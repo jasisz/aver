@@ -1,0 +1,113 @@
+module Finite
+    intent =
+        "Every value of a finite type, in the order an enum step lists its cases:"
+        "false before true, constructors in declaration order, and records and tuples"
+        "with their first part varying slowest."
+    exposes [values]
+    depends [Kernel.Term]
+    effects []
+
+fn values(f: Fin) -> List<Term>
+    ? "Every value of the type."
+    match f
+        Fin.FBool -> [Term.TBool(false), Term.TBool(true)]
+        Fin.FSum(cs) -> ctorValues(cs)
+        Fin.FRec(n, fs) -> recValues(n, fieldNames(fs), product(fieldValues(fs)))
+        Fin.FTuple(ts) -> tupleValues(product(partValues(ts)))
+
+verify values
+    values(Fin.FBool) => [Term.TBool(false), Term.TBool(true)]
+    values(Fin.FSum(["C.A", "C.B"])) => [Term.TCtor("C.A", []), Term.TCtor("C.B", [])]
+    values(Fin.FTuple([Fin.FBool, Fin.FSum(["C.A"])])) => [Term.TTuple([Term.TBool(false), Term.TCtor("C.A", [])]), Term.TTuple([Term.TBool(true), Term.TCtor("C.A", [])])]
+    values(Fin.FRec("R", [FinField(name = "a", fin = Fin.FBool), FinField(name = "b", fin = Fin.FBool)])) => [Term.TRec("R", [Field(name = "a", value = Term.TBool(false)), Field(name = "b", value = Term.TBool(false))]), Term.TRec("R", [Field(name = "a", value = Term.TBool(false)), Field(name = "b", value = Term.TBool(true))]), Term.TRec("R", [Field(name = "a", value = Term.TBool(true)), Field(name = "b", value = Term.TBool(false))]), Term.TRec("R", [Field(name = "a", value = Term.TBool(true)), Field(name = "b", value = Term.TBool(true))])]
+
+fn ctorValues(cs: List<String>) -> List<Term>
+    ? "Each constructor, applied to nothing."
+    match cs
+        [] -> []
+        [c, ..rest] -> List.prepend(Term.TCtor(c, []), ctorValues(rest))
+
+verify ctorValues
+    ctorValues([]) => []
+
+fn fieldNames(fs: List<FinField>) -> List<String>
+    ? "The field names, in order."
+    match fs
+        [] -> []
+        [f, ..rest] -> List.prepend(f.name, fieldNames(rest))
+
+verify fieldNames
+    fieldNames([FinField(name = "a", fin = Fin.FBool)]) => ["a"]
+
+fn fieldValues(fs: List<FinField>) -> List<List<Term>>
+    ? "The values of each field's type."
+    match fs
+        [] -> []
+        [f, ..rest] -> List.prepend(values(f.fin), fieldValues(rest))
+
+verify fieldValues
+    fieldValues([]) => []
+
+fn partValues(ts: List<Fin>) -> List<List<Term>>
+    ? "The values of each part's type."
+    match ts
+        [] -> []
+        [t, ..rest] -> List.prepend(values(t), partValues(rest))
+
+verify partValues
+    partValues([Fin.FBool]) => [[Term.TBool(false), Term.TBool(true)]]
+
+fn product(parts: List<List<Term>>) -> List<List<Term>>
+    ? "Every choice of one value per part, the first part varying slowest."
+    match parts
+        [] -> [[]]
+        [p, ..rest] -> prefixEach(p, product(rest))
+
+verify product
+    product([]) => [[]]
+    product([[Term.TInt(1), Term.TInt(2)], [Term.TInt(3)]]) => [[Term.TInt(1), Term.TInt(3)], [Term.TInt(2), Term.TInt(3)]]
+
+fn prefixEach(heads: List<Term>, tails: List<List<Term>>) -> List<List<Term>>
+    ? "Each head in front of every tail, heads in order."
+    match heads
+        [] -> []
+        [h, ..hs] -> List.concat(consAll(h, tails), prefixEach(hs, tails))
+
+verify prefixEach
+    prefixEach([], [[]]) => []
+
+fn consAll(h: Term, tails: List<List<Term>>) -> List<List<Term>>
+    ? "One head in front of every tail."
+    match tails
+        [] -> []
+        [t, ..ts] -> List.prepend(List.prepend(h, t), consAll(h, ts))
+
+verify consAll
+    consAll(Term.TInt(1), [[], [Term.TInt(2)]]) => [[Term.TInt(1)], [Term.TInt(1), Term.TInt(2)]]
+
+fn recValues(n: String, names: List<String>, rows: List<List<Term>>) -> List<Term>
+    ? "A record literal per row of field values."
+    match rows
+        [] -> []
+        [r, ..rest] -> List.prepend(Term.TRec(n, zipFields(names, r)), recValues(n, names, rest))
+
+verify recValues
+    recValues("R", [], [[]]) => [Term.TRec("R", [])]
+
+fn zipFields(names: List<String>, vs: List<Term>) -> List<Field>
+    ? "Pair field names with values."
+    match (names, vs)
+        ([n, ..ns], [v, ..rest]) -> List.prepend(Field(name = n, value = v), zipFields(ns, rest))
+        _ -> []
+
+verify zipFields
+    zipFields(["a"], [Term.TInt(1)]) => [Field(name = "a", value = Term.TInt(1))]
+
+fn tupleValues(rows: List<List<Term>>) -> List<Term>
+    ? "A tuple per row of part values."
+    match rows
+        [] -> []
+        [r, ..rest] -> List.prepend(Term.TTuple(r), tupleValues(rest))
+
+verify tupleValues
+    tupleValues([[Term.TInt(1)]]) => [Term.TTuple([Term.TInt(1)])]

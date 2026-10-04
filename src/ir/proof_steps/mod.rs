@@ -30,7 +30,7 @@ pub use term::Term;
 use crate::ir::identity::FnId;
 
 /// Version of the step data. Bump on any change a replayer could observe.
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 4;
 
 /// An equation `lhs = rhs` between two terms.
 #[derive(Debug, Clone, PartialEq)]
@@ -60,15 +60,47 @@ pub struct LawRef {
     pub rhs: Term,
 }
 
-/// A source definition an [`Proof::Unfold`] step opens. The body is the
-/// function's single expression with its parameters as variables.
+/// A source definition an [`Proof::Unfold`] step opens: the function's
+/// local bindings, in source order, then its final expression, with its
+/// parameters as variables.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Def {
     pub fn_id: FnId,
     /// Canonical qualified name (`Domain.LockTime.reached`).
     pub name: String,
     pub params: Vec<String>,
+    /// `name = value` bindings before the final expression. Each value may
+    /// read the parameters and the bindings before it.
+    pub lets: Vec<(String, Term)>,
     pub body: Term,
+}
+
+impl Def {
+    /// The substitution that opens the definition at `args`: each parameter
+    /// to its argument, then each binding, in order, to its value with
+    /// everything before it already substituted. A later name shadows an
+    /// earlier one, so it comes first.
+    pub fn outer(&self, args: &[Term]) -> Result<Vec<(String, Term)>, String> {
+        if self.params.len() != args.len() {
+            return Err(format!(
+                "{} takes {} arguments",
+                self.name,
+                self.params.len()
+            ));
+        }
+        let mut map: Vec<(String, Term)> = self
+            .params
+            .iter()
+            .cloned()
+            .zip(args.iter().cloned())
+            .rev()
+            .collect();
+        for (name, value) in &self.lets {
+            let v = term::subst(value, &map)?;
+            map.insert(0, (name.clone(), v));
+        }
+        Ok(map)
+    }
 }
 
 /// A module-level binding (`base = 40` outside any fn) an
@@ -153,6 +185,100 @@ pub enum Proof {
         if_true: Box<Proof>,
         if_false: Box<Proof>,
     },
+    /// Any equation, from a proof that `true` and `false` are equal: the
+    /// case the step is in cannot happen.
+    Absurd {
+        contradiction: Box<Proof>,
+        lhs: Term,
+        rhs: Term,
+    },
+    /// Case split on every value of a given of finite type: `cases[i]`
+    /// proves `lhs = rhs` with `var` replaced by value `i` (also in the
+    /// hypotheses in scope), in the order [`Finite::values`] lists them.
+    Enum {
+        var: String,
+        lhs: Term,
+        rhs: Term,
+        cases: Vec<Proof>,
+    },
+}
+
+/// A type with finitely many values, every one of which a step can write
+/// out: `Bool`, a sum type whose variants carry nothing, and records and
+/// tuples of those.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Finite {
+    Bool,
+    /// The variants in declaration order.
+    Sum(Vec<crate::ir::hir::ResolvedCtor>),
+    Record {
+        type_id: crate::ir::identity::TypeId,
+        type_name: String,
+        fields: Vec<(String, Finite)>,
+    },
+    Tuple(Vec<Finite>),
+}
+
+impl Finite {
+    /// Every value of the type, in the order a case split lists them:
+    /// `false` before `true`, variants in declaration order, and records
+    /// and tuples with their first part varying slowest.
+    pub fn values(&self) -> Vec<Term> {
+        use crate::ast::Spanned;
+        use crate::ir::hir::ResolvedExpr;
+        let product = |parts: Vec<Vec<Term>>| -> Vec<Vec<Term>> {
+            parts.into_iter().fold(vec![Vec::new()], |acc, part| {
+                acc.iter()
+                    .flat_map(|prefix| {
+                        part.iter().map(move |v| {
+                            let mut next = prefix.clone();
+                            next.push(v.clone());
+                            next
+                        })
+                    })
+                    .collect()
+            })
+        };
+        match self {
+            Finite::Bool => vec![term::boolean(false), term::boolean(true)],
+            Finite::Sum(ctors) => ctors
+                .iter()
+                .map(|c| Spanned::bare(ResolvedExpr::Ctor(c.clone(), Vec::new())))
+                .collect(),
+            Finite::Record {
+                type_id,
+                type_name,
+                fields,
+            } => product(fields.iter().map(|(_, f)| f.values()).collect())
+                .into_iter()
+                .map(|vs| {
+                    Spanned::bare(ResolvedExpr::RecordCreate {
+                        type_id: Some(*type_id),
+                        type_name: type_name.clone(),
+                        fields: fields.iter().map(|(n, _)| n.clone()).zip(vs).collect(),
+                    })
+                })
+                .collect(),
+            Finite::Tuple(parts) => product(parts.iter().map(Finite::values).collect())
+                .into_iter()
+                .map(|vs| Spanned::bare(ResolvedExpr::Tuple(vs)))
+                .collect(),
+        }
+    }
+
+    /// How many values the type has, without listing them.
+    pub fn count(&self) -> usize {
+        match self {
+            Finite::Bool => 2,
+            Finite::Sum(ctors) => ctors.len(),
+            Finite::Record { fields, .. } => fields
+                .iter()
+                .fold(1usize, |n, (_, f)| n.saturating_mul(f.count())),
+            Finite::Tuple(parts) => parts
+                .iter()
+                .fold(1usize, |n, f| n.saturating_mul(f.count())),
+        }
+    }
 }
 
 /// The obligation a step script closes: a law's claim under its givens.
@@ -160,6 +286,9 @@ pub enum Proof {
 pub struct Obligation {
     pub key: String,
     pub givens: Vec<String>,
+    /// The givens of a finite type, with that type: what a
+    /// [`Proof::Enum`] split may enumerate.
+    pub finite: Vec<(String, Finite)>,
     pub premise: Option<Term>,
     pub lhs: Term,
     pub rhs: Term,
@@ -207,6 +336,8 @@ impl Proof {
             Proof::Cases {
                 if_true, if_false, ..
             } => if_true.size() + if_false.size(),
+            Proof::Enum { cases, .. } => cases.iter().map(Proof::size).sum(),
+            Proof::Absurd { contradiction, .. } => contradiction.size(),
         }
     }
 }

@@ -79,6 +79,29 @@ pub fn arm_equation(
         return Err(format!("no arm {arm}"));
     }
     let chosen = &arms[k - 1];
+    if is_catch_all(&chosen.pattern) {
+        // A catch-all arm is selected for one value: the premise names
+        // it, every earlier arm must exclude it, and a named catch-all
+        // binds it.
+        let [value] = binders else {
+            return Err("a catch-all arm takes the value it is chosen for".into());
+        };
+        for earlier in &arms[..k - 1] {
+            if !excludes(&earlier.pattern, value) {
+                return Err(format!("an earlier arm can also match arm {arm}"));
+            }
+        }
+        let names = term::pattern_binders(&chosen.pattern);
+        let mut map: Vec<(String, Term)> = outer
+            .iter()
+            .filter(|(n, _)| !names.contains(n))
+            .cloned()
+            .collect();
+        map.extend(names.iter().map(|n| (n.clone(), value.clone())));
+        let body = term::subst(&chosen.body, &map)?;
+        let subject = term::subst(subject, outer)?;
+        return Ok((Eqn::new(subject, canon(value)), body));
+    }
     // First match wins: every earlier arm must exclude this pattern's head.
     for earlier in &arms[..k - 1] {
         if !heads_differ(&earlier.pattern, &chosen.pattern) {
@@ -96,6 +119,42 @@ pub fn arm_equation(
     let body = term::subst(&chosen.body, &map)?;
     let subject = term::subst(subject, outer)?;
     Ok((Eqn::new(subject, pat), body))
+}
+
+/// A pattern every value matches: `_` or a bare name.
+pub fn is_catch_all(p: &ResolvedPattern) -> bool {
+    matches!(p, ResolvedPattern::Wildcard | ResolvedPattern::Ident(_))
+}
+
+/// Whether pattern `p` certainly does not match the value `v`: a
+/// different literal, a different constructor, or the other list shape.
+pub fn excludes(p: &ResolvedPattern, v: &Term) -> bool {
+    use crate::ir::hir::ResolvedCallee;
+    match (p, &v.node) {
+        (ResolvedPattern::Literal(l), _) => {
+            let lit = Spanned::bare(ResolvedExpr::Literal(l.clone()));
+            match (term::int_value(&lit), term::int_value(v)) {
+                (Some(a), Some(b)) => a != b,
+                (None, None) => match &v.node {
+                    ResolvedExpr::Literal(x) => {
+                        std::mem::discriminant(x) == std::mem::discriminant(l) && x != l
+                    }
+                    _ => false,
+                },
+                _ => false,
+            }
+        }
+        (ResolvedPattern::Ctor(c, _), ResolvedExpr::Ctor(d, _)) => {
+            c != d
+                && !matches!(c, crate::ir::hir::ResolvedCtor::Unresolved { .. })
+                && !matches!(d, crate::ir::hir::ResolvedCtor::Unresolved { .. })
+        }
+        (ResolvedPattern::EmptyList, ResolvedExpr::Call(ResolvedCallee::Builtin(b), args)) => {
+            b == "List.prepend" && args.len() == 2
+        }
+        (ResolvedPattern::Cons(..), ResolvedExpr::List(xs)) => xs.is_empty(),
+        _ => false,
+    }
 }
 
 fn heads_differ(a: &ResolvedPattern, b: &ResolvedPattern) -> bool {
@@ -145,15 +204,7 @@ pub fn conclusion(p: &Proof, script: &Script, hyps: &Hyps) -> Result<Eqn, String
             let def = script
                 .def(*fn_id)
                 .ok_or_else(|| "unfold: no such definition".to_string())?;
-            if def.params.len() != args.len() {
-                return Err("unfold: wrong number of arguments".into());
-            }
-            let outer: Vec<(String, Term)> = def
-                .params
-                .iter()
-                .cloned()
-                .zip(args.iter().cloned())
-                .collect();
+            let outer = def.outer(args).map_err(|m| format!("unfold: {m}"))?;
             let lhs = Spanned::bare(ResolvedExpr::Call(
                 crate::ir::hir::ResolvedCallee::Fn(*fn_id),
                 args.iter().map(canon).collect(),
@@ -307,6 +358,57 @@ pub fn conclusion(p: &Proof, script: &Script, hyps: &Hyps) -> Result<Eqn, String
                 return Err("cases: the two arms prove different equations".into());
             }
             Ok(t)
+        }
+        Proof::Absurd {
+            contradiction,
+            lhs,
+            rhs,
+        } => {
+            let e = conclusion(contradiction, script, hyps)?;
+            match (term::bool_value(&e.lhs), term::bool_value(&e.rhs)) {
+                (Some(a), Some(b)) if a != b => Ok(Eqn::new(canon(lhs), canon(rhs))),
+                _ => Err("absurd: the step does not equate true with false".into()),
+            }
+        }
+        Proof::Enum {
+            var,
+            lhs,
+            rhs,
+            cases,
+        } => {
+            let (_, ty) = script
+                .obligation
+                .finite
+                .iter()
+                .find(|(n, _)| n == var)
+                .ok_or_else(|| format!("enum: {var} is not a given of finite type"))?;
+            let values = ty.values();
+            if values.len() != cases.len() {
+                return Err(format!(
+                    "enum: {var} has {} values, {} cases given",
+                    values.len(),
+                    cases.len()
+                ));
+            }
+            for (i, (v, case)) in values.iter().zip(cases).enumerate() {
+                let at = [(var.clone(), v.clone())];
+                let scoped: Hyps = hyps
+                    .iter()
+                    .map(|(n, e)| {
+                        Ok((
+                            n.clone(),
+                            Eqn::new(term::subst(&e.lhs, &at)?, term::subst(&e.rhs, &at)?),
+                        ))
+                    })
+                    .collect::<Result<_, String>>()?;
+                let got =
+                    conclusion(case, script, &scoped).map_err(|m| format!("enum.{i}: {m}"))?;
+                let want = Eqn::new(term::subst(lhs, &at)?, term::subst(rhs, &at)?);
+                if !same_eqn(&got, &want) {
+                    return Err(format!("enum.{i}: the case proves a different equation"));
+                }
+            }
+            Ok(Eqn::new(canon(lhs), canon(rhs)))
         }
     }
 }

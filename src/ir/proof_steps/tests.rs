@@ -10,6 +10,7 @@ fn script(lhs: super::Term, rhs: super::Term, proof: Proof) -> Script {
         obligation: Obligation {
             key: "f.law".into(),
             givens: vec!["a".into(), "b".into()],
+            finite: Vec::new(),
             premise: None,
             lhs,
             rhs,
@@ -139,4 +140,79 @@ fn a_binding_unfolds_to_the_value_the_script_carries() {
     assert!(conclusion(&step, &s, &Vec::new()).is_err());
     s.consts[0].value = term::int(&41.into());
     assert!(check_script(&s).is_err());
+}
+
+#[test]
+fn a_definition_opens_its_local_bindings_in_order() {
+    let def = super::Def {
+        fn_id: crate::ir::identity::FnId(0),
+        name: "f".into(),
+        params: vec!["x".into()],
+        lets: vec![
+            ("y".into(), add(var("x"), var("x"))),
+            ("z".into(), add(var("y"), var("x"))),
+        ],
+        body: var("z"),
+    };
+    let outer = def.outer(&[var("a")]).unwrap();
+    assert_eq!(
+        term::subst(&def.body, &outer).unwrap(),
+        add(add(var("a"), var("a")), var("a"))
+    );
+    assert!(def.outer(&[]).is_err());
+}
+
+#[test]
+fn an_enum_split_needs_one_case_per_value_of_a_finite_given() {
+    let claim = term::binop(BinOp::Eq, var("b"), var("b"));
+    let case = |v: bool| Proof::Compute {
+        lhs: term::binop(BinOp::Eq, term::boolean(v), term::boolean(v)),
+        rhs: term::boolean(true),
+    };
+    let split = |cases: Vec<Proof>| Proof::Enum {
+        var: "b".into(),
+        lhs: claim.clone(),
+        rhs: term::boolean(true),
+        cases,
+    };
+    let mut s = script(
+        claim.clone(),
+        term::boolean(true),
+        split(vec![case(false), case(true)]),
+    );
+    s.obligation.givens = vec!["b".into()];
+    s.obligation.finite = vec![("b".into(), super::Finite::Bool)];
+    assert!(check_script(&s).is_ok());
+    s.proof = split(vec![case(false)]);
+    assert!(check_script(&s).is_err());
+    s.proof = split(vec![case(true), case(false)]);
+    assert!(check_script(&s).is_err());
+    s.proof = split(vec![case(false), case(true)]);
+    s.obligation.finite.clear();
+    assert!(check_script(&s).is_err());
+}
+
+#[test]
+fn a_catch_all_arm_is_chosen_only_for_a_value_the_earlier_arms_exclude() {
+    use crate::ast::Literal;
+    let arm = |pattern, body| ResolvedMatchArm {
+        pattern,
+        body: Box::new(body),
+        binding_slots: std::sync::OnceLock::new(),
+    };
+    let arms = vec![
+        arm(
+            ResolvedPattern::Literal(Literal::Int(0)),
+            term::int(&0.into()),
+        ),
+        arm(ResolvedPattern::Ident("n".into()), var("n")),
+    ];
+    let five = term::int(&5.into());
+    let (premise, body) =
+        super::check::arm_equation(&var("c"), &arms, 2, &[], std::slice::from_ref(&five)).unwrap();
+    assert_eq!(premise, Eqn::new(var("c"), five.clone()));
+    assert_eq!(body, five);
+    let zero = term::int(&0.into());
+    assert!(super::check::arm_equation(&var("c"), &arms, 2, &[], &[zero]).is_err());
+    assert!(super::check::arm_equation(&var("c"), &arms, 2, &[], &[var("x")]).is_err());
 }

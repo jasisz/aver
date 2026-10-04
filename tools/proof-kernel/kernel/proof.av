@@ -1,9 +1,10 @@
 module Proof
     intent =
-        "Proof steps, definitions, module-level bindings, cited laws and the script that ties them"
+        "Proof steps, definitions (local bindings, then one expression), module-level bindings, cited"
+        "laws and the script that ties them"
         "to one obligation."
         "Each step names its rule and writes out every instance; see src/ir/proof_steps/mod.rs."
-    exposes [Proof, Def, Const, Law, Script, Hyp, premiseOf]
+    exposes [Proof, Def, Const, Law, Script, Hyp, Given, premiseOf]
     depends [Kernel.Term]
     effects []
 
@@ -21,10 +22,13 @@ type Proof
     PLaw(String, List<Binding>, List<Proof>)
     PCompute(Term, Term)
     PCases(Term, String, Proof, Proof)
+    PEnum(String, Term, Term, List<Proof>)
+    PAbsurd(Proof, Term, Term)
 
 record Def
     name: String
     params: List<String>
+    lets: List<Binding>
     body: Term
 
 record Const
@@ -38,8 +42,13 @@ record Law
     lhs: Term
     rhs: Term
 
+record Given
+    name: String
+    fin: Fin
+
 record Script
     obligation: Law
+    finite: List<Given>
     defs: List<Def>
     consts: List<Const>
     laws: List<Law>

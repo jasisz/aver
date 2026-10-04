@@ -392,6 +392,103 @@ impl aver_rt::AverDisplay for Eqn {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Fin {
+    FBool,
+    FSum(aver_rt::AverList<AverStr>),
+    FRec(AverStr, aver_rt::AverList<FinField>),
+    FTuple(aver_rt::AverList<Fin>),
+}
+
+impl Fin {
+    fn aver_key_rank(&self) -> usize {
+        match self {
+            Fin::FBool => 0,
+            Fin::FRec(..) => 1,
+            Fin::FSum(..) => 2,
+            Fin::FTuple(..) => 3,
+        }
+    }
+}
+
+impl PartialOrd for Fin {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Fin {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let rank = self.aver_key_rank().cmp(&other.aver_key_rank());
+        if rank != std::cmp::Ordering::Equal {
+            return rank;
+        }
+        match (self, other) {
+            (Fin::FRec(a0, a1), Fin::FRec(b0, b1)) => std::cmp::Ordering::Equal
+                .then_with(|| a0.cmp(b0))
+                .then_with(|| a1.cmp(b1)),
+            (Fin::FSum(a0), Fin::FSum(b0)) => std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0)),
+            (Fin::FTuple(a0), Fin::FTuple(b0)) => {
+                std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
+            }
+            _ => std::cmp::Ordering::Equal,
+        }
+    }
+}
+
+impl aver_rt::AverDisplay for Fin {
+    fn aver_display(&self) -> String {
+        match self {
+            Fin::FBool => "FBool".to_string(),
+            Fin::FSum(f0) => format!("FSum({})", f0.aver_display_inner()),
+            Fin::FRec(f0, f1) => format!(
+                "FRec({})",
+                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+            ),
+            Fin::FTuple(f0) => format!("FTuple({})", f0.aver_display_inner()),
+        }
+    }
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct FinField {
+    pub name: AverStr,
+    pub fin: Fin,
+}
+
+impl PartialOrd for FinField {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for FinField {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        std::cmp::Ordering::Equal
+            .then_with(|| self.fin.cmp(&other.fin))
+            .then_with(|| self.name.cmp(&other.name))
+    }
+}
+
+impl aver_rt::AverDisplay for FinField {
+    fn aver_display(&self) -> String {
+        format!(
+            "FinField({})",
+            vec![
+                format!("name: {}", self.name.aver_display_inner()),
+                format!("fin: {}", self.fin.aver_display_inner())
+            ]
+            .join(", ")
+        )
+    }
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
+}
+
 /// Whether a term is the hole.
 pub fn isHole(t @ _: &Term) -> bool {
     crate::proof_kernel::cancel_checkpoint();

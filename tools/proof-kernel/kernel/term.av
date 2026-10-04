@@ -2,7 +2,7 @@ module Term
     intent =
         "Terms of the proof-step data: Aver expressions as the compiler wrote them."
         "Variables are names; a hole marks the rewrite position of a congruence step."
-    exposes [Term, Arm, Field, Pat, Binding, Eqn, isHole, bind]
+    exposes [Term, Arm, Field, Pat, Binding, Eqn, Fin, FinField, isHole, bind]
     effects []
 
 type Term
@@ -49,6 +49,16 @@ record Binding
 record Eqn
     lhs: Term
     rhs: Term
+
+type Fin
+    FBool
+    FSum(List<String>)
+    FRec(String, List<FinField>)
+    FTuple(List<Fin>)
+
+record FinField
+    name: String
+    fin: Fin
 
 fn isHole(t: Term) -> Bool
     ? "Whether a term is the hole."

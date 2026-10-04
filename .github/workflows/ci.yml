@@ -332,6 +332,18 @@ jobs:
           cargo build -p aver-lang --bin aver --features wasm,wasip2
           python3 tools/cert_ratchet.py --aver target/debug/aver
 
+      - name: Proof-step coverage ratchet
+        if: matrix.lane == 'checks'
+        # A producer, kernel or format change that reopens a law closed by
+        # steps must fail the PR that makes it. `--backend aver` checks the
+        # steps with the kernel written in Aver, in process, so this needs no
+        # Lean: it runs over every corpus file with a law and compares the laws
+        # closed by steps with tools/steps-baseline.json. A gain is recorded in
+        # the same commit with `python3 tools/steps_ratchet.py --update`. The
+        # binary is the one the step above built.
+        timeout-minutes: 10
+        run: python3 tools/steps_ratchet.py --aver target/debug/aver
+
       - name: Install Node for the JavaScript Work host
         if: matrix.lane == 'wasm-gc'
         uses: actions/setup-node@v4

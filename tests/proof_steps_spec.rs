@@ -108,8 +108,22 @@ fn the_producers_write_steps_for_the_shapes_they_know() {
         .map(|(law, _)| law)
         .collect();
     assert_eq!(bytes, ["decode.eightReadBack"]);
+    let lets_out = scratch("shapes-lets");
+    let lets: Vec<String> = export_steps("lets.av", &lets_out)
+        .into_iter()
+        .map(|(law, _)| law)
+        .collect();
+    assert_eq!(
+        lets,
+        [
+            "bumped.positiveStays",
+            "score.nothingClearedScoresNothing",
+            "sumAndDouble.isTwiceTheSum",
+        ]
+    );
     let _ = fs::remove_dir_all(out);
     let _ = fs::remove_dir_all(bytes_out);
+    let _ = fs::remove_dir_all(lets_out);
 }
 
 #[test]
@@ -125,6 +139,12 @@ fn the_replayer_accepts_every_emitted_proof() {
             .into_iter()
             .map(|(_, p)| p),
     );
+    let lets_out = scratch("accept-lets");
+    files.extend(
+        export_steps("lets.av", &lets_out)
+            .into_iter()
+            .map(|(_, p)| p),
+    );
     let result = replay(&files);
     assert!(result.status.success(), "{}", format_output(&result));
     let text = String::from_utf8_lossy(&result.stdout);
@@ -136,6 +156,59 @@ fn the_replayer_accepts_every_emitted_proof() {
     );
     let _ = fs::remove_dir_all(out);
     let _ = fs::remove_dir_all(bytes_out);
+    let _ = fs::remove_dir_all(lets_out);
+}
+
+/// Where the parenthesised form opening at `open` closes.
+fn closing(text: &str, open: usize) -> usize {
+    let mut depth = 0usize;
+    let mut quoted = false;
+    for (i, c) in text[open..].char_indices() {
+        match c {
+            '"' => quoted = !quoted,
+            '(' if !quoted => depth += 1,
+            ')' if !quoted => {
+                depth -= 1;
+                if depth == 0 {
+                    return open + i;
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("unbalanced form at {open}")
+}
+
+/// The direct sub-forms of the form opening at `open`, as byte ranges.
+fn sub_forms(text: &str, open: usize) -> Vec<(usize, usize)> {
+    let end = closing(text, open);
+    let mut out = Vec::new();
+    let mut i = open + 1;
+    while i < end {
+        if text[i..].starts_with('(') {
+            let j = closing(text, i);
+            out.push((i, j + 1));
+            i = j + 1;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// The script with the cases of its first `(enum …)` rearranged: `keep`
+/// lists, by index, the cases that remain and their order.
+fn recase(text: &str, keep: &[usize]) -> String {
+    let open = text.find("(enum ").expect("an enum step");
+    let forms = sub_forms(text, open);
+    // (enum VAR LHS RHS CASE…): the first two sub-forms are the claim.
+    let cases = &forms[2..];
+    let rebuilt: Vec<&str> = keep
+        .iter()
+        .map(|&k| &text[cases[k].0..cases[k].1])
+        .collect();
+    let (from, to) = (cases[0].0, cases[cases.len() - 1].1);
+    format!("{}{}{}", &text[..from], rebuilt.join(" "), &text[to..])
 }
 
 /// Replace the first occurrence of `from` after the proof starts.
@@ -445,6 +518,233 @@ fn the_embedded_kernel_refuses_mutated_scripts() {
             "{from} -> {to}: {refused:?}"
         );
     }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn both_kernels_unfold_through_local_bindings_and_refuse_mutations() {
+    let out = scratch("lets");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("lets.av", &out).into_iter().collect();
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let sum = read("sumAndDouble.isTwiceTheSum");
+    assert!(sum.contains("((total (op + (v a) (v b))) (twice (op + (v total) (v total))))"));
+    let bumped = read("bumped.positiveStays");
+    for (kind, text) in [
+        (
+            "arguments swapped",
+            mutate_proof(&sum, "((v a) (v b))", "((v b) (v a))"),
+        ),
+        (
+            "the other arm",
+            mutate_proof(&bumped, "(unfold bumped 1", "(unfold bumped 2"),
+        ),
+    ] {
+        let refused = aver::proof_kernel::verdict(&text);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "{kind}: {refused:?}"
+        );
+        let path = out.join("mutant.steps");
+        fs::write(&path, &text).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(
+            !result.status.success(),
+            "{kind}: {}",
+            format_output(&result)
+        );
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn both_kernels_split_a_finite_given_into_every_value_and_refuse_mutations() {
+    let out = scratch("finite");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("finite.av", &out).into_iter().collect();
+    assert_eq!(
+        files.keys().cloned().collect::<Vec<_>>(),
+        [
+            "agree.symmetric",
+            "lit.offIsDark",
+            "next.cyclesInThree",
+            "safe.notSafeMeansNextIsAmber",
+        ]
+    );
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let cycle = read("next.cyclesInThree");
+    let agree = read("agree.symmetric");
+    let safe = read("safe.notSafeMeansNextIsAmber");
+    assert!(safe.contains("(absurd "), "{safe}");
+    for (kind, text) in [
+        ("a missing case", recase(&cycle, &[0, 1])),
+        ("two cases swapped", recase(&cycle, &[1, 0, 2])),
+        ("a case repeated", recase(&cycle, &[0, 1, 1])),
+        (
+            "the wrong given",
+            mutate_proof(&agree, "(enum b ", "(enum a "),
+        ),
+        (
+            "a split of a given that is not finite",
+            agree.replace("((a (tbool)) (b (tbool)))", "((a (tbool)) b)"),
+        ),
+        ("an absurd case that is not", {
+            let open = safe.find("(absurd ").unwrap();
+            let (from, to) = sub_forms(&safe, open)[0];
+            format!("{}(refl (b true)){}", &safe[..from], &safe[to..])
+        }),
+    ] {
+        let refused = aver::proof_kernel::verdict(&text);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "{kind}: {refused:?}"
+        );
+        let path = out.join("mutant.steps");
+        fs::write(&path, &text).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(
+            !result.status.success(),
+            "{kind}: {}",
+            format_output(&result)
+        );
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_splits_a_finite_given_and_refuses_a_missing_case() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("finite-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "finite.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "0",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(summary["steps_rejected"], serde_json::json!([]));
+    for law in [
+        "agree.symmetric",
+        "lit.offIsDark",
+        "next.cyclesInThree",
+        "safe.notSafeMeansNextIsAmber",
+    ] {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}");
+    }
+    let lean = fs::read_to_string(out.join("Finite.lean")).unwrap();
+    let law = "next.cyclesInThree";
+    let line = exact_line(&lean, "next_law_cyclesInThree").to_string();
+    let case = |ctor: &str| {
+        let head = format!(" | Light.{ctor} => ");
+        let at = line.find(&head).unwrap_or_else(|| panic!("no case {ctor}"));
+        let start = at + head.len();
+        (at, start, closing(&line, start) + 1)
+    };
+    // Two cases' proofs swapped: each proves the other value's claim.
+    let (_, red_from, red_to) = case("red");
+    let (_, amber_from, amber_to) = case("amber");
+    let swapped = format!(
+        "{}{}{}{}{}",
+        &line[..red_from],
+        &line[amber_from..amber_to],
+        &line[red_to..amber_from],
+        &line[red_from..red_to],
+        &line[amber_to..]
+    );
+    assert!(
+        lean_refuses(&out, "Finite.lean", &lean.replacen(&line, &swapped, 1), law),
+        "two cases swapped: Lean must refuse the step term"
+    );
+    // A missing case: Lean reports the match as incomplete. That error is
+    // logged rather than thrown, so the law fails instead of falling back;
+    // read it with the file's message filter for this law removed.
+    let (green_at, _, green_to) = case("green");
+    let missing = format!("{}{}", &line[..green_at], &line[green_to..]);
+    let unfiltered = lean.replacen(&line, &missing, 1).replacen(
+        &format!(
+            "#guard_msgs (drop error, pass warning, pass info, pass trace) in\n-- verify law {law} "
+        ),
+        &format!("-- verify law {law} "),
+        1,
+    );
+    fs::write(out.join("Finite.lean"), &unfiltered).unwrap();
+    let run = Command::new("lake")
+        .args(["env", "lean", "Finite.lean"])
+        .current_dir(&out)
+        .output()
+        .expect("lake runs");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(
+        text.contains("Missing cases"),
+        "a missing case: Lean must refuse the step term\n{text}"
+    );
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_unfolds_through_local_bindings_and_refuses_a_mutation() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("lets-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "lets.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "0",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let lean = fs::read_to_string(out.join("Lets.lean")).unwrap();
+    let law = "sumAndDouble.isTwiceTheSum";
+    assert!(!lean_refuses(&out, "Lets.lean", &lean, law));
+    let line = exact_line(&lean, "sumAndDouble_law_isTwiceTheSum").to_string();
+    let at = line.find("exact (show").expect("the step term");
+    let (lemmas, term) = line.split_at(at);
+    let swapped = term.replacen("__aver_unfold_0 (a) (b)", "__aver_unfold_0 (b) (a)", 1);
+    assert_ne!(term, swapped, "{term}");
+    let mutated = lean.replacen(&line, &format!("{lemmas}{swapped}"), 1);
+    assert!(
+        lean_refuses(&out, "Lets.lean", &mutated, law),
+        "arguments swapped: Lean must refuse the mutated step term"
+    );
     let _ = fs::remove_dir_all(out);
 }
 

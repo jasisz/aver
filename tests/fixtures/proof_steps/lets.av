@@ -1,0 +1,50 @@
+module Lets
+    intent = "Functions that name values before their final expression, whose laws proof lowering proves as data."
+    exposes [sumAndDouble, score, bumped]
+    effects []
+
+fn sumAndDouble(a: Int, b: Int) -> Int
+    ? "The sum, then twice the sum, each named first."
+    total = a + b
+    twice = total + total
+    twice
+
+verify sumAndDouble
+    sumAndDouble(2, 3) => 10
+
+verify sumAndDouble law isTwiceTheSum
+    given a: Int = [0, 2, 5]
+    given b: Int = [1, 3]
+    sumAndDouble(a, b) => (a + b) + (a + b)
+
+fn score(cleared: Int, level: Int) -> Int
+    ? "Points for the lines cleared, scaled by the level."
+    mult = level + 1
+    points = cleared * 100
+    match cleared > 0
+        true -> points * mult
+        false -> 0
+
+verify score
+    score(0, 3) => 0
+    score(2, 1) => 400
+
+verify score law nothingClearedScoresNothing
+    given level: Int = [0, 1, 7]
+    score(0, level) => 0
+
+fn bumped(x: Int) -> Int
+    ? "One more, unless it was already positive."
+    positive = x > 0
+    match positive
+        true -> x
+        false -> x + 1
+
+verify bumped
+    bumped(3) => 3
+    bumped(0) => 1
+
+verify bumped law positiveStays
+    given x: Int = [1, 2, 9]
+    when x > 0
+    bumped(x) => x
