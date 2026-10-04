@@ -43,16 +43,23 @@ fn law_ref(inputs: &ProofLowerInputs, t: &LawTheorem) -> LawRef {
     LawRef {
         key: law_key(inputs, t),
         givens: t.quantifiers.iter().map(|q| q.name.clone()).collect(),
-        premise: premise_of(t),
-        lhs: canon(&t.claim_lhs),
-        rhs: canon(&t.claim_rhs),
+        premise: premise_of(inputs, t),
+        lhs: law_term(inputs, t, &t.claim_lhs),
+        rhs: law_term(inputs, t, &t.claim_rhs),
     }
 }
 
-fn premise_of(t: &LawTheorem) -> Option<Term> {
+/// A term of law `t`, with its module's binding reads spelled as every
+/// step term spells them (`env::qualify_bindings`).
+fn law_term(inputs: &ProofLowerInputs, t: &LawTheorem, term: &Term) -> Term {
+    let scope = inputs.symbol_table.fn_entry(t.fn_id).key.scope_str();
+    env::qualify_bindings(&canon(term), inputs, scope)
+}
+
+fn premise_of(inputs: &ProofLowerInputs, t: &LawTheorem) -> Option<Term> {
     match t.premises.as_slice() {
         [] => None,
-        [p] => Some(canon(&p.expr)),
+        [p] => Some(law_term(inputs, t, &p.expr)),
         _ => None,
     }
 }
@@ -82,9 +89,9 @@ fn obligation(inputs: &ProofLowerInputs, t: &LawTheorem) -> Obligation {
     Obligation {
         key: law_key(inputs, t),
         givens: t.quantifiers.iter().map(|q| q.name.clone()).collect(),
-        premise: premise_of(t),
-        lhs: canon(&t.claim_lhs),
-        rhs: canon(&t.claim_rhs),
+        premise: premise_of(inputs, t),
+        lhs: law_term(inputs, t, &t.claim_lhs),
+        rhs: law_term(inputs, t, &t.claim_rhs),
     }
 }
 
@@ -180,6 +187,7 @@ fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, t: &LawTheorem) -> Result<Sc
     let script = Script {
         obligation: ob,
         defs: env.used_defs(),
+        consts: env.used_consts(),
         laws: env.laws.clone(),
         proof,
     };

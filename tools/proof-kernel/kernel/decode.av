@@ -335,6 +335,7 @@ fn proofOf(tag: String, args: List<Sexp>) -> Result<Proof, String>
         "trans" -> transProof(args)
         "congr" -> congrProof(args)
         "unfold" -> unfoldProof(args)
+        "const" -> Result.Ok(Proof.PConst(onlyAtom(args)?))
         "arm" -> armProof(args)
         "proj" -> Result.Ok(Proof.PProj(oneTerm(args)?))
         "hyp" -> Result.Ok(Proof.PHyp(onlyAtom(args)?))
@@ -500,12 +501,31 @@ fn defs(ss: List<Sexp>) -> Result<List<Def>, String>
 verify defs
     defs([]) => Result.Ok([])
 
-fn script(s: Sexp) -> Result<Script, String>
-    ? "(steps 1 (obligation …) (defs …) (laws …) (proof …)); version 1 only."
+fn constant(s: Sexp) -> Result<Const, String>
+    ? "(const NAME TERM)"
     match s
-        Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("1"), o, Sexp.Node([Sexp.Atom("defs"), ..ds]), Sexp.Node([Sexp.Atom("laws"), ..ls]), Sexp.Node([Sexp.Atom("proof"), p])]) -> Result.Ok(Script(obligation = law(o, "obligation")?, defs = defs(ds)?, laws = laws(ls)?, proof = proof(p)?))
+        Sexp.Node([Sexp.Atom("const"), Sexp.Atom(n), v]) -> Result.Ok(Const(name = n, value = term(v)?))
+        _ -> Result.Err("malformed const")
+
+verify constant
+    constant(Sexp.Atom("x")) => Result.Err("malformed const")
+    constant(Sexp.Node([Sexp.Atom("const"), Sexp.Atom("base"), Sexp.Node([Sexp.Atom("i"), Sexp.Atom("40")])])) => Result.Ok(Const(name = "base", value = Term.TInt(40)))
+
+fn consts(ss: List<Sexp>) -> Result<List<Const>, String>
+    ? "Module-level bindings."
+    match ss
+        [] -> Result.Ok([])
+        [s, ..rest] -> Result.Ok(List.prepend(constant(s)?, consts(rest)?))
+
+verify consts
+    consts([]) => Result.Ok([])
+
+fn script(s: Sexp) -> Result<Script, String>
+    ? "(steps 2 (obligation …) (defs …) (consts …) (laws …) (proof …)); version 2 only."
+    match s
+        Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("2"), o, Sexp.Node([Sexp.Atom("defs"), ..ds]), Sexp.Node([Sexp.Atom("consts"), ..cs]), Sexp.Node([Sexp.Atom("laws"), ..ls]), Sexp.Node([Sexp.Atom("proof"), p])]) -> Result.Ok(Script(obligation = law(o, "obligation")?, defs = defs(ds)?, consts = consts(cs)?, laws = laws(ls)?, proof = proof(p)?))
         Sexp.Node([Sexp.Atom("steps"), Sexp.Atom(v), ..rest]) -> Result.Err("unsupported step format version {v}")
         _ -> Result.Err("not a step script")
 
 verify script
-    script(Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("2")])) => Result.Err("unsupported step format version 2")
+    script(Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("1")])) => Result.Err("unsupported step format version 1")

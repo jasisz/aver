@@ -14,7 +14,8 @@
 //!   instantiation, intermediate term and rewrite position;
 //! - there are no backend lemma names, simp sets, heartbeats, and no step
 //!   that relies on a backend unfolding a definition by itself: a definition
-//!   is opened only by [`Proof::Unfold`] at an explicit arm.
+//!   is opened only by [`Proof::Unfold`] at an explicit arm, and a
+//!   module-level binding only by [`Proof::UnfoldConst`].
 //!
 //! The serialised form ([`sexpr`]) is versioned by [`FORMAT_VERSION`].
 
@@ -29,7 +30,7 @@ pub use term::Term;
 use crate::ir::identity::FnId;
 
 /// Version of the step data. Bump on any change a replayer could observe.
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 
 /// An equation `lhs = rhs` between two terms.
 #[derive(Debug, Clone, PartialEq)]
@@ -70,6 +71,18 @@ pub struct Def {
     pub body: Term,
 }
 
+/// A module-level binding (`base = 40` outside any fn) an
+/// [`Proof::UnfoldConst`] step opens. A term reads it as the variable
+/// `name`: bare for the entry module's own binding, qualified by module for
+/// a dependency's (`Lib.base`), so two modules' `base` stay apart. A law's
+/// givens never take such a name: the checker refuses a local that shadows
+/// a module-level one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Const {
+    pub name: String,
+    pub value: Term,
+}
+
 /// One proof step. Each variant proves exactly one equation, computable
 /// from the variant's own data plus the definitions, cited laws and
 /// hypotheses in scope; the equation is written out wherever the rule
@@ -98,6 +111,9 @@ pub enum Proof {
         binders: Vec<Term>,
         premise: Option<Box<Proof>>,
     },
+    /// The value of a module-level binding: `name = value`, a constant
+    /// with no parameters and no arms.
+    UnfoldConst { name: String },
     /// Arm `arm` (1-based) of the explicit `match` term `subject_match`:
     /// `match s { … } = arm_k[pattern vars := binders]`, with `premise`
     /// proving `s = pattern_k[pattern vars := binders]`.
@@ -155,6 +171,7 @@ pub struct Obligation {
 pub struct Script {
     pub obligation: Obligation,
     pub defs: Vec<Def>,
+    pub consts: Vec<Const>,
     pub laws: Vec<LawRef>,
     pub proof: Proof,
 }
@@ -162,6 +179,9 @@ pub struct Script {
 impl Script {
     pub fn def(&self, fn_id: FnId) -> Option<&Def> {
         self.defs.iter().find(|d| d.fn_id == fn_id)
+    }
+    pub fn constant(&self, name: &str) -> Option<&Const> {
+        self.consts.iter().find(|c| c.name == name)
     }
     pub fn law(&self, key: &str) -> Option<&LawRef> {
         self.laws.iter().find(|l| l.key == key)
@@ -172,7 +192,11 @@ impl Proof {
     /// Number of nodes, for reports.
     pub fn size(&self) -> usize {
         1 + match self {
-            Proof::Refl(_) | Proof::Proj { .. } | Proof::Hyp(_) | Proof::Compute { .. } => 0,
+            Proof::Refl(_)
+            | Proof::Proj { .. }
+            | Proof::Hyp(_)
+            | Proof::Compute { .. }
+            | Proof::UnfoldConst { .. } => 0,
             Proof::Symm(p) => p.size(),
             Proof::Trans { steps, .. } => steps.iter().map(Proof::size).sum(),
             Proof::Congr { inner, .. } => inner.size(),

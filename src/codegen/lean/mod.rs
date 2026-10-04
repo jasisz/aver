@@ -273,6 +273,11 @@ pub fn proof_mode_findings(ctx: &CodegenContext) -> Vec<ProofModeIssue> {
             line: uf.line,
             message: uf.message.clone(),
         })
+        .chain(
+            transpile::module_binding_refusals(ctx)
+                .into_iter()
+                .map(|(line, message)| ProofModeIssue { line, message }),
+        )
         .collect()
 }
 

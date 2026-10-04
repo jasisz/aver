@@ -18,6 +18,11 @@ pub(super) enum ScopedDecl {
     Type(usize),
     CapabilityOperation(usize),
     FnComponent(usize),
+    /// A module-level binding (`base = 40`), by index into the slice the
+    /// plan was built from. It is a constant: it comes after the fns its
+    /// value calls and the bindings it reads, and before every fn that
+    /// reads it.
+    Binding(usize),
 }
 
 pub(super) struct ScopedDeclPlan<'a> {
@@ -29,6 +34,7 @@ pub(super) fn plan_scoped_declarations<'a>(
     ctx: &CodegenContext,
     type_defs: &'a [TypeDef],
     fn_defs: &'a [FnDef],
+    bindings: &[crate::codegen::ModuleBinding],
     scope: Option<&str>,
 ) -> ScopedDeclPlan<'a> {
     let pure: Vec<&FnDef> = fn_defs
@@ -51,8 +57,14 @@ pub(super) fn plan_scoped_declarations<'a>(
     let type_count = type_defs.len();
     let operation_count = capability_operations.len();
     let fn_offset = type_count + operation_count;
-    let node_count = fn_offset + components.len();
+    let binding_offset = fn_offset + components.len();
+    let node_count = binding_offset + bindings.len();
     let mut dependencies = vec![HashSet::<usize>::new(); node_count];
+    let binding_nodes: HashMap<String, usize> = bindings
+        .iter()
+        .enumerate()
+        .map(|(index, binding)| (binding.name.clone(), binding_offset + index))
+        .collect();
 
     let type_nodes: HashMap<String, usize> = type_defs
         .iter()
@@ -120,6 +132,33 @@ pub(super) fn plan_scoped_declarations<'a>(
                 dependencies[node].insert(dependency);
             }
         }
+        for fd in component {
+            for stmt in fd.body.stmts() {
+                let (Stmt::Binding(_, _, expr) | Stmt::Expr(expr)) = stmt;
+                add_binding_reads(node, expr, &binding_nodes, &mut dependencies);
+            }
+        }
+        add_local_type_dependencies(node, &type_refs, &type_nodes, scope, &mut dependencies);
+    }
+
+    for (binding_index, binding) in bindings.iter().enumerate() {
+        let node = binding_offset + binding_index;
+        let mut called = HashSet::new();
+        collect_called_idents(&binding.value, &mut called);
+        for name in called {
+            if let Some(&dependency) = fn_nodes.get(&name) {
+                dependencies[node].insert(dependency);
+            }
+            if let Some(&dependency) = operation_nodes.get(&name) {
+                dependencies[node].insert(dependency);
+            }
+        }
+        add_binding_reads(node, &binding.value, &binding_nodes, &mut dependencies);
+        let mut type_refs = HashSet::new();
+        if let Some(annotation) = &binding.annotation {
+            collect_annotation_type_refs(annotation, &mut type_refs);
+        }
+        collect_expr_type_refs(&binding.value, &mut type_refs);
         add_local_type_dependencies(node, &type_refs, &type_nodes, scope, &mut dependencies);
     }
 
@@ -157,13 +196,34 @@ pub(super) fn plan_scoped_declarations<'a>(
                 ScopedDecl::Type(node)
             } else if node < fn_offset {
                 ScopedDecl::CapabilityOperation(node - type_count)
-            } else {
+            } else if node < binding_offset {
                 ScopedDecl::FnComponent(node - fn_offset)
+            } else {
+                ScopedDecl::Binding(node - binding_offset)
             }
         })
         .collect();
 
     ScopedDeclPlan { components, order }
+}
+
+/// `node` reads every module-level binding `expr` names. A local never
+/// shadows a module-level name (the checker refuses it), so a bare
+/// identifier spelled like a binding is a read of that binding.
+fn add_binding_reads(
+    node: usize,
+    expr: &Spanned<Expr>,
+    binding_nodes: &HashMap<String, usize>,
+    dependencies: &mut [HashSet<usize>],
+) {
+    crate::call_graph::walk_expr(expr, &mut |node_expr| {
+        if let Expr::Ident(name) = node_expr
+            && let Some(&dependency) = binding_nodes.get(name)
+            && dependency != node
+        {
+            dependencies[node].insert(dependency);
+        }
+    });
 }
 
 fn type_name(td: &TypeDef) -> &str {

@@ -12,6 +12,8 @@ fn verdict(text: String) -> Result<String, String>
     Kernel.Check.checkScript(Kernel.Decode.script(sexp)?)
 
 verify verdict
-    verdict("(steps 1 (obligation k () (none) (i 1) (i 1)) (defs) (laws) (proof (refl (i 1))))") => Result.Ok("k")
-    verdict("(steps 1 (obligation k () (none) (i 1) (i 1)) (defs) (laws) (proof (hyp h)))") => Result.Err("step proof: hypothesis h is not in scope")
-    verdict("(steps 2)") => Result.Err("unsupported step format version 2")
+    verdict("(steps 2 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (laws) (proof (refl (i 1))))") => Result.Ok("k")
+    verdict("(steps 2 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (laws) (proof (hyp h)))") => Result.Err("step proof: hypothesis h is not in scope")
+    verdict("(steps 2 (obligation k () (none) (v base) (i 40)) (defs) (consts (const base (i 40))) (laws) (proof (const base)))") => Result.Ok("k")
+    verdict("(steps 2 (obligation k () (none) (v base) (i 41)) (defs) (consts (const base (i 40))) (laws) (proof (const base)))") => Result.Err("step proof: the proof ends at a different equation than the claim")
+    verdict("(steps 1)") => Result.Err("unsupported step format version 1")

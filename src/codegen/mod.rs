@@ -59,6 +59,10 @@ pub struct ModuleInfo {
     /// ordinary module-owned function; only the entry module's `main` has
     /// entry-point semantics.
     pub fn_defs: Vec<FnDef>,
+    /// Module-level bindings (`base = 40` outside any fn), in source order.
+    /// The module's own fns read them by their bare name; every backend has
+    /// to give them a value, and the proof export a definition.
+    pub bindings: Vec<ModuleBinding>,
     /// Provider-bound declarations retained for name resolution and VM
     /// fail-closed dispatch. They have signatures but no Aver bodies.
     pub capability_items: Vec<CapabilityItem>,
@@ -86,6 +90,69 @@ pub struct ModuleInfo {
     /// analysis sufficient — see `project_aver_module_dag` memory and
     /// `src/ir/analyze.rs` for why cross-module SCCs are impossible.
     pub analysis: Option<crate::ir::AnalysisResult>,
+}
+
+/// A module-level binding: `name = value` (or `name: T = value`) written
+/// outside any fn. The checker allows no effects in `value`.
+#[derive(Clone, Debug)]
+pub struct ModuleBinding {
+    pub name: String,
+    /// The written type annotation, if any.
+    pub annotation: Option<String>,
+    pub value: crate::ast::Spanned<crate::ast::Expr>,
+}
+
+impl ModuleBinding {
+    /// The binding's type: the annotation when written, otherwise the type
+    /// the checker stamped on the value. `None` only for a value the checker
+    /// never typed.
+    pub fn ty(&self) -> Option<crate::types::Type> {
+        match &self.annotation {
+            Some(annotation) => crate::types::parse_type_str_strict(annotation).ok(),
+            None => self.value.ty().cloned(),
+        }
+    }
+
+    /// The type a backend declares the binding at, or why there is none: a
+    /// value the checker left untyped, or typed only partly (an unresolved
+    /// type variable, an earlier error, a fn value).
+    pub fn declared_type(&self) -> Result<crate::types::Type, String> {
+        fn concrete(ty: &crate::types::Type) -> bool {
+            use crate::types::Type;
+            match ty {
+                Type::Var(_) | Type::Invalid | Type::Fn(..) => false,
+                Type::List(inner) | Type::Vector(inner) | Type::Option(inner) => concrete(inner),
+                Type::Result(a, b) | Type::Map(a, b) => concrete(a) && concrete(b),
+                Type::Tuple(items) => items.iter().all(concrete),
+                _ => true,
+            }
+        }
+        match self.ty() {
+            Some(ty) if concrete(&ty) => Ok(ty),
+            Some(ty) => Err(format!(
+                "its type `{}` is not a concrete value type; annotate the binding",
+                ty.display()
+            )),
+            None => Err("the checker gave its value no type".to_string()),
+        }
+    }
+}
+
+/// Every module-level binding in `items`, in source order.
+pub fn collect_module_bindings(items: &[TopLevel]) -> Vec<ModuleBinding> {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            TopLevel::Stmt(crate::ast::Stmt::Binding(name, annotation, value)) => {
+                Some(ModuleBinding {
+                    name: name.clone(),
+                    annotation: annotation.clone(),
+                    value: value.clone(),
+                })
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// Identity of one emitted verify case in the whole program.
@@ -129,6 +196,7 @@ impl ModuleInfo {
             exposes_opaque,
             type_defs,
             fn_defs,
+            bindings: collect_module_bindings(items),
             capability_items,
             capability_semantics,
             verify_blocks: collect_verify_blocks(items),
@@ -1264,6 +1332,25 @@ impl CodegenContext {
 
     /// Entry module's name from `items` (the `module X` declaration's
     /// X). `None` for ad-hoc test programs without a module decl.
+    /// The module-level bindings of `scope` (a dependency's prefix), or of
+    /// the entry module for `None` or the entry's own name.
+    pub fn module_bindings(&self, scope: Option<&str>) -> Vec<ModuleBinding> {
+        match scope.and_then(|prefix| self.modules.iter().find(|m| m.prefix == prefix)) {
+            Some(module) => module.bindings.clone(),
+            None => collect_module_bindings(&self.items),
+        }
+    }
+
+    /// Is `name` a module-level binding of `scope` (see [`Self::module_bindings`])?
+    pub fn is_module_binding(&self, scope: Option<&str>, name: &str) -> bool {
+        match scope.and_then(|prefix| self.modules.iter().find(|m| m.prefix == prefix)) {
+            Some(module) => module.bindings.iter().any(|b| b.name == name),
+            None => self.items.iter().any(|item| {
+                matches!(item, TopLevel::Stmt(crate::ast::Stmt::Binding(n, _, _)) if n == name)
+            }),
+        }
+    }
+
     pub(crate) fn entry_module_name(&self) -> Option<String> {
         self.items.iter().find_map(|i| match i {
             TopLevel::Module(m) => Some(m.name.clone()),
@@ -1533,6 +1620,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
 #[cfg(test)]
 pub(crate) fn test_module(prefix: &str, depends: &[&str], type_defs: Vec<TypeDef>) -> ModuleInfo {
     ModuleInfo {
+        bindings: Vec::new(),
         prefix: prefix.to_string(),
         depends: depends.iter().map(|d| d.to_string()).collect(),
         exposes: vec![],

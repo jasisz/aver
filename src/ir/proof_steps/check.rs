@@ -180,6 +180,17 @@ pub fn conclusion(p: &Proof, script: &Script, hyps: &Hyps) -> Result<Eqn, String
             }
             Ok(Eqn::new(lhs, body))
         }
+        Proof::UnfoldConst { name } => {
+            let c = script
+                .constant(name)
+                .ok_or_else(|| format!("const: no binding {name}"))?;
+            let value = canon(&c.value);
+            let lhs = term::var(name);
+            if let Some(ty) = value.ty() {
+                lhs.set_ty(ty.clone());
+            }
+            Ok(Eqn::new(lhs, value))
+        }
         Proof::Arm {
             term: t,
             arm,

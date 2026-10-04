@@ -308,6 +308,17 @@ impl Env<'_> {
                     }
                 }
             }
+            ResolvedExpr::Ident(name) => match self.constant(name) {
+                // A module-level binding reads as its value.
+                Some(c) => {
+                    self.mark_const_used(name);
+                    Ok(Step::Progress(Box::new((
+                        Proof::UnfoldConst { name: name.clone() },
+                        canon(&c.value),
+                    ))))
+                }
+                None => Ok(self.settle(cur, None)),
+            },
             _ => Ok(self.settle(cur, None)),
         }
     }
@@ -351,6 +362,7 @@ impl Env<'_> {
     fn scratch_script(&mut self) -> crate::ir::proof_steps::Script {
         let mut s = empty_script();
         s.defs = self.used_defs();
+        s.consts = self.used_consts();
         s
     }
 
@@ -403,6 +415,7 @@ pub(crate) fn empty_script() -> crate::ir::proof_steps::Script {
             rhs: term::boolean(true),
         },
         defs: Vec::new(),
+        consts: Vec::new(),
         laws: Vec::new(),
         proof: Proof::Refl(term::boolean(true)),
     }

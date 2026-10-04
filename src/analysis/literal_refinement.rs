@@ -650,6 +650,7 @@ mod tests {
                 let items = parse(src);
                 let decl = crate::visibility::module_decl(&items);
                 ModuleInfo {
+                    bindings: crate::codegen::collect_module_bindings(&items),
                     prefix: prefix.to_string(),
                     depends: decl.map(|d| d.depends.clone()).unwrap_or_default(),
                     exposes: decl.map(|d| d.exposes.clone()).unwrap_or_default(),

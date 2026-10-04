@@ -7,6 +7,7 @@
 //! ```text
 //! script  := (steps VERSION (obligation KEY (GIVEN…) PREMISE TERM TERM)
 //!                    (defs (def NAME (PARAM…) TERM)…)
+//!                    (consts (const NAME TERM)…)
 //!                    (laws (law KEY (GIVEN…) PREMISE TERM TERM)…)
 //!                    (proof PROOF))
 //! PREMISE := (none) | TERM
@@ -19,6 +20,7 @@
 //!          | (pt PAT…) | (pc CTOR NAME…)
 //! PROOF   := (refl TERM) | (symm PROOF) | (trans (TERM…) PROOF…)
 //!          | (congr TERM PROOF) | (unfold FN ARM (TERM…) (TERM…) [PROOF])
+//!          | (const NAME)
 //!          | (arm ARM (TERM…) TERM PROOF) | (proj TERM) | (hyp NAME)
 //!          | (rule RULE ((NAME TERM)…) PROOF…) | (law KEY ((NAME TERM)…) [PROOF])
 //!          | (compute TERM TERM) | (cases TERM NAME PROOF PROOF)
@@ -304,6 +306,7 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
             s.push(')');
             s
         }
+        Proof::UnfoldConst { name } => format!("(const {name})"),
         Proof::Arm {
             term: t,
             arm,
@@ -383,6 +386,14 @@ pub fn script(s: &Script, names: &dyn Names) -> Result<String, String> {
             d.name,
             d.params.join(" "),
             term(&d.body, names)?
+        ));
+    }
+    out.push_str(")\n (consts");
+    for c in &s.consts {
+        out.push_str(&format!(
+            "\n  (const {} {})",
+            c.name,
+            term(&c.value, names)?
         ));
     }
     out.push_str(")\n (laws");

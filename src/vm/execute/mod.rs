@@ -570,9 +570,23 @@ impl VM {
         }
     }
 
+    /// Evaluate the module-level statements: each dependency's
+    /// `__top_level__:<Module>` chunk, then the entry's `__top_level__`, in
+    /// the order the compiler added them (dependencies first), so a binding
+    /// that calls into another module reads that module's bindings filled.
     pub fn run_top_level(&mut self) -> Result<(), VmError> {
         self.preflight_capability_providers()?;
-        if let Some(top_id) = self.code.find("__top_level__") {
+        let chunks: Vec<u32> = self
+            .code
+            .functions
+            .iter()
+            .enumerate()
+            .filter(|(_, chunk)| {
+                chunk.name == "__top_level__" || chunk.name.starts_with("__top_level__:")
+            })
+            .map(|(id, _)| id as u32)
+            .collect();
+        for top_id in chunks {
             let _ = self.call_function(top_id, &[])?;
         }
         Ok(())

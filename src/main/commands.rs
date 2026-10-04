@@ -1650,6 +1650,7 @@ pub(super) fn reject_literal_refinement_discharge(
                 aver::codegen::capability_metadata(&m.items);
             let decl = aver::visibility::module_decl(&m.items);
             aver::codegen::ModuleInfo {
+                bindings: aver::codegen::collect_module_bindings(&m.items),
                 prefix: m.dep_name.clone(),
                 depends: decl.map(|d| d.depends.clone()).unwrap_or_default(),
                 exposes: decl.map(|d| d.exposes.clone()).unwrap_or_default(),

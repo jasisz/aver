@@ -4051,6 +4051,7 @@ mod tests {
         }; // make sure TypeVariant import resolves under all features
 
         let make_module = |prefix: &str| ModuleInfo {
+            bindings: Vec::new(),
             prefix: prefix.to_string(),
             depends: Vec::new(),
             exposes: Vec::new(),
@@ -4148,6 +4149,7 @@ mod tests {
             line: 1,
         };
         let module = ModuleInfo {
+            bindings: Vec::new(),
             prefix: "Mod".to_string(),
             depends: Vec::new(),
             exposes: Vec::new(),
@@ -4283,6 +4285,7 @@ mod tests {
             resolution: None,
         };
         let make_module = |prefix: &str, ret: &str| ModuleInfo {
+            bindings: Vec::new(),
             prefix: prefix.to_string(),
             depends: Vec::new(),
             exposes: Vec::new(),

@@ -11,4 +11,4 @@ fn verdict(text: String) -> Result<String, String>
     Kernel.Verdict.verdict(text)
 
 verify verdict
-    verdict("(steps 2)") => Result.Err("unsupported step format version 2")
+    verdict("(steps 1)") => Result.Err("unsupported step format version 1")

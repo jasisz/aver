@@ -475,6 +475,12 @@ struct ProgramCompiler {
     source_file: String,
     required_capability_operations: std::collections::BTreeSet<String>,
     process_verify_drivers: std::collections::HashSet<crate::ir::FnId>,
+    /// While a dependency's fns compile: the global table they see, which
+    /// adds that module's own bindings (`base = 40`) under their bare names,
+    /// pointing at the qualified globals (`Lib.base`) that hold them. A
+    /// dependency's bindings are not the entry's, so they never enter
+    /// `global_names` under a bare name.
+    dep_global_view: Option<HashMap<String, u16>>,
 }
 
 impl ProgramCompiler {
@@ -487,6 +493,7 @@ impl ProgramCompiler {
             source_file: String::new(),
             required_capability_operations: std::collections::BTreeSet::new(),
             process_verify_drivers: std::collections::HashSet::new(),
+            dep_global_view: None,
         };
         // bootstrap into a fresh `VmSymbolTable` populates well-known
         // builtins / wrappers / namespaces; nothing it inserts can
@@ -697,6 +704,25 @@ impl ProgramCompiler {
         }
 
         let module_scope: HashMap<String, u32> = module_fn_ids.iter().cloned().collect();
+        // The module's own bindings (`base = 40`) live in globals keyed by
+        // their qualified name, so two modules' `base` stay apart; the
+        // module's fns and its top-level chunk read them by the bare name
+        // they wrote.
+        let binding_stmts: Vec<&Stmt> = mod_items
+            .iter()
+            .filter_map(|item| match item {
+                TopLevel::Stmt(stmt) => Some(stmt),
+                _ => None,
+            })
+            .collect();
+        let mut dep_globals = self.global_names.clone();
+        for stmt in &binding_stmts {
+            if let Stmt::Binding(name, _, _) = stmt {
+                let idx = self.ensure_global(&visibility::qualified_name(dep_name, name));
+                dep_globals.insert(name.clone(), idx);
+            }
+        }
+        self.dep_global_view = Some(dep_globals);
         // Lower the dep module to MIR and walk each fn's MIR body into
         // bytecode with the dep's module scope — the same path the entry
         // module takes. MIR is the only VM codegen path; a rejection
@@ -717,6 +743,20 @@ impl ProgramCompiler {
                 self.code.functions[*fn_id as usize] = chunk;
                 fn_idx += 1;
             }
+        }
+        let dep_globals = self.dep_global_view.take().unwrap_or_default();
+        if !binding_stmts.is_empty() {
+            self.compile_top_level_chunk(
+                &format!("__top_level__:{dep_name}"),
+                &binding_stmts,
+                &ctx,
+                Some(&dep_globals),
+                &module_scope,
+                dep_path,
+                entry_symbols,
+                arena,
+                &dep_mir,
+            )?;
         }
 
         // Expose exported functions and types via globals and namespace members.
@@ -1041,7 +1081,7 @@ impl ProgramCompiler {
                 .map(|effect| self.symbols.intern_name(&effect.node))
                 .collect(),
             local_slots,
-            &self.global_names,
+            self.dep_global_view.as_ref().unwrap_or(&self.global_names),
             module_scope,
             &self.code,
             &mut self.symbols,
@@ -1070,47 +1110,85 @@ impl ProgramCompiler {
         arena: &mut Arena,
         mir_program: &crate::ir::mir::MirProgram,
     ) -> Result<(), CompileError> {
-        let has_stmts = items
+        let stmts: Vec<&Stmt> = items
             .iter()
-            .any(|i| matches!(i, ResolvedTopLevel::Passthrough(TopLevel::Stmt(_))));
-        if !has_stmts {
+            .filter_map(|i| match i {
+                ResolvedTopLevel::Passthrough(TopLevel::Stmt(stmt)) => Some(stmt),
+                _ => None,
+            })
+            .collect();
+        if stmts.is_empty() {
             return Ok(());
         }
-
-        for item in items {
-            if let ResolvedTopLevel::Passthrough(TopLevel::Stmt(Stmt::Binding(name, _, _))) = item {
+        for stmt in &stmts {
+            if let Stmt::Binding(name, _, _) = stmt {
                 self.ensure_global(name);
             }
         }
-
         // Top-level statements never went through the resolver pass
         // (Phase E lifts `FnDef` bodies but leaves `TopLevel::Stmt`
         // as passthrough). Resolve them here against the entry's
         // symbol table.
         let resolver_ctx = crate::ir::hir::ResolveCtx::new(symbols);
-        let resolved: Vec<ResolvedStmt> = items
+        let source_file = self.source_file.clone();
+        self.compile_top_level_chunk(
+            "__top_level__",
+            &stmts,
+            &resolver_ctx,
+            None,
+            &HashMap::new(),
+            &source_file,
+            symbols,
+            arena,
+            mir_program,
+        )
+    }
+
+    /// One chunk that evaluates a module's top-level statements in source
+    /// order, storing each binding's value in its global (`Binding`) or
+    /// popping it (`Expr`). The entry's chunk is `__top_level__`; a
+    /// dependency's is `__top_level__:<Module>`, and `VM::run_top_level`
+    /// runs them in the order they were added — dependencies first, the way
+    /// the loader hands them over — so a binding whose value calls into a
+    /// dependency reads that dependency's bindings already filled.
+    ///
+    /// `dep_globals` is the global table a dependency's statements see: its
+    /// own bindings under their bare names, mapped to the qualified globals
+    /// that hold them. `None` for the entry, whose bindings are globals
+    /// under their own names. `module_scope` is the dependency's own fns,
+    /// for a fn passed as a value (empty for the entry).
+    #[allow(clippy::too_many_arguments)]
+    fn compile_top_level_chunk(
+        &mut self,
+        chunk_name: &str,
+        stmts: &[&Stmt],
+        resolver_ctx: &crate::ir::hir::ResolveCtx<'_>,
+        dep_globals: Option<&HashMap<String, u16>>,
+        module_scope: &HashMap<String, u32>,
+        source_file: &str,
+        symbols: &SymbolTable,
+        arena: &mut Arena,
+        mir_program: &crate::ir::mir::MirProgram,
+    ) -> Result<(), CompileError> {
+        let resolved: Vec<ResolvedStmt> = stmts
             .iter()
-            .filter_map(|i| match i {
-                ResolvedTopLevel::Passthrough(TopLevel::Stmt(stmt)) => {
-                    Some(resolve_stmt_for_top_level(&resolver_ctx, stmt))
-                }
-                _ => None,
-            })
+            .map(|stmt| resolve_stmt_for_top_level(resolver_ctx, stmt))
             .collect();
 
         // Each statement stores its value to a global (`Binding`) or pops
         // it (`Expr`); compute the store targets up front so the borrow
         // of `self.global_names` doesn't collide with the `FnCompiler`.
+        let globals = dep_globals.unwrap_or(&self.global_names);
         let store_targets: Vec<Option<u16>> = resolved
             .iter()
             .map(|rs| match rs {
-                ResolvedStmt::Binding { name, .. } => Some(self.global_names[name.as_str()]),
+                ResolvedStmt::Binding { name, .. } => Some(globals[name.as_str()]),
                 ResolvedStmt::Expr(_) => None,
             })
             .collect();
 
         // Lower every value expression (the builtin / instantiation
-        // tables grow on a clone of the entry program so the BuiltinId /
+        // tables grow on a clone of the module's program so the BuiltinId /
         // FnId references match the walker's program). The walker emits
         // the value; the `STORE_GLOBAL` / `POP` is emitted here, so no
         // MIR-level global-binding node is needed. MIR is the only VM
@@ -1130,10 +1208,8 @@ impl ProgramCompiler {
                     // program's own terms, and the statement carries its
                     // line. The internal error is for everything else.
                     let msg = match crate::ir::hir::collect_unresolved_in_value(value).first() {
-                        Some(unresolved) => unresolved.explain(
-                            "a top-level statement",
-                            &unresolved.at_file(&self.source_file),
-                        ),
+                        Some(unresolved) => unresolved
+                            .explain("a top-level statement", &unresolved.at_file(source_file)),
                         None => format!(
                             "internal error: a top-level statement did not lower to MIR ({reason:?})"
                         ),
@@ -1151,15 +1227,14 @@ impl ProgramCompiler {
             });
         }
 
-        let empty_mod_scope = HashMap::new();
         let mut fc = FnCompiler::new(
-            "__top_level__",
+            chunk_name,
             0,
             0,
             Vec::new(),
             HashMap::new(),
-            &self.global_names,
-            &empty_mod_scope,
+            dep_globals.unwrap_or(&self.global_names),
+            module_scope,
             &self.code,
             &mut self.symbols,
             arena,

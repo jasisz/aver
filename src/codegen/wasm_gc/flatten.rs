@@ -282,6 +282,7 @@ pub fn flatten_multimodule(
         qualified_type_names: &qualified_type_names,
         same_module_prefix: None,
         same_module_fns: &empty_set,
+        same_module_bindings: &empty_set,
         // The entry keeps the bare spelling of every name it declares, while
         // an imported colliding name is canonicalised to the one declaration
         // visible through the entry's own `depends` surface.
@@ -301,6 +302,12 @@ pub fn flatten_multimodule(
             TopLevel::TypeDef(td) => {
                 rewrite_type_def(td, &qualified_type_names, &colliding_bare_names);
                 canonicalise_type_def_for_colliding(td, &entry_colliding_owner);
+            }
+            // A module-level binding's value is substituted into the fns
+            // that read it, so it names other modules the way a fn body
+            // does (`bumped = Core.bump(0)`).
+            TopLevel::Stmt(Stmt::Binding(_, _, value) | Stmt::Expr(value)) => {
+                rewrite_spanned_expr(value, &entry_ctx);
             }
             _ => {}
         }
@@ -327,6 +334,8 @@ pub fn flatten_multimodule(
             .filter(|fd| !verification_only.contains(&fd.name))
             .map(|fd| fd.name.clone())
             .collect();
+        let same_module_bindings: HashSet<String> =
+            dep.bindings.iter().map(|b| b.name.clone()).collect();
         let own_types: HashSet<String> = dep
             .type_defs
             .iter()
@@ -358,6 +367,7 @@ pub fn flatten_multimodule(
             qualified_type_names: &qualified_type_names,
             same_module_prefix: Some(&dep.prefix),
             same_module_fns: &same_module_fns,
+            same_module_bindings: &same_module_bindings,
             colliding_owner: &colliding_owner,
             flattened_name_by_type_id: &flattened_name_by_type_id,
             colliding_bare_names: &colliding_bare_names,
@@ -388,6 +398,23 @@ pub fn flatten_multimodule(
 
             new_fd.name = prefixed(&dep.prefix, &fd.name);
             items.push(TopLevel::FnDef(new_fd));
+        }
+
+        // The module's bindings join the flattened program as module-level
+        // bindings under the prefixed name its fns now read
+        // (`top_level::inline_module_bindings` substitutes them where read).
+        for binding in &dep.bindings {
+            let mut value = binding.value.clone();
+            rewrite_spanned_expr(&mut value, &dep_ctx);
+            let annotation = binding
+                .annotation
+                .as_deref()
+                .map(|annotation| rewrite_type_spelling(annotation, &dep_ctx));
+            items.push(TopLevel::Stmt(Stmt::Binding(
+                prefixed(&dep.prefix, &binding.name),
+                annotation,
+                value,
+            )));
         }
     }
 
@@ -657,6 +684,10 @@ struct RewriteCtx<'a> {
     same_module_prefix: Option<&'a str>,
     /// Fn names declared by the module being walked.
     same_module_fns: &'a HashSet<String>,
+    /// Module-level binding names (`base = 40`) declared by the module
+    /// being walked. A read of one is renamed with the module prefix, like a
+    /// fn, so it names the binding the flattener appends under that name.
+    same_module_bindings: &'a HashSet<String>,
     /// Ambiguous bare type names as the module being walked reads them:
     /// name → the module that declares what the name means HERE. Its own
     /// declaration when it has one, otherwise the single declaration
@@ -847,6 +878,13 @@ fn rewrite_expr(expr: &mut Expr, ctx: &RewriteCtx<'_>) {
         }
         Expr::ErrorProp(inner) => {
             rewrite_spanned_expr(inner, ctx);
+        }
+        Expr::Ident(name) => {
+            if let Some(prefix) = ctx.same_module_prefix
+                && ctx.same_module_bindings.contains(name.as_str())
+            {
+                *name = prefixed(prefix, name);
+            }
         }
         Expr::InterpolatedStr(parts) => {
             for part in parts.iter_mut() {

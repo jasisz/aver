@@ -262,6 +262,7 @@ mod tests {
 
     fn mk_module(prefix: &str, fn_names: &[&str]) -> ModuleInfo {
         ModuleInfo {
+            bindings: Vec::new(),
             prefix: prefix.to_string(),
             depends: vec![],
             exposes: vec![],

@@ -2533,12 +2533,17 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             None => Vec::new(),
         };
 
-        let strategy = classify_law_strategy(
+        let strategy = binding_unfolds::with_binding_unfolds(
+            classify_law_strategy(
+                law,
+                &vb.fn_name,
+                inputs,
+                &ir.refined_types,
+                &ir.fn_contracts,
+                law_scope_ref,
+            ),
             law,
-            &vb.fn_name,
             inputs,
-            &ir.refined_types,
-            &ir.fn_contracts,
             law_scope_ref,
         );
 
@@ -2566,6 +2571,23 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
 
 mod law_dependencies;
 mod law_induction;
+
+/// The module-level bindings of `scope` (a dependency's prefix), or of the
+/// entry module for `None`.
+pub(crate) fn module_bindings_of(
+    inputs: &ProofLowerInputs,
+    scope: Option<&str>,
+) -> Vec<crate::codegen::ModuleBinding> {
+    match scope {
+        Some(prefix) => inputs
+            .dep_modules
+            .iter()
+            .find(|m| m.prefix == prefix)
+            .map(|m| m.bindings.clone())
+            .unwrap_or_default(),
+        None => crate::codegen::collect_module_bindings(inputs.entry_items),
+    }
+}
 mod steps;
 
 /// Pick the strategy `LawLower` should pin on a `(fn, law)` pair.
@@ -2919,6 +2941,7 @@ fn classify_law_strategy(
     ProofStrategy::BackendDispatch
 }
 
+mod binding_unfolds;
 mod bounded_int_domain;
 mod conditional_comparison;
 mod finite_domain;
