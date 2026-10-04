@@ -407,6 +407,7 @@ jobs:
             yield_imported_effects_spec \
             process_stop_requested_spec \
             tcp_nonblocking_spec \
+            regression_vm_verify_module_bindings \
             yield_module_helpers_spec
           do
             cargo test -p aver-lang --features wasm --test "$test"
