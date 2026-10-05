@@ -14,6 +14,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 - **`List.len([])`, `Map.len({})`, `[] == []` and every other generic `List`, `Map` or `Vector` builtin applied to an empty literal compile on wasm-gc and Rust.** Nothing in such a call says what the literal holds; the type checker now takes the element type from the call's other arguments or from where the result goes, and otherwise settles on `Int`, which the call's result cannot show. wasm-gc used to reject the module ("`List<T>` helper wasn't registered") and the Rust build stopped with "type annotations needed".
 
+- **A `List`, `Option`, `Result`, `Map`, `Vector` or tuple value whose type no signature names compiles on wasm-gc.** `List.len(List.zip([1], ["a"]))`, `Option.Some(1) == Option.None` or `Map.get(m, k) == Option.None` written straight in `main`, or in a function whose signature does not mention that type, used to fail with "validation failed — … wasn't registered" while the VM ran the program. Programs that compiled before produce the same module and certificate byte for byte.
+
 ### Changed
 
 - **`aver proof` closes more laws by proof steps: a function that names values before its final expression (`mult = level + 1` then a `match`) is now opened by a step, in Lean and in the kernel written in Aver.** The step format is now version 3: a definition carries its local bindings, which a step substitutes in order.

@@ -204,10 +204,13 @@ impl FnMap {
     }
 
     pub(super) fn zip_ops_lookup(&self, canonical: &str) -> Option<u32> {
-        if let Some(&o) = self.zip_ops.get(canonical) {
+        // A nested element type arrives as `Type::display` spells it,
+        // `Tuple<Int, Bool>`; the helpers are keyed whitespace-free.
+        let canonical = super::types::normalize_compound(canonical);
+        if let Some(&o) = self.zip_ops.get(&canonical) {
             return Some(o);
         }
-        let bare = super::types::strip_inner_dotted_prefixes(canonical);
+        let bare = super::types::strip_inner_dotted_prefixes(&canonical);
         if bare != canonical {
             self.zip_ops.get(&bare).copied()
         } else {
