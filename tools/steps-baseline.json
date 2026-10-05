@@ -153,6 +153,11 @@
    "clamp16.fitsSixteenBits"
   ]
  },
+ "proof-corpus/decomposed/handwritten/qrev_rev.av": {
+  "steps": [
+   "qrev.accGeneralizes"
+  ]
+ },
  "proof-corpus/decomposed/prod/lemma_16.av": {
   "steps": [
    "plus.plusSuccRight"
@@ -184,6 +189,16 @@
   "steps": [
    "plus.plusSuccRight",
    "plus.plusZeroRight"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_27.av": {
+  "steps": [
+   "qrev.qrevSpec"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_29.av": {
+  "steps": [
+   "qrev.qrevRevAppend"
   ]
  },
  "proof-corpus/decomposed/prod/prop_33.av": {
@@ -247,6 +262,11 @@
  "proof-corpus/tip/prod/lemma_17.av": {
   "steps": [
    "plus.plusShiftTwo"
+  ]
+ },
+ "proof-corpus/tip/prod/prop_12.av": {
+  "steps": [
+   "qrev.qrevRevAppend"
   ]
  }
 }

@@ -21,6 +21,7 @@ fn fastRev(xs: List<Int>) -> List<Int>
 verify qrev law accGeneralizes
     given xs: List<Int> = [[], [1], [1, 2, 3], [3, 1, 2]]
     given acc: List<Int> = [[], [9], [8, 7]]
+    using [List.concat.assoc]
     qrev(xs, acc) => List.concat(rev(xs), acc)
 
 verify fastRev law equalsRev
