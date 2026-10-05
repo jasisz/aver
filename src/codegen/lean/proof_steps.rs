@@ -286,6 +286,9 @@ struct Renderer<'a> {
     support: Vec<String>,
     /// Rendering a builtin fact over `List α`: an empty list is `[] : List α`.
     generic: bool,
+    /// Hypotheses the theorem introduces whose term is a bare comparison:
+    /// Lean states them `(a < b) = true`, an equation of Props.
+    prop_hyps: Vec<String>,
 }
 
 /// `t` with every empty list that has no type typed `List α`.
@@ -463,17 +466,10 @@ impl Renderer<'_> {
             // A `when` that is a bare comparison is stated `(a < b) = true`,
             // which Lean reads as an equation of Props; recover the Bool
             // equation the steps use.
-            Proof::Hyp(name)
-                if name == "when"
-                    && self
-                        .script
-                        .obligation
-                        .premise
-                        .as_ref()
-                        .is_some_and(is_prop_comparison) =>
-            {
-                "decide_eq_true (of_eq_true (h_when.trans (eq_self true)))".to_string()
-            }
+            Proof::Hyp(name) if self.prop_hyps.contains(name) => format!(
+                "decide_eq_true (of_eq_true ({}.trans (eq_self true)))",
+                self.hyp_name(name)
+            ),
             Proof::Hyp(name) => self.hyp_name(name),
             Proof::Rule {
                 rule,
@@ -724,6 +720,25 @@ impl Renderer<'_> {
                 let ctx = rarray(&rendered);
                 format!(
                     "((Lean.Grind.CommRing.norm_int {ctx} {el} (Lean.Grind.CommRing.Expr.toPoly_k {er}) rfl).trans (Lean.Grind.CommRing.norm_int {ctx} {er} (Lean.Grind.CommRing.Expr.toPoly_k {er}) rfl).symm)"
+                )
+            }
+            // A cut: a term-mode `have` of the Bool equation, in scope for
+            // the rest.
+            Proof::Have {
+                name,
+                fact,
+                proof: inner,
+                body,
+            } => {
+                let stated = Eqn::new(fact.clone(), term::boolean(true));
+                let pf = self.proof(inner, hyps)?;
+                let mut scoped = hyps.clone();
+                scoped.push((name.clone(), stated.clone()));
+                let pb = self.proof(body, &scoped)?;
+                format!(
+                    "(have {} : {} := {pf}; {pb})",
+                    self.hyp_name(name),
+                    self.eqn(&stated)
                 )
             }
             // `true = false` (or the other way round) is refuted by `decide`.
@@ -1077,6 +1092,7 @@ pub(crate) fn render_cited_facts(body: &str, ctx: &CodegenContext) -> Result<Str
             unfolds: BTreeMap::new(),
             support: Vec::new(),
             generic: true,
+            prop_hyps: Vec::new(),
         };
         let ob = &script.obligation;
         let statement = r.eqn(&Eqn::new(ob.lhs.clone(), ob.rhs.clone()));
@@ -1092,6 +1108,9 @@ pub(crate) fn render_cited_facts(body: &str, ctx: &CodegenContext) -> Result<Str
             };
             when = format!(" (h_when : {stated} = true)");
             hyps.push(("when".into(), Eqn::new(p.clone(), term::boolean(true))));
+            if is_prop_comparison(p) {
+                r.prop_hyps.push("when".into());
+            }
         }
         let term = r.proof(&script.proof, &hyps)?;
         if !r.support.is_empty() {
@@ -1253,6 +1272,95 @@ fn touches_refinement(t: &Term, ctx: &CodegenContext) -> bool {
 /// Render `script` as a term for its law's theorem, after `intro` of the
 /// givens (and `h_when`).
 pub(crate) fn render(script: &Script, ctx: &CodegenContext) -> Result<Rendered, String> {
+    render_with(script, &[], ctx)
+}
+
+/// The `because` chain of a law's script: the cuts before the first reason
+/// (the `when` split into its lines), each reason `because<k>` with its fact
+/// and proof, and the proof of the claim under all of them.
+type Cut<'a> = (&'a String, &'a Term, &'a Proof);
+
+fn reason_chain(p: &Proof) -> (Vec<Cut<'_>>, Vec<(&Term, &Proof)>, &Proof) {
+    let mut prefix = Vec::new();
+    let mut reasons = Vec::new();
+    let mut at = p;
+    while let Proof::Have {
+        name,
+        fact,
+        proof,
+        body,
+    } = at
+    {
+        if *name == format!("because{}", reasons.len() + 1) {
+            reasons.push((fact, proof.as_ref()));
+        } else if reasons.is_empty() {
+            prefix.push((name, fact, proof.as_ref()));
+        } else {
+            break;
+        }
+        at = body;
+    }
+    (prefix, reasons, at)
+}
+
+/// Render the part of a law's script that proves one obligation of its
+/// `because` chain, the way the Lean export states it: `index < n` is
+/// `because<index+1>` and `index == n` the implication, after `intro` of
+/// the givens, `h_reason0 … h_reason<index-1>` and `h_when`. The earlier
+/// reasons are those hypotheses, not their proofs.
+pub(crate) fn render_reason(
+    script: &Script,
+    index: usize,
+    ctx: &CodegenContext,
+) -> Result<Rendered, String> {
+    let (prefix, reasons, claim_proof) = reason_chain(&script.proof);
+    if index > reasons.len() {
+        return Err(format!(
+            "the script proves {} reasons, not {}",
+            reasons.len(),
+            index
+        ));
+    }
+    let mut proof = if index < reasons.len() {
+        reasons[index].1.clone()
+    } else {
+        claim_proof.clone()
+    };
+    for k in (0..index).rev() {
+        proof = Proof::Have {
+            name: format!("because{}", k + 1),
+            fact: reasons[k].0.clone(),
+            proof: Box::new(Proof::Hyp(format!("h_reason{k}"))),
+            body: Box::new(proof),
+        };
+    }
+    for (name, fact, p) in prefix.into_iter().rev() {
+        proof = Proof::Have {
+            name: name.clone(),
+            fact: fact.clone(),
+            proof: Box::new(p.clone()),
+            body: Box::new(proof),
+        };
+    }
+    let mut part = script.clone();
+    if index < reasons.len() {
+        part.obligation.lhs = reasons[index].0.clone();
+        part.obligation.rhs = term::boolean(true);
+    }
+    part.proof = proof;
+    let earlier: Vec<(String, Term)> = (0..index)
+        .map(|k| (format!("h_reason{k}"), reasons[k].0.clone()))
+        .collect();
+    render_with(&part, &earlier, ctx)
+}
+
+/// [`render`], with `introduced` hypotheses (name, Bool term that is
+/// `true`) in scope besides `h_when`.
+fn render_with(
+    script: &Script,
+    introduced: &[(String, Term)],
+    ctx: &CodegenContext,
+) -> Result<Rendered, String> {
     // Every term of the proof comes from these, by unfolding, rewriting
     // and computing; the Lean model of a refined record is a `Subtype`,
     // which the step terms do not spell, so such a law keeps its tactics.
@@ -1284,10 +1392,20 @@ pub(crate) fn render(script: &Script, ctx: &CodegenContext) -> Result<Rendered, 
         unfolds: BTreeMap::new(),
         support: Vec::new(),
         generic: false,
+        prop_hyps: Vec::new(),
     };
     let mut hyps = Hyps::new();
     if let Some(p) = &script.obligation.premise {
         hyps.push(("when".into(), Eqn::new(p.clone(), term::boolean(true))));
+        if is_prop_comparison(p) {
+            r.prop_hyps.push("when".into());
+        }
+    }
+    for (name, t) in introduced {
+        hyps.push((name.clone(), Eqn::new(t.clone(), term::boolean(true))));
+        if is_prop_comparison(t) {
+            r.prop_hyps.push(name.clone());
+        }
     }
     let term = r.proof(&script.proof, &hyps)?;
     let term = to_statement(&script.obligation, term);

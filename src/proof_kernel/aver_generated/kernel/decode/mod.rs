@@ -1034,25 +1034,25 @@ pub fn proofOf(
                                                             if &*__dispatch_subject == "cases" {
                                                                 crate::proof_kernel::aver_generated::kernel::decode::casesProof(args)
                                                             } else {
-                                                                if &*__dispatch_subject == "enum" {
-                                                                    crate::proof_kernel::aver_generated::kernel::decode::enumProof(args)
+                                                                if &*__dispatch_subject == "have" {
+                                                                    crate::proof_kernel::aver_generated::kernel::decode::haveProof(args)
                                                                 } else {
                                                                     if &*__dispatch_subject
-                                                                        == "absurd"
+                                                                        == "enum"
                                                                     {
-                                                                        crate::proof_kernel::aver_generated::kernel::decode::absurdProof(args)
+                                                                        crate::proof_kernel::aver_generated::kernel::decode::enumProof(args)
                                                                     } else {
                                                                         if &*__dispatch_subject
-                                                                            == "induct"
+                                                                            == "absurd"
                                                                         {
-                                                                            crate::proof_kernel::aver_generated::kernel::decode::inductProof(args)
+                                                                            crate::proof_kernel::aver_generated::kernel::decode::absurdProof(args)
                                                                         } else {
                                                                             if &*__dispatch_subject
-                                                                                == "listinduct"
+                                                                                == "induct"
                                                                             {
-                                                                                crate::proof_kernel::aver_generated::kernel::decode::listInductProof(args)
+                                                                                crate::proof_kernel::aver_generated::kernel::decode::inductProof(args)
                                                                             } else {
-                                                                                if &*__dispatch_subject == "ring" { crate::proof_kernel::aver_generated::kernel::decode::ringProof(args) } else { if &*__dispatch_subject == "linear" { crate::proof_kernel::aver_generated::kernel::decode::linearProof(args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(29)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown rule ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(tag)))); __b })) } }
+                                                                                if &*__dispatch_subject == "listinduct" { crate::proof_kernel::aver_generated::kernel::decode::listInductProof(args) } else { if &*__dispatch_subject == "ring" { crate::proof_kernel::aver_generated::kernel::decode::ringProof(args) } else { if &*__dispatch_subject == "linear" { crate::proof_kernel::aver_generated::kernel::decode::linearProof(args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(29)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown rule ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(tag)))); __b })) } } }
                                                                             }
                                                                         }
                                                                     }
@@ -1446,6 +1446,55 @@ pub fn casesProof(
             }
         } else {
             Err(AverStr::from("malformed cases"))
+        }
+    }
+}
+
+/// (have NAME TERM PROOF PROOF)
+pub fn haveProof(
+    args @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::sexp::Sexp>,
+) -> Result<crate::proof_kernel::aver_generated::kernel::proof::Proof, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __list_subject = args.clone();
+        if let Some((__pat0, __pat1)) = aver_rt::list_uncons_cloned(&__list_subject) {
+            match __pat0 {
+                crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(h) => {
+                    let __list_subject = __pat1;
+                    if let Some((fact, __pat2)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                        {
+                            let __list_subject = __pat2;
+                            if let Some((p, __pat3)) = aver_rt::list_uncons_cloned(&__list_subject)
+                            {
+                                {
+                                    let __list_subject = __pat3;
+                                    if let Some((body, __pat4)) =
+                                        aver_rt::list_uncons_cloned(&__list_subject)
+                                    {
+                                        {
+                                            let __list_subject = __pat4;
+                                            if __list_subject.is_empty() {
+                                                Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PHave(h, crate::proof_kernel::aver_generated::kernel::decode::term(&fact)?, std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::decode::proof(&p)?), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::decode::proof(&body)?)))
+                                            } else {
+                                                Err(AverStr::from("malformed have"))
+                                            }
+                                        }
+                                    } else {
+                                        Err(AverStr::from("malformed have"))
+                                    }
+                                }
+                            } else {
+                                Err(AverStr::from("malformed have"))
+                            }
+                        }
+                    } else {
+                        Err(AverStr::from("malformed have"))
+                    }
+                }
+                _ => Err(AverStr::from("malformed have")),
+            }
+        } else {
+            Err(AverStr::from("malformed have"))
         }
     }
 }
@@ -2540,7 +2589,7 @@ pub fn consts(
     aver_list_match!(ss.clone(), [] => Ok(aver_rt::AverList::empty()), [s, rest] => Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::constant(&s)?, &crate::proof_kernel::aver_generated::kernel::decode::consts(&rest)?)))
 }
 
-/// (steps 5 (obligation …) (defs …) (consts …) (laws …) (proof …)); version 5 only.
+/// (steps 6 (obligation …) (defs …) (consts …) (laws …) (proof …)); version 6 only.
 pub fn script(
     s @ _: &crate::proof_kernel::aver_generated::kernel::sexp::Sexp,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::proof::Script, AverStr> {
@@ -2559,7 +2608,7 @@ pub fn script(
                                 {
                                     match __pat4 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(v) => {
-            { let __int_match_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&v)); if __int_match_subject == aver_rt::AverInt::from_i64(53) { { let __list_subject = rest; if let Some((o, __pat5)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat5; if let Some((__pat6, __pat7)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat6 {
+            { let __int_match_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&v)); if __int_match_subject == aver_rt::AverInt::from_i64(54) { { let __list_subject = rest; if let Some((o, __pat5)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat5; if let Some((__pat6, __pat7)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat6 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat8) => {
             { let __list_subject = __pat8; if let Some((__pat9, ds)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat9 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(__pat10) => {

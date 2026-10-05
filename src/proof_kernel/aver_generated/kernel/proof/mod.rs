@@ -51,6 +51,12 @@ pub enum Proof {
         std::sync::Arc<Proof>,
         std::sync::Arc<Proof>,
     ),
+    PHave(
+        AverStr,
+        crate::proof_kernel::aver_generated::kernel::term::Term,
+        std::sync::Arc<Proof>,
+        std::sync::Arc<Proof>,
+    ),
     PEnum(
         AverStr,
         crate::proof_kernel::aver_generated::kernel::term::Term,
@@ -102,18 +108,19 @@ impl Proof {
             Proof::PCongr(..) => 5,
             Proof::PConst(..) => 6,
             Proof::PEnum(..) => 7,
-            Proof::PHyp(..) => 8,
-            Proof::PInduct(..) => 9,
-            Proof::PLaw(..) => 10,
-            Proof::PLinear(..) => 11,
-            Proof::PListInduct(..) => 12,
-            Proof::PProj(..) => 13,
-            Proof::PRefl(..) => 14,
-            Proof::PRing(..) => 15,
-            Proof::PRule(..) => 16,
-            Proof::PSymm(..) => 17,
-            Proof::PTrans(..) => 18,
-            Proof::PUnfold(..) => 19,
+            Proof::PHave(..) => 8,
+            Proof::PHyp(..) => 9,
+            Proof::PInduct(..) => 10,
+            Proof::PLaw(..) => 11,
+            Proof::PLinear(..) => 12,
+            Proof::PListInduct(..) => 13,
+            Proof::PProj(..) => 14,
+            Proof::PRefl(..) => 15,
+            Proof::PRing(..) => 16,
+            Proof::PRule(..) => 17,
+            Proof::PSymm(..) => 18,
+            Proof::PTrans(..) => 19,
+            Proof::PUnfold(..) => 20,
         }
     }
 }
@@ -160,6 +167,13 @@ impl Ord for Proof {
                 std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
             }
             (Proof::PEnum(a0, a1, a2, a3), Proof::PEnum(b0, b1, b2, b3)) => {
+                std::cmp::Ordering::Equal
+                    .then_with(|| a0.cmp(b0))
+                    .then_with(|| a1.cmp(b1))
+                    .then_with(|| a2.cmp(b2))
+                    .then_with(|| a3.cmp(b3))
+            }
+            (Proof::PHave(a0, a1, a2, a3), Proof::PHave(b0, b1, b2, b3)) => {
                 std::cmp::Ordering::Equal
                     .then_with(|| a0.cmp(b0))
                     .then_with(|| a1.cmp(b1))
@@ -294,6 +308,16 @@ impl aver_rt::AverDisplay for Proof {
             ),
             Proof::PCases(f0, f1, f2, f3) => format!(
                 "PCases({})",
+                vec![
+                    f0.aver_display_inner(),
+                    f1.aver_display_inner(),
+                    f2.aver_display_inner(),
+                    f3.aver_display_inner()
+                ]
+                .join(", ")
+            ),
+            Proof::PHave(f0, f1, f2, f3) => format!(
+                "PHave({})",
                 vec![
                     f0.aver_display_inner(),
                     f1.aver_display_inner(),

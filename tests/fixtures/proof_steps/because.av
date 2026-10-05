@@ -1,0 +1,57 @@
+module Because
+    intent = "Laws argued with `because` lines, and a law whose `when` takes several lines: each line, and each reason once proved, is a hypothesis of its own."
+    exposes [sum2, twice, count]
+    effects []
+
+fn sum2(x: Int, y: Int) -> Int
+    ? "Two numbers added."
+    x + y
+
+verify sum2
+    sum2(1, 2) => 3
+
+verify sum2 law staysPositive
+    given x: Int = [1, 2]
+    given y: Int = [1, 5]
+    when x > 0
+    when y > 0
+    sum2(x, y) > 0 => true
+
+fn twice(x: Int) -> Int
+    ? "The number added to itself."
+    x + x
+
+verify twice
+    twice(3) => 6
+
+verify twice law grows
+    given x: Int = [1, 3]
+    when x > 0
+    because x >= 1
+    because twice(x) >= x + 1
+    twice(x) > x => true
+
+verify twice law needsMore
+    given x: Int = [6, 7]
+    when x > 0
+    because x > 5
+    twice(x) > 10 => true
+
+fn count(n: Int) -> Int
+    ? "One for each step down to zero."
+    match n <= 0
+        true -> 0
+        false -> 1 + count(n - 1)
+
+verify count
+    count(3) => 3
+
+verify count law nonNegative
+    given n: Int = [-1, 0, 3]
+    count(n) >= 0 => true
+
+verify count law doubledNonNegative
+    given n: Int = [-1, 0, 3]
+    because count(n) >= 0
+    using [count.nonNegative]
+    count(n) + count(n) >= 0 => true

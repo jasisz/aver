@@ -201,16 +201,21 @@ fn citations(env: &mut Env, laws: Vec<LawRef>, ob: &Obligation) -> Result<Proof,
     }
 }
 
-/// An environment for one attempt: the law's `when` in scope and its
-/// cited laws, minus any that would loop, as rewrite rules.
+/// An environment for one attempt: the law's `when` in scope, each of its
+/// lines and each reason proved so far as a hypothesis of its own, and
+/// its cited laws, minus any that would loop, as rewrite rules.
 fn fresh_env<'a>(
     inputs: &'a ProofLowerInputs<'a>,
     ob: &Obligation,
+    known: &[(String, Term)],
     using: &Option<Vec<LawRef>>,
 ) -> Env<'a> {
     let mut env = Env::new(inputs);
     if let Some(p) = &ob.premise {
         env.hyps.push(("when".into(), chain::eqn_true(p)));
+    }
+    for (name, fact) in known {
+        env.hyps.push((name.clone(), chain::eqn_true(fact)));
     }
     env.rewrite_laws = using
         .iter()
@@ -221,17 +226,150 @@ fn fresh_env<'a>(
     env
 }
 
+/// The lines of a `when` written over several lines (which the parser
+/// joins with `Bool.and`), each with its proof from hypothesis `when`.
+/// A `when` of one line has none.
+fn when_lines(premise: &Term) -> Vec<(Term, Proof)> {
+    fn split(t: &Term, proof: Proof, out: &mut Vec<(Term, Proof)>) {
+        use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
+        if let ResolvedExpr::Call(ResolvedCallee::Builtin(b), args) = &t.node
+            && b == "Bool.and"
+            && args.len() == 2
+        {
+            let elim = |rule: WallRule| Proof::Rule {
+                rule,
+                subst: vec![("a".into(), canon(&args[0])), ("b".into(), canon(&args[1]))],
+                premises: vec![proof.clone()],
+            };
+            split(&args[0], elim(WallRule::AndElimL), out);
+            split(&args[1], elim(WallRule::AndElimR), out);
+        } else {
+            out.push((canon(t), proof));
+        }
+    }
+    let mut out = Vec::new();
+    split(premise, Proof::Hyp("when".into()), &mut out);
+    if out.len() < 2 {
+        return Vec::new();
+    }
+    out
+}
+
+/// Whether `p` may read hypothesis `name` (an over-approximation: a
+/// hypothesis of the same name bound inside counts too).
+fn uses_hyp(p: &Proof, name: &str) -> bool {
+    let any = |ps: &[Proof]| ps.iter().any(|q| uses_hyp(q, name));
+    match p {
+        Proof::Hyp(n) => n == name,
+        Proof::Linear { hyps, .. } => hyps.iter().any(|n| n == name),
+        Proof::Symm(q) | Proof::Congr { inner: q, .. } => uses_hyp(q, name),
+        Proof::Absurd { contradiction, .. } => uses_hyp(contradiction, name),
+        Proof::Arm { premise, .. } => uses_hyp(premise, name),
+        Proof::Unfold { premise, .. } | Proof::Law { premise, .. } => {
+            premise.as_ref().is_some_and(|q| uses_hyp(q, name))
+        }
+        Proof::Trans { steps, .. } => any(steps),
+        Proof::Rule { premises, .. } => any(premises),
+        Proof::Enum { cases, .. } => any(cases),
+        Proof::Cases {
+            if_true, if_false, ..
+        } => uses_hyp(if_true, name) || uses_hyp(if_false, name),
+        Proof::Have { proof, body, .. } => uses_hyp(proof, name) || uses_hyp(body, name),
+        Proof::Induct { cases, .. } => cases.iter().any(|c| uses_hyp(&c.proof, name)),
+        Proof::InductList { nil, cons, .. } => uses_hyp(nil, name) || uses_hyp(cons, name),
+        Proof::Refl(_)
+        | Proof::UnfoldConst { .. }
+        | Proof::Proj { .. }
+        | Proof::Cell { .. }
+        | Proof::Compute { .. }
+        | Proof::Ring { .. } => false,
+    }
+}
+
+/// What one obligation's proof needs from its environment.
+struct Part {
+    proof: Proof,
+    defs: Vec<crate::ir::proof_steps::Def>,
+    consts: Vec<crate::ir::proof_steps::Const>,
+    laws: Vec<LawRef>,
+}
+
+/// Prove one obligation of the law: `ob` under `known` besides the `when`.
+/// `induct_on` is the function induction may follow; `algebra` is set for
+/// the claim of a law with an algebraic strategy.
+#[allow(clippy::too_many_arguments)]
+fn prove_part(
+    inputs: &ProofLowerInputs,
+    t: &LawTheorem,
+    ob: &Obligation,
+    known: &[(String, Term)],
+    using: &Option<Vec<LawRef>>,
+    induct_on: Option<crate::ir::identity::FnId>,
+    algebraic: bool,
+    hints: &mut Vec<String>,
+) -> Result<Part, String> {
+    // Each attempt starts from a fresh environment: a failed one may have
+    // opened definitions and bound hypothesis names.
+    let mut env = fresh_env(inputs, ob, known, using);
+    let proof = if algebraic {
+        algebra(&mut env, t, ob)?
+    } else {
+        let mut refusals: Vec<String> = Vec::new();
+        let mut found = None;
+        for attempt in 0..4 {
+            let outcome = match attempt {
+                0 => match using {
+                    Some(laws) => citations(&mut env, laws.clone(), ob),
+                    None => continue,
+                },
+                1 => env.prove_by_evaluation(&ob.lhs, &ob.rhs, SPLIT_DEPTH),
+                2 if ob.finite.is_empty() => continue,
+                2 => env.prove_by_cases(&ob.finite, &ob.lhs, &ob.rhs, SPLIT_DEPTH),
+                _ => match induct_on {
+                    Some(f) => env.prove_by_induction(f, ob, SPLIT_DEPTH),
+                    None => continue,
+                },
+            };
+            match outcome {
+                Ok(proof) => {
+                    found = Some(proof);
+                    break;
+                }
+                Err(why) => {
+                    refusals.push(why);
+                    for h in env.hints.drain(..) {
+                        if !hints.contains(&h) {
+                            hints.push(h);
+                        }
+                    }
+                    env = fresh_env(inputs, ob, known, using);
+                }
+            }
+        }
+        found.ok_or_else(|| refusals.join("; "))?
+    };
+    Ok(Part {
+        proof,
+        defs: env.used_defs(),
+        consts: env.used_consts(),
+        laws: env.laws.clone(),
+    })
+}
+
 /// Prove `t` by steps; `hints` collects the facts that would rewrite where
 /// a failed attempt stopped.
+///
+/// A law with `because` lines is proved the way the user argued it: with
+/// guard `H` and reasons `R1 … Rn`, each `Ri` under `H` and the reasons
+/// before it, then the claim under all of them. The script states the law
+/// itself and proves it by one cut ([`Proof::Have`]) per reason, so the
+/// kernel checks the composition too.
 fn produce(
     inputs: &ProofLowerInputs,
     ir: &ProofIR,
     t: &LawTheorem,
     hints: &mut Vec<String>,
 ) -> Result<Script, String> {
-    if !t.reason_inductions.is_empty() {
-        return Err("a law with `because` steps".into());
-    }
     if t.premises.len() > 1 {
         return Err("more than one premise".into());
     }
@@ -242,59 +380,110 @@ fn produce(
         }
         _ => None,
     };
-    // Each attempt starts from a fresh environment: a failed one may have
-    // opened definitions and bound hypothesis names.
-    let mut env = fresh_env(inputs, &ob, &using);
-    let proof = match &t.strategy {
+    let algebraic = matches!(
+        t.strategy,
         ProofStrategy::Commutative { .. }
-        | ProofStrategy::Associative { .. }
-        | ProofStrategy::IdentityElement { .. } => algebra(&mut env, t, &ob)?,
-        _ => {
-            let mut refusals: Vec<String> = Vec::new();
-            let mut found = None;
-            for attempt in 0..4 {
-                let outcome = match attempt {
-                    0 => match &using {
-                        Some(laws) => citations(&mut env, laws.clone(), &ob),
-                        None => continue,
-                    },
-                    1 => env.prove_by_evaluation(&ob.lhs, &ob.rhs, SPLIT_DEPTH),
-                    2 if ob.finite.is_empty() => continue,
-                    2 => env.prove_by_cases(&ob.finite, &ob.lhs, &ob.rhs, SPLIT_DEPTH),
-                    _ => env.prove_by_induction(t.fn_id, &ob, SPLIT_DEPTH),
-                };
-                match outcome {
-                    Ok(proof) => {
-                        found = Some(proof);
-                        break;
-                    }
-                    Err(why) => {
-                        refusals.push(why);
-                        for h in env.hints.drain(..) {
-                            if !hints.contains(&h) {
-                                hints.push(h);
-                            }
-                        }
-                        env = fresh_env(inputs, &ob, &using);
-                    }
-                }
-            }
-            found.ok_or_else(|| refusals.join("; "))?
+            | ProofStrategy::Associative { .. }
+            | ProofStrategy::IdentityElement { .. }
+    );
+    // Each line of a `when` written over several lines is a hypothesis of
+    // its own, cut from `when` by the `Bool.and` eliminations.
+    let lines = ob.premise.as_ref().map(when_lines).unwrap_or_default();
+    let mut known: Vec<(String, Term)> = lines
+        .iter()
+        .enumerate()
+        .map(|(i, (fact, _))| (format!("when{}", i + 1), fact.clone()))
+        .collect();
+    let reasons: Vec<Term> = t.reasons.iter().map(|r| law_term(inputs, t, r)).collect();
+    let n = reasons.len();
+    let mut parts: Vec<Part> = Vec::new();
+    for (i, reason) in reasons.iter().enumerate() {
+        let part_ob = Obligation {
+            lhs: reason.clone(),
+            rhs: crate::ir::proof_steps::term::boolean(true),
+            ..ob.clone()
+        };
+        // A reason that recurses with a checked plan may be proved by
+        // induction along its own function, as the claim is along the law's.
+        let induct_on = match (&t.reason_inductions.get(i), &reason.node) {
+            (
+                Some(Some(_)),
+                crate::ir::hir::ResolvedExpr::Call(crate::ir::hir::ResolvedCallee::Fn(f), _),
+            ) => Some(*f),
+            _ => None,
+        };
+        let part = prove_part(inputs, t, &part_ob, &known, &using, induct_on, false, hints)
+            .map_err(|why| format!("reason {} of {n}: {why}", i + 1))?;
+        parts.push(part);
+        known.push((format!("because{}", i + 1), reason.clone()));
+    }
+    let last = prove_part(
+        inputs,
+        t,
+        &ob,
+        &known,
+        &using,
+        Some(t.fn_id),
+        algebraic && n == 0,
+        hints,
+    )
+    .map_err(|why| {
+        if n == 0 {
+            why
+        } else {
+            format!("the claim after its {n} reasons: {why}")
         }
-    };
+    })?;
+    let mut proof = last.proof.clone();
+    for (i, (reason, part)) in reasons.iter().zip(&parts).enumerate().rev() {
+        proof = Proof::Have {
+            name: format!("because{}", i + 1),
+            fact: reason.clone(),
+            proof: Box::new(part.proof.clone()),
+            body: Box::new(proof),
+        };
+    }
+    for (i, (fact, from_when)) in lines.iter().enumerate().rev() {
+        let name = format!("when{}", i + 1);
+        if uses_hyp(&proof, &name) {
+            proof = Proof::Have {
+                name,
+                fact: fact.clone(),
+                proof: Box::new(from_when.clone()),
+                body: Box::new(proof),
+            };
+        }
+    }
     if proof.size() > MAX_PROOF_NODES {
         return Err(format!(
             "{} steps is more than a backend should elaborate",
             proof.size()
         ));
     }
-    let script = Script {
+    let mut script = Script {
         obligation: ob,
-        defs: env.used_defs(),
-        consts: env.used_consts(),
-        laws: env.laws.clone(),
+        defs: Vec::new(),
+        consts: Vec::new(),
+        laws: Vec::new(),
         proof,
     };
+    for part in parts.iter().chain(std::iter::once(&last)) {
+        for d in &part.defs {
+            if !script.defs.iter().any(|x| x.fn_id == d.fn_id) {
+                script.defs.push(d.clone());
+            }
+        }
+        for c in &part.consts {
+            if !script.consts.iter().any(|x| x.name == c.name) {
+                script.consts.push(c.clone());
+            }
+        }
+        for l in &part.laws {
+            if !script.laws.iter().any(|x| x.key == l.key) {
+                script.laws.push(l.clone());
+            }
+        }
+    }
     // The kernel judges what the producers built; a script it refuses,
     // or cannot read back, is refused here by the kernel's reason.
     let text = crate::ir::proof_steps::sexpr::script(&script, inputs.symbol_table)?;

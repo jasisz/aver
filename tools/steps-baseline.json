@@ -93,6 +93,18 @@
    "nrNewErrNum.nrErrorSquares"
   ]
  },
+ "projects/k5_fdiv/domain/exponent.av": {
+  "steps": [
+   "divideExponentNoOverflow.section_9_3_no_overflow",
+   "divideExponentNoUnderflow.section_9_3_no_underflow",
+   "exponentQ1.table3_row17",
+   "exponentQ2.table3_row23",
+   "exponentQ3.table3_row29",
+   "exponentQdl0.table3_row13",
+   "exponentQdl1.table3_row19",
+   "exponentQdl2.table3_row25"
+  ]
+ },
  "projects/k5_fdiv/domain/fprep.av": {
   "steps": [
    "fpScaleKeepsSignificand.significandInvariant",

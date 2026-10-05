@@ -2560,6 +2560,11 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             claim_rhs: inputs.resolve_expr(&law.rhs, law_scope_ref),
             strategy,
             induction,
+            reasons: law
+                .because
+                .iter()
+                .map(|r| inputs.resolve_expr(r, law_scope_ref))
+                .collect(),
             reason_inductions,
             function_cone,
             using: law.using.clone(),

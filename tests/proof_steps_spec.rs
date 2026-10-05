@@ -1079,7 +1079,7 @@ fn joining_texts_is_never_read_as_int_arithmetic() {
     // step applies to it, even in a script made by hand.
     let script = |op: &str| {
         format!(
-            "(steps 5 (obligation k (a b) (none) (op {op} (v a) (v b)) (op {op} (v b) (v a))) (defs) (consts) (laws) (proof (ring (op {op} (v a) (v b)) (op {op} (v b) (v a)))))"
+            "(steps 6 (obligation k (a b) (none) (op {op} (v a) (v b)) (op {op} (v b) (v a))) (defs) (consts) (laws) (proof (ring (op {op} (v a) (v b)) (op {op} (v b) (v a)))))"
         )
     };
     assert_eq!(
@@ -2060,4 +2060,138 @@ fn the_embedded_kernel_is_generated_from_the_aver_source() {
         .output()
         .expect("python3 runs");
     assert!(out.status.success(), "{}", format_output(&out));
+}
+
+#[test]
+fn both_kernels_check_because_chains_and_refuse_mutations() {
+    let out = scratch("because");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("because.av", &out).into_iter().collect();
+    assert_eq!(
+        files.keys().cloned().collect::<Vec<_>>(),
+        [
+            "count.doubledNonNegative",
+            "sum2.staysPositive",
+            "twice.grows"
+        ]
+    );
+    // A reason no producer proves names itself, and the law keeps its
+    // tactics.
+    let refused =
+        fs::read_to_string(out.join("proof_steps").join("twice.needsMore.refused")).unwrap();
+    assert!(refused.starts_with("reason 1 of 1: "), "{refused}");
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let doubled = read("count.doubledNonNegative");
+    let positive = read("sum2.staysPositive");
+    assert!(doubled.contains("(have because1 "), "{doubled}");
+    assert!(positive.contains("(have when1 "), "{positive}");
+    for (kind, text) in [
+        (
+            "a reason stated as another fact",
+            mutate_proof(
+                &doubled,
+                "(have because1 (op >= (call count (v n)) (i 0))",
+                "(have because1 (op >= (call count (v n)) (i 1))",
+            ),
+        ),
+        (
+            "a reason read before its cut",
+            mutate_proof(&doubled, "(have because1 ", "(have because2 "),
+        ),
+        (
+            "the other line of the when",
+            mutate_proof(&positive, "(rule bool.and.elim_l", "(rule bool.and.elim_r"),
+        ),
+    ] {
+        let refused = aver::proof_kernel::verdict(&text);
+        assert!(refused.is_err(), "{kind}: {refused:?}");
+        let path = out.join("mutant.steps");
+        fs::write(&path, &text).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(
+            !result.status.success(),
+            "{kind}: {}",
+            format_output(&result)
+        );
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_checks_each_obligation_of_a_because_chain_by_its_steps() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("because-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "because.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "10",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for obligation in [
+        "count.doubledNonNegative",
+        "count.doubledNonNegative.because1",
+        "count.doubledNonNegative.implication",
+        "sum2.staysPositive",
+        "twice.grows",
+        "twice.grows.because1",
+        "twice.grows.because2",
+        "twice.grows.implication",
+    ] {
+        assert_eq!(
+            summary["closed_by"][obligation], "steps",
+            "{obligation}: {summary}"
+        );
+    }
+    assert_eq!(
+        summary["steps_rejected"],
+        serde_json::json!([]),
+        "{summary}"
+    );
+    // The implication reads the reason as the hypothesis its theorem
+    // introduces; a cut that states another fact does not elaborate.
+    let lean = fs::read_to_string(out.join("Because.lean")).unwrap();
+    let start = lean
+        .find("theorem __aver_reason_count_law_doubledNonNegative_implication :")
+        .expect("the implication");
+    let line = lean[start..]
+        .lines()
+        .find(|l| l.contains("have because1 :"))
+        .expect("the steps branch")
+        .to_string();
+    let wrong = line.replace(
+        "have because1 : ((count n >= 0)",
+        "have because1 : ((count n >= 1)",
+    );
+    assert_ne!(line, wrong, "{line}");
+    assert!(
+        lean_refuses(
+            &out,
+            "Because.lean",
+            &lean.replacen(&line, &wrong, 1),
+            "count.doubledNonNegative"
+        ),
+        "a reason stated as another fact: Lean must refuse the step term"
+    );
+    let _ = fs::remove_dir_all(out);
 }
