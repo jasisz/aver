@@ -9,6 +9,13 @@
    "countAll.viaExpand"
   ]
  },
+ "examples/formal/empty_map_facts.av": {
+  "steps": [
+   "contains.emptyContainsNothing",
+   "lookup.emptyHasNoEntries",
+   "size.emptyHasZeroSize"
+  ]
+ },
  "examples/formal/law_auto.av": {
   "steps": [
    "add.associative",

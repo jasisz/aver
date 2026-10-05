@@ -1521,6 +1521,131 @@ fn induction_refuses_a_recursive_call_inside_a_split_arm() {
     let _ = fs::remove_dir_all(dir);
 }
 
+const MAP_LAWS: [&str; 8] = [
+    "count.otherWordsUnchanged",
+    "place.otherPointsUnchanged",
+    "place.readsBackAtAPoint",
+    "put.holdsTheKey",
+    "put.leavesOtherKeys",
+    "put.readsBack",
+    "put.sizeOfOneEntry",
+    "put.sizeWhenPresent",
+];
+
+#[test]
+fn both_kernels_check_the_map_rules_and_refuse_mutations() {
+    let out = scratch("maps");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("maps.av", &out).into_iter().collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), MAP_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let swap = |law: &str, from: &str, to: &str| {
+        let text = read(law);
+        assert!(text.contains(from), "{law}: {text}");
+        text.replacen(from, to, 1)
+    };
+    for (kind, text) in [
+        (
+            "another key read as the key just set",
+            swap(
+                "put.leavesOtherKeys",
+                "(rule map.get.set_other",
+                "(rule map.get.set_same",
+            ),
+        ),
+        (
+            "the key just set read as another",
+            swap(
+                "put.readsBack",
+                "(rule map.get.set_same",
+                "(rule map.get.set_other",
+            ),
+        ),
+        (
+            "a held key counted as new",
+            swap(
+                "put.sizeWhenPresent",
+                "(rule map.len.set_present",
+                "(rule map.len.set_absent",
+            ),
+        ),
+        (
+            "a new key counted as held",
+            swap(
+                "put.sizeOfOneEntry",
+                "(rule map.len.set_absent",
+                "(rule map.len.set_present",
+            ),
+        ),
+        (
+            "membership read from the map before the set",
+            swap(
+                "count.otherWordsUnchanged",
+                "(rule map.has.set_other",
+                "(rule map.has.set_same",
+            ),
+        ),
+    ] {
+        let refused = aver::proof_kernel::verdict(&text);
+        assert!(refused.is_err(), "{kind}: {refused:?}");
+        let path = out.join("mutant.steps");
+        fs::write(&path, &text).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(
+            !result.status.success(),
+            "{kind}: {}",
+            format_output(&result)
+        );
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_checks_the_map_rules_over_int_string_and_record_keys() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("maps-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "maps.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "0",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in MAP_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let lean = fs::read_to_string(out.join("Maps.lean")).unwrap();
+    let law = "place.otherPointsUnchanged";
+    let line = exact_line(&lean, "place_law_otherPointsUnchanged").to_string();
+    let wrong = line.replacen("AverMap.step_get_set_other", "AverMap.step_get_set_same", 1);
+    assert_ne!(line, wrong, "{line}");
+    assert!(
+        lean_refuses(&out, "Maps.lean", &lean.replacen(&line, &wrong, 1), law),
+        "another key read as the key just set: Lean must refuse the step term"
+    );
+    let _ = fs::remove_dir_all(out);
+}
+
 #[test]
 fn the_embedded_kernel_is_generated_from_the_aver_source() {
     let out = Command::new("python3")

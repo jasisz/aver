@@ -18,7 +18,7 @@
 //! PREMISE := (none) | TERM
 //! TERM    := (i INT) | (b true|false) | (s "TEXT") | (unit) | (v NAME) | (hole)
 //!          | (get TERM FIELD) | (call FN TERM…) | (bi BUILTIN TERM…)
-//!          | (op OP TERM TERM) | (neg TERM) | (ctor CTOR TERM…)
+//!          | (op OP TERM TERM) | (neg TERM) | (ctor CTOR TERM…)   ; `{}` is (bi Map.empty)
 //!          | (match TERM (arm PAT TERM)…) | (str TERM…) | (list TERM…)
 //!          | (tuple TERM…) | (rec TYPE (FIELD TERM)…) | (upd TYPE TERM (FIELD TERM)…)
 //! PAT     := (pw) | (pv NAME) | (pl TERM) | (pnil) | (pcons NAME NAME)
@@ -298,8 +298,10 @@ pub fn term(t: &Term, names: &dyn Names) -> Result<String, String> {
             s
         }
         ResolvedExpr::ErrorProp(_) => return Err("`?` is outside the step format".into()),
+        // The empty map is the one map literal steps read.
+        ResolvedExpr::MapLiteral(kvs) if kvs.is_empty() => "(bi Map.empty)".to_string(),
         ResolvedExpr::MapLiteral(_) => {
-            return Err("map literals are outside the step format".into());
+            return Err("map literals with entries are outside the step format".into());
         }
         ResolvedExpr::IndependentProduct(..) => {
             return Err("independent products are outside the step format".into());

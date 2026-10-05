@@ -897,6 +897,37 @@ const AVER_MAP_PRELUDE_SET_SET_SELF: &str = r#"theorem set_set_self [DecidableEq
   · rw [set_of_has m k v h, set_of_has m k w h]
     exact replace_replace m k v w"#;
 
+/// The Lean statement of each Map wall rule of the proof steps
+/// (`crate::ir::proof_steps::rules`), proved from the model and the lemmas
+/// above. A key comparison is the program's own `!=`, lawful for every key
+/// type a map may have (records derive `LawfulBEq`).
+const AVER_MAP_PRELUDE_STEPS: &str = r#"theorem step_get_empty [DecidableEq α] (k : α) :
+    AverMap.get ([] : List (α × β)) k = Option.none := rfl
+theorem step_get_set_same [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) :
+    AverMap.get (AverMap.set m k v) k = Option.some v := get_set_self m k v
+theorem step_get_set_other [DecidableEq α] [AverKeyOrder α] [BEq α] [LawfulBEq α]
+    (m : List (α × β)) (k : α) (v : β) (k2 : α) (h : (k != k2) = true) :
+    AverMap.get (AverMap.set m k v) k2 = AverMap.get m k2 :=
+  get_set_other m k k2 v (fun e => (bne_iff_ne.mp h) e.symm)
+theorem step_has_empty [DecidableEq α] (k : α) : AverMap.has ([] : List (α × β)) k = false :=
+  has_nil k
+theorem step_has_set_same [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) :
+    AverMap.has (AverMap.set m k v) k = true := has_set_self m k v
+theorem step_has_set_other [DecidableEq α] [AverKeyOrder α] [BEq α] [LawfulBEq α]
+    (m : List (α × β)) (k : α) (v : β) (k2 : α) (h : (k != k2) = true) :
+    AverMap.has (AverMap.set m k v) k2 = AverMap.has m k2 :=
+  has_set_other m k k2 v (fun e => (bne_iff_ne.mp h) e.symm)
+theorem step_len_empty : ((AverMap.len ([] : List (α × β)) : Nat) : Int) = 0 := rfl
+theorem step_len_set_present [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β)
+    (h : AverMap.has m k = true) :
+    ((AverMap.len (AverMap.set m k v) : Nat) : Int) = ((AverMap.len m : Nat) : Int) := by
+  rw [len_set_of_has m k v h]
+theorem step_len_set_absent [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β)
+    (h : AverMap.has m k = false) :
+    ((AverMap.len (AverMap.set m k v) : Nat) : Int) = ((AverMap.len m : Nat) : Int) + 1 := by
+  rw [set_of_missing m k v h]
+  simp [AverMap.len, length_insert]"#;
+
 const AVER_MAP_PRELUDE_END: &str = r#"end AverMap"#;
 
 const LEAN_PRELUDE_AVER_LIST: &str = r#"namespace AverList
@@ -1629,14 +1660,18 @@ fn generate_map_prelude(body: &str, include_all_helpers: bool) -> String {
 
     // Dependency closure first: a lemma that another lemma's proof applies is
     // demanded by that lemma too, not only by the generated body that names it.
+    // The proof steps' Map rules rest on the `set` lemmas below.
+    let needs_steps = include_all_helpers || body.contains("AverMap.step_");
     let needs_has_set = include_all_helpers || mentions_exact(body, "AverMap.has_set");
     let needs_set_set_self = include_all_helpers || mentions_exact(body, "AverMap.set_set_self");
     let needs_set_set_comm = include_all_helpers || mentions_exact(body, "AverMap.set_set_comm");
     let needs_has_set_self = include_all_helpers
+        || needs_steps
         || body.contains("AverMap.has_set_self")
         || needs_has_set
         || needs_set_set_self;
     let needs_has_set_other = include_all_helpers
+        || needs_steps
         || body.contains("AverMap.has_set_other")
         || needs_has_set
         || needs_set_set_comm;
@@ -1648,11 +1683,13 @@ fn generate_map_prelude(body: &str, include_all_helpers: bool) -> String {
         || needs_has_set_other
         || needs_get_set_ne;
     let needs_len_set_ge_one = include_all_helpers || body.contains("AverMap.len_set_ge_one");
-    let needs_get_set_self = include_all_helpers || body.contains("AverMap.get_set_self");
+    let needs_get_set_self =
+        include_all_helpers || needs_steps || body.contains("AverMap.get_set_self");
     let needs_len_set_ge = include_all_helpers || mentions_exact(body, "AverMap.len_set_ge");
     let needs_len_set_le = include_all_helpers || body.contains("AverMap.len_set_le");
     let needs_get_remove = include_all_helpers || body.contains("AverMap.get_remove");
-    let needs_len_set_of_has = include_all_helpers || body.contains("AverMap.len_set_of_has");
+    let needs_len_set_of_has =
+        include_all_helpers || needs_steps || body.contains("AverMap.len_set_of_has");
     let needs_len_remove_le = include_all_helpers || body.contains("AverMap.len_remove_le");
 
     // Every `set` fact is a case split on membership over the same ground, so
@@ -1709,6 +1746,9 @@ fn generate_map_prelude(body: &str, include_all_helpers: bool) -> String {
     }
     if needs_set_set_self {
         parts.push(AVER_MAP_PRELUDE_SET_SET_SELF.to_string());
+    }
+    if needs_steps {
+        parts.push(AVER_MAP_PRELUDE_STEPS.to_string());
     }
 
     parts.push(AVER_MAP_PRELUDE_END.to_string());

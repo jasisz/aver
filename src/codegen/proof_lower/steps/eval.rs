@@ -419,7 +419,109 @@ impl Env<'_> {
         if let Some(step) = self.list_step(cur)? {
             return Ok(step);
         }
+        if let Some(step) = self.map_step(cur)? {
+            return Ok(step);
+        }
         self.settle(cur, blocked)
+    }
+
+    /// `Map.get`, `Map.has` or `Map.len` of the empty map or of a
+    /// `Map.set` takes one step by its rule: at the key just set (the same
+    /// term), at a key the step decides is another (`k != k2`), and for the
+    /// size by whether the map held the key, which is split on when open.
+    fn map_step(&mut self, cur: &Term) -> Result<Option<Step>, String> {
+        let ResolvedExpr::Call(ResolvedCallee::Builtin(name), args) = &cur.node else {
+            return Ok(None);
+        };
+        let Some(map) = args.first() else {
+            return Ok(None);
+        };
+        let bind = |names: &[&str], values: Vec<Term>| -> Vec<(String, Term)> {
+            names.iter().map(|n| n.to_string()).zip(values).collect()
+        };
+        let empty = matches!(&map.node, ResolvedExpr::MapLiteral(kvs) if kvs.is_empty());
+        let set = match &map.node {
+            ResolvedExpr::Call(ResolvedCallee::Builtin(b), parts)
+                if b == "Map.set" && parts.len() == 3 =>
+            {
+                Some(parts.clone())
+            }
+            _ => None,
+        };
+        let decided = |env: &mut Self, t: Term| -> Result<Option<(bool, Proof)>, String> {
+            let ev = env.whnf(&t)?;
+            let Some(v) = term::bool_value(ev.chain.cur()) else {
+                return Ok(None);
+            };
+            Ok(Some((v, ev.chain.finish().1)))
+        };
+        let (rule, subst, premises) = match (name.as_str(), args.len(), empty, set) {
+            ("Map.get", 2, true, _) => (
+                WallRule::MapGetEmpty,
+                bind(&["k"], vec![args[1].clone()]),
+                vec![],
+            ),
+            ("Map.has", 2, true, _) => (
+                WallRule::MapHasEmpty,
+                bind(&["k"], vec![args[1].clone()]),
+                vec![],
+            ),
+            ("Map.len", 1, true, _) => (WallRule::MapLenEmpty, vec![], vec![]),
+            ("Map.get" | "Map.has", 2, false, Some(p)) => {
+                let get = name == "Map.get";
+                if canon(&p[1]) == canon(&args[1]) {
+                    let rule = if get {
+                        WallRule::MapGetSetSame
+                    } else {
+                        WallRule::MapHasSetSame
+                    };
+                    (rule, bind(&["m", "k", "v"], p), vec![])
+                } else {
+                    let ne = term::binop(BinOp::Neq, p[1].clone(), args[1].clone());
+                    let Some((true, premise)) = decided(self, ne)? else {
+                        return Ok(None);
+                    };
+                    let rule = if get {
+                        WallRule::MapGetSetOther
+                    } else {
+                        WallRule::MapHasSetOther
+                    };
+                    let mut values = p;
+                    values.push(args[1].clone());
+                    (rule, bind(&["m", "k", "v", "k2"], values), vec![premise])
+                }
+            }
+            ("Map.len", 1, false, Some(p)) => {
+                let held = term::builtin(
+                    "Map.has",
+                    vec![p[0].clone(), p[1].clone()],
+                    Some(crate::ast::Type::Bool),
+                );
+                match decided(self, held.clone())? {
+                    Some((true, premise)) => (
+                        WallRule::MapLenSetPresent,
+                        bind(&["m", "k", "v"], p),
+                        vec![premise],
+                    ),
+                    Some((false, premise)) => (
+                        WallRule::MapLenSetAbsent,
+                        bind(&["m", "k", "v"], p),
+                        vec![premise],
+                    ),
+                    None => return self.settle(cur, Some(canon(&held))).map(Some),
+                }
+            }
+            _ => return Ok(None),
+        };
+        let (_, concl) = rule.instantiate(&subst).expect("rule binders");
+        Ok(Some(Step::Progress(Box::new((
+            Proof::Rule {
+                rule,
+                subst,
+                premises,
+            },
+            concl.rhs,
+        )))))
     }
 
     /// A list builtin whose list argument is `[]` or `List.prepend(x, a)`

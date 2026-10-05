@@ -162,6 +162,16 @@ fn lemma(rule: WallRule) -> &'static str {
         WallRule::DropConsGt => "AverSteps.list_drop_cons_gt",
         WallRule::ReverseNil => "AverSteps.list_reverse_nil",
         WallRule::ReverseCons => "AverSteps.list_reverse_cons",
+        // The Map rules sit with the map model they read.
+        WallRule::MapGetEmpty => "AverMap.step_get_empty",
+        WallRule::MapGetSetSame => "AverMap.step_get_set_same",
+        WallRule::MapGetSetOther => "AverMap.step_get_set_other",
+        WallRule::MapHasEmpty => "AverMap.step_has_empty",
+        WallRule::MapHasSetSame => "AverMap.step_has_set_same",
+        WallRule::MapHasSetOther => "AverMap.step_has_set_other",
+        WallRule::MapLenEmpty => "AverMap.step_len_empty",
+        WallRule::MapLenSetPresent => "AverMap.step_len_set_present",
+        WallRule::MapLenSetAbsent => "AverMap.step_len_set_absent",
     }
 }
 
