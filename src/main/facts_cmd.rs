@@ -20,6 +20,7 @@ pub(crate) fn cmd_facts(prefix: Option<&str>, json: bool, markdown: bool) {
                 serde_json::json!({
                     "name": f.key,
                     "givens": f.script.obligation.givens,
+                    "when": f.when(),
                     "claim": f.claim(),
                     "cites": f.cites(),
                 })
@@ -35,6 +36,9 @@ pub(crate) fn cmd_facts(prefix: Option<&str>, json: bool, markdown: bool) {
     for f in &chosen {
         println!("{}", f.key);
         println!("    given {}", f.script.obligation.givens.join(", "));
+        if let Some(when) = f.when() {
+            println!("    when {when}");
+        }
         println!("    {}", f.claim());
     }
     println!("cite one in a law with `using [{}]`", chosen[0].key);

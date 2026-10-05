@@ -157,7 +157,8 @@
  },
  "projects/song/wave.av": {
   "steps": [
-   "clamp16.fitsSixteenBits"
+   "clamp16.fitsSixteenBits",
+   "header.sizeIsFortyFour"
   ]
  },
  "proof-corpus/decomposed/handwritten/all_zero_sum.av": {

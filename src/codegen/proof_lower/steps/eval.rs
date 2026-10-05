@@ -192,6 +192,9 @@ impl Env<'_> {
         if let Some((name, value)) = self.hyp_for(cur) {
             return Ok(Step::Progress(Box::new((Proof::Hyp(name), value))));
         }
+        if let Some(proof) = self.conjunct_of_hyp(cur) {
+            return Ok(Step::Progress(Box::new((proof, term::boolean(true)))));
+        }
         if let Some(step) = self.decide_linearly(cur) {
             return Ok(Step::Progress(Box::new(step)));
         }
@@ -422,7 +425,176 @@ impl Env<'_> {
         if let Some(step) = self.map_step(cur)? {
             return Ok(step);
         }
+        if let Some(step) = self.vector_step(cur)? {
+            return Ok(step);
+        }
         self.settle(cur, blocked)
+    }
+
+    /// A Vector builtin takes one step by its rule where the step can
+    /// decide the rule's premise: a vector of a list read back as the list
+    /// (and the other way), the length after a write or of a literal-size
+    /// `Vector.new`, and a read below zero, past the end, after a write
+    /// (at the same index or, decided, another) or of a `Vector.new`.
+    fn vector_step(&mut self, cur: &Term) -> Result<Option<Step>, String> {
+        use crate::ir::hir::BuiltinIntrinsic;
+        let ResolvedExpr::Call(ResolvedCallee::Builtin(name), args) = &cur.node else {
+            return Ok(None);
+        };
+        let builtin = |t: &Term, want: &str, n: usize| -> Option<Vec<Term>> {
+            match &t.node {
+                ResolvedExpr::Call(ResolvedCallee::Builtin(b), xs)
+                    if b == want && xs.len() == n =>
+                {
+                    Some(xs.clone())
+                }
+                _ => None,
+            }
+        };
+        let made = |t: &Term| -> Option<Vec<Term>> {
+            match &t.node {
+                ResolvedExpr::Call(ResolvedCallee::Intrinsic(BuiltinIntrinsic::VectorNew), xs)
+                    if xs.len() == 2 =>
+                {
+                    Some(xs.clone())
+                }
+                _ => None,
+            }
+        };
+        // `Option.withDefault(Vector.set(v, i, x), v)`: the vector a write
+        // leaves, or the vector itself when the index is out of range.
+        let written = |t: &Term| -> Option<Vec<Term>> {
+            let outer = builtin(t, "Option.withDefault", 2)?;
+            let set = builtin(&outer[0], "Vector.set", 3)?;
+            (canon(&set[0]) == canon(&outer[1])).then_some(set)
+        };
+        let decided = |env: &mut Self, t: Term| -> Result<Option<(bool, Proof)>, String> {
+            let ev = env.whnf(&t)?;
+            let Some(v) = term::bool_value(ev.chain.cur()) else {
+                return Ok(None);
+            };
+            Ok(Some((v, ev.chain.finish().1)))
+        };
+        let int = |n: i64| term::int(&n.into());
+        let vlen =
+            |v: &Term| term::builtin("Vector.len", vec![v.clone()], Some(crate::ast::Type::Int));
+        let in_range = |at: &Term, end: Term| {
+            term::bool_and(
+                term::binop(BinOp::Lte, int(0), at.clone()),
+                term::binop(BinOp::Lt, at.clone(), end),
+            )
+        };
+        let bind = |names: &[&str], values: Vec<Term>| -> Vec<(String, Term)> {
+            names.iter().map(|n| n.to_string()).zip(values).collect()
+        };
+        let (rule, subst, premises): (WallRule, Vec<(String, Term)>, Vec<Proof>) =
+            match (name.as_str(), args.as_slice()) {
+                ("List.fromVector", [w]) => match builtin(w, "Vector.fromList", 1) {
+                    Some(l) => (WallRule::VecToListOfList, bind(&["l"], l), vec![]),
+                    None => return Ok(None),
+                },
+                ("Vector.fromList", [l]) => match builtin(l, "List.fromVector", 1) {
+                    Some(v) => (WallRule::VecOfListToList, bind(&["v"], v), vec![]),
+                    None => return Ok(None),
+                },
+                ("Vector.len", [w]) => {
+                    if let Some(set) = written(w) {
+                        (WallRule::VecLenSet, bind(&["v", "i", "x"], set), vec![])
+                    } else if let Some(nx) = made(w) {
+                        let ok = term::binop(BinOp::Lte, int(0), nx[0].clone());
+                        let Some((true, p)) = decided(self, ok)? else {
+                            return Ok(None);
+                        };
+                        (WallRule::VecLenNew, bind(&["n", "x"], nx), vec![p])
+                    } else if builtin(w, "Vector.fromList", 1).is_some() {
+                        // The length of a vector made from a list is that
+                        // list's, which the list rules read.
+                        (
+                            WallRule::VecLenToList,
+                            bind(&["v"], vec![w.clone()]),
+                            vec![],
+                        )
+                    } else {
+                        return Ok(None);
+                    }
+                }
+                ("Vector.get", [w, j]) => {
+                    if let Some(set) = written(w) {
+                        let Some((true, p)) = decided(self, in_range(&set[1], vlen(&set[0])))?
+                        else {
+                            return Ok(None);
+                        };
+                        if canon(&set[1]) == canon(j) {
+                            (
+                                WallRule::VecGetSetSame,
+                                bind(&["v", "i", "x"], set),
+                                vec![p],
+                            )
+                        } else {
+                            let ne = term::binop(BinOp::Neq, set[1].clone(), j.clone());
+                            let Some((true, q)) = decided(self, ne)? else {
+                                return Ok(None);
+                            };
+                            let mut values = set;
+                            values.push(j.clone());
+                            (
+                                WallRule::VecGetSetOther,
+                                bind(&["v", "i", "x", "j"], values),
+                                vec![p, q],
+                            )
+                        }
+                    } else if let Some(nx) = made(w) {
+                        let Some((true, p)) = decided(self, in_range(j, nx[0].clone()))? else {
+                            return Ok(None);
+                        };
+                        let mut values = nx;
+                        values.push(j.clone());
+                        (WallRule::VecGetNew, bind(&["n", "x", "i"], values), vec![p])
+                    } else if let Some((true, p)) =
+                        decided(self, term::binop(BinOp::Lt, j.clone(), int(0)))?
+                    {
+                        (
+                            WallRule::VecGetNegative,
+                            bind(&["v", "i"], vec![w.clone(), j.clone()]),
+                            vec![p],
+                        )
+                    } else if let Some((true, p)) =
+                        decided(self, term::binop(BinOp::Gte, j.clone(), vlen(w)))?
+                    {
+                        (
+                            WallRule::VecGetPastEnd,
+                            bind(&["v", "i"], vec![w.clone(), j.clone()]),
+                            vec![p],
+                        )
+                    } else {
+                        return Ok(None);
+                    }
+                }
+                ("Vector.set", [v, i, x]) => {
+                    let out = term::bool_or(
+                        term::binop(BinOp::Lt, i.clone(), int(0)),
+                        term::binop(BinOp::Gte, i.clone(), vlen(v)),
+                    );
+                    let Some((true, p)) = decided(self, out)? else {
+                        return Ok(None);
+                    };
+                    (
+                        WallRule::VecSetOutOfRange,
+                        bind(&["v", "i", "x"], vec![v.clone(), i.clone(), x.clone()]),
+                        vec![p],
+                    )
+                }
+                _ => return Ok(None),
+            };
+        let (_, concl) = rule.instantiate(&subst).expect("rule binders");
+        Ok(Some(Step::Progress(Box::new((
+            Proof::Rule {
+                rule,
+                subst,
+                premises,
+            },
+            concl.rhs,
+        )))))
     }
 
     /// `Map.get`, `Map.has` or `Map.len` of the empty map or of a
@@ -522,6 +694,35 @@ impl Env<'_> {
             },
             concl.rhs,
         )))))
+    }
+
+    /// `t = true` from a hypothesis `Bool.and(…) = true` that holds `t` as
+    /// one of its conjuncts, taken apart by `bool.and.elim_l` and `_r`.
+    fn conjunct_of_hyp(&self, t: &Term) -> Option<Proof> {
+        fn find(t: &Term, part: &Term, proof: Proof) -> Option<Proof> {
+            if canon(part) == *t {
+                return Some(proof);
+            }
+            let ResolvedExpr::Call(ResolvedCallee::Builtin(b), args) = &part.node else {
+                return None;
+            };
+            if b != "Bool.and" || args.len() != 2 {
+                return None;
+            }
+            let elim = |rule: WallRule| Proof::Rule {
+                rule,
+                subst: vec![("a".into(), args[0].clone()), ("b".into(), args[1].clone())],
+                premises: vec![proof.clone()],
+            };
+            find(t, &args[0], elim(WallRule::AndElimL))
+                .or_else(|| find(t, &args[1], elim(WallRule::AndElimR)))
+        }
+        let t = canon(t);
+        self.hyps.iter().rev().find_map(|(name, e)| {
+            (term::bool_value(&e.rhs) == Some(true))
+                .then(|| find(&t, &e.lhs, Proof::Hyp(name.clone())))
+                .flatten()
+        })
     }
 
     /// A list builtin whose list argument is `[]` or `List.prepend(x, a)`

@@ -83,10 +83,25 @@ pub enum WallRule {
     MapLenEmpty,
     MapLenSetPresent,
     MapLenSetAbsent,
+    // Vectors: the list a vector holds, a read below zero or past the end,
+    // a write out of range, a read after a write at the same and at
+    // another index, the length after a write, and a vector made by
+    // `Vector.new` with a literal size.
+    VecToListOfList,
+    VecOfListToList,
+    VecLenToList,
+    VecGetNegative,
+    VecGetPastEnd,
+    VecSetOutOfRange,
+    VecGetSetSame,
+    VecGetSetOther,
+    VecLenSet,
+    VecLenNew,
+    VecGetNew,
 }
 
 impl WallRule {
-    pub const ALL: [WallRule; 56] = [
+    pub const ALL: [WallRule; 67] = [
         WallRule::AndTrueL,
         WallRule::AndFalseL,
         WallRule::AndTrueR,
@@ -143,6 +158,17 @@ impl WallRule {
         WallRule::MapLenEmpty,
         WallRule::MapLenSetPresent,
         WallRule::MapLenSetAbsent,
+        WallRule::VecToListOfList,
+        WallRule::VecOfListToList,
+        WallRule::VecLenToList,
+        WallRule::VecGetNegative,
+        WallRule::VecGetPastEnd,
+        WallRule::VecSetOutOfRange,
+        WallRule::VecGetSetSame,
+        WallRule::VecGetSetOther,
+        WallRule::VecLenSet,
+        WallRule::VecLenNew,
+        WallRule::VecGetNew,
     ];
 
     /// Stable identifier, shared with the replayer.
@@ -204,6 +230,17 @@ impl WallRule {
             WallRule::MapLenEmpty => "map.len.empty",
             WallRule::MapLenSetPresent => "map.len.set_present",
             WallRule::MapLenSetAbsent => "map.len.set_absent",
+            WallRule::VecToListOfList => "vector.to_list.of_list",
+            WallRule::VecOfListToList => "vector.of_list.to_list",
+            WallRule::VecLenToList => "vector.len.to_list",
+            WallRule::VecGetNegative => "vector.get.negative",
+            WallRule::VecGetPastEnd => "vector.get.past_end",
+            WallRule::VecSetOutOfRange => "vector.set.out_of_range",
+            WallRule::VecGetSetSame => "vector.get.set_same",
+            WallRule::VecGetSetOther => "vector.get.set_other",
+            WallRule::VecLenSet => "vector.len.set",
+            WallRule::VecLenNew => "vector.len.new",
+            WallRule::VecGetNew => "vector.get.new",
         }
     }
 
@@ -245,6 +282,18 @@ impl WallRule {
             | WallRule::MapLenSetPresent
             | WallRule::MapLenSetAbsent => &["m", "k", "v"],
             WallRule::MapGetSetOther | WallRule::MapHasSetOther => &["m", "k", "v", "k2"],
+            WallRule::VecToListOfList => &["l"],
+            WallRule::VecOfListToList => &["v"],
+            WallRule::VecLenToList => &["v"],
+            WallRule::VecGetNegative => &["v", "i"],
+            WallRule::VecGetPastEnd => &["v", "i"],
+            WallRule::VecSetOutOfRange => &["v", "i", "x"],
+            WallRule::VecGetSetSame => &["v", "i", "x"],
+            WallRule::VecGetSetOther => &["v", "i", "x", "j"],
+            WallRule::VecLenSet => &["v", "i", "x"],
+            WallRule::VecLenNew => &["n", "x"],
+            WallRule::VecGetNew => &["n", "x", "i"],
+
             _ => &["a", "b"],
         }
     }
@@ -290,6 +339,34 @@ impl WallRule {
             ))
         };
         let other = || is(cmp(BinOp::Neq, k(), k2()), true);
+        let (vv, ii, jj, l, nn) = (
+            || var("v"),
+            || var("i"),
+            || var("j"),
+            || var("l"),
+            || var("n"),
+        );
+        let vb = |name: &str, args: Vec<Term>, ty: Option<crate::ast::Type>| {
+            term::builtin(name, args, ty)
+        };
+        let vlen = |t: Term| vb("Vector.len", vec![t], Some(crate::ast::Type::Int));
+        let vget = |t: Term, at: Term| vb("Vector.get", vec![t, at], None);
+        let vset = || vb("Vector.set", vec![vv(), ii(), x()], None);
+        let written = || vb("Option.withDefault", vec![vset(), vv()], None);
+        let made = || {
+            crate::ast::Spanned::bare(crate::ir::hir::ResolvedExpr::Call(
+                crate::ir::hir::ResolvedCallee::Intrinsic(BuiltinIntrinsic::VectorNew),
+                vec![nn(), x()],
+            ))
+        };
+        let none = || option(crate::ir::hir::BuiltinCtor::OptionNone, vec![]);
+        let some = |t: Term| option(crate::ir::hir::BuiltinCtor::OptionSome, vec![t]);
+        let in_range = |at: Term, end: Term| {
+            is(
+                bool_and(cmp(BinOp::Lte, i(0), at.clone()), cmp(BinOp::Lt, at, end)),
+                true,
+            )
+        };
         match self {
             WallRule::AndTrueL => (vec![], Eqn::new(bool_and(t(), b()), b())),
             WallRule::AndFalseL => (vec![], Eqn::new(bool_and(f(), b()), f())),
@@ -449,6 +526,77 @@ impl WallRule {
             WallRule::MapLenSetAbsent => (
                 vec![is(has(m(), k()), false)],
                 Eqn::new(size(set()), binop(BinOp::Add, size(m()), i(1))),
+            ),
+            WallRule::VecToListOfList => (
+                vec![],
+                Eqn::new(
+                    vb(
+                        "List.fromVector",
+                        vec![vb("Vector.fromList", vec![l()], None)],
+                        None,
+                    ),
+                    l(),
+                ),
+            ),
+            WallRule::VecOfListToList => (
+                vec![],
+                Eqn::new(
+                    vb(
+                        "Vector.fromList",
+                        vec![vb("List.fromVector", vec![vv()], None)],
+                        None,
+                    ),
+                    vv(),
+                ),
+            ),
+            WallRule::VecLenToList => (
+                vec![],
+                Eqn::new(
+                    vlen(vv()),
+                    vb(
+                        "List.len",
+                        vec![vb("List.fromVector", vec![vv()], None)],
+                        Some(crate::ast::Type::Int),
+                    ),
+                ),
+            ),
+            WallRule::VecGetNegative => (
+                vec![is(cmp(BinOp::Lt, ii(), i(0)), true)],
+                Eqn::new(vget(vv(), ii()), none()),
+            ),
+            WallRule::VecGetPastEnd => (
+                vec![is(cmp(BinOp::Gte, ii(), vlen(vv())), true)],
+                Eqn::new(vget(vv(), ii()), none()),
+            ),
+            WallRule::VecSetOutOfRange => (
+                vec![is(
+                    bool_or(
+                        cmp(BinOp::Lt, ii(), i(0)),
+                        cmp(BinOp::Gte, ii(), vlen(vv())),
+                    ),
+                    true,
+                )],
+                Eqn::new(vset(), none()),
+            ),
+            WallRule::VecGetSetSame => (
+                vec![in_range(ii(), vlen(vv()))],
+                Eqn::new(vget(written(), ii()), some(x())),
+            ),
+            WallRule::VecGetSetOther => (
+                vec![
+                    in_range(ii(), vlen(vv())),
+                    is(cmp(BinOp::Neq, ii(), jj()), true),
+                ],
+                Eqn::new(vget(written(), jj()), vget(vv(), jj())),
+            ),
+            WallRule::VecLenSet => (vec![], Eqn::new(vlen(written()), vlen(vv()))),
+            WallRule::VecLenNew => (
+                vec![is(cmp(BinOp::Lte, i(0), nn()), true)],
+                Eqn::new(vlen(made()), nn()),
+            ),
+            WallRule::VecGetNew => (
+                vec![in_range(ii(), nn())],
+                Eqn::new(vget(made(), ii()), some(x())),
             ),
         }
     }

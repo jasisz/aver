@@ -1,0 +1,37 @@
+module VectorFacts
+    intent = "Laws that cite the builtin Vector facts."
+    exposes [grid]
+    effects []
+
+fn grid(xs: List<Int>) -> Vector<Int>
+    ? "A list as a vector."
+    Vector.fromList(xs)
+
+verify grid
+    grid([1, 2]) => Vector.fromList([1, 2])
+
+verify grid law sizeOfTheList
+    given xs: List<Int> = [[], [1, 2]]
+    using [Vector.len.ofList]
+    Vector.len(Vector.fromList(xs)) => List.len(xs)
+
+verify grid law listBack
+    given xs: List<Int> = [[], [1, 2]]
+    using [Vector.toList.ofList]
+    List.fromVector(Vector.fromList(xs)) => xs
+
+verify grid law otherCellKept
+    given v: Vector<Int> = [Vector.fromList([1, 2, 3])]
+    given i: Int = [0, 1]
+    given j: Int = [1, 2]
+    given x: Int = [9]
+    when Bool.and(Bool.and(0 <= i, i < Vector.len(v)), i != j)
+    using [Vector.get.afterSetOther]
+    Vector.get(Option.withDefault(Vector.set(v, i, x), v), j) => Vector.get(v, j)
+
+verify grid law nothingPastTheEnd
+    given v: Vector<Int> = [Vector.fromList([1, 2, 3])]
+    given i: Int = [3, 4]
+    when i >= Vector.len(v)
+    using [Vector.get.pastEnd]
+    Vector.get(v, i) => Option.None
