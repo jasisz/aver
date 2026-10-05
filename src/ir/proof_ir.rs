@@ -501,6 +501,10 @@ pub struct LawTheorem {
     /// Why no producer wrote steps, when none did: where it stopped, with
     /// both sides and the hypotheses in scope.
     pub steps_refusal: Option<String>,
+    /// When no producer wrote steps: each builtin fact whose left side
+    /// matches a part of where evaluation stopped, with that part, as a
+    /// hint to cite it. Never applied without `using`.
+    pub steps_hints: Vec<String>,
 }
 
 #[derive(Debug, Clone)]

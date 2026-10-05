@@ -28,6 +28,9 @@ pub(crate) struct Env<'a> {
     pub next_ih: usize,
     /// Evaluations in progress, one inside another.
     pub nesting: usize,
+    /// Builtin facts that would rewrite a part of a term evaluation
+    /// stopped at (see [`super::eval`]), as hints for the report.
+    pub hints: Vec<String>,
 }
 
 impl<'a> Env<'a> {
@@ -45,6 +48,7 @@ impl<'a> Env<'a> {
             next_hyp: 0,
             next_ih: 0,
             nesting: 0,
+            hints: Vec::new(),
         }
     }
 

@@ -1412,6 +1412,60 @@ fn lean_states_each_cited_fact_once_for_every_element_type() {
     let _ = fs::remove_dir_all(out);
 }
 
+/// A law that does not cite the fact that would close it stays open, and
+/// the report names the fact and the part of the stuck term it rewrites:
+/// in `--backend aver` text and JSON, and in the exported `.refused` file
+/// the Lean check reads.
+#[test]
+fn a_stuck_law_is_hinted_the_facts_that_rewrite_where_it_stopped() {
+    let dir = repo_root().join(FIXTURES);
+    let text = aver_in(&dir, &["proof", "hints.av", "--backend", "aver"]);
+    let out = String::from_utf8_lossy(&text.stdout).to_string();
+    assert!(
+        out.contains("0 of 11 law(s) closed by steps"),
+        "{}",
+        format_output(&text)
+    );
+    assert!(
+        out.contains("  joined.lengthAdds: not closed by this backend (steps: evaluation stops at `List.len(List.concat(xs, ys))`")
+            && out.contains("    hint: `List.len.ofConcat` rewrites `List.len(List.concat(xs, ys))`; add it to `using`"),
+        "{out}"
+    );
+    let json = aver_in(
+        &dir,
+        &["proof", "hints.av", "--backend", "aver", "--check-json"],
+    );
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&json.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        summary["steps_hints"]["reversed.twiceIsTheSame"],
+        serde_json::json!([
+            "`List.reverse.involutive` rewrites `List.reverse(List.reverse(xs))`; add it to `using`"
+        ]),
+        "{summary}"
+    );
+    assert_eq!(summary["closed_by"]["reversed.twiceIsTheSame"], "open");
+    let export = scratch("hints");
+    let files = export_steps("hints.av", &export);
+    assert!(files.is_empty(), "{files:?}");
+    let refused =
+        fs::read_to_string(export.join("proof_steps/batch.threeBatches.refused")).unwrap();
+    assert!(
+        refused.lines().nth(1)
+            == Some(
+                "hint: `List.concat.assoc` rewrites `List.concat(List.concat(a, b), c)`; add it to `using`"
+            ),
+        "{refused}"
+    );
+    let _ = fs::remove_dir_all(export);
+}
+
 #[test]
 fn the_embedded_kernel_is_generated_from_the_aver_source() {
     let out = Command::new("python3")

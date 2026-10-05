@@ -1236,7 +1236,8 @@ pub(crate) fn lead_portfolio(
 /// One `proof_steps/<law>.steps` file per law with a step proof: the
 /// serialised script the Aver replayer checks. A law no producer wrote
 /// steps for gets `proof_steps/<law>.refused` instead, with where the
-/// producer stopped.
+/// producer stopped on its first line and one `hint: …` line per builtin
+/// fact that would rewrite a part of it.
 pub(crate) fn step_files(ctx: &CodegenContext) -> Vec<(String, String)> {
     ctx.proof_ir
         .law_theorems
@@ -1248,10 +1249,11 @@ pub(crate) fn step_files(ctx: &CodegenContext) -> Vec<(String, String)> {
             }
             let why = t.steps_refusal.as_ref()?;
             let key = crate::ir::proof_steps::sexpr::Names::fn_name(&ctx.symbol_table, t.fn_id);
-            Some((
-                format!("proof_steps/{key}.{}.refused", t.law_name),
-                format!("{why}\n"),
-            ))
+            let mut text = format!("{why}\n");
+            for hint in &t.steps_hints {
+                text.push_str(&format!("hint: {hint}\n"));
+            }
+            Some((format!("proof_steps/{key}.{}.refused", t.law_name), text))
         })
         .collect()
 }

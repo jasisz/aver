@@ -12,6 +12,9 @@ pub(super) struct StepsReport {
     pub rejected: BTreeSet<String>,
     /// Why no steps were written, by law.
     pub refused: BTreeMap<String, String>,
+    /// The builtin facts that would rewrite where the producer stopped, by
+    /// law (see `LawTheorem::steps_hints`).
+    pub hints: BTreeMap<String, Vec<String>>,
 }
 
 impl StepsReport {
@@ -55,10 +58,22 @@ pub(super) fn collect(output_dir: &str, build_log: &str) -> StepsReport {
                 || lean_sources.contains(&format!("AVER_STEPS_REJECTED:{law}\""))
         })
         .collect();
-    let refused: BTreeMap<String, String> = with("refused")
-        .into_iter()
-        .filter_map(|(law, p)| Some((law, std::fs::read_to_string(p).ok()?.trim().to_string())))
-        .collect();
+    let mut refused: BTreeMap<String, String> = BTreeMap::new();
+    let mut hints: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (law, p) in with("refused") {
+        let Ok(text) = std::fs::read_to_string(p) else {
+            continue;
+        };
+        let mut lines = text.lines();
+        refused.insert(law.clone(), lines.next().unwrap_or("").trim().to_string());
+        let found: Vec<String> = lines
+            .filter_map(|l| l.strip_prefix("hint: "))
+            .map(str::to_string)
+            .collect();
+        if !found.is_empty() {
+            hints.insert(law, found);
+        }
+    }
     let rejected = build_log
         .lines()
         .filter_map(|line| line.split_once("AVER_STEPS_REJECTED:"))
@@ -69,6 +84,7 @@ pub(super) fn collect(output_dir: &str, build_log: &str) -> StepsReport {
         emitted,
         rejected,
         refused,
+        hints,
     }
 }
 

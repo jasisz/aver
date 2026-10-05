@@ -1,0 +1,82 @@
+module Hints
+    intent = "Laws over concrete lists that do not cite the builtin facts that would close them."
+    exposes [Tx, joined, batch, reversed]
+    effects []
+
+record Tx
+    id: Int
+    amount: Int
+
+fn joined(xs: List<Int>, ys: List<Int>) -> List<Int>
+    ? "Both lists, one after the other."
+    List.concat(xs, ys)
+
+verify joined
+    joined([1], [2]) => [1, 2]
+
+verify joined law lengthAdds
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given ys: List<Int> = [[], [3]]
+    List.len(joined(xs, ys)) => List.len(xs) + List.len(ys)
+
+verify joined law regroups
+    given xs: List<Int> = [[], [1]]
+    given ys: List<Int> = [[], [2]]
+    given zs: List<Int> = [[], [3]]
+    joined(joined(xs, ys), zs) => joined(xs, joined(ys, zs))
+
+fn batch(a: List<Tx>, b: List<Tx>) -> List<Tx>
+    ? "Two batches of transactions as one."
+    List.concat(a, b)
+
+verify batch
+    batch([], [Tx(id = 1, amount = 5)]) => [Tx(id = 1, amount = 5)]
+
+verify batch law sizeAdds
+    given a: List<Tx> = [[], [Tx(id = 1, amount = 5)]]
+    given b: List<Tx> = [[], [Tx(id = 2, amount = 7)]]
+    List.len(batch(a, b)) => List.len(a) + List.len(b)
+
+verify batch law threeBatches
+    given a: List<Tx> = [[], [Tx(id = 1, amount = 5)]]
+    given b: List<Tx> = [[], [Tx(id = 2, amount = 7)]]
+    given c: List<Tx> = [[], [Tx(id = 3, amount = 9)]]
+    batch(batch(a, b), c) => batch(a, batch(b, c))
+
+verify joined law emptyOnTheRight
+    given xs: List<Int> = [[], [1, 2]]
+    joined(xs, []) => xs
+
+verify joined law takesTheFront
+    given xs: List<Int> = [[], [1], [1, 1]]
+    given ys: List<Int> = [[], [2]]
+    List.take(joined(xs, ys), List.len(xs)) => xs
+
+verify joined law dropsTheFront
+    given xs: List<Int> = [[], [1], [1, 1]]
+    given ys: List<Int> = [[], [2]]
+    List.drop(joined(xs, ys), List.len(xs)) => ys
+
+fn reversed(xs: List<Int>) -> List<Int>
+    ? "The list backwards."
+    List.reverse(xs)
+
+verify reversed
+    reversed([1, 2]) => [2, 1]
+
+verify reversed law keepsTheLength
+    given xs: List<Int> = [[], [1, 2, 2]]
+    List.len(reversed(xs)) => List.len(xs)
+
+verify reversed law ofJoined
+    given xs: List<Int> = [[], [1, 2]]
+    given ys: List<Int> = [[], [3]]
+    reversed(joined(xs, ys)) => joined(reversed(ys), reversed(xs))
+
+verify reversed law twiceIsTheSame
+    given xs: List<Int> = [[], [1, 2, 3]]
+    reversed(reversed(xs)) => xs
+
+verify reversed law lengthIsNeverNegative
+    given xs: List<Int> = [[], [1]]
+    List.len(reversed(xs)) >= 0 => true

@@ -672,8 +672,9 @@ impl Env<'_> {
 impl Env<'_> {
     /// The refusal for two sides evaluation cannot bring together: both
     /// sides as it left them, and the hypotheses in scope.
-    pub(crate) fn stopped_at(&self, lhs: &Term, rhs: &Term) -> String {
+    pub(crate) fn stopped_at(&mut self, lhs: &Term, rhs: &Term) -> String {
         use crate::ir::proof_steps::show;
+        self.note_fact_hints(&[lhs, rhs]);
         let names = self.inputs.symbol_table;
         let mut s = format!(
             "evaluation stops at `{}` and `{}`",
@@ -692,6 +693,44 @@ impl Env<'_> {
             );
         }
         s
+    }
+}
+
+impl Env<'_> {
+    /// Each builtin fact the law does not cite whose left side matches a
+    /// part of `terms`, one match each: pattern matching on the term as it
+    /// stands, never a rewrite followed by another match.
+    fn note_fact_hints(&mut self, terms: &[&Term]) {
+        use crate::ir::proof_steps::{facts, show};
+        fn parts<'t>(t: &'t Term, out: &mut Vec<&'t Term>) {
+            out.push(t);
+            for c in term::children(t) {
+                parts(c, out);
+            }
+        }
+        let mut all = Vec::new();
+        for t in terms {
+            parts(t, &mut all);
+        }
+        for fact in facts::all() {
+            if self.rewrite_laws.iter().any(|l| l.key == fact.key) {
+                continue;
+            }
+            let ob = &fact.script.obligation;
+            if let Some(part) = all
+                .iter()
+                .find(|p| super::rewrite::matches(&ob.lhs, p, &ob.givens, &mut Vec::new()))
+            {
+                let hint = format!(
+                    "`{}` rewrites `{}`; add it to `using`",
+                    fact.key,
+                    show::term(part, self.inputs.symbol_table)
+                );
+                if !self.hints.contains(&hint) {
+                    self.hints.push(hint);
+                }
+            }
+        }
     }
 }
 

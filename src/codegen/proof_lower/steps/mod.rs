@@ -222,7 +222,14 @@ fn fresh_env<'a>(
     env
 }
 
-fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, t: &LawTheorem) -> Result<Script, String> {
+/// Prove `t` by steps; `hints` collects the facts that would rewrite where
+/// a failed attempt stopped.
+fn produce(
+    inputs: &ProofLowerInputs,
+    ir: &ProofIR,
+    t: &LawTheorem,
+    hints: &mut Vec<String>,
+) -> Result<Script, String> {
     if !t.reason_inductions.is_empty() {
         return Err("a law with `because` steps".into());
     }
@@ -264,6 +271,11 @@ fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, t: &LawTheorem) -> Result<Sc
                     }
                     Err(why) => {
                         refusals.push(why);
+                        for h in env.hints.drain(..) {
+                            if !hints.contains(&h) {
+                                hints.push(h);
+                            }
+                        }
                         env = fresh_env(inputs, &ob, &using);
                     }
                 }
@@ -295,7 +307,8 @@ fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, t: &LawTheorem) -> Result<Sc
 pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
     let debug = std::env::var_os("AVER_STEPS_DEBUG").is_some();
     for i in 0..ir.law_theorems.len() {
-        let result = produce(inputs, ir, &ir.law_theorems[i]);
+        let mut hints = Vec::new();
+        let result = produce(inputs, ir, &ir.law_theorems[i], &mut hints);
         if debug {
             let key = law_key(inputs, &ir.law_theorems[i]);
             match &result {
@@ -307,10 +320,12 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             Ok(script) => {
                 ir.law_theorems[i].steps = Some(script);
                 ir.law_theorems[i].steps_refusal = None;
+                ir.law_theorems[i].steps_hints = Vec::new();
             }
             Err(why) => {
                 ir.law_theorems[i].steps = None;
                 ir.law_theorems[i].steps_refusal = Some(why);
+                ir.law_theorems[i].steps_hints = hints;
             }
         }
     }
