@@ -160,7 +160,14 @@ impl Env<'_> {
             let Some(said) = term::bool_value(&e.rhs) else {
                 continue;
             };
-            let ev = self.whnf(&e.lhs)?;
+            // Evaluated without the hypotheses that state it, which would
+            // only give their own value back.
+            let saved = self.hyps.clone();
+            let lhs = term::canon(&e.lhs);
+            self.hyps.retain(|(_, h)| term::canon(&h.lhs) != lhs);
+            let ev = self.whnf(&e.lhs);
+            self.hyps = saved;
+            let ev = ev?;
             if term::bool_value(ev.chain.cur()) != Some(!said) {
                 continue;
             }

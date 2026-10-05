@@ -20,14 +20,15 @@ pub(super) struct StepsReport {
 impl StepsReport {
     /// How an obligation was closed: `steps`, `tactic`, or `open`.
     pub fn closed_by(&self, obligation: &str, universal: bool) -> &'static str {
-        // The obligations of a `because` chain share their law's script.
-        let law = obligation
-            .strip_suffix(".implication")
-            .or_else(|| {
-                let (law, step) = obligation.rsplit_once(".because")?;
-                (!step.is_empty() && step.bytes().all(|b| b.is_ascii_digit())).then_some(law)
-            })
-            .unwrap_or(obligation);
+        // An obligation of a `because` chain has a script of its own; a
+        // law guided by `using` alone shares its law's.
+        let law = if self.emitted.contains(obligation) {
+            obligation
+        } else {
+            obligation
+                .strip_suffix(".implication")
+                .unwrap_or(obligation)
+        };
         if !universal {
             "open"
         } else if self.emitted.contains(law) && !self.rejected.contains(law) {
@@ -63,6 +64,30 @@ pub(super) fn collect(output_dir: &str, build_log: &str) -> StepsReport {
                 || lean_sources.contains(&format!("AVER_STEPS_REJECTED:{law}\""))
         })
         .collect();
+    // A law whose `because` obligations each got their own step term is
+    // stated by Lean through them: it closes by steps when all of them do.
+    let mut emitted = emitted;
+    let obligation_of = |name: &str, law: &str| {
+        name.strip_prefix(law)
+            .and_then(|rest| rest.strip_prefix('.'))
+            .is_some_and(|step| {
+                step == "implication"
+                    || step
+                        .strip_prefix("because")
+                        .is_some_and(|k| !k.is_empty() && k.bytes().all(|b| b.is_ascii_digit()))
+            })
+    };
+    let files = with("steps");
+    for (law, _) in &files {
+        let parts: Vec<&String> = files
+            .iter()
+            .map(|(n, _)| n)
+            .filter(|n| obligation_of(n, law))
+            .collect();
+        if !parts.is_empty() && parts.iter().all(|p| emitted.contains(*p)) {
+            emitted.insert(law.clone());
+        }
+    }
     let mut refused: BTreeMap<String, String> = BTreeMap::new();
     let mut hints: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (law, p) in with("refused") {

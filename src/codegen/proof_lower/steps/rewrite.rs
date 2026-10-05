@@ -133,6 +133,10 @@ impl Env<'_> {
                 }
             }
         }
+        // A fact inside a hypothesis that calls a predicate.
+        if let Some(proof) = self.view_for(&t) {
+            return Some(proof);
+        }
         // `0 <= e && e < n`: a range fact.
         if let ResolvedExpr::Call(ResolvedCallee::Builtin(b), args) = &t.node
             && b == "Bool.and"
@@ -142,10 +146,92 @@ impl Env<'_> {
             && let ResolvedExpr::BinOp(BinOp::Lt, e2, n) = &args[1].node
             && canon(e) == canon(e2)
             && let Some(n) = term::int_value(n)
+            && let Some(p) = self.range(e, &n, 0)
         {
-            return self.range(e, &n, 0);
+            return Some(p);
         }
-        None
+        // A conjunction, one conjunct at a time.
+        if let ResolvedExpr::Call(ResolvedCallee::Builtin(b), args) = &t.node
+            && b == "Bool.and"
+            && args.len() == 2
+        {
+            return self.discharge_conjuncts(&t).ok();
+        }
+        // A comparison the decided comparisons in scope settle linearly.
+        self.linear_proof(&t, true)
+    }
+
+    /// Prove `t = true` for a conjunction (`Bool.and`, nested) one conjunct
+    /// at a time, each as [`Self::discharge`] proves a single fact, then
+    /// put the conjunction back together: `Bool.and(a, b)` is
+    /// `Bool.and(true, b)` by `a = true`, which is `b`, which is `true`.
+    /// The first conjunct no proof is found for comes back.
+    pub(crate) fn discharge_conjuncts(&mut self, t: &Term) -> Result<Proof, Box<Term>> {
+        let t = canon(t);
+        let ResolvedExpr::Call(ResolvedCallee::Builtin(b), args) = &t.node else {
+            return self.discharge(&t).ok_or(Box::new(t));
+        };
+        if b != "Bool.and" || args.len() != 2 {
+            return self.discharge(&t).ok_or(Box::new(t));
+        }
+        let (a, b) = (canon(&args[0]), canon(&args[1]));
+        let pa = match self.discharge(&a) {
+            Some(p) => p,
+            None => return Err(Box::new(self.first_open_conjunct(&a))),
+        };
+        let pb = match self.discharge(&b) {
+            Some(p) => p,
+            None => return Err(Box::new(self.first_open_conjunct(&b))),
+        };
+        let truth = term::boolean(true);
+        Ok(Proof::Trans {
+            terms: vec![
+                t.clone(),
+                canon(&term::bool_and(truth.clone(), b.clone())),
+                b.clone(),
+                truth,
+            ],
+            steps: vec![
+                Proof::Congr {
+                    ctx: term::bool_and(term::hole(), b.clone()),
+                    inner: Box::new(pa),
+                },
+                Proof::Rule {
+                    rule: WallRule::AndTrueL,
+                    subst: vec![("b".into(), b)],
+                    premises: Vec::new(),
+                },
+                pb,
+            ],
+        })
+    }
+
+    /// Every conjunct of `t`, innermost, that [`Self::discharge`] does not
+    /// prove.
+    pub(crate) fn open_conjuncts(&mut self, t: &Term) -> Vec<Term> {
+        let t = canon(t);
+        if self.discharge(&t).is_some() {
+            return Vec::new();
+        }
+        if let ResolvedExpr::Call(ResolvedCallee::Builtin(b), args) = &t.node
+            && b == "Bool.and"
+            && args.len() == 2
+        {
+            let mut out = self.open_conjuncts(&args[0]);
+            out.extend(self.open_conjuncts(&args[1]));
+            if !out.is_empty() {
+                return out;
+            }
+        }
+        vec![t]
+    }
+
+    /// The innermost conjunct of `t` that [`Self::discharge`] does not prove.
+    pub(crate) fn first_open_conjunct(&mut self, t: &Term) -> Term {
+        match self.discharge_conjuncts(t) {
+            Ok(_) => canon(t),
+            Err(open) => *open,
+        }
     }
 
     fn range(&mut self, e: &Term, n: &num_bigint::BigInt, depth: usize) -> Option<Proof> {
@@ -201,7 +287,17 @@ impl Env<'_> {
                 }
                 let subst = ordered(&law.givens, found)?;
                 let premise = match &law.premise {
-                    Some(when) => Some(Box::new(self.discharge(&term::subst(when, &subst).ok()?)?)),
+                    Some(when) => {
+                        let when = term::subst(when, &subst).ok()?;
+                        match self.discharge(&when) {
+                            Some(p) => Some(Box::new(p)),
+                            None => {
+                                let open = self.open_conjuncts(&when);
+                                self.note_open_premise(&law.key, &subst, &open);
+                                return None;
+                            }
+                        }
+                    }
                     None => None,
                 };
                 let rhs = term::subst(&law.rhs, &subst).ok()?;
@@ -428,4 +524,132 @@ pub(crate) fn loops(law: &LawRef) -> Option<String> {
 /// Whether `part` occurs in `t`.
 fn holds_term(t: &Term, part: &Term) -> bool {
     canon(t) == *part || term::children(t).into_iter().any(|c| holds_term(c, part))
+}
+
+fn is_int_term(t: &Term) -> bool {
+    matches!(t.ty(), Some(crate::ast::Type::Int)) || term::int_value(t).is_some()
+}
+
+/// Steps proving `a = b` when the two differ only in Int parts that are the
+/// same polynomial: a ring step at each such part, under congruence. `None`
+/// when they differ anywhere else; no steps when they are the same term.
+pub(crate) fn ring_bridge(a: &Term, b: &Term) -> Option<Vec<(Proof, Term)>> {
+    let (a, b) = (canon(a), canon(b));
+    if a == b {
+        return Some(Vec::new());
+    }
+    if (is_int_term(&a) || is_int_term(&b)) && crate::ir::proof_steps::ring::same_polynomial(&a, &b)
+    {
+        return Some(vec![(
+            Proof::Ring {
+                lhs: a,
+                rhs: b.clone(),
+            },
+            b,
+        )]);
+    }
+    if !head_eq(&a, &b) || matches!(a.node, ResolvedExpr::Match { .. }) {
+        return None;
+    }
+    let n = term::children(&a).len();
+    if n != term::children(&b).len() || n == 0 {
+        return None;
+    }
+    let mut steps = Vec::new();
+    let mut cur = a.clone();
+    for i in 0..n {
+        let (x, y) = (
+            term::children(&cur)[i].clone(),
+            term::children(&b)[i].clone(),
+        );
+        let inner = ring_bridge(&x, &y)?;
+        for (proof, to) in inner {
+            let ctx = term::context_at(&cur, &[i]);
+            let next = canon(&term::plug(&ctx, &to));
+            steps.push((
+                Proof::Congr {
+                    ctx,
+                    inner: Box::new(proof),
+                },
+                next.clone(),
+            ));
+            cur = next;
+        }
+    }
+    (cur == b).then_some(steps)
+}
+
+impl Env<'_> {
+    /// `x = y` by one instance of a cited law, either way round: one side
+    /// of the law matches its side of the equation, which fixes every
+    /// given, and the other side of the instance is the other side of the
+    /// equation up to Int parts that are the same polynomial. Its `when`
+    /// is discharged as any premise is. Commutativity applies this way
+    /// too, since nothing is rewritten again.
+    pub(crate) fn direct_equal(&mut self, x: &Term, y: &Term) -> Option<Proof> {
+        let (x, y) = (canon(x), canon(y));
+        for law in self.cited_all.clone() {
+            for flip in [false, true] {
+                let (pl, pr) = if flip {
+                    (&law.rhs, &law.lhs)
+                } else {
+                    (&law.lhs, &law.rhs)
+                };
+                // Either side may fix the givens; the other is bridged.
+                for (anchor, target) in [(pl, &x), (pr, &y)] {
+                    let mut found = Vec::new();
+                    if !matches(anchor, target, &law.givens, &mut found) {
+                        continue;
+                    }
+                    let Some(subst) = ordered(&law.givens, found) else {
+                        continue;
+                    };
+                    let (Ok(il), Ok(ir)) = (term::subst(pl, &subst), term::subst(pr, &subst))
+                    else {
+                        continue;
+                    };
+                    let (il, ir) = (canon(&il), canon(&ir));
+                    let (Some(before), Some(after)) = (ring_bridge(&x, &il), ring_bridge(&ir, &y))
+                    else {
+                        continue;
+                    };
+                    let premise = match &law.premise {
+                        None => None,
+                        Some(when) => {
+                            let when = term::subst(when, &subst).ok()?;
+                            match self.discharge(&when) {
+                                Some(p) => Some(Box::new(p)),
+                                None => {
+                                    let open = self.open_conjuncts(&when);
+                                    self.note_open_premise(&law.key, &subst, &open);
+                                    continue;
+                                }
+                            }
+                        }
+                    };
+                    let mut step = Proof::Law {
+                        law: law.key.clone(),
+                        subst,
+                        premise,
+                    };
+                    if flip {
+                        step = Proof::Symm(Box::new(step));
+                    }
+                    if !self.laws.iter().any(|l| l.key == law.key) {
+                        self.laws.push(law.clone());
+                    }
+                    let mut chain = super::chain::Chain::new(&x);
+                    for (p, to) in before {
+                        chain.push(p, to);
+                    }
+                    chain.push(step, ir.clone());
+                    for (p, to) in after {
+                        chain.push(p, to);
+                    }
+                    return Some(chain.finish().1);
+                }
+            }
+        }
+        None
+    }
 }

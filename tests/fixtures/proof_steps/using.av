@@ -56,7 +56,7 @@ verify g law throughHOtherWay
 verify g law overlapping
     given x: String = ["", "a"]
     using [f.isG, f.isH]
-    f(x) => g(x)
+    f(x) + "?" => g(x) + "?"
 
 verify sameLen law commutes
     given a: List<Int> = [[], [1]]
@@ -67,3 +67,8 @@ verify sameLen law againstOne
     given xs: List<Int> = [[], [1]]
     using [sameLen.commutes]
     sameLen(xs, [1]) => sameLen([1], xs)
+
+verify sameLen law negatedAgainstOne
+    given xs: List<Int> = [[], [1]]
+    using [sameLen.commutes]
+    Bool.not(sameLen(xs, [1])) => Bool.not(sameLen([1], xs))

@@ -3,11 +3,15 @@
 
 Every corpus file that declares a law (`examples/`, `proof-corpus/`,
 `projects/*`) is proved, and per file the baseline `tools/steps-baseline.json`
-records two levels:
+records three levels:
 
 - `steps`: laws closed by proof steps the kernel written in Aver checks,
   with `aver proof --backend aver`, in process. This needs no Lean and runs
   on every pull request.
+- `obligations`: for a law with `because` lines that is not at the steps
+  level, each obligation of its chain (`<law>.because<k>`, `<law>.implication`)
+  closed by steps the kernel checks, so partial progress is held too. A law at
+  the steps level is not counted again by its parts.
 - `tactic`: the other laws Lean closes (with tactics, or with steps that
   cite a law only tactics close). Measured only with `--lean`, which also
   runs `aver proof --check-json` per file and needs Lean.
@@ -51,7 +55,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BASELINE = REPO_ROOT / "tools" / "steps-baseline.json"
 CORPUS_DIRS = ["examples", "proof-corpus", "projects"]
 LAW = re.compile(r"^verify \S+ law ", re.M)
-LEVELS = ("steps", "tactic")
+LEVELS = ("steps", "obligations", "tactic")
 
 # Files whose modules resolve from a root other than their own directory.
 MODULE_ROOTS = {
@@ -90,7 +94,20 @@ def summarize(report: dict) -> dict:
     """The part of a `--check-json` report the ratchet holds."""
     closed_by = {law: how for law, how in report.get("closed_by", {}).items() if own(law)}
     by = lambda level: sorted(law for law, how in closed_by.items() if how == level)
-    return {"steps": by("steps"), "tactic": by("tactic"), "laws": len(closed_by)}
+    steps = set(by("steps"))
+    # Obligations of a `because` chain closed by steps, for laws that are
+    # not: a law at the steps level is not counted again by its parts.
+    obligations = sorted(
+        ob
+        for ob, how in report.get("obligations_closed_by", {}).items()
+        if own(ob) and how == "steps" and ob.rsplit(".", 1)[0] not in steps
+    )
+    return {
+        "steps": sorted(steps),
+        "obligations": obligations,
+        "tactic": by("tactic"),
+        "laws": len(closed_by),
+    }
 
 
 def report(aver: Path, entry: str, lean: bool) -> dict:
@@ -123,6 +140,7 @@ def measure(aver: Path, entry: str, lean: bool) -> dict:
     closed = {law for law in by_lean.get("universal", []) if own(law)}
     return {
         "steps": steps["steps"],
+        "obligations": steps["obligations"],
         "tactic": sorted(closed - set(steps["steps"])),
         "laws": steps["laws"],
     }
@@ -132,7 +150,11 @@ def steps_gains(before: dict, after: dict) -> dict[str, list[str]]:
     """The laws `after` records at the steps level that `before` does not, by file."""
     out: dict[str, list[str]] = {}
     for entry, row in after.items():
-        new = sorted(set(row.get("steps", [])) - set(before.get(entry, {}).get("steps", [])))
+        old = before.get(entry, {})
+        new = sorted(
+            (set(row.get("steps", [])) - set(old.get("steps", [])))
+            | (set(row.get("obligations", [])) - set(old.get("obligations", [])) - set(old.get("steps", [])))
+        )
         if new:
             out[entry] = new
     return out
@@ -174,9 +196,12 @@ def compare(baseline: dict, current: dict, levels: tuple[str, ...]) -> tuple[lis
                 drops.append(f"{entry}: no longer in the corpus")
             continue
         for level in levels:
-            before, after = set(old.get(level, [])), set(new[level])
+            before, after = set(old.get(level, [])), set(new.get(level, []))
             for law in sorted(before - after):
-                now = next((other for other in LEVELS if law in new[other]), None)
+                # An obligation whose whole law now closes by steps moved up.
+                if level == "obligations" and law.rsplit(".", 1)[0] in new.get("steps", []):
+                    continue
+                now = next((other for other in LEVELS if law in new.get(other, [])), None)
                 where = f"is closed by {now} now" if now else "no longer closes"
                 drops.append(f"{entry}: `{law}` {where} (was {level})")
             gains += [f"{entry}: `{law}` newly closes by {level}" for law in sorted(after - before)]
@@ -243,7 +268,7 @@ def main(argv: list[str]) -> int:
             "(record it with `python3 tools/steps_ratchet.py --lean --update`)"
         )
         lean = False
-    levels = LEVELS if lean else ("steps",)
+    levels = LEVELS if lean else ("steps", "obligations")
 
     entries = [e for e in corpus(REPO_ROOT) if not args.only or e in args.only]
     current: dict = {}

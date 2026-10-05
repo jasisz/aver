@@ -65,11 +65,39 @@ class CompareTests(unittest.TestCase):
 
     def test_summary_splits_the_levels(self) -> None:
         report = {"closed_by": {"f.l": "steps", "g.l": "open", "h.l": "tactic"}}
-        self.assertEqual(ratchet.summarize(report), {"steps": ["f.l"], "tactic": ["h.l"], "laws": 3})
+        self.assertEqual(ratchet.summarize(report), {"steps": ["f.l"], "obligations": [], "tactic": ["h.l"], "laws": 3})
 
     def test_imported_laws_count_where_they_are_declared(self) -> None:
         report = {"closed_by": {"f.l": "steps", "Lib.g.l": "steps", "Lib.h.l": "open"}}
-        self.assertEqual(ratchet.summarize(report), {"steps": ["f.l"], "tactic": [], "laws": 1})
+        self.assertEqual(ratchet.summarize(report), {"steps": ["f.l"], "obligations": [], "tactic": [], "laws": 1})
+
+    def test_obligations_of_laws_not_closed_whole(self) -> None:
+        report = {
+            "closed_by": {"f.l": "steps", "g.l": "open"},
+            "obligations_closed_by": {
+                "f.l.because1": "steps",
+                "f.l.implication": "steps",
+                "g.l.because1": "steps",
+                "g.l.implication": "open",
+                "Lib.h.l.because1": "steps",
+            },
+        }
+        self.assertEqual(ratchet.summarize(report)["obligations"], ["g.l.because1"])
+
+    def test_an_obligation_gain_is_counted_and_goes_to_lean(self) -> None:
+        old = {"a.av": {"obligations": ["g.l.because1"]}}
+        new = {"a.av": {"steps": [], "obligations": ["g.l.because1", "g.l.implication"]}}
+        drops, gains = ratchet.compare(old, new, ("steps", "obligations"))
+        self.assertEqual(drops, [])
+        self.assertEqual(gains, ["a.av: `g.l.implication` newly closes by obligations"])
+        self.assertEqual(ratchet.steps_gains(old, new), {"a.av": ["g.l.implication"]})
+
+    def test_a_law_closed_whole_is_not_counted_twice(self) -> None:
+        old = {"a.av": {"obligations": ["g.l.because1"]}}
+        new = {"a.av": {"steps": ["g.l"], "obligations": []}}
+        drops, gains = ratchet.compare(old, new, ("steps", "obligations"))
+        self.assertEqual(drops, [])
+        self.assertEqual(gains, ["a.av: `g.l` newly closes by steps"])
 
     def test_only_new_steps_level_laws_go_to_lean(self) -> None:
         base = {"a.av": {"steps": ["f.l"], "tactic": ["g.l"]}, "b.av": {"steps": ["h.l"]}}

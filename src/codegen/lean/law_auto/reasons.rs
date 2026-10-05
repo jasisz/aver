@@ -565,10 +565,26 @@ pub(in crate::codegen::lean) fn emit_reason_law(
         // and the whole strategy above is its fallback. Each obligation
         // takes its own part of the law's script, with the earlier reasons
         // as the hypotheses this theorem introduces.
+        let obligation = super::law_obligations_for(ctx, &vb.fn_name, &law.name)
+            .and_then(|obs| obs.into_iter().nth(index))
+            .and_then(|ob| ob.script);
+        let steps = match obligation {
+            Some(script) => {
+                crate::codegen::lean::proof_steps::render_obligation(&script, index, ctx)
+                    .ok()
+                    .map(|r| (script.obligation.key.clone(), r))
+            }
+            // A law guided by `using` alone has one obligation, its own.
+            None if reasons.is_empty() => super::law_steps_for(ctx, &vb.fn_name, &law.name)
+                .and_then(|script| {
+                    crate::codegen::lean::proof_steps::render_reason(&script, index, ctx)
+                        .ok()
+                        .map(|r| (script.obligation.key.clone(), r))
+                }),
+            None => None,
+        };
         if claim.allow_steps
-            && let Some(script) = super::law_steps_for(ctx, &vb.fn_name, &law.name)
-            && let Ok(rendered) =
-                crate::codegen::lean::proof_steps::render_reason(&script, index, ctx)
+            && let Some((steps_key, rendered)) = steps
         {
             let structured = lines.split_off(strategy_start);
             lines.push("  first".to_string());
@@ -577,7 +593,7 @@ pub(in crate::codegen::lean) fn emit_reason_law(
             lines.push(format!(
                 "    trace \"{}{}\"",
                 crate::codegen::lean::proof_steps::STEPS_REJECTED_MARKER,
-                script.obligation.key
+                steps_key
             ));
             lines.extend(structured.into_iter().map(|line| format!("  {line}")));
         }

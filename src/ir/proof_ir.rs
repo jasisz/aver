@@ -509,6 +509,18 @@ pub struct LawTheorem {
     /// matches a part of where evaluation stopped, with that part, as a
     /// hint to cite it. Never applied without `using`.
     pub steps_hints: Vec<String>,
+    /// For a law with `because` lines: each obligation of its chain
+    /// (`<law>.because<k>`, then `<law>.implication`), with its own script
+    /// or why none. A script states what it assumes in its premise.
+    pub obligation_steps: Vec<ObligationSteps>,
+}
+
+/// One obligation of a `because` chain and its proof as data, if any.
+#[derive(Debug, Clone)]
+pub struct ObligationSteps {
+    pub key: String,
+    pub script: Option<crate::ir::proof_steps::Script>,
+    pub refusal: Option<String>,
 }
 
 #[derive(Debug, Clone)]
