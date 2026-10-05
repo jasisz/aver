@@ -27,6 +27,7 @@ fn sumList(xs: List<Nat>) -> Nat
 verify sumList law sumCons
     given h: Nat = [Nat.Z, Nat.S(Nat.Z)]
     given t: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z)]]
+    using [List.concat.rightIdentity]
     sumList(List.concat([h], t)) => plus(h, sumList(t))
 
 verify sumList law sumAllZero

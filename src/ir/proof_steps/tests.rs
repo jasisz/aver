@@ -407,6 +407,45 @@ fn both_checkers_refuse_wrong_ring_and_linear_steps() {
     }
 }
 
+/// A list literal with an element is that element in front of the rest,
+/// and nothing else, in both checkers.
+#[test]
+fn both_checkers_read_a_list_literal_as_a_cell() {
+    use super::sexpr::{BuiltinsOnly, script as serialise};
+    let lit = term::list(vec![var("y"), var("z")]);
+    let cell = |h: &str, t: super::Term| term::builtin("List.prepend", vec![var(h), t], None);
+    let verdicts = |lhs: super::Term, rhs: super::Term, list: super::Term| {
+        let mut s = script(lhs, rhs, Proof::Cell { list });
+        s.obligation.givens = vec!["y".into(), "z".into()];
+        (
+            check_script(&s),
+            crate::proof_kernel::verdict(&serialise(&s, &BuiltinsOnly).unwrap()),
+        )
+    };
+    let good = cell("y", term::list(vec![var("z")]));
+    assert_eq!(
+        verdicts(lit.clone(), good, lit.clone()),
+        (Ok(()), Ok("f.law".to_string()))
+    );
+    for (kind, (rust, kernel)) in [
+        (
+            "the elements swapped",
+            verdicts(
+                lit.clone(),
+                cell("z", term::list(vec![var("y")])),
+                lit.clone(),
+            ),
+        ),
+        (
+            "the empty list",
+            verdicts(term::nil(), term::nil(), term::nil()),
+        ),
+    ] {
+        assert!(rust.is_err(), "{kind}: the compiler's checker accepted");
+        assert!(kernel.is_err(), "{kind}: the kernel accepted");
+    }
+}
+
 /// A module-level binding opens to its value and to nothing else: the step
 /// names the binding, the script carries its value, and a binding the
 /// script does not carry proves nothing.

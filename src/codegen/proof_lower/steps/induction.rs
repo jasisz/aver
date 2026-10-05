@@ -58,6 +58,19 @@ fn recursive_in_claim(env: &mut Env, ob: &Obligation) -> Vec<String> {
         .collect()
 }
 
+/// Whether `t` holds a `match` with a call of `f` in one of its arms.
+fn split_holds_self_call(t: &Term, f: FnId) -> bool {
+    if let ResolvedExpr::Match { subject, arms } = &t.node {
+        return split_holds_self_call(subject, f)
+            || arms
+                .iter()
+                .any(|a| !induct::self_calls(&a.body, f).is_empty());
+    }
+    term::children(t)
+        .into_iter()
+        .any(|c| split_holds_self_call(c, f))
+}
+
 fn fresh(base: &str, taken: &[String]) -> String {
     if !taken.iter().any(|t| t == base) {
         return base.to_string();
@@ -143,6 +156,14 @@ impl Env<'_> {
         let ResolvedExpr::Match { arms, .. } = &def.body.node else {
             return Err("induction: the body is not a match".into());
         };
+        // Lean's induction principle for `f` splits a case further at every
+        // `match` (an `if` included) that holds a recursive call; one case
+        // per arm would not line up with it.
+        if arms.iter().any(|arm| split_holds_self_call(&arm.body, f)) {
+            return Err(format!(
+                "induction along {f_name}: a recursive call sits inside a case split of an arm, where Lean's induction principle for {f_name} splits the case further"
+            ));
+        }
         self.mark_used(f);
         let mut cases = Vec::new();
         for (i, arm) in arms.iter().enumerate() {

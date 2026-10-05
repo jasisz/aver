@@ -292,7 +292,11 @@ impl Renderer<'_> {
         let body = match p {
             // A module-level binding is a Lean `def` with no parameters;
             // its value is its definitional unfolding.
-            Proof::Refl(_) | Proof::Proj { .. } | Proof::UnfoldConst { .. } => "rfl".to_string(),
+            // `[x, y]` is notation for `x :: [y]`.
+            Proof::Refl(_)
+            | Proof::Proj { .. }
+            | Proof::Cell { .. }
+            | Proof::UnfoldConst { .. } => "rfl".to_string(),
             Proof::Symm(inner) => format!("Eq.symm {}", self.proof(inner, hyps)?),
             Proof::Trans { steps, .. } => {
                 let mut parts = Vec::new();

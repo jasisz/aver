@@ -167,6 +167,10 @@ pub enum Proof {
     /// A record literal's field: `R(…, f = v, …).f = v`. `term` is the
     /// projection.
     Proj { term: Term },
+    /// A list literal with at least one element is its first element in
+    /// front of the rest: `[x, …rest] = List.prepend(x, […rest])`. `list`
+    /// is the literal.
+    Cell { list: Term },
     /// A hypothesis in scope, by name (`when` is the law's own premise).
     Hyp(String),
     /// A wall rule instance; `subst` binds every rule binder, `premises`
@@ -383,6 +387,7 @@ impl Proof {
         1 + match self {
             Proof::Refl(_)
             | Proof::Proj { .. }
+            | Proof::Cell { .. }
             | Proof::Hyp(_)
             | Proof::Compute { .. }
             | Proof::UnfoldConst { .. }

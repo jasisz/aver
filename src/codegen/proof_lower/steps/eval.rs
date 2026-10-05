@@ -54,8 +54,13 @@ fn is_int(t: &Term) -> bool {
 }
 
 /// The arm of a match whose pattern head the value `v` has, with the
-/// pattern's bindings. `None` when no arm can be selected syntactically.
-fn select_arm(arms: &[crate::ir::hir::ResolvedMatchArm], v: &Term) -> Option<(u32, Vec<Term>)> {
+/// pattern's bindings, and whether `v` is a list literal the arm reads as a
+/// cell (so the premise ends with a [`Proof::Cell`] step). `None` when no
+/// arm can be selected syntactically.
+fn select_arm(
+    arms: &[crate::ir::hir::ResolvedMatchArm],
+    v: &Term,
+) -> Option<(u32, Vec<Term>, bool)> {
     use crate::ir::proof_steps::check::{excludes, is_catch_all};
     for (i, arm) in arms.iter().enumerate() {
         let k = (i + 1) as u32;
@@ -64,35 +69,58 @@ fn select_arm(arms: &[crate::ir::hir::ResolvedMatchArm], v: &Term) -> Option<(u3
             return arms[..i]
                 .iter()
                 .all(|earlier| excludes(&earlier.pattern, v))
-                .then(|| (k, vec![canon(v)]));
+                .then(|| (k, vec![canon(v)], false));
         }
         match (&arm.pattern, &v.node) {
             (ResolvedPattern::Literal(l), ResolvedExpr::Literal(x)) => {
                 if l == x {
-                    return Some((k, Vec::new()));
+                    return Some((k, Vec::new(), false));
                 }
             }
             (ResolvedPattern::Ctor(c, names), ResolvedExpr::Ctor(c2, args)) => {
                 if c == c2 && names.len() == args.len() {
-                    return Some((k, args.clone()));
+                    return Some((k, args.clone(), false));
                 }
             }
             (ResolvedPattern::EmptyList, ResolvedExpr::List(xs)) if xs.is_empty() => {
-                return Some((k, Vec::new()));
+                return Some((k, Vec::new(), false));
             }
             (ResolvedPattern::Cons(..), ResolvedExpr::Call(ResolvedCallee::Builtin(b), args))
                 if b == "List.prepend" && args.len() == 2 =>
             {
-                return Some((k, args.clone()));
+                return Some((k, args.clone(), false));
+            }
+            // A list literal with an element is a cell.
+            (ResolvedPattern::Cons(..), ResolvedExpr::List(xs)) if !xs.is_empty() => {
+                return Some((
+                    k,
+                    term::children(&term::cell_of(v)?)
+                        .into_iter()
+                        .cloned()
+                        .collect(),
+                    true,
+                ));
             }
             // A literal subject meets a different literal / constructor:
             // keep looking. Anything else cannot be decided here.
+            (ResolvedPattern::EmptyList, ResolvedExpr::List(xs)) if !xs.is_empty() => continue,
             (ResolvedPattern::EmptyList, ResolvedExpr::Call(..))
             | (ResolvedPattern::Cons(..), ResolvedExpr::List(_)) => continue,
             _ => return None,
         }
     }
     None
+}
+
+/// `chain` with a last [`Proof::Cell`] step when its value is a list
+/// literal an arm reads as a cell.
+fn with_cell(mut chain: Chain, cell: bool) -> Chain {
+    if cell {
+        let list = chain.cur().clone();
+        let to = term::cell_of(&list).expect("select_arm saw a list literal with an element");
+        chain.push(Proof::Cell { list }, to);
+    }
+    chain
 }
 
 fn is_bool_value(t: &Term) -> bool {
@@ -240,8 +268,8 @@ impl Env<'_> {
                 let ev = self.whnf(&s)?;
                 let value = ev.chain.cur().clone();
                 match select_arm(arms, &value) {
-                    Some((k, binders)) => {
-                        let (_, premise) = ev.chain.finish();
+                    Some((k, binders, cell)) => {
+                        let (_, premise) = with_cell(ev.chain, cell).finish();
                         let unfold = Proof::Unfold {
                             fn_id: *id,
                             arm: k,
@@ -318,8 +346,8 @@ impl Env<'_> {
                 let ev = self.whnf(subject)?;
                 let value = ev.chain.cur().clone();
                 match select_arm(arms, &value) {
-                    Some((k, binders)) => {
-                        let (_, premise) = ev.chain.finish();
+                    Some((k, binders, cell)) => {
+                        let (_, premise) = with_cell(ev.chain, cell).finish();
                         let arm = Proof::Arm {
                             term: cur.clone(),
                             arm: k,
@@ -338,6 +366,16 @@ impl Env<'_> {
                         self.settle(cur, g)
                     }
                 }
+            }
+            // A list literal with an open element evaluates to its first
+            // element in front of the rest; a closed one keeps the shape it
+            // was written in.
+            ResolvedExpr::List(xs) if !xs.is_empty() && term::eval_closed(cur).is_none() => {
+                let to = term::cell_of(cur).expect("a list literal with an element");
+                Ok(Step::Progress(Box::new((
+                    Proof::Cell { list: cur.clone() },
+                    to,
+                ))))
             }
             ResolvedExpr::Ident(name) => match self.constant(name) {
                 // A module-level binding reads as its value.
@@ -395,6 +433,26 @@ impl Env<'_> {
         let Some(list) = args.first() else {
             return Ok(None);
         };
+        if matches!(
+            name.as_str(),
+            "List.concat" | "List.len" | "List.reverse" | "List.take" | "List.drop"
+        ) && let ResolvedExpr::List(xs) = &list.node
+            && !xs.is_empty()
+            && term::eval_closed(list).is_none()
+        {
+            // A literal with an open element steps as a cell; a closed one
+            // keeps the shape it was written in.
+            let cell = term::cell_of(list).expect("a list literal with an element");
+            let ctx = term::context_at(cur, &[0]);
+            let to = term::plug(&ctx, &cell);
+            return Ok(Some(Step::Progress(Box::new((
+                Proof::Congr {
+                    ctx,
+                    inner: Box::new(Proof::Cell { list: list.clone() }),
+                },
+                to,
+            )))));
+        }
         let shape = match &list.node {
             ResolvedExpr::List(xs) if xs.is_empty() => None,
             ResolvedExpr::Call(ResolvedCallee::Builtin(b), parts)

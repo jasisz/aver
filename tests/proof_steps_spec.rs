@@ -1132,12 +1132,13 @@ fn lean_checks_ring_and_linear_steps() {
     let _ = fs::remove_dir_all(out);
 }
 
-const LIST_LAWS: [&str; 8] = [
+const LIST_LAWS: [&str; 9] = [
     "oneIfPositive.isLenOfTakeOfOne",
     "pushed.dropNothing",
     "pushed.dropOneMore",
     "pushed.growsByOne",
     "pushed.joinsInFront",
+    "pushed.literalWithVariables",
     "pushed.reversedEndsWithHead",
     "pushed.takeKeepsHead",
     "pushed.takeNothing",
@@ -1497,6 +1498,27 @@ fn aver_facts_lists_the_facts_with_their_statements() {
         involutive["cites"],
         serde_json::json!(["List.reverse.ofConcat"])
     );
+}
+
+/// Induction along a function whose arm splits (`if`) around its
+/// recursive call is refused by name: Lean's induction principle for it
+/// has one case per branch, not one per arm.
+#[test]
+fn induction_refuses_a_recursive_call_inside_a_split_arm() {
+    let dir = scratch("split-arm");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("split.av"),
+        "module Split\n    intent = \"Insertion with an if around the recursive call.\"\n    exposes [ins, size]\n    effects []\n\nfn size(xs: List<Int>) -> Int\n    ? \"Length.\"\n    match xs\n        [] -> 0\n        [h, ..t] -> size(t) + 1\n\nverify size\n    size([1]) => 1\n\nfn ins(x: Int, xs: List<Int>) -> List<Int>\n    ? \"Insert before the first larger element.\"\n    match xs\n        [] -> [x]\n        [h, ..t] -> match x < h\n            true -> List.prepend(x, xs)\n            false -> List.prepend(h, ins(x, t))\n\nverify ins\n    ins(2, [1, 3]) => [1, 2, 3]\n\nverify ins law growsByOne\n    given x: Int = [0, 2]\n    given xs: List<Int> = [[], [1, 3]]\n    size(ins(x, xs)) => size(xs) + 1\n",
+    )
+    .unwrap();
+    let result = aver_in(&dir, &["proof", "split.av", "--backend", "aver"]);
+    let text = format_output(&result);
+    assert!(
+        text.contains("induction along ins: a recursive call sits inside a case split of an arm"),
+        "{text}"
+    );
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]

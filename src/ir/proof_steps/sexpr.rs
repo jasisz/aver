@@ -26,7 +26,7 @@
 //! PROOF   := (refl TERM) | (symm PROOF) | (trans (TERM…) PROOF…)
 //!          | (congr TERM PROOF) | (unfold FN ARM (TERM…) (TERM…) [PROOF])
 //!          | (const NAME)
-//!          | (arm ARM (TERM…) TERM PROOF) | (proj TERM) | (hyp NAME)
+//!          | (arm ARM (TERM…) TERM PROOF) | (proj TERM) | (cell TERM) | (hyp NAME)
 //!          | (rule RULE ((NAME TERM)…) PROOF…) | (law KEY ((NAME TERM)…) [PROOF])
 //!          | (compute TERM TERM) | (cases TERM NAME PROOF PROOF)
 //!          | (enum NAME TERM TERM PROOF…) | (absurd PROOF TERM TERM)
@@ -367,6 +367,7 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
             proof(premise, names)?
         ),
         Proof::Proj { term: t } => format!("(proj {})", term(t, names)?),
+        Proof::Cell { list } => format!("(cell {})", term(list, names)?),
         Proof::Hyp(h) => format!("(hyp {h})"),
         Proof::Rule {
             rule,

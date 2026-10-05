@@ -338,6 +338,7 @@ fn proofOf(tag: String, args: List<Sexp>) -> Result<Proof, String>
         "const" -> Result.Ok(Proof.PConst(onlyAtom(args)?))
         "arm" -> armProof(args)
         "proj" -> Result.Ok(Proof.PProj(oneTerm(args)?))
+        "cell" -> Result.Ok(Proof.PCell(oneTerm(args)?))
         "hyp" -> Result.Ok(Proof.PHyp(onlyAtom(args)?))
         "rule" -> instanceProof(args, "rule")
         "law" -> instanceProof(args, "law")

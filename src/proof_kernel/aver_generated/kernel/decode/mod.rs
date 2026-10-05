@@ -1016,44 +1016,43 @@ pub fn proofOf(
                                     if &*__dispatch_subject == "proj" {
                                         Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PProj(crate::proof_kernel::aver_generated::kernel::decode::oneTerm(args)?))
                                     } else {
-                                        if &*__dispatch_subject == "hyp" {
-                                            Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PHyp(crate::proof_kernel::aver_generated::kernel::decode::onlyAtom(args)?))
+                                        if &*__dispatch_subject == "cell" {
+                                            Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PCell(crate::proof_kernel::aver_generated::kernel::decode::oneTerm(args)?))
                                         } else {
-                                            if &*__dispatch_subject == "rule" {
-                                                crate::proof_kernel::aver_generated::kernel::decode::instanceProof(args, AverStr::from("rule"))
+                                            if &*__dispatch_subject == "hyp" {
+                                                Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PHyp(crate::proof_kernel::aver_generated::kernel::decode::onlyAtom(args)?))
                                             } else {
-                                                if &*__dispatch_subject == "law" {
-                                                    crate::proof_kernel::aver_generated::kernel::decode::instanceProof(args, AverStr::from("law"))
+                                                if &*__dispatch_subject == "rule" {
+                                                    crate::proof_kernel::aver_generated::kernel::decode::instanceProof(args, AverStr::from("rule"))
                                                 } else {
-                                                    if &*__dispatch_subject == "compute" {
-                                                        crate::proof_kernel::aver_generated::kernel::decode::computeProof(args)
+                                                    if &*__dispatch_subject == "law" {
+                                                        crate::proof_kernel::aver_generated::kernel::decode::instanceProof(args, AverStr::from("law"))
                                                     } else {
-                                                        if &*__dispatch_subject == "cases" {
-                                                            crate::proof_kernel::aver_generated::kernel::decode::casesProof(args)
+                                                        if &*__dispatch_subject == "compute" {
+                                                            crate::proof_kernel::aver_generated::kernel::decode::computeProof(args)
                                                         } else {
-                                                            if &*__dispatch_subject == "enum" {
-                                                                crate::proof_kernel::aver_generated::kernel::decode::enumProof(args)
+                                                            if &*__dispatch_subject == "cases" {
+                                                                crate::proof_kernel::aver_generated::kernel::decode::casesProof(args)
                                                             } else {
-                                                                if &*__dispatch_subject == "absurd"
-                                                                {
-                                                                    crate::proof_kernel::aver_generated::kernel::decode::absurdProof(args)
+                                                                if &*__dispatch_subject == "enum" {
+                                                                    crate::proof_kernel::aver_generated::kernel::decode::enumProof(args)
                                                                 } else {
                                                                     if &*__dispatch_subject
-                                                                        == "induct"
+                                                                        == "absurd"
                                                                     {
-                                                                        crate::proof_kernel::aver_generated::kernel::decode::inductProof(args)
+                                                                        crate::proof_kernel::aver_generated::kernel::decode::absurdProof(args)
                                                                     } else {
                                                                         if &*__dispatch_subject
-                                                                            == "listinduct"
+                                                                            == "induct"
                                                                         {
-                                                                            crate::proof_kernel::aver_generated::kernel::decode::listInductProof(args)
+                                                                            crate::proof_kernel::aver_generated::kernel::decode::inductProof(args)
                                                                         } else {
                                                                             if &*__dispatch_subject
-                                                                                == "ring"
+                                                                                == "listinduct"
                                                                             {
-                                                                                crate::proof_kernel::aver_generated::kernel::decode::ringProof(args)
+                                                                                crate::proof_kernel::aver_generated::kernel::decode::listInductProof(args)
                                                                             } else {
-                                                                                if &*__dispatch_subject == "linear" { crate::proof_kernel::aver_generated::kernel::decode::linearProof(args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(29)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown rule ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(tag)))); __b })) }
+                                                                                if &*__dispatch_subject == "ring" { crate::proof_kernel::aver_generated::kernel::decode::ringProof(args) } else { if &*__dispatch_subject == "linear" { crate::proof_kernel::aver_generated::kernel::decode::linearProof(args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(29)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown rule ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(tag)))); __b })) } }
                                                                             }
                                                                         }
                                                                     }

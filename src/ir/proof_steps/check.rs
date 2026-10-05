@@ -259,6 +259,10 @@ pub fn conclusion(p: &Proof, script: &Script, hyps: &Hyps) -> Result<Eqn, String
             }
             Ok(Eqn::new(canon(t), body))
         }
+        Proof::Cell { list } => {
+            let cell = term::cell_of(list).ok_or("cell: not a list literal with an element")?;
+            Ok(Eqn::new(canon(list), canon(&cell)))
+        }
         Proof::Proj { term: t } => {
             let ResolvedExpr::Attr(obj, field) = &t.node else {
                 return Err("proj: not a field access".into());
