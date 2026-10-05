@@ -61,7 +61,7 @@ fn select_arm(
     arms: &[crate::ir::hir::ResolvedMatchArm],
     v: &Term,
 ) -> Option<(u32, Vec<Term>, bool)> {
-    use crate::ir::proof_steps::check::{excludes, is_catch_all};
+    use crate::ir::proof_steps::claim::{excludes, is_catch_all};
     for (i, arm) in arms.iter().enumerate() {
         let k = (i + 1) as u32;
         if is_catch_all(&arm.pattern) {
@@ -233,7 +233,7 @@ impl Env<'_> {
         match &cur.node {
             ResolvedExpr::Attr(obj, _) => {
                 if matches!(obj.node, ResolvedExpr::RecordCreate { .. }) {
-                    let ev = crate::ir::proof_steps::check::conclusion(
+                    let ev = crate::ir::proof_steps::claim::claim(
                         &Proof::Proj { term: cur.clone() },
                         &empty_script(),
                         &Vec::new(),
@@ -282,9 +282,8 @@ impl Env<'_> {
                         };
                         self.mark_used(*id);
                         let script = self.scratch_script();
-                        let eq = crate::ir::proof_steps::check::conclusion(
-                            &unfold, &script, &self.hyps,
-                        )?;
+                        let eq =
+                            crate::ir::proof_steps::claim::claim(&unfold, &script, &self.hyps)?;
                         Ok(Step::Progress(Box::new((unfold, eq.rhs))))
                     }
                     None => {
@@ -357,7 +356,7 @@ impl Env<'_> {
                             binders,
                             premise: Box::new(premise),
                         };
-                        let eq = crate::ir::proof_steps::check::conclusion(
+                        let eq = crate::ir::proof_steps::claim::claim(
                             &arm,
                             &empty_script(),
                             &self.hyps,

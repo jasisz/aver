@@ -15,7 +15,7 @@ use crate::ast::{BinOp, Spanned, VerifyKind};
 use crate::codegen::CodegenContext;
 use crate::ir::hir::{ResolvedCallee, ResolvedExpr, ResolvedPattern};
 use crate::ir::identity::FnId;
-use crate::ir::proof_steps::check::{Hyps, arm_equation, conclusion};
+use crate::ir::proof_steps::claim::{Hyps, arm_equation, claim};
 use crate::ir::proof_steps::term::{self, HOLE, Term};
 use crate::ir::proof_steps::{Eqn, Proof, Script, WallRule};
 
@@ -361,7 +361,7 @@ impl Renderer<'_> {
     }
 
     fn concl(&self, p: &Proof, hyps: &Hyps) -> Result<Eqn, String> {
-        conclusion(p, self.script, hyps)
+        claim(p, self.script, hyps)
     }
 
     fn proof(&mut self, p: &Proof, hyps: &Hyps) -> Result<String, String> {
@@ -433,7 +433,7 @@ impl Renderer<'_> {
                 let pat = &arms[*arm as usize - 1].pattern;
                 let literal;
                 let pat = match binders.as_slice() {
-                    [v] if crate::ir::proof_steps::check::is_catch_all(pat) => {
+                    [v] if crate::ir::proof_steps::claim::is_catch_all(pat) => {
                         match term::bool_value(v) {
                             Some(b) => {
                                 literal = ResolvedPattern::Literal(crate::ast::Literal::Bool(b));
@@ -831,7 +831,7 @@ impl Renderer<'_> {
             .and_then(|d| match &d.body.node {
                 ResolvedExpr::Match { arms, .. } if arm > 0 => arms
                     .get(arm as usize - 1)
-                    .map(|a| crate::ir::proof_steps::check::is_catch_all(&a.pattern)),
+                    .map(|a| crate::ir::proof_steps::claim::is_catch_all(&a.pattern)),
                 _ => None,
             })
             .unwrap_or(false);

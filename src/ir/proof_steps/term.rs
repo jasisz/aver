@@ -359,25 +359,6 @@ pub fn plug(ctx: &Term, t: &Term) -> Term {
     subst(ctx, &[(HOLE.to_string(), t.clone())]).expect("a hole is never under a binder")
 }
 
-/// Number of holes in `t`.
-pub fn hole_count(t: &Term) -> usize {
-    let mut fv = Vec::new();
-    count_var(t, HOLE, &mut fv);
-    fv.len()
-}
-
-fn count_var(t: &Term, name: &str, out: &mut Vec<()>) {
-    if let ResolvedExpr::Ident(n) = &t.node
-        && n == name
-    {
-        out.push(());
-    }
-    let _ = map_children(t, &mut |c| {
-        count_var(c, name, out);
-        Ok(c.clone())
-    });
-}
-
 /// Direct children in position order (match arm bodies excluded: the
 /// producers never rewrite under a binder).
 pub fn children(t: &Term) -> Vec<&Term> {

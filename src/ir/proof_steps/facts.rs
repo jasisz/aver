@@ -3,8 +3,8 @@
 //!
 //! A law cites a fact by its key in `using` (`List.concat.assoc`), like a
 //! law of its own program. A citation carries the fact's whole step proof
-//! ([`super::LawRef::fact`]), and both checkers check that proof before
-//! they let a step use the fact, so a fact is never an assumption. Lean
+//! ([`super::LawRef::fact`]), and the kernel checks that proof before it
+//! lets a step use the fact, so a fact is never an assumption. Lean
 //! states each fact once, for every element type (`{α : Type}`), from the
 //! same terms, and proves it with the same steps.
 //!

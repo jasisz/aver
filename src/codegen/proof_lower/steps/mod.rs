@@ -1,8 +1,8 @@
 //! Step producers: the rungs that recognised a law's shape write its proof
 //! as data (`crate::ir::proof_steps`) instead of leaving a backend to search.
 //!
-//! Three producers, tried in order and each checked by
-//! [`crate::ir::proof_steps::check::check_script`] before it is kept:
+//! Producers, tried in order; a script is kept only once the kernel
+//! written in Aver ([`crate::proof_kernel::verdict`]) accepts it:
 //! - **algebra**: a pinned `Commutative` / `Associative` / `IdentityElement`
 //!   law: open the wrapper on both sides, close with one ring rule;
 //! - **citations**: a law with an explicit `using` list: rewrite with the
@@ -28,7 +28,6 @@ mod induction;
 mod rewrite;
 
 use crate::codegen::proof_lower::ProofLowerInputs;
-use crate::ir::proof_steps::check::check_script;
 use crate::ir::proof_steps::term::{Term, canon};
 use crate::ir::proof_steps::{LawRef, Obligation, Proof, Script, WallRule};
 use crate::ir::{LawTheorem, ProofIR, ProofStrategy};
@@ -296,10 +295,10 @@ fn produce(
         laws: env.laws.clone(),
         proof,
     };
-    check_script(&script)?;
-    // A script the kernel could not read back would be a producer error
-    // later; refuse it here, by name.
-    crate::ir::proof_steps::sexpr::script(&script, inputs.symbol_table)?;
+    // The kernel judges what the producers built; a script it refuses,
+    // or cannot read back, is refused here by the kernel's reason.
+    let text = crate::ir::proof_steps::sexpr::script(&script, inputs.symbol_table)?;
+    crate::proof_kernel::verdict(&text)?;
     Ok(script)
 }
 

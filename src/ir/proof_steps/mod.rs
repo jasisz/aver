@@ -19,7 +19,7 @@
 //!
 //! The serialised form ([`sexpr`]) is versioned by [`FORMAT_VERSION`].
 
-pub mod check;
+pub mod claim;
 pub mod facts;
 pub mod induct;
 pub mod linear;
