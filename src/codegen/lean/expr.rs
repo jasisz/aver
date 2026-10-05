@@ -270,7 +270,15 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
             // would have emitted a set literal in written order rather than
             // key order. Both go away by letting it fall through.
             if entries.is_empty() {
-                "[]".to_string()
+                // `{}` carries its checked key and value types, so a read of
+                // it on its own (`Map.has({}, "a")`) still has a type in Lean.
+                match expr
+                    .ty()
+                    .filter(|ty| crate::types::checker::type_is_fully_concrete(ty))
+                {
+                    Some(ty) => format!("([] : {})", super::types::type_to_lean(ty)),
+                    None => "[]".to_string(),
+                }
             } else {
                 // The map model is a key-sorted association list, so a
                 // literal written out of order (`{"z" => 1, "a" => 2}`)
