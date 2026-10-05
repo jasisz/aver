@@ -134,6 +134,20 @@ jobs:
           citation_probe_audits_actual_closures_through_globals_and_local_lets
           definitional_unfolding_keeps_decidable_instances_valid_for_rewrite_and_apply
 
+      - name: Check the new steps-level laws under Lean
+        if: matrix.shard == 1 && github.event_name == 'pull_request'
+        # The steps ratchet in ci.yml credits laws the kernel written in Aver
+        # closes. Every law this pull request adds to that level in
+        # tools/steps-baseline.json is checked under Lean too, only in the
+        # files that gained one, so the Aver kernel alone never earns it.
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch --depth=1 origin "$BASE_REF"
+          git show "origin/$BASE_REF:tools/steps-baseline.json" > "$RUNNER_TEMP/base-steps-baseline.json"
+          cargo build -p aver-lang --bin aver
+          python3 tools/steps_ratchet.py --aver target/debug/aver --lean-gains "$RUNNER_TEMP/base-steps-baseline.json"
+
       - name: Run proof-export tests
         # Restricting to these targets keeps this job short (no overlap
         # with the lib / wasm / bench jobs). `AVER_CERT_REQUIRE_LEAN=1` makes

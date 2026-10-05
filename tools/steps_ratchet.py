@@ -23,6 +23,16 @@ with its baseline update:
 
 A deliberate loss needs `--allow-drop` as well, which a reviewer sees as a
 baseline diff that removes lines. Every run prints the totals.
+
+A law recorded at the steps level was closed by the kernel written in Aver.
+So that the kernel alone never earns the credit, every law a baseline change
+adds to that level is checked under Lean as well, file by file and only for
+the files that gained: `--update` does it when `lake` is installed, and the
+proof workflow does it on every pull request:
+
+    python3 tools/steps_ratchet.py --lean-gains <the base branch's baseline>
+
+It fails when Lean does not close such a law by its step proof.
 """
 
 from __future__ import annotations
@@ -31,6 +41,7 @@ import argparse
 import concurrent.futures
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -110,6 +121,40 @@ def measure(aver: Path, entry: str, lean: bool) -> dict:
     }
 
 
+def steps_gains(before: dict, after: dict) -> dict[str, list[str]]:
+    """The laws `after` records at the steps level that `before` does not, by file."""
+    out: dict[str, list[str]] = {}
+    for entry, row in after.items():
+        new = sorted(set(row.get("steps", [])) - set(before.get(entry, {}).get("steps", [])))
+        if new:
+            out[entry] = new
+    return out
+
+
+def lean_confirms(aver: Path, gains: dict[str, list[str]], jobs: int) -> list[str]:
+    """Check under Lean each file that gained steps-level laws; the laws Lean
+    does not close by their step proof, as lines to report."""
+    failures: list[str] = []
+
+    def one(entry: str) -> list[str]:
+        try:
+            closed = report(aver, entry, True).get("closed_by", {})
+        except RuntimeError as error:
+            return [str(error)]
+        return [
+            f"{entry}: `{law}` closes by steps in the Aver kernel but by {closed.get(law, 'nothing')} in Lean"
+            for law in gains[entry]
+            if closed.get(law) != "steps"
+        ]
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+        for lines in pool.map(one, sorted(gains)):
+            failures += lines
+    for entry in sorted(gains):
+        print(f"checked under Lean: {entry}: {', '.join(gains[entry])}")
+    return failures
+
+
 def compare(baseline: dict, current: dict, levels: tuple[str, ...]) -> tuple[list[str], list[str]]:
     """Return (drops, gains) as human-readable lines, file by file, for the levels measured."""
     drops: list[str] = []
@@ -157,12 +202,31 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--allow-drop", action="store_true", help="with --update: accept losses")
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--only", action="append", default=[], help="measure only this corpus file")
+    parser.add_argument(
+        "--lean-gains",
+        type=Path,
+        metavar="BASE_BASELINE",
+        help="check under Lean every steps-level law the baseline records beyond BASE_BASELINE",
+    )
     args = parser.parse_args(argv)
     aver = args.aver.resolve()
     if not aver.is_file():
         print(f"{aver}: no aver binary; build it with `cargo build --bin aver`", file=sys.stderr)
         return 2
     baseline = json.loads(args.baseline.read_text()) if args.baseline.exists() else {}
+    if args.lean_gains is not None:
+        base = json.loads(args.lean_gains.read_text()) if args.lean_gains.exists() else {}
+        gains = steps_gains(base, baseline)
+        if not gains:
+            print("the baseline adds no law to the steps level; nothing to check under Lean")
+            return 0
+        failures = lean_confirms(aver, gains, args.jobs)
+        if failures:
+            print("laws the Aver kernel closes by steps that Lean does not:", file=sys.stderr)
+            print("\n".join(failures), file=sys.stderr)
+            return 1
+        print(f"Lean closes all {sum(len(v) for v in gains.values())} new steps-level law(s) by steps")
+        return 0
     lean = args.lean
     if lean and not args.update and not any(row.get("tactic") for row in baseline.values()):
         # Nothing to compare the tactic level with: measuring it would only
@@ -201,6 +265,15 @@ def main(argv: list[str]) -> int:
             print("\n".join(drops), file=sys.stderr)
             return 1
         merged = recorded(baseline, current, levels, full=not args.only)
+        gains_now = steps_gains(baseline, merged)
+        if gains_now and shutil.which("lake"):
+            failures = lean_confirms(aver, gains_now, args.jobs)
+            if failures:
+                print("refusing to record laws Lean does not close by steps:", file=sys.stderr)
+                print("\n".join(failures), file=sys.stderr)
+                return 1
+        elif gains_now:
+            print("no `lake` here: the proof workflow checks the new steps-level laws under Lean")
         args.baseline.write_text(json.dumps(merged, indent=1, sort_keys=True) + "\n")
         print(f"recorded {len(merged)} files in {args.baseline}")
         return 0
