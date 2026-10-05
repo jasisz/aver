@@ -67,6 +67,10 @@ class CompareTests(unittest.TestCase):
         report = {"closed_by": {"f.l": "steps", "g.l": "open", "h.l": "tactic"}}
         self.assertEqual(ratchet.summarize(report), {"steps": ["f.l"], "tactic": ["h.l"], "laws": 3})
 
+    def test_imported_laws_count_where_they_are_declared(self) -> None:
+        report = {"closed_by": {"f.l": "steps", "Lib.g.l": "steps", "Lib.h.l": "open"}}
+        self.assertEqual(ratchet.summarize(report), {"steps": ["f.l"], "tactic": [], "laws": 1})
+
     def test_only_new_steps_level_laws_go_to_lean(self) -> None:
         base = {"a.av": {"steps": ["f.l"], "tactic": ["g.l"]}, "b.av": {"steps": ["h.l"]}}
         head = {

@@ -92,6 +92,9 @@ fn comparisonSchema(id: String) -> Option<Schema>
         "int.eq.false_of_ne" -> complement("!=", true, "==", false)
         "int.ne.of_not_eq" -> complement("==", false, "!=", true)
         "int.ne.false_of_eq" -> complement("==", true, "!=", false)
+        "int.eq.of_le_ge" -> Option.Some(Schema(binders = ["a", "b"], premises = [is(Term.TOp("<=", v("a"), v("b")), true), is(Term.TOp(">=", v("a"), v("b")), true)], concl = is(Term.TOp("==", v("a"), v("b")), true)))
+        "int.eq.false_of_lt" -> complement("<", true, "==", false)
+        "int.eq.false_of_gt" -> complement(">", true, "==", false)
         _ -> ringSchema(id)
 
 verify comparisonSchema

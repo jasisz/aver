@@ -321,7 +321,24 @@ pub fn comparisonSchema(id @ _: AverStr) -> Option<Schema> {
                                                     {
                                                         crate::proof_kernel::aver_generated::kernel::rules::complement(AverStr::from("=="), true, AverStr::from("!="), false)
                                                     } else {
-                                                        crate::proof_kernel::aver_generated::kernel::rules::ringSchema(id)
+                                                        if &*__dispatch_subject == "int.eq.of_le_ge"
+                                                        {
+                                                            Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: aver_rt::AverList::from_vec(vec![AverStr::from("a"), AverStr::from("b")]), premises: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("<="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b")))), true), crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from(">="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b")))), true)]), concl: crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("=="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b")))), true) })
+                                                        } else {
+                                                            if &*__dispatch_subject
+                                                                == "int.eq.false_of_lt"
+                                                            {
+                                                                crate::proof_kernel::aver_generated::kernel::rules::complement(AverStr::from("<"), true, AverStr::from("=="), false)
+                                                            } else {
+                                                                if &*__dispatch_subject
+                                                                    == "int.eq.false_of_gt"
+                                                                {
+                                                                    crate::proof_kernel::aver_generated::kernel::rules::complement(AverStr::from(">"), true, AverStr::from("=="), false)
+                                                                } else {
+                                                                    crate::proof_kernel::aver_generated::kernel::rules::ringSchema(id)
+                                                                }
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }

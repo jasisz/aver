@@ -4,6 +4,20 @@
    "flattenThenCount.countViaFlatten"
   ]
  },
+ "examples/data/rational.av": {
+  "steps": [
+   "minus.equalsPlusNegate",
+   "negate.involutive",
+   "plus.associative",
+   "plus.commutative",
+   "plus.zeroIsNeutral",
+   "times.associative",
+   "times.commutative",
+   "times.distributesOverPlus",
+   "times.oneIsNeutral",
+   "times.zeroAbsorbs"
+  ]
+ },
  "examples/data/words.av": {
   "steps": [
    "countAll.viaExpand"
@@ -55,13 +69,16 @@
  },
  "examples/games/eggcatch/core.av": {
   "steps": [
+   "addMiss.monotone",
    "chuteIndex.inRange",
+   "earn.neverDrops",
    "foxCount.exactlyOne",
    "nextPos.advancesByOne",
    "resolveLip.conserves",
    "resolveLip.noFalseMiss",
    "startBoard.conserves",
-   "stepAll.leftFold"
+   "stepAll.leftFold",
+   "tallyHit.monotone"
   ]
  },
  "examples/games/tetris/logic.av": {
@@ -71,95 +88,52 @@
    "computeScore.zeroLinesZeroScore"
   ]
  },
- "projects/k5_fdiv/domain/awaymodel.av": {
-  "steps": [
-   "Domain.Fprep.productExpInRange.productExponentBounds",
-   "Domain.StickyInt.sigDouble.doubleIsTwice"
-  ]
- },
- "projects/k5_fdiv/domain/binadeorder.av": {
-  "steps": [
-   "Domain.Fprep.productExpInRange.productExponentBounds"
-  ]
- },
  "projects/k5_fdiv/domain/estimate.av": {
   "steps": [
    "nrNewErrNum.nrErrorSquares"
   ]
  },
- "projects/k5_fdiv/domain/exponent.av": {
-  "steps": [
-   "Domain.Fprep.productExpInRange.productExponentBounds"
-  ]
- },
  "projects/k5_fdiv/domain/fprep.av": {
   "steps": [
+   "fpScaleKeepsSignificand.significandInvariant",
+   "fpScaleShiftsExponent.exponentShift",
+   "fpValueEqualsGeneralWhenNonnegExp.agreesOnNonnegExp",
+   "pow2Signed.agreesWithPow2Fraction",
    "productExpInRange.productExponentBounds"
   ]
  },
- "projects/k5_fdiv/domain/fracround.av": {
+ "projects/k5_fdiv/domain/rational.av": {
   "steps": [
-   "Domain.Fprep.productExpInRange.productExponentBounds",
-   "Domain.StickyInt.sigDouble.doubleIsTwice"
-  ]
- },
- "projects/k5_fdiv/domain/kernel.av": {
-  "steps": [
-   "Domain.Fprep.productExpInRange.productExponentBounds",
-   "Domain.StickyInt.sigDouble.doubleIsTwice"
-  ]
- },
- "projects/k5_fdiv/domain/modelscale.av": {
-  "steps": [
-   "Domain.Fprep.productExpInRange.productExponentBounds"
-  ]
- },
- "projects/k5_fdiv/domain/recip.av": {
-  "steps": [
-   "Domain.Estimate.nrNewErrNum.nrErrorSquares",
-   "Domain.Fprep.productExpInRange.productExponentBounds",
-   "Domain.StickyInt.sigDouble.doubleIsTwice"
+   "minus.equalsPlusNegate",
+   "negate.involutive",
+   "plus.associative",
+   "plus.commutative",
+   "plus.zeroIsNeutral",
+   "times.associative",
+   "times.commutative",
+   "times.distributesOverPlus",
+   "times.oneIsNeutral",
+   "times.zeroAbsorbs"
   ]
  },
  "projects/k5_fdiv/domain/remainder.av": {
   "steps": [
-   "Domain.Estimate.nrNewErrNum.nrErrorSquares",
-   "Domain.Fprep.productExpInRange.productExponentBounds",
-   "Domain.StickyInt.sigDouble.doubleIsTwice",
    "awayDigitOvershoot.guarded"
   ]
  },
  "projects/k5_fdiv/domain/round.av": {
   "steps": [
-   "Domain.Fprep.productExpInRange.productExponentBounds",
-   "Domain.StickyInt.sigDouble.doubleIsTwice"
-  ]
- },
- "projects/k5_fdiv/domain/roundscale.av": {
-  "steps": [
-   "Domain.StickyInt.sigDouble.doubleIsTwice"
+   "awayExpInRange.exponentInRange",
+   "stickyErrorReconstructs.reconstructsValue",
+   "stickyKeepsExponent.exponentInvariant",
+   "truncErrorReconstructs.reconstructsValue",
+   "truncKeepsExponent.exponentInvariant",
+   "truncNegateSymmetric.signSymmetry"
   ]
  },
  "projects/k5_fdiv/domain/stickyint.av": {
   "steps": [
    "sigDouble.doubleIsTwice"
-  ]
- },
- "projects/k5_fdiv/domain/stickyscale.av": {
-  "steps": [
-   "Domain.Fprep.productExpInRange.productExponentBounds",
-   "Domain.StickyInt.sigDouble.doubleIsTwice"
-  ]
- },
- "projects/k5_fdiv/domain/truncscale.av": {
-  "steps": [
-   "Domain.Fprep.productExpInRange.productExponentBounds",
-   "Domain.StickyInt.sigDouble.doubleIsTwice"
-  ]
- },
- "projects/k5_fdiv/domain/valuechain.av": {
-  "steps": [
-   "Domain.StickyInt.sigDouble.doubleIsTwice"
   ]
  },
  "projects/song/wave.av": {
