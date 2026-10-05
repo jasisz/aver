@@ -222,6 +222,7 @@ fn by_list_induction(
                 givens: givens.clone(),
                 finite: Vec::new(),
                 lists: givens,
+                ints: Vec::new(),
                 premise: None,
                 lhs: lhs.clone(),
                 rhs: rhs.clone(),
@@ -901,6 +902,7 @@ fn map_fact(
                 givens: givens.iter().map(|g| g.to_string()).collect(),
                 finite: Vec::new(),
                 lists: Vec::new(),
+                ints: Vec::new(),
                 premise,
                 lhs,
                 rhs,
@@ -1018,6 +1020,7 @@ fn vector_fact(
                     .filter(|(_, s)| *s == Sort::List)
                     .map(|(g, _)| g.to_string())
                     .collect(),
+                ints: Vec::new(),
                 premise,
                 lhs: eq.0,
                 rhs: eq.1,

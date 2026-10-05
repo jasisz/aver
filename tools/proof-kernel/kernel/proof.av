@@ -28,6 +28,7 @@ type Proof
     PAbsurd(Proof, Term, Term)
     PInduct(String, List<Term>, Term, Term, List<Case>)
     PListInduct(String, Term, Term, Proof, String, String, String, Proof)
+    PIntInduct(String, Term, Term, String, Proof, List<String>, List<Proof>, String, Proof)
     PRing(Term, Term)
     PLinear(Term, Bool, List<String>, List<Int>)
 
@@ -66,6 +67,7 @@ record Script
     obligation: Law
     finite: List<Given>
     lists: List<String>
+    ints: List<String>
     defs: List<Def>
     consts: List<Const>
     laws: List<Law>

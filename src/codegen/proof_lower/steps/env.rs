@@ -37,6 +37,9 @@ pub(crate) struct Env<'a> {
     /// Where a cited law matched but a conjunct of its `when` found no
     /// proof, for the refusal.
     pub open_premises: Vec<String>,
+    /// Predicate hypotheses opened on the way to the current case, so
+    /// none is opened twice.
+    pub opened: Vec<Term>,
 }
 
 impl<'a> Env<'a> {
@@ -57,6 +60,7 @@ impl<'a> Env<'a> {
             nesting: 0,
             hints: Vec::new(),
             open_premises: Vec::new(),
+            opened: Vec::new(),
         }
     }
 

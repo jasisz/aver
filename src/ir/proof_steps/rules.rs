@@ -47,6 +47,8 @@ pub enum WallRule {
     EqOfLeGe,
     EqFalseOfLt,
     EqFalseOfGt,
+    // A true Int equality lets one side stand for the other.
+    EqOfBeq,
     // Ring laws of Int.
     AddComm,
     MulComm,
@@ -105,7 +107,7 @@ pub enum WallRule {
 }
 
 impl WallRule {
-    pub const ALL: [WallRule; 70] = [
+    pub const ALL: [WallRule; 71] = [
         WallRule::AndTrueL,
         WallRule::AndFalseL,
         WallRule::AndTrueR,
@@ -133,6 +135,7 @@ impl WallRule {
         WallRule::EqOfLeGe,
         WallRule::EqFalseOfLt,
         WallRule::EqFalseOfGt,
+        WallRule::EqOfBeq,
         WallRule::AddComm,
         WallRule::MulComm,
         WallRule::AddAssoc,
@@ -208,6 +211,7 @@ impl WallRule {
             WallRule::EqOfLeGe => "int.eq.of_le_ge",
             WallRule::EqFalseOfLt => "int.eq.false_of_lt",
             WallRule::EqFalseOfGt => "int.eq.false_of_gt",
+            WallRule::EqOfBeq => "int.eq.of_beq",
             WallRule::AddComm => "int.add_comm",
             WallRule::MulComm => "int.mul_comm",
             WallRule::AddAssoc => "int.add_assoc",
@@ -411,6 +415,7 @@ impl WallRule {
             ),
             WallRule::EqFalseOfLt => compl(BinOp::Lt, true, BinOp::Eq, false),
             WallRule::EqFalseOfGt => compl(BinOp::Gt, true, BinOp::Eq, false),
+            WallRule::EqOfBeq => (vec![is(cmp(BinOp::Eq, a(), b()), true)], Eqn::new(a(), b())),
             WallRule::AddComm => (
                 vec![],
                 Eqn::new(binop(BinOp::Add, a(), b()), binop(BinOp::Add, b(), a())),

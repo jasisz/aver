@@ -1,0 +1,83 @@
+module Countdown
+    intent = "Laws proved by induction on an Int counting down to zero, and by a true Int equality."
+    exposes [pow2, below, belowReason, scaled, shifted, halves]
+    effects []
+
+fn pow2(n: Int) -> Int
+    ? "Two to the n, and 1 at or below zero."
+    match n <= 0
+        true -> 1
+        false -> 2 * pow2(n - 1)
+
+verify pow2
+    pow2(0) => 1
+    pow2(3) => 8
+
+verify pow2 law positive
+    given n: Int = [-2, 0, 3]
+    pow2(n) >= 1 holds
+
+fn below(a: Int, b: Int, c: Int) -> Bool
+    ? "A nonnegative factor keeps an order."
+    a * c <= b * c
+
+verify below
+    below(1, 2, 3) => true
+
+verify below law nonnegativeFactor
+    given a: Int = [-1, 2]
+    given b: Int = [0, 3]
+    given c: Int = [0, 2]
+    when a <= b
+    when c >= 0
+    because belowReason(a, b, c)
+    using []
+    below(a, b, c) holds
+
+fn belowReason(a: Int, b: Int, c: Int) -> Bool
+    ? "Down the factor, one step at a time."
+    match c <= 0
+        true -> below(a, b, c)
+        false -> Bool.and(belowReason(a, b, c - 1), below(a, b, c))
+
+verify belowReason
+    belowReason(1, 2, 3) => true
+
+fn scaled(a: Int, c: Int) -> Int
+    ? "A product."
+    a * c
+
+verify scaled
+    scaled(2, 3) => 6
+
+verify scaled law pinnedToZero
+    given a: Int = [1, 2]
+    given c: Int = [0]
+    when c >= 0
+    when c <= 0
+    scaled(a, c) => 0
+
+fn shifted(x: Int) -> Int
+    ? "One more."
+    x + 1
+
+verify shifted
+    shifted(3) => 4
+
+verify shifted law atThree
+    given x: Int = [3]
+    when x == 3
+    shifted(x) => 4
+
+fn halves(n: Int) -> Int
+    ? "Counts down by two: not a countdown the steps open."
+    match n <= 0
+        true -> 0
+        false -> 1 + halves(n - 2)
+
+verify halves
+    halves(4) => 2
+
+verify halves law nonnegative
+    given n: Int = [-1, 0, 4]
+    halves(n) >= 0 holds

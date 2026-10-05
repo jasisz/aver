@@ -35,7 +35,7 @@ pub use term::Term;
 use crate::ir::identity::FnId;
 
 /// Version of the step data. Bump on any change a replayer could observe.
-pub const FORMAT_VERSION: u32 = 6;
+pub const FORMAT_VERSION: u32 = 7;
 
 /// An equation `lhs = rhs` between two terms.
 #[derive(Debug, Clone, PartialEq)]
@@ -239,6 +239,23 @@ pub enum Proof {
         ih: String,
         cons: Box<Proof>,
     },
+    /// Induction on a given of type Int down to zero, apart from any
+    /// function's recursion: `base` proves the claim `lhs = rhs` under
+    /// hypothesis `guard : var <= 0 = true`; `step` proves it under
+    /// `guard : var <= 0 = false` and `ih`, the claim at `var - 1`. The
+    /// hypotheses named in `carried` mention `var` and stay in scope in both
+    /// cases; in the step each is first proved at `var - 1` by its proof, so
+    /// `ih` holds. Any other hypothesis that mentions `var` is out of scope.
+    InductInt {
+        var: String,
+        lhs: Term,
+        rhs: Term,
+        guard: String,
+        base: Box<Proof>,
+        carried: Vec<(String, Proof)>,
+        ih: String,
+        step: Box<Proof>,
+    },
     /// `goal = value` for an Int comparison `goal`: its opposite and the
     /// hypotheses `hyps`, each read as `p >= 0` and weighted by `weights`
     /// (the opposite first), add up to a negative constant (see
@@ -363,6 +380,9 @@ pub struct Obligation {
     /// The givens of a list type: what a [`Proof::InductList`] step may
     /// induct on.
     pub lists: Vec<String>,
+    /// The givens of type Int: what a [`Proof::InductInt`] step may induct
+    /// on.
+    pub ints: Vec<String>,
     pub premise: Option<Term>,
     pub lhs: Term,
     pub rhs: Term,
@@ -418,6 +438,12 @@ impl Proof {
             Proof::Absurd { contradiction, .. } => contradiction.size(),
             Proof::Induct { cases, .. } => cases.iter().map(|c| c.proof.size()).sum(),
             Proof::InductList { nil, cons, .. } => nil.size() + cons.size(),
+            Proof::InductInt {
+                base,
+                carried,
+                step,
+                ..
+            } => base.size() + carried.iter().map(|(_, p)| p.size()).sum::<usize>() + step.size(),
         }
     }
 }

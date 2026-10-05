@@ -153,6 +153,7 @@ fn kernel_computes(t: &Term, value: &Term) -> Result<String, String> {
             givens: Vec::new(),
             finite: Vec::new(),
             lists: Vec::new(),
+            ints: Vec::new(),
             premise: None,
             lhs: t.clone(),
             rhs: value.clone(),

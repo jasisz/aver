@@ -85,6 +85,17 @@ pub enum Proof {
         AverStr,
         std::sync::Arc<Proof>,
     ),
+    PIntInduct(
+        AverStr,
+        crate::proof_kernel::aver_generated::kernel::term::Term,
+        crate::proof_kernel::aver_generated::kernel::term::Term,
+        AverStr,
+        std::sync::Arc<Proof>,
+        aver_rt::AverList<AverStr>,
+        aver_rt::AverList<Proof>,
+        AverStr,
+        std::sync::Arc<Proof>,
+    ),
     PRing(
         crate::proof_kernel::aver_generated::kernel::term::Term,
         crate::proof_kernel::aver_generated::kernel::term::Term,
@@ -111,16 +122,17 @@ impl Proof {
             Proof::PHave(..) => 8,
             Proof::PHyp(..) => 9,
             Proof::PInduct(..) => 10,
-            Proof::PLaw(..) => 11,
-            Proof::PLinear(..) => 12,
-            Proof::PListInduct(..) => 13,
-            Proof::PProj(..) => 14,
-            Proof::PRefl(..) => 15,
-            Proof::PRing(..) => 16,
-            Proof::PRule(..) => 17,
-            Proof::PSymm(..) => 18,
-            Proof::PTrans(..) => 19,
-            Proof::PUnfold(..) => 20,
+            Proof::PIntInduct(..) => 11,
+            Proof::PLaw(..) => 12,
+            Proof::PLinear(..) => 13,
+            Proof::PListInduct(..) => 14,
+            Proof::PProj(..) => 15,
+            Proof::PRefl(..) => 16,
+            Proof::PRing(..) => 17,
+            Proof::PRule(..) => 18,
+            Proof::PSymm(..) => 19,
+            Proof::PTrans(..) => 20,
+            Proof::PUnfold(..) => 21,
         }
     }
 }
@@ -191,6 +203,19 @@ impl Ord for Proof {
                     .then_with(|| a3.cmp(b3))
                     .then_with(|| a4.cmp(b4))
             }
+            (
+                Proof::PIntInduct(a0, a1, a2, a3, a4, a5, a6, a7, a8),
+                Proof::PIntInduct(b0, b1, b2, b3, b4, b5, b6, b7, b8),
+            ) => std::cmp::Ordering::Equal
+                .then_with(|| a0.cmp(b0))
+                .then_with(|| a1.cmp(b1))
+                .then_with(|| a2.cmp(b2))
+                .then_with(|| a3.cmp(b3))
+                .then_with(|| a4.cmp(b4))
+                .then_with(|| a5.cmp(b5))
+                .then_with(|| a6.cmp(b6))
+                .then_with(|| a7.cmp(b7))
+                .then_with(|| a8.cmp(b8)),
             (Proof::PLaw(a0, a1, a2), Proof::PLaw(b0, b1, b2)) => std::cmp::Ordering::Equal
                 .then_with(|| a0.cmp(b0))
                 .then_with(|| a1.cmp(b1))
@@ -367,6 +392,21 @@ impl aver_rt::AverDisplay for Proof {
                     f5.aver_display_inner(),
                     f6.aver_display_inner(),
                     f7.aver_display_inner()
+                ]
+                .join(", ")
+            ),
+            Proof::PIntInduct(f0, f1, f2, f3, f4, f5, f6, f7, f8) => format!(
+                "PIntInduct({})",
+                vec![
+                    f0.aver_display_inner(),
+                    f1.aver_display_inner(),
+                    f2.aver_display_inner(),
+                    f3.aver_display_inner(),
+                    f4.aver_display_inner(),
+                    f5.aver_display_inner(),
+                    f6.aver_display_inner(),
+                    f7.aver_display_inner(),
+                    f8.aver_display_inner()
                 ]
                 .join(", ")
             ),
@@ -633,6 +673,7 @@ pub struct Script {
     pub obligation: Law,
     pub finite: aver_rt::AverList<Given>,
     pub lists: aver_rt::AverList<AverStr>,
+    pub ints: aver_rt::AverList<AverStr>,
     pub defs: aver_rt::AverList<Def>,
     pub consts: aver_rt::AverList<Const>,
     pub laws: aver_rt::AverList<Law>,
@@ -653,6 +694,7 @@ impl Ord for Script {
             .then_with(|| self.defs.cmp(&other.defs))
             .then_with(|| self.facts.cmp(&other.facts))
             .then_with(|| self.finite.cmp(&other.finite))
+            .then_with(|| self.ints.cmp(&other.ints))
             .then_with(|| self.laws.cmp(&other.laws))
             .then_with(|| self.lists.cmp(&other.lists))
             .then_with(|| self.obligation.cmp(&other.obligation))
@@ -668,6 +710,7 @@ impl aver_rt::AverDisplay for Script {
                 format!("obligation: {}", self.obligation.aver_display_inner()),
                 format!("finite: {}", self.finite.aver_display_inner()),
                 format!("lists: {}", self.lists.aver_display_inner()),
+                format!("ints: {}", self.ints.aver_display_inner()),
                 format!("defs: {}", self.defs.aver_display_inner()),
                 format!("consts: {}", self.consts.aver_display_inner()),
                 format!("laws: {}", self.laws.aver_display_inner()),

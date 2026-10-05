@@ -95,10 +95,12 @@ fn comparisonSchema(id: String) -> Option<Schema>
         "int.eq.of_le_ge" -> Option.Some(Schema(binders = ["a", "b"], premises = [is(Term.TOp("<=", v("a"), v("b")), true), is(Term.TOp(">=", v("a"), v("b")), true)], concl = is(Term.TOp("==", v("a"), v("b")), true)))
         "int.eq.false_of_lt" -> complement("<", true, "==", false)
         "int.eq.false_of_gt" -> complement(">", true, "==", false)
+        "int.eq.of_beq" -> Option.Some(Schema(binders = ["a", "b"], premises = [is(Term.TOp("==", v("a"), v("b")), true)], concl = eq(v("a"), v("b"))))
         _ -> ringSchema(id)
 
 verify comparisonSchema
     comparisonSchema("nope") => Option.None
+    comparisonSchema("int.eq.of_beq") => Option.Some(Schema(binders = ["a", "b"], premises = [is(Term.TOp("==", v("a"), v("b")), true)], concl = eq(v("a"), v("b"))))
 
 fn ringSchema(id: String) -> Option<Schema>
     ? "Ring laws of Int."

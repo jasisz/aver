@@ -329,6 +329,36 @@ pub fn recursion(
                                     &arms,
                                 )
                             }
+                            crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
+                                __pat3,
+                                __pat4,
+                                __pat5,
+                            ) => {
+                                let __pat4 = (*__pat4).clone();
+                                let __pat5 = (*__pat5).clone();
+                                match &*__pat3 {
+        "<=" => {
+            match __pat4 {
+        crate::proof_kernel::aver_generated::kernel::term::Term::TVar(p) => {
+            match __pat5 {
+        crate::proof_kernel::aver_generated::kernel::term::Term::TInt(__pat6) => {
+            { let __int_match_subject = __pat6; if __int_match_subject == aver_rt::AverInt::from_i64(0) { crate::proof_kernel::aver_generated::kernel::induct::countdown(d, p.clone(), crate::proof_kernel::aver_generated::kernel::induct::indexOf(d.params.clone(), p, aver_rt::AverInt::from_i64(0)), &arms) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(56)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name)))); __b }; __b.push_str(&AverStr::from(" recurses outside a match on a parameter")); __b })) } }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(56)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name)))); __b }; __b.push_str(&AverStr::from(" recurses outside a match on a parameter")); __b }))
+        }
+    }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(56)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name)))); __b }; __b.push_str(&AverStr::from(" recurses outside a match on a parameter")); __b }))
+        }
+    }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(56)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name)))); __b }; __b.push_str(&AverStr::from(" recurses outside a match on a parameter")); __b }))
+        }
+    }
+                            }
                             _ => Err(aver_rt::AverStr::from({
                                 let mut __b = {
                                     let mut __b = aver_rt::Buffer::with_capacity(
@@ -373,6 +403,137 @@ pub fn recursion(
             }
         }
     }
+}
+
+/// Arm true does not recurse; arm false calls itself with p - 1 at place j, p not rebound inside.
+pub fn countdown(
+    d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
+    p @ _: AverStr,
+    j @ _: aver_rt::AverInt,
+    arms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
+) -> Result<Option<aver_rt::AverInt>, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let (__pat0, __pat1) = ((j < aver_rt::AverInt::from_i64(0)), arms.clone());
+        if __pat0 {
+            Err(aver_rt::AverStr::from({
+                let mut __b = {
+                    let mut __b = aver_rt::Buffer::with_capacity(
+                        (aver_rt::AverInt::from_i64(69)).to_usize().unwrap_or(0),
+                    );
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name))));
+                    __b
+                };
+                __b.push_str(&AverStr::from(
+                    " recurses on a match whose subject is not a parameter",
+                ));
+                __b
+            }))
+        } else {
+            {
+                let __list_subject = __pat1;
+                if let Some((stop, __pat2)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                    {
+                        let __list_subject = __pat2;
+                        if let Some((go, __pat3)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                            {
+                                let __list_subject = __pat3;
+                                if __list_subject.is_empty() {
+                                    if (((stop.pattern == crate::proof_kernel::aver_generated::kernel::term::Pat::PLit(crate::proof_kernel::aver_generated::kernel::term::Term::TBool(true))) && (go.pattern == crate::proof_kernel::aver_generated::kernel::term::Pat::PLit(crate::proof_kernel::aver_generated::kernel::term::Term::TBool(false)))) && ((aver_rt::AverInt::from_i64(crate::proof_kernel::aver_generated::kernel::induct::selfCalls(stop.body, d.name.clone(), aver_rt::AverList::empty()).len() as i64) == aver_rt::AverInt::from_i64(0)) && crate::proof_kernel::aver_generated::kernel::induct::callsCountDown(&crate::proof_kernel::aver_generated::kernel::induct::selfCalls(go.body, d.name.clone(), aver_rt::AverList::empty()), p.clone(), j.clone(), aver_rt::AverInt::from_i64(d.params.len() as i64)))) { Ok(Some(j)) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(68)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name)))); __b }; __b.push_str(&AverStr::from(" does not count ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(p)))); __b }; __b.push_str(&AverStr::from(" down by one to zero")); __b })) }
+                                } else {
+                                    Err(aver_rt::AverStr::from({
+                                        let mut __b = {
+                                            let mut __b = {
+                                                let mut __b = {
+                                                    let mut __b = aver_rt::Buffer::with_capacity(
+                                                        (aver_rt::AverInt::from_i64(68))
+                                                            .to_usize()
+                                                            .unwrap_or(0),
+                                                    );
+                                                    __b.push_str(&aver_rt::AverStr::from(
+                                                        aver_rt::aver_display(&(d.name)),
+                                                    ));
+                                                    __b
+                                                };
+                                                __b.push_str(&AverStr::from(" does not count "));
+                                                __b
+                                            };
+                                            __b.push_str(&aver_rt::AverStr::from(
+                                                aver_rt::aver_display(&(p)),
+                                            ));
+                                            __b
+                                        };
+                                        __b.push_str(&AverStr::from(" down by one to zero"));
+                                        __b
+                                    }))
+                                }
+                            }
+                        } else {
+                            Err(aver_rt::AverStr::from({
+                                let mut __b = {
+                                    let mut __b = {
+                                        let mut __b = {
+                                            let mut __b = aver_rt::Buffer::with_capacity(
+                                                (aver_rt::AverInt::from_i64(68))
+                                                    .to_usize()
+                                                    .unwrap_or(0),
+                                            );
+                                            __b.push_str(&aver_rt::AverStr::from(
+                                                aver_rt::aver_display(&(d.name)),
+                                            ));
+                                            __b
+                                        };
+                                        __b.push_str(&AverStr::from(" does not count "));
+                                        __b
+                                    };
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                        &(p),
+                                    )));
+                                    __b
+                                };
+                                __b.push_str(&AverStr::from(" down by one to zero"));
+                                __b
+                            }))
+                        }
+                    }
+                } else {
+                    Err(aver_rt::AverStr::from({
+                        let mut __b = {
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = aver_rt::Buffer::with_capacity(
+                                        (aver_rt::AverInt::from_i64(68)).to_usize().unwrap_or(0),
+                                    );
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                        &(d.name),
+                                    )));
+                                    __b
+                                };
+                                __b.push_str(&AverStr::from(" does not count "));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(p))));
+                            __b
+                        };
+                        __b.push_str(&AverStr::from(" down by one to zero"));
+                        __b
+                    }))
+                }
+            }
+        }
+    }
+}
+
+/// Each call passes p - 1 at place j, with p not rebound around it.
+#[inline(always)]
+pub fn callsCountDown(
+    cs @ _: &aver_rt::AverList<Call>,
+    p @ _: AverStr,
+    j @ _: aver_rt::AverInt,
+    n @ _: aver_rt::AverInt,
+) -> bool {
+    crate::proof_kernel::cancel_checkpoint();
+    aver_list_match!(cs.clone(), [] => true, [c, rest] => (((aver_rt::AverInt::from_i64(c.args.len() as i64) == n) && ((crate::proof_kernel::aver_generated::kernel::induct::nthTerm(c.args.clone(), j.clone()) == Some(crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("-"), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::term::Term::TVar(p.clone())), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::term::Term::TInt(aver_rt::AverInt::from_i64(1)))))) && (!c.inner.contains(&p)))) && crate::proof_kernel::aver_generated::kernel::induct::callsCountDown(&rest, p, j, n)))
 }
 
 /// Every arm's recursive calls pass a part of the value at place j.

@@ -132,6 +132,12 @@ impl Env<'_> {
                 "induction: {f_name} recurses on {v} in one call and on {other} in another; which to follow is a choice the law has to make"
             ));
         }
+        // A countdown recurses on an Int given: induction down to zero on
+        // that given, the hypotheses about it carried along.
+        if induct::countdown(&def).is_some() {
+            self.mark_used(f);
+            return self.prove_by_int_induction(&f_name, &v, ob, depth);
+        }
         // The scheme follows the first of them, outermost first on the left.
         let args = (*first).clone();
         let (_, general) = induct::varied(&args, j, &ob.givens)?;
@@ -203,5 +209,102 @@ impl Env<'_> {
             rhs: canon(&ob.rhs),
             cases,
         })
+    }
+
+    /// Prove `ob` by induction on the Int given `v` down to zero, as the
+    /// countdown `f_name` recurses: the case `v <= 0`, then the case
+    /// `v > 0` with the claim at `v - 1`. Every hypothesis that mentions
+    /// `v` is carried: it stays in scope, and in the step it is first
+    /// proved at `v - 1` by evaluation, so the claim there holds.
+    fn prove_by_int_induction(
+        &mut self,
+        f_name: &str,
+        v: &str,
+        ob: &Obligation,
+        depth: usize,
+    ) -> Result<Proof, String> {
+        use crate::ast::BinOp;
+        if !ob.ints.iter().any(|g| g == v) {
+            return Err(format!(
+                "induction along {f_name}: {v} is not a given of type Int"
+            ));
+        }
+        let mentions = |e: &crate::ir::proof_steps::Eqn| {
+            let mut fv = Vec::new();
+            term::free_vars(&e.lhs, &mut fv);
+            term::free_vars(&e.rhs, &mut fv);
+            fv.iter().any(|n| n == v)
+        };
+        // Each name once, as it stands innermost, in scope order.
+        let mut carried: Vec<(String, crate::ir::proof_steps::Eqn)> = Vec::new();
+        for (i, (name, e)) in self.hyps.iter().enumerate() {
+            let shadowed = self.hyps[i + 1..].iter().any(|(n, _)| n == name);
+            if !shadowed && mentions(e) {
+                carried.push((name.clone(), e.clone()));
+            }
+        }
+        let kept: Vec<(String, crate::ir::proof_steps::Eqn)> = self
+            .hyps
+            .iter()
+            .filter(|(_, e)| !mentions(e))
+            .cloned()
+            .collect();
+        let guard = self.fresh_hyp();
+        self.next_ih += 1;
+        let ih = format!("ih{}", self.next_ih);
+        let at = term::binop(BinOp::Lte, term::var(v), term::int(&0.into()));
+        let down = [(
+            v.to_string(),
+            term::binop(BinOp::Sub, term::var(v), term::int(&1.into())),
+        )];
+        let saved = std::mem::take(&mut self.hyps);
+        let scope = |value: bool| {
+            let mut h = kept.clone();
+            h.push((
+                guard.clone(),
+                crate::ir::proof_steps::Eqn::new(at.clone(), term::boolean(value)),
+            ));
+            h.extend(carried.iter().cloned());
+            h
+        };
+        let in_case = |env: &mut Self,
+                       value: bool,
+                       extra: Option<(String, crate::ir::proof_steps::Eqn)>,
+                       lhs: &Term,
+                       rhs: &Term| {
+            env.hyps = scope(value);
+            env.hyps.extend(extra);
+            env.prove_by_evaluation(lhs, rhs, depth)
+        };
+        let result = (|| -> Result<Proof, String> {
+            let base = in_case(self, true, None, &ob.lhs, &ob.rhs)
+                .map_err(|m| format!("induction on {v} along {f_name}, case {v} <= 0: {m}"))?;
+            let mut proved = Vec::new();
+            for (name, e) in &carried {
+                let at_less = (term::subst(&e.lhs, &down)?, term::subst(&e.rhs, &down)?);
+                let p = in_case(self, false, None, &at_less.0, &at_less.1).map_err(|m| {
+                    format!("induction on {v} along {f_name}: `{name}` at {v} - 1: {m}")
+                })?;
+                proved.push((name.clone(), p));
+            }
+            let at_ih = crate::ir::proof_steps::Eqn::new(
+                term::subst(&ob.lhs, &down)?,
+                term::subst(&ob.rhs, &down)?,
+            );
+            let step = in_case(self, false, Some((ih.clone(), at_ih)), &ob.lhs, &ob.rhs)
+                .map_err(|m| format!("induction on {v} along {f_name}, case {v} > 0: {m}"))?;
+            Ok(Proof::InductInt {
+                var: v.to_string(),
+                lhs: canon(&ob.lhs),
+                rhs: canon(&ob.rhs),
+                guard: guard.clone(),
+                base: Box::new(base),
+                carried: proved,
+                ih: ih.clone(),
+                step: Box::new(step),
+            })
+        })();
+        self.hyps = saved;
+        result
     }
 }
