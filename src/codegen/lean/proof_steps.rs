@@ -74,6 +74,16 @@ theorem eq_false_of_lt (a b : Int) (h : decide (a < b) = true) : (a == b) = fals
   beq_eq_false_iff_ne.mpr (Int.ne_of_lt (of_decide_eq_true h))
 theorem eq_false_of_gt (a b : Int) (h : decide (a > b) = true) : (a == b) = false :=
   beq_eq_false_iff_ne.mpr (Int.ne_of_gt (of_decide_eq_true h))
+theorem eq_of_beq (a b : Int) (h : (a == b) = true) : a = b :=
+  beq_iff_eq.mp h
+theorem int_induct {P : Int → Prop} (base : ∀ n, decide (n <= 0) = true → P n)
+    (step : ∀ n, decide (n <= 0) = false → P (n - 1) → P n) (n : Int) : P n := by
+  have key : ∀ (k : Nat) (m : Int), m.toNat = k → P m := by
+    intro k
+    induction k with
+    | zero => intro m h; exact base m (decide_eq_true (by omega))
+    | succ k ih => intro m h; exact step m (decide_eq_false (by omega)) (ih (m - 1) (by omega))
+  exact key n.toNat n rfl
 theorem add_comm (a b : Int) : a + b = b + a := Int.add_comm a b
 theorem mul_comm (a b : Int) : a * b = b * a := Int.mul_comm a b
 theorem add_assoc (a b c : Int) : a + b + c = a + (b + c) := Int.add_assoc a b c
@@ -205,6 +215,7 @@ fn lemma(rule: WallRule) -> &'static str {
         WallRule::EqOfLeGe => "AverSteps.eq_of_le_ge",
         WallRule::EqFalseOfLt => "AverSteps.eq_false_of_lt",
         WallRule::EqFalseOfGt => "AverSteps.eq_false_of_gt",
+        WallRule::EqOfBeq => "AverSteps.eq_of_beq",
         WallRule::AddComm => "AverSteps.add_comm",
         WallRule::MulComm => "AverSteps.mul_comm",
         WallRule::AddAssoc => "AverSteps.add_assoc",
@@ -668,6 +679,86 @@ impl Renderer<'_> {
                     self.eqn(&eq),
                     lean(head),
                     lean(tail),
+                    v = lean(var),
+                )
+            }
+            // `AverSteps.int_induct` with the claim, under the carried
+            // hypotheses, as its motive: the case `var <= 0`, then the case
+            // `var > 0` with the claim at `var - 1`, which holds once each
+            // carried hypothesis is proved there. The cases see what the
+            // kernel gives them: the carried hypotheses rebound, the guard,
+            // and those that do not mention `var`.
+            Proof::InductInt {
+                var,
+                guard,
+                base,
+                carried,
+                ih,
+                step,
+                ..
+            } => {
+                let lean = super::syntax::aver_name_to_lean;
+                let mentions = |e: &Eqn| {
+                    let mut fv = Vec::new();
+                    term::free_vars(&e.lhs, &mut fv);
+                    term::free_vars(&e.rhs, &mut fv);
+                    fv.contains(var)
+                };
+                let mut stated: Vec<(String, Eqn)> = Vec::new();
+                for (name, _) in carried {
+                    let (_, e) = hyps
+                        .iter()
+                        .rev()
+                        .find(|(h, _)| h == name)
+                        .ok_or_else(|| format!("intinduct: {name} is not in scope"))?;
+                    stated.push((name.clone(), e.clone()));
+                }
+                let kept: Hyps = hyps.iter().filter(|(_, e)| !mentions(e)).cloned().collect();
+                let at = term::binop(BinOp::Lte, term::var(var), term::int(&0.into()));
+                let scope = |value: bool| -> Hyps {
+                    let mut h = kept.clone();
+                    h.push((guard.clone(), Eqn::new(at.clone(), term::boolean(value))));
+                    h.extend(stated.iter().cloned());
+                    h
+                };
+                let down = [(
+                    var.clone(),
+                    term::binop(BinOp::Sub, term::var(var), term::int(&1.into())),
+                )];
+                let ih_eq = Eqn::new(term::subst(&eq.lhs, &down)?, term::subst(&eq.rhs, &down)?);
+                let names: Vec<String> = stated.iter().map(|(n, _)| self.hyp_name(n)).collect();
+                let mut motive = String::new();
+                for (_, e) in &stated {
+                    motive.push_str(&format!("{} → ", self.eqn(e)));
+                }
+                motive.push_str(&self.eqn(&eq));
+                let outer: Vec<String> = carried
+                    .iter()
+                    .map(|(n, _)| self.proof(&Proof::Hyp(n.clone()), hyps))
+                    .collect::<Result<_, _>>()?;
+                // Inside the cases the carried hypotheses are rebound as the
+                // equations of Bools the steps read.
+                let saved = self.prop_hyps.clone();
+                self.prop_hyps
+                    .retain(|h| !carried.iter().any(|(n, _)| n == h));
+                self.prop_hyps.retain(|h| h != guard && h != ih);
+                let pb = self.proof(base, &scope(true));
+                let above = scope(false);
+                let carry: Result<Vec<String>, String> =
+                    carried.iter().map(|(_, q)| self.proof(q, &above)).collect();
+                let mut with_ih = above.clone();
+                with_ih.push((ih.clone(), ih_eq.clone()));
+                let ps = self.proof(step, &with_ih);
+                self.prop_hyps = saved;
+                let (pb, carry, ps) = (pb?, carry?, ps?);
+                let g = self.hyp_name(guard);
+                let h = self.hyp_name(ih);
+                let rebound = names.join(" ");
+                format!(
+                    "(AverSteps.int_induct (P := fun {v} => {motive}) (fun {v} {g} {rebound} => {pb}) (fun {v} {g} {h}_all {rebound} => (have {h} : {} := {h}_all {}; {ps})) {v} {})",
+                    self.eqn(&ih_eq),
+                    carry.join(" "),
+                    outer.join(" "),
                     v = lean(var),
                 )
             }

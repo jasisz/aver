@@ -47,6 +47,11 @@
    "sub.rightIdentity"
   ]
  },
+ "examples/formal/recursive_monotone.av": {
+  "steps": [
+   "tri.nonneg"
+  ]
+ },
  "examples/formal/spec_laws.av": {
   "steps": [
    "absVal.absValSpec",
@@ -88,6 +93,18 @@
    "computeScore.zeroLinesZeroScore"
   ]
  },
+ "projects/k5_fdiv/domain/awaymodel.av": {
+  "obligations": [
+   "rawValuePositive.positivePrecision.because1",
+   "rawValuePositive.positivePrecision.because3"
+  ]
+ },
+ "projects/k5_fdiv/domain/binadeorder.av": {
+  "obligations": [
+   "fractionWindow.integerMagnitude.because1",
+   "fractionWindow.integerMagnitude.because2"
+  ]
+ },
  "projects/k5_fdiv/domain/estimate.av": {
   "steps": [
    "nrNewErrNum.nrErrorSquares"
@@ -110,21 +127,23 @@
    "fpScaleKeepsSignificand.significandInvariant",
    "fpScaleShiftsExponent.exponentShift",
    "fpValueEqualsGeneralWhenNonnegExp.agreesOnNonnegExp",
+   "pow2.positive",
    "pow2Signed.agreesWithPow2Fraction",
    "productExpInRange.productExponentBounds"
   ]
  },
  "projects/k5_fdiv/domain/fractionorder.av": {
-  "obligations": [
-   "le.fromPositiveCrossProduct.implication",
-   "lt.fromPositiveCrossProduct.implication"
+  "steps": [
+   "le.fromPositiveCrossProduct",
+   "lt.fromPositiveCrossProduct"
   ]
  },
  "projects/k5_fdiv/domain/integerorder.av": {
-  "obligations": [
-   "multiplyLt.positiveFactor.implication",
-   "nonnegativeProduct.nonnegativeFactors.implication",
-   "positiveProduct.positiveFactors.implication"
+  "steps": [
+   "multiplyLe.nonnegativeFactor",
+   "multiplyLt.positiveFactor",
+   "nonnegativeProduct.nonnegativeFactors",
+   "positiveProduct.positiveFactors"
   ]
  },
  "projects/k5_fdiv/domain/kernel.av": {
@@ -132,12 +151,39 @@
    "binadeSig.significandWindow.implication",
    "modelAway.normalizedModel.implication",
    "modelCeiling.normalizedModel.because11",
+   "modelCeiling.normalizedModel.because2",
+   "modelCeiling.normalizedModel.because6",
+   "modelSign.normalizedSign.because1",
+   "modelSign.normalizedSign.because3",
+   "modelSign.normalizedSign.because4",
+   "modelSign.normalizedSign.because5",
    "modelSign.normalizedSign.because7",
-   "normalizedValueExponent.executableExponent.implication"
+   "modelStickyExact.normalizedModel.because5",
+   "modelStickyHalf.normalizedModel.because2",
+   "modelTruncation.normalizedModel.because4",
+   "normalizedValueExponent.executableExponent.implication",
+   "singleBitHalf.normalizedModel.because10",
+   "singleBitHalf.normalizedModel.because11",
+   "singleBitHalf.normalizedModel.because3",
+   "singleBitHalf.normalizedModel.because7",
+   "singleBitHalf.normalizedModel.because8",
+   "singleBitHalf.normalizedModel.because9"
   ]
  },
  "projects/k5_fdiv/domain/modelscale.av": {
   "obligations": [
+   "absoluteValue.normalizedMagnitude.because1",
+   "absoluteValue.normalizedMagnitude.because3",
+   "absoluteValue.normalizedMagnitude.because4",
+   "modelWindow.normalizedMagnitude.because5",
+   "nonzeroValue.normalizedValue.because1",
+   "nonzeroValue.normalizedValue.because3",
+   "nonzeroValue.normalizedValue.because4",
+   "scaledWindow.normalizedSignificand.because1",
+   "scaledWindow.normalizedSignificand.because2",
+   "scaledWindow.normalizedSignificand.because3",
+   "scaledWindow.normalizedSignificand.because4",
+   "scaledWindow.normalizedSignificand.because5",
    "scaledWindow.normalizedSignificand.implication",
    "uniqueWindow.uniqueExponent.implication"
   ]
@@ -173,17 +219,25 @@
  },
  "projects/k5_fdiv/domain/roundscale.av": {
   "obligations": [
-   "remainderQuotient.smallRemainder.implication"
+   "remainderQuotient.smallRemainder.implication",
+   "scaledCeiling.positiveScale.because1",
+   "scaledCeiling.positiveScale.because2",
+   "scaledCeiling.positiveScale.because3"
   ]
  },
  "projects/k5_fdiv/domain/stickyint.av": {
   "steps": [
+   "pow2.positive",
    "sigDouble.doubleIsTwice"
   ]
  },
  "projects/k5_fdiv/domain/truncscale.av": {
   "obligations": [
-   "scaledQuotient.exactScale.implication"
+   "scaledQuotient.exactScale.because1",
+   "scaledQuotient.exactScale.because2",
+   "scaledQuotient.exactScale.implication",
+   "signOfProduct.positiveMagnitudes.because1",
+   "signOfProduct.positiveMagnitudes.implication"
   ]
  },
  "projects/song/wave.av": {

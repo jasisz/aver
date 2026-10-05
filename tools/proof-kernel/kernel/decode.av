@@ -349,6 +349,7 @@ fn proofOf(tag: String, args: List<Sexp>) -> Result<Proof, String>
         "absurd" -> absurdProof(args)
         "induct" -> inductProof(args)
         "listinduct" -> listInductProof(args)
+        "intinduct" -> intInductProof(args)
         "ring" -> ringProof(args)
         "linear" -> linearProof(args)
         _ -> Result.Err("unknown rule {tag}")
@@ -512,6 +513,15 @@ fn listInductProof(args: List<Sexp>) -> Result<Proof, String>
 verify listInductProof
     listInductProof([]) => Result.Err("malformed listinduct")
 
+fn intInductProof(args: List<Sexp>) -> Result<Proof, String>
+    ? "(intinduct NAME TERM TERM GUARD PROOF (NAME…) (PROOF…) IH PROOF)"
+    match args
+        [Sexp.Atom(v), l, r, Sexp.Atom(g), b, ns, ps, Sexp.Atom(ih), st] -> Result.Ok(Proof.PIntInduct(v, term(l)?, term(r)?, g, proof(b)?, atoms(items(ns)?)?, proofs(items(ps)?)?, ih, proof(st)?))
+        _ -> Result.Err("malformed intinduct")
+
+verify intInductProof
+    intInductProof([]) => Result.Err("malformed intinduct")
+
 fn inductProof(args: List<Sexp>) -> Result<Proof, String>
     ? "(induct FN (TERM…) TERM TERM (case (NAME…) (NAME…) PROOF)…)"
     match args
@@ -577,27 +587,30 @@ record Givens
     names: List<String>
     finite: List<Given>
     lists: List<String>
+    ints: List<String>
 
 fn obligationGivens(ss: List<Sexp>) -> Result<Givens, String>
-    ? "The obligation's givens: a bare name, (NAME TYPE) for a given of finite type, or (NAME (tlist)) for a given of list type."
+    ? "The obligation's givens: a bare name, (NAME TYPE) for a given of finite type, (NAME (tlist)) for a given of list type, or (NAME (tint)) for a given of type Int."
     match ss
-        [] -> Result.Ok(Givens(names = [], finite = [], lists = []))
+        [] -> Result.Ok(Givens(names = [], finite = [], lists = [], ints = []))
         [s, ..rest] -> withGiven(s, obligationGivens(rest)?)
 
 verify obligationGivens
-    obligationGivens([Sexp.Atom("a"), Sexp.Node([Sexp.Atom("b"), Sexp.Node([Sexp.Atom("tbool")])])]) => Result.Ok(Givens(names = ["a", "b"], finite = [Given(name = "b", fin = Fin.FBool)], lists = []))
-    obligationGivens([Sexp.Node([Sexp.Atom("xs"), Sexp.Node([Sexp.Atom("tlist")])])]) => Result.Ok(Givens(names = ["xs"], finite = [], lists = ["xs"]))
+    obligationGivens([Sexp.Atom("a"), Sexp.Node([Sexp.Atom("b"), Sexp.Node([Sexp.Atom("tbool")])])]) => Result.Ok(Givens(names = ["a", "b"], finite = [Given(name = "b", fin = Fin.FBool)], lists = [], ints = []))
+    obligationGivens([Sexp.Node([Sexp.Atom("xs"), Sexp.Node([Sexp.Atom("tlist")])])]) => Result.Ok(Givens(names = ["xs"], finite = [], lists = ["xs"], ints = []))
+    obligationGivens([Sexp.Node([Sexp.Atom("n"), Sexp.Node([Sexp.Atom("tint")])])]) => Result.Ok(Givens(names = ["n"], finite = [], lists = [], ints = ["n"]))
 
 fn withGiven(s: Sexp, rest: Givens) -> Result<Givens, String>
     ? "One given in front of the rest."
     match s
-        Sexp.Atom(n) -> Result.Ok(Givens(names = List.prepend(n, rest.names), finite = rest.finite, lists = rest.lists))
-        Sexp.Node([Sexp.Atom(n), Sexp.Node([Sexp.Atom("tlist")])]) -> Result.Ok(Givens(names = List.prepend(n, rest.names), finite = rest.finite, lists = List.prepend(n, rest.lists)))
-        Sexp.Node([Sexp.Atom(n), t]) -> Result.Ok(Givens(names = List.prepend(n, rest.names), finite = List.prepend(Given(name = n, fin = fin(t)?), rest.finite), lists = rest.lists))
+        Sexp.Atom(n) -> Result.Ok(Givens(names = List.prepend(n, rest.names), finite = rest.finite, lists = rest.lists, ints = rest.ints))
+        Sexp.Node([Sexp.Atom(n), Sexp.Node([Sexp.Atom("tlist")])]) -> Result.Ok(Givens(names = List.prepend(n, rest.names), finite = rest.finite, lists = List.prepend(n, rest.lists), ints = rest.ints))
+        Sexp.Node([Sexp.Atom(n), Sexp.Node([Sexp.Atom("tint")])]) -> Result.Ok(Givens(names = List.prepend(n, rest.names), finite = rest.finite, lists = rest.lists, ints = List.prepend(n, rest.ints)))
+        Sexp.Node([Sexp.Atom(n), t]) -> Result.Ok(Givens(names = List.prepend(n, rest.names), finite = List.prepend(Given(name = n, fin = fin(t)?), rest.finite), lists = rest.lists, ints = rest.ints))
         _ -> Result.Err("malformed given")
 
 verify withGiven
-    withGiven(Sexp.Node([]), Givens(names = [], finite = [], lists = [])) => Result.Err("malformed given")
+    withGiven(Sexp.Node([]), Givens(names = [], finite = [], lists = [], ints = [])) => Result.Err("malformed given")
 
 fn obligation(s: Sexp) -> Result<Tuple<Law, Givens>, String>
     ? "(obligation KEY (GIVEN…) PREMISE TERM TERM): the law it states and its typed givens."
@@ -613,7 +626,7 @@ fn obligationOf(k: String, gs: Givens, p: List<Term>, l: Term, r: Term) -> Resul
     Result.Ok((Law(key = k, givens = gs.names, premise = p, lhs = l, rhs = r), gs))
 
 verify obligationOf
-    obligationOf("k", Givens(names = [], finite = [], lists = []), [], Term.TUnit, Term.TUnit) => Result.Ok((Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit), Givens(names = [], finite = [], lists = [])))
+    obligationOf("k", Givens(names = [], finite = [], lists = [], ints = []), [], Term.TUnit, Term.TUnit) => Result.Ok((Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit), Givens(names = [], finite = [], lists = [], ints = [])))
 
 fn premise(s: Sexp) -> Result<List<Term>, String>
     ? "(none) or a term."
@@ -671,7 +684,7 @@ fn factOf(k: String, gs: Givens, w: List<Term>, l: Term, r: Term, p: Proof) -> R
         _ -> Result.Err("fact {k}: a given of finite type")
 
 verify factOf
-    factOf("k", Givens(names = ["b"], finite = [Given(name = "b", fin = Fin.FBool)], lists = []), [], Term.TUnit, Term.TUnit, Proof.PRefl(Term.TUnit)) => Result.Err("fact k: a given of finite type")
+    factOf("k", Givens(names = ["b"], finite = [Given(name = "b", fin = Fin.FBool)], lists = [], ints = []), [], Term.TUnit, Term.TUnit, Proof.PRefl(Term.TUnit)) => Result.Err("fact k: a given of finite type")
 
 fn def(s: Sexp) -> Result<Def, String>
     ? "(def NAME (PARAM…) ((NAME TERM)…) TERM): parameters, local bindings in order, the final expression."
@@ -712,9 +725,9 @@ verify consts
     consts([]) => Result.Ok([])
 
 fn script(s: Sexp) -> Result<Script, String>
-    ? "(steps 6 (obligation …) (defs …) (consts …) (laws …) (proof …)); version 6 only."
+    ? "(steps 7 (obligation …) (defs …) (consts …) (laws …) (proof …)); version 7 only."
     match s
-        Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("6"), o, Sexp.Node([Sexp.Atom("defs"), ..ds]), Sexp.Node([Sexp.Atom("consts"), ..cs]), Sexp.Node([Sexp.Atom("laws"), ..ls]), Sexp.Node([Sexp.Atom("proof"), p])]) -> scriptOf(obligation(o)?, defs(ds)?, consts(cs)?, laws(ls)?, proof(p)?)
+        Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("7"), o, Sexp.Node([Sexp.Atom("defs"), ..ds]), Sexp.Node([Sexp.Atom("consts"), ..cs]), Sexp.Node([Sexp.Atom("laws"), ..ls]), Sexp.Node([Sexp.Atom("proof"), p])]) -> scriptOf(obligation(o)?, defs(ds)?, consts(cs)?, laws(ls)?, proof(p)?)
         Sexp.Node([Sexp.Atom("steps"), Sexp.Atom(v), ..rest]) -> Result.Err("unsupported step format version {v}")
         _ -> Result.Err("not a step script")
 
@@ -724,7 +737,7 @@ verify script
 fn scriptOf(o: Tuple<Law, Givens>, ds: List<Def>, cs: List<Const>, ls: Cited, p: Proof) -> Result<Script, String>
     ? "The script once its parts are read."
     match o
-        (ob, gs) -> Result.Ok(Script(obligation = ob, finite = gs.finite, lists = gs.lists, defs = ds, consts = cs, laws = ls.laws, facts = ls.facts, proof = p))
+        (ob, gs) -> Result.Ok(Script(obligation = ob, finite = gs.finite, lists = gs.lists, ints = gs.ints, defs = ds, consts = cs, laws = ls.laws, facts = ls.facts, proof = p))
 
 verify scriptOf
-    scriptOf((Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit), Givens(names = [], finite = [], lists = [])), [], [], Cited(laws = [], facts = []), Proof.PRefl(Term.TUnit)) => Result.Ok(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit), finite = [], lists = [], defs = [], consts = [], laws = [], facts = [], proof = Proof.PRefl(Term.TUnit)))
+    scriptOf((Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit), Givens(names = [], finite = [], lists = [], ints = [])), [], [], Cited(laws = [], facts = []), Proof.PRefl(Term.TUnit)) => Result.Ok(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit), finite = [], lists = [], ints = [], defs = [], consts = [], laws = [], facts = [], proof = Proof.PRefl(Term.TUnit)))

@@ -122,6 +122,18 @@ pub(crate) fn finite_givens(inputs: &ProofLowerInputs, t: &LawTheorem) -> Vec<(S
 }
 
 /// The givens whose type is a `List`.
+/// The givens of type Int: what an Int induction may count down.
+pub(crate) fn int_givens(t: &LawTheorem) -> Vec<String> {
+    t.quantifiers
+        .iter()
+        .filter(|q| {
+            let QuantifierType::Plain(ty) = &q.binder_type;
+            matches!(crate::types::parse_type_str(ty), crate::ast::Type::Int)
+        })
+        .map(|q| q.name.clone())
+        .collect()
+}
+
 pub(crate) fn list_givens(t: &LawTheorem) -> Vec<String> {
     t.quantifiers
         .iter()

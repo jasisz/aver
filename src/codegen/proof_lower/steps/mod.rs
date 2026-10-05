@@ -120,6 +120,7 @@ fn obligation(inputs: &ProofLowerInputs, t: &LawTheorem) -> Obligation {
         givens: t.quantifiers.iter().map(|q| q.name.clone()).collect(),
         finite: finite::finite_givens(inputs, t),
         lists: finite::list_givens(t),
+        ints: finite::int_givens(t),
         premise: premise_of(inputs, t),
         lhs: law_term(inputs, t, &t.claim_lhs),
         rhs: law_term(inputs, t, &t.claim_rhs),
@@ -281,6 +282,16 @@ fn uses_hyp(p: &Proof, name: &str) -> bool {
         Proof::Have { proof, body, .. } => uses_hyp(proof, name) || uses_hyp(body, name),
         Proof::Induct { cases, .. } => cases.iter().any(|c| uses_hyp(&c.proof, name)),
         Proof::InductList { nil, cons, .. } => uses_hyp(nil, name) || uses_hyp(cons, name),
+        Proof::InductInt {
+            base,
+            carried,
+            step,
+            ..
+        } => {
+            uses_hyp(base, name)
+                || uses_hyp(step, name)
+                || carried.iter().any(|(n, p)| n == name || uses_hyp(p, name))
+        }
         Proof::Refl(_)
         | Proof::UnfoldConst { .. }
         | Proof::Proj { .. }

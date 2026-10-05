@@ -14,6 +14,7 @@
 //!                    (proof PROOF))
 //! OGIVEN  := NAME | (NAME TYPE)       ; a given of finite type, with its type
 //!          | (NAME (tlist))            ; a given of list type
+//!          | (NAME (tint))             ; a given of type Int
 //! TYPE    := (tbool) | (tsum CTOR…) | (trec TYPE (FIELD TYPE)…) | (ttuple TYPE…)
 //! PREMISE := (none) | TERM
 //! TERM    := (i INT) | (b true|false) | (s "TEXT") | (unit) | (v NAME) | (hole)
@@ -33,6 +34,7 @@
 //!          | (enum NAME TERM TERM PROOF…) | (absurd PROOF TERM TERM)
 //!          | (induct FN (TERM…) TERM TERM (case (NAME…) (NAME…) PROOF)…)
 //!          | (listinduct NAME TERM TERM PROOF (NAME NAME NAME) PROOF)
+//!          | (intinduct NAME TERM TERM NAME PROOF (NAME…) (PROOF…) NAME PROOF)
 //!          | (ring TERM TERM) | (linear TERM BOOL (NAME…) (INT…))
 //! ```
 
@@ -490,6 +492,32 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
             proof(nil, names)?,
             proof(cons, names)?
         ),
+        Proof::InductInt {
+            var,
+            lhs,
+            rhs,
+            guard,
+            base,
+            carried,
+            ih,
+            step,
+        } => format!(
+            "(intinduct {var} {} {} {guard} {} ({}) ({}) {ih} {})",
+            term(lhs, names)?,
+            term(rhs, names)?,
+            proof(base, names)?,
+            carried
+                .iter()
+                .map(|(n, _)| n.as_str())
+                .collect::<Vec<_>>()
+                .join(" "),
+            carried
+                .iter()
+                .map(|(_, p)| proof(p, names))
+                .collect::<Result<Vec<_>, String>>()?
+                .join(" "),
+            proof(step, names)?
+        ),
         Proof::Enum {
             var,
             lhs,
@@ -556,6 +584,7 @@ pub fn script(s: &Script, names: &dyn Names) -> Result<String, String> {
         .map(|g| match o.finite.iter().find(|(n, _)| n == g) {
             Some((_, f)) => format!("({g} {})", finite(f, names)),
             None if o.lists.contains(g) => format!("({g} (tlist))"),
+            None if o.ints.contains(g) => format!("({g} (tint))"),
             None => g.clone(),
         })
         .collect();

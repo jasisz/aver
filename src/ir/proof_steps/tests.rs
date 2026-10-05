@@ -13,6 +13,7 @@ fn script(lhs: super::Term, rhs: super::Term, proof: Proof) -> Script {
             givens: vec!["a".into(), "b".into()],
             finite: Vec::new(),
             lists: Vec::new(),
+            ints: Vec::new(),
             premise: None,
             lhs,
             rhs,
@@ -640,13 +641,14 @@ fn constructor(p: &Proof) -> &'static str {
         Proof::Absurd { .. } => "absurd",
         Proof::Induct { .. } => "induct",
         Proof::InductList { .. } => "listinduct",
+        Proof::InductInt { .. } => "intinduct",
         Proof::Linear { .. } => "linear",
         Proof::Ring { .. } => "ring",
         Proof::Enum { .. } => "enum",
     }
 }
 
-const CONSTRUCTORS: [&str; 21] = [
+const CONSTRUCTORS: [&str; 22] = [
     "have",
     "refl",
     "symm",
@@ -665,6 +667,7 @@ const CONSTRUCTORS: [&str; 21] = [
     "absurd",
     "induct",
     "listinduct",
+    "intinduct",
     "linear",
     "ring",
     "enum",
@@ -968,6 +971,28 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
         premises: Vec::new(),
     };
 
+    // n = n down to zero; the changed sample reads the claim at n - 1 in
+    // the case n <= 0, where it is not in scope.
+    let int_induct = |base: Proof| {
+        let mut s = script(
+            var("n"),
+            var("n"),
+            Proof::InductInt {
+                var: "n".into(),
+                lhs: var("n"),
+                rhs: var("n"),
+                guard: "g".into(),
+                base: Box::new(base),
+                carried: Vec::new(),
+                ih: "ih".into(),
+                step: Box::new(Proof::Refl(var("n"))),
+            },
+        );
+        s.obligation.givens = vec!["n".into()];
+        s.obligation.ints = vec!["n".into()];
+        s
+    };
+
     let linear = |bound: i64| {
         with_premise(
             script(
@@ -1110,6 +1135,10 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
         (
             list_induct(concat_nil.clone()),
             list_induct(Proof::Hyp("ih".into())),
+        ),
+        (
+            int_induct(Proof::Refl(var("n"))),
+            int_induct(Proof::Hyp("ih".into())),
         ),
         (linear(1), linear(0)),
         (ring(2), ring(3)),

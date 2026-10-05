@@ -1021,6 +1021,177 @@ fn lean_inducts_with_the_functional_induction_principle_and_refuses_mutations() 
     let _ = fs::remove_dir_all(out);
 }
 
+const COUNTDOWN_LAWS: [&str; 6] = [
+    "below.nonnegativeFactor",
+    "below.nonnegativeFactor.because1",
+    "below.nonnegativeFactor.implication",
+    "pow2.positive",
+    "scaled.pinnedToZero",
+    "shifted.atThree",
+];
+
+/// `text` with the sub-form `index` of its first `(intinduct …)` replaced.
+fn reinduct(text: &str, index: usize, to: &str) -> String {
+    let (from, end) = nth_form(text, "(intinduct ", index);
+    format!("{}{to}{}", &text[..from], &text[end..])
+}
+
+#[test]
+fn both_kernels_induct_on_an_int_down_to_zero_and_refuse_mutations() {
+    let out = scratch("countdown");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("countdown.av", &out).into_iter().collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), COUNTDOWN_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let pow2 = read("pow2.positive");
+    let reason = read("below.nonnegativeFactor.because1");
+    let at_three = read("shifted.atThree");
+    assert!(pow2.contains("(proof (intinduct n "), "{pow2}");
+    assert!(pow2.contains("((n (tint)))"), "{pow2}");
+    // The `when` and its line about `c` are carried down with `c`.
+    assert!(reason.contains(" (when when2) ("), "{reason}");
+    assert!(at_three.contains("(rule int.eq.of_beq "), "{at_three}");
+    // (intinduct VAR LHS RHS GUARD BASE (NAME…) (PROOF…) IH STEP): the base
+    // case is sub-form 2, the carried hypotheses and their proofs at n - 1
+    // sub-forms 3 and 4.
+    for (kind, text) in [
+        (
+            "the hypothesis used in the base case",
+            reinduct(&pow2, 2, "(hyp ih1)"),
+        ),
+        (
+            "the step at n - 2",
+            mutate_proof(&pow2, "(op - (v n) (i 1))", "(op - (v n) (i 2))"),
+        ),
+        (
+            "the carried hypotheses left out",
+            reinduct(&reinduct(&reason, 4, "()"), 3, "()"),
+        ),
+        (
+            "induction on a given not known to be an Int",
+            pow2.replacen("((n (tint)))", "(n)", 1),
+        ),
+        (
+            "an equality used for another value",
+            mutate_proof(&at_three, "(b (i 3))", "(b (i 4))"),
+        ),
+    ] {
+        let refused = aver::proof_kernel::verdict(&text);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "{kind}: {refused:?}\n{text}"
+        );
+        let path = out.join("mutant.steps");
+        fs::write(&path, &text).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(
+            !result.status.success(),
+            "{kind}: {}",
+            format_output(&result)
+        );
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn steps_open_only_a_countdown_by_one_to_zero() {
+    let out = scratch("countdown-gate");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "countdown.av",
+            "--backend",
+            "aver",
+            "-o",
+            out.to_str().unwrap(),
+        ],
+    );
+    let text = String::from_utf8_lossy(&result.stdout);
+    assert!(
+        text.contains("steps do not open `halves`"),
+        "{}",
+        format_output(&result)
+    );
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_inducts_on_an_int_down_to_zero_and_refuses_a_mutation() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("countdown-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "countdown.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "1",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in COUNTDOWN_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let lean = fs::read_to_string(out.join("Countdown.lean")).unwrap();
+    let law = "pow2.positive";
+    // The claim is a comparison, so the step term sits inside `propext`.
+    let start = lean
+        .find("theorem pow2_law_positive :")
+        .expect("the law's theorem");
+    let line = lean[start..]
+        .lines()
+        .find(|l| l.contains("AverSteps.int_induct (P :="))
+        .expect("the steps branch")
+        .to_string();
+    let at = line
+        .find("AverSteps.int_induct (P :=")
+        .unwrap_or_else(|| panic!("{line}"));
+    // AverSteps.int_induct (P := …) BASE STEP n: the base case and the step
+    // case are the two forms after the motive.
+    let motive_open = at + "AverSteps.int_induct ".len();
+    let base_open = closing(&line, motive_open) + 2;
+    let base_close = closing(&line, base_open);
+    let step_open = base_close + 2;
+    let step_close = closing(&line, step_open);
+    let swapped = format!(
+        "{}{} {}{}",
+        &line[..base_open],
+        &line[step_open..=step_close],
+        &line[base_open..=base_close],
+        &line[step_close + 1..]
+    );
+    assert!(
+        lean_refuses(
+            &out,
+            "Countdown.lean",
+            &lean.replacen(&line, &swapped, 1),
+            law
+        ),
+        "the cases swapped: Lean must refuse the step term"
+    );
+    let _ = fs::remove_dir_all(out);
+}
+
 const ARITH_LAWS: [&str; 6] = [
     "clamp.positiveStaysPositive",
     "next.staysAboveOne",
@@ -1082,7 +1253,7 @@ fn joining_texts_is_never_read_as_int_arithmetic() {
     // step applies to it, even in a script made by hand.
     let script = |op: &str| {
         format!(
-            "(steps 6 (obligation k (a b) (none) (op {op} (v a) (v b)) (op {op} (v b) (v a))) (defs) (consts) (laws) (proof (ring (op {op} (v a) (v b)) (op {op} (v b) (v a)))))"
+            "(steps 7 (obligation k (a b) (none) (op {op} (v a) (v b)) (op {op} (v b) (v a))) (defs) (consts) (laws) (proof (ring (op {op} (v a) (v b)) (op {op} (v b) (v a)))))"
         )
     };
     assert_eq!(
@@ -2078,6 +2249,7 @@ fn both_kernels_check_because_chains_and_refuse_mutations() {
             "count.doubledNonNegative",
             "count.doubledNonNegative.because1",
             "count.doubledNonNegative.implication",
+            "count.nonNegative",
             "far.outsideFive",
             "mix.commutes",
             "mix.shiftedCommutes",
@@ -2238,6 +2410,7 @@ fn lean_checks_each_obligation_of_a_because_chain_by_its_steps() {
         "count.doubledNonNegative",
         "count.doubledNonNegative.because1",
         "count.doubledNonNegative.implication",
+        "count.nonNegative",
         "sum2.staysPositive",
         "twice.aboveAtLeastOne",
         "twice.grows",

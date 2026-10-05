@@ -9,6 +9,12 @@
 //! ([`super::Proof::Induct`]). Definitions that call each other are
 //! refused outright.
 //!
+//! A definition may also count an Int parameter down to zero
+//! ([`countdown`]): `match n <= 0`, arm `true` without a recursive call,
+//! arm `false` calling itself with `n - 1` in that parameter's place. It
+//! stops for every Int, a negative one included; an induction along it is
+//! [`super::Proof::InductInt`] on the given in that place.
+//!
 //! An induction step names its leading function `f` and the arguments the
 //! claim applies it to. The argument at the matched place must be a given;
 //! the other arguments that are givens are generalised. Each arm of `f` is
@@ -88,6 +94,9 @@ pub fn structural_param(def: &Def) -> Result<Option<usize>, String> {
     let ResolvedExpr::Match { subject, arms } = &def.body.node else {
         return refuse("outside a match on a parameter");
     };
+    if let Some(j) = countdown(def) {
+        return Ok(Some(j));
+    }
     let ResolvedExpr::Ident(p) = &subject.node else {
         return refuse("on a match whose subject is not a parameter");
     };
@@ -107,6 +116,53 @@ pub fn structural_param(def: &Def) -> Result<Option<usize>, String> {
         }
     }
     Ok(Some(j))
+}
+
+/// The place of the Int parameter `def` counts down by one to zero, when
+/// its body is `match p <= 0` with arm `true` free of recursive calls and
+/// every recursive call in arm `false` passing `p - 1` at `p`'s place, `p`
+/// not rebound around it.
+pub fn countdown(def: &Def) -> Option<usize> {
+    use crate::ast::{BinOp, Literal};
+    if !def.lets.is_empty() {
+        return None;
+    }
+    let ResolvedExpr::Match { subject, arms } = &def.body.node else {
+        return None;
+    };
+    let ResolvedExpr::BinOp(BinOp::Lte, p, zero) = &subject.node else {
+        return None;
+    };
+    let (ResolvedExpr::Ident(p), Some(z)) = (&p.node, term::int_value(zero)) else {
+        return None;
+    };
+    if z != 0.into() {
+        return None;
+    }
+    let j = def.params.iter().position(|n| n == p)?;
+    let [stop, go] = arms.as_slice() else {
+        return None;
+    };
+    let is = |pat: &crate::ir::hir::ResolvedPattern, v: bool| matches!(pat, crate::ir::hir::ResolvedPattern::Literal(Literal::Bool(b)) if *b == v);
+    if !is(&stop.pattern, true) || !is(&go.pattern, false) {
+        return None;
+    }
+    if !self_calls(&stop.body, def.fn_id).is_empty() {
+        return None;
+    }
+    let one_less = |t: &Term| match &t.node {
+        ResolvedExpr::BinOp(BinOp::Sub, x, one) => {
+            matches!(&x.node, ResolvedExpr::Ident(n) if n == p)
+                && term::int_value(one) == Some(1.into())
+        }
+        _ => false,
+    };
+    self_calls(&go.body, def.fn_id)
+        .iter()
+        .all(|(args, inner)| {
+            args.len() == def.params.len() && one_less(&args[j]) && !inner.contains(p)
+        })
+        .then_some(j)
 }
 
 /// The given at the matched place `j`, and the other givens among `args`

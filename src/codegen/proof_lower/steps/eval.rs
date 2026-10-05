@@ -206,6 +206,9 @@ impl Env<'_> {
         if let Some(step) = self.cited_int_equality(cur) {
             return Ok(Some(step));
         }
+        if let Some(step) = self.equal_to_literal(cur) {
+            return Ok(Some(step));
+        }
         if let Some((proof, to)) = self.rewrite_with_cited(cur)? {
             return Ok(Some(Step::Progress(Box::new((proof, to)))));
         }
@@ -241,6 +244,77 @@ impl Env<'_> {
             },
             term::boolean(true),
         ))))
+    }
+
+    /// `a = k` for an Int term `a` pinned to the literal `k`, by
+    /// `int.eq.of_beq`: a hypothesis states `(a == k) = true`, or, for a
+    /// variable, the comparisons in scope bound it by `k` from both sides
+    /// (`k` one of the literals a hypothesis compares it with). Only toward
+    /// a literal, so a rewrite never feeds another.
+    fn equal_to_literal(&mut self, cur: &Term) -> Option<Step> {
+        if term::int_value(cur).is_some() {
+            return None;
+        }
+        let t = canon(cur);
+        let stated = self.hyps.iter().rev().find_map(|(n, e)| {
+            if term::bool_value(&e.rhs) != Some(true) {
+                return None;
+            }
+            let ResolvedExpr::BinOp(BinOp::Eq, a, k) = &e.lhs.node else {
+                return None;
+            };
+            (canon(a) == t && term::int_value(k).is_some())
+                .then(|| (Proof::Hyp(n.clone()), canon(k)))
+        });
+        let (premise, k) = match stated {
+            Some(found) => found,
+            None => self.pinned(&t)?,
+        };
+        Some(Step::Progress(Box::new((
+            Proof::Rule {
+                rule: WallRule::EqOfBeq,
+                subst: vec![("a".into(), t), ("b".into(), k.clone())],
+                premises: vec![premise],
+            },
+            k,
+        ))))
+    }
+
+    /// `(x == k) = true` for a variable `x` of type Int that the
+    /// comparisons in scope pin to the literal `k`, by the two orders.
+    fn pinned(&mut self, x: &Term) -> Option<(Proof, Term)> {
+        if !matches!(x.node, ResolvedExpr::Ident(_)) || !is_int(x) {
+            return None;
+        }
+        let mut literals: Vec<Term> = Vec::new();
+        for (_, e) in &self.hyps {
+            if term::bool_value(&e.rhs).is_none() {
+                continue;
+            }
+            let ResolvedExpr::BinOp(op, a, b) = &e.lhs.node else {
+                continue;
+            };
+            if !matches!(op, BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte) {
+                continue;
+            }
+            for (side, other) in [(a, b), (b, a)] {
+                if canon(side) == *x
+                    && term::int_value(other).is_some()
+                    && !literals.contains(&canon(other))
+                {
+                    literals.push(canon(other));
+                }
+            }
+        }
+        for k in literals {
+            let eq = canon(&term::binop(BinOp::Eq, x.clone(), k.clone()));
+            if let Some((proof, value)) = self.decide_linearly(&eq)
+                && term::bool_value(&value) == Some(true)
+            {
+                return Some((proof, k));
+            }
+        }
+        None
     }
 
     fn settle(&mut self, cur: &Term, blocked: Option<Term>) -> Result<Step, String> {
@@ -329,6 +403,17 @@ impl Env<'_> {
                     ))));
                 };
                 let s = term::subst(subject, &outer)?;
+                // A countdown opens only where a hypothesis states its guard
+                // or the guard computes: opening it one level wherever
+                // arithmetic could decide the guard would trade a call the
+                // facts in scope talk about for one they do not.
+                let countdown = crate::ir::proof_steps::induct::countdown(&def).is_some();
+                if countdown
+                    && term::eval_closed(&canon(&s)).is_none()
+                    && self.hyp_for(&s).is_none()
+                {
+                    return self.settle(cur, None);
+                }
                 let ev = self.whnf(&s)?;
                 let value = ev.chain.cur().clone();
                 match select_arm(arms, &value) {
@@ -347,6 +432,9 @@ impl Env<'_> {
                             crate::ir::proof_steps::claim::claim(&unfold, &script, &self.hyps)?;
                         Ok(Step::Progress(Box::new((unfold, eq.rhs))))
                     }
+                    // Splitting on a countdown's guard would unroll the
+                    // recursion one more level in every branch.
+                    None if countdown => self.settle(cur, None),
                     None => {
                         let g = ev.blocked.or_else(|| {
                             (matches!(value.ty(), Some(crate::ast::Type::Bool))
@@ -1208,6 +1296,13 @@ impl Env<'_> {
                 nl.push(proof, rc);
                 return Ok(meet(nl, nr));
             }
+            // A predicate hypothesis that chooses by a Bool: open it at the
+            // arm its guard selects, splitting on the guard when it is open.
+            if depth > 0
+                && let Some(proof) = self.open_hypothesis(lhs, rhs, depth)?
+            {
+                return Ok(proof);
+            }
             return Err(self.stopped_at(nl.cur(), nr.cur()));
         };
         if depth == 0 || is_bool_value(&g) || self.hyp_for(&g).is_some() {
@@ -1401,6 +1496,122 @@ impl Env<'_> {
         Ok(None)
     }
 
+    /// `lhs = rhs` once the first hypothesis `f(args) = true` not yet
+    /// opened, where `f`'s body is a `match` on a Bool with one arm for
+    /// `true` and one for `false`, is opened: its guard decided by a
+    /// hypothesis or by linear arithmetic, or split on otherwise; in each
+    /// case the lines of the selected arm (its `Bool.and` parts) are cut in
+    /// as hypotheses. `None` when no hypothesis is such a call.
+    fn open_hypothesis(
+        &mut self,
+        lhs: &Term,
+        rhs: &Term,
+        depth: usize,
+    ) -> Result<Option<Proof>, String> {
+        let found = self.hyps.iter().rev().find_map(|(name, e)| {
+            if term::bool_value(&e.rhs) != Some(true) || self.opened.contains(&canon(&e.lhs)) {
+                return None;
+            }
+            let ResolvedExpr::Call(ResolvedCallee::Fn(id), args) = &e.lhs.node else {
+                return None;
+            };
+            Some((name.clone(), canon(&e.lhs), *id, args.clone()))
+        });
+        let Some((name, fact, id, args)) = found else {
+            return Ok(None);
+        };
+        let Some(def) = self.def(id) else {
+            return Ok(None);
+        };
+        let ResolvedExpr::Match { subject, arms } = &def.body.node else {
+            return Ok(None);
+        };
+        let arm_of = |v: bool| {
+            arms.iter().position(|a| {
+                matches!(&a.pattern, ResolvedPattern::Literal(crate::ast::Literal::Bool(b)) if *b == v)
+            })
+        };
+        let (Some(at_true), Some(at_false)) = (arm_of(true), arm_of(false)) else {
+            return Ok(None);
+        };
+        if arms.len() != 2 {
+            return Ok(None);
+        }
+        let args: Vec<Term> = args.iter().map(canon).collect();
+        let guard = canon(&term::subst(subject, &def.outer(&args)?)?);
+        self.mark_used(id);
+        self.opened.push(fact.clone());
+        // The arm for `value`, its lines cut in, then the claim under them.
+        let open = |env: &mut Self, value: bool, premise: Proof| -> Result<Proof, String> {
+            let k = (if value { at_true } else { at_false }) as u32 + 1;
+            let unfold = Proof::Unfold {
+                fn_id: id,
+                arm: k,
+                args: args.clone(),
+                binders: Vec::new(),
+                premise: Some(Box::new(premise)),
+            };
+            let script = env.scratch_script();
+            let body = crate::ir::proof_steps::claim::claim(&unfold, &script, &env.hyps)?.rhs;
+            let from = Proof::Trans {
+                terms: vec![body.clone(), fact.clone(), term::boolean(true)],
+                steps: vec![Proof::Symm(Box::new(unfold)), Proof::Hyp(name.clone())],
+            };
+            let mut lines = Vec::new();
+            super::split_and(&body, from, &mut lines);
+            let saved = env.hyps.len();
+            let mut cuts = Vec::new();
+            for (line, proof) in lines {
+                let h = env.fresh_hyp();
+                env.hyps
+                    .push((h.clone(), Eqn::new(line.clone(), term::boolean(true))));
+                cuts.push((h, line, proof));
+            }
+            let body = env.prove_by_evaluation(lhs, rhs, depth - 1);
+            env.hyps.truncate(saved);
+            let mut proof = body?;
+            for (h, line, from) in cuts.into_iter().rev() {
+                proof = Proof::Have {
+                    name: h,
+                    fact: line,
+                    proof: Box::new(from),
+                    body: Box::new(proof),
+                };
+            }
+            Ok(proof)
+        };
+        let decided = match self.hyp_for(&guard) {
+            Some((h, v)) => term::bool_value(&v).map(|b| (Proof::Hyp(h), b)),
+            None => self
+                .decide_linearly(&guard)
+                .and_then(|(p, v)| Some((p, term::bool_value(&v)?))),
+        };
+        let out = match decided {
+            Some((premise, value)) => open(self, value, premise),
+            None => {
+                let h = self.fresh_hyp();
+                let branch = |env: &mut Self, v: bool| -> Result<Proof, String> {
+                    env.hyps
+                        .push((h.clone(), Eqn::new(guard.clone(), term::boolean(v))));
+                    let out = open(env, v, Proof::Hyp(h.clone()));
+                    env.hyps.pop();
+                    out
+                };
+                match (branch(self, true), branch(self, false)) {
+                    (Ok(t), Ok(f)) => Ok(Proof::Cases {
+                        on: guard.clone(),
+                        hyp: h.clone(),
+                        if_true: Box::new(t),
+                        if_false: Box::new(f),
+                    }),
+                    (Err(e), _) | (_, Err(e)) => Err(e),
+                }
+            }
+        };
+        self.opened.pop();
+        out.map(Some)
+    }
+
     /// The refusal for two sides evaluation cannot bring together: both
     /// sides as it left them, and the hypotheses in scope.
     pub(crate) fn stopped_at(&mut self, lhs: &Term, rhs: &Term) -> String {
@@ -1473,6 +1684,7 @@ pub(crate) fn empty_script() -> crate::ir::proof_steps::Script {
             givens: Vec::new(),
             finite: Vec::new(),
             lists: Vec::new(),
+            ints: Vec::new(),
             premise: None,
             lhs: term::boolean(true),
             rhs: term::boolean(true),

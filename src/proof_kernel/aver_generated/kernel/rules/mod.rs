@@ -335,7 +335,13 @@ pub fn comparisonSchema(id @ _: AverStr) -> Option<Schema> {
                                                                 {
                                                                     crate::proof_kernel::aver_generated::kernel::rules::complement(AverStr::from(">"), true, AverStr::from("=="), false)
                                                                 } else {
-                                                                    crate::proof_kernel::aver_generated::kernel::rules::ringSchema(id)
+                                                                    if &*__dispatch_subject
+                                                                        == "int.eq.of_beq"
+                                                                    {
+                                                                        Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: aver_rt::AverList::from_vec(vec![AverStr::from("a"), AverStr::from("b")]), premises: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("=="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b")))), true)]), concl: crate::proof_kernel::aver_generated::kernel::rules::eq(&crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b"))) })
+                                                                    } else {
+                                                                        crate::proof_kernel::aver_generated::kernel::rules::ringSchema(id)
+                                                                    }
                                                                 }
                                                             }
                                                         }

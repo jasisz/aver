@@ -14,11 +14,12 @@ record Env
     hyps: List<Hyp>
     finite: List<Given>
     lists: List<String>
+    ints: List<String>
     givens: List<String>
 
 fn emptyEnv() -> Env
     ? "No definitions, laws or hypotheses."
-    Env(defs = [], consts = [], laws = [], hyps = [], finite = [], lists = [], givens = [])
+    Env(defs = [], consts = [], laws = [], hyps = [], finite = [], lists = [], ints = [], givens = [])
 
 verify emptyEnv
     emptyEnv().hyps => []
@@ -52,6 +53,7 @@ fn conclude(p: Proof, env: Env, path: String) -> Result<Eqn, String>
         Proof.PAbsurd(q, l, r) -> absurd(conclude(q, env, "{path}/absurd")?, l, r, path)
         Proof.PInduct(f, xs, l, r, cs) -> induct(f, xs, Eqn(lhs = l, rhs = r), cs, env, path)
         Proof.PListInduct(v, l, r, n, h, t, ih, c) -> listInduct(v, Eqn(lhs = l, rhs = r), n, [h, t, ih], c, env, path)
+        Proof.PIntInduct(v, l, r, g, b, names, carry, ih, st) -> intInduct(v, Eqn(lhs = l, rhs = r), g, b, names, carry, ih, st, env, path)
         Proof.PRing(l, r) -> ring(l, r, path)
         Proof.PLinear(g, v, hs, ws) -> linear(g, v, hs, ws, env, path)
 
@@ -218,7 +220,7 @@ verify have
 
 fn withHyp(env: Env, h: String, on: Term, value: Bool) -> Env
     ? "The environment with one more hypothesis in front."
-    Env(defs = env.defs, consts = env.consts, laws = env.laws, hyps = List.prepend(Hyp(name = h, eqn = Eqn(lhs = on, rhs = Term.TBool(value))), env.hyps), finite = env.finite, lists = env.lists, givens = env.givens)
+    Env(defs = env.defs, consts = env.consts, laws = env.laws, hyps = List.prepend(Hyp(name = h, eqn = Eqn(lhs = on, rhs = Term.TBool(value))), env.hyps), finite = env.finite, lists = env.lists, ints = env.ints, givens = env.givens)
 
 verify withHyp
     List.len(withHyp(emptyEnv(), "h", Term.TVar("c"), true).hyps) => 1
@@ -320,7 +322,7 @@ verify substHyps
 
 fn withHyps(env: Env, hs: List<Hyp>) -> Env
     ? "The environment with its hypotheses replaced."
-    Env(defs = env.defs, consts = env.consts, laws = env.laws, hyps = hs, finite = env.finite, lists = env.lists, givens = env.givens)
+    Env(defs = env.defs, consts = env.consts, laws = env.laws, hyps = hs, finite = env.finite, lists = env.lists, ints = env.ints, givens = env.givens)
 
 verify withHyps
     withHyps(emptyEnv(), []).hyps => []
@@ -688,15 +690,15 @@ fn checkScript(s: Script) -> Result<String, String>
     ? "The proof must prove exactly the obligation, under its when; every cited builtin fact is checked first."
     Kernel.Induct.refuseMutualRecursion(s.defs)?
     checkFacts(s.facts, [])?
-    env = Env(defs = s.defs, consts = s.consts, laws = List.concat(s.laws, factLaws(s.facts)), hyps = lawHyps(s.obligation), finite = s.finite, lists = s.lists, givens = s.obligation.givens)
+    env = Env(defs = s.defs, consts = s.consts, laws = List.concat(s.laws, factLaws(s.facts)), hyps = lawHyps(s.obligation), finite = s.finite, lists = s.lists, ints = s.ints, givens = s.obligation.givens)
     e = conclude(s.proof, env, "proof")?
     match e == Eqn(lhs = s.obligation.lhs, rhs = s.obligation.rhs)
         true -> Result.Ok(s.obligation.key)
         false -> Result.Err("step proof: the proof ends at a different equation than the claim")
 
 verify checkScript
-    checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], defs = [], consts = [], laws = [], facts = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Ok("k")
-    checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2)), finite = [], lists = [], defs = [], consts = [], laws = [], facts = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Err("step proof: the proof ends at a different equation than the claim")
+    checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], laws = [], facts = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Ok("k")
+    checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2)), finite = [], lists = [], ints = [], defs = [], consts = [], laws = [], facts = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Err("step proof: the proof ends at a different equation than the claim")
 
 fn lawHyps(ob: Law) -> List<Hyp>
     ? "The obligation's when, as hypothesis `when`."
@@ -1006,11 +1008,85 @@ verify listCases
     listCases("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), "h", "t", "ih", Proof.PRefl(Term.TBi("List.prepend", [Term.TVar("h"), Term.TVar("t")])), emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")))
     listCases("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), "h", "t", "ih", Proof.PHyp("ih"), emptyEnv(), "p") => Result.Err("step p/cons: the case proves a different equation")
 
+fn intInduct(v: String, claim: Eqn, g: String, base: Proof, names: List<String>, carry: List<Proof>, ih: String, step: Proof, env: Env, path: String) -> Result<Eqn, String>
+    ? "Induction on a given of type Int down to zero: the claim where v <= 0 (hypothesis g), and where v > 0 under hypothesis ih, the claim at v - 1. The hypotheses carried hold at v - 1 first; any other one that mentions v is out of scope."
+    match (List.contains(env.ints, v), List.len(names) == List.len(carry))
+        (false, _) -> refuse(path, "{v} is not a given of type Int")
+        (_, false) -> refuse(path, "one proof per carried hypothesis")
+        _ -> intCases(v, claim, g, base, namedHyps(names, env.hyps, path)?, carry, ih, step, env, path)
+
+verify intInduct
+    intInduct("n", Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), "g", Proof.PRefl(Term.TVar("n")), [], [], "ih", Proof.PRefl(Term.TVar("n")), emptyEnv(), "p") => Result.Err("step p: n is not a given of type Int")
+    intInduct("n", Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), "g", Proof.PRefl(Term.TVar("n")), ["h"], [], "ih", Proof.PRefl(Term.TVar("n")), intsEnv(["n"]), "p") => Result.Err("step p: one proof per carried hypothesis")
+    intInduct("n", Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), "g", Proof.PRefl(Term.TVar("n")), [], [], "ih", Proof.PRefl(Term.TVar("n")), intsEnv(["n"]), "p") => Result.Ok(Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")))
+
+fn intsEnv(ns: List<String>) -> Env
+    ? "No definitions, laws or hypotheses, and these givens of type Int."
+    Env(defs = [], consts = [], laws = [], hyps = [], finite = [], lists = [], ints = ns, givens = ns)
+
+verify intsEnv
+    intsEnv(["n"]).ints => ["n"]
+
+fn intCases(v: String, claim: Eqn, g: String, base: Proof, cs: List<Hyp>, carry: List<Proof>, ih: String, step: Proof, env: Env, path: String) -> Result<Eqn, String>
+    ? "The case v <= 0; then, where v > 0, each carried hypothesis at v - 1, and the claim under the claim at v - 1. A case sees the carried hypotheses (the last named innermost), then g, then those that do not mention v."
+    guard = Term.TOp("<=", Term.TVar(v), Term.TInt(0))
+    down = [Kernel.Term.bind(v, Term.TOp("-", Term.TVar(v), Term.TInt(1)))]
+    kept = notMentioning(env.hyps, v)
+    inner = List.reverse(cs)
+    caseProves(base, claim, withHyps(env, List.concat(inner, List.prepend(Hyp(name = g, eqn = Eqn(lhs = guard, rhs = Term.TBool(true))), kept))), "{path}/base")?
+    above = withHyps(env, List.concat(inner, List.prepend(Hyp(name = g, eqn = Eqn(lhs = guard, rhs = Term.TBool(false))), kept)))
+    carriedHold(cs, carry, down, above, path)?
+    caseProves(step, claim, withHyps(above, List.prepend(Hyp(name = ih, eqn = instantiate(claim, down, path)?), above.hyps)), "{path}/step")?
+    Result.Ok(claim)
+
+verify intCases
+    intCases("n", Eqn(lhs = Term.TVar("n"), rhs = Term.TInt(0)), "g", Proof.PRefl(Term.TVar("n")), [], [], "ih", Proof.PRefl(Term.TVar("n")), intsEnv(["n"]), "p") => Result.Err("step p/base: the case proves a different equation")
+    intCases("n", Eqn(lhs = Term.TOp("<=", Term.TVar("n"), Term.TInt(0)), rhs = Term.TBool(true)), "g", Proof.PHyp("g"), [], [], "ih", Proof.PHyp("g"), intsEnv(["n"]), "p") => Result.Err("step p/step: the case proves a different equation")
+    intCases("n", Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), "g", Proof.PHyp("h"), [], [], "ih", Proof.PRefl(Term.TVar("n")), withHyp(intsEnv(["n"]), "h", Term.TVar("n"), true), "p") => Result.Err("step p/base: hypothesis h is not in scope")
+
+fn namedHyps(names: List<String>, scope: List<Hyp>, path: String) -> Result<List<Hyp>, String>
+    ? "The hypotheses of these names, as they stand in scope."
+    match names
+        [] -> Result.Ok([])
+        [n, ..rest] -> Result.Ok(List.prepend(Hyp(name = n, eqn = hyp(n, scope, path)?), namedHyps(rest, scope, path)?))
+
+verify namedHyps
+    namedHyps(["h"], [], "p") => Result.Err("step p: hypothesis h is not in scope")
+
+fn notMentioning(hs: List<Hyp>, v: String) -> List<Hyp>
+    ? "The hypotheses that do not mention v."
+    match hs
+        [] -> []
+        [h, ..rest] -> match hypsMention([h], [v])
+            true -> notMentioning(rest, v)
+            false -> List.prepend(h, notMentioning(rest, v))
+
+verify notMentioning
+    notMentioning([Hyp(name = "h", eqn = Eqn(lhs = Term.TVar("n"), rhs = Term.TBool(true))), Hyp(name = "k", eqn = Eqn(lhs = Term.TVar("m"), rhs = Term.TBool(true)))], "n") => [Hyp(name = "k", eqn = Eqn(lhs = Term.TVar("m"), rhs = Term.TBool(true)))]
+
+fn carriedHold(cs: List<Hyp>, proofs: List<Proof>, down: List<Binding>, env: Env, path: String) -> Result<Unit, String>
+    ? "Each carried hypothesis, at v - 1, proved by its proof."
+    match (cs, proofs)
+        ([c, ..more], [q, ..qs]) -> carriedThen(caseProves(q, instantiate(c.eqn, down, path)?, env, "{path}/carry.{c.name}"), more, qs, down, env, path)
+        _ -> Result.Ok(Unit)
+
+verify carriedHold
+    carriedHold([], [], [], emptyEnv(), "p") => Result.Ok(Unit)
+    carriedHold([Hyp(name = "h", eqn = Eqn(lhs = Term.TVar("n"), rhs = Term.TBool(true)))], [Proof.PHyp("h")], [Kernel.Term.bind("n", Term.TInt(0))], withHyp(emptyEnv(), "h", Term.TVar("n"), true), "p") => Result.Err("step p/carry.h: the case proves a different equation")
+
+fn carriedThen(done: Result<Unit, String>, cs: List<Hyp>, proofs: List<Proof>, down: List<Binding>, env: Env, path: String) -> Result<Unit, String>
+    ? "The rest of the carried hypotheses, once this one held."
+    done?
+    carriedHold(cs, proofs, down, env, path)
+
+verify carriedThen
+    carriedThen(Result.Err("no"), [], [], [], emptyEnv(), "p") => Result.Err("no")
+
 fn checkFacts(fs: List<Fact>, earlier: List<Law>) -> Result<Unit, String>
     ? "Each builtin fact proves its statement over builtins and the facts before it: no definitions, no other laws, no when."
     match fs
         [] -> Result.Ok(Unit)
-        [f, ..rest] -> checkFactThen(checkScript(Script(obligation = f.law, finite = [], lists = f.lists, defs = [], consts = [], laws = earlier, facts = [], proof = f.proof)), f.law, rest, earlier)
+        [f, ..rest] -> checkFactThen(checkScript(Script(obligation = f.law, finite = [], lists = f.lists, ints = [], defs = [], consts = [], laws = earlier, facts = [], proof = f.proof)), f.law, rest, earlier)
 
 verify checkFacts
     checkFacts([], []) => Result.Ok(Unit)

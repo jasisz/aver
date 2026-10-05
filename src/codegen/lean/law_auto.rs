@@ -323,7 +323,7 @@ pub fn emit_verify_law_forall_auto_proof(
     // first alternative, so grind can do NEW work — guaranteed closers
     // like `omega`/`rfl` are left byte-identical).
     let mut proof = maybe_wrap_with_grind_rung(vb, law, ctx, inner);
-    let steps_rendered = if proof.replaces_theorem || cert_model {
+    let steps_rendered = if cert_model {
         None
     } else {
         law_steps_for(ctx, &vb.fn_name, &law.name).and_then(|script| {
@@ -355,6 +355,28 @@ pub fn emit_verify_law_forall_auto_proof(
                 .insert_before_sorry(super::tactic_ir::Tactic::Leaf(arm));
         }
     }
+    // A proof that states its own theorem, in the words the law's theorem
+    // is stated in anyway, keeps it, renamed, as the fallback a step term
+    // leads: the law's theorem then closes by the steps or by that renamed
+    // theorem. A theorem stated otherwise is left as it is.
+    let steps_rendered = match steps_rendered {
+        Some(found) if proof.replaces_theorem => {
+            let head = format!("theorem {theorem_base} :");
+            let ordinary = format!("{head} ∀ {quant_params}, {theorem_prop} := by");
+            match proof.support_lines.iter().position(|l| *l == ordinary) {
+                Some(at) => {
+                    let renamed = format!("theorem {theorem_base}__portfolio :");
+                    proof.support_lines[at] = proof.support_lines[at].replacen(&head, &renamed, 1);
+                    proof.replaces_theorem = false;
+                    proof.body =
+                        super::tactic_ir::Tactic::Leaf(format!("exact {theorem_base}__portfolio"));
+                    Some(found)
+                }
+                None => None,
+            }
+        }
+        other => other,
+    };
     // A proof written as data leads: the kernel checks it, and the whole
     // portfolio above stays behind it as the fallback.
     if let Some((key, rendered)) = steps_rendered {
