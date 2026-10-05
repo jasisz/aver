@@ -53,6 +53,14 @@ fn is_int(t: &Term) -> bool {
     matches!(t.ty(), Some(crate::ast::Type::Int)) || term::int_value(t).is_some()
 }
 
+/// Whether `part` occurs in `t`, both canonical; a `match` counts as
+/// containing everything, since its arms are not children.
+fn occurs(part: &Term, t: &Term) -> bool {
+    *t == *part
+        || matches!(t.node, ResolvedExpr::Match { .. })
+        || term::children(t).into_iter().any(|c| occurs(part, c))
+}
+
 /// The arm of a match whose pattern head the value `v` has, with the
 /// pattern's bindings, and whether `v` is a list literal the arm reads as a
 /// cell (so the premise ends with a [`Proof::Cell`] step). `None` when no
@@ -206,7 +214,7 @@ impl Env<'_> {
         if let Some(step) = self.cited_int_equality(cur) {
             return Ok(Some(step));
         }
-        if let Some(step) = self.equal_to_literal(cur) {
+        if let Some(step) = self.equal_by_hypothesis(cur) {
             return Ok(Some(step));
         }
         if let Some((proof, to)) = self.rewrite_with_cited(cur)? {
@@ -246,30 +254,72 @@ impl Env<'_> {
         ))))
     }
 
-    /// `a = k` for an Int term `a` pinned to the literal `k`, by
-    /// `int.eq.of_beq`: a hypothesis states `(a == k) = true`, or, for a
-    /// variable, the comparisons in scope bound it by `k` from both sides
-    /// (`k` one of the literals a hypothesis compares it with). Only toward
-    /// a literal, so a rewrite never feeds another.
-    fn equal_to_literal(&mut self, cur: &Term) -> Option<Step> {
+    /// `a = k` for an Int term `a` a hypothesis or the orders make equal to
+    /// `k`, by `int.eq.of_beq`: a hypothesis states `(a == k) = true`, or,
+    /// for a variable, the comparisons in scope bound it by the literal `k`
+    /// from both sides (`k` one of the literals a hypothesis compares it
+    /// with). A stated `k` that is not a literal is taken only when no left
+    /// side of a stated equality occurs in it, so a rewrite never feeds
+    /// another.
+    fn equal_by_hypothesis(&mut self, cur: &Term) -> Option<Step> {
         if term::int_value(cur).is_some() {
             return None;
         }
         let t = canon(cur);
-        let stated = self.hyps.iter().rev().find_map(|(n, e)| {
-            if term::bool_value(&e.rhs) != Some(true) {
-                return None;
-            }
-            let ResolvedExpr::BinOp(BinOp::Eq, a, k) = &e.lhs.node else {
-                return None;
+        let stated_lhs: Vec<Term> = self
+            .hyps
+            .iter()
+            .filter(|(_, e)| term::bool_value(&e.rhs) == Some(true))
+            .filter_map(|(_, e)| match &e.lhs.node {
+                ResolvedExpr::BinOp(BinOp::Eq, a, _) => Some(canon(a)),
+                _ => None,
+            })
+            .collect();
+        let candidates: Vec<(String, Term, Term)> = self
+            .hyps
+            .iter()
+            .rev()
+            .filter(|(_, e)| term::bool_value(&e.rhs) == Some(true))
+            .filter_map(|(n, e)| match &e.lhs.node {
+                ResolvedExpr::BinOp(BinOp::Eq, a, k) => Some((n.clone(), canon(a), canon(k))),
+                _ => None,
+            })
+            .filter(|(_, a, k)| {
+                term::int_value(k).is_some()
+                    || (is_int(a) && is_int(k) && !stated_lhs.iter().any(|l| occurs(l, k)))
+            })
+            .collect();
+        for (n, a, k) in candidates {
+            let rule = |a: Term| Proof::Rule {
+                rule: WallRule::EqOfBeq,
+                subst: vec![("a".into(), a), ("b".into(), k.clone())],
+                premises: vec![Proof::Hyp(n.clone())],
             };
-            (canon(a) == t && term::int_value(k).is_some())
-                .then(|| (Proof::Hyp(n.clone()), canon(k)))
-        });
-        let (premise, k) = match stated {
-            Some(found) => found,
-            None => self.pinned(&t)?,
-        };
+            if a == t {
+                return Some(Step::Progress(Box::new((rule(a), k))));
+            }
+            // `a` a call of a definition that only names another term
+            // (no `match`, no recursion) whose body there is `cur`: the
+            // hypothesis read through that one unfolding.
+            if term::int_value(&k).is_some() {
+                continue;
+            }
+            let Some((unfold, body)) = self.wrapper_unfold(&a) else {
+                continue;
+            };
+            if body != t {
+                continue;
+            }
+            if let ResolvedExpr::Call(ResolvedCallee::Fn(id), _) = &a.node {
+                self.mark_used(*id);
+            }
+            let proof = Proof::Trans {
+                terms: vec![t.clone(), a.clone(), k.clone()],
+                steps: vec![Proof::Symm(Box::new(unfold)), rule(a)],
+            };
+            return Some(Step::Progress(Box::new((proof, k))));
+        }
+        let (premise, k) = self.pinned(&t)?;
         Some(Step::Progress(Box::new((
             Proof::Rule {
                 rule: WallRule::EqOfBeq,
@@ -278,6 +328,31 @@ impl Env<'_> {
             },
             k,
         ))))
+    }
+
+    /// The whole-body equation of `a`, a call of a definition whose body is
+    /// not a `match` and that does not recurse, with that body at `a`'s
+    /// arguments; `None` otherwise.
+    fn wrapper_unfold(&mut self, a: &Term) -> Option<(Proof, Term)> {
+        let ResolvedExpr::Call(ResolvedCallee::Fn(id), args) = &a.node else {
+            return None;
+        };
+        if self.inputs.recursive_fns.contains(id) {
+            return None;
+        }
+        let def = self.def(*id)?;
+        if matches!(def.body.node, ResolvedExpr::Match { .. }) {
+            return None;
+        }
+        let body = canon(&term::subst(&def.body, &def.outer(args).ok()?).ok()?);
+        let unfold = Proof::Unfold {
+            fn_id: *id,
+            arm: 0,
+            args: args.iter().map(canon).collect(),
+            binders: Vec::new(),
+            premise: None,
+        };
+        Some((unfold, body))
     }
 
     /// `(x == k) = true` for a variable `x` of type Int that the
@@ -1132,6 +1207,14 @@ impl Env<'_> {
                 Eqn::new(f.clone(), term::boolean(true)),
             ));
         }
+        let viewed = known.len();
+        let instances = self.cited_comparisons(goal);
+        for (i, (f, _, _)) in instances.iter().enumerate() {
+            known.push((
+                format!("h_cited{i}"),
+                Eqn::new(f.clone(), term::boolean(true)),
+            ));
+        }
         let mut atoms = Vec::new();
         let mut facts = vec![linear::as_nonneg(goal, !value, &mut atoms)?];
         for (_, e) in &known {
@@ -1152,10 +1235,18 @@ impl Env<'_> {
             }
             if k < plain {
                 hyps.push(n.clone());
-            } else {
+            } else if k < viewed {
                 let (fact, proof, id) = views[k - plain].clone();
                 let name = self.fresh_hyp();
                 self.mark_used(id);
+                hyps.push(name.clone());
+                cuts.push((name, fact, proof));
+            } else {
+                let (fact, proof, law) = instances[k - viewed].clone();
+                let name = self.fresh_hyp();
+                if !self.laws.iter().any(|l| l.key == law.key) {
+                    self.laws.push(law);
+                }
                 hyps.push(name.clone());
                 cuts.push((name, fact, proof));
             }
@@ -1176,6 +1267,57 @@ impl Env<'_> {
             };
         }
         Some(proof)
+    }
+
+    /// The instances of the cited laws that state an Int comparison, with
+    /// no `when`, at the atoms of `goal` they are about: each with its
+    /// proof. A law's givens are fixed by one of its atoms matching one of
+    /// the goal's, so only facts about what the goal mentions are offered.
+    fn cited_comparisons(
+        &mut self,
+        goal: &Term,
+    ) -> Vec<(Term, Proof, crate::ir::proof_steps::LawRef)> {
+        use super::rewrite::{matches, ordered};
+        use crate::ir::proof_steps::linear;
+        let mut goal_atoms = Vec::new();
+        if linear::as_nonneg(goal, true, &mut goal_atoms).is_none() {
+            return Vec::new();
+        }
+        let mut out: Vec<(Term, Proof, crate::ir::proof_steps::LawRef)> = Vec::new();
+        for law in self.cited_all.clone() {
+            if term::bool_value(&law.rhs) != Some(true) || law.premise.is_some() {
+                continue;
+            }
+            let mut law_atoms = Vec::new();
+            if linear::as_nonneg(&law.lhs, true, &mut law_atoms).is_none() {
+                continue;
+            }
+            for pat in &law_atoms {
+                for atom in &goal_atoms {
+                    let mut found = Vec::new();
+                    if !matches(pat, atom, &law.givens, &mut found) {
+                        continue;
+                    }
+                    let Some(subst) = ordered(&law.givens, found) else {
+                        continue;
+                    };
+                    let Ok(fact) = term::subst(&law.lhs, &subst) else {
+                        continue;
+                    };
+                    let fact = canon(&fact);
+                    if out.iter().any(|(f, _, _)| *f == fact) {
+                        continue;
+                    }
+                    let proof = Proof::Law {
+                        law: law.key.clone(),
+                        subst,
+                        premise: None,
+                    };
+                    out.push((fact, proof, law.clone()));
+                }
+            }
+        }
+        out
     }
 
     /// A law the author cited, applied left to right to a term evaluation
