@@ -1,6 +1,6 @@
 module Because
     intent = "Laws argued with `because` lines, and a law whose `when` takes several lines: each line, and each reason once proved, is a hypothesis of its own."
-    exposes [sum2, twice, count, bothPositive]
+    exposes [sum2, twice, count, bothPositive, atLeast]
     effects []
 
 fn sum2(x: Int, y: Int) -> Int
@@ -76,3 +76,15 @@ verify bothPositive law shifted
     when x > 1
     using [bothPositive.fromBoth]
     bothPositive(x - 1, 1) => true
+
+fn atLeast(x: Int, y: Int) -> Bool
+    ? "Whether x is at least y."
+    x >= y
+
+verify atLeast
+    atLeast(2, 1) => true
+
+verify twice law aboveAtLeastOne
+    given x: Int = [1, 4]
+    when atLeast(x, 1)
+    twice(x) > x => true

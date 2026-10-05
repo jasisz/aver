@@ -1275,14 +1275,19 @@ pub(crate) fn render(script: &Script, ctx: &CodegenContext) -> Result<Rendered, 
     render_with(script, &[], ctx)
 }
 
-/// The `because` chain of a law's script: the cuts before the first reason
-/// (the `when` split into its lines), each reason `because<k>` with its fact
-/// and proof, and the proof of the claim under all of them.
-type Cut<'a> = (&'a String, &'a Term, &'a Proof);
+/// One cut of a law's script: a reason `because<k>` (with `k` from 1),
+/// or another cut in scope from where it stands on (a `when` line, an
+/// opened hypothesis).
+enum Cut<'a> {
+    Reason(usize, &'a Term, &'a Proof),
+    Other(&'a String, &'a Term, &'a Proof),
+}
 
-fn reason_chain(p: &Proof) -> (Vec<Cut<'_>>, Vec<(&Term, &Proof)>, &Proof) {
-    let mut prefix = Vec::new();
-    let mut reasons = Vec::new();
+/// The cuts of a law's script in scope order, and the proof of the claim
+/// under all of them.
+fn reason_chain(p: &Proof) -> (Vec<Cut<'_>>, &Proof) {
+    let mut cuts = Vec::new();
+    let mut reasons = 0;
     let mut at = p;
     while let Proof::Have {
         name,
@@ -1291,29 +1296,36 @@ fn reason_chain(p: &Proof) -> (Vec<Cut<'_>>, Vec<(&Term, &Proof)>, &Proof) {
         body,
     } = at
     {
-        if *name == format!("because{}", reasons.len() + 1) {
-            reasons.push((fact, proof.as_ref()));
-        } else if reasons.is_empty() {
-            prefix.push((name, fact, proof.as_ref()));
+        if *name == format!("because{}", reasons + 1) {
+            reasons += 1;
+            cuts.push(Cut::Reason(reasons, fact, proof.as_ref()));
         } else {
-            break;
+            cuts.push(Cut::Other(name, fact, proof.as_ref()));
         }
         at = body;
     }
-    (prefix, reasons, at)
+    (cuts, at)
 }
 
 /// Render the part of a law's script that proves one obligation of its
 /// `because` chain, the way the Lean export states it: `index < n` is
 /// `because<index+1>` and `index == n` the implication, after `intro` of
 /// the givens, `h_reason0 … h_reason<index-1>` and `h_when`. The earlier
-/// reasons are those hypotheses, not their proofs.
+/// reasons are those hypotheses, not their proofs; the other cuts before
+/// the obligation keep their proofs.
 pub(crate) fn render_reason(
     script: &Script,
     index: usize,
     ctx: &CodegenContext,
 ) -> Result<Rendered, String> {
-    let (prefix, reasons, claim_proof) = reason_chain(&script.proof);
+    let (cuts, claim_proof) = reason_chain(&script.proof);
+    let reasons: Vec<&Term> = cuts
+        .iter()
+        .filter_map(|c| match c {
+            Cut::Reason(_, fact, _) => Some(*fact),
+            Cut::Other(..) => None,
+        })
+        .collect();
     if index > reasons.len() {
         return Err(format!(
             "the script proves {} reasons, not {}",
@@ -1321,35 +1333,42 @@ pub(crate) fn render_reason(
             index
         ));
     }
-    let mut proof = if index < reasons.len() {
-        reasons[index].1.clone()
-    } else {
-        claim_proof.clone()
-    };
-    for k in (0..index).rev() {
-        proof = Proof::Have {
-            name: format!("because{}", k + 1),
-            fact: reasons[k].0.clone(),
-            proof: Box::new(Proof::Hyp(format!("h_reason{k}"))),
-            body: Box::new(proof),
-        };
+    // The cuts before the obligation, and what it proves under them.
+    let mut before = Vec::new();
+    let mut proof = claim_proof.clone();
+    for c in &cuts {
+        match c {
+            Cut::Reason(k, _, p) if *k == index + 1 => {
+                proof = (*p).clone();
+                break;
+            }
+            c => before.push(c),
+        }
     }
-    for (name, fact, p) in prefix.into_iter().rev() {
-        proof = Proof::Have {
-            name: name.clone(),
-            fact: fact.clone(),
-            proof: Box::new(p.clone()),
-            body: Box::new(proof),
+    for c in before.into_iter().rev() {
+        proof = match c {
+            Cut::Reason(k, fact, _) => Proof::Have {
+                name: format!("because{k}"),
+                fact: (*fact).clone(),
+                proof: Box::new(Proof::Hyp(format!("h_reason{}", k - 1))),
+                body: Box::new(proof),
+            },
+            Cut::Other(name, fact, p) => Proof::Have {
+                name: (*name).clone(),
+                fact: (*fact).clone(),
+                proof: Box::new((*p).clone()),
+                body: Box::new(proof),
+            },
         };
     }
     let mut part = script.clone();
     if index < reasons.len() {
-        part.obligation.lhs = reasons[index].0.clone();
+        part.obligation.lhs = reasons[index].clone();
         part.obligation.rhs = term::boolean(true);
     }
     part.proof = proof;
     let earlier: Vec<(String, Term)> = (0..index)
-        .map(|k| (format!("h_reason{k}"), reasons[k].0.clone()))
+        .map(|k| (format!("h_reason{k}"), reasons[k].clone()))
         .collect();
     render_with(&part, &earlier, ctx)
 }

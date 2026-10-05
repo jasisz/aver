@@ -2074,6 +2074,7 @@ fn both_kernels_check_because_chains_and_refuse_mutations() {
             "bothPositive.shifted",
             "count.doubledNonNegative",
             "sum2.staysPositive",
+            "twice.aboveAtLeastOne",
             "twice.grows"
         ]
     );
@@ -2093,6 +2094,9 @@ fn both_kernels_check_because_chains_and_refuse_mutations() {
     let shifted = read("bothPositive.shifted");
     assert!(shifted.contains("(rule bool.and.true_l "), "{shifted}");
     assert!(doubled.contains("(have because1 "), "{doubled}");
+    // A `when` that calls a predicate, opened once to its body.
+    let opened = read("twice.aboveAtLeastOne");
+    assert!(opened.contains("(have when_open "), "{opened}");
     assert!(positive.contains("(have when1 "), "{positive}");
     for (kind, text) in [
         (
@@ -2114,6 +2118,14 @@ fn both_kernels_check_because_chains_and_refuse_mutations() {
         (
             "a conjunct settled with a weight that does not add up",
             mutate_proof(&shifted, "true (when) (1 1)", "true (when) (1 2)"),
+        ),
+        (
+            "a hypothesis opened to another body",
+            mutate_proof(
+                &opened,
+                "(have when_open (op >= (v x) (i 1))",
+                "(have when_open (op >= (v x) (i 0))",
+            ),
         ),
         (
             "the other line of the when",
@@ -2169,6 +2181,7 @@ fn lean_checks_each_obligation_of_a_because_chain_by_its_steps() {
         "count.doubledNonNegative.because1",
         "count.doubledNonNegative.implication",
         "sum2.staysPositive",
+        "twice.aboveAtLeastOne",
         "twice.grows",
         "twice.grows.because1",
         "twice.grows.because2",
