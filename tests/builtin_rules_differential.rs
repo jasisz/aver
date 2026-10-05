@@ -185,12 +185,14 @@ fn the_kernel_evaluates_every_rule_instance_as_the_compiler_does() {
 /// list per rule; `k` is a given only so that each law has one sample.
 fn program() -> String {
     let mut src = String::from(
-        "module RuleSamples\n    intent = \"Every sampled instance of the list rules and facts.\"\n    exposes [lists, ints]\n    effects []\n\nfn lists(xs: List<List<Int>>) -> List<List<Int>>\n    ? \"Anchor for list-valued instances.\"\n    xs\n\nfn ints(xs: List<Int>) -> List<Int>\n    ? \"Anchor for Int-valued instances.\"\n    xs\n",
+        "module RuleSamples\n    intent = \"Every sampled instance of the list rules and facts.\"\n    exposes [lists, ints, bools]\n    effects []\n\nfn bools(xs: List<Bool>) -> List<Bool>\n    ? \"Anchor for Bool-valued instances.\"\n    xs\n\nfn lists(xs: List<List<Int>>) -> List<List<Int>>\n    ? \"Anchor for list-valued instances.\"\n    xs\n\nfn ints(xs: List<Int>) -> List<Int>\n    ? \"Anchor for Int-valued instances.\"\n    xs\n",
     );
     for (n, s) in schemas().iter().enumerate() {
         let is = instances(s);
         let anchor = if is_list(&is[0].value) {
             "lists"
+        } else if term::bool_value(&is[0].value).is_some() {
+            "bools"
         } else {
             "ints"
         };

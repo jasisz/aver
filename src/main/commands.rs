@@ -9228,6 +9228,21 @@ fn run_proof_check(
                 serde_json::Value::Array(steps.rejected.iter().map(|l| l.clone().into()).collect()),
             );
         }
+        // Builtin facts that would rewrite where the steps producer stopped,
+        // by law: a hint to cite them, never applied without `using`.
+        if !steps.hints.is_empty() {
+            let hints: serde_json::Map<String, serde_json::Value> = steps
+                .hints
+                .iter()
+                .map(|(law, hs)| {
+                    (
+                        law.clone(),
+                        serde_json::Value::Array(hs.iter().map(|h| h.clone().into()).collect()),
+                    )
+                })
+                .collect();
+            obj.insert("steps_hints".into(), serde_json::Value::Object(hints));
+        }
         // `true` means the check FAILED with the compiler-model bug above
         // regardless of budgets.
         obj.insert("model_panicked".into(), (model_panic_hits > 0).into());
@@ -9344,14 +9359,28 @@ fn run_proof_check(
                 for law in &audit.laws {
                     let universal = law.tier == LawTier::Universal;
                     match steps.closed_by(&law.law, universal) {
-                        "open" => match steps.refused.get(&law.law) {
-                            Some(why) => println!(
-                                "  {}: {}, not closed (steps: {why})",
-                                law.law,
-                                law.tier.as_str()
-                            ),
-                            None => println!("  {}: {}, not closed", law.law, law.tier.as_str()),
-                        },
+                        "open" => {
+                            match steps.refused.get(&law.law) {
+                                Some(why) => println!(
+                                    "  {}: {}, not closed (steps: {why})",
+                                    law.law,
+                                    law.tier.as_str()
+                                ),
+                                None => {
+                                    println!("  {}: {}, not closed", law.law, law.tier.as_str())
+                                }
+                            }
+                            for hint in steps.hints.get(&law.law).into_iter().flatten() {
+                                println!("    hint: {hint}");
+                            }
+                        }
+                        // Tactics closed it; a cited fact would let steps.
+                        "tactic" => {
+                            println!("  {}: closed by tactic", law.law);
+                            for hint in steps.hints.get(&law.law).into_iter().flatten() {
+                                println!("    hint: {hint}");
+                            }
+                        }
                         by => println!("  {}: closed by {by}", law.law),
                     }
                 }

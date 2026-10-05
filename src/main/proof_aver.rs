@@ -54,8 +54,13 @@ pub(super) fn run(
     let started = std::time::Instant::now();
     let steps_dir = std::path::Path::new(output_dir).join("proof_steps");
     let mut verdicts: BTreeMap<String, Verdict> = BTreeMap::new();
+    // Builtin facts that would rewrite where the producer stopped, by law.
+    let mut hints: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for theorem in &ctx.proof_ir.law_theorems {
         let key = law_key(&ctx.symbol_table, theorem);
+        if !theorem.steps_hints.is_empty() {
+            hints.insert(key.clone(), theorem.steps_hints.clone());
+        }
         let verdict = match &theorem.steps {
             None => Verdict::Open(theorem.steps_refusal.clone()),
             Some(script) => match aver::ir::proof_steps::sexpr::script(script, &ctx.symbol_table) {
@@ -151,6 +156,24 @@ pub(super) fn run(
             "steps_rejected".into(),
             serde_json::Value::Array(refused.iter().map(|(k, _)| (*k).clone().into()).collect()),
         );
+        if !hints.is_empty() {
+            obj.insert(
+                "steps_hints".into(),
+                serde_json::Value::Object(
+                    hints
+                        .iter()
+                        .map(|(k, hs)| {
+                            (
+                                k.clone(),
+                                serde_json::Value::Array(
+                                    hs.iter().map(|h| h.clone().into()).collect(),
+                                ),
+                            )
+                        })
+                        .collect(),
+                ),
+            );
+        }
         obj.insert("universal_laws".into(), closed.into());
         obj.insert("open_laws".into(), open.into());
         obj.insert("budget".into(), sorry_budget.unwrap_or(0).into());
@@ -172,6 +195,11 @@ pub(super) fn run(
                 }
             };
             println!("  {key}: {line}");
+            if !matches!(verdict, Verdict::Steps) {
+                for hint in hints.get(key).into_iter().flatten() {
+                    println!("    hint: {hint}");
+                }
+            }
         }
         println!(
             "aver proof (backend aver): {closed} of {} law(s) closed by steps checked by the Aver kernel in {:.1} ms",

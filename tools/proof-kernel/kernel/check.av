@@ -663,7 +663,7 @@ verify lawPremises
 fn checkScript(s: Script) -> Result<String, String>
     ? "The proof must prove exactly the obligation, under its when; every cited builtin fact is checked first."
     Kernel.Induct.refuseMutualRecursion(s.defs)?
-    checkFacts(s.facts)?
+    checkFacts(s.facts, [])?
     env = Env(defs = s.defs, consts = s.consts, laws = List.concat(s.laws, factLaws(s.facts)), hyps = lawHyps(s.obligation), finite = s.finite, lists = s.lists, givens = s.obligation.givens)
     e = conclude(s.proof, env, "proof")?
     match e == Eqn(lhs = s.obligation.lhs, rhs = s.obligation.rhs)
@@ -982,24 +982,25 @@ verify listCases
     listCases("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), "h", "t", "ih", Proof.PRefl(Term.TBi("List.prepend", [Term.TVar("h"), Term.TVar("t")])), emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")))
     listCases("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), "h", "t", "ih", Proof.PHyp("ih"), emptyEnv(), "p") => Result.Err("step p/cons: the case proves a different equation")
 
-fn checkFacts(fs: List<Fact>) -> Result<Unit, String>
-    ? "Each builtin fact proves its statement over builtins alone: no definitions, no laws, no when."
+fn checkFacts(fs: List<Fact>, earlier: List<Law>) -> Result<Unit, String>
+    ? "Each builtin fact proves its statement over builtins and the facts before it: no definitions, no other laws, no when."
     match fs
         [] -> Result.Ok(Unit)
-        [f, ..rest] -> checkFactThen(checkScript(Script(obligation = f.law, finite = [], lists = f.lists, defs = [], consts = [], laws = [], facts = [], proof = f.proof)), f.law.key, rest)
+        [f, ..rest] -> checkFactThen(checkScript(Script(obligation = f.law, finite = [], lists = f.lists, defs = [], consts = [], laws = earlier, facts = [], proof = f.proof)), f.law, rest, earlier)
 
 verify checkFacts
-    checkFacts([]) => Result.Ok(Unit)
-    checkFacts([Fact(law = Law(key = "List.k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2)), lists = [], proof = Proof.PRefl(Term.TInt(1)))]) => Result.Err("fact List.k: step proof: the proof ends at a different equation than the claim")
+    checkFacts([], []) => Result.Ok(Unit)
+    checkFacts([Fact(law = Law(key = "List.k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2)), lists = [], proof = Proof.PRefl(Term.TInt(1)))], []) => Result.Err("fact List.k: step proof: the proof ends at a different equation than the claim")
+    checkFacts([Fact(law = Law(key = "List.k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2)), lists = [], proof = Proof.PLaw("List.j", [], []))], []) => Result.Err("fact List.k: step proof: law List.j is not cited")
 
-fn checkFactThen(done: Result<String, String>, key: String, rest: List<Fact>) -> Result<Unit, String>
-    ? "The rest of the facts, once this one checked."
+fn checkFactThen(done: Result<String, String>, law: Law, rest: List<Fact>, earlier: List<Law>) -> Result<Unit, String>
+    ? "The rest of the facts, once this one checked; they may cite it."
     match done
-        Result.Ok(k) -> checkFacts(rest)
-        Result.Err(why) -> Result.Err("fact {key}: {why}")
+        Result.Ok(k) -> checkFacts(rest, List.concat(earlier, [law]))
+        Result.Err(why) -> Result.Err("fact {law.key}: {why}")
 
 verify checkFactThen
-    checkFactThen(Result.Err("no"), "List.k", []) => Result.Err("fact List.k: no")
+    checkFactThen(Result.Err("no"), Law(key = "List.k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit), [], []) => Result.Err("fact List.k: no")
 
 fn factLaws(fs: List<Fact>) -> List<Law>
     ? "The statements of checked facts, as laws a step may cite."

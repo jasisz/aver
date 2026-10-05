@@ -489,12 +489,15 @@ pub fn check_script(script: &Script) -> Result<(), String> {
     }
 }
 
-/// A builtin fact: a script over builtins alone, with nothing to cite and
-/// no `when`, that proves exactly the statement the citation uses.
+/// A builtin fact: a script over builtins alone, citing only other facts,
+/// with no `when`, that proves exactly the statement the citation uses.
 fn check_fact(law: &super::LawRef, fact: &Script) -> Result<(), String> {
     let ob = &fact.obligation;
-    if !fact.defs.is_empty() || !fact.consts.is_empty() || !fact.laws.is_empty() {
-        return Err("a fact uses only builtins".into());
+    if !fact.defs.is_empty()
+        || !fact.consts.is_empty()
+        || fact.laws.iter().any(|l| l.fact.is_none())
+    {
+        return Err("a fact uses only builtins and other facts".into());
     }
     if ob.key != law.key
         || ob.givens != law.givens

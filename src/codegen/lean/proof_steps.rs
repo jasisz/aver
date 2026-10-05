@@ -428,6 +428,9 @@ impl Renderer<'_> {
                     }
                 }
                 match cited {
+                    // A fact is stated as the equation of Bools the steps
+                    // read.
+                    Some(l) if l.fact.is_some() => s,
                     Some(l) => from_statement(&l.lhs, &l.rhs, format!("({s})")),
                     None => s,
                 }
@@ -938,16 +941,40 @@ fn same_file_blocks(ctx: &CodegenContext) -> Vec<&crate::ast::VerifyBlock> {
 /// Each builtin fact `body` cites, as one theorem over every element type,
 /// stated from the fact's own terms and proved by its steps.
 pub(crate) fn render_cited_facts(body: &str, ctx: &CodegenContext) -> Result<String, String> {
+    let all = crate::ir::proof_steps::facts::all();
+    // The cited facts and every fact their proofs cite.
+    let mut needed: Vec<String> = all
+        .iter()
+        .filter(|f| body.contains(&fact_theorem(f)))
+        .map(|f| f.key.to_string())
+        .collect();
+    for fact in all.iter().rev() {
+        if needed.iter().any(|k| k == fact.key) {
+            for l in &fact.script.laws {
+                if !needed.contains(&l.key) {
+                    needed.push(l.key.clone());
+                }
+            }
+        }
+    }
     let mut out = Vec::new();
-    for fact in crate::ir::proof_steps::facts::all() {
-        if !body.contains(&fact_theorem(&fact)) {
+    for fact in &all {
+        if !needed.iter().any(|k| k == fact.key) {
             continue;
         }
         let script = &fact.script;
+        let laws = script
+            .laws
+            .iter()
+            .filter_map(|l| {
+                let cited = crate::ir::proof_steps::facts::named(&l.key)?;
+                Some((l.key.clone(), fact_theorem(&cited)))
+            })
+            .collect();
         let mut r = Renderer {
             script,
             ctx,
-            laws: BTreeMap::new(),
+            laws,
             unfolds: BTreeMap::new(),
             support: Vec::new(),
             generic: true,
@@ -960,7 +987,7 @@ pub(crate) fn render_cited_facts(body: &str, ctx: &CodegenContext) -> Result<Str
         }
         out.push(format!(
             "set_option autoImplicit false in\ntheorem {} {{α : Type}} ({} : List α) :\n    {statement} :=\n  {term}",
-            fact_theorem(&fact),
+            fact_theorem(fact),
             ob.givens.join(" ")
         ));
     }
@@ -1209,7 +1236,8 @@ pub(crate) fn lead_portfolio(
 /// One `proof_steps/<law>.steps` file per law with a step proof: the
 /// serialised script the Aver replayer checks. A law no producer wrote
 /// steps for gets `proof_steps/<law>.refused` instead, with where the
-/// producer stopped.
+/// producer stopped on its first line and one `hint: …` line per builtin
+/// fact that would rewrite a part of it.
 pub(crate) fn step_files(ctx: &CodegenContext) -> Vec<(String, String)> {
     ctx.proof_ir
         .law_theorems
@@ -1221,10 +1249,11 @@ pub(crate) fn step_files(ctx: &CodegenContext) -> Vec<(String, String)> {
             }
             let why = t.steps_refusal.as_ref()?;
             let key = crate::ir::proof_steps::sexpr::Names::fn_name(&ctx.symbol_table, t.fn_id);
-            Some((
-                format!("proof_steps/{key}.{}.refused", t.law_name),
-                format!("{why}\n"),
-            ))
+            let mut text = format!("{why}\n");
+            for hint in &t.steps_hints {
+                text.push_str(&format!("hint: {hint}\n"));
+            }
+            Some((format!("proof_steps/{key}.{}.refused", t.law_name), text))
         })
         .collect()
 }

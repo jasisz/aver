@@ -1249,11 +1249,18 @@ fn lean_checks_the_list_rules_and_refuses_a_mutation() {
     let _ = fs::remove_dir_all(out);
 }
 
-const FACT_LAWS: [&str; 4] = [
+const FACT_LAWS: [&str; 11] = [
     "batch.sizeAdds",
     "batch.threeBatches",
+    "joined.dropsTheFront",
+    "joined.emptyOnTheRight",
     "joined.lengthAdds",
     "joined.regroups",
+    "joined.takesTheFront",
+    "reversed.keepsTheLength",
+    "reversed.lengthIsNeverNegative",
+    "reversed.ofJoined",
+    "reversed.twiceIsTheSame",
 ];
 
 #[test]
@@ -1298,6 +1305,16 @@ fn a_cited_builtin_fact_is_checked_with_the_law_and_refused_when_mutated() {
                 "(fact List.concat.assoc (a",
             ),
         ),
+        ("a fact cited before a fact its proof cites", {
+            // Move `List.concat.rightIdentity` after the fact that cites it.
+            let text = read("reversed.twiceIsTheSame");
+            let from = text.find("\n  (fact List.concat.rightIdentity ").unwrap();
+            let to = text[from + 1..].find("\n  (fact ").unwrap() + from + 1;
+            let entry = text[from..to].to_string();
+            let rest = format!("{}{}", &text[..from], &text[to..]);
+            let at = rest.find("\n  (fact List.reverse.involutive ").unwrap();
+            format!("{}{entry}{}", &rest[..at], &rest[at..])
+        }),
         ("a fact cited without its proof", {
             let text = read("joined.regroups");
             let from = text.find("\n  (fact ").unwrap();
@@ -1393,6 +1410,93 @@ fn lean_states_each_cited_fact_once_for_every_element_type() {
         .expect("lake runs");
     assert!(!built.status.success(), "{}", format_output(&built));
     let _ = fs::remove_dir_all(out);
+}
+
+/// A law that does not cite the fact that would close it stays open, and
+/// the report names the fact and the part of the stuck term it rewrites:
+/// in `--backend aver` text and JSON, and in the exported `.refused` file
+/// the Lean check reads.
+#[test]
+fn a_stuck_law_is_hinted_the_facts_that_rewrite_where_it_stopped() {
+    let dir = repo_root().join(FIXTURES);
+    let text = aver_in(&dir, &["proof", "hints.av", "--backend", "aver"]);
+    let out = String::from_utf8_lossy(&text.stdout).to_string();
+    assert!(
+        out.contains("0 of 11 law(s) closed by steps"),
+        "{}",
+        format_output(&text)
+    );
+    assert!(
+        out.contains("  joined.lengthAdds: not closed by this backend (steps: evaluation stops at `List.len(List.concat(xs, ys))`")
+            && out.contains("    hint: `List.len.ofConcat` rewrites `List.len(List.concat(xs, ys))`; add it to `using`"),
+        "{out}"
+    );
+    let json = aver_in(
+        &dir,
+        &["proof", "hints.av", "--backend", "aver", "--check-json"],
+    );
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&json.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        summary["steps_hints"]["reversed.twiceIsTheSame"],
+        serde_json::json!([
+            "`List.reverse.involutive` rewrites `List.reverse(List.reverse(xs))`; add it to `using`"
+        ]),
+        "{summary}"
+    );
+    assert_eq!(summary["closed_by"]["reversed.twiceIsTheSame"], "open");
+    let export = scratch("hints");
+    let files = export_steps("hints.av", &export);
+    assert!(files.is_empty(), "{files:?}");
+    let refused =
+        fs::read_to_string(export.join("proof_steps/batch.threeBatches.refused")).unwrap();
+    assert!(
+        refused.lines().nth(1)
+            == Some(
+                "hint: `List.concat.assoc` rewrites `List.concat(List.concat(a, b), c)`; add it to `using`"
+            ),
+        "{refused}"
+    );
+    let _ = fs::remove_dir_all(export);
+}
+
+#[test]
+fn aver_facts_lists_the_facts_with_their_statements() {
+    let dir = repo_root();
+    let text = aver_in(&dir, &["facts", "List.len"]);
+    let out = String::from_utf8_lossy(&text.stdout).to_string();
+    assert!(text.status.success(), "{}", format_output(&text));
+    assert!(
+        out.contains("List.len.ofConcat\n    given a, b\n    List.len(List.concat(a, b)) => List.len(a) + List.len(b)\n"),
+        "{out}"
+    );
+    assert!(!out.contains("List.concat.assoc"), "{out}");
+    let json = aver_in(&dir, &["facts", "--json"]);
+    let list: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&json.stdout).trim()).unwrap();
+    let names: Vec<&str> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"List.reverse.involutive"), "{names:?}");
+    let involutive = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == "List.reverse.involutive")
+        .unwrap();
+    assert_eq!(
+        involutive["cites"],
+        serde_json::json!(["List.reverse.ofConcat"])
+    );
 }
 
 #[test]

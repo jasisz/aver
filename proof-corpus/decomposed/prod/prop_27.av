@@ -16,6 +16,7 @@ fn rev(x: List<Int>) -> List<Int>
 verify qrev law qrevSpec
     given x: List<Int> = [[], [1], [1, 2, 3]]
     given y: List<Int> = [[], [9], [8, 7]]
+    using [List.concat.assoc]
     qrev(x, y) => List.concat(rev(x), y)
 
 verify rev law revQrev

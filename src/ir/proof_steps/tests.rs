@@ -291,6 +291,122 @@ fn compute_compares_whole_lists() {
     assert!(check_script(&s(l(&[1, 3]))).is_err());
 }
 
+/// `docs/builtin-facts.md` is generated from the registry.
+#[test]
+fn the_builtin_facts_page_is_generated_from_the_registry() {
+    assert_eq!(
+        super::facts::markdown(""),
+        include_str!("../../../docs/builtin-facts.md"),
+        "run `aver facts --markdown > docs/builtin-facts.md`"
+    );
+}
+
+/// The two arithmetic steps, checked by both checkers: an honest `ring` and
+/// `linear` step is accepted, and each way of getting the arithmetic wrong
+/// is refused by the compiler's checker and by the kernel written in Aver.
+#[test]
+fn both_checkers_refuse_wrong_ring_and_linear_steps() {
+    use super::sexpr::{BuiltinsOnly, script as serialise};
+    let i = |n: i64| term::int(&n.into());
+    let (a, b) = (|| var("a"), || var("b"));
+    let mul = |x: super::Term, y: super::Term| term::binop(BinOp::Mul, x, y);
+    let sub = |x: super::Term, y: super::Term| term::binop(BinOp::Sub, x, y);
+    let verdicts = |s: &Script| {
+        (
+            check_script(s),
+            crate::proof_kernel::verdict(&serialise(s, &BuiltinsOnly).unwrap()),
+        )
+    };
+    // (a + b) * (a + b) = a*a + 2*a*b + b*b.
+    let square = mul(add(a(), b()), add(a(), b()));
+    let expanded = |k: i64| add(add(mul(a(), a()), mul(mul(i(k), a()), b())), mul(b(), b()));
+    let ring = |lhs: super::Term, rhs: super::Term, claim: super::Term| {
+        script(square.clone(), claim, Proof::Ring { lhs, rhs })
+    };
+    assert_eq!(
+        verdicts(&ring(square.clone(), expanded(2), expanded(2))),
+        (Ok(()), Ok("f.law".to_string()))
+    );
+    let a_minus_b = sub(a(), b());
+    let b_minus_a = sub(b(), a());
+    let mut swapped = script(
+        a_minus_b.clone(),
+        b_minus_a.clone(),
+        Proof::Ring {
+            lhs: a_minus_b,
+            rhs: b_minus_a,
+        },
+    );
+    swapped.obligation.givens = vec!["a".into(), "b".into()];
+    for (kind, s) in [
+        (
+            "a wrong normal form",
+            ring(square.clone(), expanded(3), expanded(3)),
+        ),
+        ("two different polynomials", swapped),
+    ] {
+        let (rust, kernel) = verdicts(&s);
+        assert!(rust.is_err(), "{kind}: the compiler's checker accepted");
+        assert!(kernel.is_err(), "{kind}: the kernel accepted");
+    }
+    // `when a >= 1`, so `a > 0` is true: the opposite (`a <= 0`) and the
+    // hypothesis add up to `-1 >= 0`.
+    let goal = term::binop(BinOp::Gt, a(), i(0));
+    let linear = |premise: super::Term, hyps: Vec<&str>, weights: Vec<i64>| {
+        let mut s = script(
+            goal.clone(),
+            term::boolean(true),
+            Proof::Linear {
+                goal: goal.clone(),
+                value: true,
+                hyps: hyps.into_iter().map(String::from).collect(),
+                weights: weights.into_iter().map(Into::into).collect(),
+            },
+        );
+        s.obligation.premise = Some(premise);
+        s
+    };
+    let at_least = |k: i64| term::binop(BinOp::Gte, a(), i(k));
+    assert_eq!(
+        verdicts(&linear(at_least(1), vec!["when"], vec![1, 1])),
+        (Ok(()), Ok("f.law".to_string()))
+    );
+    for (kind, s) in [
+        (
+            "a weight that leaves a variable",
+            linear(at_least(1), vec!["when"], vec![1, 2]),
+        ),
+        (
+            "a negative weight",
+            linear(at_least(1), vec!["when"], vec![1, -1]),
+        ),
+        (
+            "a weight on a name that is no hypothesis",
+            linear(at_least(1), vec!["h_nope"], vec![1, 1]),
+        ),
+        (
+            "fewer weights than facts",
+            linear(at_least(1), vec!["when"], vec![1]),
+        ),
+        (
+            "a sum whose constant is not negative",
+            linear(at_least(0), vec!["when"], vec![1, 1]),
+        ),
+        (
+            "a hypothesis that is not an Int comparison",
+            linear(
+                term::bool_and(at_least(1), term::boolean(true)),
+                vec!["when"],
+                vec![1, 1],
+            ),
+        ),
+    ] {
+        let (rust, kernel) = verdicts(&s);
+        assert!(rust.is_err(), "{kind}: the compiler's checker accepted");
+        assert!(kernel.is_err(), "{kind}: the kernel accepted");
+    }
+}
+
 /// A module-level binding opens to its value and to nothing else: the step
 /// names the binding, the script carries its value, and a binding the
 /// script does not carry proves nothing.

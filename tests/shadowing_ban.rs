@@ -683,6 +683,11 @@ const NOT_A_DOOR: &[(&str, &str)] = &[
         "consumes an emitted certificate directory and the wasm module it describes, not \
          Aver source",
     ),
+    (
+        "facts",
+        "lists the builtin facts compiled into `aver`; it takes no Aver source, so there \
+         is no program to refuse",
+    ),
     ("help", "prints help"),
 ];
 

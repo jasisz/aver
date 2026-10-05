@@ -294,6 +294,18 @@ pub(super) enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// List the builtin facts a law may cite in `using`, each with its
+    /// statement written as an Aver law
+    Facts {
+        /// Only the facts whose name starts with this (`List.len`)
+        prefix: Option<String>,
+        /// Emit the list as JSON
+        #[arg(long)]
+        json: bool,
+        /// Emit the list as the Markdown of `docs/builtin-facts.md`
+        #[arg(long, conflicts_with = "json")]
+        markdown: bool,
+    },
     /// Report every declared effect list against the minimum the checker
     /// computes for it, and optionally rewrite the lists to that minimum
     Effects {

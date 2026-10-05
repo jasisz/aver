@@ -1,5 +1,5 @@
-module Facts
-    intent = "Laws over concrete lists that cite builtin facts in `using`."
+module Hints
+    intent = "Laws over concrete lists that do not cite the builtin facts that would close them."
     exposes [Tx, joined, batch, reversed]
     effects []
 
@@ -17,14 +17,12 @@ verify joined
 verify joined law lengthAdds
     given xs: List<Int> = [[], [1], [1, 2]]
     given ys: List<Int> = [[], [3]]
-    using [List.len.ofConcat]
     List.len(joined(xs, ys)) => List.len(xs) + List.len(ys)
 
 verify joined law regroups
     given xs: List<Int> = [[], [1]]
     given ys: List<Int> = [[], [2]]
     given zs: List<Int> = [[], [3]]
-    using [List.concat.assoc]
     joined(joined(xs, ys), zs) => joined(xs, joined(ys, zs))
 
 fn batch(a: List<Tx>, b: List<Tx>) -> List<Tx>
@@ -37,31 +35,26 @@ verify batch
 verify batch law sizeAdds
     given a: List<Tx> = [[], [Tx(id = 1, amount = 5)]]
     given b: List<Tx> = [[], [Tx(id = 2, amount = 7)]]
-    using [List.len.ofConcat]
     List.len(batch(a, b)) => List.len(a) + List.len(b)
 
 verify batch law threeBatches
     given a: List<Tx> = [[], [Tx(id = 1, amount = 5)]]
     given b: List<Tx> = [[], [Tx(id = 2, amount = 7)]]
     given c: List<Tx> = [[], [Tx(id = 3, amount = 9)]]
-    using [List.concat.assoc]
     batch(batch(a, b), c) => batch(a, batch(b, c))
 
 verify joined law emptyOnTheRight
     given xs: List<Int> = [[], [1, 2]]
-    using [List.concat.rightIdentity]
     joined(xs, []) => xs
 
 verify joined law takesTheFront
     given xs: List<Int> = [[], [1], [1, 1]]
     given ys: List<Int> = [[], [2]]
-    using [List.take.ofConcat]
     List.take(joined(xs, ys), List.len(xs)) => xs
 
 verify joined law dropsTheFront
     given xs: List<Int> = [[], [1], [1, 1]]
     given ys: List<Int> = [[], [2]]
-    using [List.drop.ofConcat]
     List.drop(joined(xs, ys), List.len(xs)) => ys
 
 fn reversed(xs: List<Int>) -> List<Int>
@@ -73,21 +66,17 @@ verify reversed
 
 verify reversed law keepsTheLength
     given xs: List<Int> = [[], [1, 2, 2]]
-    using [List.len.ofReverse]
     List.len(reversed(xs)) => List.len(xs)
 
 verify reversed law ofJoined
     given xs: List<Int> = [[], [1, 2]]
     given ys: List<Int> = [[], [3]]
-    using [List.reverse.ofConcat]
     reversed(joined(xs, ys)) => joined(reversed(ys), reversed(xs))
 
 verify reversed law twiceIsTheSame
     given xs: List<Int> = [[], [1, 2, 3]]
-    using [List.reverse.involutive]
     reversed(reversed(xs)) => xs
 
 verify reversed law lengthIsNeverNegative
     given xs: List<Int> = [[], [1]]
-    using [List.len.nonneg]
     List.len(reversed(xs)) >= 0 => true

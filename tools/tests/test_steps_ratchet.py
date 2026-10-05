@@ -67,6 +67,16 @@ class CompareTests(unittest.TestCase):
         report = {"closed_by": {"f.l": "steps", "g.l": "open", "h.l": "tactic"}}
         self.assertEqual(ratchet.summarize(report), {"steps": ["f.l"], "tactic": ["h.l"], "laws": 3})
 
+    def test_only_new_steps_level_laws_go_to_lean(self) -> None:
+        base = {"a.av": {"steps": ["f.l"], "tactic": ["g.l"]}, "b.av": {"steps": ["h.l"]}}
+        head = {
+            "a.av": {"steps": ["f.l", "g.l"]},
+            "b.av": {"steps": ["h.l"]},
+            "c.av": {"steps": ["k.l"]},
+        }
+        self.assertEqual(ratchet.steps_gains(base, head), {"a.av": ["g.l"], "c.av": ["k.l"]})
+        self.assertEqual(ratchet.steps_gains(head, base), {})
+
     def test_module_roots(self) -> None:
         self.assertEqual(ratchet.module_root("projects/k5_fdiv/domain/round.av"), "projects/k5_fdiv")
         self.assertEqual(ratchet.module_root("examples/games/tetris/logic.av"), "examples/games/tetris")
