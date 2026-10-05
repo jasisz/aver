@@ -46,6 +46,13 @@
    "stillToSend.acceptedPrefixNeverOvershoots"
   ]
  },
+ "examples/games/checkers/ai.av": {
+  "steps": [
+   "centerBonus.emptyNeutral",
+   "pieceValue.antisymmetry",
+   "pieceValue.kingWorthTripleMan"
+  ]
+ },
  "examples/games/eggcatch/core.av": {
   "steps": [
    "chuteIndex.inRange",

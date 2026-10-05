@@ -109,55 +109,6 @@ pub fn structural_param(def: &Def) -> Result<Option<usize>, String> {
     Ok(Some(j))
 }
 
-/// The functions each definition calls among `defs`; refuses any cycle
-/// through more than one definition.
-pub fn refuse_mutual_recursion(defs: &[Def]) -> Result<(), String> {
-    let calls = |d: &Def| -> Vec<FnId> {
-        let mut out = Vec::new();
-        let mut visit = |t: &Term| collect_callees(t, &mut out);
-        for (_, v) in &d.lets {
-            visit(v);
-        }
-        visit(&d.body);
-        out.retain(|g| *g != d.fn_id && defs.iter().any(|e| e.fn_id == *g));
-        out
-    };
-    for d in defs {
-        // Depth-first from d's callees; reaching d again is a cycle.
-        let mut stack = calls(d);
-        let mut seen: Vec<FnId> = Vec::new();
-        while let Some(g) = stack.pop() {
-            if g == d.fn_id {
-                return Err(format!("{} is part of a mutual recursion", d.name));
-            }
-            if seen.contains(&g) {
-                continue;
-            }
-            seen.push(g);
-            if let Some(e) = defs.iter().find(|e| e.fn_id == g) {
-                stack.extend(calls(e));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn collect_callees(t: &Term, out: &mut Vec<FnId>) {
-    match &t.node {
-        ResolvedExpr::Call(ResolvedCallee::Fn(g), _) => out.push(*g),
-        ResolvedExpr::TailCall { target, .. } => out.push(*target),
-        _ => {}
-    }
-    if let ResolvedExpr::Match { arms, .. } = &t.node {
-        for arm in arms {
-            collect_callees(&arm.body, out);
-        }
-    }
-    for c in term::children(t) {
-        collect_callees(c, out);
-    }
-}
-
 /// The given at the matched place `j`, and the other givens among `args`
 /// that vary with the recursion, with their places. A given that appears
 /// twice varies at its first place only.
@@ -206,7 +157,7 @@ pub fn case(
         return Err("wrong number of names".into());
     }
     let ys: Vec<Term> = binders.iter().map(|b| term::var(b)).collect();
-    let value = super::check::pattern_term(&arm.pattern, &ys)?;
+    let value = super::claim::pattern_term(&arm.pattern, &ys)?;
     let at = [(v.to_string(), value)];
     let goal = Eqn::new(term::subst(lhs, &at)?, term::subst(rhs, &at)?);
     let calls = self_calls(&arm.body, def.fn_id);
