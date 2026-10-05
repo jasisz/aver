@@ -54,6 +54,10 @@ pub(super) fn run(
     let started = std::time::Instant::now();
     let steps_dir = std::path::Path::new(output_dir).join("proof_steps");
     let mut verdicts: BTreeMap<String, Verdict> = BTreeMap::new();
+    // The obligations of `because` chains, apart from the laws: a law
+    // counts only when all of its obligations close.
+    let mut obligation_verdicts: BTreeMap<String, Verdict> = BTreeMap::new();
+    let mut obligation_cites: BTreeMap<String, Vec<String>> = BTreeMap::new();
     // Builtin facts that would rewrite where the producer stopped, by law.
     let mut hints: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for theorem in &ctx.proof_ir.law_theorems {
@@ -78,6 +82,41 @@ pub(super) fn run(
             },
         };
         verdicts.insert(key, verdict);
+        for ob in &theorem.obligation_steps {
+            let verdict = match &ob.script {
+                None => Verdict::Open(ob.refusal.clone()),
+                Some(script) => {
+                    match aver::ir::proof_steps::sexpr::script(script, &ctx.symbol_table) {
+                        Err(why) => Verdict::Refused(why),
+                        Ok(text) => {
+                            if std::fs::create_dir_all(&steps_dir).is_ok() {
+                                let _ = std::fs::write(
+                                    steps_dir.join(format!("{}.steps", ob.key)),
+                                    &text,
+                                );
+                            }
+                            match aver::proof_kernel::verdict(&text) {
+                                Ok(proved) if proved == ob.key => Verdict::Steps,
+                                Ok(other) => Verdict::Refused(format!("the script proves {other}")),
+                                Err(why) => Verdict::Refused(why),
+                            }
+                        }
+                    }
+                }
+            };
+            obligation_verdicts.insert(ob.key.clone(), verdict);
+            if let Some(script) = &ob.script {
+                obligation_cites.insert(
+                    ob.key.clone(),
+                    script
+                        .laws
+                        .iter()
+                        .filter(|l| l.fact.is_none())
+                        .map(|l| l.key.clone())
+                        .collect(),
+                );
+            }
+        }
     }
     // Credit composes: a law whose script cites a law this backend did not
     // close is not closed either (Lean gets the same from its axiom audit).
@@ -118,6 +157,18 @@ pub(super) fn run(
             verdicts.insert(k, Verdict::CitesOpen(c));
         }
     }
+    // An obligation is closed only when the laws it cites are.
+    for (k, cited) in &obligation_cites {
+        if !matches!(obligation_verdicts.get(k), Some(Verdict::Steps)) {
+            continue;
+        }
+        if let Some(c) = cited
+            .iter()
+            .find(|c| !matches!(verdicts.get(*c), Some(Verdict::Steps)))
+        {
+            obligation_verdicts.insert(k.clone(), Verdict::CitesOpen(c.clone()));
+        }
+    }
     let elapsed = started.elapsed();
     let closed = verdicts
         .values()
@@ -126,6 +177,7 @@ pub(super) fn run(
     let open = verdicts.len() - closed;
     let refused: Vec<(&String, &String)> = verdicts
         .iter()
+        .chain(&obligation_verdicts)
         .filter_map(|(k, v)| match v {
             Verdict::Refused(why) => Some((k, why)),
             _ => None,
@@ -140,6 +192,22 @@ pub(super) fn run(
             "closed_by".into(),
             serde_json::Value::Object(
                 verdicts
+                    .iter()
+                    .map(|(k, v)| {
+                        let by = if matches!(v, Verdict::Steps) {
+                            "steps"
+                        } else {
+                            "open"
+                        };
+                        (k.clone(), by.into())
+                    })
+                    .collect(),
+            ),
+        );
+        obj.insert(
+            "obligations_closed_by".into(),
+            serde_json::Value::Object(
+                obligation_verdicts
                     .iter()
                     .map(|(k, v)| {
                         let by = if matches!(v, Verdict::Steps) {
@@ -195,6 +263,20 @@ pub(super) fn run(
                 }
             };
             println!("  {key}: {line}");
+            let prefix = format!("{key}.");
+            for (ob, v) in obligation_verdicts
+                .iter()
+                .filter(|(k, _)| k.starts_with(&prefix))
+            {
+                let line = match v {
+                    Verdict::Steps => "closed by steps".to_string(),
+                    Verdict::Open(None) => "open".to_string(),
+                    Verdict::Open(Some(why)) => format!("open (steps: {why})"),
+                    Verdict::Refused(why) => format!("open (kernel: {why})"),
+                    Verdict::CitesOpen(law) => format!("open (it cites {law}, which is not)"),
+                };
+                println!("    obligation {ob}: {line}");
+            }
             if !matches!(verdict, Verdict::Steps) {
                 for hint in hints.get(key).into_iter().flatten() {
                     println!("    hint: {hint}");

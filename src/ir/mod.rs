@@ -44,9 +44,10 @@ pub use pipeline::{
 };
 pub use proof_ir::{
     CountdownFloor, DecreaseProof, EscapePairSpec, FloorDivShrink, FloorWindowFigure, FnContract,
-    FuelMetric, LawTheorem, MapUpdatePostconditionKind, Measure, NativeIntCountdownBody, Predicate,
-    PreservationProof, ProofIR, ProofStrategy, Quantifier, QuantifierType, RecursionContract,
-    RefinedTypeDecl, SmartGuard, StringEscapeRoundtripPin, UnclassifiedFn, WrapperDriver,
+    FuelMetric, LawTheorem, MapUpdatePostconditionKind, Measure, NativeIntCountdownBody,
+    ObligationSteps, Predicate, PreservationProof, ProofIR, ProofStrategy, Quantifier,
+    QuantifierType, RecursionContract, RefinedTypeDecl, SmartGuard, StringEscapeRoundtripPin,
+    UnclassifiedFn, WrapperDriver,
 };
 pub use string_index::{
     StringIndexPassReport, has_string_index_shape, run_string_index_pass,

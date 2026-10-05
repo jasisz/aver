@@ -223,6 +223,7 @@ fn fresh_env<'a>(
         .filter(|l| rewrite::loops(l).is_none())
         .cloned()
         .collect();
+    env.cited_all = using.iter().flatten().cloned().collect();
     env
 }
 
@@ -240,7 +241,7 @@ fn when_lines(premise: &Term) -> Vec<(Term, Proof)> {
 
 /// The leaves of a `Bool.and` (nested) that `proof` proves true, each with
 /// its proof by the eliminations.
-fn split_and(t: &Term, proof: Proof, out: &mut Vec<(Term, Proof)>) {
+pub(crate) fn split_and(t: &Term, proof: Proof, out: &mut Vec<(Term, Proof)>) {
     use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
     if let ResolvedExpr::Call(ResolvedCallee::Builtin(b), args) = &t.node
         && b == "Bool.and"
@@ -255,101 +256,6 @@ fn split_and(t: &Term, proof: Proof, out: &mut Vec<(Term, Proof)>) {
         split_and(&args[1], elim(WallRule::AndElimR), out);
     } else {
         out.push((canon(t), proof));
-    }
-}
-
-/// A hypothesis `name : fact = true` whose fact calls a predicate that does
-/// not recurse, opened once: its body as hypothesis `<name>_open`, from the
-/// definition's whole-body equation and the hypothesis, then the body's
-/// `Bool.and` lines as `<name>_open1`, `<name>_open2`, … like a `when`'s.
-/// Nothing for any other fact, or for a body that is a `match`.
-fn open_hypothesis(
-    inputs: &ProofLowerInputs,
-    name: &str,
-    fact: &Term,
-    opened: &mut Vec<crate::ir::proof_steps::Def>,
-) -> Vec<(String, Term, Option<Proof>)> {
-    use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
-    use crate::ir::proof_steps::term;
-    let fact = canon(fact);
-    let ResolvedExpr::Call(ResolvedCallee::Fn(id), args) = &fact.node else {
-        return Vec::new();
-    };
-    if inputs.recursive_fns.contains(id) {
-        return Vec::new();
-    }
-    let Some(def) = Env::new(inputs).def(*id) else {
-        return Vec::new();
-    };
-    if matches!(def.body.node, ResolvedExpr::Match { .. }) {
-        return Vec::new();
-    }
-    let args: Vec<Term> = args.iter().map(canon).collect();
-    let Ok(outer) = def.outer(&args) else {
-        return Vec::new();
-    };
-    let Ok(body) = term::subst(&def.body, &outer) else {
-        return Vec::new();
-    };
-    let body = canon(&body);
-    let open = format!("{name}_open");
-    let from = Proof::Trans {
-        terms: vec![body.clone(), fact.clone(), term::boolean(true)],
-        steps: vec![
-            Proof::Symm(Box::new(Proof::Unfold {
-                fn_id: *id,
-                arm: 0,
-                args,
-                binders: Vec::new(),
-                premise: None,
-            })),
-            Proof::Hyp(name.into()),
-        ],
-    };
-    if !opened.iter().any(|d| d.fn_id == *id) {
-        opened.push(def);
-    }
-    let mut out = vec![(open.clone(), body.clone(), Some(from))];
-    let mut lines = Vec::new();
-    split_and(&body, Proof::Hyp(open.clone()), &mut lines);
-    if lines.len() > 1 {
-        for (i, (line, proof)) in lines.into_iter().enumerate() {
-            out.push((format!("{open}{}", i + 1), line, Some(proof)));
-        }
-    }
-    out
-}
-
-/// Whether `p` opens definition `f` anywhere.
-fn uses_unfold(p: &Proof, f: crate::ir::identity::FnId) -> bool {
-    let any = |ps: &[Proof]| ps.iter().any(|q| uses_unfold(q, f));
-    match p {
-        Proof::Unfold { fn_id, premise, .. } => {
-            *fn_id == f || premise.as_ref().is_some_and(|q| uses_unfold(q, f))
-        }
-        Proof::Induct { fn_id, cases, .. } => {
-            *fn_id == f || cases.iter().any(|c| uses_unfold(&c.proof, f))
-        }
-        Proof::Symm(q) | Proof::Congr { inner: q, .. } => uses_unfold(q, f),
-        Proof::Absurd { contradiction, .. } => uses_unfold(contradiction, f),
-        Proof::Arm { premise, .. } => uses_unfold(premise, f),
-        Proof::Law { premise, .. } => premise.as_ref().is_some_and(|q| uses_unfold(q, f)),
-        Proof::Trans { steps, .. } => any(steps),
-        Proof::Rule { premises, .. } => any(premises),
-        Proof::Enum { cases, .. } => any(cases),
-        Proof::Cases {
-            if_true, if_false, ..
-        } => uses_unfold(if_true, f) || uses_unfold(if_false, f),
-        Proof::Have { proof, body, .. } => uses_unfold(proof, f) || uses_unfold(body, f),
-        Proof::InductList { nil, cons, .. } => uses_unfold(nil, f) || uses_unfold(cons, f),
-        Proof::Refl(_)
-        | Proof::Hyp(_)
-        | Proof::Linear { .. }
-        | Proof::UnfoldConst { .. }
-        | Proof::Proj { .. }
-        | Proof::Cell { .. }
-        | Proof::Compute { .. }
-        | Proof::Ring { .. } => false,
     }
 }
 
@@ -417,7 +323,11 @@ fn prove_part(
         for attempt in 0..4 {
             let outcome = match attempt {
                 0 => match using {
-                    Some(laws) => citations(&mut env, laws.clone(), ob),
+                    // One instance of a cited law, either way round, first.
+                    Some(laws) => match env.direct_equal(&ob.lhs, &ob.rhs) {
+                        Some(proof) => Ok(proof),
+                        None => citations(&mut env, laws.clone(), ob),
+                    },
                     None => continue,
                 },
                 1 => env.prove_by_evaluation(&ob.lhs, &ob.rhs, SPLIT_DEPTH),
@@ -454,28 +364,122 @@ fn prove_part(
     })
 }
 
+/// One cut in scope order: a `when` line, or reason `k` (from 1) with its
+/// proof when its obligation closed.
+struct Cut {
+    name: String,
+    fact: Term,
+    proof: Option<Proof>,
+    reason: Option<usize>,
+}
+
+/// What [`produce`] found: the law's own script (every obligation closed)
+/// or why not, and, for a law with `because` lines, each obligation's.
+struct Produced {
+    law: Result<Script, String>,
+    obligations: Vec<crate::ir::ObligationSteps>,
+}
+
+/// `items` joined right to left with `Bool.and`, and the proof of each
+/// item from hypothesis `when` stating the whole.
+fn conjoin(items: &[Term]) -> Option<(Term, Vec<Proof>)> {
+    use crate::ir::proof_steps::term;
+    let (last, rest) = items.split_last()?;
+    let mut whole = last.clone();
+    for item in rest.iter().rev() {
+        whole = canon(&term::bool_and(item.clone(), whole));
+    }
+    let mut proofs = Vec::new();
+    let mut at = whole.clone();
+    let mut from = Proof::Hyp("when".into());
+    for _ in rest {
+        let crate::ir::hir::ResolvedExpr::Call(_, args) = &at.node else {
+            unreachable!("built as a conjunction");
+        };
+        let (a, b) = (canon(&args[0]), canon(&args[1]));
+        let elim = |rule: WallRule| Proof::Rule {
+            rule,
+            subst: vec![("a".into(), a.clone()), ("b".into(), b.clone())],
+            premises: vec![from.clone()],
+        };
+        proofs.push(elim(WallRule::AndElimL));
+        from = elim(WallRule::AndElimR);
+        at = b;
+    }
+    proofs.push(from);
+    Some((whole, proofs))
+}
+
+fn merge_into(script: &mut Script, part: &Part) {
+    for d in &part.defs {
+        if !script.defs.iter().any(|x| x.fn_id == d.fn_id) {
+            script.defs.push(d.clone());
+        }
+    }
+    for c in &part.consts {
+        if !script.consts.iter().any(|x| x.name == c.name) {
+            script.consts.push(c.clone());
+        }
+    }
+    for l in &part.laws {
+        if !script.laws.iter().any(|x| x.key == l.key) {
+            script.laws.push(l.clone());
+        }
+    }
+}
+
+/// `body` under the cuts in `cuts`, innermost last: a reason is read from
+/// hypothesis `h_reason<k-1>` (`with_proofs` false) or proved by its own
+/// proof; any other cut only when something after it reads it.
+fn under_cuts(cuts: &[Cut], body: Proof, with_proofs: bool) -> Proof {
+    let mut proof = body;
+    for c in cuts.iter().rev() {
+        let from = match (c.reason, with_proofs) {
+            (Some(k), false) => Proof::Hyp(format!("h_reason{}", k - 1)),
+            _ => c.proof.clone().expect("a cut in scope has its proof"),
+        };
+        if c.reason.is_some() || uses_hyp(&proof, &c.name) {
+            proof = Proof::Have {
+                name: c.name.clone(),
+                fact: c.fact.clone(),
+                proof: Box::new(from),
+                body: Box::new(proof),
+            };
+        }
+    }
+    proof
+}
+
 /// Prove `t` by steps; `hints` collects the facts that would rewrite where
 /// a failed attempt stopped.
 ///
 /// A law with `because` lines is proved the way the user argued it: with
 /// guard `H` and reasons `R1 … Rn`, each `Ri` under `H` and the reasons
-/// before it, then the claim under all of them. The script states the law
-/// itself and proves it by one cut ([`Proof::Have`]) per reason, so the
-/// kernel checks the composition too.
+/// before it, then the claim under all of them. Each obligation gets a
+/// script of its own, checked apart, whose premise states what it assumes
+/// (the earlier reasons, then `H`); a later obligation is tried even when
+/// an earlier one did not close. When all close, the law's own script
+/// proves it by one cut ([`Proof::Have`]) per reason, so the kernel
+/// checks the composition too.
 fn produce(
     inputs: &ProofLowerInputs,
     ir: &ProofIR,
     t: &LawTheorem,
     hints: &mut Vec<String>,
-) -> Result<Script, String> {
+) -> Produced {
+    let refuse = |why: String| Produced {
+        law: Err(why),
+        obligations: Vec::new(),
+    };
     if t.premises.len() > 1 {
-        return Err("more than one premise".into());
+        return refuse("more than one premise".into());
     }
     let ob = obligation(inputs, t);
     let using = match &t.using {
-        Some(names) if !names.is_empty() => {
-            Some(cited(inputs, ir, t, names).ok_or("a cited law has no theorem")?)
-        }
+        Some(names) if !names.is_empty() => match cited(inputs, ir, t, names) {
+            Some(laws) => Some(laws),
+            None => return refuse("a cited law has no theorem".into()),
+        },
         _ => None,
     };
     let algebraic = matches!(
@@ -485,33 +489,34 @@ fn produce(
             | ProofStrategy::IdentityElement { .. }
     );
     // Each line of a `when` written over several lines is a hypothesis of
-    // its own, cut from `when` by the `Bool.and` eliminations; a hypothesis
-    // that calls a predicate is opened once to its body, split the same way.
-    // The cuts, in scope order: `None` marks reason i, proved in its part.
-    let mut cuts: Vec<(String, Term, Option<Proof>)> = Vec::new();
-    let mut opened: Vec<crate::ir::proof_steps::Def> = Vec::new();
-    let lines = ob.premise.as_ref().map(when_lines).unwrap_or_default();
-    if lines.is_empty() {
-        if let Some(p) = &ob.premise {
-            cuts.extend(open_hypothesis(inputs, "when", p, &mut opened));
-        }
-    } else {
-        for (i, (fact, from_when)) in lines.iter().enumerate() {
-            let name = format!("when{}", i + 1);
-            cuts.push((name.clone(), fact.clone(), Some(from_when.clone())));
-            cuts.extend(open_hypothesis(inputs, &name, fact, &mut opened));
-        }
-    }
-    let known_of = |cuts: &[(String, Term, Option<Proof>)]| -> Vec<(String, Term)> {
+    // its own, cut from `when` by the `Bool.and` eliminations.
+    let mut cuts: Vec<Cut> = ob
+        .premise
+        .as_ref()
+        .map(when_lines)
+        .unwrap_or_default()
+        .into_iter()
+        .enumerate()
+        .map(|(i, (fact, proof))| Cut {
+            name: format!("when{}", i + 1),
+            fact,
+            proof: Some(proof),
+            reason: None,
+        })
+        .collect();
+    let known_of = |cuts: &[Cut]| -> Vec<(String, Term)> {
         cuts.iter()
-            .map(|(n, f, _)| (n.clone(), f.clone()))
+            .map(|c| (c.name.clone(), c.fact.clone()))
             .collect()
     };
     let reasons: Vec<Term> = t.reasons.iter().map(|r| law_term(inputs, t, r)).collect();
     let n = reasons.len();
-    let mut parts: Vec<Part> = Vec::new();
+    let key = law_key(inputs, t);
+    // Each obligation: its part, or why not, with the cuts in its scope.
+    let mut results: Vec<(Result<Part, String>, usize)> = Vec::new();
     for (i, reason) in reasons.iter().enumerate() {
         let part_ob = Obligation {
+            key: format!("{key}.because{}", i + 1),
             lhs: reason.clone(),
             rhs: crate::ir::proof_steps::term::boolean(true),
             ..ob.clone()
@@ -527,17 +532,29 @@ fn produce(
         };
         let known = known_of(&cuts);
         let part = prove_part(inputs, t, &part_ob, &known, &using, induct_on, false, hints)
-            .map_err(|why| format!("reason {} of {n}: {why}", i + 1))?;
-        let name = format!("because{}", i + 1);
-        cuts.push((name.clone(), reason.clone(), Some(part.proof.clone())));
-        parts.push(part);
-        cuts.extend(open_hypothesis(inputs, &name, reason, &mut opened));
+            .map_err(|why| format!("reason {} of {n}: {why}", i + 1));
+        let proof = part.as_ref().ok().map(|p| p.proof.clone());
+        results.push((part, cuts.len()));
+        cuts.push(Cut {
+            name: format!("because{}", i + 1),
+            fact: reason.clone(),
+            proof,
+            reason: Some(i + 1),
+        });
     }
     let known = known_of(&cuts);
+    let last_ob = Obligation {
+        key: if n == 0 {
+            key.clone()
+        } else {
+            format!("{key}.implication")
+        },
+        ..ob.clone()
+    };
     let last = prove_part(
         inputs,
         t,
-        &ob,
+        &last_ob,
         &known,
         &using,
         Some(t.fn_id),
@@ -550,59 +567,119 @@ fn produce(
         } else {
             format!("the claim after its {n} reasons: {why}")
         }
-    })?;
-    // A reason is always cut; a `when` line or an opened hypothesis only
-    // when something after it reads it.
-    let mut proof = last.proof.clone();
-    for (name, fact, from) in cuts.into_iter().rev() {
-        let reason = name.starts_with("because") && name[7..].bytes().all(|b| b.is_ascii_digit());
-        if reason || uses_hyp(&proof, &name) {
-            proof = Proof::Have {
-                name,
-                fact,
-                proof: Box::new(from.expect("every cut has its proof")),
-                body: Box::new(proof),
+    });
+    results.push((last, cuts.len()));
+
+    let check = |script: Script| -> Result<Script, String> {
+        if script.proof.size() > MAX_PROOF_NODES {
+            return Err(format!(
+                "{} steps is more than a backend should elaborate",
+                script.proof.size()
+            ));
+        }
+        // The kernel judges what the producers built; a script it refuses,
+        // or cannot read back, is refused here by the kernel's reason.
+        let text = crate::ir::proof_steps::sexpr::script(&script, inputs.symbol_table)?;
+        crate::proof_kernel::verdict(&text)?;
+        Ok(script)
+    };
+
+    // One script per obligation of a `because` chain.
+    let mut obligations = Vec::new();
+    if n > 0 {
+        for (i, (part, scope)) in results.iter().enumerate() {
+            let ob_key = if i < n {
+                format!("{key}.because{}", i + 1)
+            } else {
+                format!("{key}.implication")
             };
+            let script = part.as_ref().map_err(Clone::clone).and_then(|part| {
+                // What it assumes, in the order its Lean theorem introduces
+                // them: the earlier reasons, then the guard.
+                let mut names: Vec<String> =
+                    (0..i.min(n)).map(|k| format!("h_reason{k}")).collect();
+                let mut items: Vec<Term> = reasons[..i.min(n)].to_vec();
+                if let Some(h) = &ob.premise {
+                    names.push("when".into());
+                    items.push(h.clone());
+                }
+                let view = under_cuts(&cuts[..*scope], part.proof.clone(), false);
+                let (premise, proof) = match conjoin(&items) {
+                    None => (None, view),
+                    Some((whole, from)) => {
+                        let mut proof = view;
+                        if !(names.len() == 1 && names[0] == "when") {
+                            for (name, (fact, p)) in names.iter().zip(items.iter().zip(from)).rev()
+                            {
+                                proof = Proof::Have {
+                                    name: name.clone(),
+                                    fact: fact.clone(),
+                                    proof: Box::new(p),
+                                    body: Box::new(proof),
+                                };
+                            }
+                        }
+                        (Some(whole), proof)
+                    }
+                };
+                let (lhs, rhs) = if i < n {
+                    (
+                        reasons[i].clone(),
+                        crate::ir::proof_steps::term::boolean(true),
+                    )
+                } else {
+                    (ob.lhs.clone(), ob.rhs.clone())
+                };
+                let mut script = Script {
+                    obligation: Obligation {
+                        key: ob_key.clone(),
+                        premise,
+                        lhs,
+                        rhs,
+                        ..ob.clone()
+                    },
+                    defs: Vec::new(),
+                    consts: Vec::new(),
+                    laws: Vec::new(),
+                    proof,
+                };
+                merge_into(&mut script, part);
+                check(script)
+            });
+            obligations.push(crate::ir::ObligationSteps {
+                key: ob_key,
+                script: script.as_ref().ok().cloned(),
+                refusal: script.err(),
+            });
         }
     }
-    if proof.size() > MAX_PROOF_NODES {
-        return Err(format!(
-            "{} steps is more than a backend should elaborate",
-            proof.size()
-        ));
+
+    // The law itself, once every obligation closed.
+    if let Some(why) = results.iter().find_map(|(p, _)| p.as_ref().err()) {
+        return Produced {
+            law: Err(why.clone()),
+            obligations,
+        };
     }
+    let parts: Vec<&Part> = results
+        .iter()
+        .map(|(p, _)| p.as_ref().expect("all closed"))
+        .collect();
+    let proof = under_cuts(&cuts, parts[n].proof.clone(), true);
     let mut script = Script {
         obligation: ob,
-        defs: opened
-            .into_iter()
-            .filter(|d| uses_unfold(&proof, d.fn_id))
-            .collect(),
+        defs: Vec::new(),
         consts: Vec::new(),
         laws: Vec::new(),
         proof,
     };
-    for part in parts.iter().chain(std::iter::once(&last)) {
-        for d in &part.defs {
-            if !script.defs.iter().any(|x| x.fn_id == d.fn_id) {
-                script.defs.push(d.clone());
-            }
-        }
-        for c in &part.consts {
-            if !script.consts.iter().any(|x| x.name == c.name) {
-                script.consts.push(c.clone());
-            }
-        }
-        for l in &part.laws {
-            if !script.laws.iter().any(|x| x.key == l.key) {
-                script.laws.push(l.clone());
-            }
-        }
+    for part in parts {
+        merge_into(&mut script, part);
     }
-    // The kernel judges what the producers built; a script it refuses,
-    // or cannot read back, is refused here by the kernel's reason.
-    let text = crate::ir::proof_steps::sexpr::script(&script, inputs.symbol_table)?;
-    crate::proof_kernel::verdict(&text)?;
-    Ok(script)
+    Produced {
+        law: check(script),
+        obligations,
+    }
 }
 
 /// Fill `LawTheorem::steps` for every law a producer can prove.
@@ -610,7 +687,9 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
     let debug = std::env::var_os("AVER_STEPS_DEBUG").is_some();
     for i in 0..ir.law_theorems.len() {
         let mut hints = Vec::new();
-        let result = produce(inputs, ir, &ir.law_theorems[i], &mut hints);
+        let produced = produce(inputs, ir, &ir.law_theorems[i], &mut hints);
+        ir.law_theorems[i].obligation_steps = produced.obligations;
+        let result = produced.law;
         if debug {
             let key = law_key(inputs, &ir.law_theorems[i]);
             match &result {

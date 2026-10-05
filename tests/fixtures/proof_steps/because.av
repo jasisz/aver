@@ -1,6 +1,6 @@
 module Because
     intent = "Laws argued with `because` lines, and a law whose `when` takes several lines: each line, and each reason once proved, is a hypothesis of its own."
-    exposes [sum2, twice, count, bothPositive, atLeast]
+    exposes [sum2, twice, count, bothPositive, atLeast, mix, far]
     effects []
 
 fn sum2(x: Int, y: Int) -> Int
@@ -88,3 +88,35 @@ verify twice law aboveAtLeastOne
     given x: Int = [1, 4]
     when atLeast(x, 1)
     twice(x) > x => true
+
+fn mix(a: Int, b: Int) -> Int
+    ? "Both numbers, doubled and added."
+    a * 2 + b * 2
+
+verify mix
+    mix(1, 2) => 6
+
+verify mix law commutes
+    given a: Int = [0, 1]
+    given b: Int = [2, 3]
+    mix(a, b) => mix(b, a)
+
+verify mix law shiftedCommutes
+    given x: Int = [0, 4]
+    given y: Int = [1, 2]
+    using [mix.commutes]
+    mix(x + 1, y) == mix(y, 1 + x) => true
+
+fn far(s: Int) -> Int
+    ? "The distance from zero."
+    match s >= 0
+        true -> s
+        false -> 0 - s
+
+verify far
+    far(-7) => 7
+
+verify far law outsideFive
+    given s: Int = [-6, 5]
+    when Bool.or(s >= 5, s <= -5)
+    far(s) >= 5 => true

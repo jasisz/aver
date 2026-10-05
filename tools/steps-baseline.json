@@ -114,6 +114,34 @@
    "productExpInRange.productExponentBounds"
   ]
  },
+ "projects/k5_fdiv/domain/fractionorder.av": {
+  "obligations": [
+   "le.fromPositiveCrossProduct.implication",
+   "lt.fromPositiveCrossProduct.implication"
+  ]
+ },
+ "projects/k5_fdiv/domain/integerorder.av": {
+  "obligations": [
+   "multiplyLt.positiveFactor.implication",
+   "nonnegativeProduct.nonnegativeFactors.implication",
+   "positiveProduct.positiveFactors.implication"
+  ]
+ },
+ "projects/k5_fdiv/domain/kernel.av": {
+  "obligations": [
+   "binadeSig.significandWindow.implication",
+   "modelAway.normalizedModel.implication",
+   "modelCeiling.normalizedModel.because11",
+   "modelSign.normalizedSign.because7",
+   "normalizedValueExponent.executableExponent.implication"
+  ]
+ },
+ "projects/k5_fdiv/domain/modelscale.av": {
+  "obligations": [
+   "scaledWindow.normalizedSignificand.implication",
+   "uniqueWindow.uniqueExponent.implication"
+  ]
+ },
  "projects/k5_fdiv/domain/rational.av": {
   "steps": [
    "minus.equalsPlusNegate",
@@ -143,9 +171,19 @@
    "truncNegateSymmetric.signSymmetry"
   ]
  },
+ "projects/k5_fdiv/domain/roundscale.av": {
+  "obligations": [
+   "remainderQuotient.smallRemainder.implication"
+  ]
+ },
  "projects/k5_fdiv/domain/stickyint.av": {
   "steps": [
    "sigDouble.doubleIsTwice"
+  ]
+ },
+ "projects/k5_fdiv/domain/truncscale.av": {
+  "obligations": [
+   "scaledQuotient.exactScale.implication"
   ]
  },
  "projects/song/wave.av": {

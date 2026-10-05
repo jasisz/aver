@@ -785,8 +785,11 @@ fn a_using_list_is_a_set_and_ambiguous_or_looping_rewrites_are_refused_by_name()
             .contains("law f.isG and law f.isH both rewrite `f(x)`, to different terms"),
         "{log}"
     );
+    // Such a law is still one instance: it proves an equation it matches
+    // whole, either way round.
+    assert!(line("sameLen.againstOne").ends_with(" nodes"), "{log}");
     assert!(
-        line("sameLen.againstOne").contains(
+        line("sameLen.negatedAgainstOne").contains(
             "law sameLen.commutes rewrites a term into one it applies to again, so rewriting with it never stops"
         ),
         "{log}"
@@ -2073,9 +2076,18 @@ fn both_kernels_check_because_chains_and_refuse_mutations() {
             "bothPositive.fromBoth",
             "bothPositive.shifted",
             "count.doubledNonNegative",
+            "count.doubledNonNegative.because1",
+            "count.doubledNonNegative.implication",
+            "far.outsideFive",
+            "mix.commutes",
+            "mix.shiftedCommutes",
             "sum2.staysPositive",
             "twice.aboveAtLeastOne",
-            "twice.grows"
+            "twice.grows",
+            "twice.grows.because1",
+            "twice.grows.because2",
+            "twice.grows.implication",
+            "twice.needsMore.implication",
         ]
     );
     // A reason no producer proves names itself, and the law keeps its
@@ -2094,9 +2106,34 @@ fn both_kernels_check_because_chains_and_refuse_mutations() {
     let shifted = read("bothPositive.shifted");
     assert!(shifted.contains("(rule bool.and.true_l "), "{shifted}");
     assert!(doubled.contains("(have because1 "), "{doubled}");
-    // A `when` that calls a predicate, opened once to its body.
+    // A `when` that calls a predicate, opened where a linear step reads
+    // the comparison inside it.
     let opened = read("twice.aboveAtLeastOne");
-    assert!(opened.contains("(have when_open "), "{opened}");
+    assert!(
+        opened.contains("(have h_steps1 (op >= (v x) (i 1)) "),
+        "{opened}"
+    );
+    // An obligation closes on its own, stating what it assumes: the
+    // claim of `needsMore` from its reason, which stays open.
+    let assumed = read("twice.needsMore.implication");
+    assert!(
+        assumed.contains("(bi Bool.and (op > (v x) (i 5)) (op > (v x) (i 0)))"),
+        "{assumed}"
+    );
+    // One instance of a cited law that would loop as a rewrite rule, its
+    // sides matched up to the ring.
+    let comm = read("mix.shiftedCommutes");
+    assert!(
+        comm.contains("(law mix.commutes ") && comm.contains("(ring "),
+        "{comm}"
+    );
+    // A disjunction in the `when`: where its left side is false, the right
+    // side is cut in, and a branch the comparisons rule out is absurd.
+    let far = read("far.outsideFive");
+    assert!(
+        far.contains("(rule bool.or.false_l ") && far.contains("(absurd "),
+        "{far}"
+    );
     assert!(positive.contains("(have when1 "), "{positive}");
     for (kind, text) in [
         (
@@ -2123,9 +2160,25 @@ fn both_kernels_check_because_chains_and_refuse_mutations() {
             "a hypothesis opened to another body",
             mutate_proof(
                 &opened,
-                "(have when_open (op >= (v x) (i 1))",
-                "(have when_open (op >= (v x) (i 0))",
+                "(have h_steps1 (op >= (v x) (i 1))",
+                "(have h_steps1 (op >= (v x) (i 0))",
             ),
+        ),
+        (
+            "an obligation that assumes less than it uses",
+            assumed.replacen(
+                "(bi Bool.and (op > (v x) (i 5)) (op > (v x) (i 0)))",
+                "(op > (v x) (i 0))",
+                1,
+            ),
+        ),
+        (
+            "a cited law instance at other givens",
+            mutate_proof(&comm, "(law mix.commutes ((a ", "(law mix.commutes ((b "),
+        ),
+        (
+            "the other side of the disjunction",
+            mutate_proof(&far, "(rule bool.or.false_l ", "(rule bool.or.false_r "),
         ),
         (
             "the other line of the when",
@@ -2175,6 +2228,11 @@ fn lean_checks_each_obligation_of_a_because_chain_by_its_steps() {
     )
     .unwrap();
     for obligation in [
+        "far.outsideFive",
+        "mix.shiftedCommutes",
+        "mix.shiftedCommutes.implication",
+        "twice.aboveAtLeastOne",
+        "twice.needsMore.implication",
         "bothPositive.fromBoth",
         "bothPositive.shifted",
         "count.doubledNonNegative",

@@ -384,6 +384,22 @@ pub(super) fn law_steps_for(
         .and_then(|t| t.steps.clone())
 }
 
+/// The obligations of the `because` chain of `(fn_name, law_name)`, each
+/// with its step script if proof lowering produced one.
+pub(super) fn law_obligations_for(
+    ctx: &CodegenContext,
+    fn_name: &str,
+    law_name: &str,
+) -> Option<Vec<crate::ir::ObligationSteps>> {
+    let fn_id = ctx.law_target_fn_id(fn_name)?;
+    ctx.proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_id == fn_id && t.law_name == law_name)
+        .map(|t| t.obligation_steps.clone())
+        .filter(|obs| !obs.is_empty())
+}
+
 /// Put `arm` in front of an open proof: `intro …` then `first | (arm) | (the
 /// rest of the proof)`. A proof that replaces its theorem, whose first
 /// alternative is already a guaranteed closer, or that is not the canonical

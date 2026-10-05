@@ -1373,6 +1373,49 @@ pub(crate) fn render_reason(
     render_with(&part, &earlier, ctx)
 }
 
+/// Render the script of one obligation of a `because` chain
+/// ([`crate::ir::ObligationSteps`]) for its Lean theorem, after `intro` of
+/// the givens, `h_reason0 … h_reason<index-1>` and `h_when`. The script
+/// states what it assumes as one premise and takes it apart first; Lean
+/// introduces the parts instead, so those cuts are left out.
+pub(crate) fn render_obligation(
+    script: &Script,
+    index: usize,
+    ctx: &CodegenContext,
+) -> Result<Rendered, String> {
+    let mut at = &script.proof;
+    let mut guard = None;
+    let mut earlier: Vec<(String, Term)> = Vec::new();
+    let mut stripped = false;
+    while let Proof::Have {
+        name, fact, body, ..
+    } = at
+    {
+        if name == "when" {
+            guard = Some(fact.clone());
+        } else if name.starts_with("h_reason") {
+            earlier.push((name.clone(), fact.clone()));
+        } else {
+            break;
+        }
+        stripped = true;
+        at = body;
+    }
+    if !stripped {
+        guard = script.obligation.premise.clone();
+    }
+    if earlier.len() != index {
+        return Err(format!(
+            "the obligation assumes {} reasons, not {index}",
+            earlier.len()
+        ));
+    }
+    let mut part = script.clone();
+    part.obligation.premise = guard;
+    part.proof = at.clone();
+    render_with(&part, &earlier, ctx)
+}
+
 /// [`render`], with `introduced` hypotheses (name, Bool term that is
 /// `true`) in scope besides `h_when`.
 fn render_with(
@@ -1515,21 +1558,31 @@ pub(crate) fn lead_portfolio(
 /// producer stopped on its first line and one `hint: …` line per builtin
 /// fact that would rewrite a part of it.
 pub(crate) fn step_files(ctx: &CodegenContext) -> Vec<(String, String)> {
-    ctx.proof_ir
-        .law_theorems
-        .iter()
-        .filter_map(|t| {
-            if let Some(script) = t.steps.as_ref() {
-                let text = crate::ir::proof_steps::sexpr::script(script, &ctx.symbol_table).ok()?;
-                return Some((format!("proof_steps/{}.steps", script.obligation.key), text));
+    let mut out = Vec::new();
+    for t in &ctx.proof_ir.law_theorems {
+        // Each obligation of a `because` chain that closed, on its own.
+        for ob in &t.obligation_steps {
+            if let Some(script) = &ob.script
+                && let Ok(text) = crate::ir::proof_steps::sexpr::script(script, &ctx.symbol_table)
+            {
+                out.push((format!("proof_steps/{}.steps", ob.key), text));
             }
-            let why = t.steps_refusal.as_ref()?;
-            let key = crate::ir::proof_steps::sexpr::Names::fn_name(&ctx.symbol_table, t.fn_id);
-            let mut text = format!("{why}\n");
-            for hint in &t.steps_hints {
-                text.push_str(&format!("hint: {hint}\n"));
+        }
+        if let Some(script) = t.steps.as_ref() {
+            if let Ok(text) = crate::ir::proof_steps::sexpr::script(script, &ctx.symbol_table) {
+                out.push((format!("proof_steps/{}.steps", script.obligation.key), text));
             }
-            Some((format!("proof_steps/{key}.{}.refused", t.law_name), text))
-        })
-        .collect()
+            continue;
+        }
+        let Some(why) = t.steps_refusal.as_ref() else {
+            continue;
+        };
+        let key = crate::ir::proof_steps::sexpr::Names::fn_name(&ctx.symbol_table, t.fn_id);
+        let mut text = format!("{why}\n");
+        for hint in &t.steps_hints {
+            text.push_str(&format!("hint: {hint}\n"));
+        }
+        out.push((format!("proof_steps/{key}.{}.refused", t.law_name), text));
+    }
+    out
 }

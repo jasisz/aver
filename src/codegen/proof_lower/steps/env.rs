@@ -21,6 +21,9 @@ pub(crate) struct Env<'a> {
     /// Laws the author cited with `using`, which evaluation may apply left
     /// to right where it stops.
     pub rewrite_laws: Vec<LawRef>,
+    /// Every law the author cited, also those that would loop as rewrite
+    /// rules: one instance may still prove an equation outright.
+    pub cited_all: Vec<LawRef>,
     pub hyps: Vec<(String, Eqn)>,
     pub fuel: usize,
     next_hyp: usize,
@@ -46,6 +49,7 @@ impl<'a> Env<'a> {
             used_consts: Vec::new(),
             laws: Vec::new(),
             rewrite_laws: Vec::new(),
+            cited_all: Vec::new(),
             hyps: Vec::new(),
             fuel: 4000,
             next_hyp: 0,
@@ -196,19 +200,42 @@ impl<'a> Env<'a> {
         Some(def)
     }
 
-    /// Record that law `key` matched but its `when` needs `open`, which no
-    /// hypothesis, linear step or computation gives.
-    pub(crate) fn note_open_premise(&mut self, key: &str, open: &Term) {
+    /// Record that law `key`, at `subst`, matched but the conjuncts `open`
+    /// of its `when` found no proof: an argument the law's author can add.
+    pub(crate) fn note_open_premise(&mut self, key: &str, subst: &[(String, Term)], open: &[Term]) {
+        let names = self.inputs.symbol_table;
+        let show = |t: &Term| crate::ir::proof_steps::show::term(t, names);
+        let at = subst
+            .iter()
+            .map(|(g, t)| format!("{g} := {}", show(t)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let needs = open
+            .iter()
+            .map(|t| format!("`{}`", show(t)))
+            .collect::<Vec<_>>()
+            .join(" and ");
         let note = format!(
-            "law {key} applies but its `when` needs `{}`, which no hypothesis, linear step or computation gives",
-            crate::ir::proof_steps::show::term(open, self.inputs.symbol_table)
+            "missing argument: law {key} at ({at}) applies but its `when` needs {needs}, which no hypothesis, linear step or computation gives; state it in a `because` line or cite a law that does"
         );
         if !self.open_premises.contains(&note) {
             self.open_premises.push(note);
         }
     }
 
-    /// `why`, with the cited laws whose `when` stayed open.
+    /// Record that evaluation met a call of `f` it may not open.
+    pub(crate) fn note_closed_recursion(&mut self, f: FnId) {
+        let name = crate::ir::proof_steps::sexpr::Names::fn_name(self.inputs.symbol_table, f);
+        let note = format!(
+            "checker limit: steps do not open `{name}`, whose recursion is not a descent they follow"
+        );
+        if !self.open_premises.contains(&note) {
+            self.open_premises.push(note);
+        }
+    }
+
+    /// `why`, with the cited laws whose `when` stayed open and the calls
+    /// steps could not open.
     pub(crate) fn with_open_premises(&self, why: String) -> String {
         if self.open_premises.is_empty() {
             why
