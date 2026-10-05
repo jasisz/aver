@@ -854,11 +854,45 @@ impl Env<'_> {
     }
 
     /// An Int comparison the decided comparisons in scope settle by
-    /// linear arithmetic, with its value.
+    /// linear arithmetic, with its value. An Int equality is settled
+    /// through the two orders: both hold (`int.eq.of_le_ge`), or one
+    /// strict order does (`int.eq.false_of_lt`, `_gt`).
     fn decide_linearly(&self, cur: &Term) -> Option<(Proof, Term)> {
+        if let ResolvedExpr::BinOp(BinOp::Eq, a, b) = &cur.node
+            && is_int(a)
+        {
+            let subst = vec![
+                ("a".to_string(), a.as_ref().clone()),
+                ("b".to_string(), b.as_ref().clone()),
+            ];
+            let rule_on = |rule: WallRule| -> Option<(Proof, Term)> {
+                let (premises, concl) = rule.instantiate(&subst)?;
+                let premises = premises
+                    .iter()
+                    .map(|e| self.linear_proof(&e.lhs, term::bool_value(&e.rhs)?))
+                    .collect::<Option<Vec<_>>>()?;
+                Some((
+                    Proof::Rule {
+                        rule,
+                        subst: subst.clone(),
+                        premises,
+                    },
+                    concl.rhs,
+                ))
+            };
+            return rule_on(WallRule::EqOfLeGe)
+                .or_else(|| rule_on(WallRule::EqFalseOfLt))
+                .or_else(|| rule_on(WallRule::EqFalseOfGt));
+        }
+        [true, false]
+            .into_iter()
+            .find_map(|value| Some((self.linear_proof(cur, value)?, term::boolean(value))))
+    }
+
+    /// `goal = value` for an Int comparison `goal`, when its opposite and
+    /// the decided comparisons in scope add up to a contradiction.
+    fn linear_proof(&self, goal: &Term, value: bool) -> Option<Proof> {
         use crate::ir::proof_steps::linear;
-        let mut atoms = Vec::new();
-        linear::as_nonneg(cur, true, &mut atoms)?;
         let known: Vec<(String, crate::ir::proof_steps::Eqn)> = self
             .hyps
             .iter()
@@ -868,41 +902,31 @@ impl Env<'_> {
             })
             .cloned()
             .collect();
-        if known.is_empty() {
-            return None;
+        let mut atoms = Vec::new();
+        let mut facts = vec![linear::as_nonneg(goal, !value, &mut atoms)?];
+        for (_, e) in &known {
+            facts.push(linear::as_nonneg(
+                &e.lhs,
+                term::bool_value(&e.rhs)?,
+                &mut atoms,
+            )?);
         }
-        for value in [true, false] {
-            let mut atoms = Vec::new();
-            let mut facts = vec![linear::as_nonneg(cur, !value, &mut atoms)?];
-            for (_, e) in &known {
-                facts.push(linear::as_nonneg(
-                    &e.lhs,
-                    term::bool_value(&e.rhs)?,
-                    &mut atoms,
-                )?);
-            }
-            if let Some(weights) = linear::certificate(&facts) {
-                // Only the hypotheses the certificate uses are named.
-                let mut hyps = Vec::new();
-                let mut kept = vec![weights[0].clone()];
-                for ((n, _), w) in known.iter().zip(&weights[1..]) {
-                    if *w != num_bigint::BigInt::from(0) {
-                        hyps.push(n.clone());
-                        kept.push(w.clone());
-                    }
-                }
-                return Some((
-                    Proof::Linear {
-                        goal: canon(cur),
-                        value,
-                        hyps,
-                        weights: kept,
-                    },
-                    term::boolean(value),
-                ));
+        let weights = linear::certificate(&facts)?;
+        // Only the hypotheses the certificate uses are named.
+        let mut hyps = Vec::new();
+        let mut kept = vec![weights[0].clone()];
+        for ((n, _), w) in known.iter().zip(&weights[1..]) {
+            if *w != num_bigint::BigInt::from(0) {
+                hyps.push(n.clone());
+                kept.push(w.clone());
             }
         }
-        None
+        Some(Proof::Linear {
+            goal: canon(goal),
+            value,
+            hyps,
+            weights: kept,
+        })
     }
 
     /// A law the author cited, applied left to right to a term evaluation

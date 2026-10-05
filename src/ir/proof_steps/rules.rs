@@ -43,6 +43,10 @@ pub enum WallRule {
     EqFalseOfNe,
     NeOfNotEq,
     NeFalseOfEq,
+    // Two decided orders decide an equality.
+    EqOfLeGe,
+    EqFalseOfLt,
+    EqFalseOfGt,
     // Ring laws of Int.
     AddComm,
     MulComm,
@@ -101,7 +105,7 @@ pub enum WallRule {
 }
 
 impl WallRule {
-    pub const ALL: [WallRule; 67] = [
+    pub const ALL: [WallRule; 70] = [
         WallRule::AndTrueL,
         WallRule::AndFalseL,
         WallRule::AndTrueR,
@@ -126,6 +130,9 @@ impl WallRule {
         WallRule::EqFalseOfNe,
         WallRule::NeOfNotEq,
         WallRule::NeFalseOfEq,
+        WallRule::EqOfLeGe,
+        WallRule::EqFalseOfLt,
+        WallRule::EqFalseOfGt,
         WallRule::AddComm,
         WallRule::MulComm,
         WallRule::AddAssoc,
@@ -198,6 +205,9 @@ impl WallRule {
             WallRule::EqFalseOfNe => "int.eq.false_of_ne",
             WallRule::NeOfNotEq => "int.ne.of_not_eq",
             WallRule::NeFalseOfEq => "int.ne.false_of_eq",
+            WallRule::EqOfLeGe => "int.eq.of_le_ge",
+            WallRule::EqFalseOfLt => "int.eq.false_of_lt",
+            WallRule::EqFalseOfGt => "int.eq.false_of_gt",
             WallRule::AddComm => "int.add_comm",
             WallRule::MulComm => "int.mul_comm",
             WallRule::AddAssoc => "int.add_assoc",
@@ -392,6 +402,15 @@ impl WallRule {
             WallRule::EqFalseOfNe => compl(BinOp::Neq, true, BinOp::Eq, false),
             WallRule::NeOfNotEq => compl(BinOp::Eq, false, BinOp::Neq, true),
             WallRule::NeFalseOfEq => compl(BinOp::Eq, true, BinOp::Neq, false),
+            WallRule::EqOfLeGe => (
+                vec![
+                    is(cmp(BinOp::Lte, a(), b()), true),
+                    is(cmp(BinOp::Gte, a(), b()), true),
+                ],
+                is(cmp(BinOp::Eq, a(), b()), true),
+            ),
+            WallRule::EqFalseOfLt => compl(BinOp::Lt, true, BinOp::Eq, false),
+            WallRule::EqFalseOfGt => compl(BinOp::Gt, true, BinOp::Eq, false),
             WallRule::AddComm => (
                 vec![],
                 Eqn::new(binop(BinOp::Add, a(), b()), binop(BinOp::Add, b(), a())),
