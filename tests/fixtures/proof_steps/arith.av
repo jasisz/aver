@@ -1,6 +1,6 @@
 module Arith
     intent = "Int laws that need the ring step or linear arithmetic over the hypotheses."
-    exposes [twice, sqSum, next, clamp, sumTR, total]
+    exposes [twice, sqSum, next, clamp, sumTR, total, overshoots]
     effects []
 
 fn twice(x: Int) -> Int
@@ -75,3 +75,16 @@ verify sumTR law isAccPlusTotal
     given xs: List<Int> = [[], [1], [1, 2, 3]]
     given acc: Int = [0, 5]
     sumTR(xs, acc) => acc + total(xs)
+
+fn overshoots(g: Int, q: Int) -> Bool
+    ? "A digit q at least as far from zero as g, on the same side, leaves a remainder of the opposite sign."
+    g * (g - q) <= 0
+
+verify overshoots
+    overshoots(3, 5) => true
+
+verify overshoots law oppositeRemainder
+    given g: Int = [-3, 0, 3]
+    given q: Int = [-5, 0, 5]
+    when g * q >= g * g
+    overshoots(g, q) => true

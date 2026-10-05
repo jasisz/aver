@@ -360,7 +360,7 @@ impl Renderer<'_> {
                 binders,
                 premise,
             } => {
-                let ResolvedExpr::Match { arms, .. } = &t.node else {
+                let ResolvedExpr::Match { subject, arms } = &t.node else {
                     return Err("arm: not a match".into());
                 };
                 let pat = &arms[*arm as usize - 1].pattern;
@@ -377,7 +377,10 @@ impl Renderer<'_> {
                     }
                     _ => pat,
                 };
-                let tactic = arm_tactic(pat, t, "h_arm")?;
+                // The evidence is read off the subject: a comparison is a
+                // Prop in the model, so its Bool premise goes through
+                // `decide`.
+                let tactic = arm_tactic(pat, subject, "h_arm")?;
                 format!("(fun h_arm => by {tactic}) {}", self.proof(premise, hyps)?)
             }
             // A `when` that is a bare comparison is stated `(a < b) = true`,
@@ -619,12 +622,17 @@ impl Renderer<'_> {
                     };
                     facts.push_str(&format!("have steps_fact{i} := {fact}; "));
                 }
-                // The comparison as the Prop `omega` proves.
+                // The comparison as the Prop `omega` proves. The kernel
+                // written in Aver reads each product of givens as one atom
+                // after normalising; `omega` does not multiply out, so a
+                // product of givens goes to `grind`, which normalises the
+                // ring first.
                 let prop = emit_expr(goal, self.ctx);
+                let close = "first | omega | grind";
                 if *value {
-                    format!("decide_eq_true (show {prop} from by {facts}omega)")
+                    format!("decide_eq_true (show {prop} from by {facts}{close})")
                 } else {
-                    format!("decide_eq_false (show ¬ ({prop}) from by {facts}omega)")
+                    format!("decide_eq_false (show ¬ ({prop}) from by {facts}{close})")
                 }
             }
             // Both sides read as `Lean.Grind.CommRing.Expr` over one list of

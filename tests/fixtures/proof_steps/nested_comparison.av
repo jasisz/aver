@@ -1,0 +1,31 @@
+module NestedComparison
+    intent = "A clamp whose second test sits in a nested match on a comparison."
+    exposes [clamp16, fits16]
+    effects []
+
+fn clamp16(sample: Int) -> Int
+    ? "A sample clipped to the 16-bit range."
+    match sample > 32767
+        true -> 32767
+        false -> match sample < -32768
+            true -> -32768
+            false -> sample
+
+verify clamp16
+    clamp16(40000) => 32767
+    clamp16(-40000) => -32768
+    clamp16(5) => 5
+
+fn fits16(sample: Int) -> Bool
+    ? "Whether a sample fits 16 bits."
+    match sample < -32768
+        true -> false
+        false -> sample <= 32767
+
+verify fits16
+    fits16(0) => true
+    fits16(-32769) => false
+
+verify clamp16 law fitsSixteenBits
+    given sample: Int = [-100000, -32769, -32768, -1, 0, 1, 32767, 32768, 100000]
+    fits16(clamp16(sample)) => true
