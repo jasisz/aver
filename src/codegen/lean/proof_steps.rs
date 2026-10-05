@@ -1073,7 +1073,14 @@ pub(crate) fn render_cited_facts(body: &str, ctx: &CodegenContext) -> Result<Str
         let mut hyps = Hyps::new();
         let mut when = String::new();
         if let Some(p) = &ob.premise {
-            when = format!(" (h_when : {} = true)", r.expr(p));
+            // Stated as a law states its `when`: a bare comparison as a
+            // Prop, anything else as a Bool.
+            let stated = if is_prop_comparison(p) {
+                format!("({})", emit_expr(&over_alpha(p), ctx))
+            } else {
+                r.expr(p)
+            };
+            when = format!(" (h_when : {stated} = true)");
             hyps.push(("when".into(), Eqn::new(p.clone(), term::boolean(true))));
         }
         let term = r.proof(&script.proof, &hyps)?;
@@ -1083,10 +1090,14 @@ pub(crate) fn render_cited_facts(body: &str, ctx: &CodegenContext) -> Result<Str
         use crate::ir::proof_steps::facts::Sort;
         // Every element, key and value type: a key with the equality and
         // order the map model reads, never a fallback instance.
-        let types = if fact.over_lists() {
-            "{α : Type}".to_string()
-        } else {
+        let over_maps = fact
+            .sorts
+            .iter()
+            .any(|(_, s)| matches!(s, Sort::Map | Sort::Key | Sort::Value));
+        let types = if over_maps {
             "{α β : Type} [DecidableEq α] [AverKeyOrder α] [BEq α] [LawfulBEq α]".to_string()
+        } else {
+            "{α : Type}".to_string()
         };
         let binders: Vec<String> = fact
             .sorts
@@ -1095,8 +1106,10 @@ pub(crate) fn render_cited_facts(body: &str, ctx: &CodegenContext) -> Result<Str
                 let ty = match s {
                     Sort::List => "List α",
                     Sort::Map => "List (α × β)",
-                    Sort::Key => "α",
+                    Sort::Key | Sort::Elem => "α",
                     Sort::Value => "β",
+                    Sort::Vector => "Array α",
+                    Sort::Int => "Int",
                 };
                 format!("({} : {ty})", super::syntax::aver_name_to_lean(g))
             })

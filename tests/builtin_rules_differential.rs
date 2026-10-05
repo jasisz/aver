@@ -83,7 +83,10 @@ fn schemas() -> Vec<Schema> {
         .collect();
     // Map facts are tested with the Map rules, on maps the kernel cannot
     // evaluate.
-    for f in facts::all().into_iter().filter(|f| f.over_lists()) {
+    for f in facts::all()
+        .into_iter()
+        .filter(|f| f.key.starts_with("List."))
+    {
         let ob = &f.script.obligation;
         out.push(Schema {
             name: f.key.to_string(),

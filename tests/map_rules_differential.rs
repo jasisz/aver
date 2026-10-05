@@ -100,7 +100,10 @@ fn schemas() -> Vec<Schema> {
             }
         })
         .collect();
-    for f in facts::all().into_iter().filter(|f| !f.over_lists()) {
+    for f in facts::all()
+        .into_iter()
+        .filter(|f| f.key.starts_with("Map."))
+    {
         let ob = &f.script.obligation;
         out.push(Schema {
             name: f.key.to_string(),
