@@ -35,7 +35,7 @@ pub use term::Term;
 use crate::ir::identity::FnId;
 
 /// Version of the step data. Bump on any change a replayer could observe.
-pub const FORMAT_VERSION: u32 = 5;
+pub const FORMAT_VERSION: u32 = 6;
 
 /// An equation `lhs = rhs` between two terms.
 #[derive(Debug, Clone, PartialEq)]
@@ -197,6 +197,16 @@ pub enum Proof {
         hyp: String,
         if_true: Box<Proof>,
         if_false: Box<Proof>,
+    },
+    /// A cut: `proof` proves `fact = true` under the hypotheses in scope,
+    /// and `body` is checked with hypothesis `name : fact = true` added;
+    /// the step proves what `body` proves. The ordered `because` lines of
+    /// a law are proved this way, each with the earlier ones in scope.
+    Have {
+        name: String,
+        fact: Term,
+        proof: Box<Proof>,
+        body: Box<Proof>,
     },
     /// Any equation, from a proof that `true` and `false` are equal: the
     /// case the step is in cannot happen.
@@ -403,6 +413,7 @@ impl Proof {
             Proof::Cases {
                 if_true, if_false, ..
             } => if_true.size() + if_false.size(),
+            Proof::Have { proof, body, .. } => proof.size() + body.size(),
             Proof::Enum { cases, .. } => cases.iter().map(Proof::size).sum(),
             Proof::Absurd { contradiction, .. } => contradiction.size(),
             Proof::Induct { cases, .. } => cases.iter().map(|c| c.proof.size()).sum(),

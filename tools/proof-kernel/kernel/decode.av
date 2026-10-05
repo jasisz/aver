@@ -344,6 +344,7 @@ fn proofOf(tag: String, args: List<Sexp>) -> Result<Proof, String>
         "law" -> instanceProof(args, "law")
         "compute" -> computeProof(args)
         "cases" -> casesProof(args)
+        "have" -> haveProof(args)
         "enum" -> enumProof(args)
         "absurd" -> absurdProof(args)
         "induct" -> inductProof(args)
@@ -453,6 +454,16 @@ fn casesProof(args: List<Sexp>) -> Result<Proof, String>
 
 verify casesProof
     casesProof([]) => Result.Err("malformed cases")
+
+fn haveProof(args: List<Sexp>) -> Result<Proof, String>
+    ? "(have NAME TERM PROOF PROOF)"
+    match args
+        [Sexp.Atom(h), fact, p, body] -> Result.Ok(Proof.PHave(h, term(fact)?, proof(p)?, proof(body)?))
+        _ -> Result.Err("malformed have")
+
+verify haveProof
+    haveProof([]) => Result.Err("malformed have")
+    haveProof([Sexp.Atom("h"), Sexp.Node([Sexp.Atom("unit")]), Sexp.Node([Sexp.Atom("refl"), Sexp.Node([Sexp.Atom("unit")])]), Sexp.Node([Sexp.Atom("hyp"), Sexp.Atom("h")])]) => Result.Ok(Proof.PHave("h", Term.TUnit, Proof.PRefl(Term.TUnit), Proof.PHyp("h")))
 
 fn enumProof(args: List<Sexp>) -> Result<Proof, String>
     ? "(enum NAME TERM TERM PROOF…)"
@@ -701,9 +712,9 @@ verify consts
     consts([]) => Result.Ok([])
 
 fn script(s: Sexp) -> Result<Script, String>
-    ? "(steps 5 (obligation …) (defs …) (consts …) (laws …) (proof …)); version 5 only."
+    ? "(steps 6 (obligation …) (defs …) (consts …) (laws …) (proof …)); version 6 only."
     match s
-        Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("5"), o, Sexp.Node([Sexp.Atom("defs"), ..ds]), Sexp.Node([Sexp.Atom("consts"), ..cs]), Sexp.Node([Sexp.Atom("laws"), ..ls]), Sexp.Node([Sexp.Atom("proof"), p])]) -> scriptOf(obligation(o)?, defs(ds)?, consts(cs)?, laws(ls)?, proof(p)?)
+        Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("6"), o, Sexp.Node([Sexp.Atom("defs"), ..ds]), Sexp.Node([Sexp.Atom("consts"), ..cs]), Sexp.Node([Sexp.Atom("laws"), ..ls]), Sexp.Node([Sexp.Atom("proof"), p])]) -> scriptOf(obligation(o)?, defs(ds)?, consts(cs)?, laws(ls)?, proof(p)?)
         Sexp.Node([Sexp.Atom("steps"), Sexp.Atom(v), ..rest]) -> Result.Err("unsupported step format version {v}")
         _ -> Result.Err("not a step script")
 

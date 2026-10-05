@@ -20,8 +20,13 @@ pub(super) struct StepsReport {
 impl StepsReport {
     /// How an obligation was closed: `steps`, `tactic`, or `open`.
     pub fn closed_by(&self, obligation: &str, universal: bool) -> &'static str {
+        // The obligations of a `because` chain share their law's script.
         let law = obligation
             .strip_suffix(".implication")
+            .or_else(|| {
+                let (law, step) = obligation.rsplit_once(".because")?;
+                (!step.is_empty() && step.bytes().all(|b| b.is_ascii_digit())).then_some(law)
+            })
             .unwrap_or(obligation);
         if !universal {
             "open"

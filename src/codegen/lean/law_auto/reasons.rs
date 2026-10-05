@@ -562,11 +562,13 @@ pub(in crate::codegen::lean) fn emit_reason_law(
             lines.extend(structured.into_iter().map(|line| format!("  {line}")));
         }
         // A proof written as data leads everything: the kernel checks it,
-        // and the whole strategy above is its fallback.
-        if final_step
-            && claim.allow_steps
+        // and the whole strategy above is its fallback. Each obligation
+        // takes its own part of the law's script, with the earlier reasons
+        // as the hypotheses this theorem introduces.
+        if claim.allow_steps
             && let Some(script) = super::law_steps_for(ctx, &vb.fn_name, &law.name)
-            && let Ok(rendered) = crate::codegen::lean::proof_steps::render(&script, ctx)
+            && let Ok(rendered) =
+                crate::codegen::lean::proof_steps::render_reason(&script, index, ctx)
         {
             let structured = lines.split_off(strategy_start);
             lines.push("  first".to_string());

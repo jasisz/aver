@@ -242,6 +242,13 @@ pub fn claim(p: &Proof, script: &Script, hyps: &Hyps) -> Result<Eqn, String> {
             h.push((hyp.clone(), Eqn::new(canon(on), term::boolean(true))));
             claim(if_true, script, &h)
         }
+        Proof::Have {
+            name, fact, body, ..
+        } => {
+            let mut h = hyps.clone();
+            h.push((name.clone(), Eqn::new(canon(fact), term::boolean(true))));
+            claim(body, script, &h)
+        }
         Proof::Compute { lhs, rhs }
         | Proof::Ring { lhs, rhs }
         | Proof::Absurd { lhs, rhs, .. }

@@ -23,6 +23,7 @@ type Proof
     PLaw(String, List<Binding>, List<Proof>)
     PCompute(Term, Term)
     PCases(Term, String, Proof, Proof)
+    PHave(String, Term, Proof, Proof)
     PEnum(String, Term, Term, List<Proof>)
     PAbsurd(Proof, Term, Term)
     PInduct(String, List<Term>, Term, Term, List<Case>)

@@ -636,6 +636,7 @@ fn constructor(p: &Proof) -> &'static str {
         Proof::Law { .. } => "law",
         Proof::Compute { .. } => "compute",
         Proof::Cases { .. } => "cases",
+        Proof::Have { .. } => "have",
         Proof::Absurd { .. } => "absurd",
         Proof::Induct { .. } => "induct",
         Proof::InductList { .. } => "listinduct",
@@ -645,7 +646,8 @@ fn constructor(p: &Proof) -> &'static str {
     }
 }
 
-const CONSTRUCTORS: [&str; 20] = [
+const CONSTRUCTORS: [&str; 21] = [
+    "have",
     "refl",
     "symm",
     "trans",
@@ -1001,6 +1003,24 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
         )
     };
 
+    // A cut whose proof must state its fact: `a > 0` from `when`, then
+    // the claim from the cut.
+    let have = |fact: super::Term| {
+        with_premise(
+            script(
+                positive(),
+                term::boolean(true),
+                Proof::Have {
+                    name: "h".into(),
+                    fact,
+                    proof: Box::new(Proof::Hyp("when".into())),
+                    body: Box::new(Proof::Hyp("h".into())),
+                },
+            ),
+            positive(),
+        )
+    };
+
     let samples: Vec<(Script, Script)> = vec![
         (
             script(a(), a(), Proof::Refl(a())),
@@ -1084,6 +1104,7 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
         (cite(false), cite(true)),
         (compute(7), compute(6)),
         (split(Proof::Refl(a())), split(Proof::Refl(b()))),
+        (have(positive()), have(term::binop(BinOp::Gt, b(), i(0)))),
         (absurd(false), absurd(true)),
         (induct(0), induct(1)),
         (

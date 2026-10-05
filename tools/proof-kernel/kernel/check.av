@@ -47,6 +47,7 @@ fn conclude(p: Proof, env: Env, path: String) -> Result<Eqn, String>
         Proof.PLaw(k, bs, ps) -> lawStep(k, bs, ps, env, path)
         Proof.PCompute(a, b) -> compute(a, b, path)
         Proof.PCases(on, h, t, f) -> cases(on, h, t, f, env, path)
+        Proof.PHave(h, fact, q, body) -> have(h, fact, q, body, env, path)
         Proof.PEnum(v, l, r, cs) -> enumStep(v, l, r, cs, env, path)
         Proof.PAbsurd(q, l, r) -> absurd(conclude(q, env, "{path}/absurd")?, l, r, path)
         Proof.PInduct(f, xs, l, r, cs) -> induct(f, xs, Eqn(lhs = l, rhs = r), cs, env, path)
@@ -202,6 +203,18 @@ fn cases(on: Term, h: String, t: Proof, f: Proof, env: Env, path: String) -> Res
 
 verify cases
     cases(Term.TVar("c"), "h", Proof.PHyp("h"), Proof.PHyp("h"), emptyEnv(), "p") => Result.Err("step p: the two branches prove different equations")
+
+fn have(h: String, fact: Term, q: Proof, body: Proof, env: Env, path: String) -> Result<Eqn, String>
+    ? "A cut: q proves fact = true in the current scope, then body is checked with it as hypothesis h."
+    proved = conclude(q, env, "{path}/have.{h}")?
+    match proved == Eqn(lhs = fact, rhs = Term.TBool(true))
+        true -> conclude(body, withHyp(env, h, fact, true), path)
+        false -> refuse(path, "the proof of {h} ends at a different equation than its fact")
+
+verify have
+    have("h", Term.TVar("c"), Proof.PHyp("g"), Proof.PHyp("h"), withHyp(emptyEnv(), "g", Term.TVar("c"), true), "p") => Result.Ok(Eqn(lhs = Term.TVar("c"), rhs = Term.TBool(true)))
+    have("h", Term.TVar("c"), Proof.PHyp("g"), Proof.PHyp("h"), withHyp(emptyEnv(), "g", Term.TVar("c"), false), "p") => Result.Err("step p: the proof of h ends at a different equation than its fact")
+    have("h", Term.TVar("c"), Proof.PHyp("h"), Proof.PHyp("h"), emptyEnv(), "p") => Result.Err("step p/have.h: hypothesis h is not in scope")
 
 fn withHyp(env: Env, h: String, on: Term, value: Bool) -> Env
     ? "The environment with one more hypothesis in front."

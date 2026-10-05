@@ -485,6 +485,10 @@ pub struct LawTheorem {
     /// These are proof candidates, never assumptions: each backend must prove
     /// the recursive call's premises and strict decrease.
     pub induction: Option<LawInduction>,
+    /// The `because` lines, in source order: Bool terms, each proved under
+    /// the guard and the reasons before it, and together with them the
+    /// premises of the claim.
+    pub reasons: Vec<Spanned<crate::ir::hir::ResolvedExpr>>,
     /// Plans for the separately checked `because` obligations, in source order.
     /// Each plan retains the law guard and every preceding explanation as
     /// recursive-call premises. A plan supplies no proof credit by itself.

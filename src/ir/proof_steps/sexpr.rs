@@ -29,6 +29,7 @@
 //!          | (arm ARM (TERM…) TERM PROOF) | (proj TERM) | (cell TERM) | (hyp NAME)
 //!          | (rule RULE ((NAME TERM)…) PROOF…) | (law KEY ((NAME TERM)…) [PROOF])
 //!          | (compute TERM TERM) | (cases TERM NAME PROOF PROOF)
+//!          | (have NAME TERM PROOF PROOF)
 //!          | (enum NAME TERM TERM PROOF…) | (absurd PROOF TERM TERM)
 //!          | (induct FN (TERM…) TERM TERM (case (NAME…) (NAME…) PROOF)…)
 //!          | (listinduct NAME TERM TERM PROOF (NAME NAME NAME) PROOF)
@@ -410,6 +411,17 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
             term(on, names)?,
             proof(if_true, names)?,
             proof(if_false, names)?
+        ),
+        Proof::Have {
+            name,
+            fact,
+            proof: p,
+            body,
+        } => format!(
+            "(have {name} {} {} {})",
+            term(fact, names)?,
+            proof(p, names)?,
+            proof(body, names)?
         ),
         Proof::Induct {
             fn_id,
