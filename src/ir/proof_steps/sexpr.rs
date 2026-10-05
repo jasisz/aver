@@ -9,7 +9,7 @@
 //!                    (defs (def NAME (PARAM…) ((NAME TERM)…) TERM)…)
 //!                    (consts (const NAME TERM)…)
 //!                    (laws (law KEY (GIVEN…) PREMISE TERM TERM)…
-//!                          (fact KEY (OGIVEN…) TERM TERM PROOF)…)
+//!                          (fact KEY (OGIVEN…) PREMISE TERM TERM PROOF)…)
 //!   a fact comes after the facts its proof cites, and may cite only them
 //!                    (proof PROOF))
 //! OGIVEN  := NAME | (NAME TYPE)       ; a given of finite type, with its type
@@ -601,9 +601,10 @@ pub fn script(s: &Script, names: &dyn Names) -> Result<String, String> {
                 })
                 .collect();
             out.push_str(&format!(
-                "\n  (fact {} ({}) {} {} {})",
+                "\n  (fact {} ({}) {} {} {} {})",
                 l.key,
                 givens.join(" "),
+                premise(&l.premise, names)?,
                 term(&l.lhs, names)?,
                 term(&l.rhs, names)?,
                 proof(&fact.proof, names)?

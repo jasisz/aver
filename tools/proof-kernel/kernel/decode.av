@@ -647,20 +647,20 @@ verify laws
 fn withCited(s: Sexp, rest: Cited) -> Result<Cited, String>
     ? "One cited law or fact in front of the rest."
     match s
-        Sexp.Node([Sexp.Atom("fact"), Sexp.Atom(k), gs, l, r, p]) -> Result.Ok(Cited(laws = rest.laws, facts = List.prepend(factOf(k, obligationGivens(items(gs)?)?, term(l)?, term(r)?, proof(p)?)?, rest.facts)))
+        Sexp.Node([Sexp.Atom("fact"), Sexp.Atom(k), gs, w, l, r, p]) -> Result.Ok(Cited(laws = rest.laws, facts = List.prepend(factOf(k, obligationGivens(items(gs)?)?, premise(w)?, term(l)?, term(r)?, proof(p)?)?, rest.facts)))
         _ -> Result.Ok(Cited(laws = List.prepend(law(s, "law")?, rest.laws), facts = rest.facts))
 
 verify withCited
     withCited(Sexp.Atom("x"), Cited(laws = [], facts = [])) => Result.Err("malformed law")
 
-fn factOf(k: String, gs: Givens, l: Term, r: Term, p: Proof) -> Result<Fact, String>
-    ? "(fact KEY (GIVEN…) TERM TERM PROOF): a fact has no when and no given of finite type."
+fn factOf(k: String, gs: Givens, w: List<Term>, l: Term, r: Term, p: Proof) -> Result<Fact, String>
+    ? "(fact KEY (GIVEN…) PREMISE TERM TERM PROOF): a fact has no given of finite type."
     match gs.finite
-        [] -> Result.Ok(Fact(law = Law(key = k, givens = gs.names, premise = [], lhs = l, rhs = r), lists = gs.lists, proof = p))
+        [] -> Result.Ok(Fact(law = Law(key = k, givens = gs.names, premise = w, lhs = l, rhs = r), lists = gs.lists, proof = p))
         _ -> Result.Err("fact {k}: a given of finite type")
 
 verify factOf
-    factOf("k", Givens(names = ["b"], finite = [Given(name = "b", fin = Fin.FBool)], lists = []), Term.TUnit, Term.TUnit, Proof.PRefl(Term.TUnit)) => Result.Err("fact k: a given of finite type")
+    factOf("k", Givens(names = ["b"], finite = [Given(name = "b", fin = Fin.FBool)], lists = []), [], Term.TUnit, Term.TUnit, Proof.PRefl(Term.TUnit)) => Result.Err("fact k: a given of finite type")
 
 fn def(s: Sexp) -> Result<Def, String>
     ? "(def NAME (PARAM…) ((NAME TERM)…) TERM): parameters, local bindings in order, the final expression."

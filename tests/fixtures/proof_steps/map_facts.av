@@ -1,0 +1,62 @@
+module MapFacts
+    intent = "Laws that cite the builtin Map facts, over Int and record keys."
+    exposes [Pt, store, place]
+    effects []
+
+record Pt
+    x: Int
+    y: Int
+
+fn store(m: Map<Int, String>, k: Int, v: String) -> Map<Int, String>
+    ? "Set one entry."
+    Map.set(m, k, v)
+
+verify store
+    store({}, 1, "a") => {1 => "a"}
+
+verify store law readsBack
+    given m: Map<Int, String> = [{1 => "a"}]
+    given k: Int = [1, 2]
+    given v: String = ["b"]
+    using [Map.get.afterSet]
+    Map.get(Map.set(m, k, v), k) => Option.Some(v)
+
+verify store law leavesOtherKeys
+    given m: Map<Int, String> = [{1 => "a"}]
+    given k: Int = [1, 2]
+    given k2: Int = [1, 3]
+    given v: String = ["b"]
+    when k != k2
+    using [Map.get.afterSetOther]
+    Map.get(Map.set(m, k, v), k2) => Map.get(m, k2)
+
+verify store law holdsTheKey
+    given m: Map<Int, String> = [{1 => "a"}]
+    given k: Int = [1, 2]
+    given v: String = ["b"]
+    using [Map.has.afterSet]
+    Map.has(Map.set(m, k, v), k) => true
+
+verify store law keepsTheSize
+    given m: Map<Int, String> = [{1 => "a"}]
+    given k: Int = [1]
+    given v: String = ["b"]
+    when Map.has(m, k)
+    using [Map.len.afterSetPresent]
+    Map.len(Map.set(m, k, v)) => Map.len(m)
+
+fn place(m: Map<Pt, Int>, p: Pt, v: Int) -> Map<Pt, Int>
+    ? "Set the value at a point."
+    Map.set(m, p, v)
+
+verify place
+    place({}, Pt(x = 1, y = 2), 3) => {Pt(x = 1, y = 2) => 3}
+
+verify place law otherPointsUnchanged
+    given m: Map<Pt, Int> = [{Pt(x = 0, y = 0) => 1}]
+    given p: Pt = [Pt(x = 0, y = 0), Pt(x = 1, y = 2)]
+    given q: Pt = [Pt(x = 0, y = 0), Pt(x = 3, y = 3)]
+    given v: Int = [5]
+    when p != q
+    using [Map.get.afterSetOther]
+    Map.get(Map.set(m, p, v), q) => Map.get(m, q)

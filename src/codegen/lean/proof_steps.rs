@@ -995,14 +995,41 @@ pub(crate) fn render_cited_facts(body: &str, ctx: &CodegenContext) -> Result<Str
         };
         let ob = &script.obligation;
         let statement = r.eqn(&Eqn::new(ob.lhs.clone(), ob.rhs.clone()));
-        let term = r.proof(&script.proof, &Hyps::new())?;
-        if !r.support.is_empty() || ob.givens != ob.lists {
-            return Err(format!("fact {}: not a fact over lists alone", fact.key));
+        let mut hyps = Hyps::new();
+        let mut when = String::new();
+        if let Some(p) = &ob.premise {
+            when = format!(" (h_when : {} = true)", r.expr(p));
+            hyps.push(("when".into(), Eqn::new(p.clone(), term::boolean(true))));
         }
+        let term = r.proof(&script.proof, &hyps)?;
+        if !r.support.is_empty() {
+            return Err(format!("fact {}: a fact opens no definition", fact.key));
+        }
+        use crate::ir::proof_steps::facts::Sort;
+        // Every element, key and value type: a key with the equality and
+        // order the map model reads, never a fallback instance.
+        let types = if fact.over_lists() {
+            "{α : Type}".to_string()
+        } else {
+            "{α β : Type} [DecidableEq α] [AverKeyOrder α] [BEq α] [LawfulBEq α]".to_string()
+        };
+        let binders: Vec<String> = fact
+            .sorts
+            .iter()
+            .map(|(g, s)| {
+                let ty = match s {
+                    Sort::List => "List α",
+                    Sort::Map => "List (α × β)",
+                    Sort::Key => "α",
+                    Sort::Value => "β",
+                };
+                format!("({} : {ty})", super::syntax::aver_name_to_lean(g))
+            })
+            .collect();
         out.push(format!(
-            "set_option autoImplicit false in\ntheorem {} {{α : Type}} ({} : List α) :\n    {statement} :=\n  {term}",
+            "set_option autoImplicit false in\ntheorem {} {types} {}{when} :\n    {statement} :=\n  {term}",
             fact_theorem(fact),
-            ob.givens.join(" ")
+            binders.join(" ")
         ));
     }
     Ok(out.join("\n\n"))

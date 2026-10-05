@@ -259,10 +259,14 @@ fn every_builtin_fact_checks_and_a_misstated_citation_is_refused() {
         let cite = Proof::Law {
             law: fact.key.into(),
             subst: ob.givens.iter().map(|g| (g.clone(), var(g))).collect(),
-            premise: None,
+            premise: ob
+                .premise
+                .as_ref()
+                .map(|_| Box::new(Proof::Hyp("when".into()))),
         };
         let mut citing = script(ob.lhs.clone(), ob.rhs.clone(), cite);
         citing.obligation.givens = ob.givens.clone();
+        citing.obligation.premise = ob.premise.clone();
         citing.laws.push(fact.law_ref());
         assert_eq!(check_script(&citing), Ok(()), "{}", fact.key);
         let mut misstated = citing.clone();

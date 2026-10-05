@@ -335,7 +335,7 @@ aver facts List.reverse    # only the facts whose name starts with this
 aver facts --json
 ```
 
-A law cites a builtin fact in `using` like one of its own program's laws (`using [List.len.ofConcat]`). Facts hold for lists of any element type; their step proofs travel with the citation and are checked before use. When `aver proof` leaves a law open, or closes it only by tactics, it prints a `hint:` line naming each fact whose left side matches a part of where the steps stopped. Add the fact to `using` yourself; nothing is cited for you.
+A law cites a builtin fact in `using` like one of its own program's laws (`using [List.len.ofConcat]`). Facts hold for lists of any element type and maps of any key and value type (some have a `when`, such as `Map.get.afterSetOther`); their step proofs travel with the citation and are checked before use. When `aver proof` leaves a law open, or closes it only by tactics, it prints a `hint:` line naming each fact whose left side matches a part of where the steps stopped. Add the fact to `using` yourself; nothing is cited for you.
 
 ### Replay
 

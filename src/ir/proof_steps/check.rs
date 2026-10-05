@@ -494,7 +494,7 @@ pub fn check_script(script: &Script) -> Result<(), String> {
 }
 
 /// A builtin fact: a script over builtins alone, citing only other facts,
-/// with no `when`, that proves exactly the statement the citation uses.
+/// with the same `when` as the citation, that proves exactly the statement the citation uses.
 fn check_fact(law: &super::LawRef, fact: &Script) -> Result<(), String> {
     let ob = &fact.obligation;
     if !fact.defs.is_empty()
@@ -505,8 +505,7 @@ fn check_fact(law: &super::LawRef, fact: &Script) -> Result<(), String> {
     }
     if ob.key != law.key
         || ob.givens != law.givens
-        || ob.premise.is_some()
-        || law.premise.is_some()
+        || ob.premise != law.premise
         || ob.lhs != law.lhs
         || ob.rhs != law.rhs
     {
