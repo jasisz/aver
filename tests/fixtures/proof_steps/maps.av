@@ -1,0 +1,82 @@
+module Maps
+    intent = "Laws the Map rules settle, over Int, String and record keys."
+    exposes [Pt, put, count, place]
+    effects []
+
+record Pt
+    x: Int
+    y: Int
+
+fn put(m: Map<Int, String>, k: Int, v: String) -> Map<Int, String>
+    ? "Set one entry."
+    Map.set(m, k, v)
+
+verify put
+    put({}, 1, "a") => {1 => "a"}
+
+verify put law readsBack
+    given m: Map<Int, String> = [{}, {1 => "a"}]
+    given k: Int = [1, 2]
+    given v: String = ["b"]
+    Map.get(put(m, k, v), k) => Option.Some(v)
+
+verify put law leavesOtherKeys
+    given m: Map<Int, String> = [{}, {1 => "a"}]
+    given k: Int = [1, 2]
+    given k2: Int = [1, 3]
+    given v: String = ["b"]
+    when k != k2
+    Map.get(put(m, k, v), k2) => Map.get(m, k2)
+
+verify put law holdsTheKey
+    given m: Map<Int, String> = [{}, {1 => "a"}]
+    given k: Int = [1, 2]
+    given v: String = ["b"]
+    Map.has(put(m, k, v), k) => true
+
+verify put law sizeWhenPresent
+    given m: Map<Int, String> = [{1 => "a"}]
+    given k: Int = [1]
+    given v: String = ["b"]
+    when Map.has(m, k)
+    Map.len(put(m, k, v)) => Map.len(m)
+
+verify put law sizeOfOneEntry
+    given k: Int = [1, 2]
+    given v: String = ["b"]
+    Map.len(put({}, k, v)) => 1
+
+fn count(m: Map<String, Int>, word: String) -> Map<String, Int>
+    ? "One more for a word."
+    Map.set(m, word, 1)
+
+verify count
+    count({}, "a") => {"a" => 1}
+
+verify count law otherWordsUnchanged
+    given m: Map<String, Int> = [{"a" => 2}, {"c" => 1}]
+    given w: String = ["a", "b"]
+    given w2: String = ["a", "c"]
+    when w != w2
+    Map.has(count(m, w), w2) => Map.has(m, w2)
+
+fn place(m: Map<Pt, Int>, p: Pt, v: Int) -> Map<Pt, Int>
+    ? "Set the value at a point."
+    Map.set(m, p, v)
+
+verify place
+    place({}, Pt(x = 1, y = 2), 3) => {Pt(x = 1, y = 2) => 3}
+
+verify place law readsBackAtAPoint
+    given m: Map<Pt, Int> = [{}, {Pt(x = 0, y = 0) => 1}]
+    given p: Pt = [Pt(x = 0, y = 0), Pt(x = 1, y = 2)]
+    given v: Int = [5]
+    Map.get(place(m, p, v), p) => Option.Some(v)
+
+verify place law otherPointsUnchanged
+    given m: Map<Pt, Int> = [{}, {Pt(x = 0, y = 0) => 1}]
+    given p: Pt = [Pt(x = 0, y = 0), Pt(x = 1, y = 2)]
+    given q: Pt = [Pt(x = 0, y = 0), Pt(x = 3, y = 3)]
+    given v: Int = [5]
+    when p != q
+    Map.get(place(m, p, v), q) => Map.get(m, q)

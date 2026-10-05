@@ -16,4 +16,5 @@ fn rev(x: List<Int>) -> List<Int>
 verify rev law revAppendSingleton
     given x: List<Int> = [[], [1], [1, 2, 3]]
     given y: Int = [0, 1, 2]
+    using [List.concat.rightIdentity]
     rev(append(x, [y])) => List.concat([y], rev(x))

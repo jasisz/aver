@@ -259,6 +259,10 @@ pub fn conclusion(p: &Proof, script: &Script, hyps: &Hyps) -> Result<Eqn, String
             }
             Ok(Eqn::new(canon(t), body))
         }
+        Proof::Cell { list } => {
+            let cell = term::cell_of(list).ok_or("cell: not a list literal with an element")?;
+            Ok(Eqn::new(canon(list), canon(&cell)))
+        }
         Proof::Proj { term: t } => {
             let ResolvedExpr::Attr(obj, field) = &t.node else {
                 return Err("proj: not a field access".into());
@@ -490,7 +494,7 @@ pub fn check_script(script: &Script) -> Result<(), String> {
 }
 
 /// A builtin fact: a script over builtins alone, citing only other facts,
-/// with no `when`, that proves exactly the statement the citation uses.
+/// with the same `when` as the citation, that proves exactly the statement the citation uses.
 fn check_fact(law: &super::LawRef, fact: &Script) -> Result<(), String> {
     let ob = &fact.obligation;
     if !fact.defs.is_empty()
@@ -501,8 +505,7 @@ fn check_fact(law: &super::LawRef, fact: &Script) -> Result<(), String> {
     }
     if ob.key != law.key
         || ob.givens != law.givens
-        || ob.premise.is_some()
-        || law.premise.is_some()
+        || ob.premise != law.premise
         || ob.lhs != law.lhs
         || ob.rhs != law.rhs
     {

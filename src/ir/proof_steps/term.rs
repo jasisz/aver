@@ -60,6 +60,24 @@ pub fn nil() -> Term {
     list(Vec::new())
 }
 
+/// `[x, …rest]` as `List.prepend(x, […rest])`, for a literal with at least
+/// one element.
+pub fn cell_of(t: &Term) -> Option<Term> {
+    let ResolvedExpr::List(xs) = &t.node else {
+        return None;
+    };
+    let (x, rest) = xs.split_first()?;
+    let tail = list(rest.to_vec());
+    if let Some(ty) = t.ty() {
+        tail.set_ty(ty.clone());
+    }
+    Some(builtin(
+        "List.prepend",
+        vec![x.clone(), tail],
+        t.ty().cloned(),
+    ))
+}
+
 /// A list literal.
 pub fn list(items: Vec<Term>) -> Term {
     Spanned::bare(ResolvedExpr::List(items))

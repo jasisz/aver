@@ -54,8 +54,13 @@ fn is_int(t: &Term) -> bool {
 }
 
 /// The arm of a match whose pattern head the value `v` has, with the
-/// pattern's bindings. `None` when no arm can be selected syntactically.
-fn select_arm(arms: &[crate::ir::hir::ResolvedMatchArm], v: &Term) -> Option<(u32, Vec<Term>)> {
+/// pattern's bindings, and whether `v` is a list literal the arm reads as a
+/// cell (so the premise ends with a [`Proof::Cell`] step). `None` when no
+/// arm can be selected syntactically.
+fn select_arm(
+    arms: &[crate::ir::hir::ResolvedMatchArm],
+    v: &Term,
+) -> Option<(u32, Vec<Term>, bool)> {
     use crate::ir::proof_steps::check::{excludes, is_catch_all};
     for (i, arm) in arms.iter().enumerate() {
         let k = (i + 1) as u32;
@@ -64,35 +69,58 @@ fn select_arm(arms: &[crate::ir::hir::ResolvedMatchArm], v: &Term) -> Option<(u3
             return arms[..i]
                 .iter()
                 .all(|earlier| excludes(&earlier.pattern, v))
-                .then(|| (k, vec![canon(v)]));
+                .then(|| (k, vec![canon(v)], false));
         }
         match (&arm.pattern, &v.node) {
             (ResolvedPattern::Literal(l), ResolvedExpr::Literal(x)) => {
                 if l == x {
-                    return Some((k, Vec::new()));
+                    return Some((k, Vec::new(), false));
                 }
             }
             (ResolvedPattern::Ctor(c, names), ResolvedExpr::Ctor(c2, args)) => {
                 if c == c2 && names.len() == args.len() {
-                    return Some((k, args.clone()));
+                    return Some((k, args.clone(), false));
                 }
             }
             (ResolvedPattern::EmptyList, ResolvedExpr::List(xs)) if xs.is_empty() => {
-                return Some((k, Vec::new()));
+                return Some((k, Vec::new(), false));
             }
             (ResolvedPattern::Cons(..), ResolvedExpr::Call(ResolvedCallee::Builtin(b), args))
                 if b == "List.prepend" && args.len() == 2 =>
             {
-                return Some((k, args.clone()));
+                return Some((k, args.clone(), false));
+            }
+            // A list literal with an element is a cell.
+            (ResolvedPattern::Cons(..), ResolvedExpr::List(xs)) if !xs.is_empty() => {
+                return Some((
+                    k,
+                    term::children(&term::cell_of(v)?)
+                        .into_iter()
+                        .cloned()
+                        .collect(),
+                    true,
+                ));
             }
             // A literal subject meets a different literal / constructor:
             // keep looking. Anything else cannot be decided here.
+            (ResolvedPattern::EmptyList, ResolvedExpr::List(xs)) if !xs.is_empty() => continue,
             (ResolvedPattern::EmptyList, ResolvedExpr::Call(..))
             | (ResolvedPattern::Cons(..), ResolvedExpr::List(_)) => continue,
             _ => return None,
         }
     }
     None
+}
+
+/// `chain` with a last [`Proof::Cell`] step when its value is a list
+/// literal an arm reads as a cell.
+fn with_cell(mut chain: Chain, cell: bool) -> Chain {
+    if cell {
+        let list = chain.cur().clone();
+        let to = term::cell_of(&list).expect("select_arm saw a list literal with an element");
+        chain.push(Proof::Cell { list }, to);
+    }
+    chain
 }
 
 fn is_bool_value(t: &Term) -> bool {
@@ -240,8 +268,8 @@ impl Env<'_> {
                 let ev = self.whnf(&s)?;
                 let value = ev.chain.cur().clone();
                 match select_arm(arms, &value) {
-                    Some((k, binders)) => {
-                        let (_, premise) = ev.chain.finish();
+                    Some((k, binders, cell)) => {
+                        let (_, premise) = with_cell(ev.chain, cell).finish();
                         let unfold = Proof::Unfold {
                             fn_id: *id,
                             arm: k,
@@ -318,8 +346,8 @@ impl Env<'_> {
                 let ev = self.whnf(subject)?;
                 let value = ev.chain.cur().clone();
                 match select_arm(arms, &value) {
-                    Some((k, binders)) => {
-                        let (_, premise) = ev.chain.finish();
+                    Some((k, binders, cell)) => {
+                        let (_, premise) = with_cell(ev.chain, cell).finish();
                         let arm = Proof::Arm {
                             term: cur.clone(),
                             arm: k,
@@ -338,6 +366,16 @@ impl Env<'_> {
                         self.settle(cur, g)
                     }
                 }
+            }
+            // A list literal with an open element evaluates to its first
+            // element in front of the rest; a closed one keeps the shape it
+            // was written in.
+            ResolvedExpr::List(xs) if !xs.is_empty() && term::eval_closed(cur).is_none() => {
+                let to = term::cell_of(cur).expect("a list literal with an element");
+                Ok(Step::Progress(Box::new((
+                    Proof::Cell { list: cur.clone() },
+                    to,
+                ))))
             }
             ResolvedExpr::Ident(name) => match self.constant(name) {
                 // A module-level binding reads as its value.
@@ -381,7 +419,109 @@ impl Env<'_> {
         if let Some(step) = self.list_step(cur)? {
             return Ok(step);
         }
+        if let Some(step) = self.map_step(cur)? {
+            return Ok(step);
+        }
         self.settle(cur, blocked)
+    }
+
+    /// `Map.get`, `Map.has` or `Map.len` of the empty map or of a
+    /// `Map.set` takes one step by its rule: at the key just set (the same
+    /// term), at a key the step decides is another (`k != k2`), and for the
+    /// size by whether the map held the key, which is split on when open.
+    fn map_step(&mut self, cur: &Term) -> Result<Option<Step>, String> {
+        let ResolvedExpr::Call(ResolvedCallee::Builtin(name), args) = &cur.node else {
+            return Ok(None);
+        };
+        let Some(map) = args.first() else {
+            return Ok(None);
+        };
+        let bind = |names: &[&str], values: Vec<Term>| -> Vec<(String, Term)> {
+            names.iter().map(|n| n.to_string()).zip(values).collect()
+        };
+        let empty = matches!(&map.node, ResolvedExpr::MapLiteral(kvs) if kvs.is_empty());
+        let set = match &map.node {
+            ResolvedExpr::Call(ResolvedCallee::Builtin(b), parts)
+                if b == "Map.set" && parts.len() == 3 =>
+            {
+                Some(parts.clone())
+            }
+            _ => None,
+        };
+        let decided = |env: &mut Self, t: Term| -> Result<Option<(bool, Proof)>, String> {
+            let ev = env.whnf(&t)?;
+            let Some(v) = term::bool_value(ev.chain.cur()) else {
+                return Ok(None);
+            };
+            Ok(Some((v, ev.chain.finish().1)))
+        };
+        let (rule, subst, premises) = match (name.as_str(), args.len(), empty, set) {
+            ("Map.get", 2, true, _) => (
+                WallRule::MapGetEmpty,
+                bind(&["k"], vec![args[1].clone()]),
+                vec![],
+            ),
+            ("Map.has", 2, true, _) => (
+                WallRule::MapHasEmpty,
+                bind(&["k"], vec![args[1].clone()]),
+                vec![],
+            ),
+            ("Map.len", 1, true, _) => (WallRule::MapLenEmpty, vec![], vec![]),
+            ("Map.get" | "Map.has", 2, false, Some(p)) => {
+                let get = name == "Map.get";
+                if canon(&p[1]) == canon(&args[1]) {
+                    let rule = if get {
+                        WallRule::MapGetSetSame
+                    } else {
+                        WallRule::MapHasSetSame
+                    };
+                    (rule, bind(&["m", "k", "v"], p), vec![])
+                } else {
+                    let ne = term::binop(BinOp::Neq, p[1].clone(), args[1].clone());
+                    let Some((true, premise)) = decided(self, ne)? else {
+                        return Ok(None);
+                    };
+                    let rule = if get {
+                        WallRule::MapGetSetOther
+                    } else {
+                        WallRule::MapHasSetOther
+                    };
+                    let mut values = p;
+                    values.push(args[1].clone());
+                    (rule, bind(&["m", "k", "v", "k2"], values), vec![premise])
+                }
+            }
+            ("Map.len", 1, false, Some(p)) => {
+                let held = term::builtin(
+                    "Map.has",
+                    vec![p[0].clone(), p[1].clone()],
+                    Some(crate::ast::Type::Bool),
+                );
+                match decided(self, held.clone())? {
+                    Some((true, premise)) => (
+                        WallRule::MapLenSetPresent,
+                        bind(&["m", "k", "v"], p),
+                        vec![premise],
+                    ),
+                    Some((false, premise)) => (
+                        WallRule::MapLenSetAbsent,
+                        bind(&["m", "k", "v"], p),
+                        vec![premise],
+                    ),
+                    None => return self.settle(cur, Some(canon(&held))).map(Some),
+                }
+            }
+            _ => return Ok(None),
+        };
+        let (_, concl) = rule.instantiate(&subst).expect("rule binders");
+        Ok(Some(Step::Progress(Box::new((
+            Proof::Rule {
+                rule,
+                subst,
+                premises,
+            },
+            concl.rhs,
+        )))))
     }
 
     /// A list builtin whose list argument is `[]` or `List.prepend(x, a)`
@@ -395,6 +535,26 @@ impl Env<'_> {
         let Some(list) = args.first() else {
             return Ok(None);
         };
+        if matches!(
+            name.as_str(),
+            "List.concat" | "List.len" | "List.reverse" | "List.take" | "List.drop"
+        ) && let ResolvedExpr::List(xs) = &list.node
+            && !xs.is_empty()
+            && term::eval_closed(list).is_none()
+        {
+            // A literal with an open element steps as a cell; a closed one
+            // keeps the shape it was written in.
+            let cell = term::cell_of(list).expect("a list literal with an element");
+            let ctx = term::context_at(cur, &[0]);
+            let to = term::plug(&ctx, &cell);
+            return Ok(Some(Step::Progress(Box::new((
+                Proof::Congr {
+                    ctx,
+                    inner: Box::new(Proof::Cell { list: list.clone() }),
+                },
+                to,
+            )))));
+        }
         let shape = match &list.node {
             ResolvedExpr::List(xs) if xs.is_empty() => None,
             ResolvedExpr::Call(ResolvedCallee::Builtin(b), parts)

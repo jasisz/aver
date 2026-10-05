@@ -3,6 +3,7 @@ module Rules
         "The wall: every rule a step may apply, as an equation schema over named binders."
         "The replayer's own copy of src/ir/proof_steps/rules.rs; an identifier not listed here is refused."
         "The list rules are the constructor equations of the list builtins, with Aver's truncation of a count."
+        "The map rules read Map.get, Map.has and Map.len on the empty map and on Map.set(m, k, v)."
     exposes [Schema, schema]
     depends [Kernel.Term]
     effects []
@@ -185,8 +186,36 @@ fn listSchema(id: String) -> Option<Schema>
         "list.drop.cons_gt" -> counted(["x", "a", "n"], true, lb("drop", [xa, v("n")]), lb("drop", [v("a"), less]))
         "list.reverse.nil" -> plain([], lb("reverse", [nil]), nil)
         "list.reverse.cons" -> plain(["x", "a"], lb("reverse", [xa]), lb("concat", [lb("reverse", [v("a")]), cons(v("x"), nil)]))
-        _ -> Option.None
+        _ -> mapSchema(id)
 
 verify listSchema
     listSchema("list.len.nil") => plain([], Term.TBi("List.len", [Term.TList([])]), Term.TInt(0))
     listSchema("list.len") => Option.None
+
+fn mb(name: String, args: List<Term>) -> Term
+    ? "A Map builtin applied to its arguments; the empty map is Map.empty()."
+    Term.TBi("Map.{name}", args)
+
+verify mb
+    mb("empty", []) => Term.TBi("Map.empty", [])
+
+fn mapSchema(id: String) -> Option<Schema>
+    ? "Each Map read on the empty map and on a set: at the key set, at another key, and the size by membership."
+    set = mb("set", [v("m"), v("k"), v("v")])
+    empty = mb("empty", [])
+    other = [is(Term.TOp("!=", v("k"), v("k2")), true)]
+    match id
+        "map.get.empty" -> plain(["k"], mb("get", [empty, v("k")]), Term.TCtor("Option.None", []))
+        "map.get.set_same" -> plain(["m", "k", "v"], mb("get", [set, v("k")]), Term.TCtor("Option.Some", [v("v")]))
+        "map.get.set_other" -> Option.Some(Schema(binders = ["m", "k", "v", "k2"], premises = other, concl = eq(mb("get", [set, v("k2")]), mb("get", [v("m"), v("k2")]))))
+        "map.has.empty" -> plain(["k"], mb("has", [empty, v("k")]), Term.TBool(false))
+        "map.has.set_same" -> plain(["m", "k", "v"], mb("has", [set, v("k")]), Term.TBool(true))
+        "map.has.set_other" -> Option.Some(Schema(binders = ["m", "k", "v", "k2"], premises = other, concl = eq(mb("has", [set, v("k2")]), mb("has", [v("m"), v("k2")]))))
+        "map.len.empty" -> plain([], mb("len", [empty]), Term.TInt(0))
+        "map.len.set_present" -> Option.Some(Schema(binders = ["m", "k", "v"], premises = [is(mb("has", [v("m"), v("k")]), true)], concl = eq(mb("len", [set]), mb("len", [v("m")]))))
+        "map.len.set_absent" -> Option.Some(Schema(binders = ["m", "k", "v"], premises = [is(mb("has", [v("m"), v("k")]), false)], concl = eq(mb("len", [set]), Term.TOp("+", mb("len", [v("m")]), Term.TInt(1)))))
+        _ -> Option.None
+
+verify mapSchema
+    mapSchema("map.len.empty") => plain([], Term.TBi("Map.len", [Term.TBi("Map.empty", [])]), Term.TInt(0))
+    mapSchema("map.keys.set") => Option.None

@@ -719,6 +719,9 @@ pub fn conclude(
         crate::proof_kernel::aver_generated::kernel::proof::Proof::PProj(t) => {
             crate::proof_kernel::aver_generated::kernel::check::proj(t, path)
         }
+        crate::proof_kernel::aver_generated::kernel::proof::Proof::PCell(t) => {
+            crate::proof_kernel::aver_generated::kernel::check::cell(&t, path)
+        }
         crate::proof_kernel::aver_generated::kernel::proof::Proof::PHyp(h) => {
             crate::proof_kernel::aver_generated::kernel::check::hyp(h, env.hyps.clone(), path)
         }
@@ -1047,6 +1050,40 @@ pub fn proj(
         _ => crate::proof_kernel::aver_generated::kernel::check::refuse(
             path,
             AverStr::from("a projection must read a field of a record literal"),
+        ),
+    }
+}
+
+/// A list literal with an element is that element in front of the rest.
+pub fn cell(
+    t @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    path @ _: AverStr,
+) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    match t.clone() {
+        crate::proof_kernel::aver_generated::kernel::term::Term::TList(__pat0) => {
+            let __list_subject = __pat0;
+            if let Some((x, rest)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                Ok(crate::proof_kernel::aver_generated::kernel::term::Eqn {
+                    lhs: t.clone(),
+                    rhs: crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
+                        AverStr::from("List.prepend"),
+                        aver_rt::AverList::from_vec(vec![
+                            x,
+                            crate::proof_kernel::aver_generated::kernel::term::Term::TList(rest),
+                        ]),
+                    ),
+                })
+            } else {
+                crate::proof_kernel::aver_generated::kernel::check::refuse(
+                    path,
+                    AverStr::from("a cell step needs a list literal with an element"),
+                )
+            }
+        }
+        _ => crate::proof_kernel::aver_generated::kernel::check::refuse(
+            path,
+            AverStr::from("a cell step needs a list literal with an element"),
         ),
     }
 }

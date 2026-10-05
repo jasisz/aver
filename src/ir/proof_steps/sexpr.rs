@@ -9,7 +9,7 @@
 //!                    (defs (def NAME (PARAM…) ((NAME TERM)…) TERM)…)
 //!                    (consts (const NAME TERM)…)
 //!                    (laws (law KEY (GIVEN…) PREMISE TERM TERM)…
-//!                          (fact KEY (OGIVEN…) TERM TERM PROOF)…)
+//!                          (fact KEY (OGIVEN…) PREMISE TERM TERM PROOF)…)
 //!   a fact comes after the facts its proof cites, and may cite only them
 //!                    (proof PROOF))
 //! OGIVEN  := NAME | (NAME TYPE)       ; a given of finite type, with its type
@@ -18,7 +18,7 @@
 //! PREMISE := (none) | TERM
 //! TERM    := (i INT) | (b true|false) | (s "TEXT") | (unit) | (v NAME) | (hole)
 //!          | (get TERM FIELD) | (call FN TERM…) | (bi BUILTIN TERM…)
-//!          | (op OP TERM TERM) | (neg TERM) | (ctor CTOR TERM…)
+//!          | (op OP TERM TERM) | (neg TERM) | (ctor CTOR TERM…)   ; `{}` is (bi Map.empty)
 //!          | (match TERM (arm PAT TERM)…) | (str TERM…) | (list TERM…)
 //!          | (tuple TERM…) | (rec TYPE (FIELD TERM)…) | (upd TYPE TERM (FIELD TERM)…)
 //! PAT     := (pw) | (pv NAME) | (pl TERM) | (pnil) | (pcons NAME NAME)
@@ -26,7 +26,7 @@
 //! PROOF   := (refl TERM) | (symm PROOF) | (trans (TERM…) PROOF…)
 //!          | (congr TERM PROOF) | (unfold FN ARM (TERM…) (TERM…) [PROOF])
 //!          | (const NAME)
-//!          | (arm ARM (TERM…) TERM PROOF) | (proj TERM) | (hyp NAME)
+//!          | (arm ARM (TERM…) TERM PROOF) | (proj TERM) | (cell TERM) | (hyp NAME)
 //!          | (rule RULE ((NAME TERM)…) PROOF…) | (law KEY ((NAME TERM)…) [PROOF])
 //!          | (compute TERM TERM) | (cases TERM NAME PROOF PROOF)
 //!          | (enum NAME TERM TERM PROOF…) | (absurd PROOF TERM TERM)
@@ -298,8 +298,10 @@ pub fn term(t: &Term, names: &dyn Names) -> Result<String, String> {
             s
         }
         ResolvedExpr::ErrorProp(_) => return Err("`?` is outside the step format".into()),
+        // The empty map is the one map literal steps read.
+        ResolvedExpr::MapLiteral(kvs) if kvs.is_empty() => "(bi Map.empty)".to_string(),
         ResolvedExpr::MapLiteral(_) => {
-            return Err("map literals are outside the step format".into());
+            return Err("map literals with entries are outside the step format".into());
         }
         ResolvedExpr::IndependentProduct(..) => {
             return Err("independent products are outside the step format".into());
@@ -367,6 +369,7 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
             proof(premise, names)?
         ),
         Proof::Proj { term: t } => format!("(proj {})", term(t, names)?),
+        Proof::Cell { list } => format!("(cell {})", term(list, names)?),
         Proof::Hyp(h) => format!("(hyp {h})"),
         Proof::Rule {
             rule,
@@ -598,9 +601,10 @@ pub fn script(s: &Script, names: &dyn Names) -> Result<String, String> {
                 })
                 .collect();
             out.push_str(&format!(
-                "\n  (fact {} ({}) {} {} {})",
+                "\n  (fact {} ({}) {} {} {} {})",
                 l.key,
                 givens.join(" "),
+                premise(&l.premise, names)?,
                 term(&l.lhs, names)?,
                 term(&l.rhs, names)?,
                 proof(&fact.proof, names)?

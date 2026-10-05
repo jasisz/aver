@@ -29,6 +29,7 @@ pub enum Proof {
         std::sync::Arc<Proof>,
     ),
     PProj(crate::proof_kernel::aver_generated::kernel::term::Term),
+    PCell(crate::proof_kernel::aver_generated::kernel::term::Term),
     PHyp(AverStr),
     PRule(
         AverStr,
@@ -96,22 +97,23 @@ impl Proof {
             Proof::PAbsurd(..) => 0,
             Proof::PArm(..) => 1,
             Proof::PCases(..) => 2,
-            Proof::PCompute(..) => 3,
-            Proof::PCongr(..) => 4,
-            Proof::PConst(..) => 5,
-            Proof::PEnum(..) => 6,
-            Proof::PHyp(..) => 7,
-            Proof::PInduct(..) => 8,
-            Proof::PLaw(..) => 9,
-            Proof::PLinear(..) => 10,
-            Proof::PListInduct(..) => 11,
-            Proof::PProj(..) => 12,
-            Proof::PRefl(..) => 13,
-            Proof::PRing(..) => 14,
-            Proof::PRule(..) => 15,
-            Proof::PSymm(..) => 16,
-            Proof::PTrans(..) => 17,
-            Proof::PUnfold(..) => 18,
+            Proof::PCell(..) => 3,
+            Proof::PCompute(..) => 4,
+            Proof::PCongr(..) => 5,
+            Proof::PConst(..) => 6,
+            Proof::PEnum(..) => 7,
+            Proof::PHyp(..) => 8,
+            Proof::PInduct(..) => 9,
+            Proof::PLaw(..) => 10,
+            Proof::PLinear(..) => 11,
+            Proof::PListInduct(..) => 12,
+            Proof::PProj(..) => 13,
+            Proof::PRefl(..) => 14,
+            Proof::PRing(..) => 15,
+            Proof::PRule(..) => 16,
+            Proof::PSymm(..) => 17,
+            Proof::PTrans(..) => 18,
+            Proof::PUnfold(..) => 19,
         }
     }
 }
@@ -144,6 +146,9 @@ impl Ord for Proof {
                     .then_with(|| a1.cmp(b1))
                     .then_with(|| a2.cmp(b2))
                     .then_with(|| a3.cmp(b3))
+            }
+            (Proof::PCell(a0), Proof::PCell(b0)) => {
+                std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
             }
             (Proof::PCompute(a0, a1), Proof::PCompute(b0, b1)) => std::cmp::Ordering::Equal
                 .then_with(|| a0.cmp(b0))
@@ -263,6 +268,7 @@ impl aver_rt::AverDisplay for Proof {
                 .join(", ")
             ),
             Proof::PProj(f0) => format!("PProj({})", f0.aver_display_inner()),
+            Proof::PCell(f0) => format!("PCell({})", f0.aver_display_inner()),
             Proof::PHyp(f0) => format!("PHyp({})", f0.aver_display_inner()),
             Proof::PRule(f0, f1, f2) => format!(
                 "PRule({})",

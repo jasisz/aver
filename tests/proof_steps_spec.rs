@@ -1132,12 +1132,13 @@ fn lean_checks_ring_and_linear_steps() {
     let _ = fs::remove_dir_all(out);
 }
 
-const LIST_LAWS: [&str; 8] = [
+const LIST_LAWS: [&str; 9] = [
     "oneIfPositive.isLenOfTakeOfOne",
     "pushed.dropNothing",
     "pushed.dropOneMore",
     "pushed.growsByOne",
     "pushed.joinsInFront",
+    "pushed.literalWithVariables",
     "pushed.reversedEndsWithHead",
     "pushed.takeKeepsHead",
     "pushed.takeNothing",
@@ -1293,8 +1294,8 @@ fn a_cited_builtin_fact_is_checked_with_the_law_and_refused_when_mutated() {
             "a fact stated with a different right side",
             swap(
                 "joined.lengthAdds",
-                "(fact List.len.ofConcat ((a (tlist)) (b (tlist))) (bi List.len (bi List.concat (v a) (v b))) (op + (bi List.len (v a)) (bi List.len (v b)))",
-                "(fact List.len.ofConcat ((a (tlist)) (b (tlist))) (bi List.len (bi List.concat (v a) (v b))) (op + (bi List.len (v a)) (bi List.len (v a)))",
+                "(fact List.len.ofConcat ((a (tlist)) (b (tlist))) (none) (bi List.len (bi List.concat (v a) (v b))) (op + (bi List.len (v a)) (bi List.len (v b)))",
+                "(fact List.len.ofConcat ((a (tlist)) (b (tlist))) (none) (bi List.len (bi List.concat (v a) (v b))) (op + (bi List.len (v a)) (bi List.len (v a)))",
             ),
         ),
         (
@@ -1388,8 +1389,8 @@ fn lean_states_each_cited_fact_once_for_every_element_type() {
     }
     let common = fs::read_to_string(out.join("AverCommon.lean")).unwrap();
     for theorem in [
-        "theorem AverFacts.list_len_ofConcat {α : Type} (a b : List α) :",
-        "theorem AverFacts.list_concat_assoc {α : Type} (a b c : List α) :",
+        "theorem AverFacts.list_len_ofConcat {α : Type} (a : List α) (b : List α) :",
+        "theorem AverFacts.list_concat_assoc {α : Type} (a : List α) (b : List α) (c : List α) :",
     ] {
         assert_eq!(common.matches(theorem).count(), 1, "{common}");
     }
@@ -1497,6 +1498,278 @@ fn aver_facts_lists_the_facts_with_their_statements() {
         involutive["cites"],
         serde_json::json!(["List.reverse.ofConcat"])
     );
+}
+
+/// Induction along a function whose arm splits (`if`) around its
+/// recursive call is refused by name: Lean's induction principle for it
+/// has one case per branch, not one per arm.
+#[test]
+fn induction_refuses_a_recursive_call_inside_a_split_arm() {
+    let dir = scratch("split-arm");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("split.av"),
+        "module Split\n    intent = \"Insertion with an if around the recursive call.\"\n    exposes [ins, size]\n    effects []\n\nfn size(xs: List<Int>) -> Int\n    ? \"Length.\"\n    match xs\n        [] -> 0\n        [h, ..t] -> size(t) + 1\n\nverify size\n    size([1]) => 1\n\nfn ins(x: Int, xs: List<Int>) -> List<Int>\n    ? \"Insert before the first larger element.\"\n    match xs\n        [] -> [x]\n        [h, ..t] -> match x < h\n            true -> List.prepend(x, xs)\n            false -> List.prepend(h, ins(x, t))\n\nverify ins\n    ins(2, [1, 3]) => [1, 2, 3]\n\nverify ins law growsByOne\n    given x: Int = [0, 2]\n    given xs: List<Int> = [[], [1, 3]]\n    size(ins(x, xs)) => size(xs) + 1\n",
+    )
+    .unwrap();
+    let result = aver_in(&dir, &["proof", "split.av", "--backend", "aver"]);
+    let text = format_output(&result);
+    assert!(
+        text.contains("induction along ins: a recursive call sits inside a case split of an arm"),
+        "{text}"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+const MAP_LAWS: [&str; 8] = [
+    "count.otherWordsUnchanged",
+    "place.otherPointsUnchanged",
+    "place.readsBackAtAPoint",
+    "put.holdsTheKey",
+    "put.leavesOtherKeys",
+    "put.readsBack",
+    "put.sizeOfOneEntry",
+    "put.sizeWhenPresent",
+];
+
+#[test]
+fn both_kernels_check_the_map_rules_and_refuse_mutations() {
+    let out = scratch("maps");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("maps.av", &out).into_iter().collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), MAP_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let swap = |law: &str, from: &str, to: &str| {
+        let text = read(law);
+        assert!(text.contains(from), "{law}: {text}");
+        text.replacen(from, to, 1)
+    };
+    for (kind, text) in [
+        (
+            "another key read as the key just set",
+            swap(
+                "put.leavesOtherKeys",
+                "(rule map.get.set_other",
+                "(rule map.get.set_same",
+            ),
+        ),
+        (
+            "the key just set read as another",
+            swap(
+                "put.readsBack",
+                "(rule map.get.set_same",
+                "(rule map.get.set_other",
+            ),
+        ),
+        (
+            "a held key counted as new",
+            swap(
+                "put.sizeWhenPresent",
+                "(rule map.len.set_present",
+                "(rule map.len.set_absent",
+            ),
+        ),
+        (
+            "a new key counted as held",
+            swap(
+                "put.sizeOfOneEntry",
+                "(rule map.len.set_absent",
+                "(rule map.len.set_present",
+            ),
+        ),
+        (
+            "membership read from the map before the set",
+            swap(
+                "count.otherWordsUnchanged",
+                "(rule map.has.set_other",
+                "(rule map.has.set_same",
+            ),
+        ),
+    ] {
+        let refused = aver::proof_kernel::verdict(&text);
+        assert!(refused.is_err(), "{kind}: {refused:?}");
+        let path = out.join("mutant.steps");
+        fs::write(&path, &text).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(
+            !result.status.success(),
+            "{kind}: {}",
+            format_output(&result)
+        );
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_checks_the_map_rules_over_int_string_and_record_keys() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("maps-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "maps.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "0",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in MAP_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let lean = fs::read_to_string(out.join("Maps.lean")).unwrap();
+    let law = "place.otherPointsUnchanged";
+    let line = exact_line(&lean, "place_law_otherPointsUnchanged").to_string();
+    let wrong = line.replacen("AverMap.step_get_set_other", "AverMap.step_get_set_same", 1);
+    assert_ne!(line, wrong, "{line}");
+    assert!(
+        lean_refuses(&out, "Maps.lean", &lean.replacen(&line, &wrong, 1), law),
+        "another key read as the key just set: Lean must refuse the step term"
+    );
+    let _ = fs::remove_dir_all(out);
+}
+
+const MAP_FACT_LAWS: [&str; 5] = [
+    "place.otherPointsUnchanged",
+    "store.holdsTheKey",
+    "store.keepsTheSize",
+    "store.leavesOtherKeys",
+    "store.readsBack",
+];
+
+#[test]
+fn a_cited_map_fact_is_checked_with_its_when_and_refused_when_mutated() {
+    let out = scratch("map-facts");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("map_facts.av", &out).into_iter().collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), MAP_FACT_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        let text = read(law);
+        assert!(text.contains("\n  (fact Map."), "{text}");
+        assert_eq!(aver::proof_kernel::verdict(&text), Ok(law.clone()));
+    }
+    let swap = |law: &str, from: &str, to: &str| {
+        let text = read(law);
+        assert!(text.contains(from), "{law}: {text}");
+        text.replacen(from, to, 1)
+    };
+    for (kind, text) in [
+        (
+            "a fact stated without its when",
+            swap(
+                "store.leavesOtherKeys",
+                "(fact Map.get.afterSetOther (m k v k2) (op != (v k) (v k2))",
+                "(fact Map.get.afterSetOther (m k v k2) (none)",
+            ),
+        ),
+        (
+            "a fact proved by the rule for the key just set",
+            swap(
+                "store.leavesOtherKeys",
+                "(rule map.get.set_other",
+                "(rule map.get.set_same",
+            ),
+        ),
+        (
+            "a size fact proved for a key the map does not hold",
+            swap(
+                "store.keepsTheSize",
+                "(rule map.len.set_present",
+                "(rule map.len.set_absent",
+            ),
+        ),
+    ] {
+        let refused = aver::proof_kernel::verdict(&text);
+        assert!(refused.is_err(), "{kind}: {refused:?}\n{text}");
+        let path = out.join("mutant.steps");
+        fs::write(&path, &text).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(
+            !result.status.success(),
+            "{kind}: {}",
+            format_output(&result)
+        );
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn a_key_order_fact_about_maps_is_not_a_builtin_fact() {
+    let dir = scratch("map-key-order");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("keys.av"),
+        "module Keys\n    intent = \"A law citing a fact about the order of keys.\"\n    exposes [store]\n    effects []\n\nfn store(m: Map<Int, Int>, k: Int) -> Map<Int, Int>\n    ? \"Set one entry.\"\n    Map.set(m, k, 0)\n\nverify store law keysGrow\n    given m: Map<Int, Int> = [{1 => 1}]\n    given k: Int = [2]\n    using [Map.keys.afterSet]\n    List.len(Map.keys(store(m, k))) >= List.len(Map.keys(m)) => true\n",
+    )
+    .unwrap();
+    let result = aver_in(&dir, &["check", "keys.av"]);
+    let text = format_output(&result);
+    assert!(!result.status.success(), "{text}");
+    assert!(
+        text.contains("'Map.keys.afterSet', which is not a builtin fact"),
+        "{text}"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn lean_states_each_cited_map_fact_once_for_every_key_and_value_type() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("map-facts-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "map_facts.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "0",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in MAP_FACT_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let common = fs::read_to_string(out.join("AverCommon.lean")).unwrap();
+    assert_eq!(
+        common
+            .matches("theorem AverFacts.map_get_afterSetOther {α β : Type} [DecidableEq α] [AverKeyOrder α] [BEq α] [LawfulBEq α] (m : List (α × β)) (k : α) (v : β) (k2 : α) (h_when :")
+            .count(),
+        1,
+        "{common}"
+    );
+    let _ = fs::remove_dir_all(out);
 }
 
 #[test]

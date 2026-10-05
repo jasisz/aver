@@ -204,6 +204,13 @@ theorem has_eq_isSome_get [DecidableEq α] (m : List (α × β)) (k : α) :
           · simp [has_cons, get_cons, h]
           · simpa [has_cons, get_cons, h] using ih
 
+theorem has_set_self [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) :
+    AverMap.has (AverMap.set m k v) k = true := by
+  cases h : AverMap.has m k
+  · rw [set_of_missing m k v h, has_eq_isSome_get, get_insert_self k v m h]
+    rfl
+  · rw [set_of_has m k v h, has_replace, h]
+
 theorem get_set_self [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) :
     AverMap.get (AverMap.set m k v) k = some v := by
   cases h : AverMap.has m k
@@ -211,6 +218,50 @@ theorem get_set_self [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k
     exact get_insert_self k v m h
   · rw [set_of_has m k v h]
     exact get_replace_self m k v h
+
+theorem get_set_other [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k key : α) (v : β) (h : key ≠ k) :
+    AverMap.get (AverMap.set m k v) key = AverMap.get m key := by
+  cases hh : AverMap.has m k
+  · rw [set_of_missing m k v hh]
+    exact get_insert_ne k key v h m
+  · rw [set_of_has m k v hh]
+    exact get_replace_ne m k key v h
+
+theorem has_set_other [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k key : α) (v : β) (h : key ≠ k) :
+    AverMap.has (AverMap.set m k v) key = AverMap.has m key := by
+  rw [has_eq_isSome_get, has_eq_isSome_get, get_set_other m k key v h]
+
+theorem len_set_of_has [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β)
+    (h : AverMap.has m k = true) : AverMap.len (AverMap.set m k v) = AverMap.len m := by
+  rw [set_of_has m k v h]
+  simp [AverMap.len, length_replace]
+
+theorem step_get_empty [DecidableEq α] (k : α) :
+    AverMap.get ([] : List (α × β)) k = Option.none := rfl
+theorem step_get_set_same [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) :
+    AverMap.get (AverMap.set m k v) k = Option.some v := get_set_self m k v
+theorem step_get_set_other [DecidableEq α] [AverKeyOrder α] [BEq α] [LawfulBEq α]
+    (m : List (α × β)) (k : α) (v : β) (k2 : α) (h : (k != k2) = true) :
+    AverMap.get (AverMap.set m k v) k2 = AverMap.get m k2 :=
+  get_set_other m k k2 v (fun e => (bne_iff_ne.mp h) e.symm)
+theorem step_has_empty [DecidableEq α] (k : α) : AverMap.has ([] : List (α × β)) k = false :=
+  has_nil k
+theorem step_has_set_same [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) :
+    AverMap.has (AverMap.set m k v) k = true := has_set_self m k v
+theorem step_has_set_other [DecidableEq α] [AverKeyOrder α] [BEq α] [LawfulBEq α]
+    (m : List (α × β)) (k : α) (v : β) (k2 : α) (h : (k != k2) = true) :
+    AverMap.has (AverMap.set m k v) k2 = AverMap.has m k2 :=
+  has_set_other m k k2 v (fun e => (bne_iff_ne.mp h) e.symm)
+theorem step_len_empty : ((AverMap.len ([] : List (α × β)) : Nat) : Int) = 0 := rfl
+theorem step_len_set_present [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β)
+    (h : AverMap.has m k = true) :
+    ((AverMap.len (AverMap.set m k v) : Nat) : Int) = ((AverMap.len m : Nat) : Int) := by
+  rw [len_set_of_has m k v h]
+theorem step_len_set_absent [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β)
+    (h : AverMap.has m k = false) :
+    ((AverMap.len (AverMap.set m k v) : Nat) : Int) = ((AverMap.len m : Nat) : Int) + 1 := by
+  rw [set_of_missing m k v h]
+  simp [AverMap.len, length_insert]
 
 end AverMap
 == MapModelShape.lean ==
@@ -232,7 +283,7 @@ def boolKeyed  : List (Bool × Int) :=
 set_option smartUnfolding false in
 /-- A map built by three Map.set calls, written out of key order. -/
 def built  : List (String × Int) :=
-  let m0 := AverMap.set [] "z" (1 : Int)
+  let m0 := AverMap.set ([] : List (String × Int)) "z" (1 : Int)
   let m1 := AverMap.set m0 "a" (2 : Int)
   AverMap.set m1 "m" (3 : Int)
 
@@ -270,8 +321,13 @@ example : AverMap.values boolKeyed = [(0 : Int), 1] := by decide +kernel
 -- given v: Int = [0, 7]
 -- aver:law-class built_law_setKeepsWhatItWrote universal built.setKeepsWhatItWrote
 theorem built_law_setKeepsWhatItWrote : ∀ (k : String) (v : Int), AverMap.get (AverMap.set built k v) k = Option.some v := by
-  intro k v
-  simpa using AverMap.get_set_self built k v
+  first
+  | (intro k v; have __aver_unfold_0 : (built) = (AverMap.set (AverMap.set (AverMap.set ([] : List (String × Int)) "z" (1 : Int)) "a" (2 : Int)) "m" (3 : Int)) := (by (conv => lhs; unfold built); all_goals (first | rfl | (dsimp only; (repeat' split) <;> simp_all))); exact (show (AverMap.get (AverMap.set built k v) k) = (Option.some v) from (Eq.trans (show (AverMap.get (AverMap.set built k v) k) = (AverMap.get (AverMap.set (AverMap.set (AverMap.set (AverMap.set ([] : List (String × Int)) "z" (1 : Int)) "a" (2 : Int)) "m" (3 : Int)) k v) k) from congrArg (fun (__steps_hole : List (String × Int)) => (AverMap.get __steps_hole k)) (show (AverMap.set built k v) = (AverMap.set (AverMap.set (AverMap.set (AverMap.set ([] : List (String × Int)) "z" (1 : Int)) "a" (2 : Int)) "m" (3 : Int)) k v) from congrArg (fun (__steps_hole : List (String × Int)) => (AverMap.set __steps_hole k v)) (show (built) = (AverMap.set (AverMap.set (AverMap.set ([] : List (String × Int)) "z" (1 : Int)) "a" (2 : Int)) "m" (3 : Int)) from __aver_unfold_0))) (show (AverMap.get (AverMap.set (AverMap.set (AverMap.set (AverMap.set ([] : List (String × Int)) "z" (1 : Int)) "a" (2 : Int)) "m" (3 : Int)) k v) k) = (Option.some v) from AverMap.step_get_set_same (AverMap.set (AverMap.set (AverMap.set ([] : List (String × Int)) "z" (1 : Int)) "a" (2 : Int)) "m" (3 : Int)) (k) (v)))))
+  | (
+    trace "AVER_STEPS_REJECTED:built.setKeepsWhatItWrote"
+    intro k v
+    simpa using AverMap.get_set_self built k v
+  )
 set_option synthInstance.maxSize 4096 in
 theorem built_law_setKeepsWhatItWrote_checked_domain : (AverMap.get (AverMap.set built "a" (0 : Int)) "a" = Option.some (0 : Int)) ∧ (AverMap.get (AverMap.set built "a" (7 : Int)) "a" = Option.some (7 : Int)) ∧ (AverMap.get (AverMap.set built "q" (0 : Int)) "q" = Option.some (0 : Int)) ∧ (AverMap.get (AverMap.set built "q" (7 : Int)) "q" = Option.some (7 : Int)) ∧ (AverMap.get (AverMap.set built "z" (0 : Int)) "z" = Option.some (0 : Int)) ∧ (AverMap.get (AverMap.set built "z" (7 : Int)) "z" = Option.some (7 : Int)) := by native_decide
 theorem built_law_setKeepsWhatItWrote_sample_1 : AverMap.get (AverMap.set built "a" (0 : Int)) "a" = Option.some (0 : Int) := by native_decide

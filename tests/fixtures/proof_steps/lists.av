@@ -68,3 +68,8 @@ verify oneIfPositive law isLenOfTakeOfOne
     given x: Int = [1, 2]
     given n: Int = [0 - 1, 0, 1, 2]
     List.len(List.take(pushed(x, []), n)) => oneIfPositive(n)
+
+verify pushed law literalWithVariables
+    given x: Int = [1, 2]
+    given y: Int = [3]
+    List.len(List.concat([x, y], pushed(x, []))) => 3

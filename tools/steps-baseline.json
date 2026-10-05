@@ -9,6 +9,13 @@
    "countAll.viaExpand"
   ]
  },
+ "examples/formal/empty_map_facts.av": {
+  "steps": [
+   "contains.emptyContainsNothing",
+   "lookup.emptyHasNoEntries",
+   "size.emptyHasZeroSize"
+  ]
+ },
  "examples/formal/law_auto.av": {
   "steps": [
    "add.associative",
@@ -153,9 +160,31 @@
    "clamp16.fitsSixteenBits"
   ]
  },
+ "proof-corpus/decomposed/handwritten/all_zero_sum.av": {
+  "steps": [
+   "sumList.sumCons"
+  ]
+ },
  "proof-corpus/decomposed/handwritten/qrev_rev.av": {
   "steps": [
    "qrev.accGeneralizes"
+  ]
+ },
+ "proof-corpus/decomposed/isaplanner/prop_85.av": {
+  "steps": [
+   "len.lenSnocSucc"
+  ]
+ },
+ "proof-corpus/decomposed/prod/lemma_05.av": {
+  "steps": [
+   "drop.dropSuccCons"
+  ]
+ },
+ "proof-corpus/decomposed/prod/lemma_09.av": {
+  "steps": [
+   "append.appendBridge",
+   "append.appendRightId",
+   "rev.revSingleton"
   ]
  },
  "proof-corpus/decomposed/prod/lemma_16.av": {
@@ -180,9 +209,26 @@
    "plus.plusSuccRight"
   ]
  },
+ "proof-corpus/decomposed/prod/prop_10.av": {
+  "steps": [
+   "append.appendBridge",
+   "append.appendRightId"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_11.av": {
+  "steps": [
+   "app.appBridge",
+   "app.appRightId"
+  ]
+ },
  "proof-corpus/decomposed/prod/prop_16.av": {
   "steps": [
    "plus.plusSuccRight"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_19.av": {
+  "steps": [
+   "append.appendNilR"
   ]
  },
  "proof-corpus/decomposed/prod/prop_23.av": {
@@ -194,6 +240,12 @@
  "proof-corpus/decomposed/prod/prop_27.av": {
   "steps": [
    "qrev.qrevSpec"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_28.av": {
+  "steps": [
+   "append.appendConcatBridge",
+   "append.appendRightId"
   ]
  },
  "proof-corpus/decomposed/prod/prop_29.av": {
@@ -214,7 +266,8 @@
  },
  "proof-corpus/decomposed/prod/prop_39.av": {
   "steps": [
-   "barbar.barbarTrueRight"
+   "barbar.barbarTrueRight",
+   "elem.elemConcatSingleton"
   ]
  },
  "proof-corpus/decomposed/prod/prop_42.av": {
@@ -225,12 +278,19 @@
  },
  "proof-corpus/decomposed/prod/prop_43.av": {
   "steps": [
-   "barbar.barbarTrueRight"
+   "barbar.barbarTrueRight",
+   "elem.elemConcatSingleton"
   ]
  },
  "proof-corpus/decomposed/prod/prop_44.av": {
   "steps": [
-   "barbar.barbarTrueLeft"
+   "barbar.barbarTrueLeft",
+   "elem.elemConcatSingleton"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_05.av": {
+  "steps": [
+   "count.countCons"
   ]
  },
  "proof-corpus/tip/isaplanner/prop_11.av": {
@@ -238,9 +298,34 @@
    "drop.dropZero"
   ]
  },
+ "proof-corpus/tip/isaplanner/prop_13.av": {
+  "steps": [
+   "drop.dropSuccCons"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_16.av": {
+  "steps": [
+   "last.lastSingleton"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_39.av": {
+  "steps": [
+   "count.countConsSplit"
+  ]
+ },
  "proof-corpus/tip/isaplanner/prop_40.av": {
   "steps": [
    "take.takeZeroNil"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_42.av": {
+  "steps": [
+   "take.takeConsShift"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_45.av": {
+  "steps": [
+   "zip.zipConsCons"
   ]
  },
  "proof-corpus/tip/isaplanner/prop_46.av": {
@@ -259,9 +344,24 @@
    "plus.plusSuccRight"
   ]
  },
+ "proof-corpus/tip/prod/lemma_08.av": {
+  "steps": [
+   "rev.revAppendSingleton"
+  ]
+ },
+ "proof-corpus/tip/prod/lemma_11.av": {
+  "steps": [
+   "append.appendSnocAssoc"
+  ]
+ },
  "proof-corpus/tip/prod/lemma_17.av": {
   "steps": [
    "plus.plusShiftTwo"
+  ]
+ },
+ "proof-corpus/tip/prod/lemma_18.av": {
+  "steps": [
+   "length.insertLength"
   ]
  },
  "proof-corpus/tip/prod/prop_12.av": {

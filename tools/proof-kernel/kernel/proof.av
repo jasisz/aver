@@ -17,6 +17,7 @@ type Proof
     PConst(String)
     PArm(Int, List<Term>, Term, Proof)
     PProj(Term)
+    PCell(Term)
     PHyp(String)
     PRule(String, List<Binding>, List<Proof>)
     PLaw(String, List<Binding>, List<Proof>)

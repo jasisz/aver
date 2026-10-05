@@ -41,6 +41,7 @@ verify elem law elemConcatSingleton
     given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
     given z: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
     given ys: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z)]]
+    using [List.concat.rightIdentity]
     elem(x, List.concat([z], ys)) => barbar(eqNat(x, z), elem(x, ys))
 
 verify elem law elemDrop

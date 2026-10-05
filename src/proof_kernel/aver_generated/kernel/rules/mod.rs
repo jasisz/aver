@@ -753,7 +753,7 @@ pub fn listSchema(id @ _: AverStr) -> Option<Schema> {
         ),
     );
     {
-        let __dispatch_subject = id;
+        let __dispatch_subject = id.clone();
         if &*__dispatch_subject == "list.concat.nil" {
             crate::proof_kernel::aver_generated::kernel::rules::plain(
                 &aver_rt::AverList::from_vec(vec![AverStr::from("b")]),
@@ -894,10 +894,199 @@ pub fn listSchema(id @ _: AverStr) -> Option<Schema> {
                                                     if &*__dispatch_subject == "list.reverse.cons" {
                                                         crate::proof_kernel::aver_generated::kernel::rules::plain(&aver_rt::AverList::from_vec(vec![AverStr::from("x"), AverStr::from("a")]), &crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("reverse"), &aver_rt::AverList::from_vec(vec![xa])), &crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("concat"), &aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("reverse"), &aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))])), crate::proof_kernel::aver_generated::kernel::rules::cons(&crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("x")), &nil)])))
                                                     } else {
-                                                        None
+                                                        crate::proof_kernel::aver_generated::kernel::rules::mapSchema(id)
                                                     }
                                                 }
                                             }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A Map builtin applied to its arguments; the empty map is Map.empty().
+pub fn mb(
+    name @ _: AverStr,
+    args @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+) -> crate::proof_kernel::aver_generated::kernel::term::Term {
+    crate::proof_kernel::cancel_checkpoint();
+    crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
+        aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = aver_rt::Buffer::with_capacity(
+                    (aver_rt::AverInt::from_i64(20)).to_usize().unwrap_or(0),
+                );
+                __b.push_str(&AverStr::from("Map."));
+                __b
+            };
+            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));
+            __b
+        }),
+        args.clone(),
+    )
+}
+
+/// Each Map read on the empty map and on a set: at the key set, at another key, and the size by membership.
+pub fn mapSchema(id @ _: AverStr) -> Option<Schema> {
+    crate::proof_kernel::cancel_checkpoint();
+    let set @ _ = crate::proof_kernel::aver_generated::kernel::rules::mb(
+        AverStr::from("set"),
+        &aver_rt::AverList::from_vec(vec![
+            crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("m")),
+            crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("k")),
+            crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("v")),
+        ]),
+    );
+    let empty @ _ = crate::proof_kernel::aver_generated::kernel::rules::mb(
+        AverStr::from("empty"),
+        &aver_rt::AverList::empty(),
+    );
+    let other @ _ = aver_rt::AverList::from_vec(vec![
+        crate::proof_kernel::aver_generated::kernel::rules::is(
+            &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
+                AverStr::from("!="),
+                std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(
+                    AverStr::from("k"),
+                )),
+                std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(
+                    AverStr::from("k2"),
+                )),
+            ),
+            true,
+        ),
+    ]);
+    {
+        let __dispatch_subject = id;
+        if &*__dispatch_subject == "map.get.empty" {
+            crate::proof_kernel::aver_generated::kernel::rules::plain(
+                &aver_rt::AverList::from_vec(vec![AverStr::from("k")]),
+                &crate::proof_kernel::aver_generated::kernel::rules::mb(
+                    AverStr::from("get"),
+                    &aver_rt::AverList::from_vec(vec![
+                        empty,
+                        crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("k")),
+                    ]),
+                ),
+                &crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(
+                    AverStr::from("Option.None"),
+                    aver_rt::AverList::empty(),
+                ),
+            )
+        } else {
+            if &*__dispatch_subject == "map.get.set_same" {
+                crate::proof_kernel::aver_generated::kernel::rules::plain(
+                    &aver_rt::AverList::from_vec(vec![
+                        AverStr::from("m"),
+                        AverStr::from("k"),
+                        AverStr::from("v"),
+                    ]),
+                    &crate::proof_kernel::aver_generated::kernel::rules::mb(
+                        AverStr::from("get"),
+                        &aver_rt::AverList::from_vec(vec![
+                            set,
+                            crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from(
+                                "k",
+                            )),
+                        ]),
+                    ),
+                    &crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(
+                        AverStr::from("Option.Some"),
+                        aver_rt::AverList::from_vec(vec![
+                            crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from(
+                                "v",
+                            )),
+                        ]),
+                    ),
+                )
+            } else {
+                if &*__dispatch_subject == "map.get.set_other" {
+                    Some(crate::proof_kernel::aver_generated::kernel::rules::Schema {
+                        binders: aver_rt::AverList::from_vec(vec![
+                            AverStr::from("m"),
+                            AverStr::from("k"),
+                            AverStr::from("v"),
+                            AverStr::from("k2"),
+                        ]),
+                        premises: other,
+                        concl: crate::proof_kernel::aver_generated::kernel::rules::eq(
+                            &crate::proof_kernel::aver_generated::kernel::rules::mb(
+                                AverStr::from("get"),
+                                &aver_rt::AverList::from_vec(vec![
+                                    set,
+                                    crate::proof_kernel::aver_generated::kernel::rules::v(
+                                        AverStr::from("k2"),
+                                    ),
+                                ]),
+                            ),
+                            &crate::proof_kernel::aver_generated::kernel::rules::mb(
+                                AverStr::from("get"),
+                                &aver_rt::AverList::from_vec(vec![
+                                    crate::proof_kernel::aver_generated::kernel::rules::v(
+                                        AverStr::from("m"),
+                                    ),
+                                    crate::proof_kernel::aver_generated::kernel::rules::v(
+                                        AverStr::from("k2"),
+                                    ),
+                                ]),
+                            ),
+                        ),
+                    })
+                } else {
+                    if &*__dispatch_subject == "map.has.empty" {
+                        crate::proof_kernel::aver_generated::kernel::rules::plain(
+                            &aver_rt::AverList::from_vec(vec![AverStr::from("k")]),
+                            &crate::proof_kernel::aver_generated::kernel::rules::mb(
+                                AverStr::from("has"),
+                                &aver_rt::AverList::from_vec(vec![
+                                    empty,
+                                    crate::proof_kernel::aver_generated::kernel::rules::v(
+                                        AverStr::from("k"),
+                                    ),
+                                ]),
+                            ),
+                            &crate::proof_kernel::aver_generated::kernel::term::Term::TBool(false),
+                        )
+                    } else {
+                        if &*__dispatch_subject == "map.has.set_same" {
+                            crate::proof_kernel::aver_generated::kernel::rules::plain(
+                                &aver_rt::AverList::from_vec(vec![
+                                    AverStr::from("m"),
+                                    AverStr::from("k"),
+                                    AverStr::from("v"),
+                                ]),
+                                &crate::proof_kernel::aver_generated::kernel::rules::mb(
+                                    AverStr::from("has"),
+                                    &aver_rt::AverList::from_vec(vec![
+                                        set,
+                                        crate::proof_kernel::aver_generated::kernel::rules::v(
+                                            AverStr::from("k"),
+                                        ),
+                                    ]),
+                                ),
+                                &crate::proof_kernel::aver_generated::kernel::term::Term::TBool(
+                                    true,
+                                ),
+                            )
+                        } else {
+                            if &*__dispatch_subject == "map.has.set_other" {
+                                Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: aver_rt::AverList::from_vec(vec![AverStr::from("m"), AverStr::from("k"), AverStr::from("v"), AverStr::from("k2")]), premises: other, concl: crate::proof_kernel::aver_generated::kernel::rules::eq(&crate::proof_kernel::aver_generated::kernel::rules::mb(AverStr::from("has"), &aver_rt::AverList::from_vec(vec![set, crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("k2"))])), &crate::proof_kernel::aver_generated::kernel::rules::mb(AverStr::from("has"), &aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("m")), crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("k2"))]))) })
+                            } else {
+                                if &*__dispatch_subject == "map.len.empty" {
+                                    crate::proof_kernel::aver_generated::kernel::rules::plain(&aver_rt::AverList::empty(), &crate::proof_kernel::aver_generated::kernel::rules::mb(AverStr::from("len"), &aver_rt::AverList::from_vec(vec![empty])), &crate::proof_kernel::aver_generated::kernel::term::Term::TInt(aver_rt::AverInt::from_i64(0)))
+                                } else {
+                                    if &*__dispatch_subject == "map.len.set_present" {
+                                        Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: aver_rt::AverList::from_vec(vec![AverStr::from("m"), AverStr::from("k"), AverStr::from("v")]), premises: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::rules::mb(AverStr::from("has"), &aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("m")), crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("k"))])), true)]), concl: crate::proof_kernel::aver_generated::kernel::rules::eq(&crate::proof_kernel::aver_generated::kernel::rules::mb(AverStr::from("len"), &aver_rt::AverList::from_vec(vec![set])), &crate::proof_kernel::aver_generated::kernel::rules::mb(AverStr::from("len"), &aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("m"))]))) })
+                                    } else {
+                                        if &*__dispatch_subject == "map.len.set_absent" {
+                                            Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: aver_rt::AverList::from_vec(vec![AverStr::from("m"), AverStr::from("k"), AverStr::from("v")]), premises: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::rules::mb(AverStr::from("has"), &aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("m")), crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("k"))])), false)]), concl: crate::proof_kernel::aver_generated::kernel::rules::eq(&crate::proof_kernel::aver_generated::kernel::rules::mb(AverStr::from("len"), &aver_rt::AverList::from_vec(vec![set])), &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("+"), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::mb(AverStr::from("len"), &aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("m"))]))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::term::Term::TInt(aver_rt::AverInt::from_i64(1))))) })
+                                        } else {
+                                            None
                                         }
                                     }
                                 }

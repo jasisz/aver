@@ -41,6 +41,7 @@ fn conclude(p: Proof, env: Env, path: String) -> Result<Eqn, String>
         Proof.PConst(n) -> constant(n, env.consts, path)
         Proof.PArm(k, ys, t, q) -> armStep(k, ys, t, q, env, path)
         Proof.PProj(t) -> proj(t, path)
+        Proof.PCell(t) -> cell(t, path)
         Proof.PHyp(h) -> hyp(h, env.hyps, path)
         Proof.PRule(id, bs, ps) -> rule(id, bs, ps, env, path)
         Proof.PLaw(k, bs, ps) -> lawStep(k, bs, ps, env, path)
@@ -145,6 +146,16 @@ fn proj(t: Term, path: String) -> Result<Eqn, String>
 verify proj
     proj(Term.TGet(Term.TRec("R", [Field(name = "a", value = Term.TInt(3))]), "a"), "p") => Result.Ok(Eqn(lhs = Term.TGet(Term.TRec("R", [Field(name = "a", value = Term.TInt(3))]), "a"), rhs = Term.TInt(3)))
     proj(Term.TGet(Term.TVar("r"), "a"), "p") => Result.Err("step p: a projection must read a field of a record literal")
+
+fn cell(t: Term, path: String) -> Result<Eqn, String>
+    ? "A list literal with an element is that element in front of the rest."
+    match t
+        Term.TList([x, ..rest]) -> Result.Ok(Eqn(lhs = t, rhs = Term.TBi("List.prepend", [x, Term.TList(rest)])))
+        _ -> refuse(path, "a cell step needs a list literal with an element")
+
+verify cell
+    cell(Term.TList([Term.TVar("y")]), "p") => Result.Ok(Eqn(lhs = Term.TList([Term.TVar("y")]), rhs = Term.TBi("List.prepend", [Term.TVar("y"), Term.TList([])])))
+    cell(Term.TList([]), "p") => Result.Err("step p: a cell step needs a list literal with an element")
 
 fn projField(t: Term, fs: List<Field>, f: String, path: String) -> Result<Eqn, String>
     ? "Find the field among the literal's fields."

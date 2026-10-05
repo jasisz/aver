@@ -71,10 +71,22 @@ pub enum WallRule {
     DropConsGt,
     ReverseNil,
     ReverseCons,
+    // The Map builtins on the empty map and on `Map.set(m, k, v)`: a read
+    // at the key just set, at another key (`k != k2`), and the size after a
+    // set at a key the map holds or does not hold.
+    MapGetEmpty,
+    MapGetSetSame,
+    MapGetSetOther,
+    MapHasEmpty,
+    MapHasSetSame,
+    MapHasSetOther,
+    MapLenEmpty,
+    MapLenSetPresent,
+    MapLenSetAbsent,
 }
 
 impl WallRule {
-    pub const ALL: [WallRule; 47] = [
+    pub const ALL: [WallRule; 56] = [
         WallRule::AndTrueL,
         WallRule::AndFalseL,
         WallRule::AndTrueR,
@@ -122,6 +134,15 @@ impl WallRule {
         WallRule::DropConsGt,
         WallRule::ReverseNil,
         WallRule::ReverseCons,
+        WallRule::MapGetEmpty,
+        WallRule::MapGetSetSame,
+        WallRule::MapGetSetOther,
+        WallRule::MapHasEmpty,
+        WallRule::MapHasSetSame,
+        WallRule::MapHasSetOther,
+        WallRule::MapLenEmpty,
+        WallRule::MapLenSetPresent,
+        WallRule::MapLenSetAbsent,
     ];
 
     /// Stable identifier, shared with the replayer.
@@ -174,6 +195,15 @@ impl WallRule {
             WallRule::DropConsGt => "list.drop.cons_gt",
             WallRule::ReverseNil => "list.reverse.nil",
             WallRule::ReverseCons => "list.reverse.cons",
+            WallRule::MapGetEmpty => "map.get.empty",
+            WallRule::MapGetSetSame => "map.get.set_same",
+            WallRule::MapGetSetOther => "map.get.set_other",
+            WallRule::MapHasEmpty => "map.has.empty",
+            WallRule::MapHasSetSame => "map.has.set_same",
+            WallRule::MapHasSetOther => "map.has.set_other",
+            WallRule::MapLenEmpty => "map.len.empty",
+            WallRule::MapLenSetPresent => "map.len.set_present",
+            WallRule::MapLenSetAbsent => "map.len.set_absent",
         }
     }
 
@@ -208,6 +238,13 @@ impl WallRule {
             | WallRule::TakeConsGt
             | WallRule::DropConsLe
             | WallRule::DropConsGt => &["x", "a", "n"],
+            WallRule::MapGetEmpty | WallRule::MapHasEmpty => &["k"],
+            WallRule::MapLenEmpty => &[],
+            WallRule::MapGetSetSame
+            | WallRule::MapHasSetSame
+            | WallRule::MapLenSetPresent
+            | WallRule::MapLenSetAbsent => &["m", "k", "v"],
+            WallRule::MapGetSetOther | WallRule::MapHasSetOther => &["m", "k", "v", "k2"],
             _ => &["a", "b"],
         }
     }
@@ -237,6 +274,22 @@ impl WallRule {
         let at_most_zero = || is(cmp(BinOp::Lte, n(), i(0)), true);
         let above_zero = || is(cmp(BinOp::Gt, n(), i(0)), true);
         let pred = || binop(BinOp::Sub, n(), i(1));
+        let (m, k, v, k2) = (|| var("m"), || var("k"), || var("v"), || var("k2"));
+        let empty =
+            || crate::ast::Spanned::bare(crate::ir::hir::ResolvedExpr::MapLiteral(Vec::new()));
+        let set = || term::builtin("Map.set", vec![m(), k(), v()], None);
+        let get = |map: Term, key: Term| term::builtin("Map.get", vec![map, key], None);
+        let has = |map: Term, key: Term| {
+            term::builtin("Map.has", vec![map, key], Some(crate::ast::Type::Bool))
+        };
+        let size = |map: Term| term::builtin("Map.len", vec![map], Some(crate::ast::Type::Int));
+        let option = |c: crate::ir::hir::BuiltinCtor, args: Vec<Term>| {
+            crate::ast::Spanned::bare(crate::ir::hir::ResolvedExpr::Ctor(
+                crate::ir::hir::ResolvedCtor::Builtin(c),
+                args,
+            ))
+        };
+        let other = || is(cmp(BinOp::Neq, k(), k2()), true);
         match self {
             WallRule::AndTrueL => (vec![], Eqn::new(bool_and(t(), b()), b())),
             WallRule::AndFalseL => (vec![], Eqn::new(bool_and(f(), b()), f())),
@@ -369,6 +422,33 @@ impl WallRule {
                         vec![list("List.reverse", vec![a()]), cons(x(), nil())],
                     ),
                 ),
+            ),
+            WallRule::MapGetEmpty => (
+                vec![],
+                Eqn::new(
+                    get(empty(), k()),
+                    option(crate::ir::hir::BuiltinCtor::OptionNone, vec![]),
+                ),
+            ),
+            WallRule::MapGetSetSame => (
+                vec![],
+                Eqn::new(
+                    get(set(), k()),
+                    option(crate::ir::hir::BuiltinCtor::OptionSome, vec![v()]),
+                ),
+            ),
+            WallRule::MapGetSetOther => (vec![other()], Eqn::new(get(set(), k2()), get(m(), k2()))),
+            WallRule::MapHasEmpty => (vec![], is(has(empty(), k()), false)),
+            WallRule::MapHasSetSame => (vec![], is(has(set(), k()), true)),
+            WallRule::MapHasSetOther => (vec![other()], Eqn::new(has(set(), k2()), has(m(), k2()))),
+            WallRule::MapLenEmpty => (vec![], Eqn::new(size(empty()), i(0))),
+            WallRule::MapLenSetPresent => (
+                vec![is(has(m(), k()), true)],
+                Eqn::new(size(set()), size(m())),
+            ),
+            WallRule::MapLenSetAbsent => (
+                vec![is(has(m(), k()), false)],
+                Eqn::new(size(set()), binop(BinOp::Add, size(m()), i(1))),
             ),
         }
     }

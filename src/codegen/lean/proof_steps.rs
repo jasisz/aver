@@ -162,6 +162,16 @@ fn lemma(rule: WallRule) -> &'static str {
         WallRule::DropConsGt => "AverSteps.list_drop_cons_gt",
         WallRule::ReverseNil => "AverSteps.list_reverse_nil",
         WallRule::ReverseCons => "AverSteps.list_reverse_cons",
+        // The Map rules sit with the map model they read.
+        WallRule::MapGetEmpty => "AverMap.step_get_empty",
+        WallRule::MapGetSetSame => "AverMap.step_get_set_same",
+        WallRule::MapGetSetOther => "AverMap.step_get_set_other",
+        WallRule::MapHasEmpty => "AverMap.step_has_empty",
+        WallRule::MapHasSetSame => "AverMap.step_has_set_same",
+        WallRule::MapHasSetOther => "AverMap.step_has_set_other",
+        WallRule::MapLenEmpty => "AverMap.step_len_empty",
+        WallRule::MapLenSetPresent => "AverMap.step_len_set_present",
+        WallRule::MapLenSetAbsent => "AverMap.step_len_set_absent",
     }
 }
 
@@ -292,7 +302,11 @@ impl Renderer<'_> {
         let body = match p {
             // A module-level binding is a Lean `def` with no parameters;
             // its value is its definitional unfolding.
-            Proof::Refl(_) | Proof::Proj { .. } | Proof::UnfoldConst { .. } => "rfl".to_string(),
+            // `[x, y]` is notation for `x :: [y]`.
+            Proof::Refl(_)
+            | Proof::Proj { .. }
+            | Proof::Cell { .. }
+            | Proof::UnfoldConst { .. } => "rfl".to_string(),
             Proof::Symm(inner) => format!("Eq.symm {}", self.proof(inner, hyps)?),
             Proof::Trans { steps, .. } => {
                 let mut parts = Vec::new();
@@ -981,14 +995,41 @@ pub(crate) fn render_cited_facts(body: &str, ctx: &CodegenContext) -> Result<Str
         };
         let ob = &script.obligation;
         let statement = r.eqn(&Eqn::new(ob.lhs.clone(), ob.rhs.clone()));
-        let term = r.proof(&script.proof, &Hyps::new())?;
-        if !r.support.is_empty() || ob.givens != ob.lists {
-            return Err(format!("fact {}: not a fact over lists alone", fact.key));
+        let mut hyps = Hyps::new();
+        let mut when = String::new();
+        if let Some(p) = &ob.premise {
+            when = format!(" (h_when : {} = true)", r.expr(p));
+            hyps.push(("when".into(), Eqn::new(p.clone(), term::boolean(true))));
         }
+        let term = r.proof(&script.proof, &hyps)?;
+        if !r.support.is_empty() {
+            return Err(format!("fact {}: a fact opens no definition", fact.key));
+        }
+        use crate::ir::proof_steps::facts::Sort;
+        // Every element, key and value type: a key with the equality and
+        // order the map model reads, never a fallback instance.
+        let types = if fact.over_lists() {
+            "{α : Type}".to_string()
+        } else {
+            "{α β : Type} [DecidableEq α] [AverKeyOrder α] [BEq α] [LawfulBEq α]".to_string()
+        };
+        let binders: Vec<String> = fact
+            .sorts
+            .iter()
+            .map(|(g, s)| {
+                let ty = match s {
+                    Sort::List => "List α",
+                    Sort::Map => "List (α × β)",
+                    Sort::Key => "α",
+                    Sort::Value => "β",
+                };
+                format!("({} : {ty})", super::syntax::aver_name_to_lean(g))
+            })
+            .collect();
         out.push(format!(
-            "set_option autoImplicit false in\ntheorem {} {{α : Type}} ({} : List α) :\n    {statement} :=\n  {term}",
+            "set_option autoImplicit false in\ntheorem {} {types} {}{when} :\n    {statement} :=\n  {term}",
             fact_theorem(fact),
-            ob.givens.join(" ")
+            binders.join(" ")
         ));
     }
     Ok(out.join("\n\n"))
