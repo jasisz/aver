@@ -96,6 +96,7 @@
  "projects/k5_fdiv/domain/awaymodel.av": {
   "obligations": [
    "rawValuePositive.positivePrecision.because1",
+   "rawValuePositive.positivePrecision.because2",
    "rawValuePositive.positivePrecision.because3"
   ]
  },
@@ -114,6 +115,12 @@
   "steps": [
    "divideExponentNoOverflow.section_9_3_no_overflow",
    "divideExponentNoUnderflow.section_9_3_no_underflow",
+   "exponentDh.table3_row7",
+   "exponentP0.table3_row9",
+   "exponentPh0.table3_row10",
+   "exponentPh1.table3_row16",
+   "exponentPh2.table3_row22",
+   "exponentPh3.table3_row28",
    "exponentQ1.table3_row17",
    "exponentQ2.table3_row23",
    "exponentQ3.table3_row29",
@@ -129,6 +136,9 @@
    "fpValueEqualsGeneralWhenNonnegExp.agreesOnNonnegExp",
    "pow2.positive",
    "pow2Signed.agreesWithPow2Fraction",
+   "pow2SignedAtLeastOne.geOne",
+   "pow2SignedDenomPositive.positive",
+   "pow2SignedPositive.positive",
    "productExpInRange.productExponentBounds"
   ]
  },
@@ -149,34 +159,60 @@
  "projects/k5_fdiv/domain/kernel.av": {
   "obligations": [
    "binadeSig.significandWindow.implication",
+   "fracExpo.executableMagnitude.because2",
+   "fracExpo.executableMagnitude.because3",
+   "fracExpo.executableMagnitude.because4",
+   "fracExpo.executableMagnitude.because5",
+   "fracExpo.rationalMagnitude.because2",
+   "fracExpo.rationalMagnitude.because3",
+   "fracExpo.rationalMagnitude.because4",
+   "fracExpo.rationalMagnitude.because5",
    "modelAway.normalizedModel.implication",
    "modelCeiling.normalizedModel.because11",
    "modelCeiling.normalizedModel.because2",
+   "modelCeiling.normalizedModel.because3",
+   "modelCeiling.normalizedModel.because4",
    "modelCeiling.normalizedModel.because6",
    "modelSign.normalizedSign.because1",
+   "modelSign.normalizedSign.because2",
    "modelSign.normalizedSign.because3",
    "modelSign.normalizedSign.because4",
    "modelSign.normalizedSign.because5",
    "modelSign.normalizedSign.because7",
+   "modelStickyExact.normalizedModel.because2",
+   "modelStickyExact.normalizedModel.because3",
    "modelStickyExact.normalizedModel.because5",
    "modelStickyHalf.normalizedModel.because2",
+   "modelStickyHalf.normalizedModel.because3",
+   "modelStickyHalf.normalizedModel.because4",
    "modelTruncation.normalizedModel.because4",
+   "modelTruncation.normalizedModel.because5",
+   "modelTruncation.normalizedModel.because6",
    "normalizedValueExponent.executableExponent.implication",
    "singleBitHalf.normalizedModel.because10",
    "singleBitHalf.normalizedModel.because11",
    "singleBitHalf.normalizedModel.because3",
+   "singleBitHalf.normalizedModel.because4",
+   "singleBitHalf.normalizedModel.because5",
    "singleBitHalf.normalizedModel.because7",
    "singleBitHalf.normalizedModel.because8",
    "singleBitHalf.normalizedModel.because9"
+  ],
+  "steps": [
+   "twoPow.roundingScale"
   ]
  },
  "projects/k5_fdiv/domain/modelscale.av": {
   "obligations": [
    "absoluteValue.normalizedMagnitude.because1",
+   "absoluteValue.normalizedMagnitude.because2",
    "absoluteValue.normalizedMagnitude.because3",
    "absoluteValue.normalizedMagnitude.because4",
+   "modelWindow.normalizedMagnitude.because3",
+   "modelWindow.normalizedMagnitude.because4",
    "modelWindow.normalizedMagnitude.because5",
    "nonzeroValue.normalizedValue.because1",
+   "nonzeroValue.normalizedValue.because2",
    "nonzeroValue.normalizedValue.because3",
    "nonzeroValue.normalizedValue.because4",
    "scaledWindow.normalizedSignificand.because1",

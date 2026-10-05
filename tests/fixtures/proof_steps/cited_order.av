@@ -1,0 +1,62 @@
+module CitedOrder
+    intent = "Laws closed by an order a cited law states, and by an equality between two calls a hypothesis states."
+    exposes [pow2, power, twoPow, positivePower, sameReason]
+    effects []
+
+fn pow2(n: Int) -> Int
+    ? "Two to the n, and 1 at or below zero."
+    match n <= 0
+        true -> 1
+        false -> 2 * pow2(n - 1)
+
+verify pow2
+    pow2(0) => 1
+    pow2(3) => 8
+
+verify pow2 law positive
+    given n: Int = [-2, 0, 3]
+    pow2(n) >= 1 holds
+
+fn positivePower(k: Int) -> Bool
+    ? "Two to the minus k is positive."
+    pow2(0 - k) > 0
+
+verify positivePower
+    positivePower(3) => true
+
+verify positivePower law holds
+    given k: Int = [-1, 0, 2]
+    using [pow2.positive]
+    positivePower(k) holds
+
+fn power(n: Int) -> Int
+    ? "Two to the n again, written apart."
+    match n <= 0
+        true -> 1
+        false -> 2 * power(n - 1)
+
+verify power
+    power(3) => 8
+
+fn twoPow(n: Int) -> Int
+    ? "A name for power."
+    power(n)
+
+verify twoPow
+    twoPow(2) => 4
+
+verify twoPow law agrees
+    given n: Int = [-1, 0, 3]
+    because sameReason(n)
+    using []
+    twoPow(n) => pow2(n)
+
+fn sameReason(n: Int) -> Bool
+    ? "The two powers agree, one step at a time."
+    match n <= 0
+        true -> twoPow(n) == pow2(n)
+        false -> Bool.and(sameReason(n - 1), twoPow(n) == pow2(n))
+
+verify sameReason
+    sameReason(-1) => true
+    sameReason(3) => true
