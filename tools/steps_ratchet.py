@@ -196,12 +196,12 @@ def compare(baseline: dict, current: dict, levels: tuple[str, ...]) -> tuple[lis
                 drops.append(f"{entry}: no longer in the corpus")
             continue
         for level in levels:
-            before, after = set(old.get(level, [])), set(new[level])
+            before, after = set(old.get(level, [])), set(new.get(level, []))
             for law in sorted(before - after):
                 # An obligation whose whole law now closes by steps moved up.
-                if level == "obligations" and law.rsplit(".", 1)[0] in new["steps"]:
+                if level == "obligations" and law.rsplit(".", 1)[0] in new.get("steps", []):
                     continue
-                now = next((other for other in LEVELS if law in new[other]), None)
+                now = next((other for other in LEVELS if law in new.get(other, [])), None)
                 where = f"is closed by {now} now" if now else "no longer closes"
                 drops.append(f"{entry}: `{law}` {where} (was {level})")
             gains += [f"{entry}: `{law}` newly closes by {level}" for law in sorted(after - before)]
