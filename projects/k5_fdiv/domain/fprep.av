@@ -296,6 +296,7 @@ verify pow2SignedPositive
 // positivity pow2(_) >= 1, cited from the pool law above.
 verify pow2SignedPositive law positive
     given k: Int = [-3, -1, 0, 2, 5]
+    using [pow2.positive]
     pow2SignedPositive(k) holds
 
 fn pow2SignedDenomPositive(k: Int) -> Bool
@@ -309,6 +310,7 @@ verify pow2SignedDenomPositive
 
 verify pow2SignedDenomPositive law positive
     given k: Int = [-3, -1, 0, 2, 5]
+    using [pow2.positive]
     pow2SignedDenomPositive(k) holds
 
 fn pow2SignedAtLeastOne(k: Int) -> Bool
@@ -325,6 +327,7 @@ verify pow2SignedAtLeastOne
 verify pow2SignedAtLeastOne law geOne
     given k: Int = [0, 1, 4]
     when k >= 0
+    using [pow2.positive]
     pow2SignedAtLeastOne(k) holds
 
 fn pow2SignedMonotone(m: Int, n: Int) -> Bool

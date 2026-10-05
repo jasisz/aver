@@ -78,7 +78,7 @@ pub(crate) fn matches(
     ps.len() == ts.len() && ps.iter().zip(ts).all(|(p, c)| matches(p, c, vars, out))
 }
 
-fn ordered(vars: &[String], found: Vec<(String, Term)>) -> Option<Vec<(String, Term)>> {
+pub(crate) fn ordered(vars: &[String], found: Vec<(String, Term)>) -> Option<Vec<(String, Term)>> {
     vars.iter()
         .map(|v| found.iter().find(|(k, _)| k == v).cloned())
         .collect()

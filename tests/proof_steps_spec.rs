@@ -1192,6 +1192,97 @@ fn lean_inducts_on_an_int_down_to_zero_and_refuses_a_mutation() {
     let _ = fs::remove_dir_all(out);
 }
 
+const CITED_ORDER_LAWS: [&str; 5] = [
+    "positivePower.holds",
+    "pow2.positive",
+    "twoPow.agrees",
+    "twoPow.agrees.because1",
+    "twoPow.agrees.implication",
+];
+
+#[test]
+fn both_kernels_check_cited_orders_and_equal_calls_and_refuse_mutations() {
+    let out = scratch("cited-order");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("cited_order.av", &out).into_iter().collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), CITED_ORDER_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let positive = read("positivePower.holds");
+    let agrees = read("twoPow.agrees.because1");
+    // The cited order at the goal's own atom, then linear arithmetic.
+    let instance = "(law pow2.positive ((n (op - (i 0) (v k)))))";
+    assert!(positive.contains(instance), "{positive}");
+    // The hypothesis about `twoPow`, read through its one unfolding.
+    let equal = "(rule int.eq.of_beq ((a (call twoPow (op - (v n) (i 1)))) (b (call pow2 (op - (v n) (i 1)))))";
+    assert!(agrees.contains(equal), "{agrees}");
+    for (kind, text) in [
+        (
+            "the cited law at another argument",
+            mutate_proof(&positive, instance, "(law pow2.positive ((n (v k))))"),
+        ),
+        (
+            "the equality used for another call",
+            mutate_proof(
+                &agrees,
+                equal,
+                "(rule int.eq.of_beq ((a (call twoPow (op - (v n) (i 1)))) (b (call pow2 (v n))))",
+            ),
+        ),
+    ] {
+        let refused = aver::proof_kernel::verdict(&text);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "{kind}: {refused:?}\n{text}"
+        );
+        let path = out.join("mutant.steps");
+        fs::write(&path, &text).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(
+            !result.status.success(),
+            "{kind}: {}",
+            format_output(&result)
+        );
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_closes_cited_orders_and_equal_calls_by_their_steps() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("cited-order-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "cited_order.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in ["positivePower.holds", "pow2.positive", "twoPow.agrees"] {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
 const ARITH_LAWS: [&str; 6] = [
     "clamp.positiveStaysPositive",
     "next.staysAboveOne",
