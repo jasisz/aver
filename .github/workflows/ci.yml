@@ -386,6 +386,7 @@ jobs:
             bigint_literals_differential \
             builtin_rules_differential \
             map_rules_differential \
+            vector_rules_differential \
             cert_certify_spec \
             cert_decode_spec \
             cert_one_build_spec \
