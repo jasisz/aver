@@ -79,9 +79,16 @@ def module_root(entry: str) -> str:
     return "/".join(parts[:-1])
 
 
+def own(law: str) -> bool:
+    """A law the proved file declares itself. A report also lists the laws of
+    every module the file imports, under their module path (`Domain.Fprep.…`);
+    those are counted at the file that declares them, which is an entry too."""
+    return not law[:1].isupper()
+
+
 def summarize(report: dict) -> dict:
     """The part of a `--check-json` report the ratchet holds."""
-    closed_by = report.get("closed_by", {})
+    closed_by = {law: how for law, how in report.get("closed_by", {}).items() if own(law)}
     by = lambda level: sorted(law for law, how in closed_by.items() if how == level)
     return {"steps": by("steps"), "tactic": by("tactic"), "laws": len(closed_by)}
 
@@ -113,7 +120,7 @@ def measure(aver: Path, entry: str, lean: bool) -> dict:
     if not lean:
         return steps
     by_lean = report(aver, entry, True)
-    closed = set(by_lean.get("universal", []))
+    closed = {law for law in by_lean.get("universal", []) if own(law)}
     return {
         "steps": steps["steps"],
         "tactic": sorted(closed - set(steps["steps"])),

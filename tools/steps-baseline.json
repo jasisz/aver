@@ -88,177 +88,18 @@
    "computeScore.zeroLinesZeroScore"
   ]
  },
- "projects/k5_fdiv/domain/awaymodel.av": {
-  "steps": [
-   "Domain.Fprep.fpScaleKeepsSignificand.significandInvariant",
-   "Domain.Fprep.fpScaleShiftsExponent.exponentShift",
-   "Domain.Fprep.fpValueEqualsGeneralWhenNonnegExp.agreesOnNonnegExp",
-   "Domain.Fprep.pow2Signed.agreesWithPow2Fraction",
-   "Domain.Fprep.productExpInRange.productExponentBounds",
-   "Domain.Rational.minus.equalsPlusNegate",
-   "Domain.Rational.negate.involutive",
-   "Domain.Rational.plus.associative",
-   "Domain.Rational.plus.commutative",
-   "Domain.Rational.plus.zeroIsNeutral",
-   "Domain.Rational.times.associative",
-   "Domain.Rational.times.commutative",
-   "Domain.Rational.times.distributesOverPlus",
-   "Domain.Rational.times.oneIsNeutral",
-   "Domain.Rational.times.zeroAbsorbs",
-   "Domain.Round.awayExpInRange.exponentInRange",
-   "Domain.Round.stickyErrorReconstructs.reconstructsValue",
-   "Domain.Round.stickyKeepsExponent.exponentInvariant",
-   "Domain.Round.truncErrorReconstructs.reconstructsValue",
-   "Domain.Round.truncKeepsExponent.exponentInvariant",
-   "Domain.Round.truncNegateSymmetric.signSymmetry",
-   "Domain.StickyInt.sigDouble.doubleIsTwice"
-  ]
- },
- "projects/k5_fdiv/domain/binadeorder.av": {
-  "steps": [
-   "Domain.Fprep.fpScaleKeepsSignificand.significandInvariant",
-   "Domain.Fprep.fpScaleShiftsExponent.exponentShift",
-   "Domain.Fprep.fpValueEqualsGeneralWhenNonnegExp.agreesOnNonnegExp",
-   "Domain.Fprep.pow2Signed.agreesWithPow2Fraction",
-   "Domain.Fprep.productExpInRange.productExponentBounds",
-   "Domain.Rational.minus.equalsPlusNegate",
-   "Domain.Rational.negate.involutive",
-   "Domain.Rational.plus.associative",
-   "Domain.Rational.plus.commutative",
-   "Domain.Rational.plus.zeroIsNeutral",
-   "Domain.Rational.times.associative",
-   "Domain.Rational.times.commutative",
-   "Domain.Rational.times.distributesOverPlus",
-   "Domain.Rational.times.oneIsNeutral",
-   "Domain.Rational.times.zeroAbsorbs"
-  ]
- },
  "projects/k5_fdiv/domain/estimate.av": {
   "steps": [
    "nrNewErrNum.nrErrorSquares"
   ]
  },
- "projects/k5_fdiv/domain/exponent.av": {
-  "steps": [
-   "Domain.Fprep.fpScaleKeepsSignificand.significandInvariant",
-   "Domain.Fprep.fpScaleShiftsExponent.exponentShift",
-   "Domain.Fprep.fpValueEqualsGeneralWhenNonnegExp.agreesOnNonnegExp",
-   "Domain.Fprep.pow2Signed.agreesWithPow2Fraction",
-   "Domain.Fprep.productExpInRange.productExponentBounds",
-   "Domain.Rational.minus.equalsPlusNegate",
-   "Domain.Rational.negate.involutive",
-   "Domain.Rational.plus.associative",
-   "Domain.Rational.plus.commutative",
-   "Domain.Rational.plus.zeroIsNeutral",
-   "Domain.Rational.times.associative",
-   "Domain.Rational.times.commutative",
-   "Domain.Rational.times.distributesOverPlus",
-   "Domain.Rational.times.oneIsNeutral",
-   "Domain.Rational.times.zeroAbsorbs"
-  ]
- },
  "projects/k5_fdiv/domain/fprep.av": {
   "steps": [
-   "Domain.Rational.minus.equalsPlusNegate",
-   "Domain.Rational.negate.involutive",
-   "Domain.Rational.plus.associative",
-   "Domain.Rational.plus.commutative",
-   "Domain.Rational.plus.zeroIsNeutral",
-   "Domain.Rational.times.associative",
-   "Domain.Rational.times.commutative",
-   "Domain.Rational.times.distributesOverPlus",
-   "Domain.Rational.times.oneIsNeutral",
-   "Domain.Rational.times.zeroAbsorbs",
    "fpScaleKeepsSignificand.significandInvariant",
    "fpScaleShiftsExponent.exponentShift",
    "fpValueEqualsGeneralWhenNonnegExp.agreesOnNonnegExp",
    "pow2Signed.agreesWithPow2Fraction",
    "productExpInRange.productExponentBounds"
-  ]
- },
- "projects/k5_fdiv/domain/fracround.av": {
-  "steps": [
-   "Domain.Fprep.fpScaleKeepsSignificand.significandInvariant",
-   "Domain.Fprep.fpScaleShiftsExponent.exponentShift",
-   "Domain.Fprep.fpValueEqualsGeneralWhenNonnegExp.agreesOnNonnegExp",
-   "Domain.Fprep.pow2Signed.agreesWithPow2Fraction",
-   "Domain.Fprep.productExpInRange.productExponentBounds",
-   "Domain.Rational.minus.equalsPlusNegate",
-   "Domain.Rational.negate.involutive",
-   "Domain.Rational.plus.associative",
-   "Domain.Rational.plus.commutative",
-   "Domain.Rational.plus.zeroIsNeutral",
-   "Domain.Rational.times.associative",
-   "Domain.Rational.times.commutative",
-   "Domain.Rational.times.distributesOverPlus",
-   "Domain.Rational.times.oneIsNeutral",
-   "Domain.Rational.times.zeroAbsorbs",
-   "Domain.Round.awayExpInRange.exponentInRange",
-   "Domain.Round.stickyErrorReconstructs.reconstructsValue",
-   "Domain.Round.stickyKeepsExponent.exponentInvariant",
-   "Domain.Round.truncErrorReconstructs.reconstructsValue",
-   "Domain.Round.truncKeepsExponent.exponentInvariant",
-   "Domain.Round.truncNegateSymmetric.signSymmetry",
-   "Domain.StickyInt.sigDouble.doubleIsTwice"
-  ]
- },
- "projects/k5_fdiv/domain/fractionorder.av": {
-  "steps": [
-   "Domain.Rational.minus.equalsPlusNegate",
-   "Domain.Rational.negate.involutive",
-   "Domain.Rational.plus.associative",
-   "Domain.Rational.plus.commutative",
-   "Domain.Rational.plus.zeroIsNeutral",
-   "Domain.Rational.times.associative",
-   "Domain.Rational.times.commutative",
-   "Domain.Rational.times.distributesOverPlus",
-   "Domain.Rational.times.oneIsNeutral",
-   "Domain.Rational.times.zeroAbsorbs"
-  ]
- },
- "projects/k5_fdiv/domain/kernel.av": {
-  "steps": [
-   "Domain.Fprep.fpScaleKeepsSignificand.significandInvariant",
-   "Domain.Fprep.fpScaleShiftsExponent.exponentShift",
-   "Domain.Fprep.fpValueEqualsGeneralWhenNonnegExp.agreesOnNonnegExp",
-   "Domain.Fprep.pow2Signed.agreesWithPow2Fraction",
-   "Domain.Fprep.productExpInRange.productExponentBounds",
-   "Domain.Rational.minus.equalsPlusNegate",
-   "Domain.Rational.negate.involutive",
-   "Domain.Rational.plus.associative",
-   "Domain.Rational.plus.commutative",
-   "Domain.Rational.plus.zeroIsNeutral",
-   "Domain.Rational.times.associative",
-   "Domain.Rational.times.commutative",
-   "Domain.Rational.times.distributesOverPlus",
-   "Domain.Rational.times.oneIsNeutral",
-   "Domain.Rational.times.zeroAbsorbs",
-   "Domain.Round.awayExpInRange.exponentInRange",
-   "Domain.Round.stickyErrorReconstructs.reconstructsValue",
-   "Domain.Round.stickyKeepsExponent.exponentInvariant",
-   "Domain.Round.truncErrorReconstructs.reconstructsValue",
-   "Domain.Round.truncKeepsExponent.exponentInvariant",
-   "Domain.Round.truncNegateSymmetric.signSymmetry",
-   "Domain.StickyInt.sigDouble.doubleIsTwice"
-  ]
- },
- "projects/k5_fdiv/domain/modelscale.av": {
-  "steps": [
-   "Domain.Fprep.fpScaleKeepsSignificand.significandInvariant",
-   "Domain.Fprep.fpScaleShiftsExponent.exponentShift",
-   "Domain.Fprep.fpValueEqualsGeneralWhenNonnegExp.agreesOnNonnegExp",
-   "Domain.Fprep.pow2Signed.agreesWithPow2Fraction",
-   "Domain.Fprep.productExpInRange.productExponentBounds",
-   "Domain.Rational.minus.equalsPlusNegate",
-   "Domain.Rational.negate.involutive",
-   "Domain.Rational.plus.associative",
-   "Domain.Rational.plus.commutative",
-   "Domain.Rational.plus.zeroIsNeutral",
-   "Domain.Rational.times.associative",
-   "Domain.Rational.times.commutative",
-   "Domain.Rational.times.distributesOverPlus",
-   "Domain.Rational.times.oneIsNeutral",
-   "Domain.Rational.times.zeroAbsorbs"
   ]
  },
  "projects/k5_fdiv/domain/rational.av": {
@@ -275,79 +116,13 @@
    "times.zeroAbsorbs"
   ]
  },
- "projects/k5_fdiv/domain/recip.av": {
-  "steps": [
-   "Domain.Estimate.nrNewErrNum.nrErrorSquares",
-   "Domain.Fprep.fpScaleKeepsSignificand.significandInvariant",
-   "Domain.Fprep.fpScaleShiftsExponent.exponentShift",
-   "Domain.Fprep.fpValueEqualsGeneralWhenNonnegExp.agreesOnNonnegExp",
-   "Domain.Fprep.pow2Signed.agreesWithPow2Fraction",
-   "Domain.Fprep.productExpInRange.productExponentBounds",
-   "Domain.Rational.minus.equalsPlusNegate",
-   "Domain.Rational.negate.involutive",
-   "Domain.Rational.plus.associative",
-   "Domain.Rational.plus.commutative",
-   "Domain.Rational.plus.zeroIsNeutral",
-   "Domain.Rational.times.associative",
-   "Domain.Rational.times.commutative",
-   "Domain.Rational.times.distributesOverPlus",
-   "Domain.Rational.times.oneIsNeutral",
-   "Domain.Rational.times.zeroAbsorbs",
-   "Domain.Round.awayExpInRange.exponentInRange",
-   "Domain.Round.stickyErrorReconstructs.reconstructsValue",
-   "Domain.Round.stickyKeepsExponent.exponentInvariant",
-   "Domain.Round.truncErrorReconstructs.reconstructsValue",
-   "Domain.Round.truncKeepsExponent.exponentInvariant",
-   "Domain.Round.truncNegateSymmetric.signSymmetry",
-   "Domain.StickyInt.sigDouble.doubleIsTwice"
-  ]
- },
  "projects/k5_fdiv/domain/remainder.av": {
   "steps": [
-   "Domain.Estimate.nrNewErrNum.nrErrorSquares",
-   "Domain.Fprep.fpScaleKeepsSignificand.significandInvariant",
-   "Domain.Fprep.fpScaleShiftsExponent.exponentShift",
-   "Domain.Fprep.fpValueEqualsGeneralWhenNonnegExp.agreesOnNonnegExp",
-   "Domain.Fprep.pow2Signed.agreesWithPow2Fraction",
-   "Domain.Fprep.productExpInRange.productExponentBounds",
-   "Domain.Rational.minus.equalsPlusNegate",
-   "Domain.Rational.negate.involutive",
-   "Domain.Rational.plus.associative",
-   "Domain.Rational.plus.commutative",
-   "Domain.Rational.plus.zeroIsNeutral",
-   "Domain.Rational.times.associative",
-   "Domain.Rational.times.commutative",
-   "Domain.Rational.times.distributesOverPlus",
-   "Domain.Rational.times.oneIsNeutral",
-   "Domain.Rational.times.zeroAbsorbs",
-   "Domain.Round.awayExpInRange.exponentInRange",
-   "Domain.Round.stickyErrorReconstructs.reconstructsValue",
-   "Domain.Round.stickyKeepsExponent.exponentInvariant",
-   "Domain.Round.truncErrorReconstructs.reconstructsValue",
-   "Domain.Round.truncKeepsExponent.exponentInvariant",
-   "Domain.Round.truncNegateSymmetric.signSymmetry",
-   "Domain.StickyInt.sigDouble.doubleIsTwice",
    "awayDigitOvershoot.guarded"
   ]
  },
  "projects/k5_fdiv/domain/round.av": {
   "steps": [
-   "Domain.Fprep.fpScaleKeepsSignificand.significandInvariant",
-   "Domain.Fprep.fpScaleShiftsExponent.exponentShift",
-   "Domain.Fprep.fpValueEqualsGeneralWhenNonnegExp.agreesOnNonnegExp",
-   "Domain.Fprep.pow2Signed.agreesWithPow2Fraction",
-   "Domain.Fprep.productExpInRange.productExponentBounds",
-   "Domain.Rational.minus.equalsPlusNegate",
-   "Domain.Rational.negate.involutive",
-   "Domain.Rational.plus.associative",
-   "Domain.Rational.plus.commutative",
-   "Domain.Rational.plus.zeroIsNeutral",
-   "Domain.Rational.times.associative",
-   "Domain.Rational.times.commutative",
-   "Domain.Rational.times.distributesOverPlus",
-   "Domain.Rational.times.oneIsNeutral",
-   "Domain.Rational.times.zeroAbsorbs",
-   "Domain.StickyInt.sigDouble.doubleIsTwice",
    "awayExpInRange.exponentInRange",
    "stickyErrorReconstructs.reconstructsValue",
    "stickyKeepsExponent.exponentInvariant",
@@ -356,83 +131,9 @@
    "truncNegateSymmetric.signSymmetry"
   ]
  },
- "projects/k5_fdiv/domain/roundscale.av": {
-  "steps": [
-   "Domain.StickyInt.sigDouble.doubleIsTwice"
-  ]
- },
  "projects/k5_fdiv/domain/stickyint.av": {
   "steps": [
    "sigDouble.doubleIsTwice"
-  ]
- },
- "projects/k5_fdiv/domain/stickyscale.av": {
-  "steps": [
-   "Domain.Fprep.fpScaleKeepsSignificand.significandInvariant",
-   "Domain.Fprep.fpScaleShiftsExponent.exponentShift",
-   "Domain.Fprep.fpValueEqualsGeneralWhenNonnegExp.agreesOnNonnegExp",
-   "Domain.Fprep.pow2Signed.agreesWithPow2Fraction",
-   "Domain.Fprep.productExpInRange.productExponentBounds",
-   "Domain.Rational.minus.equalsPlusNegate",
-   "Domain.Rational.negate.involutive",
-   "Domain.Rational.plus.associative",
-   "Domain.Rational.plus.commutative",
-   "Domain.Rational.plus.zeroIsNeutral",
-   "Domain.Rational.times.associative",
-   "Domain.Rational.times.commutative",
-   "Domain.Rational.times.distributesOverPlus",
-   "Domain.Rational.times.oneIsNeutral",
-   "Domain.Rational.times.zeroAbsorbs",
-   "Domain.StickyInt.sigDouble.doubleIsTwice"
-  ]
- },
- "projects/k5_fdiv/domain/table.av": {
-  "steps": [
-   "Domain.Rational.minus.equalsPlusNegate",
-   "Domain.Rational.negate.involutive",
-   "Domain.Rational.plus.associative",
-   "Domain.Rational.plus.commutative",
-   "Domain.Rational.plus.zeroIsNeutral",
-   "Domain.Rational.times.associative",
-   "Domain.Rational.times.commutative",
-   "Domain.Rational.times.distributesOverPlus",
-   "Domain.Rational.times.oneIsNeutral",
-   "Domain.Rational.times.zeroAbsorbs"
-  ]
- },
- "projects/k5_fdiv/domain/truncscale.av": {
-  "steps": [
-   "Domain.Fprep.fpScaleKeepsSignificand.significandInvariant",
-   "Domain.Fprep.fpScaleShiftsExponent.exponentShift",
-   "Domain.Fprep.fpValueEqualsGeneralWhenNonnegExp.agreesOnNonnegExp",
-   "Domain.Fprep.pow2Signed.agreesWithPow2Fraction",
-   "Domain.Fprep.productExpInRange.productExponentBounds",
-   "Domain.Rational.minus.equalsPlusNegate",
-   "Domain.Rational.negate.involutive",
-   "Domain.Rational.plus.associative",
-   "Domain.Rational.plus.commutative",
-   "Domain.Rational.plus.zeroIsNeutral",
-   "Domain.Rational.times.associative",
-   "Domain.Rational.times.commutative",
-   "Domain.Rational.times.distributesOverPlus",
-   "Domain.Rational.times.oneIsNeutral",
-   "Domain.Rational.times.zeroAbsorbs",
-   "Domain.StickyInt.sigDouble.doubleIsTwice"
-  ]
- },
- "projects/k5_fdiv/domain/valuechain.av": {
-  "steps": [
-   "Domain.Rational.minus.equalsPlusNegate",
-   "Domain.Rational.negate.involutive",
-   "Domain.Rational.plus.associative",
-   "Domain.Rational.plus.commutative",
-   "Domain.Rational.plus.zeroIsNeutral",
-   "Domain.Rational.times.associative",
-   "Domain.Rational.times.commutative",
-   "Domain.Rational.times.distributesOverPlus",
-   "Domain.Rational.times.oneIsNeutral",
-   "Domain.Rational.times.zeroAbsorbs",
-   "Domain.StickyInt.sigDouble.doubleIsTwice"
   ]
  },
  "projects/song/wave.av": {
