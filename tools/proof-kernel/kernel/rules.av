@@ -4,6 +4,7 @@ module Rules
         "The replayer's own copy of src/ir/proof_steps/rules.rs; an identifier not listed here is refused."
         "The list rules are the constructor equations of the list builtins, with Aver's truncation of a count."
         "The map rules read Map.get, Map.has and Map.len on the empty map and on Map.set(m, k, v)."
+        "The vector rules read a vector as the list it holds, and Vector.get and Vector.len after a write or a literal-size Vector.new."
     exposes [Schema, schema]
     depends [Kernel.Term]
     effects []
@@ -214,8 +215,45 @@ fn mapSchema(id: String) -> Option<Schema>
         "map.len.empty" -> plain([], mb("len", [empty]), Term.TInt(0))
         "map.len.set_present" -> Option.Some(Schema(binders = ["m", "k", "v"], premises = [is(mb("has", [v("m"), v("k")]), true)], concl = eq(mb("len", [set]), mb("len", [v("m")]))))
         "map.len.set_absent" -> Option.Some(Schema(binders = ["m", "k", "v"], premises = [is(mb("has", [v("m"), v("k")]), false)], concl = eq(mb("len", [set]), Term.TOp("+", mb("len", [v("m")]), Term.TInt(1)))))
-        _ -> Option.None
+        _ -> vectorSchema(id)
 
 verify mapSchema
     mapSchema("map.len.empty") => plain([], Term.TBi("Map.len", [Term.TBi("Map.empty", [])]), Term.TInt(0))
     mapSchema("map.keys.set") => Option.None
+
+fn vb(name: String, args: List<Term>) -> Term
+    ? "A Vector builtin applied to its arguments."
+    Term.TBi("Vector.{name}", args)
+
+verify vb
+    vb("len", [v("v")]) => Term.TBi("Vector.len", [v("v")])
+
+fn inRange(at: Term, end: Term) -> Eqn
+    ? "0 <= at and at < end, as a premise."
+    is(conn("Bool.and", Term.TOp("<=", Term.TInt(0), at), Term.TOp("<", at, end)), true)
+
+verify inRange
+    inRange(v("i"), v("n")) => is(conn("Bool.and", Term.TOp("<=", Term.TInt(0), v("i")), Term.TOp("<", v("i"), v("n"))), true)
+
+fn vectorSchema(id: String) -> Option<Schema>
+    ? "A vector as the list it holds; reads out of range; a read and the length after a write; a literal-size Vector.new."
+    len = vb("len", [v("v")])
+    written = Term.TBi("Option.withDefault", [vb("set", [v("v"), v("i"), v("x")]), v("v")])
+    made = Term.TBi("__vector_new", [v("n"), v("x")])
+    match id
+        "vector.to_list.of_list" -> plain(["l"], Term.TBi("List.fromVector", [vb("fromList", [v("l")])]), v("l"))
+        "vector.of_list.to_list" -> plain(["v"], vb("fromList", [Term.TBi("List.fromVector", [v("v")])]), v("v"))
+        "vector.len.to_list" -> plain(["v"], len, Term.TBi("List.len", [Term.TBi("List.fromVector", [v("v")])]))
+        "vector.get.negative" -> Option.Some(Schema(binders = ["v", "i"], premises = [is(Term.TOp("<", v("i"), Term.TInt(0)), true)], concl = eq(vb("get", [v("v"), v("i")]), Term.TCtor("Option.None", []))))
+        "vector.get.past_end" -> Option.Some(Schema(binders = ["v", "i"], premises = [is(Term.TOp(">=", v("i"), len), true)], concl = eq(vb("get", [v("v"), v("i")]), Term.TCtor("Option.None", []))))
+        "vector.set.out_of_range" -> Option.Some(Schema(binders = ["v", "i", "x"], premises = [is(conn("Bool.or", Term.TOp("<", v("i"), Term.TInt(0)), Term.TOp(">=", v("i"), len)), true)], concl = eq(vb("set", [v("v"), v("i"), v("x")]), Term.TCtor("Option.None", []))))
+        "vector.get.set_same" -> Option.Some(Schema(binders = ["v", "i", "x"], premises = [inRange(v("i"), len)], concl = eq(vb("get", [written, v("i")]), Term.TCtor("Option.Some", [v("x")]))))
+        "vector.get.set_other" -> Option.Some(Schema(binders = ["v", "i", "x", "j"], premises = [inRange(v("i"), len), is(Term.TOp("!=", v("i"), v("j")), true)], concl = eq(vb("get", [written, v("j")]), vb("get", [v("v"), v("j")]))))
+        "vector.len.set" -> plain(["v", "i", "x"], vb("len", [written]), len)
+        "vector.len.new" -> Option.Some(Schema(binders = ["n", "x"], premises = [is(Term.TOp("<=", Term.TInt(0), v("n")), true)], concl = eq(vb("len", [made]), v("n"))))
+        "vector.get.new" -> Option.Some(Schema(binders = ["n", "x", "i"], premises = [inRange(v("i"), v("n"))], concl = eq(vb("get", [made, v("i")]), Term.TCtor("Option.Some", [v("x")]))))
+        _ -> Option.None
+
+verify vectorSchema
+    vectorSchema("vector.len.set") == Option.None => false
+    vectorSchema("vector.keys") => Option.None

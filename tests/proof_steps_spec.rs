@@ -1816,6 +1816,129 @@ fn lean_takes_an_arm_of_a_nested_match_on_a_comparison() {
     let _ = fs::remove_dir_all(out);
 }
 
+const VECTOR_LAWS: [&str; 10] = [
+    "cells.keepTheList",
+    "cells.lengthOfTheList",
+    "cells.literalSize",
+    "cells.literalSizeRead",
+    "write.keepsTheLength",
+    "write.leavesOtherIndices",
+    "write.noWriteOutOfRange",
+    "write.nothingBelowZero",
+    "write.nothingPastTheEnd",
+    "write.readsBack",
+];
+
+#[test]
+fn both_kernels_check_the_vector_rules_and_refuse_mutations() {
+    let out = scratch("vectors");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("vectors.av", &out).into_iter().collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), VECTOR_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let swap = |law: &str, from: &str, to: &str| {
+        let text = read(law);
+        assert!(text.contains(from), "{law}: {text}");
+        text.replacen(from, to, 1)
+    };
+    for (kind, text) in [
+        (
+            "a read past the end taken as below zero",
+            swap(
+                "write.nothingPastTheEnd",
+                "(rule vector.get.past_end",
+                "(rule vector.get.negative",
+            ),
+        ),
+        (
+            "a read after a write taken as a read below zero",
+            swap(
+                "write.readsBack",
+                "(rule vector.get.set_same",
+                "(rule vector.get.negative",
+            ),
+        ),
+        (
+            "the length of a new vector taken as after a write",
+            swap(
+                "cells.literalSize",
+                "(rule vector.len.new",
+                "(rule vector.len.set",
+            ),
+        ),
+        (
+            "a write in range taken as out of range",
+            swap(
+                "write.noWriteOutOfRange",
+                "(rule vector.set.out_of_range",
+                "(rule vector.get.past_end",
+            ),
+        ),
+    ] {
+        let refused = aver::proof_kernel::verdict(&text);
+        assert!(refused.is_err(), "{kind}: {refused:?}");
+        let path = out.join("mutant.steps");
+        fs::write(&path, &text).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(
+            !result.status.success(),
+            "{kind}: {}",
+            format_output(&result)
+        );
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_checks_the_vector_rules_and_refuses_a_mutation() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("vectors-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "vectors.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "0",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in VECTOR_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let lean = fs::read_to_string(out.join("Vectors.lean")).unwrap();
+    let law = "write.nothingPastTheEnd";
+    let line = exact_line(&lean, "write_law_nothingPastTheEnd").to_string();
+    let wrong = line.replacen(
+        "AverSteps.vector_get_past_end",
+        "AverSteps.vector_get_negative",
+        1,
+    );
+    assert_ne!(line, wrong, "{line}");
+    assert!(
+        lean_refuses(&out, "Vectors.lean", &lean.replacen(&line, &wrong, 1), law),
+        "a read past the end taken as below zero: Lean must refuse the step term"
+    );
+    let _ = fs::remove_dir_all(out);
+}
+
 #[test]
 fn the_embedded_kernel_is_generated_from_the_aver_source() {
     let out = Command::new("python3")

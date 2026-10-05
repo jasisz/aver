@@ -1,0 +1,75 @@
+module Vectors
+    intent = "Laws the Vector rules settle: reads in and out of range, writes, lengths and the list a vector holds."
+    exposes [write, cells]
+    effects []
+
+fn write(v: Vector<Int>, i: Int, x: Int) -> Vector<Int>
+    ? "Write x at i, or leave v when i is out of range."
+    Option.withDefault(Vector.set(v, i, x), v)
+
+verify write
+    write(Vector.fromList([1, 2]), 0, 9) => Vector.fromList([9, 2])
+    write(Vector.fromList([1, 2]), 5, 9) => Vector.fromList([1, 2])
+
+fn cells(xs: List<Int>) -> Vector<Int>
+    ? "A list as a vector."
+    Vector.fromList(xs)
+
+verify cells
+    cells([1]) => Vector.fromList([1])
+
+verify write law readsBack
+    given v: Vector<Int> = [Vector.fromList([1, 2, 3])]
+    given i: Int = [0, 2]
+    given x: Int = [7]
+    when Bool.and(0 <= i, i < Vector.len(v))
+    Vector.get(write(v, i, x), i) => Option.Some(x)
+
+verify write law leavesOtherIndices
+    given v: Vector<Int> = [Vector.fromList([1, 2, 3])]
+    given i: Int = [0, 2]
+    given j: Int = [1, 2]
+    given x: Int = [7]
+    when Bool.and(Bool.and(0 <= i, i < Vector.len(v)), i != j)
+    Vector.get(write(v, i, x), j) => Vector.get(v, j)
+
+verify write law keepsTheLength
+    given v: Vector<Int> = [Vector.fromList([1, 2, 3])]
+    given i: Int = [-1, 0, 5]
+    given x: Int = [7]
+    Vector.len(write(v, i, x)) => Vector.len(v)
+
+verify write law nothingBelowZero
+    given v: Vector<Int> = [Vector.fromList([1, 2, 3])]
+    given i: Int = [-1, -5]
+    when i < 0
+    Vector.get(v, i) => Option.None
+
+verify write law nothingPastTheEnd
+    given v: Vector<Int> = [Vector.fromList([1, 2, 3])]
+    given i: Int = [3, 9]
+    when i >= Vector.len(v)
+    Vector.get(v, i) => Option.None
+
+verify write law noWriteOutOfRange
+    given v: Vector<Int> = [Vector.fromList([1, 2, 3])]
+    given i: Int = [-1, 3]
+    given x: Int = [7]
+    when Bool.or(i < 0, i >= Vector.len(v))
+    Vector.set(v, i, x) => Option.None
+
+verify cells law keepTheList
+    given xs: List<Int> = [[], [1, 2]]
+    List.fromVector(cells(xs)) => xs
+
+verify cells law lengthOfTheList
+    given xs: List<Int> = [[], [1, 2]]
+    Vector.len(cells(xs)) => List.len(xs)
+
+verify cells law literalSize
+    given x: Int = [0, 4]
+    Vector.len(Vector.new(3, x)) => 3
+
+verify cells law literalSizeRead
+    given x: Int = [0, 4]
+    Vector.get(Vector.new(3, x), 2) => Option.Some(x)

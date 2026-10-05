@@ -110,6 +110,62 @@ theorem list_drop_cons_gt {α : Type} (x : α) (a : List α) (n : Int) (h : deci
 theorem list_reverse_nil {α : Type} : ([] : List α).reverse = [] := rfl
 theorem list_reverse_cons {α : Type} (x : α) (a : List α) : (x :: a).reverse = (a.reverse ++ [x]) :=
   List.reverse_cons
+theorem vector_to_list_of_list {α : Type} (l : List α) : l.toArray.toList = l := List.toList_toArray
+theorem vector_of_list_to_list {α : Type} (v : Array α) : v.toList.toArray = v := Array.toArray_toList
+theorem vector_len_as_list {α : Type} (v : Array α) : (v.size : Int) = (v.toList.length : Int) := by simp
+theorem vector_get_negative {α : Type} (v : Array α) (i : Int) (h : decide (i < 0) = true) :
+    (if i < 0 then Option.none else v[Int.toNat i]?) = Option.none := by
+  simp [of_decide_eq_true h]
+theorem vector_get_past_end {α : Type} (v : Array α) (i : Int) (h : decide (i >= (v.size : Int)) = true) :
+    (if i < 0 then Option.none else v[Int.toNat i]?) = Option.none := by
+  have := of_decide_eq_true h
+  split
+  · rfl
+  · apply Array.getElem?_eq_none; omega
+theorem vector_set_out_of_range {α : Type} (v : Array α) (i : Int) (x : α)
+    (h : (decide (i < 0) || decide (i >= (v.size : Int))) = true) :
+    (if i < 0 then Option.none else if i < v.size then Option.some (v.set! (Int.toNat i) x) else Option.none) = Option.none := by
+  simp only [Bool.or_eq_true, decide_eq_true_eq] at h
+  split
+  · rfl
+  · split
+    · omega
+    · rfl
+theorem vector_get_set_same {α : Type} (v : Array α) (i : Int) (x : α)
+    (h : (decide (0 <= i) && decide (i < (v.size : Int))) = true) :
+    (if i < 0 then Option.none else ((if i < 0 then Option.none else if i < v.size then Option.some (v.set! (Int.toNat i) x) else Option.none).getD v)[Int.toNat i]?) = Option.some x := by
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at h
+  have h0 : ¬ i < 0 := by omega
+  have h1 : (i < v.size) := h.2
+  have h2 : i.toNat < v.size := by omega
+  simp [h0, h1, Array.set!, h2]
+theorem vector_get_set_other {α : Type} (v : Array α) (i : Int) (x : α) (j : Int)
+    (h : (decide (0 <= i) && decide (i < (v.size : Int))) = true) (hj : (i != j) = true) :
+    (if j < 0 then Option.none else ((if i < 0 then Option.none else if i < v.size then Option.some (v.set! (Int.toNat i) x) else Option.none).getD v)[Int.toNat j]?) = (if j < 0 then Option.none else v[Int.toNat j]?) := by
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at h
+  have hne : i ≠ j := by simpa using hj
+  have h0 : ¬ i < 0 := by omega
+  have h1 : (i < v.size) := h.2
+  have hne' : ¬ j < 0 → i.toNat ≠ j.toNat := by intro hj0; omega
+  by_cases hj0 : j < 0
+  · simp [hj0]
+  · simp [h0, h1, hj0, Array.set!, hne' hj0]
+theorem vector_len_set {α : Type} (v : Array α) (i : Int) (x : α) :
+    ((((if i < 0 then Option.none else if i < v.size then Option.some (v.set! (Int.toNat i) x) else Option.none).getD v).size : Int)) = (v.size : Int) := by
+  split
+  · rfl
+  · split <;> simp
+theorem vector_len_new {α : Type} (n : Int) (x : α) (h : decide (0 <= n) = true) :
+    ((Array.replicate (Int.toNat n) x).size : Int) = n := by
+  have := of_decide_eq_true h
+  simp; omega
+theorem vector_get_new {α : Type} (n : Int) (x : α) (i : Int)
+    (h : (decide (0 <= i) && decide (i < n)) = true) :
+    (if i < 0 then Option.none else (Array.replicate (Int.toNat n) x)[Int.toNat i]?) = Option.some x := by
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at h
+  have h0 : ¬ i < 0 := by omega
+  have h1 : i.toNat < n.toNat := by omega
+  simp [h0, h1]
 end AverSteps"#;
 
 /// The only rule-specific Lean table.
@@ -172,6 +228,17 @@ fn lemma(rule: WallRule) -> &'static str {
         WallRule::MapLenEmpty => "AverMap.step_len_empty",
         WallRule::MapLenSetPresent => "AverMap.step_len_set_present",
         WallRule::MapLenSetAbsent => "AverMap.step_len_set_absent",
+        WallRule::VecToListOfList => "AverSteps.vector_to_list_of_list",
+        WallRule::VecOfListToList => "AverSteps.vector_of_list_to_list",
+        WallRule::VecLenToList => "AverSteps.vector_len_as_list",
+        WallRule::VecGetNegative => "AverSteps.vector_get_negative",
+        WallRule::VecGetPastEnd => "AverSteps.vector_get_past_end",
+        WallRule::VecSetOutOfRange => "AverSteps.vector_set_out_of_range",
+        WallRule::VecGetSetSame => "AverSteps.vector_get_set_same",
+        WallRule::VecGetSetOther => "AverSteps.vector_get_set_other",
+        WallRule::VecLenSet => "AverSteps.vector_len_set",
+        WallRule::VecLenNew => "AverSteps.vector_len_new",
+        WallRule::VecGetNew => "AverSteps.vector_get_new",
     }
 }
 
