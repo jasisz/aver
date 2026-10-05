@@ -1018,9 +1018,10 @@ fn lean_inducts_with_the_functional_induction_principle_and_refuses_mutations() 
     let _ = fs::remove_dir_all(out);
 }
 
-const ARITH_LAWS: [&str; 5] = [
+const ARITH_LAWS: [&str; 6] = [
     "clamp.positiveStaysPositive",
     "next.staysAboveOne",
+    "overshoots.oppositeRemainder",
     "sqSum.expands",
     "sumTR.isAccPlusTotal",
     "twice.isDouble",
@@ -1768,6 +1769,49 @@ fn lean_states_each_cited_map_fact_once_for_every_key_and_value_type() {
             .count(),
         1,
         "{common}"
+    );
+    let _ = fs::remove_dir_all(out);
+}
+
+/// A step into an arm of a `match` on a comparison: the model writes the
+/// comparison as a Prop, so the arm's Bool premise reaches it through
+/// `decide`. The nested `match sample < -32768` used to be refused by Lean.
+#[test]
+fn lean_takes_an_arm_of_a_nested_match_on_a_comparison() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("nested-comparison");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "nested_comparison.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "0",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        summary["steps_rejected"],
+        serde_json::json!([]),
+        "{summary}"
+    );
+    assert_eq!(
+        summary["closed_by"]["clamp16.fitsSixteenBits"], "steps",
+        "{summary}"
     );
     let _ = fs::remove_dir_all(out);
 }
