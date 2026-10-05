@@ -1,6 +1,6 @@
 module Because
     intent = "Laws argued with `because` lines, and a law whose `when` takes several lines: each line, and each reason once proved, is a hypothesis of its own."
-    exposes [sum2, twice, count]
+    exposes [sum2, twice, count, bothPositive]
     effects []
 
 fn sum2(x: Int, y: Int) -> Int
@@ -55,3 +55,24 @@ verify count law doubledNonNegative
     because count(n) >= 0
     using [count.nonNegative]
     count(n) + count(n) >= 0 => true
+
+fn bothPositive(a: Int, b: Int) -> Bool
+    ? "Whether the sum of two numbers is positive."
+    a + b > 0
+
+verify bothPositive
+    bothPositive(1, 2) => true
+
+verify bothPositive law fromBoth
+    given a: Int = [1, 2]
+    given b: Int = [1, 3]
+    when a > 0
+    when b > 0
+    using []
+    bothPositive(a, b) => true
+
+verify bothPositive law shifted
+    given x: Int = [2, 5]
+    when x > 1
+    using [bothPositive.fromBoth]
+    bothPositive(x - 1, 1) => true

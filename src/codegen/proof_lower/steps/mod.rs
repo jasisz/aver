@@ -193,11 +193,11 @@ fn citations(env: &mut Env, laws: Vec<LawRef>, ob: &Obligation) -> Result<Proof,
         Ok(chain::meet(left, right))
     } else {
         let names = env.inputs.symbol_table;
-        Err(with_reasons(format!(
+        Err(env.with_open_premises(with_reasons(format!(
             "the cited laws rewrite the sides to `{}` and `{}`",
             crate::ir::proof_steps::show::term(left.cur(), names),
             crate::ir::proof_steps::show::term(right.cur(), names)
-        )))
+        ))))
     }
 }
 

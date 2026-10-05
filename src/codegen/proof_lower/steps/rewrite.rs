@@ -142,10 +142,72 @@ impl Env<'_> {
             && let ResolvedExpr::BinOp(BinOp::Lt, e2, n) = &args[1].node
             && canon(e) == canon(e2)
             && let Some(n) = term::int_value(n)
+            && let Some(p) = self.range(e, &n, 0)
         {
-            return self.range(e, &n, 0);
+            return Some(p);
         }
-        None
+        // A conjunction, one conjunct at a time.
+        if let ResolvedExpr::Call(ResolvedCallee::Builtin(b), args) = &t.node
+            && b == "Bool.and"
+            && args.len() == 2
+        {
+            return self.discharge_conjuncts(&t).ok();
+        }
+        // A comparison the decided comparisons in scope settle linearly.
+        self.linear_proof(&t, true)
+    }
+
+    /// Prove `t = true` for a conjunction (`Bool.and`, nested) one conjunct
+    /// at a time, each as [`Self::discharge`] proves a single fact, then
+    /// put the conjunction back together: `Bool.and(a, b)` is
+    /// `Bool.and(true, b)` by `a = true`, which is `b`, which is `true`.
+    /// The first conjunct no proof is found for comes back.
+    pub(crate) fn discharge_conjuncts(&mut self, t: &Term) -> Result<Proof, Box<Term>> {
+        let t = canon(t);
+        let ResolvedExpr::Call(ResolvedCallee::Builtin(b), args) = &t.node else {
+            return self.discharge(&t).ok_or(Box::new(t));
+        };
+        if b != "Bool.and" || args.len() != 2 {
+            return self.discharge(&t).ok_or(Box::new(t));
+        }
+        let (a, b) = (canon(&args[0]), canon(&args[1]));
+        let pa = match self.discharge(&a) {
+            Some(p) => p,
+            None => return Err(Box::new(self.first_open_conjunct(&a))),
+        };
+        let pb = match self.discharge(&b) {
+            Some(p) => p,
+            None => return Err(Box::new(self.first_open_conjunct(&b))),
+        };
+        let truth = term::boolean(true);
+        Ok(Proof::Trans {
+            terms: vec![
+                t.clone(),
+                canon(&term::bool_and(truth.clone(), b.clone())),
+                b.clone(),
+                truth,
+            ],
+            steps: vec![
+                Proof::Congr {
+                    ctx: term::bool_and(term::hole(), b.clone()),
+                    inner: Box::new(pa),
+                },
+                Proof::Rule {
+                    rule: WallRule::AndTrueL,
+                    subst: vec![("b".into(), b)],
+                    premises: Vec::new(),
+                },
+                pb,
+            ],
+        })
+    }
+
+    /// The innermost conjunct of `t` that [`Self::discharge`] does not prove.
+    pub(crate) fn first_open_conjunct(&mut self, t: &Term) -> Term {
+        match self.discharge_conjuncts(t) {
+            Ok(_) => canon(t),
+            Err(open) => *open,
+        }
     }
 
     fn range(&mut self, e: &Term, n: &num_bigint::BigInt, depth: usize) -> Option<Proof> {
@@ -201,7 +263,17 @@ impl Env<'_> {
                 }
                 let subst = ordered(&law.givens, found)?;
                 let premise = match &law.premise {
-                    Some(when) => Some(Box::new(self.discharge(&term::subst(when, &subst).ok()?)?)),
+                    Some(when) => {
+                        let when = term::subst(when, &subst).ok()?;
+                        match self.discharge(&when) {
+                            Some(p) => Some(Box::new(p)),
+                            None => {
+                                let open = self.first_open_conjunct(&when);
+                                self.note_open_premise(&law.key, &open);
+                                return None;
+                            }
+                        }
+                    }
                     None => None,
                 };
                 let rhs = term::subst(&law.rhs, &subst).ok()?;
