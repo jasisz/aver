@@ -274,6 +274,7 @@ verify header
 
 verify header law sizeIsFortyFour
     given octets: Int = [0, 2, 44100, 2000000]
+    using [List.len.ofConcat]
     List.len(header(octets)) => 44
 
 verify header law dataLengthIsLast
