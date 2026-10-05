@@ -1467,6 +1467,39 @@ fn a_stuck_law_is_hinted_the_facts_that_rewrite_where_it_stopped() {
 }
 
 #[test]
+fn aver_facts_lists_the_facts_with_their_statements() {
+    let dir = repo_root();
+    let text = aver_in(&dir, &["facts", "List.len"]);
+    let out = String::from_utf8_lossy(&text.stdout).to_string();
+    assert!(text.status.success(), "{}", format_output(&text));
+    assert!(
+        out.contains("List.len.ofConcat\n    given a, b\n    List.len(List.concat(a, b)) => List.len(a) + List.len(b)\n"),
+        "{out}"
+    );
+    assert!(!out.contains("List.concat.assoc"), "{out}");
+    let json = aver_in(&dir, &["facts", "--json"]);
+    let list: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&json.stdout).trim()).unwrap();
+    let names: Vec<&str> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"List.reverse.involutive"), "{names:?}");
+    let involutive = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == "List.reverse.involutive")
+        .unwrap();
+    assert_eq!(
+        involutive["cites"],
+        serde_json::json!(["List.reverse.ofConcat"])
+    );
+}
+
+#[test]
 fn the_embedded_kernel_is_generated_from_the_aver_source() {
     let out = Command::new("python3")
         .args([

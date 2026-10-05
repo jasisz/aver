@@ -291,6 +291,16 @@ fn compute_compares_whole_lists() {
     assert!(check_script(&s(l(&[1, 3]))).is_err());
 }
 
+/// `docs/builtin-facts.md` is generated from the registry.
+#[test]
+fn the_builtin_facts_page_is_generated_from_the_registry() {
+    assert_eq!(
+        super::facts::markdown(""),
+        include_str!("../../../docs/builtin-facts.md"),
+        "run `aver facts --markdown > docs/builtin-facts.md`"
+    );
+}
+
 /// A module-level binding opens to its value and to nothing else: the step
 /// names the binding, the script carries its value, and a binding the
 /// script does not carry proves nothing.

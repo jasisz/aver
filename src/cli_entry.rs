@@ -21,6 +21,8 @@ mod context_format;
 mod diagnostic;
 #[path = "main/effects_cmd.rs"]
 mod effects_cmd;
+#[path = "main/facts_cmd.rs"]
+mod facts_cmd;
 use crate::format as format_cmd;
 #[path = "main/proof_waterfall.rs"]
 mod proof_waterfall;
@@ -249,6 +251,13 @@ fn main_impl(
             json,
         } => {
             capabilities_cmd::cmd_capabilities(file, module_root.as_deref(), *json);
+        }
+        Commands::Facts {
+            prefix,
+            json,
+            markdown,
+        } => {
+            facts_cmd::cmd_facts(prefix.as_deref(), *json, *markdown);
         }
         Commands::Effects {
             file,

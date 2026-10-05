@@ -327,6 +327,16 @@ Lean export modes:
 
 `--check` builds the export with `lake` and gates on the result (`--check-json` gives a machine-readable summary). `--gate <baseline>` / `--write-baseline` are the proof ratchet. `--gate` fails when a law of the baseline is gone, drops to a lower tier, changes backend, newly depends on an axiom other than Lean's standard three (`propext`, `Classical.choice`, `Quot.sound`), or newly depends on one of the standard three while staying at the same tier. A law that moves to a higher tier, such as failed to universal, is reported as `promoted` and passes, even when its universal proof uses the standard axioms. A guarded (`when`) law is stated for every input only; one whose speculative proof Lean does not close is declined (charged against `--declined-budget`), not counted as a sorry. A baseline from 0.30 that still holds `bounded` laws fails the gate with a message saying so. `--compare-manifest <earlier proof_manifest.json>` (Lean, check mode) says, for each law that did not close, whether its own script changed and which definitions it opens changed since that manifest. `--minimize` (Lean, implies `--check`) collapses each auto-proof to the single tactic that actually closed it. See [docs/lean.md](lean.md) for the proof workflow, the `--check` summary fields, `--compare-manifest` and `--minimize`.
 
+### Builtin facts
+
+```bash
+aver facts                 # every builtin fact, with its statement as an Aver law
+aver facts List.reverse    # only the facts whose name starts with this
+aver facts --json
+```
+
+A law cites a builtin fact in `using` like one of its own program's laws (`using [List.len.ofConcat]`). Facts hold for lists of any element type; their step proofs travel with the citation and are checked before use. When `aver proof` leaves a law open, or closes it only by tactics, it prints a `hint:` line naming each fact whose left side matches a part of where the steps stopped. Add the fact to `using` yourself; nothing is cited for you.
+
 ### Replay
 
 ```bash
