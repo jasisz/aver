@@ -230,29 +230,127 @@ fn fresh_env<'a>(
 /// joins with `Bool.and`), each with its proof from hypothesis `when`.
 /// A `when` of one line has none.
 fn when_lines(premise: &Term) -> Vec<(Term, Proof)> {
-    fn split(t: &Term, proof: Proof, out: &mut Vec<(Term, Proof)>) {
-        use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
-        if let ResolvedExpr::Call(ResolvedCallee::Builtin(b), args) = &t.node
-            && b == "Bool.and"
-            && args.len() == 2
-        {
-            let elim = |rule: WallRule| Proof::Rule {
-                rule,
-                subst: vec![("a".into(), canon(&args[0])), ("b".into(), canon(&args[1]))],
-                premises: vec![proof.clone()],
-            };
-            split(&args[0], elim(WallRule::AndElimL), out);
-            split(&args[1], elim(WallRule::AndElimR), out);
-        } else {
-            out.push((canon(t), proof));
-        }
-    }
     let mut out = Vec::new();
-    split(premise, Proof::Hyp("when".into()), &mut out);
+    split_and(premise, Proof::Hyp("when".into()), &mut out);
     if out.len() < 2 {
         return Vec::new();
     }
     out
+}
+
+/// The leaves of a `Bool.and` (nested) that `proof` proves true, each with
+/// its proof by the eliminations.
+fn split_and(t: &Term, proof: Proof, out: &mut Vec<(Term, Proof)>) {
+    use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
+    if let ResolvedExpr::Call(ResolvedCallee::Builtin(b), args) = &t.node
+        && b == "Bool.and"
+        && args.len() == 2
+    {
+        let elim = |rule: WallRule| Proof::Rule {
+            rule,
+            subst: vec![("a".into(), canon(&args[0])), ("b".into(), canon(&args[1]))],
+            premises: vec![proof.clone()],
+        };
+        split_and(&args[0], elim(WallRule::AndElimL), out);
+        split_and(&args[1], elim(WallRule::AndElimR), out);
+    } else {
+        out.push((canon(t), proof));
+    }
+}
+
+/// A hypothesis `name : fact = true` whose fact calls a predicate that does
+/// not recurse, opened once: its body as hypothesis `<name>_open`, from the
+/// definition's whole-body equation and the hypothesis, then the body's
+/// `Bool.and` lines as `<name>_open1`, `<name>_open2`, … like a `when`'s.
+/// Nothing for any other fact, or for a body that is a `match`.
+fn open_hypothesis(
+    inputs: &ProofLowerInputs,
+    name: &str,
+    fact: &Term,
+    opened: &mut Vec<crate::ir::proof_steps::Def>,
+) -> Vec<(String, Term, Option<Proof>)> {
+    use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
+    use crate::ir::proof_steps::term;
+    let fact = canon(fact);
+    let ResolvedExpr::Call(ResolvedCallee::Fn(id), args) = &fact.node else {
+        return Vec::new();
+    };
+    if inputs.recursive_fns.contains(id) {
+        return Vec::new();
+    }
+    let Some(def) = Env::new(inputs).def(*id) else {
+        return Vec::new();
+    };
+    if matches!(def.body.node, ResolvedExpr::Match { .. }) {
+        return Vec::new();
+    }
+    let args: Vec<Term> = args.iter().map(canon).collect();
+    let Ok(outer) = def.outer(&args) else {
+        return Vec::new();
+    };
+    let Ok(body) = term::subst(&def.body, &outer) else {
+        return Vec::new();
+    };
+    let body = canon(&body);
+    let open = format!("{name}_open");
+    let from = Proof::Trans {
+        terms: vec![body.clone(), fact.clone(), term::boolean(true)],
+        steps: vec![
+            Proof::Symm(Box::new(Proof::Unfold {
+                fn_id: *id,
+                arm: 0,
+                args,
+                binders: Vec::new(),
+                premise: None,
+            })),
+            Proof::Hyp(name.into()),
+        ],
+    };
+    if !opened.iter().any(|d| d.fn_id == *id) {
+        opened.push(def);
+    }
+    let mut out = vec![(open.clone(), body.clone(), Some(from))];
+    let mut lines = Vec::new();
+    split_and(&body, Proof::Hyp(open.clone()), &mut lines);
+    if lines.len() > 1 {
+        for (i, (line, proof)) in lines.into_iter().enumerate() {
+            out.push((format!("{open}{}", i + 1), line, Some(proof)));
+        }
+    }
+    out
+}
+
+/// Whether `p` opens definition `f` anywhere.
+fn uses_unfold(p: &Proof, f: crate::ir::identity::FnId) -> bool {
+    let any = |ps: &[Proof]| ps.iter().any(|q| uses_unfold(q, f));
+    match p {
+        Proof::Unfold { fn_id, premise, .. } => {
+            *fn_id == f || premise.as_ref().is_some_and(|q| uses_unfold(q, f))
+        }
+        Proof::Induct { fn_id, cases, .. } => {
+            *fn_id == f || cases.iter().any(|c| uses_unfold(&c.proof, f))
+        }
+        Proof::Symm(q) | Proof::Congr { inner: q, .. } => uses_unfold(q, f),
+        Proof::Absurd { contradiction, .. } => uses_unfold(contradiction, f),
+        Proof::Arm { premise, .. } => uses_unfold(premise, f),
+        Proof::Law { premise, .. } => premise.as_ref().is_some_and(|q| uses_unfold(q, f)),
+        Proof::Trans { steps, .. } => any(steps),
+        Proof::Rule { premises, .. } => any(premises),
+        Proof::Enum { cases, .. } => any(cases),
+        Proof::Cases {
+            if_true, if_false, ..
+        } => uses_unfold(if_true, f) || uses_unfold(if_false, f),
+        Proof::Have { proof, body, .. } => uses_unfold(proof, f) || uses_unfold(body, f),
+        Proof::InductList { nil, cons, .. } => uses_unfold(nil, f) || uses_unfold(cons, f),
+        Proof::Refl(_)
+        | Proof::Hyp(_)
+        | Proof::Linear { .. }
+        | Proof::UnfoldConst { .. }
+        | Proof::Proj { .. }
+        | Proof::Cell { .. }
+        | Proof::Compute { .. }
+        | Proof::Ring { .. } => false,
+    }
 }
 
 /// Whether `p` may read hypothesis `name` (an over-approximation: a
@@ -387,13 +485,28 @@ fn produce(
             | ProofStrategy::IdentityElement { .. }
     );
     // Each line of a `when` written over several lines is a hypothesis of
-    // its own, cut from `when` by the `Bool.and` eliminations.
+    // its own, cut from `when` by the `Bool.and` eliminations; a hypothesis
+    // that calls a predicate is opened once to its body, split the same way.
+    // The cuts, in scope order: `None` marks reason i, proved in its part.
+    let mut cuts: Vec<(String, Term, Option<Proof>)> = Vec::new();
+    let mut opened: Vec<crate::ir::proof_steps::Def> = Vec::new();
     let lines = ob.premise.as_ref().map(when_lines).unwrap_or_default();
-    let mut known: Vec<(String, Term)> = lines
-        .iter()
-        .enumerate()
-        .map(|(i, (fact, _))| (format!("when{}", i + 1), fact.clone()))
-        .collect();
+    if lines.is_empty() {
+        if let Some(p) = &ob.premise {
+            cuts.extend(open_hypothesis(inputs, "when", p, &mut opened));
+        }
+    } else {
+        for (i, (fact, from_when)) in lines.iter().enumerate() {
+            let name = format!("when{}", i + 1);
+            cuts.push((name.clone(), fact.clone(), Some(from_when.clone())));
+            cuts.extend(open_hypothesis(inputs, &name, fact, &mut opened));
+        }
+    }
+    let known_of = |cuts: &[(String, Term, Option<Proof>)]| -> Vec<(String, Term)> {
+        cuts.iter()
+            .map(|(n, f, _)| (n.clone(), f.clone()))
+            .collect()
+    };
     let reasons: Vec<Term> = t.reasons.iter().map(|r| law_term(inputs, t, r)).collect();
     let n = reasons.len();
     let mut parts: Vec<Part> = Vec::new();
@@ -412,11 +525,15 @@ fn produce(
             ) => Some(*f),
             _ => None,
         };
+        let known = known_of(&cuts);
         let part = prove_part(inputs, t, &part_ob, &known, &using, induct_on, false, hints)
             .map_err(|why| format!("reason {} of {n}: {why}", i + 1))?;
+        let name = format!("because{}", i + 1);
+        cuts.push((name.clone(), reason.clone(), Some(part.proof.clone())));
         parts.push(part);
-        known.push((format!("because{}", i + 1), reason.clone()));
+        cuts.extend(open_hypothesis(inputs, &name, reason, &mut opened));
     }
+    let known = known_of(&cuts);
     let last = prove_part(
         inputs,
         t,
@@ -434,22 +551,16 @@ fn produce(
             format!("the claim after its {n} reasons: {why}")
         }
     })?;
+    // A reason is always cut; a `when` line or an opened hypothesis only
+    // when something after it reads it.
     let mut proof = last.proof.clone();
-    for (i, (reason, part)) in reasons.iter().zip(&parts).enumerate().rev() {
-        proof = Proof::Have {
-            name: format!("because{}", i + 1),
-            fact: reason.clone(),
-            proof: Box::new(part.proof.clone()),
-            body: Box::new(proof),
-        };
-    }
-    for (i, (fact, from_when)) in lines.iter().enumerate().rev() {
-        let name = format!("when{}", i + 1);
-        if uses_hyp(&proof, &name) {
+    for (name, fact, from) in cuts.into_iter().rev() {
+        let reason = name.starts_with("because") && name[7..].bytes().all(|b| b.is_ascii_digit());
+        if reason || uses_hyp(&proof, &name) {
             proof = Proof::Have {
                 name,
-                fact: fact.clone(),
-                proof: Box::new(from_when.clone()),
+                fact,
+                proof: Box::new(from.expect("every cut has its proof")),
                 body: Box::new(proof),
             };
         }
@@ -462,7 +573,10 @@ fn produce(
     }
     let mut script = Script {
         obligation: ob,
-        defs: Vec::new(),
+        defs: opened
+            .into_iter()
+            .filter(|d| uses_unfold(&proof, d.fn_id))
+            .collect(),
         consts: Vec::new(),
         laws: Vec::new(),
         proof,
