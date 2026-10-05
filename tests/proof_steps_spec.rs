@@ -2070,6 +2070,8 @@ fn both_kernels_check_because_chains_and_refuse_mutations() {
     assert_eq!(
         files.keys().cloned().collect::<Vec<_>>(),
         [
+            "bothPositive.fromBoth",
+            "bothPositive.shifted",
             "count.doubledNonNegative",
             "sum2.staysPositive",
             "twice.grows"
@@ -2086,6 +2088,10 @@ fn both_kernels_check_because_chains_and_refuse_mutations() {
     }
     let doubled = read("count.doubledNonNegative");
     let positive = read("sum2.staysPositive");
+    // The cited law's two-line `when`, one conjunct at a time: a linear
+    // step for `x - 1 > 0`, a computation for `1 > 0`.
+    let shifted = read("bothPositive.shifted");
+    assert!(shifted.contains("(rule bool.and.true_l "), "{shifted}");
     assert!(doubled.contains("(have because1 "), "{doubled}");
     assert!(positive.contains("(have when1 "), "{positive}");
     for (kind, text) in [
@@ -2100,6 +2106,14 @@ fn both_kernels_check_because_chains_and_refuse_mutations() {
         (
             "a reason read before its cut",
             mutate_proof(&doubled, "(have because1 ", "(have because2 "),
+        ),
+        (
+            "the conjunction put back together by the wrong rule",
+            mutate_proof(&shifted, "(rule bool.and.true_l ", "(rule bool.and.true_r "),
+        ),
+        (
+            "a conjunct settled with a weight that does not add up",
+            mutate_proof(&shifted, "true (when) (1 1)", "true (when) (1 2)"),
         ),
         (
             "the other line of the when",
@@ -2149,6 +2163,8 @@ fn lean_checks_each_obligation_of_a_because_chain_by_its_steps() {
     )
     .unwrap();
     for obligation in [
+        "bothPositive.fromBoth",
+        "bothPositive.shifted",
         "count.doubledNonNegative",
         "count.doubledNonNegative.because1",
         "count.doubledNonNegative.implication",

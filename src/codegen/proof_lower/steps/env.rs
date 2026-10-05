@@ -31,6 +31,9 @@ pub(crate) struct Env<'a> {
     /// Builtin facts that would rewrite a part of a term evaluation
     /// stopped at (see [`super::eval`]), as hints for the report.
     pub hints: Vec<String>,
+    /// Where a cited law matched but a conjunct of its `when` found no
+    /// proof, for the refusal.
+    pub open_premises: Vec<String>,
 }
 
 impl<'a> Env<'a> {
@@ -49,6 +52,7 @@ impl<'a> Env<'a> {
             next_ih: 0,
             nesting: 0,
             hints: Vec::new(),
+            open_premises: Vec::new(),
         }
     }
 
@@ -190,6 +194,27 @@ impl<'a> Env<'a> {
             return None;
         }
         Some(def)
+    }
+
+    /// Record that law `key` matched but its `when` needs `open`, which no
+    /// hypothesis, linear step or computation gives.
+    pub(crate) fn note_open_premise(&mut self, key: &str, open: &Term) {
+        let note = format!(
+            "law {key} applies but its `when` needs `{}`, which no hypothesis, linear step or computation gives",
+            crate::ir::proof_steps::show::term(open, self.inputs.symbol_table)
+        );
+        if !self.open_premises.contains(&note) {
+            self.open_premises.push(note);
+        }
+    }
+
+    /// `why`, with the cited laws whose `when` stayed open.
+    pub(crate) fn with_open_premises(&self, why: String) -> String {
+        if self.open_premises.is_empty() {
+            why
+        } else {
+            format!("{why} ({})", self.open_premises.join("; "))
+        }
     }
 
     pub(crate) fn hyp_for(&self, t: &Term) -> Option<(String, Term)> {

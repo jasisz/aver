@@ -891,7 +891,7 @@ impl Env<'_> {
 
     /// `goal = value` for an Int comparison `goal`, when its opposite and
     /// the decided comparisons in scope add up to a contradiction.
-    fn linear_proof(&self, goal: &Term, value: bool) -> Option<Proof> {
+    pub(crate) fn linear_proof(&self, goal: &Term, value: bool) -> Option<Proof> {
         use crate::ir::proof_steps::linear;
         let known: Vec<(String, crate::ir::proof_steps::Eqn)> = self
             .hyps
@@ -1076,7 +1076,7 @@ impl Env<'_> {
                     .join(", "),
             );
         }
-        s
+        self.with_open_premises(s)
     }
 }
 
