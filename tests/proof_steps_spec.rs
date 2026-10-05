@@ -1249,11 +1249,18 @@ fn lean_checks_the_list_rules_and_refuses_a_mutation() {
     let _ = fs::remove_dir_all(out);
 }
 
-const FACT_LAWS: [&str; 4] = [
+const FACT_LAWS: [&str; 11] = [
     "batch.sizeAdds",
     "batch.threeBatches",
+    "joined.dropsTheFront",
+    "joined.emptyOnTheRight",
     "joined.lengthAdds",
     "joined.regroups",
+    "joined.takesTheFront",
+    "reversed.keepsTheLength",
+    "reversed.lengthIsNeverNegative",
+    "reversed.ofJoined",
+    "reversed.twiceIsTheSame",
 ];
 
 #[test]
@@ -1298,6 +1305,16 @@ fn a_cited_builtin_fact_is_checked_with_the_law_and_refused_when_mutated() {
                 "(fact List.concat.assoc (a",
             ),
         ),
+        ("a fact cited before a fact its proof cites", {
+            // Move `List.concat.rightIdentity` after the fact that cites it.
+            let text = read("reversed.twiceIsTheSame");
+            let from = text.find("\n  (fact List.concat.rightIdentity ").unwrap();
+            let to = text[from + 1..].find("\n  (fact ").unwrap() + from + 1;
+            let entry = text[from..to].to_string();
+            let rest = format!("{}{}", &text[..from], &text[to..]);
+            let at = rest.find("\n  (fact List.reverse.involutive ").unwrap();
+            format!("{}{entry}{}", &rest[..at], &rest[at..])
+        }),
         ("a fact cited without its proof", {
             let text = read("joined.regroups");
             let from = text.find("\n  (fact ").unwrap();

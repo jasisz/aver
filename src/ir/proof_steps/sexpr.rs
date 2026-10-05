@@ -10,6 +10,7 @@
 //!                    (consts (const NAME TERM)…)
 //!                    (laws (law KEY (GIVEN…) PREMISE TERM TERM)…
 //!                          (fact KEY (OGIVEN…) TERM TERM PROOF)…)
+//!   a fact comes after the facts its proof cites, and may cite only them
 //!                    (proof PROOF))
 //! OGIVEN  := NAME | (NAME TYPE)       ; a given of finite type, with its type
 //!          | (NAME (tlist))            ; a given of list type
@@ -569,7 +570,20 @@ pub fn script(s: &Script, names: &dyn Names) -> Result<String, String> {
         ));
     }
     out.push_str(")\n (laws");
-    for l in &s.laws {
+    // A cited fact comes after every fact its own proof cites, each once.
+    fn with_facts<'a>(laws: &'a [super::LawRef], out: &mut Vec<&'a super::LawRef>) {
+        for l in laws {
+            if let Some(fact) = &l.fact {
+                with_facts(&fact.laws, out);
+            }
+            if !out.iter().any(|o| o.key == l.key) {
+                out.push(l);
+            }
+        }
+    }
+    let mut cited = Vec::new();
+    with_facts(&s.laws, &mut cited);
+    for l in cited {
         if let Some(fact) = &l.fact {
             let lists = &fact.obligation.lists;
             let givens: Vec<String> = l
