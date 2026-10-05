@@ -78,6 +78,7 @@ mod run_turn;
 mod tests;
 mod top_level;
 mod types;
+mod types_body_values;
 mod types_discovery;
 mod vectors;
 mod view;

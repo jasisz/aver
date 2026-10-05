@@ -243,6 +243,10 @@ pub(super) fn emit_module_with(
         registry.set_capability_boundary_layouts(plan.boundary_layouts().clone());
     }
     registry.install_capability_resource_aliases();
+    // A value whose type no signature, field or annotation spells — a
+    // `List.zip` result used straight in `main` — gets its slot from the
+    // checker's stamp, appended after everything discovered above.
+    registry.register_body_value_types(&resolved_fn_defs);
 
     // Lower the post-link resolved fns to MIR and run the shared
     // `optimize` pipeline — the SAME six passes the VM consumes
