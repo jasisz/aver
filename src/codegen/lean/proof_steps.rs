@@ -307,6 +307,8 @@ struct Renderer<'a> {
     /// Hypotheses the theorem introduces whose term is a bare comparison:
     /// Lean states them `(a < b) = true`, an equation of Props.
     prop_hyps: Vec<String>,
+    /// Whether an induction was rendered by a type's recursor.
+    by_recursor: bool,
 }
 
 /// `t` with every empty list that has no type typed `List α`.
@@ -385,13 +387,13 @@ impl Renderer<'_> {
 
     /// Induction along a function whose arms split further around a
     /// recursive call, where Lean's `f.induct` has more cases than the
-    /// arms, or under hypotheses it carries: Lean's `induction` on the type
-    /// of the matched given, one alternative per constructor (the arm that
-    /// matches it), with the varied givens generalised and the carried
-    /// hypotheses reverted first, so the motive is the claim under them.
-    /// Each hypothesis of a case is the induction hypothesis of the part
-    /// its call recurses on, applied to the call's arguments at the varied
-    /// places and to the proofs of the carried hypotheses there.
+    /// arms, or under hypotheses it carries: the recursor of the matched
+    /// given's type, one case per constructor (the arm that matches it),
+    /// with the motive the claim for every value of the varied givens and
+    /// under the carried hypotheses. Each hypothesis of a case is the
+    /// induction hypothesis of the part its call recurses on, applied to
+    /// the call's arguments at the varied places and to the proofs of the
+    /// carried hypotheses there.
     #[allow(clippy::too_many_arguments)]
     fn induct_by_cases_of_type(
         &mut self,
@@ -408,11 +410,6 @@ impl Renderer<'_> {
     ) -> Result<String, String> {
         use crate::ir::proof_steps::induct;
         let lean = super::syntax::aver_name_to_lean;
-        // Lean generalises in the order of the context, which is the order
-        // of the givens.
-        let mut general: Vec<(usize, String)> = general.to_vec();
-        let givens = &self.script.obligation.givens;
-        general.sort_by_key(|(_, g)| givens.iter().position(|n| n == g));
         let varying: Vec<String> = std::iter::once(v.to_string())
             .chain(general.iter().map(|(_, g)| g.clone()))
             .collect();
@@ -435,22 +432,39 @@ impl Renderer<'_> {
             stated.push((name.clone(), e.clone()));
         }
         let kept: Hyps = hyps.iter().filter(|(_, e)| !mentions(e)).cloned().collect();
-        let carried_names: Vec<String> = carried.iter().map(|n| self.hyp_name(n)).collect();
-        let mut alts = Vec::new();
+        let gs: Vec<String> = general.iter().map(|(_, g)| lean(g)).collect();
+        let hs: Vec<String> = carried.iter().map(|n| self.hyp_name(n)).collect();
+        let mut motive = String::new();
+        if !gs.is_empty() {
+            motive.push_str(&format!("∀ {}, ", gs.join(" ")));
+        }
+        for (_, e) in &stated {
+            motive.push_str(&format!("{} → ", self.eqn(e)));
+        }
+        motive.push_str(&self.eqn(eq));
+        self.by_recursor = true;
+        let (recursor, order) = self.recursor(&args[j])?;
+        let mut minors: Vec<Option<String>> = vec![None; order.len()];
         for (arm, case) in arms.iter().zip(cases) {
-            let (alt, recursive) = self.constructor_fields(&arm.pattern)?;
+            let (ctor, recursive) = self.constructor_fields(&arm.pattern)?;
+            let at = order
+                .iter()
+                .position(|c| *c == ctor)
+                .ok_or("induct: an arm matches no constructor of the type")?;
             if recursive.len() != case.binders.len() {
                 return Err("induct: the pattern does not bind every field".into());
             }
             let field_ih = |k: usize| format!("steps_rec_{}", lean(&case.binders[k]));
             let mut names: Vec<String> = case.binders.iter().map(|b| lean(b)).collect();
             names.extend((0..recursive.len()).filter(|k| recursive[*k]).map(field_ih));
+            names.extend(gs.iter().cloned());
+            names.extend(hs.iter().cloned());
             let stated_case = induct::case(
                 def,
                 args,
                 j,
                 v,
-                &general,
+                general,
                 arm,
                 &case.binders,
                 &case.ihs,
@@ -465,7 +479,7 @@ impl Renderer<'_> {
                     Eqn::new(term::subst(&e.lhs, &here)?, term::subst(&e.rhs, &here)?),
                 ));
             }
-            let sources = induct::ih_sources(def, args, j, &general, arm, &case.binders)?;
+            let sources = induct::ih_sources(def, args, j, general, arm, &case.binders)?;
             let mut haves = String::new();
             let mut taken = Vec::new();
             for (k, ((ih, e), (part, at))) in stated_case.ihs.iter().zip(&sources).enumerate() {
@@ -488,32 +502,68 @@ impl Renderer<'_> {
             let mut inner = scope.clone();
             inner.extend(taken);
             let body = self.proof(&case.proof, &inner)?;
-            let intro = if carried_names.is_empty() {
-                String::new()
+            minors[at] = Some(if names.is_empty() {
+                format!("({haves}{body})")
             } else {
-                format!("intro {}; ", carried_names.join(" "))
-            };
-            alts.push(format!(
-                "| {alt} {} => {intro}exact ({haves}{body})",
-                names.join(" ")
+                format!("(fun {} => {haves}{body})", names.join(" "))
+            });
+        }
+        let minors: Vec<String> = minors
+            .into_iter()
+            .map(|m| m.ok_or_else(|| "induct: a constructor has no arm".to_string()))
+            .collect::<Result<_, _>>()?;
+        let mut s = format!(
+            "({recursor} (motive := fun {} => {motive}) {} {}",
+            lean(v),
+            minors.join(" "),
+            lean(v)
+        );
+        for g in &gs {
+            s.push_str(&format!(" {g}"));
+        }
+        for name in carried {
+            s.push_str(&format!(
+                " {}",
+                self.proof(&Proof::Hyp(name.clone()), hyps)?
             ));
         }
-        let generalizing = if general.is_empty() {
-            String::new()
-        } else {
-            let gs: Vec<String> = general.iter().map(|(_, g)| lean(g)).collect();
-            format!(" generalizing {}", gs.join(" "))
-        };
-        let revert = if carried_names.is_empty() {
-            String::new()
-        } else {
-            format!("revert {}; ", carried_names.join(" "))
-        };
-        Ok(format!(
-            "by {revert}induction {}{generalizing} with {}",
-            lean(v),
-            alts.join(" ")
-        ))
+        s.push(')');
+        Ok(s)
+    }
+
+    /// The recursor of the type of the given `v`, and its constructors in
+    /// the order the recursor takes their cases.
+    fn recursor(&self, v: &Term) -> Result<(String, Vec<String>), String> {
+        use crate::ast::Type;
+        use crate::codegen::proof_recognize::peano_type_named;
+        match v.ty() {
+            Some(Type::List(_)) => Ok(("List.rec".into(), vec!["nil".into(), "cons".into()])),
+            Some(ty @ Type::Named { name, .. }) => {
+                if peano_type_named(self.ctx, name).is_some() {
+                    return Ok(("Nat.rec".into(), vec!["zero".into(), "succ".into()]));
+                }
+                let variants = self
+                    .ctx
+                    .type_defs
+                    .iter()
+                    .chain(self.ctx.modules.iter().flat_map(|m| m.type_defs.iter()))
+                    .find_map(|t| match t {
+                        crate::ast::TypeDef::Sum {
+                            name: n, variants, ..
+                        } if n == name => Some(variants),
+                        _ => None,
+                    })
+                    .ok_or("induct: no definition of the matched type")?;
+                Ok((
+                    format!("{}.rec", type_to_lean(ty)),
+                    variants
+                        .iter()
+                        .map(|w| super::syntax::lean_ctor_name(&w.name))
+                        .collect(),
+                ))
+            }
+            _ => Err("induct: the matched given is not of a list or a sum type".into()),
+        }
     }
 
     /// The name of the Lean `induction` alternative for an arm's pattern,
@@ -1383,6 +1433,7 @@ pub(crate) fn render_cited_facts(body: &str, ctx: &CodegenContext) -> Result<Str
             support: Vec::new(),
             generic: true,
             prop_hyps: Vec::new(),
+            by_recursor: false,
         };
         let ob = &script.obligation;
         let statement = r.eqn(&Eqn::new(ob.lhs.clone(), ob.rhs.clone()));
@@ -1745,6 +1796,7 @@ fn render_with(
         support: Vec::new(),
         generic: false,
         prop_hyps: Vec::new(),
+        by_recursor: false,
     };
     let mut hyps = Hyps::new();
     if let Some(p) = &script.obligation.premise {
@@ -1759,8 +1811,19 @@ fn render_with(
             r.prop_hyps.push(name.clone());
         }
     }
-    let term = r.proof(&script.proof, &hyps)?;
-    let term = to_statement(&script.obligation, term);
+    let saved = (r.laws.clone(), r.prop_hyps.clone());
+    let mut term = r.proof(&script.proof, &hyps);
+    // An induction by a type's recursor: every `match` of the proof,
+    // the opened definitions' included, without generalising.
+    if r.by_recursor {
+        let previous = ctx.lean_match_fixed.replace(true);
+        (r.laws, r.prop_hyps) = saved;
+        r.unfolds.clear();
+        r.support.clear();
+        term = r.proof(&script.proof, &hyps);
+        ctx.lean_match_fixed.set(previous);
+    }
+    let term = to_statement(&script.obligation, term?);
     Ok(Rendered {
         support: r.support,
         term,

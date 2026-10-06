@@ -2044,18 +2044,23 @@ fn lean_inducts_through_a_split_arm_and_under_a_carried_when() {
     }
     let lean = fs::read_to_string(out.join("InductionSplit.lean")).unwrap();
     let line = exact_line(&lean, "double_law_keepsPositive").to_string();
-    assert!(line.contains("revert h_when; induction xs with"), "{line}");
-    // Without reverting the `when`, the induction hypothesis no longer
-    // takes the proof of it at the tail.
-    let unreverted = line.replacen("revert h_when; ", "", 1);
+    // The recursor's motive is the claim under the carried `when`, and the
+    // recursor is applied to the `when` itself at the end.
+    let carried = " xs (show (allPos xs : Bool) = (true : Bool) from h_when))";
+    assert!(
+        line.contains("List.rec (motive := fun xs => (allPos xs : Bool) = (true : Bool) → ")
+            && line.contains(carried),
+        "{line}"
+    );
+    let unapplied = line.replacen(carried, " xs)", 1);
     assert!(
         lean_refuses(
             &out,
             "InductionSplit.lean",
-            &lean.replacen(&line, &unreverted, 1),
+            &lean.replacen(&line, &unapplied, 1),
             "double.keepsPositive"
         ),
-        "the `when` left in place: Lean must refuse the step term"
+        "the `when` left unapplied: Lean must refuse the step term"
     );
     let _ = fs::remove_dir_all(out);
 }

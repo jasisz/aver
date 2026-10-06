@@ -1085,11 +1085,21 @@ fn emit_match(
                 &subject.node,
                 ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } | ResolvedExpr::Attr(_, _)
             ));
+    let fixed = if ctx.lean_match_fixed.get() {
+        "(generalizing := false) "
+    } else {
+        ""
+    };
     let emitted_match = if needs_eq_binder {
         let eq_name = format!("h_{}", line);
-        format!("match {} : {} with\n{}", eq_name, subj, arm_strs.join("\n"))
+        format!(
+            "match {fixed}{} : {} with\n{}",
+            eq_name,
+            subj,
+            arm_strs.join("\n")
+        )
     } else {
-        format!("match {} with\n{}", subj, arm_strs.join("\n"))
+        format!("match {fixed}{} with\n{}", subj, arm_strs.join("\n"))
     };
     if monadify_arms {
         let nested_match = emitted_match
