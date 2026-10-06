@@ -17,7 +17,8 @@
 //!
 //! Evaluation may rewrite with the laws a `using` list cites, left to
 //! right, where it stops; a cited law stating an `Int` comparison is also a
-//! fact for linear arithmetic at the calls it matches.
+//! fact for linear arithmetic at the calls it matches, also under a `when`
+//! proved at that instance.
 //!
 //! A law no producer handles keeps `steps: None` and its tactic portfolio.
 

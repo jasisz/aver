@@ -1,0 +1,77 @@
+module EqualSides
+    intent =
+        "Comparisons decided under a true equality between two Int variables:"
+        "the equality rewrites one side to the other, and a comparison is first"
+        "decided as written, so the facts that name its parts still apply."
+    effects []
+
+fn eqOrNe(op: Int, a: Int, b: Int) -> Int
+    ? "One when the two sides are equal (op 1) or differ (any other op)."
+    match op == 1
+        true -> match a == b
+            true -> 1
+            false -> 0
+        false -> match a != b
+            true -> 1
+            false -> 0
+
+verify eqOrNe law opposites
+    given a: Int = [-1, 0, 1]
+    given b: Int = [-1, 0, 1]
+    eqOrNe(1, a, b) + eqOrNe(2, a, b) => 1
+
+fn swappedNe(a: Int, b: Int) -> Int
+    ? "Zero when the sides are equal, read the other way round."
+    match a == b
+        true -> match b != a
+            true -> 1
+            false -> 0
+        false -> 0
+
+verify swappedNe law zero
+    given a: Int = [-1, 0, 1]
+    given b: Int = [-1, 0, 1]
+    swappedNe(a, b) => 0
+
+fn swappedEq(a: Int, b: Int) -> Int
+    ? "One when the sides are equal, read the other way round."
+    match a == b
+        true -> match b == a
+            true -> 1
+            false -> 0
+        false -> 1
+
+verify swappedEq law one
+    given a: Int = [-1, 0, 1]
+    given b: Int = [-1, 0, 1]
+    swappedEq(a, b) => 1
+
+fn strictBoth(a: Int, b: Int) -> Int
+    ? "Zero when the sides are equal: neither is below the other."
+    match a == b
+        true -> match a < b
+            true -> 1
+            false -> match b < a
+                true -> 1
+                false -> 0
+        false -> 0
+
+verify strictBoth law zero
+    given a: Int = [-1, 0, 1]
+    given b: Int = [-1, 0, 1]
+    strictBoth(a, b) => 0
+
+fn aboveBound(a: Int, b: Int, c: Int) -> Int
+    ? "One when a + 1 is above c, read under a == b."
+    match a == b
+        true -> match a + 1 > c
+            true -> 1
+            false -> 0
+        false -> 1
+
+verify aboveBound law one
+    given a: Int = [0, 1, 2]
+    given b: Int = [0, 1, 2]
+    given c: Int = [0, 1]
+    when c <= a
+    aboveBound(a, b, c) => 1

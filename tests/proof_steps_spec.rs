@@ -1283,6 +1283,86 @@ fn lean_closes_cited_orders_and_equal_calls_by_their_steps() {
     let _ = fs::remove_dir_all(out);
 }
 
+const CITED_WHEN_LAWS: [&str; 12] = [
+    "multiplyLe.nonnegativeFactor",
+    "multiplyLe.nonnegativeFactor.because1",
+    "multiplyLe.nonnegativeFactor.implication",
+    "multiplyLt.positiveFactor",
+    "multiplyLt.positiveFactor.because1",
+    "multiplyLt.positiveFactor.implication",
+    "positiveProduct.positiveFactors",
+    "positiveProduct.positiveFactors.because1",
+    "positiveProduct.positiveFactors.implication",
+    "pow2.positive",
+    "productOfPowers.positive",
+    "scaledPower.positiveScale",
+];
+
+#[test]
+fn both_kernels_check_cited_orders_under_a_proved_when_and_refuse_mutations() {
+    let out = scratch("cited-when");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("cited_when.av", &out).into_iter().collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), CITED_WHEN_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let product = read("productOfPowers.positive");
+    // The cited law at the goal's own product, its `when` proved there.
+    let instance = "(law positiveProduct.positiveFactors ((a (call pow2 (op - (i 0) (v k)))) (b (call pow2 (v n))))";
+    assert!(product.contains(instance), "{product}");
+    let mutant = mutate_proof(
+        &product,
+        instance,
+        "(law positiveProduct.positiveFactors ((a (v k)) (b (call pow2 (v n))))",
+    );
+    let verdict = aver::proof_kernel::verdict(&mutant);
+    assert!(
+        verdict
+            .as_ref()
+            .is_err_and(|why| why.starts_with("step proof")),
+        "{verdict:?}\n{mutant}"
+    );
+    let path = out.join("mutant.steps");
+    fs::write(&path, &mutant).unwrap();
+    let result = replay(std::slice::from_ref(&path));
+    assert!(!result.status.success(), "{}", format_output(&result));
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_closes_cited_orders_under_a_proved_when_by_their_steps() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("cited-when-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "cited_when.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in ["productOfPowers.positive", "scaledPower.positiveScale"] {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
 const ARITH_LAWS: [&str; 6] = [
     "clamp.positiveStaysPositive",
     "next.staysAboveOne",
