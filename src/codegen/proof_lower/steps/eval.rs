@@ -260,6 +260,9 @@ fn is_bool_value(t: &Term) -> bool {
     term::bool_value(t).is_some()
 }
 
+/// The most head steps evaluating one hypothesis may take.
+const HYPOTHESIS_FUEL: usize = 100;
+
 impl Env<'_> {
     pub(crate) fn whnf(&mut self, t: &Term) -> Result<Eval, String> {
         // Each nested evaluation is a frame on the compiler's own stack; a
@@ -2302,17 +2305,26 @@ impl Env<'_> {
             let fact = canon(&e.lhs);
             if !matches!(fact.node, ResolvedExpr::Call(ResolvedCallee::Fn(_), _))
                 || self.opened.contains(&fact)
+                || self.barren.contains(&fact)
                 || self.hyps[i + 1..].iter().any(|(n, _)| *n == name)
             {
                 continue;
             }
+            // A short evaluation only: a hypothesis that takes long to
+            // evaluate is a computation, not a shape to read. One that
+            // evaluates no further is not tried again in this attempt.
             let held = self.hyps.remove(i);
+            let fuel = self.fuel;
+            self.fuel = fuel.min(HYPOTHESIS_FUEL);
             let ev = self.whnf(&fact);
+            self.fuel = fuel - (fuel.min(HYPOTHESIS_FUEL) - self.fuel);
             self.hyps.insert(i, held);
             let Ok(ev) = ev else {
+                self.barren.push(fact);
                 continue;
             };
             if ev.chain.is_empty() {
+                self.barren.push(fact);
                 continue;
             }
             let (to, chain) = ev.chain.finish();
@@ -2331,15 +2343,21 @@ impl Env<'_> {
             if !said {
                 continue;
             }
-            self.opened.push(fact.clone());
+            // Only lines not stated true already: with nothing new, the
+            // claim would only be tried again as it was.
             let mut lines = Vec::new();
             super::split_and(&to, from, &mut lines);
+            lines.retain(|(line, _)| {
+                term::bool_value(line).is_none()
+                    && self.hyp_for(line).and_then(|(_, v)| term::bool_value(&v)) != Some(true)
+            });
+            if lines.is_empty() {
+                continue;
+            }
+            self.opened.push(fact.clone());
             let saved = self.hyps.len();
             let mut cuts = Vec::new();
             for (line, proof) in lines {
-                if term::bool_value(&line).is_some() {
-                    continue;
-                }
                 let h = self.fresh_hyp();
                 self.hyps
                     .push((h.clone(), Eqn::new(line.clone(), term::boolean(true))));
