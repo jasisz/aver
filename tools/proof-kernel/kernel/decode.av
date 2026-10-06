@@ -505,22 +505,33 @@ verify ringProof
     ringProof([]) => Result.Err("malformed ring")
 
 fn listInductProof(args: List<Sexp>) -> Result<Proof, String>
-    ? "(listinduct NAME TERM TERM PROOF (HEAD TAIL IH) PROOF)"
+    ? "(listinduct NAME TERM TERM PROOF (HEAD TAIL) (GENERAL…) ((IH (TERM…) ())…) PROOF)"
     match args
-        [Sexp.Atom(v), l, r, n, Sexp.Node([Sexp.Atom(h), Sexp.Atom(t), Sexp.Atom(ih)]), c] -> Result.Ok(Proof.PListInduct(v, term(l)?, term(r)?, proof(n)?, h, t, ih, proof(c)?))
+        [Sexp.Atom(v), l, r, n, Sexp.Node([Sexp.Atom(h), Sexp.Atom(t)]), gs, hs, c] -> Result.Ok(Proof.PListInduct(v, term(l)?, term(r)?, proof(n)?, h, t, atoms(items(gs)?)?, ihAts(items(hs)?)?, proof(c)?))
         _ -> Result.Err("malformed listinduct")
 
 verify listInductProof
     listInductProof([]) => Result.Err("malformed listinduct")
 
 fn intInductProof(args: List<Sexp>) -> Result<Proof, String>
-    ? "(intinduct NAME TERM TERM GUARD PROOF (NAME…) (PROOF…) IH PROOF)"
+    ? "(intinduct NAME TERM TERM GUARD PROOF (CARRIED…) (GENERAL…) ((IH (TERM…) (PROOF…))…) PROOF)"
     match args
-        [Sexp.Atom(v), l, r, Sexp.Atom(g), b, ns, ps, Sexp.Atom(ih), st] -> Result.Ok(Proof.PIntInduct(v, term(l)?, term(r)?, g, proof(b)?, atoms(items(ns)?)?, proofs(items(ps)?)?, ih, proof(st)?))
+        [Sexp.Atom(v), l, r, Sexp.Atom(g), b, ns, gs, hs, st] -> Result.Ok(Proof.PIntInduct(v, term(l)?, term(r)?, g, proof(b)?, atoms(items(ns)?)?, atoms(items(gs)?)?, ihAts(items(hs)?)?, proof(st)?))
         _ -> Result.Err("malformed intinduct")
 
 verify intInductProof
     intInductProof([]) => Result.Err("malformed intinduct")
+
+fn ihAts(ss: List<Sexp>) -> Result<List<IhAt>, String>
+    ? "(IH (TERM…) (PROOF…))…: a hypothesis, the values of the generalised givens, the proofs of the carried hypotheses there."
+    match ss
+        [] -> Result.Ok([])
+        [Sexp.Node([Sexp.Atom(h), at, ps]), ..rest] -> Result.Ok(List.prepend(IhAt(name = h, at = termList(at)?, carry = proofs(items(ps)?)?), ihAts(rest)?))
+        _ -> Result.Err("malformed induction hypothesis")
+
+verify ihAts
+    ihAts([Sexp.Node([Sexp.Atom("ih"), Sexp.Node([]), Sexp.Node([])])]) => Result.Ok([IhAt(name = "ih", at = [], carry = [])])
+    ihAts([Sexp.Atom("ih")]) => Result.Err("malformed induction hypothesis")
 
 fn inductProof(args: List<Sexp>) -> Result<Proof, String>
     ? "(induct FN (TERM…) TERM TERM [(carry NAME…)] (case (NAME…) (IH…) PROOF)…)"
@@ -552,14 +563,27 @@ verify carried
     carried([Sexp.Atom("x")]) => Result.Ok(([], [Sexp.Atom("x")]))
 
 fn cases(ss: List<Sexp>) -> Result<List<Case>, String>
-    ? "(case (NAME…) (IH…) PROOF)…, each IH a NAME or (NAME PROOF…) with the proofs of the carried hypotheses."
+    ? "(case (NAME…) (IH…) ((K IH (TERM…) (PROOF…))…) PROOF)…, each IH a NAME or (NAME PROOF…) with the proofs of the carried hypotheses; each (K …) a hypothesis at the part recursive call K recurses on and other values of the varied givens."
     match ss
         [] -> Result.Ok([])
-        [Sexp.Node([Sexp.Atom("case"), bs, hs, p]), ..rest] -> Result.Ok(List.prepend(Case(binders = atoms(items(bs)?)?, ihs = ihNames(items(hs)?)?, carry = ihCarry(items(hs)?)?, proof = proof(p)?), cases(rest)?))
+        [Sexp.Node([Sexp.Atom("case"), bs, hs, ms, p]), ..rest] -> Result.Ok(List.prepend(Case(binders = atoms(items(bs)?)?, ihs = ihNames(items(hs)?)?, carry = ihCarry(items(hs)?)?, more = mores(items(ms)?)?, proof = proof(p)?), cases(rest)?))
         _ -> Result.Err("malformed case")
 
 verify cases
     cases([Sexp.Atom("x")]) => Result.Err("malformed case")
+
+fn mores(ss: List<Sexp>) -> Result<List<More>, String>
+    ? "(K IH (TERM…) (PROOF…))…"
+    match ss
+        [] -> Result.Ok([])
+        [Sexp.Node([Sexp.Atom(k), Sexp.Atom(h), at, ps]), ..rest] -> match Int.fromString(k)
+            Result.Ok(n) -> Result.Ok(List.prepend(More(call = n, ih = IhAt(name = h, at = termList(at)?, carry = proofs(items(ps)?)?)), mores(rest)?))
+            Result.Err(_) -> Result.Err("malformed hypothesis")
+        _ -> Result.Err("malformed hypothesis")
+
+verify mores
+    mores([Sexp.Node([Sexp.Atom("0"), Sexp.Atom("ih"), Sexp.Node([]), Sexp.Node([])])]) => Result.Ok([More(call = 0, ih = IhAt(name = "ih", at = [], carry = []))])
+    mores([Sexp.Atom("x")]) => Result.Err("malformed hypothesis")
 
 fn ihNames(ss: List<Sexp>) -> Result<List<String>, String>
     ? "The name of each induction hypothesis."
@@ -786,9 +810,9 @@ verify consts
     consts([]) => Result.Ok([])
 
 fn script(s: Sexp) -> Result<Script, String>
-    ? "(steps 8 (obligation …) (defs …) (consts …) (laws …) (proof …)); version 8 only."
+    ? "(steps 9 (obligation …) (defs …) (consts …) (laws …) (proof …)); version 9 only."
     match s
-        Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("8"), o, Sexp.Node([Sexp.Atom("defs"), ..ds]), Sexp.Node([Sexp.Atom("consts"), ..cs]), Sexp.Node([Sexp.Atom("laws"), ..ls]), Sexp.Node([Sexp.Atom("proof"), p])]) -> scriptOf(obligation(o)?, defs(ds)?, consts(cs)?, laws(ls)?, proof(p)?)
+        Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("9"), o, Sexp.Node([Sexp.Atom("defs"), ..ds]), Sexp.Node([Sexp.Atom("consts"), ..cs]), Sexp.Node([Sexp.Atom("laws"), ..ls]), Sexp.Node([Sexp.Atom("proof"), p])]) -> scriptOf(obligation(o)?, defs(ds)?, consts(cs)?, laws(ls)?, proof(p)?)
         Sexp.Node([Sexp.Atom("steps"), Sexp.Atom(v), ..rest]) -> Result.Err("unsupported step format version {v}")
         _ -> Result.Err("not a step script")
 

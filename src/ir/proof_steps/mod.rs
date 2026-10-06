@@ -35,7 +35,7 @@ pub use term::Term;
 use crate::ir::identity::FnId;
 
 /// Version of the step data. Bump on any change a replayer could observe.
-pub const FORMAT_VERSION: u32 = 8;
+pub const FORMAT_VERSION: u32 = 9;
 
 /// An equation `lhs = rhs` between two terms.
 #[derive(Debug, Clone, PartialEq)]
@@ -234,9 +234,11 @@ pub enum Proof {
         cases: Vec<InductCase>,
     },
     /// Induction on a given of list type, apart from any function's
-    /// recursion: `nil` proves the claim `lhs = rhs` at `var = []`, and
-    /// `cons` proves it at `var = List.prepend(head, tail)` with hypothesis
-    /// `ih`, the claim at `var = tail`. The other givens stay fixed.
+    /// recursion, for every value of the givens in `general`: `nil` proves
+    /// the claim `lhs = rhs` at `var = []`, and `cons` proves it at
+    /// `var = List.prepend(head, tail)` under one hypothesis per entry of
+    /// `ihs`, the claim at `var = tail` and at that entry's values of
+    /// `general` (an entry carries no proofs). The other givens stay fixed.
     InductList {
         var: String,
         lhs: Term,
@@ -244,24 +246,29 @@ pub enum Proof {
         nil: Box<Proof>,
         head: String,
         tail: String,
-        ih: String,
+        general: Vec<String>,
+        ihs: Vec<IhAt>,
         cons: Box<Proof>,
     },
     /// Induction on a given of type Int down to zero, apart from any
-    /// function's recursion: `base` proves the claim `lhs = rhs` under
-    /// hypothesis `guard : var <= 0 = true`; `step` proves it under
-    /// `guard : var <= 0 = false` and `ih`, the claim at `var - 1`. The
-    /// hypotheses named in `carried` mention `var` and stay in scope in both
-    /// cases; in the step each is first proved at `var - 1` by its proof, so
-    /// `ih` holds. Any other hypothesis that mentions `var` is out of scope.
+    /// function's recursion, for every value of the givens in `general`:
+    /// `base` proves the claim `lhs = rhs` under hypothesis
+    /// `guard : var <= 0 = true`; `step` proves it under
+    /// `guard : var <= 0 = false` and one hypothesis per entry of `ihs`, the
+    /// claim at `var - 1` and at that entry's values of `general`. The
+    /// hypotheses named in `carried` stay in scope in both cases; for each
+    /// hypothesis of the step they are first proved at its values. Any
+    /// other hypothesis that mentions `var` or a name in `general` is out of
+    /// scope.
     InductInt {
         var: String,
         lhs: Term,
         rhs: Term,
         guard: String,
         base: Box<Proof>,
-        carried: Vec<(String, Proof)>,
-        ih: String,
+        carried: Vec<String>,
+        general: Vec<String>,
+        ihs: Vec<IhAt>,
         step: Box<Proof>,
     },
     /// `goal = value` for an Int comparison `goal`: its opposite and the
@@ -366,17 +373,30 @@ impl Finite {
     }
 }
 
+/// One hypothesis of the step of an [`Proof::InductInt`]: its name, the
+/// value of each generalised given (in the order of `general`), and the
+/// proofs of the carried hypotheses there (in the order of `carried`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct IhAt {
+    pub name: String,
+    pub at: Vec<Term>,
+    pub carry: Vec<Proof>,
+}
+
 /// One case of an [`Proof::Induct`] step: fresh names for the arm's
 /// pattern variables, one hypothesis name per recursive call in the arm
 /// (in the order [`induct::self_calls`] lists them; `_` for a call whose
 /// hypothesis the case does without), for each the proofs of the carried
-/// hypotheses at that call's arguments, and the proof of the claim at the
-/// arm's pattern under those hypotheses.
+/// hypotheses at that call's arguments, further hypotheses each at the part
+/// one of those calls recurses on and other values of the varied givens
+/// (the call's place and the values, in the order the givens vary), and
+/// the proof of the claim at the arm's pattern under all of them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InductCase {
     pub binders: Vec<String>,
     pub ihs: Vec<String>,
     pub carry: Vec<Vec<Proof>>,
+    pub more: Vec<(usize, IhAt)>,
     pub proof: Proof,
 }
 
@@ -453,11 +473,16 @@ impl Proof {
                 .sum(),
             Proof::InductList { nil, cons, .. } => nil.size() + cons.size(),
             Proof::InductInt {
-                base,
-                carried,
-                step,
-                ..
-            } => base.size() + carried.iter().map(|(_, p)| p.size()).sum::<usize>() + step.size(),
+                base, ihs, step, ..
+            } => {
+                base.size()
+                    + ihs
+                        .iter()
+                        .flat_map(|i| &i.carry)
+                        .map(Proof::size)
+                        .sum::<usize>()
+                    + step.size()
+            }
         }
     }
 }

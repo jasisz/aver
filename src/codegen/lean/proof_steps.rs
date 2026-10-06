@@ -496,8 +496,37 @@ impl Renderer<'_> {
                 for p in case.carry.get(k).into_iter().flatten() {
                     app.push_str(&format!(" {}", self.proof(p, &scope)?));
                 }
-                haves.push_str(&format!("have {ih} : {} := {app}; ", self.eqn(e)));
+                haves.push_str(&format!("have {ih} : {} := ({app}); ", self.eqn(e)));
                 taken.push((ih.clone(), e.clone()));
+            }
+            // The further hypotheses: the same field's hypothesis at other
+            // values of the varied givens.
+            for (k, ih) in &case.more {
+                let (part, _) = sources.get(*k).ok_or("induct: no such recursive call")?;
+                if !recursive[*part] {
+                    return Err("induct: a call recurses on a field of another type".into());
+                }
+                let mut at = vec![(v.to_string(), term::var(&case.binders[*part]))];
+                at.extend(
+                    general
+                        .iter()
+                        .map(|(_, g)| g.clone())
+                        .zip(ih.at.iter().cloned()),
+                );
+                let e = Eqn::new(term::subst(&eq.lhs, &at)?, term::subst(&eq.rhs, &at)?);
+                let mut app = field_ih(*part);
+                for a in &ih.at {
+                    app.push_str(&format!(" ({})", self.expr(a)));
+                }
+                for p in &ih.carry {
+                    app.push_str(&format!(" {}", self.proof(p, &scope)?));
+                }
+                haves.push_str(&format!(
+                    "have {} : {} := ({app}); ",
+                    self.hyp_name(&ih.name),
+                    self.eqn(&e)
+                ));
+                taken.push((ih.name.clone(), e));
             }
             let mut inner = scope.clone();
             inner.extend(taken);
@@ -824,7 +853,10 @@ impl Renderer<'_> {
                 let ResolvedExpr::Match { arms, .. } = &def.body.node else {
                     return Err("induct: the body is not a match".into());
                 };
-                if crate::ir::proof_steps::induct::nested_split(def) || !carried.is_empty() {
+                if crate::ir::proof_steps::induct::nested_split(def)
+                    || !carried.is_empty()
+                    || cases.iter().any(|c| !c.more.is_empty())
+                {
                     self.induct_by_cases_of_type(
                         def, args, j, &v, &general, arms, carried, cases, &eq, hyps,
                     )?
@@ -909,48 +941,81 @@ impl Renderer<'_> {
                     s
                 }
             }
-            // `List.rec` with the claim as its motive: the empty-list case,
-            // then the cell case over the head, the tail and the claim at
-            // the tail.
+            // `List.rec` with the claim, for every value of the generalised
+            // givens, as its motive: the empty-list case, then the cell case
+            // over the head, the tail and the claim at the tail, applied at
+            // each hypothesis's values.
             Proof::InductList {
                 var,
                 nil,
                 head,
                 tail,
-                ih,
+                general,
+                ihs,
                 cons,
                 lhs,
                 rhs,
             } => {
                 let lean = super::syntax::aver_name_to_lean;
-                let at_tail = [(var.clone(), term::var(tail))];
+                let gs: Vec<String> = general.iter().map(|g| lean(g)).collect();
+                let mut stated = Vec::new();
+                for ih in ihs {
+                    let mut at = vec![(var.clone(), term::var(tail))];
+                    at.extend(general.iter().cloned().zip(ih.at.iter().cloned()));
+                    let e = Eqn::new(term::subst(lhs, &at)?, term::subst(rhs, &at)?);
+                    stated.push((ih.name.clone(), e));
+                }
                 let mut scope = hyps.clone();
-                scope.push((
-                    ih.clone(),
-                    Eqn::new(term::subst(lhs, &at_tail)?, term::subst(rhs, &at_tail)?),
-                ));
+                scope.extend(stated.iter().cloned());
                 let base = self.proof(nil, hyps)?;
                 let step = self.proof(cons, &scope)?;
+                let all = format!("steps_all_{}", lean(tail));
+                let mut haves = String::new();
+                for (ih, (name, e)) in ihs.iter().zip(&stated) {
+                    let mut app = all.clone();
+                    for t in &ih.at {
+                        app.push_str(&format!(" ({})", self.expr(t)));
+                    }
+                    haves.push_str(&format!(
+                        "have {} : {} := ({app}); ",
+                        self.hyp_name(name),
+                        self.eqn(e)
+                    ));
+                }
+                let quantified = if gs.is_empty() {
+                    String::new()
+                } else {
+                    format!("∀ {}, ", gs.join(" "))
+                };
+                let bound = if gs.is_empty() {
+                    String::new()
+                } else {
+                    format!("fun {} => ", gs.join(" "))
+                };
                 format!(
-                    "(List.rec (motive := fun {v} => {}) ({base}) (fun {} {} {ih} => {step}) {v})",
+                    "(List.rec (motive := fun {v} => {quantified}{}) ({bound}{base}) (fun {} {} {all} => {bound}{haves}{step}) {v}{})",
                     self.eqn(&eq),
                     lean(head),
                     lean(tail),
+                    gs.iter().map(|g| format!(" {g}")).collect::<String>(),
                     v = lean(var),
                 )
             }
-            // `AverSteps.int_induct` with the claim, under the carried
-            // hypotheses, as its motive: the case `var <= 0`, then the case
-            // `var > 0` with the claim at `var - 1`, which holds once each
-            // carried hypothesis is proved there. The cases see what the
-            // kernel gives them: the carried hypotheses rebound, the guard,
-            // and those that do not mention `var`.
+            // `AverSteps.int_induct` with the claim, for every value of the
+            // generalised givens and under the carried hypotheses, as its
+            // motive: the case `var <= 0`, then the case `var > 0` with the
+            // claim at `var - 1`, applied at each hypothesis's values once
+            // each carried hypothesis is proved there. The cases see what
+            // the kernel gives them: the carried hypotheses rebound, the
+            // guard, and those that mention neither `var` nor a generalised
+            // given.
             Proof::InductInt {
                 var,
                 guard,
                 base,
                 carried,
-                ih,
+                general,
+                ihs,
                 step,
                 ..
             } => {
@@ -959,10 +1024,10 @@ impl Renderer<'_> {
                     let mut fv = Vec::new();
                     term::free_vars(&e.lhs, &mut fv);
                     term::free_vars(&e.rhs, &mut fv);
-                    fv.contains(var)
+                    fv.iter().any(|n| n == var || general.contains(n))
                 };
                 let mut stated: Vec<(String, Eqn)> = Vec::new();
-                for (name, _) in carried {
+                for name in carried {
                     let (_, e) = hyps
                         .iter()
                         .rev()
@@ -978,44 +1043,74 @@ impl Renderer<'_> {
                     h.extend(stated.iter().cloned());
                     h
                 };
-                let down = [(
-                    var.clone(),
-                    term::binop(BinOp::Sub, term::var(var), term::int(&1.into())),
-                )];
-                let ih_eq = Eqn::new(term::subst(&eq.lhs, &down)?, term::subst(&eq.rhs, &down)?);
                 let names: Vec<String> = stated.iter().map(|(n, _)| self.hyp_name(n)).collect();
+                let gs: Vec<String> = general.iter().map(|g| lean(g)).collect();
                 let mut motive = String::new();
+                if !gs.is_empty() {
+                    motive.push_str(&format!("∀ {}, ", gs.join(" ")));
+                }
                 for (_, e) in &stated {
                     motive.push_str(&format!("{} → ", self.eqn(e)));
                 }
                 motive.push_str(&self.eqn(&eq));
                 let outer: Vec<String> = carried
                     .iter()
-                    .map(|(n, _)| self.proof(&Proof::Hyp(n.clone()), hyps))
+                    .map(|n| self.proof(&Proof::Hyp(n.clone()), hyps))
                     .collect::<Result<_, _>>()?;
+                // Each hypothesis of the step: the claim at `var - 1` and its
+                // values of the generalised givens.
+                let mut at_ih: Vec<(String, Eqn)> = Vec::new();
+                for ih in ihs {
+                    let mut down = vec![(
+                        var.clone(),
+                        term::binop(BinOp::Sub, term::var(var), term::int(&1.into())),
+                    )];
+                    down.extend(general.iter().cloned().zip(ih.at.iter().cloned()));
+                    let e = Eqn::new(term::subst(&eq.lhs, &down)?, term::subst(&eq.rhs, &down)?);
+                    at_ih.push((ih.name.clone(), e));
+                }
                 // Inside the cases the carried hypotheses are rebound as the
                 // equations of Bools the steps read.
                 let saved = self.prop_hyps.clone();
+                self.prop_hyps.retain(|h| !carried.contains(h));
                 self.prop_hyps
-                    .retain(|h| !carried.iter().any(|(n, _)| n == h));
-                self.prop_hyps.retain(|h| h != guard && h != ih);
+                    .retain(|h| h != guard && !ihs.iter().any(|i| &i.name == h));
+                let g = self.hyp_name(guard);
                 let pb = self.proof(base, &scope(true));
                 let above = scope(false);
-                let carry: Result<Vec<String>, String> =
-                    carried.iter().map(|(_, q)| self.proof(q, &above)).collect();
+                let haves = (|| -> Result<String, String> {
+                    let mut text = String::new();
+                    for (ih, (name, e)) in ihs.iter().zip(&at_ih) {
+                        let mut app = format!("{g}_all");
+                        for t in &ih.at {
+                            app.push_str(&format!(" ({})", self.expr(t)));
+                        }
+                        for q in &ih.carry {
+                            app.push_str(&format!(" {}", self.proof(q, &above)?));
+                        }
+                        // In parentheses: the arguments may sit on a line
+                        // that starts left of the `have`.
+                        text.push_str(&format!(
+                            "have {} : {} := ({app}); ",
+                            self.hyp_name(name),
+                            self.eqn(e)
+                        ));
+                    }
+                    Ok(text)
+                })();
                 let mut with_ih = above.clone();
-                with_ih.push((ih.clone(), ih_eq.clone()));
+                with_ih.extend(at_ih.iter().cloned());
                 let ps = self.proof(step, &with_ih);
                 self.prop_hyps = saved;
-                let (pb, carry, ps) = (pb?, carry?, ps?);
-                let g = self.hyp_name(guard);
-                let h = self.hyp_name(ih);
-                let rebound = names.join(" ");
+                let (pb, haves, ps) = (pb?, haves?, ps?);
+                let mut bound: Vec<String> = gs.clone();
+                bound.extend(names.iter().cloned());
+                let rebound = bound.join(" ");
+                let mut applied: Vec<String> = gs.clone();
+                applied.extend(outer);
                 format!(
-                    "(AverSteps.int_induct (P := fun {v} => {motive}) (fun {v} {g} {rebound} => {pb}) (fun {v} {g} {h}_all {rebound} => (have {h} : {} := {h}_all {}; {ps})) {v} {})",
-                    self.eqn(&ih_eq),
-                    carry.join(" "),
-                    outer.join(" "),
+                    "(AverSteps.int_induct (P := fun {v} => {motive}) (fun {v} {g} {rebound} => {pb}) (fun {v} {g} {g}_all {rebound} => ({haves}{ps})) {v} {})",
+                    applied.join(" "),
                     v = lean(var),
                 )
             }

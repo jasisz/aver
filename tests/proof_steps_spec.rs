@@ -842,10 +842,11 @@ fn nth_form(text: &str, head: &str, index: usize) -> (usize, usize) {
     sub_forms(text, open)[index]
 }
 
-const INDUCTION_LAWS: [&str; 4] = [
+const INDUCTION_LAWS: [&str; 5] = [
     "app.lengthAdds",
     "plus.succRight",
     "plus.zeroRight",
+    "revOnto.accumulatorLast",
     "revOnto.isReverseThenAppend",
 ];
 
@@ -861,8 +862,13 @@ fn both_kernels_induct_along_the_laws_function_and_refuse_mutations() {
     }
     let law = read("app.lengthAdds");
     assert!(law.contains("(proof (induct app "), "{law}");
+    let last = read("revOnto.accumulatorLast");
+    assert!(
+        last.contains("((0 ih2 ((bi List.prepend (v h) (list))) ()))"),
+        "{last}"
+    );
     // (induct FN (ARG…) LHS RHS CASE…): the cases are sub-forms 3 and 4,
-    // each (case (NAME…) (IH…) PROOF).
+    // each (case (NAME…) (IH…) (MORE…) PROOF).
     let (base_from, base_to) = nth_form(&law, "(induct ", 3);
     let (step_from, step_to) = nth_form(&law, "(induct ", 4);
     let part = |from: usize, to: usize, i: usize| {
@@ -871,7 +877,7 @@ fn both_kernels_induct_along_the_laws_function_and_refuse_mutations() {
     };
     let (names_from, names_to) = part(step_from, step_to, 0);
     let (ihs_from, ihs_to) = part(step_from, step_to, 1);
-    let (proof_from, proof_to) = part(base_from, base_to, 2);
+    let (proof_from, proof_to) = part(base_from, base_to, 3);
     let ih = law[ihs_from + 1..ihs_to - 1].trim().to_string();
     let names: Vec<&str> = law[names_from + 1..names_to - 1]
         .split_whitespace()
@@ -895,6 +901,20 @@ fn both_kernels_induct_along_the_laws_function_and_refuse_mutations() {
         (
             "a missing case",
             format!("{}{}", law[..step_from].trim_end(), &law[step_to..]),
+        ),
+        // The right side's call passes `[h]` where the left side's passes
+        // `List.prepend(h, acc)`: a second hypothesis at the same tail.
+        (
+            "a further hypothesis at the accumulator the claim has",
+            last.replacen(
+                "((0 ih2 ((bi List.prepend (v h) (list))) ()))",
+                "((0 ih2 ((v acc)) ()))",
+                1,
+            ),
+        ),
+        (
+            "a further hypothesis on a recursive call the arm does not make",
+            last.replacen("((0 ih2 ", "((1 ih2 ", 1),
         ),
     ] {
         let refused = aver::proof_kernel::verdict(&text);
@@ -1034,10 +1054,12 @@ fn lean_inducts_with_the_functional_induction_principle_and_refuses_mutations() 
     let _ = fs::remove_dir_all(out);
 }
 
-const COUNTDOWN_LAWS: [&str; 6] = [
+const COUNTDOWN_LAWS: [&str; 8] = [
     "below.nonnegativeFactor",
     "below.nonnegativeFactor.because1",
     "below.nonnegativeFactor.implication",
+    "digitsInto.accumulatorFirst",
+    "digitsInto.length",
     "pow2.positive",
     "scaled.pinnedToZero",
     "shifted.atThree",
@@ -1062,14 +1084,20 @@ fn both_kernels_induct_on_an_int_down_to_zero_and_refuse_mutations() {
     let pow2 = read("pow2.positive");
     let reason = read("below.nonnegativeFactor.because1");
     let at_three = read("shifted.atThree");
+    let digits = read("digitsInto.accumulatorFirst");
     assert!(pow2.contains("(proof (intinduct n "), "{pow2}");
     assert!(pow2.contains("((n (tint)))"), "{pow2}");
     // The `when` and its line about `c` are carried down with `c`.
     assert!(reason.contains(" (when when2) ("), "{reason}");
     assert!(at_three.contains("(rule int.eq.of_beq "), "{at_three}");
-    // (intinduct VAR LHS RHS GUARD BASE (NAME…) (PROOF…) IH STEP): the base
-    // case is sub-form 2, the carried hypotheses and their proofs at n - 1
-    // sub-forms 3 and 4.
+    // The accumulator and the value change with the recursive call, so the
+    // claim is proved for every value of them; the right side's call needs
+    // the claim at another accumulator than the left side's.
+    assert!(digits.contains(" () (value acc) ((ih"), "{digits}");
+    // (intinduct VAR LHS RHS GUARD BASE (CARRIED…) (GENERAL…)
+    // ((IH (VALUE…) (PROOF…))…) STEP): the base case is sub-form 2, the
+    // carried hypotheses sub-form 3, the generalised givens sub-form 4, the
+    // hypotheses of the step with their values and proofs sub-form 5.
     for (kind, text) in [
         (
             "the hypothesis used in the base case",
@@ -1081,7 +1109,19 @@ fn both_kernels_induct_on_an_int_down_to_zero_and_refuse_mutations() {
         ),
         (
             "the carried hypotheses left out",
-            reinduct(&reinduct(&reason, 4, "()"), 3, "()"),
+            reinduct(&reinduct(&reason, 5, "((ih1 () ()))"), 3, "()"),
+        ),
+        (
+            "the generalised givens left out",
+            reinduct(&digits, 4, "()"),
+        ),
+        (
+            "a hypothesis at the value the claim has, not the recursive call's",
+            digits.replacen(
+                "((ih3 ((bi __int_div_euclid (v value) (i 10))",
+                "((ih3 ((v value)",
+                1,
+            ),
         ),
         (
             "induction on a given not known to be an Int",
@@ -1727,7 +1767,7 @@ fn joining_texts_is_never_read_as_int_arithmetic() {
     // step applies to it, even in a script made by hand.
     let script = |op: &str| {
         format!(
-            "(steps 8 (obligation k (a b) (none) (op {op} (v a) (v b)) (op {op} (v b) (v a))) (defs) (consts) (laws) (proof (ring (op {op} (v a) (v b)) (op {op} (v b) (v a)))))"
+            "(steps 9 (obligation k (a b) (none) (op {op} (v a) (v b)) (op {op} (v b) (v a))) (defs) (consts) (laws) (proof (ring (op {op} (v a) (v b)) (op {op} (v b) (v a)))))"
         )
     };
     assert_eq!(
@@ -1899,13 +1939,17 @@ fn lean_checks_the_list_rules_and_refuses_a_mutation() {
     let _ = fs::remove_dir_all(out);
 }
 
-const FACT_LAWS: [&str; 11] = [
+const FACT_LAWS: [&str; 15] = [
     "batch.sizeAdds",
     "batch.threeBatches",
+    "joined.droppingShortens",
+    "joined.dropsNothingBelowOne",
     "joined.dropsTheFront",
     "joined.emptyOnTheRight",
     "joined.lengthAdds",
     "joined.regroups",
+    "joined.splitsAnywhere",
+    "joined.takesNothingBelowOne",
     "joined.takesTheFront",
     "reversed.keepsTheLength",
     "reversed.lengthIsNeverNegative",
@@ -1953,6 +1997,22 @@ fn a_cited_builtin_fact_is_checked_with_the_law_and_refused_when_mutated() {
                 "joined.regroups",
                 "(fact List.concat.assoc ((a (tlist))",
                 "(fact List.concat.assoc (a",
+            ),
+        ),
+        (
+            "a fact's induction hypothesis at the count it splits, not one less",
+            swap(
+                "joined.splitsAnywhere",
+                "(x t) (n) ((ih ((op - (v n) (i 1))) ()))",
+                "(x t) (n) ((ih ((v n)) ()))",
+            ),
+        ),
+        (
+            "a fact on a count stated without its when",
+            swap(
+                "joined.takesNothingBelowOne",
+                "(fact List.take.nonPositive ((l (tlist)) n) (op <= (v n) (i 0))",
+                "(fact List.take.nonPositive ((l (tlist)) n) (none)",
             ),
         ),
         ("a fact cited before a fact its proof cites", {
