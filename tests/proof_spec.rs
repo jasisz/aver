@@ -339,8 +339,9 @@ fn run_lean_check_json_with_args(
 /// generated proof to the branch that actually closed — without changing
 /// whether the proof passes. `int_comparison_laws` emits three shape-gated
 /// `grind` portfolios (`first | (grind …) | (<body ending in sorry>)`); the
-/// probe build reports `grind` as their winner, so the minimized proof keeps
-/// just `grind […]; done` and drops the dead body-plus-`sorry` arm while
+/// probe build reports the branch that closed each (`grind`, or the step
+/// proof now tried first), so the minimized proof keeps just that and drops
+/// the dead body-plus-`sorry` arm while
 /// staying universal. Guards the whole instrument → parse → collapse →
 /// fail-safe pipeline end-to-end.
 #[test]
@@ -422,9 +423,11 @@ fn proof_minimize_collapses_grind_portfolios_and_stays_passing() {
         min_src.matches("| (grind [").count() < portfolios,
         "grind portfolios should be collapsed (fewer `| (grind [` lines than baseline {portfolios}):\n{min_src}"
     );
+    // The winner remains: `grind`, or the proof by steps that closes some
+    // of these laws before it.
     assert!(
-        min_src.contains("grind ["),
-        "the winning grind branch should remain in the collapsed proof:\n{min_src}"
+        min_src.contains("grind [") || min_src.contains("__aver_unfold_0"),
+        "the winning branch should remain in the collapsed proof:\n{min_src}"
     );
 
     let _ = std::fs::remove_dir_all(&output_dir);

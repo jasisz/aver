@@ -150,6 +150,63 @@ fn with_cell(mut chain: Chain, cell: bool) -> Chain {
     chain
 }
 
+/// For each `a % k` in `t` with a literal `k > 0`: `0 <= a % k` and
+/// `a % k < k`, each with its proof by `int.mod_range`.
+fn remainder_ranges(t: &Term) -> Vec<(Term, Proof)> {
+    use crate::ir::hir::BuiltinIntrinsic;
+    fn walk(t: &Term, out: &mut Vec<Term>) {
+        if let ResolvedExpr::Call(ResolvedCallee::Intrinsic(BuiltinIntrinsic::IntModEuclid), args) =
+            &t.node
+            && args.len() == 2
+            && term::int_value(&args[1]).is_some_and(|k| k > 0.into())
+            && !out.contains(&canon(t))
+        {
+            out.push(canon(t));
+        }
+        if !matches!(t.node, ResolvedExpr::Match { .. }) {
+            for c in term::children(t) {
+                walk(c, out);
+            }
+        }
+    }
+    let mut found = Vec::new();
+    walk(t, &mut found);
+    let mut out = Vec::new();
+    for m in found {
+        let ResolvedExpr::Call(_, args) = &m.node else {
+            continue;
+        };
+        let (a, k) = (canon(&args[0]), canon(&args[1]));
+        let positive = canon(&term::binop(BinOp::Gt, k.clone(), term::int(&0.into())));
+        let range = Proof::Rule {
+            rule: WallRule::ModRange,
+            subst: vec![("a".into(), a), ("k".into(), k.clone())],
+            premises: vec![Proof::Compute {
+                lhs: positive,
+                rhs: term::boolean(true),
+            }],
+        };
+        let low = canon(&term::binop(BinOp::Lte, term::int(&0.into()), m.clone()));
+        let high = canon(&term::binop(BinOp::Lt, m.clone(), k));
+        let elim = |rule: WallRule| Proof::Rule {
+            rule,
+            subst: vec![("a".into(), low.clone()), ("b".into(), high.clone())],
+            premises: vec![range.clone()],
+        };
+        out.push((low.clone(), elim(WallRule::AndElimL)));
+        out.push((high.clone(), elim(WallRule::AndElimR)));
+    }
+    out
+}
+
+/// Whether `t` builds or updates a record anywhere.
+fn has_record(t: &Term) -> bool {
+    matches!(
+        t.node,
+        ResolvedExpr::RecordCreate { .. } | ResolvedExpr::RecordUpdate { .. }
+    ) || term::children(t).into_iter().any(has_record)
+}
+
 /// The position of the first list literal in `t` with an element that is
 /// not a closed value, outside any `match`.
 fn open_literal_path(t: &Term) -> Option<Vec<usize>> {
@@ -276,6 +333,9 @@ impl Env<'_> {
         if let Some(step) = self.hyp_as_cells(cur) {
             return Ok(Some(step));
         }
+        if let Some(step) = self.same_sides(cur) {
+            return Ok(Some(step));
+        }
         if let Some(proof) = self.conjunct_of_hyp(cur) {
             return Ok(Some(Step::Progress(Box::new((proof, term::boolean(true))))));
         }
@@ -344,6 +404,61 @@ impl Env<'_> {
         }
         let (to, proof) = chain.finish();
         Some((proof, canon(&to)))
+    }
+
+    /// For each hypothesis `(a == b) = true` between Ints: `a <= b` and
+    /// `a >= b`, each by rewriting `a` to `b` (`int.eq.of_beq`) and the
+    /// order of `b` with itself.
+    fn equalities_as_orders(&self) -> Vec<(Term, Proof)> {
+        let mut out = Vec::new();
+        for (name, e) in &self.hyps {
+            let ResolvedExpr::BinOp(BinOp::Eq, a, b) = &e.lhs.node else {
+                continue;
+            };
+            if term::bool_value(&e.rhs) != Some(true) || !(is_int(a) || is_int(b)) {
+                continue;
+            }
+            let (a, b) = (canon(a), canon(b));
+            let equal = Proof::Rule {
+                rule: WallRule::EqOfBeq,
+                subst: vec![("a".into(), a.clone()), ("b".into(), b.clone())],
+                premises: vec![Proof::Hyp(name.clone())],
+            };
+            for op in [BinOp::Lte, BinOp::Gte] {
+                let fact = canon(&term::binop(op, a.clone(), b.clone()));
+                let same = canon(&term::binop(op, b.clone(), b.clone()));
+                let proof = Proof::Trans {
+                    terms: vec![fact.clone(), same.clone(), term::boolean(true)],
+                    steps: vec![
+                        Proof::Congr {
+                            ctx: term::binop(op, term::hole(), b.clone()),
+                            inner: Box::new(equal.clone()),
+                        },
+                        Proof::Linear {
+                            goal: same,
+                            value: true,
+                            hyps: Vec::new(),
+                            weights: vec![1.into()],
+                        },
+                    ],
+                };
+                out.push((fact, proof));
+            }
+        }
+        out
+    }
+
+    /// `(a == a) = true`, by `bool.beq.refl`, for a type whose values hold
+    /// no Float (`0.0 / 0.0` is not equal to itself).
+    fn same_sides(&self, cur: &Term) -> Option<Step> {
+        let ResolvedExpr::BinOp(BinOp::Eq, a, b) = &cur.node else {
+            return None;
+        };
+        let ty = a.ty().or(b.ty())?;
+        if canon(a) != canon(b) || self.inputs.symbol_table.may_hold_float(ty) {
+            return None;
+        }
+        Some(self.rule_step(WallRule::BeqRefl, vec![("a".into(), canon(a))]))
     }
 
     /// The first call in `t` of a definition without parameters, not a
@@ -1445,6 +1560,15 @@ impl Env<'_> {
                 Eqn::new(f.clone(), term::boolean(true)),
             ));
         }
+        let cited = known.len();
+        let mut remainders = remainder_ranges(goal);
+        remainders.extend(self.equalities_as_orders());
+        for (i, (f, _)) in remainders.iter().enumerate() {
+            known.push((
+                format!("h_mod{i}"),
+                Eqn::new(f.clone(), term::boolean(true)),
+            ));
+        }
         let mut atoms = Vec::new();
         let mut facts = vec![linear::as_nonneg(goal, !value, &mut atoms)?];
         for (_, e) in &known {
@@ -1469,6 +1593,11 @@ impl Env<'_> {
                 let (fact, proof, id) = views[k - plain].clone();
                 let name = self.fresh_hyp();
                 self.mark_used(id);
+                hyps.push(name.clone());
+                cuts.push((name, fact, proof));
+            } else if k >= cited {
+                let (fact, proof) = remainders[k - cited].clone();
+                let name = self.fresh_hyp();
                 hyps.push(name.clone());
                 cuts.push((name, fact, proof));
             } else {
@@ -1726,6 +1855,20 @@ impl Env<'_> {
             );
             return Ok(Ok(meet(nl, nr)));
         }
+        // Two terms that differ only in Int parts that are one polynomial
+        // (`(u + d) - u` and `d` inside a text): a ring step at each part.
+        // Not inside a record literal, which Lean may state as a value with
+        // the proof of its invariant (a refined type).
+        if !has_record(nl.cur())
+            && !has_record(nr.cur())
+            && let Some(steps) = super::rewrite::ring_bridge(nl.cur(), nr.cur())
+            && !steps.is_empty()
+        {
+            for (proof, to) in steps {
+                nl.push(proof, to);
+            }
+            return Ok(Ok(meet(nl, nr)));
+        }
         // Hypotheses that contradict each other linearly: the case
         // cannot happen.
         if let Some(contradiction) = self.refute_linearly() {
@@ -1838,6 +1981,31 @@ impl Env<'_> {
             let Some(said) = term::bool_value(&e.rhs) else {
                 continue;
             };
+            // `x != y` stated true, or `x == y` stated false, between Ints
+            // the orders in scope make equal.
+            if let ResolvedExpr::BinOp(op @ (BinOp::Eq | BinOp::Neq), x, y) = &e.lhs.node
+                && (*op == BinOp::Neq) == said
+                && is_int(x)
+                && let Some((equal, value)) = self.decide_linearly(&canon(&term::binop(
+                    BinOp::Eq,
+                    (**x).clone(),
+                    (**y).clone(),
+                )))
+                && term::bool_value(&value) == Some(true)
+            {
+                let other = match op {
+                    BinOp::Eq => equal,
+                    _ => Proof::Rule {
+                        rule: WallRule::NeFalseOfEq,
+                        subst: vec![("a".into(), canon(x)), ("b".into(), canon(y))],
+                        premises: vec![equal],
+                    },
+                };
+                return Some(Proof::Trans {
+                    terms: vec![term::boolean(!said), canon(&e.lhs), term::boolean(said)],
+                    steps: vec![Proof::Symm(Box::new(other)), Proof::Hyp(name)],
+                });
+            }
             if crate::ir::proof_steps::linear::as_nonneg(&e.lhs, said, &mut Vec::new()).is_none() {
                 continue;
             }

@@ -32,8 +32,16 @@ fn proof_export_dep_law_builtin_call_never_resolves_to_module_fn() {
         .nth(1)
         .expect("the dependency law theorem must be emitted");
     let body: String = theorem.lines().take(12).collect::<Vec<_>>().join("\n");
+    // A bare `concat` name, not a part of a longer one (the step lemma
+    // `AverSteps.list_concat_nil` is not a simp entry).
+    let bare_concat = body.match_indices("concat").any(|(at, _)| {
+        let before = body[..at].chars().next_back();
+        let after = body[at + "concat".len()..].chars().next();
+        !before.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.')
+            && !after.is_some_and(|c| c.is_alphanumeric() || c == '_')
+    });
     assert!(
-        !body.contains("concat"),
+        !bare_concat,
         "the law's simp set must not carry a bare `concat` (List.concat is a builtin, Bytes.concat is another module's fn):\n{body}"
     );
     assert!(

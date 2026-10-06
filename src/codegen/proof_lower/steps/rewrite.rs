@@ -247,6 +247,26 @@ impl Env<'_> {
         if depth > 16 {
             return None;
         }
+        // `a % n` for a literal `n > 0`: the remainder's own range.
+        if let ResolvedExpr::Call(ResolvedCallee::Intrinsic(BuiltinIntrinsic::IntModEuclid), args) =
+            &e.node
+            && args.len() == 2
+            && term::int_value(&args[1]).as_ref() == Some(n)
+            && *n > 0.into()
+        {
+            return Some(Proof::Rule {
+                rule: WallRule::ModRange,
+                subst: vec![("a".into(), args[0].clone()), ("k".into(), args[1].clone())],
+                premises: vec![Proof::Compute {
+                    lhs: canon(&term::binop(
+                        BinOp::Gt,
+                        args[1].clone(),
+                        term::int(&0.into()),
+                    )),
+                    rhs: term::boolean(true),
+                }],
+            });
+        }
         let ResolvedExpr::Call(ResolvedCallee::Intrinsic(BuiltinIntrinsic::IntDivEuclid), args) =
             &e.node
         else {
