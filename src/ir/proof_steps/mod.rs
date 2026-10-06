@@ -35,7 +35,7 @@ pub use term::Term;
 use crate::ir::identity::FnId;
 
 /// Version of the step data. Bump on any change a replayer could observe.
-pub const FORMAT_VERSION: u32 = 7;
+pub const FORMAT_VERSION: u32 = 8;
 
 /// An equation `lhs = rhs` between two terms.
 #[derive(Debug, Clone, PartialEq)]
@@ -221,12 +221,16 @@ pub enum Proof {
     },
     /// Induction following the recursion of `fn_id`, which the claim
     /// `lhs = rhs` applies to `args`: one case per arm of its `match`, in
-    /// order (see [`induct`]).
+    /// order (see [`induct`]). The hypotheses named in `carried` stay in
+    /// scope at each case's pattern, and a recursive call's hypothesis
+    /// holds once they are proved at the call's arguments; any other
+    /// hypothesis that mentions what the induction varies is out of scope.
     Induct {
         fn_id: FnId,
         args: Vec<Term>,
         lhs: Term,
         rhs: Term,
+        carried: Vec<String>,
         cases: Vec<InductCase>,
     },
     /// Induction on a given of list type, apart from any function's
@@ -364,12 +368,15 @@ impl Finite {
 
 /// One case of an [`Proof::Induct`] step: fresh names for the arm's
 /// pattern variables, one hypothesis name per recursive call in the arm
-/// (in the order [`induct::self_calls`] lists them), and the proof of the
-/// claim at the arm's pattern under those hypotheses.
+/// (in the order [`induct::self_calls`] lists them; `_` for a call whose
+/// hypothesis the case does without), for each the proofs of the carried
+/// hypotheses at that call's arguments, and the proof of the claim at the
+/// arm's pattern under those hypotheses.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InductCase {
     pub binders: Vec<String>,
     pub ihs: Vec<String>,
+    pub carry: Vec<Vec<Proof>>,
     pub proof: Proof,
 }
 
@@ -440,7 +447,10 @@ impl Proof {
             Proof::Have { proof, body, .. } => proof.size() + body.size(),
             Proof::Enum { cases, .. } => cases.iter().map(Proof::size).sum(),
             Proof::Absurd { contradiction, .. } => contradiction.size(),
-            Proof::Induct { cases, .. } => cases.iter().map(|c| c.proof.size()).sum(),
+            Proof::Induct { cases, .. } => cases
+                .iter()
+                .map(|c| c.proof.size() + c.carry.iter().flatten().map(Proof::size).sum::<usize>())
+                .sum(),
             Proof::InductList { nil, cons, .. } => nil.size() + cons.size(),
             Proof::InductInt {
                 base,

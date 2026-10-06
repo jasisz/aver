@@ -383,6 +383,187 @@ impl Renderer<'_> {
         format!("{} = {}", self.expr(&e.lhs), self.expr(&e.rhs))
     }
 
+    /// Induction along a function whose arms split further around a
+    /// recursive call, where Lean's `f.induct` has more cases than the
+    /// arms, or under hypotheses it carries: Lean's `induction` on the type
+    /// of the matched given, one alternative per constructor (the arm that
+    /// matches it), with the varied givens generalised and the carried
+    /// hypotheses reverted first, so the motive is the claim under them.
+    /// Each hypothesis of a case is the induction hypothesis of the part
+    /// its call recurses on, applied to the call's arguments at the varied
+    /// places and to the proofs of the carried hypotheses there.
+    #[allow(clippy::too_many_arguments)]
+    fn induct_by_cases_of_type(
+        &mut self,
+        def: &crate::ir::proof_steps::Def,
+        args: &[Term],
+        j: usize,
+        v: &str,
+        general: &[(usize, String)],
+        arms: &[crate::ir::hir::ResolvedMatchArm],
+        carried: &[String],
+        cases: &[crate::ir::proof_steps::InductCase],
+        eq: &Eqn,
+        hyps: &Hyps,
+    ) -> Result<String, String> {
+        use crate::ir::proof_steps::induct;
+        let lean = super::syntax::aver_name_to_lean;
+        // Lean generalises in the order of the context, which is the order
+        // of the givens.
+        let mut general: Vec<(usize, String)> = general.to_vec();
+        let givens = &self.script.obligation.givens;
+        general.sort_by_key(|(_, g)| givens.iter().position(|n| n == g));
+        let varying: Vec<String> = std::iter::once(v.to_string())
+            .chain(general.iter().map(|(_, g)| g.clone()))
+            .collect();
+        let mentions = |e: &Eqn| {
+            let mut fv = Vec::new();
+            term::free_vars(&e.lhs, &mut fv);
+            term::free_vars(&e.rhs, &mut fv);
+            fv.iter().any(|n| varying.contains(n))
+        };
+        let mut stated: Vec<(String, Eqn)> = Vec::new();
+        for name in carried {
+            if self.prop_hyps.contains(name) {
+                return Err(format!("induct: {name} is a comparison, not carried"));
+            }
+            let (_, e) = hyps
+                .iter()
+                .rev()
+                .find(|(h, _)| h == name)
+                .ok_or_else(|| format!("induct: {name} is not in scope"))?;
+            stated.push((name.clone(), e.clone()));
+        }
+        let kept: Hyps = hyps.iter().filter(|(_, e)| !mentions(e)).cloned().collect();
+        let carried_names: Vec<String> = carried.iter().map(|n| self.hyp_name(n)).collect();
+        let mut alts = Vec::new();
+        for (arm, case) in arms.iter().zip(cases) {
+            let (alt, recursive) = self.constructor_fields(&arm.pattern)?;
+            if recursive.len() != case.binders.len() {
+                return Err("induct: the pattern does not bind every field".into());
+            }
+            let field_ih = |k: usize| format!("steps_rec_{}", lean(&case.binders[k]));
+            let mut names: Vec<String> = case.binders.iter().map(|b| lean(b)).collect();
+            names.extend((0..recursive.len()).filter(|k| recursive[*k]).map(field_ih));
+            let stated_case = induct::case(
+                def,
+                args,
+                j,
+                v,
+                &general,
+                arm,
+                &case.binders,
+                &case.ihs,
+                &eq.lhs,
+                &eq.rhs,
+            )?;
+            let here = [(v.to_string(), stated_case.value.clone())];
+            let mut scope = kept.clone();
+            for (name, e) in &stated {
+                scope.push((
+                    name.clone(),
+                    Eqn::new(term::subst(&e.lhs, &here)?, term::subst(&e.rhs, &here)?),
+                ));
+            }
+            let sources = induct::ih_sources(def, args, j, &general, arm, &case.binders)?;
+            let mut haves = String::new();
+            let mut taken = Vec::new();
+            for (k, ((ih, e), (part, at))) in stated_case.ihs.iter().zip(&sources).enumerate() {
+                if ih == "_" {
+                    continue;
+                }
+                if !recursive[*part] {
+                    return Err("induct: a call recurses on a field of another type".into());
+                }
+                let mut app = field_ih(*part);
+                for a in at {
+                    app.push_str(&format!(" ({})", self.expr(a)));
+                }
+                for p in case.carry.get(k).into_iter().flatten() {
+                    app.push_str(&format!(" {}", self.proof(p, &scope)?));
+                }
+                haves.push_str(&format!("have {ih} : {} := {app}; ", self.eqn(e)));
+                taken.push((ih.clone(), e.clone()));
+            }
+            let mut inner = scope.clone();
+            inner.extend(taken);
+            let body = self.proof(&case.proof, &inner)?;
+            let intro = if carried_names.is_empty() {
+                String::new()
+            } else {
+                format!("intro {}; ", carried_names.join(" "))
+            };
+            alts.push(format!(
+                "| {alt} {} => {intro}exact ({haves}{body})",
+                names.join(" ")
+            ));
+        }
+        let generalizing = if general.is_empty() {
+            String::new()
+        } else {
+            let gs: Vec<String> = general.iter().map(|(_, g)| lean(g)).collect();
+            format!(" generalizing {}", gs.join(" "))
+        };
+        let revert = if carried_names.is_empty() {
+            String::new()
+        } else {
+            format!("revert {}; ", carried_names.join(" "))
+        };
+        Ok(format!(
+            "by {revert}induction {}{generalizing} with {}",
+            lean(v),
+            alts.join(" ")
+        ))
+    }
+
+    /// The name of the Lean `induction` alternative for an arm's pattern,
+    /// and which of its fields are of the matched type itself, each of
+    /// which brings an induction hypothesis.
+    fn constructor_fields(&self, pat: &ResolvedPattern) -> Result<(String, Vec<bool>), String> {
+        use crate::codegen::proof_recognize::{PeanoCtor, peano_ctor_role};
+        use crate::ir::hir::ResolvedCtor;
+        match pat {
+            ResolvedPattern::EmptyList => Ok(("nil".into(), vec![])),
+            ResolvedPattern::Cons(_, _) => Ok(("cons".into(), vec![false, true])),
+            ResolvedPattern::Ctor(ResolvedCtor::User { type_id, name, .. }, _) => {
+                let type_name = self.ctx.symbol_table.type_entry(*type_id).key.name.clone();
+                match peano_ctor_role(self.ctx, &type_name, name) {
+                    Some(PeanoCtor::Zero) => return Ok(("zero".into(), vec![])),
+                    Some(PeanoCtor::Succ) => return Ok(("succ".into(), vec![true])),
+                    None => {}
+                }
+                let variant = self
+                    .ctx
+                    .type_defs
+                    .iter()
+                    .chain(self.ctx.modules.iter().flat_map(|m| m.type_defs.iter()))
+                    .find_map(|t| match t {
+                        crate::ast::TypeDef::Sum {
+                            name: n, variants, ..
+                        } if *n == type_name => variants.iter().find(|w| w.name == *name),
+                        _ => None,
+                    })
+                    .ok_or("induct: no definition of the matched type")?;
+                let mentions = |f: &str| {
+                    f.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '.')
+                        .any(|w| w == type_name)
+                };
+                if variant
+                    .fields
+                    .iter()
+                    .any(|f| f != &type_name && mentions(f))
+                {
+                    return Err("induct: the type nests itself inside another type".into());
+                }
+                Ok((
+                    super::syntax::lean_ctor_name(name),
+                    variant.fields.iter().map(|f| *f == type_name).collect(),
+                ))
+            }
+            _ => Err("induct: an arm is not one constructor".into()),
+        }
+    }
+
     fn hyp_name(&self, name: &str) -> String {
         if name == "when" {
             "h_when".to_string()
@@ -568,7 +749,11 @@ impl Renderer<'_> {
             // matched, the arm's pattern variables, then one hypothesis per
             // recursive call.
             Proof::Induct {
-                fn_id, args, cases, ..
+                fn_id,
+                args,
+                carried,
+                cases,
+                ..
             } => {
                 let def = self.script.def(*fn_id).ok_or("induct: no definition")?;
                 let j = crate::ir::proof_steps::induct::structural_param(def)?
@@ -581,83 +766,90 @@ impl Renderer<'_> {
                 let ResolvedExpr::Match { arms, .. } = &def.body.node else {
                     return Err("induct: the body is not a match".into());
                 };
-                let lean = super::syntax::aver_name_to_lean;
-                let place = |k: usize| -> String {
-                    if k == j {
-                        lean(&v)
-                    } else {
-                        general
-                            .iter()
-                            .find(|(g, _)| *g == k)
-                            .map(|(_, n)| lean(n))
-                            .unwrap_or_else(|| "_".to_string())
-                    }
-                };
-                let f_name = emit_expr(
-                    &Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(*fn_id), Vec::new())),
-                    self.ctx,
-                );
-                // Lean leaves out of `f.induct` every parameter each
-                // recursive call passes on unchanged.
-                let fixed: Vec<bool> = (0..args.len())
-                    .map(|k| {
-                        k != j
-                            && crate::ir::proof_steps::induct::self_calls(&def.body, *fn_id)
+                if crate::ir::proof_steps::induct::nested_split(def) || !carried.is_empty() {
+                    self.induct_by_cases_of_type(
+                        def, args, j, &v, &general, arms, carried, cases, &eq, hyps,
+                    )?
+                } else {
+                    let lean = super::syntax::aver_name_to_lean;
+                    let place = |k: usize| -> String {
+                        if k == j {
+                            lean(&v)
+                        } else {
+                            general
                                 .iter()
-                                .all(|(call, inner)| {
-                                    matches!(&call[k].node, ResolvedExpr::Ident(n)
+                                .find(|(g, _)| *g == k)
+                                .map(|(_, n)| lean(n))
+                                .unwrap_or_else(|| "_".to_string())
+                        }
+                    };
+                    let f_name = emit_expr(
+                        &Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(*fn_id), Vec::new())),
+                        self.ctx,
+                    );
+                    // Lean leaves out of `f.induct` every parameter each
+                    // recursive call passes on unchanged.
+                    let fixed: Vec<bool> = (0..args.len())
+                        .map(|k| {
+                            k != j
+                                && crate::ir::proof_steps::induct::self_calls(&def.body, *fn_id)
+                                    .iter()
+                                    .all(|(call, inner)| {
+                                        matches!(&call[k].node, ResolvedExpr::Ident(n)
                                         if *n == def.params[k] && !inner.contains(n))
-                                })
-                    })
-                    .collect();
-                let varies = |k: &usize| !fixed[*k];
-                let motive_binders: Vec<String> =
-                    (0..args.len()).filter(varies).map(place).collect();
-                let mut s = format!(
-                    "({f_name}.induct (motive := fun {} => {})",
-                    motive_binders.join(" "),
-                    self.eqn(&eq)
-                );
-                let mut scope_hyps: Vec<Hyps> = Vec::new();
-                for (arm, case) in arms.iter().zip(cases) {
-                    let (_, ihs) = crate::ir::proof_steps::induct::case(
-                        def,
-                        args,
-                        j,
-                        &v,
-                        &general,
-                        arm,
-                        &case.binders,
-                        &case.ihs,
-                        &eq.lhs,
-                        &eq.rhs,
-                    )?;
-                    let mut scope = hyps.clone();
-                    scope.extend(ihs);
-                    scope_hyps.push(scope);
-                }
-                for (case, scope) in cases.iter().zip(&scope_hyps) {
-                    let mut binders: Vec<String> = (0..args.len())
-                        .filter(|k| *k != j && varies(k))
-                        .map(place)
+                                    })
+                        })
                         .collect();
-                    binders.extend(case.binders.iter().map(|b| lean(b)));
-                    binders.extend(case.ihs.iter().cloned());
-                    let body = self.proof(&case.proof, scope)?;
-                    if binders.is_empty() {
-                        s.push_str(&format!(" ({body})"));
-                    } else {
-                        s.push_str(&format!(" (fun {} => {body})", binders.join(" ")));
+                    let varies = |k: &usize| !fixed[*k];
+                    let motive_binders: Vec<String> =
+                        (0..args.len()).filter(varies).map(place).collect();
+                    let mut s = format!(
+                        "({f_name}.induct (motive := fun {} => {})",
+                        motive_binders.join(" "),
+                        self.eqn(&eq)
+                    );
+                    let mut scope_hyps: Vec<Hyps> = Vec::new();
+                    for (arm, case) in arms.iter().zip(cases) {
+                        let ihs = crate::ir::proof_steps::induct::case(
+                            def,
+                            args,
+                            j,
+                            &v,
+                            &general,
+                            arm,
+                            &case.binders,
+                            &case.ihs,
+                            &eq.lhs,
+                            &eq.rhs,
+                        )?
+                        .ihs;
+                        let mut scope = hyps.clone();
+                        scope.extend(ihs);
+                        scope_hyps.push(scope);
                     }
-                }
-                for (k, a) in args.iter().enumerate() {
-                    if varies(&k) {
-                        s.push(' ');
-                        s.push_str(&self.expr(a));
+                    for (case, scope) in cases.iter().zip(&scope_hyps) {
+                        let mut binders: Vec<String> = (0..args.len())
+                            .filter(|k| *k != j && varies(k))
+                            .map(place)
+                            .collect();
+                        binders.extend(case.binders.iter().map(|b| lean(b)));
+                        binders.extend(case.ihs.iter().cloned());
+                        let body = self.proof(&case.proof, scope)?;
+                        if binders.is_empty() {
+                            s.push_str(&format!(" ({body})"));
+                        } else {
+                            s.push_str(&format!(" (fun {} => {body})", binders.join(" ")));
+                        }
                     }
+                    for (k, a) in args.iter().enumerate() {
+                        if varies(&k) {
+                            s.push(' ');
+                            s.push_str(&self.expr(a));
+                        }
+                    }
+                    s.push(')');
+                    s
                 }
-                s.push(')');
-                s
             }
             // `List.rec` with the claim as its motive: the empty-list case,
             // then the cell case over the head, the tail and the claim at

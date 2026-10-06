@@ -1894,6 +1894,14 @@ impl Env<'_> {
         {
             return Ok(Ok(proof));
         }
+        // A hypothesis that calls a function evaluation can open (at a
+        // list cell or a constructor): evaluated, it contradicts its stated
+        // value and closes the case, or its lines are cut in.
+        if depth > 0
+            && let Some(proof) = self.evaluate_hypothesis(lhs, rhs, depth)?
+        {
+            return Ok(Ok(proof));
+        }
         if depth > 0
             && let Some(g) = [l.chain.cur(), r.chain.cur()]
                 .into_iter()
@@ -2272,6 +2280,86 @@ impl Env<'_> {
         };
         self.opened.pop();
         out.map(Some)
+    }
+
+    /// `lhs = rhs` once the innermost hypothesis `f(args) = b` not yet
+    /// evaluated, whose call evaluation takes a step on, is evaluated (the
+    /// hypothesis itself out of scope meanwhile, so it does not answer for
+    /// itself): when it ends at the other Bool, the case cannot happen;
+    /// when it ends elsewhere and `b` is true, its `Bool.and` lines are cut
+    /// in as hypotheses. `None` when no hypothesis evaluates further.
+    fn evaluate_hypothesis(
+        &mut self,
+        lhs: &Term,
+        rhs: &Term,
+        depth: usize,
+    ) -> Result<Option<Proof>, String> {
+        for i in (0..self.hyps.len()).rev() {
+            let (name, e) = self.hyps[i].clone();
+            let Some(said) = term::bool_value(&e.rhs) else {
+                continue;
+            };
+            let fact = canon(&e.lhs);
+            if !matches!(fact.node, ResolvedExpr::Call(ResolvedCallee::Fn(_), _))
+                || self.opened.contains(&fact)
+                || self.hyps[i + 1..].iter().any(|(n, _)| *n == name)
+            {
+                continue;
+            }
+            let held = self.hyps.remove(i);
+            let ev = self.whnf(&fact);
+            self.hyps.insert(i, held);
+            let Ok(ev) = ev else {
+                continue;
+            };
+            if ev.chain.is_empty() {
+                continue;
+            }
+            let (to, chain) = ev.chain.finish();
+            // `to = said`, from the evaluation and the hypothesis.
+            let from = Proof::Trans {
+                terms: vec![to.clone(), fact.clone(), term::boolean(said)],
+                steps: vec![Proof::Symm(Box::new(chain)), Proof::Hyp(name.clone())],
+            };
+            if term::bool_value(&to) == Some(!said) {
+                return Ok(Some(Proof::Absurd {
+                    contradiction: Box::new(from),
+                    lhs: canon(lhs),
+                    rhs: canon(rhs),
+                }));
+            }
+            if !said {
+                continue;
+            }
+            self.opened.push(fact.clone());
+            let mut lines = Vec::new();
+            super::split_and(&to, from, &mut lines);
+            let saved = self.hyps.len();
+            let mut cuts = Vec::new();
+            for (line, proof) in lines {
+                if term::bool_value(&line).is_some() {
+                    continue;
+                }
+                let h = self.fresh_hyp();
+                self.hyps
+                    .push((h.clone(), Eqn::new(line.clone(), term::boolean(true))));
+                cuts.push((h, line, proof));
+            }
+            let body = self.prove_by_evaluation(lhs, rhs, depth - 1);
+            self.hyps.truncate(saved);
+            self.opened.pop();
+            let mut proof = body?;
+            for (h, line, from) in cuts.into_iter().rev() {
+                proof = Proof::Have {
+                    name: h,
+                    fact: line,
+                    proof: Box::new(from),
+                    body: Box::new(proof),
+                };
+            }
+            return Ok(Some(proof));
+        }
+        Ok(None)
     }
 
     /// The refusal for two sides evaluation cannot bring together: both

@@ -445,6 +445,7 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
             args,
             lhs,
             rhs,
+            carried,
             cases,
         } => {
             let mut s = format!(
@@ -454,11 +455,27 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
                 term(lhs, names)?,
                 term(rhs, names)?
             );
+            if !carried.is_empty() {
+                s.push_str(&format!(" (carry {})", carried.join(" ")));
+            }
             for c in cases {
+                let mut ihs = Vec::new();
+                for (k, ih) in c.ihs.iter().enumerate() {
+                    match c.carry.get(k).filter(|ps| !ps.is_empty()) {
+                        Some(ps) => {
+                            let ps: Vec<String> = ps
+                                .iter()
+                                .map(|p| proof(p, names))
+                                .collect::<Result<_, _>>()?;
+                            ihs.push(format!("({ih} {})", ps.join(" ")));
+                        }
+                        None => ihs.push(ih.clone()),
+                    }
+                }
                 s.push_str(&format!(
                     " (case ({}) ({}) {})",
                     c.binders.join(" "),
-                    c.ihs.join(" "),
+                    ihs.join(" "),
                     proof(&c.proof, names)?
                 ));
             }

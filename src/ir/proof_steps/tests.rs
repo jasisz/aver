@@ -843,15 +843,18 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
                 args: vec![var("xs")],
                 lhs: call_g(var("xs")),
                 rhs: i(claim),
+                carried: Vec::new(),
                 cases: vec![
                     super::InductCase {
                         binders: Vec::new(),
                         ihs: Vec::new(),
+                        carry: Vec::new(),
                         proof: open(1, term::nil(), Vec::new()),
                     },
                     super::InductCase {
                         binders: vec!["h".into(), "t".into()],
                         ihs: vec!["ih".into()],
+                        carry: vec![Vec::new()],
                         proof: Proof::Trans {
                             terms: vec![call_g(cell("h", "t")), call_g(var("t")), i(claim)],
                             steps: vec![

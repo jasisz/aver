@@ -194,7 +194,8 @@ pub fn varied(
 /// Case `arm` of an induction along `def` at `args`, with `binders` for the
 /// arm's pattern variables: the claim `lhs = rhs` at the arm's pattern, and
 /// one hypothesis per recursive call in the arm, named by `ihs`, the claim
-/// at that call's arguments. `v` and `general` are what [`varied`] found.
+/// at that call's arguments, with the substitution that puts it there.
+/// `v` and `general` are what [`varied`] found.
 #[allow(clippy::too_many_arguments)]
 pub fn case(
     def: &Def,
@@ -207,15 +208,15 @@ pub fn case(
     ihs: &[String],
     lhs: &Term,
     rhs: &Term,
-) -> Result<(Eqn, Vec<(String, Eqn)>), String> {
+) -> Result<Case, String> {
     let names = term::pattern_binders(&arm.pattern);
     if binders.len() != names.len() {
         return Err("wrong number of names".into());
     }
     let ys: Vec<Term> = binders.iter().map(|b| term::var(b)).collect();
     let value = super::claim::pattern_term(&arm.pattern, &ys)?;
-    let at = [(v.to_string(), value)];
-    let goal = Eqn::new(term::subst(lhs, &at)?, term::subst(rhs, &at)?);
+    let here = [(v.to_string(), value.clone())];
+    let goal = Eqn::new(term::subst(lhs, &here)?, term::subst(rhs, &here)?);
     let calls = self_calls(&arm.body, def.fn_id);
     if calls.len() != ihs.len() {
         return Err(format!(
@@ -231,10 +232,16 @@ pub fn case(
         .collect();
     map.extend(names.iter().cloned().zip(ys));
     let mut out = Vec::new();
+    let mut at = Vec::new();
     for ((call, inner), ih) in calls.iter().zip(ihs) {
+        // Only the argument at the recursive place and those at the varied
+        // places enter the hypothesis; a name an inner match binds may sit
+        // anywhere else.
         let mut fv = Vec::new();
-        for a in call {
-            term::free_vars(a, &mut fv);
+        for (k, a) in call.iter().enumerate() {
+            if k == j || general.iter().any(|(g, _)| *g == k) {
+                term::free_vars(a, &mut fv);
+            }
         }
         if fv.iter().any(|n| inner.contains(n)) {
             return Err("a recursive call reads a name an inner match binds".into());
@@ -249,6 +256,81 @@ pub fn case(
             ih.clone(),
             Eqn::new(term::subst(lhs, &tau)?, term::subst(rhs, &tau)?),
         ));
+        at.push(tau);
     }
-    Ok((goal, out))
+    Ok(Case {
+        value,
+        goal,
+        ihs: out,
+        at,
+    })
+}
+
+/// One case of an induction, as [`case`] states it.
+pub struct Case {
+    /// The arm's pattern over the case's names.
+    pub value: Term,
+    /// The claim there.
+    pub goal: Eqn,
+    /// One hypothesis per recursive call: the claim at its arguments.
+    pub ihs: Vec<(String, Eqn)>,
+    /// For each, the substitution that puts the claim there.
+    pub at: Vec<Vec<(String, Term)>>,
+}
+
+/// For each recursive call in `arm`, in the order of [`case`]'s
+/// hypotheses: the place, among the arm's pattern variables, of the part
+/// it recurses on, and its arguments at the varied places, over `binders`.
+pub fn ih_sources(
+    def: &Def,
+    args: &[Term],
+    j: usize,
+    general: &[(usize, String)],
+    arm: &ResolvedMatchArm,
+    binders: &[String],
+) -> Result<Vec<(usize, Vec<Term>)>, String> {
+    let names = term::pattern_binders(&arm.pattern);
+    let ys: Vec<Term> = binders.iter().map(|b| term::var(b)).collect();
+    let mut map: Vec<(String, Term)> = def
+        .outer(args)?
+        .into_iter()
+        .filter(|(n, _)| !names.contains(n))
+        .collect();
+    map.extend(names.iter().cloned().zip(ys));
+    self_calls(&arm.body, def.fn_id)
+        .iter()
+        .map(|(call, _)| {
+            let part = match call.get(j).map(|a| &a.node) {
+                Some(ResolvedExpr::Ident(b)) => names.iter().position(|n| n == b),
+                _ => None,
+            }
+            .ok_or("a recursive call does not pass a part of the matched value")?;
+            let at = general
+                .iter()
+                .map(|(k, _)| term::subst(&call[*k], &map))
+                .collect::<Result<_, _>>()?;
+            Ok((part, at))
+        })
+        .collect()
+}
+
+/// Whether an arm of `def` holds a recursive call inside a further case
+/// split (a `match` in the arm), which Lean's own induction principle for
+/// `def` splits into more cases than the arms.
+pub fn nested_split(def: &Def) -> bool {
+    let ResolvedExpr::Match { arms, .. } = &def.body.node else {
+        return false;
+    };
+    arms.iter()
+        .any(|arm| split_holds_self_call(&arm.body, def.fn_id))
+}
+
+fn split_holds_self_call(t: &Term, f: FnId) -> bool {
+    if let ResolvedExpr::Match { subject, arms } = &t.node {
+        return split_holds_self_call(subject, f)
+            || arms.iter().any(|a| !self_calls(&a.body, f).is_empty());
+    }
+    term::children(t)
+        .into_iter()
+        .any(|c| split_holds_self_call(c, f))
 }

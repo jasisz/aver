@@ -51,7 +51,7 @@ fn conclude(p: Proof, env: Env, path: String) -> Result<Eqn, String>
         Proof.PHave(h, fact, q, body) -> have(h, fact, q, body, env, path)
         Proof.PEnum(v, l, r, cs) -> enumStep(v, l, r, cs, env, path)
         Proof.PAbsurd(q, l, r) -> absurd(conclude(q, env, "{path}/absurd")?, l, r, path)
-        Proof.PInduct(f, xs, l, r, cs) -> induct(f, xs, Eqn(lhs = l, rhs = r), cs, env, path)
+        Proof.PInduct(f, xs, l, r, carry, cs) -> induct(f, xs, Eqn(lhs = l, rhs = r), carry, cs, env, path)
         Proof.PListInduct(v, l, r, n, h, t, ih, c) -> listInduct(v, Eqn(lhs = l, rhs = r), n, [h, t, ih], c, env, path)
         Proof.PIntInduct(v, l, r, g, b, names, carry, ih, st) -> intInduct(v, Eqn(lhs = l, rhs = r), g, b, names, carry, ih, st, env, path)
         Proof.PRing(l, r) -> ring(l, r, path)
@@ -780,40 +780,50 @@ fn commaJoined(ns: List<String>) -> String
 verify commaJoined
     commaJoined(["a", "b"]) => "a,b"
 
-fn induct(f: String, xs: List<Term>, claim: Eqn, cs: List<Case>, env: Env, path: String) -> Result<Eqn, String>
-    ? "Induction along the recursion of f at arguments xs: one case per arm of its match, each with one hypothesis per recursive call in the arm."
+fn induct(f: String, xs: List<Term>, claim: Eqn, carry: List<String>, cs: List<Case>, env: Env, path: String) -> Result<Eqn, String>
+    ? "Induction along the recursion of f at arguments xs: one case per arm of its match, each with one hypothesis per recursive call in the arm. The hypotheses named in carry hold at each case's pattern; a call's hypothesis holds once they are proved at the call's arguments."
     match findDef(f, env.defs)
         Option.None -> refuse(path, "no definition of {f}")
         Option.Some(d) -> match (Kernel.Induct.structuralParam(d), d.body)
             (Result.Err(why), _) -> refuse(path, why)
             (Result.Ok(Option.None), _) -> refuse(path, "{f} does not recurse")
-            (Result.Ok(Option.Some(j)), Term.TMatch(s, arms)) -> inductOn(d, j, arms, xs, claim, cs, env, path)
+            (Result.Ok(Option.Some(j)), Term.TMatch(s, arms)) -> inductOn(d, j, arms, xs, claim, carry, cs, env, path)
             _ -> refuse(path, "the body of {f} is not a match")
 
 verify induct
-    induct("f", [], Eqn(lhs = Term.TUnit, rhs = Term.TUnit), [], emptyEnv(), "p") => Result.Err("step p: no definition of f")
+    induct("f", [], Eqn(lhs = Term.TUnit, rhs = Term.TUnit), [], [], emptyEnv(), "p") => Result.Err("step p: no definition of f")
 
-fn inductOn(d: Def, j: Int, arms: List<Arm>, xs: List<Term>, claim: Eqn, cs: List<Case>, env: Env, path: String) -> Result<Eqn, String>
+fn inductOn(d: Def, j: Int, arms: List<Arm>, xs: List<Term>, claim: Eqn, carry: List<String>, cs: List<Case>, env: Env, path: String) -> Result<Eqn, String>
     ? "The arguments, the varied givens and the shape of the arms, then every case."
     match (List.len(xs) == List.len(d.params), Kernel.Induct.varied(xs, j, env.givens))
         (false, _) -> refuse(path, "{d.name} takes {List.len(d.params)} arguments")
         (_, Result.Err(why)) -> refuse(path, why)
-        (true, Result.Ok(vr)) -> inductChecked(d, j, arms, xs, claim, cs, vr, env, path)
+        (true, Result.Ok(vr)) -> inductChecked(d, j, arms, xs, claim, namedHyps(carry, env.hyps, path)?, cs, vr, env, path)
 
 verify inductOn
-    inductOn(Def(name = "f", returnsBool = false, params = ["x"], lets = [], body = Term.TUnit), 0, [], [], Eqn(lhs = Term.TUnit, rhs = Term.TUnit), [], emptyEnv(), "p") => Result.Err("step p: f takes 1 arguments")
+    inductOn(Def(name = "f", returnsBool = false, params = ["x"], lets = [], body = Term.TUnit), 0, [], [], Eqn(lhs = Term.TUnit, rhs = Term.TUnit), [], [], emptyEnv(), "p") => Result.Err("step p: f takes 1 arguments")
 
-fn inductChecked(d: Def, j: Int, arms: List<Arm>, xs: List<Term>, claim: Eqn, cs: List<Case>, vr: Varied, env: Env, path: String) -> Result<Eqn, String>
-    ? "No hypothesis in scope mentions what varies; one case per arm; the arms are one per constructor."
+fn inductChecked(d: Def, j: Int, arms: List<Arm>, xs: List<Term>, claim: Eqn, carried: List<Hyp>, cs: List<Case>, vr: Varied, env: Env, path: String) -> Result<Eqn, String>
+    ? "One case per arm; the arms are one per constructor. The cases see the carried hypotheses and those that mention nothing the induction varies."
     varying = List.prepend(vr.v, placeNames(vr.general))
-    match (hypsMention(env.hyps, varying), List.len(arms) == List.len(cs), armsAreConstructors(arms))
-        (true, _, _) -> refuse(path, "a hypothesis in scope mentions a variable the induction varies")
-        (_, false, _) -> refuse(path, "{List.len(arms)} arms, {List.len(cs)} cases")
-        (_, _, false) -> refuse(path, "the arms are not one per constructor")
-        _ -> inductCases(d, j, arms, cs, Kernel.Induct.Call(args = xs, inner = []), claim, vr, takenNames(claim, env.hyps), env, path, 0)
+    match (List.len(arms) == List.len(cs), armsAreConstructors(arms))
+        (false, _) -> refuse(path, "{List.len(arms)} arms, {List.len(cs)} cases")
+        (_, false) -> refuse(path, "the arms are not one per constructor")
+        _ -> inductCases(d, j, arms, cs, Kernel.Induct.Call(args = xs, inner = []), claim, vr, takenNames(claim, env.hyps), carried, withHyps(env, notMentioningAny(env.hyps, varying)), path, 0)
 
 verify inductChecked
-    inductChecked(Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TUnit), 0, [], [], Eqn(lhs = Term.TVar("x"), rhs = Term.TVar("x")), [], Varied(v = "x", general = []), withHyp(emptyEnv(), "h", Term.TVar("x"), true), "p") => Result.Err("step p: a hypothesis in scope mentions a variable the induction varies")
+    inductChecked(Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TUnit), 0, [], [], Eqn(lhs = Term.TVar("x"), rhs = Term.TVar("x")), [], [Case(binders = [], ihs = [], carry = [], proof = Proof.PRefl(Term.TUnit))], Varied(v = "x", general = []), emptyEnv(), "p") => Result.Err("step p: 0 arms, 1 cases")
+
+fn notMentioningAny(hs: List<Hyp>, names: List<String>) -> List<Hyp>
+    ? "The hypotheses that mention none of the names."
+    match hs
+        [] -> []
+        [h, ..rest] -> match hypsMention([h], names)
+            true -> notMentioningAny(rest, names)
+            false -> List.prepend(h, notMentioningAny(rest, names))
+
+verify notMentioningAny
+    notMentioningAny([Hyp(name = "h", eqn = Eqn(lhs = Term.TVar("n"), rhs = Term.TBool(true))), Hyp(name = "k", eqn = Eqn(lhs = Term.TVar("m"), rhs = Term.TBool(true)))], ["m", "z"]) => [Hyp(name = "h", eqn = Eqn(lhs = Term.TVar("n"), rhs = Term.TBool(true)))]
 
 fn placeNames(ps: List<Place>) -> List<String>
     ? "The names of the varied places."
@@ -913,33 +923,33 @@ fn isCons(p: Pat) -> Bool
 verify isCons
     isCons(Pat.PNil) => false
 
-fn inductCases(d: Def, j: Int, arms: List<Arm>, cs: List<Case>, at: Call, claim: Eqn, vr: Varied, taken: List<String>, env: Env, path: String, i: Int) -> Result<Eqn, String>
+fn inductCases(d: Def, j: Int, arms: List<Arm>, cs: List<Case>, at: Call, claim: Eqn, vr: Varied, taken: List<String>, carried: List<Hyp>, env: Env, path: String, i: Int) -> Result<Eqn, String>
     ? "Each arm with its case, in order; the result is the claim."
     match (arms, cs)
-        ([a, ..moreArms], [c, ..moreCases]) -> inductNext(inductCase(d, j, a, c, at, claim, vr, taken, env, "{path}/case.{i}"), d, j, moreArms, moreCases, at, claim, vr, taken, env, path, i + 1)
+        ([a, ..moreArms], [c, ..moreCases]) -> inductNext(inductCase(d, j, a, c, at, claim, vr, taken, carried, env, "{path}/case.{i}"), d, j, moreArms, moreCases, at, claim, vr, taken, carried, env, path, i + 1)
         _ -> Result.Ok(claim)
 
 verify inductCases
-    inductCases(Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TUnit), 0, [], [], Kernel.Induct.Call(args = [], inner = []), Eqn(lhs = Term.TUnit, rhs = Term.TUnit), Varied(v = "x", general = []), [], emptyEnv(), "p", 0) => Result.Ok(Eqn(lhs = Term.TUnit, rhs = Term.TUnit))
+    inductCases(Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TUnit), 0, [], [], Kernel.Induct.Call(args = [], inner = []), Eqn(lhs = Term.TUnit, rhs = Term.TUnit), Varied(v = "x", general = []), [], [], emptyEnv(), "p", 0) => Result.Ok(Eqn(lhs = Term.TUnit, rhs = Term.TUnit))
 
-fn inductNext(done: Result<Unit, String>, d: Def, j: Int, arms: List<Arm>, cs: List<Case>, at: Call, claim: Eqn, vr: Varied, taken: List<String>, env: Env, path: String, i: Int) -> Result<Eqn, String>
+fn inductNext(done: Result<Unit, String>, d: Def, j: Int, arms: List<Arm>, cs: List<Case>, at: Call, claim: Eqn, vr: Varied, taken: List<String>, carried: List<Hyp>, env: Env, path: String, i: Int) -> Result<Eqn, String>
     ? "The rest of the cases, once this one checked."
     done?
-    inductCases(d, j, arms, cs, at, claim, vr, taken, env, path, i)
+    inductCases(d, j, arms, cs, at, claim, vr, taken, carried, env, path, i)
 
 verify inductNext
-    inductNext(Result.Err("no"), Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TUnit), 0, [], [], Kernel.Induct.Call(args = [], inner = []), Eqn(lhs = Term.TUnit, rhs = Term.TUnit), Varied(v = "x", general = []), [], emptyEnv(), "p", 0) => Result.Err("no")
+    inductNext(Result.Err("no"), Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TUnit), 0, [], [], Kernel.Induct.Call(args = [], inner = []), Eqn(lhs = Term.TUnit, rhs = Term.TUnit), Varied(v = "x", general = []), [], [], emptyEnv(), "p", 0) => Result.Err("no")
 
-fn inductCase(d: Def, j: Int, a: Arm, c: Case, at: Call, claim: Eqn, vr: Varied, taken: List<String>, env: Env, path: String) -> Result<Unit, String>
+fn inductCase(d: Def, j: Int, a: Arm, c: Case, at: Call, claim: Eqn, vr: Varied, taken: List<String>, carried: List<Hyp>, env: Env, path: String) -> Result<Unit, String>
     ? "Fresh names for the arm's pattern; the claim at the pattern, under one hypothesis per recursive call at that call's arguments."
     names = Kernel.Subst.patNames(a.pattern)
     match (List.len(names) == List.len(c.binders), freshAll(c.binders, taken, env, []))
         (false, _) -> refuseCase(path, "wrong number of names")
         (_, false) -> refuseCase(path, "the names are not fresh")
-        _ -> inductCaseNamed(d, j, a, c, namesToVars(c.binders), at, claim, vr, env, path)
+        _ -> inductCaseNamed(d, j, a, c, namesToVars(c.binders), at, claim, vr, carried, env, path)
 
 verify inductCase
-    inductCase(Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TUnit), 0, Arm(pattern = Pat.PNil, body = Term.TUnit), Case(binders = ["y"], ihs = [], proof = Proof.PRefl(Term.TUnit)), Kernel.Induct.Call(args = [], inner = []), Eqn(lhs = Term.TUnit, rhs = Term.TUnit), Varied(v = "x", general = []), [], emptyEnv(), "p") => Result.Err("step p: wrong number of names")
+    inductCase(Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TUnit), 0, Arm(pattern = Pat.PNil, body = Term.TUnit), Case(binders = ["y"], ihs = [], carry = [], proof = Proof.PRefl(Term.TUnit)), Kernel.Induct.Call(args = [], inner = []), Eqn(lhs = Term.TUnit, rhs = Term.TUnit), Varied(v = "x", general = []), [], [], emptyEnv(), "p") => Result.Err("step p: wrong number of names")
 
 fn refuseCase(path: String, why: String) -> Result<Unit, String>
     ? "A refusal of an induction case, naming it."
@@ -976,19 +986,31 @@ fn namesToVars(ns: List<String>) -> List<Term>
 verify namesToVars
     namesToVars(["a"]) => [Term.TVar("a")]
 
-fn inductCaseNamed(d: Def, j: Int, a: Arm, c: Case, ys: List<Term>, at: Call, claim: Eqn, vr: Varied, env: Env, path: String) -> Result<Unit, String>
-    ? "The goal at the arm's pattern and the hypotheses of its recursive calls; then the case's proof must prove the goal."
+fn inductCaseNamed(d: Def, j: Int, a: Arm, c: Case, ys: List<Term>, at: Call, claim: Eqn, vr: Varied, carried: List<Hyp>, env: Env, path: String) -> Result<Unit, String>
+    ? "The goal and the carried hypotheses at the arm's pattern, and the hypotheses of its recursive calls; then the case's proof must prove the goal."
     value = patTerm(a.pattern, ys, path)?
-    goal = instantiate(claim, [Kernel.Term.bind(vr.v, value)], path)?
+    here = [Kernel.Term.bind(vr.v, value)]
+    goal = instantiate(claim, here, path)?
+    scope = withHyps(env, List.concat(hypsAt(carried, here, path)?, env.hyps))
     names = Kernel.Subst.patNames(a.pattern)
     rename = List.concat(zipBind(names, ys), withoutNames(zipBind(d.params, at.args), names))
     calls = Kernel.Induct.selfCalls(a.body, d.name, [])
-    match List.len(calls) == List.len(c.ihs)
-        false -> refuseCase(path, "{List.len(calls)} recursive calls, {List.len(c.ihs)} hypotheses")
-        true -> caseProves(c.proof, goal, withHyps(env, List.concat(ihHyps(calls, c.ihs, rename, j, claim, vr, path)?, env.hyps)), path)
+    match (List.len(calls) == List.len(c.ihs), List.len(c.carry) == List.len(c.ihs))
+        (false, _) -> refuseCase(path, "{List.len(calls)} recursive calls, {List.len(c.ihs)} hypotheses")
+        (_, false) -> refuseCase(path, "one list of carried proofs per hypothesis")
+        _ -> caseProves(c.proof, goal, withHyps(scope, List.concat(ihHyps(calls, c.ihs, c.carry, rename, j, claim, vr, carried, scope, path)?, scope.hyps)), path)
 
 verify inductCaseNamed
-    inductCaseNamed(Def(name = "f", returnsBool = false, params = ["x"], lets = [], body = Term.TUnit), 0, Arm(pattern = Pat.PNil, body = Term.TInt(0)), Case(binders = [], ihs = ["ih"], proof = Proof.PRefl(Term.TUnit)), [], Kernel.Induct.Call(args = [Term.TVar("x")], inner = []), Eqn(lhs = Term.TVar("x"), rhs = Term.TVar("x")), Varied(v = "x", general = []), emptyEnv(), "p") => Result.Err("step p: 0 recursive calls, 1 hypotheses")
+    inductCaseNamed(Def(name = "f", returnsBool = false, params = ["x"], lets = [], body = Term.TUnit), 0, Arm(pattern = Pat.PNil, body = Term.TInt(0)), Case(binders = [], ihs = ["ih"], carry = [[]], proof = Proof.PRefl(Term.TUnit)), [], Kernel.Induct.Call(args = [Term.TVar("x")], inner = []), Eqn(lhs = Term.TVar("x"), rhs = Term.TVar("x")), Varied(v = "x", general = []), [], emptyEnv(), "p") => Result.Err("step p: 0 recursive calls, 1 hypotheses")
+
+fn hypsAt(hs: List<Hyp>, bs: List<Binding>, path: String) -> Result<List<Hyp>, String>
+    ? "Each hypothesis at a substitution, under its own name."
+    match hs
+        [] -> Result.Ok([])
+        [h, ..rest] -> Result.Ok(List.prepend(Hyp(name = h.name, eqn = instantiate(h.eqn, bs, path)?), hypsAt(rest, bs, path)?))
+
+verify hypsAt
+    hypsAt([Hyp(name = "h", eqn = Eqn(lhs = Term.TVar("x"), rhs = Term.TBool(true)))], [Kernel.Term.bind("x", Term.TInt(1))], "p") => Result.Ok([Hyp(name = "h", eqn = Eqn(lhs = Term.TInt(1), rhs = Term.TBool(true)))])
 
 fn withoutNames(bs: List<Binding>, names: List<String>) -> List<Binding>
     ? "Bindings for names a pattern does not shadow."
@@ -1001,32 +1023,76 @@ fn withoutNames(bs: List<Binding>, names: List<String>) -> List<Binding>
 verify withoutNames
     withoutNames([Kernel.Term.bind("t", Term.TUnit)], ["t"]) => []
 
-fn ihHyps(calls: List<Kernel.Induct.Call>, ihs: List<String>, rename: List<Binding>, j: Int, claim: Eqn, vr: Varied, path: String) -> Result<List<Hyp>, String>
-    ? "One hypothesis per recursive call: the claim at that call's arguments, later ones in front."
-    match (calls, ihs)
-        ([c, ..moreCalls], [h, ..moreNames]) -> Result.Ok(List.concat(ihHyps(moreCalls, moreNames, rename, j, claim, vr, path)?, [Hyp(name = h, eqn = ihAt(c, rename, j, claim, vr, path)?)]))
+fn ihHyps(calls: List<Kernel.Induct.Call>, ihs: List<String>, carry: List<List<Proof>>, rename: List<Binding>, j: Int, claim: Eqn, vr: Varied, carried: List<Hyp>, scope: Env, path: String) -> Result<List<Hyp>, String>
+    ? "One hypothesis per recursive call, later ones in front: the claim at that call's arguments, once each carried hypothesis is proved there. A call named _ gives none."
+    match (calls, ihs, carry)
+        ([c, ..moreCalls], [h, ..moreNames], [ps, ..moreProofs]) -> Result.Ok(List.concat(ihHyps(moreCalls, moreNames, moreProofs, rename, j, claim, vr, carried, scope, path)?, ihTaken(c, h, ps, rename, j, claim, vr, carried, scope, path)?))
         _ -> Result.Ok([])
 
 verify ihHyps
-    ihHyps([], [], [], 0, Eqn(lhs = Term.TUnit, rhs = Term.TUnit), Varied(v = "x", general = []), "p") => Result.Ok([])
+    ihHyps([], [], [], [], 0, Eqn(lhs = Term.TUnit, rhs = Term.TUnit), Varied(v = "x", general = []), [], emptyEnv(), "p") => Result.Ok([])
 
-fn ihAt(c: Kernel.Induct.Call, rename: List<Binding>, j: Int, claim: Eqn, vr: Varied, path: String) -> Result<Eqn, String>
-    ? "The claim with the varied givens replaced by the call's arguments."
-    match anyIn(Kernel.Subst.freeVarsAll(c.args), c.inner)
-        true -> refuse(path, "a recursive call reads a name an inner match binds")
-        false -> ihWith(Kernel.Subst.substAll(c.args, rename)?, j, claim, vr, path)
+fn ihTaken(c: Kernel.Induct.Call, h: String, ps: List<Proof>, rename: List<Binding>, j: Int, claim: Eqn, vr: Varied, carried: List<Hyp>, scope: Env, path: String) -> Result<List<Hyp>, String>
+    ? "The hypothesis of one call, unless it is named _."
+    match (h == "_", List.len(ps) == List.len(carried))
+        (true, _) -> Result.Ok([])
+        (_, false) -> Result.Err("step {path}: one proof per carried hypothesis")
+        _ -> ihHolds(ihAt(c, rename, j, vr, path)?, h, ps, claim, carried, scope, path)
+
+verify ihTaken
+    ihTaken(Kernel.Induct.Call(args = [Term.TVar("t")], inner = []), "_", [], [], 0, Eqn(lhs = Term.TUnit, rhs = Term.TUnit), Varied(v = "x", general = []), [], emptyEnv(), "p") => Result.Ok([])
+    ihTaken(Kernel.Induct.Call(args = [Term.TVar("t")], inner = []), "ih", [], [], 0, Eqn(lhs = Term.TUnit, rhs = Term.TUnit), Varied(v = "x", general = []), [Hyp(name = "h", eqn = Eqn(lhs = Term.TVar("x"), rhs = Term.TBool(true)))], emptyEnv(), "p") => Result.Err("step p: one proof per carried hypothesis")
+
+fn ihHolds(bs: List<Binding>, h: String, ps: List<Proof>, claim: Eqn, carried: List<Hyp>, scope: Env, path: String) -> Result<List<Hyp>, String>
+    ? "Each carried hypothesis proved at the call's arguments; then the claim there."
+    carriedHold(carried, ps, bs, scope, "{path}/{h}")?
+    Result.Ok([Hyp(name = h, eqn = instantiate(claim, bs, path)?)])
+
+verify ihHolds
+    ihHolds([Kernel.Term.bind("x", Term.TVar("t"))], "ih", [Proof.PHyp("h")], Eqn(lhs = Term.TVar("x"), rhs = Term.TInt(1)), [Hyp(name = "h", eqn = Eqn(lhs = Term.TVar("x"), rhs = Term.TBool(true)))], withHyp(emptyEnv(), "h", Term.TVar("x"), true), "p") => Result.Err("step p/ih/carry.h: the case proves a different equation")
+    ihHolds([Kernel.Term.bind("x", Term.TVar("t"))], "ih", [Proof.PHyp("h")], Eqn(lhs = Term.TVar("x"), rhs = Term.TInt(1)), [Hyp(name = "h", eqn = Eqn(lhs = Term.TVar("x"), rhs = Term.TBool(true)))], withHyp(emptyEnv(), "h", Term.TVar("t"), true), "p") => Result.Ok([Hyp(name = "ih", eqn = Eqn(lhs = Term.TVar("t"), rhs = Term.TInt(1)))])
+
+fn ihAt(c: Kernel.Induct.Call, rename: List<Binding>, j: Int, vr: Varied, path: String) -> Result<List<Binding>, String>
+    ? "The varied givens bound to the call's arguments."
+    match anyIn(Kernel.Subst.freeVarsAll(readArgs(c.args, j, vr.general, 0)), c.inner)
+        true -> Result.Err("step {path}: a recursive call reads a name an inner match binds")
+        false -> ihBindings(Kernel.Subst.substAll(c.args, rename)?, j, vr, path)
 
 verify ihAt
-    ihAt(Kernel.Induct.Call(args = [Term.TVar("t")], inner = ["t"]), [], 0, Eqn(lhs = Term.TUnit, rhs = Term.TUnit), Varied(v = "x", general = []), "p") => Result.Err("step p: a recursive call reads a name an inner match binds")
+    ihAt(Kernel.Induct.Call(args = [Term.TVar("t")], inner = ["t"]), [], 0, Varied(v = "x", general = []), "p") => Result.Err("step p: a recursive call reads a name an inner match binds")
+    ihAt(Kernel.Induct.Call(args = [Term.TVar("t"), Term.TVar("y")], inner = ["y"]), [], 0, Varied(v = "x", general = []), "p") => Result.Ok([Kernel.Term.bind("x", Term.TVar("t"))])
+    ihAt(Kernel.Induct.Call(args = [Term.TVar("t"), Term.TVar("y")], inner = ["y"]), [], 0, Varied(v = "x", general = [Place(at = 1, name = "ys")]), "p") => Result.Err("step p: a recursive call reads a name an inner match binds")
 
-fn ihWith(args: List<Term>, j: Int, claim: Eqn, vr: Varied, path: String) -> Result<Eqn, String>
-    ? "Instantiate the claim at the call's arguments."
+fn readArgs(xs: List<Term>, j: Int, ps: List<Place>, k: Int) -> List<Term>
+    ? "The arguments a hypothesis reads: the one at place j and those at the varied places."
+    match xs
+        [] -> []
+        [x, ..rest] -> match Bool.or(k == j, atPlace(ps, k))
+            true -> List.prepend(x, readArgs(rest, j, ps, k + 1))
+            false -> readArgs(rest, j, ps, k + 1)
+
+verify readArgs
+    readArgs([Term.TVar("t"), Term.TVar("y")], 0, [], 0) => [Term.TVar("t")]
+    readArgs([Term.TVar("t"), Term.TVar("y")], 0, [Place(at = 1, name = "ys")], 0) => [Term.TVar("t"), Term.TVar("y")]
+
+fn atPlace(ps: List<Place>, k: Int) -> Bool
+    ? "Whether a varied given sits at place k."
+    match ps
+        [] -> false
+        [p, ..rest] -> Bool.or(p.at == k, atPlace(rest, k))
+
+verify atPlace
+    atPlace([Place(at = 1, name = "ys")], 1) => true
+    atPlace([], 0) => false
+
+fn ihBindings(args: List<Term>, j: Int, vr: Varied, path: String) -> Result<List<Binding>, String>
+    ? "The given at the matched place and the varied givens, each bound to the call's argument at its place."
     match Kernel.Induct.nthTerm(args, j)
-        Option.None -> refuse(path, "a recursive call has too few arguments")
-        Option.Some(at) -> instantiate(claim, List.prepend(Kernel.Term.bind(vr.v, at), placeBindings(vr.general, args)), path)
+        Option.None -> Result.Err("step {path}: a recursive call has too few arguments")
+        Option.Some(at) -> Result.Ok(List.prepend(Kernel.Term.bind(vr.v, at), placeBindings(vr.general, args)))
 
-verify ihWith
-    ihWith([Term.TVar("t")], 0, Eqn(lhs = Term.TVar("x"), rhs = Term.TInt(1)), Varied(v = "x", general = []), "p") => Result.Ok(Eqn(lhs = Term.TVar("t"), rhs = Term.TInt(1)))
+verify ihBindings
+    ihBindings([Term.TVar("t")], 0, Varied(v = "x", general = []), "p") => Result.Ok([Kernel.Term.bind("x", Term.TVar("t"))])
 
 fn placeBindings(ps: List<Place>, args: List<Term>) -> List<Binding>
     ? "Each varied given bound to the call's argument at its place."

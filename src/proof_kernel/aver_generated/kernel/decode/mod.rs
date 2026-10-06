@@ -1768,7 +1768,7 @@ pub fn intInductProof(
     }
 }
 
-/// (induct FN (TERM…) TERM TERM (case (NAME…) (NAME…) PROOF)…)
+/// (induct FN (TERM…) TERM TERM [(carry NAME…)] (case (NAME…) (IH…) PROOF)…)
 pub fn inductProof(
     args @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::sexp::Sexp>,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::proof::Proof, AverStr> {
@@ -1786,10 +1786,10 @@ pub fn inductProof(
                             {
                                 {
                                     let __list_subject = __pat3;
-                                    if let Some((r, cs)) =
+                                    if let Some((r, rest)) =
                                         aver_rt::list_uncons_cloned(&__list_subject)
                                     {
-                                        Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PInduct(f, crate::proof_kernel::aver_generated::kernel::decode::termList(&xs)?, crate::proof_kernel::aver_generated::kernel::decode::term(&l)?, crate::proof_kernel::aver_generated::kernel::decode::term(&r)?, crate::proof_kernel::aver_generated::kernel::decode::cases(&cs)?))
+                                        crate::proof_kernel::aver_generated::kernel::decode::inductWith(f, &crate::proof_kernel::aver_generated::kernel::decode::termList(&xs)?, &crate::proof_kernel::aver_generated::kernel::decode::term(&l)?, &crate::proof_kernel::aver_generated::kernel::decode::term(&r)?, &crate::proof_kernel::aver_generated::kernel::decode::carried(&rest)?)
                                     } else {
                                         Err(AverStr::from("malformed induct"))
                                     }
@@ -1810,7 +1810,70 @@ pub fn inductProof(
     }
 }
 
-/// (case (NAME…) (NAME…) PROOF)…
+/// The induction step, once the carried names are split off its cases.
+pub fn inductWith(
+    f @ _: AverStr,
+    xs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    l @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    r @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    rest @ _: &(
+        aver_rt::AverList<AverStr>,
+        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::sexp::Sexp>,
+    ),
+) -> Result<crate::proof_kernel::aver_generated::kernel::proof::Proof, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let (ns, cs) = rest.clone();
+        Ok(
+            crate::proof_kernel::aver_generated::kernel::proof::Proof::PInduct(
+                f,
+                xs.clone(),
+                l.clone(),
+                r.clone(),
+                ns,
+                crate::proof_kernel::aver_generated::kernel::decode::cases(&cs)?,
+            ),
+        )
+    }
+}
+
+/// The names after carry, when the first form is (carry NAME…), and the forms after it.
+#[inline(always)]
+pub fn carried(
+    ss @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::sexp::Sexp>,
+) -> Result<
+    (
+        aver_rt::AverList<AverStr>,
+        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::sexp::Sexp>,
+    ),
+    AverStr,
+> {
+    crate::proof_kernel::cancel_checkpoint();
+    aver_list_match!(ss.clone(), [] => Ok((aver_rt::AverList::empty(), aver_rt::AverList::empty())), [s, rest] => { match s {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat0) => {
+            { let __list_subject = __pat0; if let Some((__pat1, ns)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat1 {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(__pat2) => {
+            match &*__pat2 {
+        "carry" => {
+            Ok((crate::proof_kernel::aver_generated::kernel::decode::atoms(&ns)?, rest))
+        },
+        _ => {
+            Ok((aver_rt::AverList::empty(), ss.clone()))
+        }
+    }
+        },
+        _ => {
+            Ok((aver_rt::AverList::empty(), ss.clone()))
+        }
+    } } else { Ok((aver_rt::AverList::empty(), ss.clone())) } }
+        },
+        _ => {
+            Ok((aver_rt::AverList::empty(), ss.clone()))
+        }
+    } })
+}
+
+/// (case (NAME…) (IH…) PROOF)…, each IH a NAME or (NAME PROOF…) with the proofs of the carried hypotheses.
 #[inline(always)]
 pub fn cases(
     ss @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::sexp::Sexp>,
@@ -1822,7 +1885,7 @@ pub fn cases(
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(__pat4) => {
             match &*__pat4 {
         "case" => {
-            { let __list_subject = __pat3; if let Some((bs, __pat5)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat5; if let Some((hs, __pat6)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat6; if let Some((p, __pat7)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat7; if __list_subject.is_empty() { Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::proof::Case { binders: crate::proof_kernel::aver_generated::kernel::decode::atoms(&crate::proof_kernel::aver_generated::kernel::decode::items(&bs)?)?, ihs: crate::proof_kernel::aver_generated::kernel::decode::atoms(&crate::proof_kernel::aver_generated::kernel::decode::items(&hs)?)?, proof: crate::proof_kernel::aver_generated::kernel::decode::proof(&p)? }, &crate::proof_kernel::aver_generated::kernel::decode::cases(&rest)?)) } else { Err(AverStr::from("malformed case")) } } } else { Err(AverStr::from("malformed case")) } } } else { Err(AverStr::from("malformed case")) } } } else { Err(AverStr::from("malformed case")) } }
+            { let __list_subject = __pat3; if let Some((bs, __pat5)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat5; if let Some((hs, __pat6)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat6; if let Some((p, __pat7)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat7; if __list_subject.is_empty() { Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::proof::Case { binders: crate::proof_kernel::aver_generated::kernel::decode::atoms(&crate::proof_kernel::aver_generated::kernel::decode::items(&bs)?)?, ihs: crate::proof_kernel::aver_generated::kernel::decode::ihNames(&crate::proof_kernel::aver_generated::kernel::decode::items(&hs)?)?, carry: crate::proof_kernel::aver_generated::kernel::decode::ihCarry(&crate::proof_kernel::aver_generated::kernel::decode::items(&hs)?)?, proof: crate::proof_kernel::aver_generated::kernel::decode::proof(&p)? }, &crate::proof_kernel::aver_generated::kernel::decode::cases(&rest)?)) } else { Err(AverStr::from("malformed case")) } } } else { Err(AverStr::from("malformed case")) } } } else { Err(AverStr::from("malformed case")) } } } else { Err(AverStr::from("malformed case")) } }
         },
         _ => {
             Err(AverStr::from("malformed case"))
@@ -1838,6 +1901,75 @@ pub fn cases(
             Err(AverStr::from("malformed case"))
         }
     } })
+}
+
+/// The name of each induction hypothesis.
+#[inline(always)]
+pub fn ihNames(
+    ss @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::sexp::Sexp>,
+) -> Result<aver_rt::AverList<AverStr>, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    aver_list_match!(ss.clone(), [] => Ok(aver_rt::AverList::empty()), [s, rest] => Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::ihName(&s)?, &crate::proof_kernel::aver_generated::kernel::decode::ihNames(&rest)?)))
+}
+
+/// NAME or (NAME PROOF…).
+pub fn ihName(
+    s @ _: &crate::proof_kernel::aver_generated::kernel::sexp::Sexp,
+) -> Result<AverStr, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    match s.clone() {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(n) => Ok(n),
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat0) => {
+            let __list_subject = __pat0;
+            if let Some((__pat1, ps)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                match __pat1 {
+                    crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(n) => Ok(n),
+                    _ => Err(AverStr::from("malformed hypothesis")),
+                }
+            } else {
+                Err(AverStr::from("malformed hypothesis"))
+            }
+        }
+        _ => Err(AverStr::from("malformed hypothesis")),
+    }
+}
+
+/// The proofs of the carried hypotheses for each induction hypothesis.
+#[inline(always)]
+pub fn ihCarry(
+    ss @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::sexp::Sexp>,
+) -> Result<
+    aver_rt::AverList<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>>,
+    AverStr,
+> {
+    crate::proof_kernel::cancel_checkpoint();
+    aver_list_match!(ss.clone(), [] => Ok(aver_rt::AverList::empty()), [s, rest] => Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::ihProofs(&s)?, &crate::proof_kernel::aver_generated::kernel::decode::ihCarry(&rest)?)))
+}
+
+/// None for a bare NAME; the proofs after the name otherwise.
+pub fn ihProofs(
+    s @ _: &crate::proof_kernel::aver_generated::kernel::sexp::Sexp,
+) -> Result<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    match s.clone() {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(n) => {
+            Ok(aver_rt::AverList::empty())
+        }
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat0) => {
+            let __list_subject = __pat0;
+            if let Some((__pat1, ps)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                match __pat1 {
+                    crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(n) => {
+                        crate::proof_kernel::aver_generated::kernel::decode::proofs(&ps)
+                    }
+                    _ => Err(AverStr::from("malformed hypothesis")),
+                }
+            } else {
+                Err(AverStr::from("malformed hypothesis"))
+            }
+        }
+        _ => Err(AverStr::from("malformed hypothesis")),
+    }
 }
 
 /// (absurd PROOF TERM TERM)
@@ -2656,7 +2788,7 @@ pub fn consts(
     aver_list_match!(ss.clone(), [] => Ok(aver_rt::AverList::empty()), [s, rest] => Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::constant(&s)?, &crate::proof_kernel::aver_generated::kernel::decode::consts(&rest)?)))
 }
 
-/// (steps 7 (obligation …) (defs …) (consts …) (laws …) (proof …)); version 7 only.
+/// (steps 8 (obligation …) (defs …) (consts …) (laws …) (proof …)); version 8 only.
 pub fn script(
     s @ _: &crate::proof_kernel::aver_generated::kernel::sexp::Sexp,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::proof::Script, AverStr> {
@@ -2675,7 +2807,7 @@ pub fn script(
                                 {
                                     match __pat4 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(v) => {
-            { let __int_match_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&v)); if __int_match_subject == aver_rt::AverInt::from_i64(55) { { let __list_subject = rest; if let Some((o, __pat5)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat5; if let Some((__pat6, __pat7)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat6 {
+            { let __int_match_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&v)); if __int_match_subject == aver_rt::AverInt::from_i64(56) { { let __list_subject = rest; if let Some((o, __pat5)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat5; if let Some((__pat6, __pat7)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat6 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat8) => {
             { let __list_subject = __pat8; if let Some((__pat9, ds)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat9 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(__pat10) => {

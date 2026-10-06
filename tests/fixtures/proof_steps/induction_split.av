@@ -1,0 +1,71 @@
+module InductionSplit
+    intent = "Laws proved by induction along a function whose arm splits again around its recursive call, and under a `when` about what the induction varies."
+    exposes [Nat, minus, size, ins, allPos, double]
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn minus(x: Nat, y: Nat) -> Nat
+    ? "Peano subtraction, cut off at zero: the recursive call sits inside a match on the second argument."
+    match x
+        Nat.Z -> Nat.Z
+        Nat.S(z) -> match y
+            Nat.Z -> x
+            Nat.S(w) -> minus(z, w)
+
+verify minus
+    minus(Nat.S(Nat.Z), Nat.Z) => Nat.S(Nat.Z)
+
+verify minus law minusSelf
+    given m: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    minus(m, m) => Nat.Z
+
+fn size(xs: List<Int>) -> Nat
+    ? "Length as a Peano number."
+    match xs
+        [] -> Nat.Z
+        [h, ..t] -> Nat.S(size(t))
+
+verify size
+    size([1]) => Nat.S(Nat.Z)
+
+fn ins(x: Int, xs: List<Int>) -> List<Int>
+    ? "Insert before the first larger element: the recursive call sits inside a match on a comparison."
+    match xs
+        [] -> [x]
+        [h, ..t] -> match x < h
+            true -> List.prepend(x, xs)
+            false -> List.prepend(h, ins(x, t))
+
+verify ins
+    ins(2, [1, 3]) => [1, 2, 3]
+
+verify ins law growsByOne
+    given x: Int = [0, 2]
+    given xs: List<Int> = [[], [1, 3]]
+    size(ins(x, xs)) => Nat.S(size(xs))
+
+fn allPos(xs: List<Int>) -> Bool
+    ? "Every element is positive."
+    match xs
+        [] -> true
+        [h, ..t] -> Bool.and(h > 0, allPos(t))
+
+verify allPos
+    allPos([1, 2]) => true
+
+fn double(xs: List<Int>) -> List<Int>
+    ? "Each element twice."
+    match xs
+        [] -> []
+        [h, ..t] -> List.prepend(h, List.prepend(h, double(t)))
+
+verify double
+    double([1]) => [1, 1]
+
+verify double law keepsPositive
+    given xs: List<Int> = [[], [1], [1, 0]]
+    when allPos(xs)
+    allPos(double(xs)) => true
