@@ -30,6 +30,7 @@ mod induction;
 mod rewrite;
 
 use crate::codegen::proof_lower::ProofLowerInputs;
+use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
 use crate::ir::proof_steps::term::{Term, canon};
 use crate::ir::proof_steps::{LawRef, Obligation, Proof, Script, WallRule};
 use crate::ir::{LawTheorem, ProofIR, ProofStrategy};
@@ -268,6 +269,63 @@ fn cuts_used(p: &Proof) -> bool {
     (1..=64).any(|k| uses_hyp(p, &format!("when_value{k}")))
 }
 
+/// The user functions whose calls `p` splits into the true and false cases.
+fn split_calls(p: &Proof, out: &mut Vec<crate::ir::identity::FnId>) {
+    let mut all = |ps: &[Proof]| ps.iter().for_each(|q| split_calls(q, out));
+    match p {
+        Proof::Cases {
+            on,
+            if_true,
+            if_false,
+            ..
+        } => {
+            if let ResolvedExpr::Call(ResolvedCallee::Fn(id), _) = &on.node {
+                out.push(*id);
+            }
+            split_calls(if_true, out);
+            split_calls(if_false, out);
+        }
+        Proof::Symm(q) | Proof::Congr { inner: q, .. } => split_calls(q, out),
+        Proof::Absurd { contradiction, .. } => split_calls(contradiction, out),
+        Proof::Arm { premise, .. } => split_calls(premise, out),
+        Proof::Unfold { premise, .. } | Proof::Law { premise, .. } => {
+            if let Some(q) = premise {
+                split_calls(q, out);
+            }
+        }
+        Proof::Trans { steps, .. } => all(steps),
+        Proof::Rule { premises, .. } => all(premises),
+        Proof::Enum { cases, .. } => all(cases),
+        Proof::Have { proof, body, .. } => {
+            split_calls(proof, out);
+            split_calls(body, out);
+        }
+        Proof::Induct { cases, .. } => cases.iter().for_each(|c| split_calls(&c.proof, out)),
+        Proof::InductList { nil, cons, .. } => {
+            split_calls(nil, out);
+            split_calls(cons, out);
+        }
+        Proof::InductInt {
+            base,
+            carried,
+            step,
+            ..
+        } => {
+            split_calls(base, out);
+            split_calls(step, out);
+            carried.iter().for_each(|(_, q)| split_calls(q, out));
+        }
+        Proof::Refl(_)
+        | Proof::Hyp(_)
+        | Proof::Linear { .. }
+        | Proof::UnfoldConst { .. }
+        | Proof::Proj { .. }
+        | Proof::Cell { .. }
+        | Proof::Compute { .. }
+        | Proof::Ring { .. } => {}
+    }
+}
+
 /// Whether `p` may read hypothesis `name` (an over-approximation: a
 /// hypothesis of the same name bound inside counts too).
 fn uses_hyp(p: &Proof, name: &str) -> bool {
@@ -375,6 +433,13 @@ fn prove_part(
         }
         found.ok_or_else(|| refusals.join("; "))?
     };
+    // The kernel splits on a call only when its definition says the call
+    // is a Bool, so a function split on comes with its definition.
+    let mut split = Vec::new();
+    split_calls(&proof, &mut split);
+    for id in split {
+        env.mark_used(id);
+    }
     Ok(Part {
         proof,
         defs: env.used_defs(),

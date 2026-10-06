@@ -473,6 +473,7 @@ impl aver_rt::AverDisplay for Case {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Def {
     pub name: AverStr,
+    pub returnsBool: bool,
     pub params: aver_rt::AverList<AverStr>,
     pub lets: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
     pub body: crate::proof_kernel::aver_generated::kernel::term::Term,
@@ -491,6 +492,7 @@ impl Ord for Def {
             .then_with(|| self.lets.cmp(&other.lets))
             .then_with(|| self.name.cmp(&other.name))
             .then_with(|| self.params.cmp(&other.params))
+            .then_with(|| self.returnsBool.cmp(&other.returnsBool))
     }
 }
 
@@ -500,6 +502,7 @@ impl aver_rt::AverDisplay for Def {
             "Def({})",
             vec![
                 format!("name: {}", self.name.aver_display_inner()),
+                format!("returnsBool: {}", self.returnsBool.aver_display_inner()),
                 format!("params: {}", self.params.aver_display_inner()),
                 format!("lets: {}", self.lets.aver_display_inner()),
                 format!("body: {}", self.body.aver_display_inner())

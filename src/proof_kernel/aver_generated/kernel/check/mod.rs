@@ -1482,8 +1482,132 @@ pub fn compute(
     }
 }
 
-/// Both branches of a Bool split must prove the same equation.
+/// Both branches of a Bool split must prove the same equation; the term split on must be a Bool.
+#[inline(always)]
 pub fn cases(
+    on @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    h @ _: AverStr,
+    mut t @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
+    mut f @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
+    env @ _: &Env,
+    path @ _: AverStr,
+) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    if crate::proof_kernel::aver_generated::kernel::check::isBool(on, env) {
+        crate::proof_kernel::aver_generated::kernel::check::casesOfBool(on, h, t, f, env, path)
+    } else {
+        crate::proof_kernel::aver_generated::kernel::check::refuse(
+            path,
+            AverStr::from("the term split on is not a Bool"),
+        )
+    }
+}
+
+/// Whether a term is a Bool by its shape: a literal, a comparison, a Bool connective, a call of a definition that returns a Bool, or a given of type Bool or a Bool field of one.
+pub fn isBool(
+    t @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    env @ _: &Env,
+) -> bool {
+    crate::proof_kernel::cancel_checkpoint();
+    match t.clone() {
+        crate::proof_kernel::aver_generated::kernel::term::Term::TBool(b) => true,
+        crate::proof_kernel::aver_generated::kernel::term::Term::TOp(o, a, b) => {
+            let a = (*a).clone();
+            let b = (*b).clone();
+            aver_rt::AverList::from_vec(vec![
+                AverStr::from("=="),
+                AverStr::from("!="),
+                AverStr::from("<"),
+                AverStr::from("<="),
+                AverStr::from(">"),
+                AverStr::from(">="),
+                AverStr::from("==."),
+                AverStr::from("!=."),
+                AverStr::from("<."),
+                AverStr::from("<=."),
+                AverStr::from(">."),
+                AverStr::from(">=."),
+            ])
+            .contains(&o)
+        }
+        crate::proof_kernel::aver_generated::kernel::term::Term::TBi(n, xs) => {
+            aver_rt::AverList::from_vec(vec![
+                AverStr::from("Bool.and"),
+                AverStr::from("Bool.or"),
+                AverStr::from("Bool.not"),
+            ])
+            .contains(&n)
+        }
+        crate::proof_kernel::aver_generated::kernel::term::Term::TCall(f, xs) => {
+            crate::proof_kernel::aver_generated::kernel::check::returnsBool(f, env.defs.clone())
+        }
+        _ => {
+            (crate::proof_kernel::aver_generated::kernel::check::finOf(t, &env.finite)
+                == Some(crate::proof_kernel::aver_generated::kernel::term::Fin::FBool))
+        }
+    }
+}
+
+/// The finite type of a given, or of a field of one.
+pub fn finOf(
+    t @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    gs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Given>,
+) -> Option<crate::proof_kernel::aver_generated::kernel::term::Fin> {
+    crate::proof_kernel::cancel_checkpoint();
+    match t.clone() {
+        crate::proof_kernel::aver_generated::kernel::term::Term::TVar(v) => {
+            crate::proof_kernel::aver_generated::kernel::check::findGiven(v, gs.clone())
+        }
+        crate::proof_kernel::aver_generated::kernel::term::Term::TGet(r, f) => {
+            let r = (*r).clone();
+            match crate::proof_kernel::aver_generated::kernel::check::finOf(&r, gs) {
+                Some(__pat0) => match __pat0 {
+                    crate::proof_kernel::aver_generated::kernel::term::Fin::FRec(n, fs) => {
+                        crate::proof_kernel::aver_generated::kernel::check::fieldFin(f, fs)
+                    }
+                    _ => None,
+                },
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// The finite type of a named field.
+#[inline(always)]
+pub fn fieldFin(
+    mut f @ _: AverStr,
+    mut fs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::FinField>,
+) -> Option<crate::proof_kernel::aver_generated::kernel::term::Fin> {
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        aver_list_match!(fs, [] => { return None; }, [x, rest] => { if (x.name == f) { return Some(x.fin); } else { {
+            let __tco1 = rest;
+            fs = __tco1;
+            continue;
+        } } })
+    }
+}
+
+/// Whether f is a definition in scope marked as returning a Bool.
+#[inline(always)]
+pub fn returnsBool(
+    mut f @ _: AverStr,
+    mut ds @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
+) -> bool {
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        aver_list_match!(ds, [] => { return false; }, [d, rest] => { if (d.name == f) { return d.returnsBool; } else { {
+            let __tco1 = rest;
+            ds = __tco1;
+            continue;
+        } } })
+    }
+}
+
+/// The two branches of a split on a Bool.
+pub fn casesOfBool(
     on @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
     h @ _: AverStr,
     mut t @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,

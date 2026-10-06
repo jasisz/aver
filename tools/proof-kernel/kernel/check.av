@@ -196,15 +196,79 @@ verify compute
     compute(Term.TVar("x"), Term.TInt(6), "p") => Result.Err("step p: compute needs closed terms")
 
 fn cases(on: Term, h: String, t: Proof, f: Proof, env: Env, path: String) -> Result<Eqn, String>
-    ? "Both branches of a Bool split must prove the same equation."
+    ? "Both branches of a Bool split must prove the same equation; the term split on must be a Bool."
+    match isBool(on, env)
+        true -> casesOfBool(on, h, t, f, env, path)
+        false -> refuse(path, "the term split on is not a Bool")
+
+verify cases
+    cases(Term.TVar("c"), "h", Proof.PHyp("h"), Proof.PHyp("h"), emptyEnv(), "p") => Result.Err("step p: the term split on is not a Bool")
+    cases(Term.TOp("<", Term.TVar("x"), Term.TInt(0)), "h", Proof.PHyp("h"), Proof.PHyp("h"), emptyEnv(), "p") => Result.Err("step p: the two branches prove different equations")
+
+fn isBool(t: Term, env: Env) -> Bool
+    ? "Whether a term is a Bool by its shape: a literal, a comparison, a Bool connective, a call of a definition that returns a Bool, or a given of type Bool or a Bool field of one."
+    match t
+        Term.TBool(b) -> true
+        Term.TOp(o, a, b) -> List.contains(["==", "!=", "<", "<=", ">", ">=", "==.", "!=.", "<.", "<=.", ">.", ">=."], o)
+        Term.TBi(n, xs) -> List.contains(["Bool.and", "Bool.or", "Bool.not"], n)
+        Term.TCall(f, xs) -> returnsBool(f, env.defs)
+        _ -> finOf(t, env.finite) == Option.Some(Fin.FBool)
+
+verify isBool
+    isBool(Term.TOp("<=", Term.TVar("x"), Term.TInt(0)), emptyEnv()) => true
+    isBool(Term.TOp("+", Term.TVar("x"), Term.TInt(0)), emptyEnv()) => false
+    isBool(Term.TVar("b"), emptyEnv()) => false
+    isBool(Term.TCall("f", []), emptyEnv()) => false
+
+fn finOf(t: Term, gs: List<Given>) -> Option<Fin>
+    ? "The finite type of a given, or of a field of one."
+    match t
+        Term.TVar(v) -> findGiven(v, gs)
+        Term.TGet(r, f) -> match finOf(r, gs)
+            Option.Some(Fin.FRec(n, fs)) -> fieldFin(f, fs)
+            _ -> Option.None
+        _ -> Option.None
+
+verify finOf
+    finOf(Term.TGet(Term.TVar("r"), "on"), [Given(name = "r", fin = Fin.FRec("Lamp", [FinField(name = "on", fin = Fin.FBool)]))]) => Option.Some(Fin.FBool)
+    finOf(Term.TGet(Term.TVar("r"), "off"), [Given(name = "r", fin = Fin.FRec("Lamp", [FinField(name = "on", fin = Fin.FBool)]))]) => Option.None
+    finOf(Term.TVar("b"), []) => Option.None
+
+fn fieldFin(f: String, fs: List<FinField>) -> Option<Fin>
+    ? "The finite type of a named field."
+    match fs
+        [] -> Option.None
+        [x, ..rest] -> match x.name == f
+            true -> Option.Some(x.fin)
+            false -> fieldFin(f, rest)
+
+verify fieldFin
+    fieldFin("on", [FinField(name = "on", fin = Fin.FBool)]) => Option.Some(Fin.FBool)
+    fieldFin("x", []) => Option.None
+
+fn returnsBool(f: String, ds: List<Def>) -> Bool
+    ? "Whether f is a definition in scope marked as returning a Bool."
+    match ds
+        [] -> false
+        [d, ..rest] -> match d.name == f
+            true -> d.returnsBool
+            false -> returnsBool(f, rest)
+
+verify returnsBool
+    returnsBool("p", [Def(name = "p", returnsBool = true, params = [], lets = [], body = Term.TBool(true))]) => true
+    returnsBool("p", [Def(name = "p", returnsBool = false, params = [], lets = [], body = Term.TInt(1))]) => false
+    returnsBool("q", [Def(name = "p", returnsBool = true, params = [], lets = [], body = Term.TBool(true))]) => false
+
+fn casesOfBool(on: Term, h: String, t: Proof, f: Proof, env: Env, path: String) -> Result<Eqn, String>
+    ? "The two branches of a split on a Bool."
     whenTrue = conclude(t, withHyp(env, h, on, true), "{path}/cases.true")?
     whenFalse = conclude(f, withHyp(env, h, on, false), "{path}/cases.false")?
     match whenTrue == whenFalse
         true -> Result.Ok(whenTrue)
         false -> refuse(path, "the two branches prove different equations")
 
-verify cases
-    cases(Term.TVar("c"), "h", Proof.PHyp("h"), Proof.PHyp("h"), emptyEnv(), "p") => Result.Err("step p: the two branches prove different equations")
+verify casesOfBool
+    casesOfBool(Term.TVar("c"), "h", Proof.PHyp("h"), Proof.PHyp("h"), emptyEnv(), "p") => Result.Err("step p: the two branches prove different equations")
 
 fn have(h: String, fact: Term, q: Proof, body: Proof, env: Env, path: String) -> Result<Eqn, String>
     ? "A cut: q proves fact = true in the current scope, then body is checked with it as hypothesis h."
@@ -381,10 +445,10 @@ fn unfoldArm(d: Def, k: Int, xs: List<Term>, ys: List<Term>, pre: List<Proof>, e
         _ -> unfoldMatch(d.body, k, outer, ys, pre, lhs, env, path)
 
 verify unfoldArm
-    unfoldArm(Def(name = "one", params = [], lets = [], body = Term.TInt(1)), 0, [], [], [], emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TCall("one", []), rhs = Term.TInt(1)))
-    unfoldArm(Def(name = "one", params = [], lets = [], body = Term.TInt(1)), 1, [], [], [], emptyEnv(), "p") => Result.Err("step p: the body is not a match")
-    unfoldArm(Def(name = "f", params = ["x"], lets = [Kernel.Term.bind("y", Term.TOp("+", Term.TVar("x"), Term.TInt(1))), Kernel.Term.bind("z", Term.TOp("*", Term.TVar("y"), Term.TVar("x")))], body = Term.TVar("z")), 0, [Term.TVar("a")], [], [], emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TCall("f", [Term.TVar("a")]), rhs = Term.TOp("*", Term.TOp("+", Term.TVar("a"), Term.TInt(1)), Term.TVar("a"))))
-    unfoldArm(Def(name = "f", params = ["x"], lets = [Kernel.Term.bind("x", Term.TOp("+", Term.TVar("x"), Term.TInt(1)))], body = Term.TVar("x")), 0, [Term.TVar("a")], [], [], emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TCall("f", [Term.TVar("a")]), rhs = Term.TOp("+", Term.TVar("a"), Term.TInt(1))))
+    unfoldArm(Def(name = "one", returnsBool = false, params = [], lets = [], body = Term.TInt(1)), 0, [], [], [], emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TCall("one", []), rhs = Term.TInt(1)))
+    unfoldArm(Def(name = "one", returnsBool = false, params = [], lets = [], body = Term.TInt(1)), 1, [], [], [], emptyEnv(), "p") => Result.Err("step p: the body is not a match")
+    unfoldArm(Def(name = "f", returnsBool = false, params = ["x"], lets = [Kernel.Term.bind("y", Term.TOp("+", Term.TVar("x"), Term.TInt(1))), Kernel.Term.bind("z", Term.TOp("*", Term.TVar("y"), Term.TVar("x")))], body = Term.TVar("z")), 0, [Term.TVar("a")], [], [], emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TCall("f", [Term.TVar("a")]), rhs = Term.TOp("*", Term.TOp("+", Term.TVar("a"), Term.TInt(1)), Term.TVar("a"))))
+    unfoldArm(Def(name = "f", returnsBool = false, params = ["x"], lets = [Kernel.Term.bind("x", Term.TOp("+", Term.TVar("x"), Term.TInt(1)))], body = Term.TVar("x")), 0, [Term.TVar("a")], [], [], emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TCall("f", [Term.TVar("a")]), rhs = Term.TOp("+", Term.TVar("a"), Term.TInt(1))))
 
 fn bindLets(lets: List<Binding>, outer: List<Binding>) -> Result<List<Binding>, String>
     ? "Each local binding, in order, bound to its value under everything before it; the latest name comes first."
@@ -737,7 +801,7 @@ fn inductOn(d: Def, j: Int, arms: List<Arm>, xs: List<Term>, claim: Eqn, cs: Lis
         (true, Result.Ok(vr)) -> inductChecked(d, j, arms, xs, claim, cs, vr, env, path)
 
 verify inductOn
-    inductOn(Def(name = "f", params = ["x"], lets = [], body = Term.TUnit), 0, [], [], Eqn(lhs = Term.TUnit, rhs = Term.TUnit), [], emptyEnv(), "p") => Result.Err("step p: f takes 1 arguments")
+    inductOn(Def(name = "f", returnsBool = false, params = ["x"], lets = [], body = Term.TUnit), 0, [], [], Eqn(lhs = Term.TUnit, rhs = Term.TUnit), [], emptyEnv(), "p") => Result.Err("step p: f takes 1 arguments")
 
 fn inductChecked(d: Def, j: Int, arms: List<Arm>, xs: List<Term>, claim: Eqn, cs: List<Case>, vr: Varied, env: Env, path: String) -> Result<Eqn, String>
     ? "No hypothesis in scope mentions what varies; one case per arm; the arms are one per constructor."
@@ -749,7 +813,7 @@ fn inductChecked(d: Def, j: Int, arms: List<Arm>, xs: List<Term>, claim: Eqn, cs
         _ -> inductCases(d, j, arms, cs, Kernel.Induct.Call(args = xs, inner = []), claim, vr, takenNames(claim, env.hyps), env, path, 0)
 
 verify inductChecked
-    inductChecked(Def(name = "f", params = [], lets = [], body = Term.TUnit), 0, [], [], Eqn(lhs = Term.TVar("x"), rhs = Term.TVar("x")), [], Varied(v = "x", general = []), withHyp(emptyEnv(), "h", Term.TVar("x"), true), "p") => Result.Err("step p: a hypothesis in scope mentions a variable the induction varies")
+    inductChecked(Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TUnit), 0, [], [], Eqn(lhs = Term.TVar("x"), rhs = Term.TVar("x")), [], Varied(v = "x", general = []), withHyp(emptyEnv(), "h", Term.TVar("x"), true), "p") => Result.Err("step p: a hypothesis in scope mentions a variable the induction varies")
 
 fn placeNames(ps: List<Place>) -> List<String>
     ? "The names of the varied places."
@@ -855,16 +919,16 @@ fn inductCases(d: Def, j: Int, arms: List<Arm>, cs: List<Case>, at: Call, claim:
         ([a, ..moreArms], [c, ..moreCases]) -> inductNext(inductCase(d, j, a, c, at, claim, vr, taken, env, "{path}/case.{i}"), d, j, moreArms, moreCases, at, claim, vr, taken, env, path, i + 1)
         _ -> Result.Ok(claim)
 
+verify inductCases
+    inductCases(Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TUnit), 0, [], [], Kernel.Induct.Call(args = [], inner = []), Eqn(lhs = Term.TUnit, rhs = Term.TUnit), Varied(v = "x", general = []), [], emptyEnv(), "p", 0) => Result.Ok(Eqn(lhs = Term.TUnit, rhs = Term.TUnit))
+
 fn inductNext(done: Result<Unit, String>, d: Def, j: Int, arms: List<Arm>, cs: List<Case>, at: Call, claim: Eqn, vr: Varied, taken: List<String>, env: Env, path: String, i: Int) -> Result<Eqn, String>
     ? "The rest of the cases, once this one checked."
     done?
     inductCases(d, j, arms, cs, at, claim, vr, taken, env, path, i)
 
 verify inductNext
-    inductNext(Result.Err("no"), Def(name = "f", params = [], lets = [], body = Term.TUnit), 0, [], [], Kernel.Induct.Call(args = [], inner = []), Eqn(lhs = Term.TUnit, rhs = Term.TUnit), Varied(v = "x", general = []), [], emptyEnv(), "p", 0) => Result.Err("no")
-
-verify inductCases
-    inductCases(Def(name = "f", params = [], lets = [], body = Term.TUnit), 0, [], [], Kernel.Induct.Call(args = [], inner = []), Eqn(lhs = Term.TUnit, rhs = Term.TUnit), Varied(v = "x", general = []), [], emptyEnv(), "p", 0) => Result.Ok(Eqn(lhs = Term.TUnit, rhs = Term.TUnit))
+    inductNext(Result.Err("no"), Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TUnit), 0, [], [], Kernel.Induct.Call(args = [], inner = []), Eqn(lhs = Term.TUnit, rhs = Term.TUnit), Varied(v = "x", general = []), [], emptyEnv(), "p", 0) => Result.Err("no")
 
 fn inductCase(d: Def, j: Int, a: Arm, c: Case, at: Call, claim: Eqn, vr: Varied, taken: List<String>, env: Env, path: String) -> Result<Unit, String>
     ? "Fresh names for the arm's pattern; the claim at the pattern, under one hypothesis per recursive call at that call's arguments."
@@ -875,7 +939,7 @@ fn inductCase(d: Def, j: Int, a: Arm, c: Case, at: Call, claim: Eqn, vr: Varied,
         _ -> inductCaseNamed(d, j, a, c, namesToVars(c.binders), at, claim, vr, env, path)
 
 verify inductCase
-    inductCase(Def(name = "f", params = [], lets = [], body = Term.TUnit), 0, Arm(pattern = Pat.PNil, body = Term.TUnit), Case(binders = ["y"], ihs = [], proof = Proof.PRefl(Term.TUnit)), Kernel.Induct.Call(args = [], inner = []), Eqn(lhs = Term.TUnit, rhs = Term.TUnit), Varied(v = "x", general = []), [], emptyEnv(), "p") => Result.Err("step p: wrong number of names")
+    inductCase(Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TUnit), 0, Arm(pattern = Pat.PNil, body = Term.TUnit), Case(binders = ["y"], ihs = [], proof = Proof.PRefl(Term.TUnit)), Kernel.Induct.Call(args = [], inner = []), Eqn(lhs = Term.TUnit, rhs = Term.TUnit), Varied(v = "x", general = []), [], emptyEnv(), "p") => Result.Err("step p: wrong number of names")
 
 fn refuseCase(path: String, why: String) -> Result<Unit, String>
     ? "A refusal of an induction case, naming it."
@@ -924,7 +988,7 @@ fn inductCaseNamed(d: Def, j: Int, a: Arm, c: Case, ys: List<Term>, at: Call, cl
         true -> caseProves(c.proof, goal, withHyps(env, List.concat(ihHyps(calls, c.ihs, rename, j, claim, vr, path)?, env.hyps)), path)
 
 verify inductCaseNamed
-    inductCaseNamed(Def(name = "f", params = ["x"], lets = [], body = Term.TUnit), 0, Arm(pattern = Pat.PNil, body = Term.TInt(0)), Case(binders = [], ihs = ["ih"], proof = Proof.PRefl(Term.TUnit)), [], Kernel.Induct.Call(args = [Term.TVar("x")], inner = []), Eqn(lhs = Term.TVar("x"), rhs = Term.TVar("x")), Varied(v = "x", general = []), emptyEnv(), "p") => Result.Err("step p: 0 recursive calls, 1 hypotheses")
+    inductCaseNamed(Def(name = "f", returnsBool = false, params = ["x"], lets = [], body = Term.TUnit), 0, Arm(pattern = Pat.PNil, body = Term.TInt(0)), Case(binders = [], ihs = ["ih"], proof = Proof.PRefl(Term.TUnit)), [], Kernel.Induct.Call(args = [Term.TVar("x")], inner = []), Eqn(lhs = Term.TVar("x"), rhs = Term.TVar("x")), Varied(v = "x", general = []), emptyEnv(), "p") => Result.Err("step p: 0 recursive calls, 1 hypotheses")
 
 fn withoutNames(bs: List<Binding>, names: List<String>) -> List<Binding>
     ? "Bindings for names a pattern does not shadow."

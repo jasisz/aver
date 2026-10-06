@@ -687,14 +687,17 @@ verify factOf
     factOf("k", Givens(names = ["b"], finite = [Given(name = "b", fin = Fin.FBool)], lists = [], ints = []), [], Term.TUnit, Term.TUnit, Proof.PRefl(Term.TUnit)) => Result.Err("fact k: a given of finite type")
 
 fn def(s: Sexp) -> Result<Def, String>
-    ? "(def NAME (PARAM…) ((NAME TERM)…) TERM): parameters, local bindings in order, the final expression."
+    ? "(def NAME (PARAM…) ((NAME TERM)…) TERM [bool]): parameters, local bindings in order, the final expression; `bool` marks a function that returns a Bool."
     match s
-        Sexp.Node([Sexp.Atom("def"), Sexp.Atom(n), ps, ls, b]) -> Result.Ok(Def(name = n, params = atoms(items(ps)?)?, lets = bindings(ls)?, body = term(b)?))
+        Sexp.Node([Sexp.Atom("def"), Sexp.Atom(n), ps, ls, b]) -> Result.Ok(Def(name = n, returnsBool = false, params = atoms(items(ps)?)?, lets = bindings(ls)?, body = term(b)?))
+        Sexp.Node([Sexp.Atom("def"), Sexp.Atom(n), ps, ls, b, Sexp.Atom("bool")]) -> Result.Ok(Def(name = n, returnsBool = true, params = atoms(items(ps)?)?, lets = bindings(ls)?, body = term(b)?))
         _ -> Result.Err("malformed def")
 
 verify def
     def(Sexp.Atom("x")) => Result.Err("malformed def")
-    def(Sexp.Node([Sexp.Atom("def"), Sexp.Atom("f"), Sexp.Node([Sexp.Atom("x")]), Sexp.Node([Sexp.Node([Sexp.Atom("y"), Sexp.Node([Sexp.Atom("v"), Sexp.Atom("x")])])]), Sexp.Node([Sexp.Atom("v"), Sexp.Atom("y")])])) => Result.Ok(Def(name = "f", params = ["x"], lets = [Kernel.Term.bind("y", Term.TVar("x"))], body = Term.TVar("y")))
+    def(Sexp.Node([Sexp.Atom("def"), Sexp.Atom("p"), Sexp.Node([]), Sexp.Node([]), Sexp.Node([Sexp.Atom("b"), Sexp.Atom("true")]), Sexp.Atom("bool")])) => Result.Ok(Def(name = "p", returnsBool = true, params = [], lets = [], body = Term.TBool(true)))
+    def(Sexp.Node([Sexp.Atom("def"), Sexp.Atom("p"), Sexp.Node([]), Sexp.Node([]), Sexp.Node([Sexp.Atom("b"), Sexp.Atom("true")]), Sexp.Atom("int")])) => Result.Err("malformed def")
+    def(Sexp.Node([Sexp.Atom("def"), Sexp.Atom("f"), Sexp.Node([Sexp.Atom("x")]), Sexp.Node([Sexp.Node([Sexp.Atom("y"), Sexp.Node([Sexp.Atom("v"), Sexp.Atom("x")])])]), Sexp.Node([Sexp.Atom("v"), Sexp.Atom("y")])])) => Result.Ok(Def(name = "f", returnsBool = false, params = ["x"], lets = [Kernel.Term.bind("y", Term.TVar("x"))], body = Term.TVar("y")))
 
 fn defs(ss: List<Sexp>) -> Result<List<Def>, String>
     ? "Definitions."

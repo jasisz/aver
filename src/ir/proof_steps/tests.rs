@@ -194,6 +194,49 @@ fn a_float_equality_does_not_rewrite() {
     }
 }
 
+/// A split into the true and false cases holds only for a Bool: on an Int
+/// neither case happens, and two branches proving the claim under
+/// impossible hypotheses would prove anything. The kernel splits on a
+/// comparison, and on a call only when the definition it opens is marked as
+/// returning a Bool.
+#[test]
+fn a_split_is_on_a_bool() {
+    use crate::ir::hir::ResolvedCallee;
+    use crate::ir::identity::FnId;
+    let zero = term::int(&0.into());
+    let split = |on: super::Term| Proof::Cases {
+        on,
+        hyp: "h".into(),
+        if_true: Box::new(Proof::Refl(zero.clone())),
+        if_false: Box::new(Proof::Refl(zero.clone())),
+    };
+    let call = Spanned::bare(ResolvedExpr::Call(
+        ResolvedCallee::Fn(FnId(0)),
+        vec![var("a")],
+    ));
+    let def = |returns_bool: bool| super::Def {
+        fn_id: FnId(0),
+        name: "__fn_0".into(),
+        params: vec!["x".into()],
+        returns_bool,
+        lets: Vec::new(),
+        body: term::boolean(true),
+    };
+    let s = script(zero.clone(), zero.clone(), split(var("a")));
+    assert!(kernel(&s).is_err(), "an Int split on");
+    let lt = term::binop(BinOp::Lt, var("a"), zero.clone());
+    assert!(kernel(&script(zero.clone(), zero.clone(), split(lt))).is_ok());
+    for (defs, accepted) in [
+        (vec![], false),
+        (vec![def(false)], false),
+        (vec![def(true)], true),
+    ] {
+        let mut s = script(zero.clone(), zero.clone(), split(call.clone()));
+        s.defs = defs;
+        assert_eq!(kernel(&s).is_ok(), accepted, "{:?}", kernel(&s));
+    }
+}
+
 /// `List.concat(xs, []) = xs` by induction on `xs`, a given of list type:
 /// the kernel accepts it, and refuses it when `xs` is not declared a list,
 /// when the hypothesis is used in the empty-list case, when the cell's two
@@ -486,6 +529,7 @@ fn a_definition_opens_its_local_bindings_in_order() {
         fn_id: crate::ir::identity::FnId(0),
         name: "f".into(),
         params: vec!["x".into()],
+        returns_bool: false,
         lets: vec![
             ("y".into(), add(var("x"), var("x"))),
             ("z".into(), add(var("y"), var("x"))),
@@ -568,6 +612,7 @@ fn a_recursive_definition_opens_only_when_it_recurses_on_a_part_of_its_match() {
         fn_id: FnId(7),
         name: "f".into(),
         params: vec!["xs".into()],
+        returns_bool: false,
         lets: Vec::new(),
         body: Spanned::bare(ResolvedExpr::Match {
             subject: Box::new(var("xs")),
@@ -741,6 +786,7 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
         fn_id: f,
         name: "__fn_3".into(),
         params: vec!["x".into()],
+        returns_bool: false,
         lets: Vec::new(),
         body: add(var("x"), var("x")),
     };
@@ -768,6 +814,7 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
         fn_id: g,
         name: "__fn_4".into(),
         params: vec!["xs".into()],
+        returns_bool: false,
         lets: Vec::new(),
         body: Spanned::bare(ResolvedExpr::Match {
             subject: Box::new(var("xs")),

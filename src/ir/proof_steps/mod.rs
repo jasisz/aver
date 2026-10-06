@@ -78,6 +78,10 @@ pub struct Def {
     /// Canonical qualified name (`Domain.LockTime.reached`).
     pub name: String,
     pub params: Vec<String>,
+    /// Whether the function returns a Bool; the kernel splits into the true
+    /// and false cases only a term that is a Bool, and a call is one when
+    /// its definition says so.
+    pub returns_bool: bool,
     /// `name = value` bindings before the final expression. Each value may
     /// read the parameters and the bindings before it.
     pub lets: Vec<(String, Term)>,
