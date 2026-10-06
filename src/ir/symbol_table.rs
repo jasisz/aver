@@ -176,6 +176,9 @@ pub struct SymbolTable {
     /// Recognized literal-dischargeable smart constructors — see
     /// [`SymbolTable::literal_refinements`].
     literal_refinements: crate::analysis::literal_refinement::LiteralRefinementTable,
+    /// Every field annotation of a declared type, across its variants, as
+    /// written; read by [`SymbolTable::may_hold_float`].
+    type_fields: HashMap<TypeId, Vec<String>>,
 }
 
 /// Phase 6 wave 11 — interned record for a built-in fn name.
@@ -360,6 +363,14 @@ impl SymbolTable {
                     TypeDef::Sum { name, variants, .. } => (name.clone(), variants.clone(), false),
                     TypeDef::Product { name, .. } => (name.clone(), Vec::new(), true),
                 };
+                let field_types: Vec<String> = match td {
+                    TypeDef::Sum { variants, .. } => {
+                        variants.iter().flat_map(|v| v.fields.clone()).collect()
+                    }
+                    TypeDef::Product { fields, .. } => {
+                        fields.iter().map(|(_, ty)| ty.clone()).collect()
+                    }
+                };
                 let key = match prefix {
                     Some(p) => TypeKey::in_module(p.to_string(), type_name.clone()),
                     None => TypeKey::entry(type_name.clone()),
@@ -369,6 +380,7 @@ impl SymbolTable {
                     continue;
                 }
                 table.type_index.insert(key.clone(), type_id);
+                table.type_fields.insert(type_id, field_types);
                 table
                     .type_name_index
                     .entry(type_name.clone())
@@ -943,6 +955,50 @@ impl SymbolTable {
             }
         }
         spellings
+    }
+
+    /// Whether a value of this type may hold a Float, whose `==` is not
+    /// equality: `0.0 == -0.0` holds between values that differ, and a NaN
+    /// is not equal to itself. A declared type answers by its fields; a type
+    /// this table cannot read (a type variable, a function, a name it does
+    /// not declare) answers yes.
+    pub fn may_hold_float(&self, ty: &crate::ast::Type) -> bool {
+        self.holds_float(ty, &mut Vec::new())
+    }
+
+    fn holds_float(&self, ty: &crate::ast::Type, seen: &mut Vec<TypeId>) -> bool {
+        use crate::ast::Type;
+        match ty {
+            Type::Int | Type::Str | Type::Bool | Type::Unit => false,
+            Type::Option(a) | Type::List(a) | Type::Vector(a) => self.holds_float(a, seen),
+            Type::Result(a, b) | Type::Map(a, b) => {
+                self.holds_float(a, seen) || self.holds_float(b, seen)
+            }
+            Type::Tuple(items) => items.iter().any(|t| self.holds_float(t, seen)),
+            Type::Named { id, name } => {
+                let ids = match id {
+                    Some(id) => vec![*id],
+                    None => {
+                        let bare = name.rsplit('.').next().unwrap_or(name);
+                        self.type_name_index.get(bare).cloned().unwrap_or_default()
+                    }
+                };
+                ids.is_empty()
+                    || ids.into_iter().any(|id| {
+                        if seen.contains(&id) {
+                            return false;
+                        }
+                        seen.push(id);
+                        match self.type_fields.get(&id) {
+                            None => true,
+                            Some(fields) => fields
+                                .iter()
+                                .any(|f| self.holds_float(&crate::types::parse_type_str(f), seen)),
+                        }
+                    })
+            }
+            Type::Float | Type::Fn(..) | Type::Var(_) | Type::Invalid => true,
+        }
     }
 
     pub fn type_entry(&self, id: TypeId) -> &TypeEntry {

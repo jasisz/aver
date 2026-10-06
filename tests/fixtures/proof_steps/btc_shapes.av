@@ -1,0 +1,118 @@
+module BtcShapes
+    intent = "Laws closed by steps that read a list literal as cells, a countdown under the complement of its guard, a constant in a when, a comparison inside a Bool connective, equality with itself, a remainder's range, and an equality that contradicts a stated difference."
+    exposes [readDigits, readAll, fill, under, cap, implied, same, Point, remainderFits, offBy]
+    effects []
+
+fn readDigits(reversed: List<Int>, acc: Int) -> Int
+    ? "Fold the most significant digit in first."
+    match reversed
+        [] -> acc
+        [head, ..tail] -> readDigits(tail, acc * 256 + head)
+
+verify readDigits
+    readDigits([1, 2], 0) => 258
+
+verify readDigits law finalDigit
+    given prefix: List<Int> = [[], [0], [1, 2]]
+    given acc: Int = [-1, 0, 5]
+    given d: Int = [-1, 0, 255]
+    readDigits(List.concat(prefix, [d]), acc) => readDigits(prefix, acc) * 256 + d
+
+fn readAll(digits: List<Int>) -> Int
+    ? "The number little-endian digits spell."
+    readDigits(List.reverse(digits), 0)
+
+verify readAll
+    readAll([2, 1]) => 258
+
+verify readAll law lowDigitStep
+    given tail: List<Int> = [[], [0], [1, 2]]
+    given d: Int = [-1, 0, 255]
+    using [readDigits.finalDigit]
+    readAll(List.prepend(d, tail)) => readAll(tail) * 256 + d
+
+fn fill(n: Int, acc: List<Int>) -> List<Int>
+    ? "n zeros in front of acc."
+    match n <= 0
+        true -> acc
+        false -> fill(n - 1, List.prepend(0, acc))
+
+verify fill
+    fill(2, [1]) => [0, 0, 1]
+
+verify fill law oneStep
+    given n: Int = [1, 2, 5]
+    given acc: List<Int> = [[], [1]]
+    when n > 0
+    fill(n, acc) => fill(n - 1, List.prepend(0, acc))
+
+fn cap() -> Int
+    ? "The largest size."
+    100
+
+verify cap
+    cap() => 100
+
+fn under(x: Int) -> Bool
+    ? "x is below one hundred."
+    x < 100
+
+verify under
+    under(5) => true
+
+verify under law belowCap
+    given x: Int = [0, 50, 98]
+    when x + 1 <= cap()
+    under(x) holds
+
+fn implied(h: Int) -> Bool
+    ? "At or above ten implies at or above five."
+    Bool.or(Bool.not(h >= 10), h >= 5)
+
+verify implied
+    implied(3) => true
+
+verify implied law always
+    given h: Int = [0, 7, 12]
+    implied(h) holds
+
+record Point
+    x: Int
+    tags: List<String>
+
+fn same(p: Point) -> Bool
+    ? "A point equals itself."
+    p == p
+
+verify same
+    same(Point(x = 1, tags = [])) => true
+
+verify same law reflexive
+    given p: Point = [Point(x = 1, tags = []), Point(x = -2, tags = ["a"])]
+    same(p) holds
+
+fn remainderFits(a: Int) -> Bool
+    ? "A remainder by 256 fits a byte."
+    Bool.and(Int.mod(a, 256) >= 0, Int.mod(a, 256) <= 255)
+
+verify remainderFits
+    remainderFits(-1) => true
+
+verify remainderFits law always
+    given a: Int = [-300, 0, 70000]
+    remainderFits(a) holds
+
+fn offBy(used: Int, delta: Int) -> String
+    ? "How far a count is off, when it is."
+    match used + delta == used
+        true -> "agrees"
+        false -> "off by {Int.abs((used + delta) - used)}"
+
+verify offBy
+    offBy(5, 2) => "off by 2"
+
+verify offBy law otherSize
+    given used: Int = [0, 5]
+    given delta: Int = [-2, 3]
+    when delta != 0
+    offBy(used, delta) => "off by {Int.abs(delta)}"

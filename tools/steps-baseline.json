@@ -39,6 +39,13 @@
    "swappedNe.zero"
   ]
  },
+ "examples/formal/int_comparison_laws.av": {
+  "steps": [
+   "comparable.totalOrder",
+   "notBelow.isAtLeast",
+   "sameKey.symmetric"
+  ]
+ },
  "examples/formal/law_auto.av": {
   "steps": [
    "add.associative",
@@ -102,6 +109,17 @@
    "computeScore.zeroLinesZeroScore"
   ]
  },
+ "examples/knowledge/knowledge.av": {
+  "steps": [
+   "bodyOf.admitted",
+   "headerOf.admitted"
+  ]
+ },
+ "examples/knowledge/stored.av": {
+  "obligations": [
+   "verdictOf.roundtrip.because1"
+  ]
+ },
  "projects/k5_fdiv/domain/awaymodel.av": {
   "obligations": [
    "transferredValue.sameRawValue.because1"
@@ -131,9 +149,13 @@
    "exponentPh1.table3_row16",
    "exponentPh2.table3_row22",
    "exponentPh3.table3_row28",
+   "exponentQ0.table3_row11",
    "exponentQ1.table3_row17",
    "exponentQ2.table3_row23",
    "exponentQ3.table3_row29",
+   "exponentQdh0.table3_row12",
+   "exponentQdh1.table3_row18",
+   "exponentQdh2.table3_row24",
    "exponentQdl0.table3_row13",
    "exponentQdl1.table3_row19",
    "exponentQdl2.table3_row25"
@@ -207,6 +229,7 @@
    "sameTruncation.normalizedModel.because2",
    "singleBitHalf.normalizedModel.because10",
    "singleBitHalf.normalizedModel.because11",
+   "singleBitHalf.normalizedModel.because12",
    "singleBitHalf.normalizedModel.because3",
    "singleBitHalf.normalizedModel.because4",
    "singleBitHalf.normalizedModel.because5",
@@ -233,6 +256,7 @@
    "scaledWindow.normalizedSignificand.because4",
    "scaledWindow.normalizedSignificand.because5",
    "scaledWindow.normalizedSignificand.implication",
+   "uniqueWindow.uniqueExponent.because1",
    "uniqueWindow.uniqueExponent.implication"
   ],
   "steps": [
@@ -341,6 +365,11 @@
    "plus.plusZeroRight"
   ]
  },
+ "proof-corpus/decomposed/prod/prop_05.av": {
+  "steps": [
+   "length.lengthSnoc"
+  ]
+ },
  "proof-corpus/decomposed/prod/prop_06.av": {
   "steps": [
    "plus.plusSuccRight"
@@ -388,6 +417,11 @@
  "proof-corpus/decomposed/prod/prop_29.av": {
   "steps": [
    "qrev.qrevRevAppend"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_30.av": {
+  "steps": [
+   "rev.revSnoc"
   ]
  },
  "proof-corpus/decomposed/prod/prop_33.av": {
@@ -479,6 +513,11 @@
  "proof-corpus/tip/prod/lemma_01.av": {
   "steps": [
    "plus.plusSuccRight"
+  ]
+ },
+ "proof-corpus/tip/prod/lemma_03.av": {
+  "steps": [
+   "length.lengthSnoc"
   ]
  },
  "proof-corpus/tip/prod/lemma_08.av": {

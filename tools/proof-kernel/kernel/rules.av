@@ -96,6 +96,7 @@ fn comparisonSchema(id: String) -> Option<Schema>
         "int.eq.false_of_lt" -> complement("<", true, "==", false)
         "int.eq.false_of_gt" -> complement(">", true, "==", false)
         "int.eq.of_beq" -> Option.Some(Schema(binders = ["a", "b"], premises = [is(Term.TOp("==", v("a"), v("b")), true)], concl = eq(v("a"), v("b"))))
+        "bool.beq.refl" -> plain(["a"], Term.TOp("==", v("a"), v("a")), Term.TBool(true))
         _ -> ringSchema(id)
 
 verify comparisonSchema
@@ -144,6 +145,7 @@ fn divisionSchema(id: String) -> Option<Schema>
     ? "Euclidean division by a positive divisor."
     match id
         "int.div_mod_recompose" -> Option.Some(Schema(binders = ["a", "k"], premises = [is(Term.TOp(">", v("k"), Term.TInt(0)), true)], concl = eq(Term.TOp("+", Term.TOp("*", divE(v("a"), v("k")), v("k")), modE(v("a"), v("k"))), v("a"))))
+        "int.mod_range" -> Option.Some(Schema(binders = ["a", "k"], premises = [is(Term.TOp(">", v("k"), Term.TInt(0)), true)], concl = is(range(modE(v("a"), v("k")), v("k")), true)))
         "int.div_range" -> Option.Some(Schema(binders = ["a", "k", "m", "n"], premises = [is(range(v("a"), v("m")), true), is(conn("Bool.and", Term.TOp(">", v("k"), Term.TInt(0)), Term.TOp("==", v("m"), Term.TOp("*", v("n"), v("k")))), true)], concl = is(range(divE(v("a"), v("k")), v("n")), true)))
         _ -> listSchema(id)
 

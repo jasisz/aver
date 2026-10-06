@@ -262,6 +262,12 @@ pub(crate) fn split_and(t: &Term, proof: Proof, out: &mut Vec<(Term, Proof)>) {
     }
 }
 
+/// Whether `p` cuts in a `when` line stated with the values of its
+/// constants.
+fn cuts_used(p: &Proof) -> bool {
+    (1..=64).any(|k| uses_hyp(p, &format!("when_value{k}")))
+}
+
 /// Whether `p` may read hypothesis `name` (an over-approximation: a
 /// hypothesis of the same name bound inside counts too).
 fn uses_hyp(p: &Proof, name: &str) -> bool {
@@ -517,6 +523,39 @@ fn produce(
             reason: None,
         })
         .collect();
+    // A `when` line that names a constant (`capBytes()`) is also stated
+    // with its value, so the comparisons read it as arithmetic.
+    let mut constant_defs = Vec::new();
+    if let Some(p) = &ob.premise {
+        let mut lines = when_lines(p);
+        if lines.is_empty() {
+            lines.push((canon(p), Proof::Hyp("when".into())));
+        }
+        let mut scratch = Env::new(inputs);
+        for (k, (fact, proof)) in lines.into_iter().enumerate() {
+            if let Some((bridge, folded)) = scratch.fold_constants(&fact) {
+                cuts.push(Cut {
+                    name: format!("when_value{}", k + 1),
+                    fact: folded.clone(),
+                    proof: Some(Proof::Trans {
+                        terms: vec![folded, fact, crate::ir::proof_steps::term::boolean(true)],
+                        steps: vec![Proof::Symm(Box::new(bridge)), proof],
+                    }),
+                    reason: None,
+                });
+            }
+        }
+        constant_defs = scratch.used_defs();
+    }
+    let with_constants = |script: &mut Script| {
+        if cuts_used(&script.proof) {
+            for d in &constant_defs {
+                if !script.defs.iter().any(|x| x.fn_id == d.fn_id) {
+                    script.defs.push(d.clone());
+                }
+            }
+        }
+    };
     let known_of = |cuts: &[Cut]| -> Vec<(String, Term)> {
         cuts.iter()
             .map(|c| (c.name.clone(), c.fact.clone()))
@@ -657,6 +696,7 @@ fn produce(
                     proof,
                 };
                 merge_into(&mut script, part);
+                with_constants(&mut script);
                 check(script)
             });
             obligations.push(crate::ir::ObligationSteps {
@@ -689,6 +729,7 @@ fn produce(
     for part in parts {
         merge_into(&mut script, part);
     }
+    with_constants(&mut script);
     Produced {
         law: check(script),
         obligations,

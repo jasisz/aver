@@ -108,7 +108,15 @@ fn the_producers_write_steps_for_the_shapes_they_know() {
         .into_iter()
         .map(|(law, _)| law)
         .collect();
-    assert_eq!(bytes, ["decode.eightReadBack"]);
+    assert_eq!(
+        bytes,
+        [
+            "decode.addsLowByte",
+            "decode.eightReadBack",
+            "decodeFrom.lastDigit",
+            "encode.peelsLowByte",
+        ]
+    );
     let lets_out = scratch("shapes-lets");
     let lets: Vec<String> = export_steps("lets.av", &lets_out)
         .into_iter()
@@ -788,8 +796,13 @@ fn a_using_list_is_a_set_and_ambiguous_or_looping_rewrites_are_refused_by_name()
     // Such a law is still one instance: it proves an equation it matches
     // whole, either way round.
     assert!(line("sameLen.againstOne").ends_with(" nodes"), "{log}");
+    // Evaluation decides the comparison under `Bool.not` without the law.
     assert!(
-        line("sameLen.negatedAgainstOne").contains(
+        line("sameLen.negatedAgainstOne").ends_with(" nodes"),
+        "{log}"
+    );
+    assert!(
+        line("sameLen.negatedAgainstPadded").contains(
             "law sameLen.commutes rewrites a term into one it applies to again, so rewriting with it never stops"
         ),
         "{log}"
@@ -1358,6 +1371,96 @@ fn lean_closes_cited_orders_under_a_proved_when_by_their_steps() {
     )
     .unwrap();
     for law in ["productOfPowers.positive", "scaledPower.positiveScale"] {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+const SHAPES_LAWS: [&str; 8] = [
+    "fill.oneStep",
+    "implied.always",
+    "offBy.otherSize",
+    "readAll.lowDigitStep",
+    "readDigits.finalDigit",
+    "remainderFits.always",
+    "same.reflexive",
+    "under.belowCap",
+];
+
+/// A list literal read as cells, a countdown under the complement of its
+/// guard, a constant in a `when`, a comparison inside `Bool.or`, a value
+/// equal to itself and a remainder's range: the kernel accepts each script,
+/// and refuses a remainder range at the wrong divisor and a reflexive
+/// equality between two different values.
+#[test]
+fn both_kernels_check_the_btc_shapes_and_refuse_mutations() {
+    let out = scratch("btc-shapes");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("btc_shapes.av", &out).into_iter().collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), SHAPES_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let cells = read("readDigits.finalDigit");
+    assert!(cells.contains("(cell "), "{cells}");
+    let mutants = [
+        (
+            read("remainderFits.always"),
+            "(rule int.mod_range ((a (v a)) (k (i 256)))",
+            "(rule int.mod_range ((a (v a)) (k (i 255)))",
+        ),
+        (
+            read("same.reflexive"),
+            "(rule bool.beq.refl ((a (v p))))",
+            "(rule bool.beq.refl ((a (v q))))",
+        ),
+    ];
+    for (i, (text, from, to)) in mutants.iter().enumerate() {
+        assert!(text.contains(from), "{text}");
+        let mutant = mutate_proof(text, from, to);
+        let verdict = aver::proof_kernel::verdict(&mutant);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "{verdict:?}\n{mutant}"
+        );
+        let path = out.join(format!("mutant{i}.steps"));
+        fs::write(&path, &mutant).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(!result.status.success(), "{}", format_output(&result));
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_closes_the_btc_shapes_by_their_steps() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("btc-shapes-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "btc_shapes.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in SHAPES_LAWS {
         assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
     }
     let _ = fs::remove_dir_all(out);

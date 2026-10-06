@@ -72,3 +72,8 @@ verify sameLen law negatedAgainstOne
     given xs: List<Int> = [[], [1]]
     using [sameLen.commutes]
     Bool.not(sameLen(xs, [1])) => Bool.not(sameLen([1], xs))
+
+verify sameLen law negatedAgainstPadded
+    given xs: List<Int> = [[], [1]]
+    using [sameLen.commutes]
+    Bool.not(sameLen(xs, [1])) => Bool.not(sameLen([1], List.concat(xs, [])))
