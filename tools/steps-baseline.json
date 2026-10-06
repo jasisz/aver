@@ -116,8 +116,10 @@
   ]
  },
  "examples/knowledge/stored.av": {
-  "obligations": [
-   "verdictOf.roundtrip.because1"
+  "steps": [
+   "answer.knownFactsAnswer",
+   "verdictOf.preservesFlag",
+   "verdictOf.roundtrip"
   ]
  },
  "projects/k5_fdiv/domain/awaymodel.av": {

@@ -479,6 +479,9 @@ pub fn eval_closed(t: &Term) -> Option<Term> {
                 BinOp::Lte => ints(a, b).map(|(x, y)| V::B(x <= y)),
                 BinOp::Gte => ints(a, b).map(|(x, y)| V::B(x >= y)),
                 BinOp::Eq | BinOp::Neq => {
+                    if let Some(same) = same_constructor(a, b) {
+                        return Some(V::B(if matches!(op, BinOp::Eq) { same } else { !same }));
+                    }
                     let same = match (go(a)?, go(b)?) {
                         (V::I(x), V::I(y)) => x == y,
                         (V::B(x), V::B(y)) => x == y,
@@ -545,6 +548,51 @@ pub fn eval_closed(t: &Term) -> Option<Term> {
         }
     }
     Some(back(go(t)?))
+}
+
+/// Whether two constructor applications with no free variable are the same
+/// value, where their constructors decide it: two different constructors of
+/// one type differ whatever they hold, and one constructor with no fields
+/// is equal to itself. `None` otherwise.
+fn same_constructor(a: &Term, b: &Term) -> Option<bool> {
+    use crate::ir::hir::{BuiltinCtor, ResolvedCtor};
+    let (ResolvedExpr::Ctor(c, xs), ResolvedExpr::Ctor(d, ys)) = (&a.node, &b.node) else {
+        return None;
+    };
+    let mut fv = Vec::new();
+    free_vars(a, &mut fv);
+    free_vars(b, &mut fv);
+    if !fv.is_empty() {
+        return None;
+    }
+    let distinct = match (c, d) {
+        (
+            ResolvedCtor::User {
+                ctor_id: c1,
+                type_id: t1,
+                ..
+            },
+            ResolvedCtor::User {
+                ctor_id: c2,
+                type_id: t2,
+                ..
+            },
+        ) if t1 == t2 => c1 != c2,
+        (ResolvedCtor::Builtin(b1), ResolvedCtor::Builtin(b2)) => {
+            let option =
+                |b: &BuiltinCtor| matches!(b, BuiltinCtor::OptionSome | BuiltinCtor::OptionNone);
+            if option(b1) != option(b2) {
+                return None;
+            }
+            b1 != b2
+        }
+        _ => return None,
+    };
+    if distinct {
+        Some(false)
+    } else {
+        (xs.is_empty() && ys.is_empty()).then_some(true)
+    }
 }
 
 /// Euclidean division: `x = q*k + r`, `0 <= r < |k|`.

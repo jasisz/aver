@@ -66,11 +66,33 @@ pub fn evalClosed(t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ter
         crate::proof_kernel::aver_generated::kernel::term::Term::TOp(o, a, b) => {
             let a = (*a).clone();
             let b = (*b).clone();
-            crate::proof_kernel::aver_generated::kernel::eval::evalOp(
-                o,
-                &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&a),
-                &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&b),
-            )
+            match a.clone() {
+                crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(c, xs) => {
+                    match b.clone() {
+                        crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(d, ys) => {
+                            crate::proof_kernel::aver_generated::kernel::eval::ctorOp(
+                                o,
+                                &crate::proof_kernel::aver_generated::kernel::eval::sameCtor(
+                                    c,
+                                    d,
+                                    aver_rt::AverInt::from_i64(xs.len() as i64)
+                                        .add(&aver_rt::AverInt::from_i64(ys.len() as i64)),
+                                ),
+                            )
+                        }
+                        _ => crate::proof_kernel::aver_generated::kernel::eval::evalOp(
+                            o,
+                            &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&a),
+                            &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&b),
+                        ),
+                    }
+                }
+                _ => crate::proof_kernel::aver_generated::kernel::eval::evalOp(
+                    o,
+                    &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&a),
+                    &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&b),
+                ),
+            }
         }
         crate::proof_kernel::aver_generated::kernel::term::Term::TNeg(a) => {
             let a = (*a).clone();
@@ -88,6 +110,54 @@ pub fn evalClosed(t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ter
         }
         _ => None,
     }
+}
+
+/// == or != on two constructor applications, once whether they are the same value is known.
+#[inline(always)]
+pub fn ctorOp(o @ _: AverStr, same @ _: &Option<bool>) -> Option<Val> {
+    crate::proof_kernel::cancel_checkpoint();
+    match same.clone() {
+        Some(s @ _) => crate::proof_kernel::aver_generated::kernel::eval::boolOp(o, s, true),
+        None => None,
+    }
+}
+
+/// Two different constructors of one type differ whatever they hold; one constructor with no fields equals itself. The type is the name up to its last dot, so a constructor spelled two ways is never decided.
+pub fn sameCtor(c @ _: AverStr, d @ _: AverStr, fields @ _: aver_rt::AverInt) -> Option<bool> {
+    crate::proof_kernel::cancel_checkpoint();
+    match (
+        (c == d),
+        (fields == aver_rt::AverInt::from_i64(0)),
+        ((crate::proof_kernel::aver_generated::kernel::eval::typeOf(c.clone())
+            == crate::proof_kernel::aver_generated::kernel::eval::typeOf(d))
+            && (&*crate::proof_kernel::aver_generated::kernel::eval::typeOf(c) != "")),
+    ) {
+        (true, true, _) => Some(true),
+        (false, _, true) => Some(false),
+        _ => None,
+    }
+}
+
+/// A constructor's name up to its last dot.
+#[inline(always)]
+pub fn typeOf(c @ _: AverStr) -> AverStr {
+    crate::proof_kernel::cancel_checkpoint();
+    (aver_rt::string_join(
+        &{
+            let __n = aver_rt::clamp_list_count(&(aver_rt::AverInt::from_i64(1)));
+            ((aver_rt::AverList::from_vec(
+                c.split(&*AverStr::from("."))
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>(),
+            ))
+            .into_aver()
+            .reverse())
+            .drop_first(__n)
+        }
+        .reverse(),
+        &AverStr::from("."),
+    ))
+    .into_aver()
 }
 
 /// The value of each term.

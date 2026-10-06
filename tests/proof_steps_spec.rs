@@ -1484,6 +1484,98 @@ fn lean_closes_a_division_down_to_zero_by_its_steps() {
     let _ = fs::remove_dir_all(out);
 }
 
+const CONSTRUCTOR_LAWS: [&str; 3] = [
+    "refusal.longSilenceIsRefused",
+    "verdictOf.preservesFlag",
+    "verdictOf.sameVerdict",
+];
+
+/// `==` and `!=` between two different constructors of one type compute,
+/// whatever the constructors hold; the kernel refuses a pair it cannot tell
+/// apart by name alone: one spelled without its type, two of different
+/// types, and one constructor with fields on both sides.
+#[test]
+fn both_kernels_tell_constructors_apart_and_refuse_mutations() {
+    let out = scratch("constructors");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("constructors.av", &out).into_iter().collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), CONSTRUCTOR_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let flag = read("verdictOf.preservesFlag");
+    let silence = read("refusal.longSilenceIsRefused");
+    let compute = "(compute (op == (ctor Verdict.Invalid) (ctor Verdict.Valid)) (b false))";
+    assert!(flag.contains(compute), "{flag}");
+    assert!(
+        silence.contains("(compute (op != (ctor Option.Some "),
+        "{silence}"
+    );
+    let mutants = [
+        // One constructor spelled without its type, everywhere it is written.
+        flag.replace("Verdict.Invalid", "Invalid"),
+        // The two constructors belong to different types.
+        flag.replace("Verdict.Invalid", "Other.Invalid"),
+        // The wrong value.
+        flag.replace(compute, &compute.replace("(b false)", "(b true)")),
+        // The same constructor on both sides, holding something.
+        silence.replace("(ctor Option.None)", "(ctor Option.Some (i 0))"),
+    ];
+    for (i, mutant) in mutants.iter().enumerate() {
+        assert!(
+            mutant != &flag && mutant != &silence,
+            "mutant {i} changed nothing"
+        );
+        let verdict = aver::proof_kernel::verdict(mutant);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "mutant {i}: {verdict:?}\n{mutant}"
+        );
+        let path = out.join(format!("mutant{i}.steps"));
+        fs::write(&path, mutant).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(!result.status.success(), "{}", format_output(&result));
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_tells_constructors_apart_by_their_steps() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("constructors-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "constructors.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "1",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in CONSTRUCTOR_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
 const SHAPES_LAWS: [&str; 8] = [
     "fill.oneStep",
     "implied.always",

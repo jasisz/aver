@@ -1083,6 +1083,20 @@ impl Renderer<'_> {
                 let mut scoped = hyps.clone();
                 scoped.push((name.clone(), stated.clone()));
                 let pb = self.proof(body, &scoped)?;
+                // A fact that is a hypothesis already in scope is that
+                // hypothesis: writing its type again would elaborate a
+                // `match` in it afresh, generalised over the hypotheses
+                // that mention its subject, which no longer fits.
+                if let Proof::Hyp(h) = inner.as_ref()
+                    && !self.prop_hyps.contains(h)
+                {
+                    return Ok(format!(
+                        "(show {} from (have {} := {}; {pb}))",
+                        self.eqn(&eq),
+                        self.hyp_name(name),
+                        self.hyp_name(h)
+                    ));
+                }
                 format!(
                     "(have {} : {} := {pf}; {pb})",
                     self.hyp_name(name),
