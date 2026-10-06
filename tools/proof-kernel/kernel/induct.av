@@ -5,7 +5,7 @@ module Induct
         "and the givens that vary with it. A definition may also count an Int parameter down to"
         "zero: `match n <= 0`, `true` without a recursive call, `false` calling itself at n - 1."
         "See src/ir/proof_steps/induct.rs."
-    exposes [Call, Place, Varied, selfCalls, structuralParam, refuseMutualRecursion, varied, nthTerm]
+    exposes [Call, Place, Varied, selfCalls, structuralParam, openGate, refuseMutualRecursion, varied, nthTerm]
     depends [Kernel.Term, Kernel.Subst, Kernel.Proof]
     effects []
 
@@ -118,6 +118,70 @@ verify countdown
     countdown(Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TUnit), "n", 0, [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TInt(1)), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TCall("f", [Term.TOp("-", Term.TVar("n"), Term.TInt(2))]))]) => Result.Err("f does not count n down by one to zero")
     countdown(Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TUnit), "n", 0, [Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TCall("f", [Term.TOp("-", Term.TVar("n"), Term.TInt(1))])), Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TInt(1))]) => Result.Err("f does not count n down by one to zero")
     countdown(Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TUnit), "n", 0, [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TCall("f", [Term.TOp("-", Term.TVar("n"), Term.TInt(1))])), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(1))]) => Result.Err("f does not count n down by one to zero")
+
+fn openGate(d: Def) -> Result<Unit, String>
+    ? "Whether steps may open d: its recursion passes the gate, or it divides an Int down to zero. Only the first gate also allows an induction along d."
+    match (structuralParam(d), halving(d))
+        (Result.Ok(_), _) -> Result.Ok(Unit)
+        (_, true) -> Result.Ok(Unit)
+        (Result.Err(why), false) -> Result.Err(why)
+
+verify openGate
+    openGate(Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TMatch(Term.TOp(">", Term.TVar("n"), Term.TInt(0)), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TCall("f", [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(256)])])), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(0))]))) => Result.Ok(Unit)
+    openGate(Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TCall("f", [Term.TVar("n")]))) => Result.Err("f recurses outside a match on a parameter")
+
+fn halving(d: Def) -> Bool
+    ? "match p > 0: arm false does not recurse; arm true calls itself with p / k at p's place, k a literal of at least 2, p not rebound inside. For p > 0 the Euclidean quotient is at least 0 and below p."
+    match (d.lets, d.body)
+        ([], Term.TMatch(Term.TOp(">", Term.TVar(p), Term.TInt(0)), arms)) -> halvingArms(d, p, indexOf(d.params, p, 0), arms)
+        _ -> false
+
+verify halving
+    halving(Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TMatch(Term.TOp(">", Term.TVar("n"), Term.TInt(0)), [Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(0)), Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TCall("f", [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(2)])]))]))) => true
+    halving(Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TMatch(Term.TOp(">", Term.TVar("n"), Term.TInt(0)), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TCall("f", [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(1)])])), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(0))]))) => false
+    halving(Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TMatch(Term.TOp(">", Term.TVar("n"), Term.TInt(0)), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TCall("f", [Term.TBi("__int_mod_euclid", [Term.TVar("n"), Term.TInt(2)])])), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(0))]))) => false
+    halving(Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TMatch(Term.TOp(">", Term.TVar("n"), Term.TInt(0)), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TInt(0)), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TCall("f", [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(2)])]))]))) => false
+    halving(Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TMatch(Term.TOp(">=", Term.TVar("n"), Term.TInt(0)), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TCall("f", [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(2)])])), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(0))]))) => false
+
+fn halvingArms(d: Def, p: String, j: Int, arms: List<Arm>) -> Bool
+    ? "One arm per truth value; the false arm stops, every call in the true arm divides p."
+    match (j < 0, arms)
+        (false, [a, b]) -> match (a.pattern, b.pattern)
+            (Pat.PLit(Term.TBool(true)), Pat.PLit(Term.TBool(false))) -> halvingSplit(d, p, j, a.body, b.body)
+            (Pat.PLit(Term.TBool(false)), Pat.PLit(Term.TBool(true))) -> halvingSplit(d, p, j, b.body, a.body)
+            _ -> false
+        _ -> false
+
+verify halvingArms
+    halvingArms(Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TUnit), "n", 0 - 1, []) => false
+
+fn halvingSplit(d: Def, p: String, j: Int, go: Term, stop: Term) -> Bool
+    ? "The stopping arm makes no recursive call; each call in the other divides p at place j."
+    Bool.and(List.len(selfCalls(stop, d.name, [])) == 0, callsHalve(selfCalls(go, d.name, []), p, j, List.len(d.params)))
+
+verify halvingSplit
+    halvingSplit(Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TUnit), "n", 0, Term.TInt(0), Term.TCall("f", [Term.TVar("n")])) => false
+
+fn callsHalve(cs: List<Call>, p: String, j: Int, n: Int) -> Bool
+    ? "Each call passes p / k at place j, k a literal of at least 2, p not rebound around it."
+    match cs
+        [] -> true
+        [c, ..rest] -> Bool.and(Bool.and(List.len(c.args) == n, Bool.and(divides(nthTerm(c.args, j), p), Bool.not(List.contains(c.inner, p)))), callsHalve(rest, p, j, n))
+
+verify callsHalve
+    callsHalve([Call(args = [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(256)])], inner = ["n"])], "n", 0, 1) => false
+    callsHalve([Call(args = [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(256)])], inner = [])], "n", 0, 1) => true
+
+fn divides(t: Option<Term>, p: String) -> Bool
+    ? "Whether t is p / k for a literal k of at least 2."
+    match t
+        Option.Some(Term.TBi("__int_div_euclid", [Term.TVar(q), Term.TInt(k)])) -> Bool.and(q == p, k >= 2)
+        _ -> false
+
+verify divides
+    divides(Option.Some(Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(2)])), "n") => true
+    divides(Option.Some(Term.TBi("__int_div_euclid", [Term.TVar("m"), Term.TInt(2)])), "n") => false
+    divides(Option.None, "n") => false
 
 fn callsCountDown(cs: List<Call>, p: String, j: Int, n: Int) -> Bool
     ? "Each call passes p - 1 at place j, with p not rebound around it."

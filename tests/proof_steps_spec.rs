@@ -1376,6 +1376,114 @@ fn lean_closes_cited_orders_under_a_proved_when_by_their_steps() {
     let _ = fs::remove_dir_all(out);
 }
 
+const HALVING_LAWS: [&str; 5] = [
+    "digits.exponentAbove",
+    "digits.nonpositiveKeepsAcc",
+    "digits.oneDigit",
+    "digits.positiveStep",
+    "digits.twoDigitsReadBack",
+];
+
+/// A definition that divides an Int down to zero opens where its guard is
+/// decided, and Euclidean division by a literal is pinned by linear
+/// arithmetic; both kernels refuse a definition that divides by one and a
+/// quotient bound the dividend's range does not give.
+#[test]
+fn both_kernels_open_a_division_down_to_zero_and_refuse_mutations() {
+    let out = scratch("halving");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("halving.av", &out).into_iter().collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), HALVING_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let step = read("digits.positiveStep");
+    let one = read("digits.oneDigit");
+    assert!(step.contains("(unfold digits 1 "), "{step}");
+    assert!(one.contains("(rule int.div_range "), "{one}");
+    let mutants = [
+        // The definition divides by one, everywhere it is written.
+        (&step, step.replace("(i 256)", "(i 1)")),
+        // A quotient bound read from a range the dividend is not shown in.
+        (
+            &one,
+            one.replacen("(m (i 256)) (n (i 1))", "(m (i 512)) (n (i 2))", 1),
+        ),
+        // A bound that is not the range divided by the divisor.
+        (
+            &one,
+            one.replacen("(m (i 256)) (n (i 1))", "(m (i 256)) (n (i 2))", 1),
+        ),
+    ];
+    for (i, (source, mutant)) in mutants.iter().enumerate() {
+        assert_ne!(mutant, *source, "mutant {i} changed nothing");
+        let verdict = aver::proof_kernel::verdict(mutant);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "mutant {i}: {verdict:?}\n{mutant}"
+        );
+        let path = out.join(format!("mutant{i}.steps"));
+        fs::write(&path, mutant).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(!result.status.success(), "{}", format_output(&result));
+    }
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "halving.av",
+            "--backend",
+            "aver",
+            "-o",
+            out.join("aver").to_str().unwrap(),
+        ],
+    );
+    let text = String::from_utf8_lossy(&result.stdout);
+    assert!(
+        text.contains("steps do not open `stays`"),
+        "{}",
+        format_output(&result)
+    );
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_closes_a_division_down_to_zero_by_its_steps() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("halving-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "halving.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "1",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in HALVING_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
 const SHAPES_LAWS: [&str; 8] = [
     "fill.oneStep",
     "implied.always",

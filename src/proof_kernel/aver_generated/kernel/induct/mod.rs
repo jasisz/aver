@@ -524,6 +524,256 @@ pub fn countdown(
     }
 }
 
+/// Whether steps may open d: its recursion passes the gate, or it divides an Int down to zero. Only the first gate also allows an induction along d.
+pub fn openGate(
+    d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
+) -> Result<(), AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    match (
+        crate::proof_kernel::aver_generated::kernel::induct::structuralParam(d),
+        crate::proof_kernel::aver_generated::kernel::induct::halving(d),
+    ) {
+        (Ok(_), _) => Ok(()),
+        (_, true) => Ok(()),
+        (Err(why), false) => Err(why),
+    }
+}
+
+/// match p > 0: arm false does not recurse; arm true calls itself with p / k at p's place, k a literal of at least 2, p not rebound inside. For p > 0 the Euclidean quotient is at least 0 and below p.
+pub fn halving(d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def) -> bool {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let (__pat0, __pat1) = (d.lets.clone(), d.body.clone());
+        {
+            let __list_subject = __pat0;
+            if __list_subject.is_empty() {
+                match __pat1 {
+                    crate::proof_kernel::aver_generated::kernel::term::Term::TMatch(
+                        __pat2,
+                        arms,
+                    ) => {
+                        let __pat2 = (*__pat2).clone();
+                        match __pat2 {
+                            crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
+                                __pat3,
+                                __pat4,
+                                __pat5,
+                            ) => {
+                                let __pat4 = (*__pat4).clone();
+                                let __pat5 = (*__pat5).clone();
+                                {
+                                    let __int_match_subject =
+                                        aver_rt::AverInt::from_i64(aver_rt::str_code1(&__pat3));
+                                    if __int_match_subject == aver_rt::AverInt::from_i64(62) {
+                                        match __pat4 {
+        crate::proof_kernel::aver_generated::kernel::term::Term::TVar(p) => {
+            match __pat5 {
+        crate::proof_kernel::aver_generated::kernel::term::Term::TInt(__pat6) => {
+            { let __int_match_subject = __pat6; if __int_match_subject == aver_rt::AverInt::from_i64(0) { crate::proof_kernel::aver_generated::kernel::induct::halvingArms(d, p.clone(), crate::proof_kernel::aver_generated::kernel::induct::indexOf(d.params.clone(), p, aver_rt::AverInt::from_i64(0)), &arms) } else { false } }
+        },
+        _ => {
+            false
+        }
+    }
+        },
+        _ => {
+            false
+        }
+    }
+                                    } else {
+                                        false
+                                    }
+                                }
+                            }
+                            _ => false,
+                        }
+                    }
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        }
+    }
+}
+
+/// One arm per truth value; the false arm stops, every call in the true arm divides p.
+pub fn halvingArms(
+    d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
+    p @ _: AverStr,
+    j @ _: aver_rt::AverInt,
+    arms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
+) -> bool {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let (__pat8, __pat9) = ((j < aver_rt::AverInt::from_i64(0)), arms.clone());
+        match __pat8 {
+            false => {
+                let __list_subject = __pat9;
+                if let Some((a, __pat10)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                    {
+                        let __list_subject = __pat10;
+                        if let Some((b, __pat11)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                            {
+                                let __list_subject = __pat11;
+                                if __list_subject.is_empty() {
+                                    {
+                                        let (__pat0, __pat1) = (a.pattern, b.pattern);
+                                        match __pat0 {
+        crate::proof_kernel::aver_generated::kernel::term::Pat::PLit(__pat2) => {
+            match __pat2 {
+        crate::proof_kernel::aver_generated::kernel::term::Term::TBool(__pat3) => {
+            if __pat3 { match __pat1 {
+        crate::proof_kernel::aver_generated::kernel::term::Pat::PLit(__pat4) => {
+            match __pat4 {
+        crate::proof_kernel::aver_generated::kernel::term::Term::TBool(__pat5) => {
+            match __pat5 {
+        false => {
+            crate::proof_kernel::aver_generated::kernel::induct::halvingSplit(d, p, j, a.body, b.body)
+        },
+        _ => {
+            false
+        }
+    }
+        },
+        _ => {
+            false
+        }
+    }
+        },
+        _ => {
+            false
+        }
+    } } else { match __pat1 {
+        crate::proof_kernel::aver_generated::kernel::term::Pat::PLit(__pat6) => {
+            match __pat6 {
+        crate::proof_kernel::aver_generated::kernel::term::Term::TBool(__pat7) => {
+            if __pat7 { crate::proof_kernel::aver_generated::kernel::induct::halvingSplit(d, p, j, b.body, a.body) } else { false }
+        },
+        _ => {
+            false
+        }
+    }
+        },
+        _ => {
+            false
+        }
+    } }
+        },
+        _ => {
+            false
+        }
+    }
+        },
+        _ => {
+            false
+        }
+    }
+                                    }
+                                } else {
+                                    false
+                                }
+                            }
+                        } else {
+                            false
+                        }
+                    }
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+}
+
+/// The stopping arm makes no recursive call; each call in the other divides p at place j.
+#[inline(always)]
+pub fn halvingSplit(
+    d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
+    p @ _: AverStr,
+    j @ _: aver_rt::AverInt,
+    mut go @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
+    mut stop @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
+) -> bool {
+    crate::proof_kernel::cancel_checkpoint();
+    ((aver_rt::AverInt::from_i64(
+        crate::proof_kernel::aver_generated::kernel::induct::selfCalls(
+            stop,
+            d.name.clone(),
+            aver_rt::AverList::empty(),
+        )
+        .len() as i64,
+    ) == aver_rt::AverInt::from_i64(0))
+        && crate::proof_kernel::aver_generated::kernel::induct::callsHalve(
+            &crate::proof_kernel::aver_generated::kernel::induct::selfCalls(
+                go,
+                d.name.clone(),
+                aver_rt::AverList::empty(),
+            ),
+            p,
+            j,
+            aver_rt::AverInt::from_i64(d.params.len() as i64),
+        ))
+}
+
+/// Each call passes p / k at place j, k a literal of at least 2, p not rebound around it.
+#[inline(always)]
+pub fn callsHalve(
+    cs @ _: &aver_rt::AverList<Call>,
+    p @ _: AverStr,
+    j @ _: aver_rt::AverInt,
+    n @ _: aver_rt::AverInt,
+) -> bool {
+    crate::proof_kernel::cancel_checkpoint();
+    aver_list_match!(cs.clone(), [] => true, [c, rest] => (((aver_rt::AverInt::from_i64(c.args.len() as i64) == n) && (crate::proof_kernel::aver_generated::kernel::induct::divides(&crate::proof_kernel::aver_generated::kernel::induct::nthTerm(c.args.clone(), j.clone()), p.clone()) && (!c.inner.contains(&p)))) && crate::proof_kernel::aver_generated::kernel::induct::callsHalve(&rest, p, j, n)))
+}
+
+/// Whether t is p / k for a literal k of at least 2.
+pub fn divides(
+    t @ _: &Option<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    p @ _: AverStr,
+) -> bool {
+    crate::proof_kernel::cancel_checkpoint();
+    match t.clone() {
+        Some(__pat0) => {
+            match __pat0 {
+                crate::proof_kernel::aver_generated::kernel::term::Term::TBi(__pat1, __pat2) => {
+                    match &*__pat1 {
+                        "__int_div_euclid" => {
+                            let __list_subject = __pat2;
+                            if let Some((__pat3, __pat4)) =
+                                aver_rt::list_uncons_cloned(&__list_subject)
+                            {
+                                match __pat3 {
+        crate::proof_kernel::aver_generated::kernel::term::Term::TVar(q) => {
+            { let __list_subject = __pat4; if let Some((__pat5, __pat6)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat5 {
+        crate::proof_kernel::aver_generated::kernel::term::Term::TInt(k) => {
+            { let __list_subject = __pat6; if __list_subject.is_empty() { ((q == p) && (k >= aver_rt::AverInt::from_i64(2))) } else { false } }
+        },
+        _ => {
+            false
+        }
+    } } else { false } }
+        },
+        _ => {
+            false
+        }
+    }
+                            } else {
+                                false
+                            }
+                        }
+                        _ => false,
+                    }
+                }
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
 /// Each call passes p - 1 at place j, with p not rebound around it.
 #[inline(always)]
 pub fn callsCountDown(

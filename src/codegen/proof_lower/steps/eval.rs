@@ -150,41 +150,104 @@ fn with_cell(mut chain: Chain, cell: bool) -> Chain {
     chain
 }
 
-/// For each `a % k` in `t` with a literal `k > 0`: `0 <= a % k` and
-/// `a % k < k`, each with its proof by `int.mod_range`.
-fn remainder_ranges(t: &Term) -> Vec<(Term, Proof)> {
+/// What Euclidean division by a literal `k > 0` in `ts` gives linear
+/// arithmetic, each fact with its proof: for each `a / k` or `a % k`, the
+/// two orders of `a / k * k + a % k = a` (`int.div_mod_recompose`), and
+/// `0 <= a % k` and `a % k < k` (`int.mod_range`). Also the quotients,
+/// each inside the ones that divide it again.
+fn division_facts(ts: &[&Term]) -> (Vec<(Term, Proof)>, Vec<Term>) {
     use crate::ir::hir::BuiltinIntrinsic;
-    fn walk(t: &Term, out: &mut Vec<Term>) {
-        if let ResolvedExpr::Call(ResolvedCallee::Intrinsic(BuiltinIntrinsic::IntModEuclid), args) =
-            &t.node
+    fn walk(t: &Term, mods: &mut Vec<Term>, divs: &mut Vec<Term>) {
+        if let ResolvedExpr::Call(ResolvedCallee::Intrinsic(op), args) = &t.node
             && args.len() == 2
             && term::int_value(&args[1]).is_some_and(|k| k > 0.into())
-            && !out.contains(&canon(t))
         {
-            out.push(canon(t));
+            let found = match op {
+                BuiltinIntrinsic::IntModEuclid => Some(&mut *mods),
+                BuiltinIntrinsic::IntDivEuclid => Some(&mut *divs),
+                _ => None,
+            };
+            if let Some(found) = found
+                && !found.contains(&canon(t))
+            {
+                found.push(canon(t));
+            }
         }
         if !matches!(t.node, ResolvedExpr::Match { .. }) {
             for c in term::children(t) {
-                walk(c, out);
+                walk(c, mods, divs);
             }
         }
     }
-    let mut found = Vec::new();
-    walk(t, &mut found);
+    let (mut mods, mut divs) = (Vec::new(), Vec::new());
+    for t in ts {
+        walk(t, &mut mods, &mut divs);
+    }
+    for m in &mods {
+        if let ResolvedExpr::Call(_, args) = &m.node {
+            let d = canon(&term::intrinsic(
+                BuiltinIntrinsic::IntDivEuclid,
+                args.clone(),
+            ));
+            if !divs.contains(&d) {
+                divs.push(d);
+            }
+        }
+    }
+    let positive = |k: &Term| Proof::Compute {
+        lhs: canon(&term::binop(BinOp::Gt, k.clone(), term::int(&0.into()))),
+        rhs: term::boolean(true),
+    };
     let mut out = Vec::new();
-    for m in found {
+    for d in &divs {
+        let ResolvedExpr::Call(_, args) = &d.node else {
+            continue;
+        };
+        let (a, k) = (canon(&args[0]), canon(&args[1]));
+        let subst = vec![("a".to_string(), a.clone()), ("k".to_string(), k.clone())];
+        let Some((_, concl)) = WallRule::DivModRecompose.instantiate(&subst) else {
+            continue;
+        };
+        let recompose = Proof::Rule {
+            rule: WallRule::DivModRecompose,
+            subst,
+            premises: vec![positive(&k)],
+        };
+        let whole = canon(&concl.lhs);
+        for op in [BinOp::Lte, BinOp::Gte] {
+            let fact = canon(&term::binop(op, whole.clone(), a.clone()));
+            let same = canon(&term::binop(op, a.clone(), a.clone()));
+            let proof = Proof::Trans {
+                terms: vec![fact.clone(), same.clone(), term::boolean(true)],
+                steps: vec![
+                    Proof::Congr {
+                        ctx: term::binop(op, term::hole(), a.clone()),
+                        inner: Box::new(recompose.clone()),
+                    },
+                    Proof::Linear {
+                        goal: same,
+                        value: true,
+                        hyps: Vec::new(),
+                        weights: vec![1.into()],
+                    },
+                ],
+            };
+            out.push((fact, proof));
+        }
+        let m = canon(&term::intrinsic(BuiltinIntrinsic::IntModEuclid, vec![a, k]));
+        if !mods.contains(&m) {
+            mods.push(m);
+        }
+    }
+    for m in mods {
         let ResolvedExpr::Call(_, args) = &m.node else {
             continue;
         };
         let (a, k) = (canon(&args[0]), canon(&args[1]));
-        let positive = canon(&term::binop(BinOp::Gt, k.clone(), term::int(&0.into())));
         let range = Proof::Rule {
             rule: WallRule::ModRange,
             subst: vec![("a".into(), a), ("k".into(), k.clone())],
-            premises: vec![Proof::Compute {
-                lhs: positive,
-                rhs: term::boolean(true),
-            }],
+            premises: vec![positive(&k)],
         };
         let low = canon(&term::binop(BinOp::Lte, term::int(&0.into()), m.clone()));
         let high = canon(&term::binop(BinOp::Lt, m.clone(), k));
@@ -196,7 +259,40 @@ fn remainder_ranges(t: &Term) -> Vec<(Term, Proof)> {
         out.push((low.clone(), elim(WallRule::AndElimL)));
         out.push((high.clone(), elim(WallRule::AndElimR)));
     }
-    out
+    // A quotient after the quotients inside it, which are smaller terms.
+    fn size(t: &Term) -> usize {
+        1 + term::children(t).into_iter().map(size).sum::<usize>()
+    }
+    divs.sort_by_key(size);
+    (out, divs)
+}
+
+/// `a < c` as the least `c` with its comparison `t` against a literal, when
+/// `t = value` says so: `a < c`, `a <= c - 1`, `c > a`, `c - 1 >= a`, or
+/// the complement of `a >= c`.
+fn upper_bound(t: &Term, value: bool, a: &Term) -> Option<num_bigint::BigInt> {
+    let ResolvedExpr::BinOp(op, l, r) = &t.node else {
+        return None;
+    };
+    let (op, c) = match (canon(l) == *a, canon(r) == *a) {
+        (true, false) => (*op, term::int_value(r)?),
+        (false, true) => {
+            let flipped = match op {
+                BinOp::Lt => BinOp::Gt,
+                BinOp::Gt => BinOp::Lt,
+                BinOp::Lte => BinOp::Gte,
+                BinOp::Gte => BinOp::Lte,
+                _ => return None,
+            };
+            (flipped, term::int_value(l)?)
+        }
+        _ => return None,
+    };
+    match (op, value) {
+        (BinOp::Lt, true) | (BinOp::Gte, false) => Some(c),
+        (BinOp::Lte, true) | (BinOp::Gt, false) => Some(c + 1),
+        _ => None,
+    }
 }
 
 /// Whether `t` builds or updates a record anywhere.
@@ -823,11 +919,17 @@ impl Env<'_> {
                 // guard computes: opening it one level wherever arithmetic
                 // could decide the guard would trade a call the facts in
                 // scope talk about for one they do not.
-                let countdown = crate::ir::proof_steps::induct::countdown(&def).is_some();
+                // A division down to zero opens the same way, or where linear
+                // arithmetic decides its guard (`digit / 256 > 0` is false
+                // for `digit < 256`).
+                let halving = crate::ir::proof_steps::induct::halving(&def).is_some();
+                let countdown =
+                    halving || crate::ir::proof_steps::induct::countdown(&def).is_some();
                 if countdown
                     && term::eval_closed(&canon(&s)).is_none()
                     && self.hyp_for(&s).is_none()
                     && self.complement(&canon(&s)).is_none()
+                    && (!halving || self.decide_linearly(&canon(&s)).is_none())
                 {
                     return self.settle(cur, None);
                 }
@@ -1528,6 +1630,145 @@ impl Env<'_> {
         Some(proof)
     }
 
+    /// `goal = value` for an Int comparison `goal` that the decided
+    /// comparisons in scope settle by linear arithmetic alone.
+    fn plain_linear(&self, goal: &Term, value: bool) -> Option<Proof> {
+        use crate::ir::proof_steps::linear;
+        let mut atoms = Vec::new();
+        let mut facts = vec![linear::as_nonneg(goal, !value, &mut atoms)?];
+        let mut names = Vec::new();
+        for (n, e) in &self.hyps {
+            let Some(v) = term::bool_value(&e.rhs) else {
+                continue;
+            };
+            if let Some(p) = linear::as_nonneg(&e.lhs, v, &mut atoms) {
+                facts.push(p);
+                names.push(n.clone());
+            }
+        }
+        let weights = linear::certificate(&facts)?;
+        let mut hyps = Vec::new();
+        let mut kept = vec![weights[0].clone()];
+        for (n, w) in names.into_iter().zip(&weights[1..]) {
+            if *w != num_bigint::BigInt::from(0) {
+                hyps.push(n);
+                kept.push(w.clone());
+            }
+        }
+        Some(Proof::Linear {
+            goal: canon(goal),
+            value,
+            hyps,
+            weights: kept,
+        })
+    }
+
+    /// For each quotient `a / k` in `quotients` (inner first) whose
+    /// dividend lies in `0 <= a < m` for a multiple `m = n * k`, the bounds
+    /// `0 <= a / k` and `a / k < n` (`int.div_range`): the range of `a`
+    /// comes from a quotient ranged before it, or from a comparison in
+    /// scope that bounds it by a literal and linear arithmetic.
+    fn quotient_ranges(&self, quotients: &[Term]) -> Vec<(Term, Proof)> {
+        use num_bigint::BigInt;
+        let zero = || term::int(&BigInt::from(0));
+        let mut ranged: Vec<(Term, BigInt, Proof)> = Vec::new();
+        let mut out = Vec::new();
+        for q in quotients {
+            let ResolvedExpr::Call(_, args) = &q.node else {
+                continue;
+            };
+            let (a, k) = (canon(&args[0]), canon(&args[1]));
+            let Some(kv) = term::int_value(&k) else {
+                continue;
+            };
+            // `Bool.and(0 <= a, a < m) = true` and `m`.
+            let known = ranged.iter().find(|(t, _, _)| *t == a).cloned();
+            let (m, range_a) = match known {
+                Some((_, n, proof)) => (n, proof),
+                None => {
+                    let Some(bound) = self
+                        .hyps
+                        .iter()
+                        .filter_map(|(_, e)| upper_bound(&e.lhs, term::bool_value(&e.rhs)?, &a))
+                        .min()
+                    else {
+                        continue;
+                    };
+                    let n = (&bound + &kv - 1) / &kv;
+                    if n <= BigInt::from(0) {
+                        continue;
+                    }
+                    let m = &n * &kv;
+                    let low = canon(&term::binop(BinOp::Lte, zero(), a.clone()));
+                    let high = canon(&term::binop(BinOp::Lt, a.clone(), term::int(&m)));
+                    let (Some(p_low), Some(p_high)) = (
+                        self.plain_linear(&low, true),
+                        self.plain_linear(&high, true),
+                    ) else {
+                        continue;
+                    };
+                    let both = canon(&term::bool_and(low.clone(), high.clone()));
+                    let half = canon(&term::bool_and(term::boolean(true), high.clone()));
+                    let proof = Proof::Trans {
+                        terms: vec![both, half, high.clone(), term::boolean(true)],
+                        steps: vec![
+                            Proof::Congr {
+                                ctx: term::bool_and(term::hole(), high.clone()),
+                                inner: Box::new(p_low),
+                            },
+                            Proof::Rule {
+                                rule: WallRule::AndTrueL,
+                                subst: vec![("b".into(), high)],
+                                premises: Vec::new(),
+                            },
+                            p_high,
+                        ],
+                    };
+                    (m, proof)
+                }
+            };
+            if &m % &kv != BigInt::from(0) {
+                continue;
+            }
+            let n = &m / &kv;
+            let sizes = canon(&term::bool_and(
+                term::binop(BinOp::Gt, k.clone(), zero()),
+                term::binop(
+                    BinOp::Eq,
+                    term::int(&m),
+                    term::binop(BinOp::Mul, term::int(&n), k.clone()),
+                ),
+            ));
+            let range = Proof::Rule {
+                rule: WallRule::DivRange,
+                subst: vec![
+                    ("a".into(), a.clone()),
+                    ("k".into(), k.clone()),
+                    ("m".into(), term::int(&m)),
+                    ("n".into(), term::int(&n)),
+                ],
+                premises: vec![
+                    range_a,
+                    Proof::Compute {
+                        lhs: sizes,
+                        rhs: term::boolean(true),
+                    },
+                ],
+            };
+            let low = canon(&term::binop(BinOp::Lte, zero(), q.clone()));
+            let high = canon(&term::binop(BinOp::Lt, q.clone(), term::int(&n)));
+            let elim = |rule: WallRule| Proof::Rule {
+                rule,
+                subst: vec![("a".into(), low.clone()), ("b".into(), high.clone())],
+                premises: vec![range.clone()],
+            };
+            out.push((low.clone(), elim(WallRule::AndElimL)));
+            out.push((high.clone(), elim(WallRule::AndElimR)));
+            ranged.push((q.clone(), n, range));
+        }
+        out
+    }
+
     /// `goal = value` for an Int comparison `goal`, when its opposite and
     /// the decided comparisons in scope add up to a contradiction. The
     /// comparisons inside an opened predicate hypothesis count too; one the
@@ -1564,7 +1805,10 @@ impl Env<'_> {
             ));
         }
         let cited = known.len();
-        let mut remainders = remainder_ranges(goal);
+        let mut about: Vec<&Term> = vec![goal];
+        about.extend(known.iter().map(|(_, e)| &e.lhs));
+        let (mut remainders, quotients) = division_facts(&about);
+        remainders.extend(self.quotient_ranges(&quotients));
         remainders.extend(self.equalities_as_orders());
         for (i, (f, _)) in remainders.iter().enumerate() {
             known.push((
@@ -1865,6 +2109,17 @@ impl Env<'_> {
         if !has_record(nl.cur())
             && !has_record(nr.cur())
             && let Some(steps) = super::rewrite::ring_bridge(nl.cur(), nr.cur())
+            && !steps.is_empty()
+        {
+            for (proof, to) in steps {
+                nl.push(proof, to);
+            }
+            return Ok(Ok(meet(nl, nr)));
+        }
+        // The same, where linear arithmetic shows such parts equal.
+        if !has_record(nl.cur())
+            && !has_record(nr.cur())
+            && let Some(steps) = self.linear_bridge(nl.cur(), nr.cur())
             && !steps.is_empty()
         {
             for (proof, to) in steps {
