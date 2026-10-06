@@ -2,7 +2,8 @@ module Eval
     intent =
         "Evaluation of closed terms for the compute rule: Int arithmetic, Euclidean division by a"
         "nonzero literal, comparisons, the Bool connectives, and lists of such values with"
-        "prepend, concat, len, reverse, take and drop. Anything else is not closed."
+        "prepend, concat, len, reverse, take and drop, and == or != of two constructors that"
+        "decide it by themselves. Anything else is not closed."
     exposes [Val, evalClosed]
     depends [Kernel.Term]
     effects []
@@ -17,6 +18,7 @@ fn evalClosed(t: Term) -> Option<Val>
     match t
         Term.TInt(n) -> Option.Some(Val.VInt(n))
         Term.TBool(b) -> Option.Some(Val.VBool(b))
+        Term.TOp(o, Term.TCtor(c, xs), Term.TCtor(d, ys)) -> ctorOp(o, sameCtor(c, d, List.len(xs) + List.len(ys)))
         Term.TOp(o, a, b) -> evalOp(o, evalClosed(a), evalClosed(b))
         Term.TNeg(a) -> negated(evalClosed(a))
         Term.TList(xs) -> listOf(evalAll(xs))
@@ -28,6 +30,41 @@ verify evalClosed
     evalClosed(Term.TVar("x")) => Option.None
     evalClosed(Term.TOp("<", Term.TInt(32767), Term.TNeg(Term.TInt(32768)))) => Option.Some(Val.VBool(false))
     evalClosed(Term.TBi("__int_div_euclid", [Term.TInt(0 - 7), Term.TInt(2)])) => Option.Some(Val.VInt(0 - 4))
+    evalClosed(Term.TOp("==", Term.TCtor("Option.Some", [Term.TVar("x")]), Term.TCtor("Option.None", []))) => Option.Some(Val.VBool(false))
+    evalClosed(Term.TOp("==", Term.TCtor("Option.Some", [Term.TInt(1)]), Term.TCtor("Option.Some", [Term.TInt(2)]))) => Option.None
+
+fn ctorOp(o: String, same: Option<Bool>) -> Option<Val>
+    ? "== or != on two constructor applications, once whether they are the same value is known."
+    match same
+        Option.Some(s) -> boolOp(o, s, true)
+        Option.None -> Option.None
+
+verify ctorOp
+    ctorOp("!=", Option.Some(false)) => Option.Some(Val.VBool(true))
+    ctorOp("<", Option.Some(false)) => Option.None
+    ctorOp("==", Option.None) => Option.None
+
+fn sameCtor(c: String, d: String, fields: Int) -> Option<Bool>
+    ? "Two different constructors of one type differ whatever they hold; one constructor with no fields equals itself. The type is the name up to its last dot, so a constructor spelled two ways is never decided."
+    match (c == d, fields == 0, Bool.and(typeOf(c) == typeOf(d), typeOf(c) != ""))
+        (true, true, _) -> Option.Some(true)
+        (false, _, true) -> Option.Some(false)
+        _ -> Option.None
+
+verify sameCtor
+    sameCtor("Option.Some", "Option.None", 1) => Option.Some(false)
+    sameCtor("V.Valid", "V.Valid", 0) => Option.Some(true)
+    sameCtor("V.Box", "V.Box", 2) => Option.None
+    sameCtor("V.Valid", "K.V.Valid", 0) => Option.None
+    sameCtor("Valid", "Invalid", 0) => Option.None
+
+fn typeOf(c: String) -> String
+    ? "A constructor's name up to its last dot."
+    String.join(List.reverse(List.drop(List.reverse(String.split(c, ".")), 1)), ".")
+
+verify typeOf
+    typeOf("K.Verdict.Valid") => "K.Verdict"
+    typeOf("Valid") => ""
 
 fn evalAll(xs: List<Term>) -> List<Option<Val>>
     ? "The value of each term."

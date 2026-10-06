@@ -1,0 +1,42 @@
+module Constructors
+    intent =
+        "Steps on `==` and `!=` between two constructors: two different constructors of one type"
+        "differ whatever they hold, and a constructor with no fields equals itself."
+    exposes [verdictOf, refusal]
+
+type Verdict
+    Valid
+    Invalid
+
+fn verdictOf(valid: Bool) -> Verdict
+    ? "The verdict a flag stands for."
+    match valid
+        true -> Verdict.Valid
+        false -> Verdict.Invalid
+
+verify verdictOf
+    verdictOf(true) => Verdict.Valid
+    verdictOf(false) => Verdict.Invalid
+
+verify verdictOf law preservesFlag
+    given valid: Bool = [true, false]
+    verdictOf(valid) == Verdict.Valid => valid
+
+verify verdictOf law sameVerdict
+    given valid: Bool = [true, false]
+    when valid
+    verdictOf(valid) == Verdict.Valid => true
+
+fn refusal(silentMs: Int) -> Option<String>
+    ? "Why a pool that heard nothing for this long is refused, if it is."
+    match silentMs < 150000
+        true -> Option.None
+        false -> Option.Some("no Peer said anything for {150} seconds")
+
+verify refusal
+    refusal(0) => Option.None
+
+verify refusal law longSilenceIsRefused
+    given silentMs: Int = [150000, 200000]
+    when silentMs >= 150000
+    refusal(silentMs) != Option.None => true
