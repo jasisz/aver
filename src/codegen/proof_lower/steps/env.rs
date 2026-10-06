@@ -192,6 +192,7 @@ impl<'a> Env<'a> {
             fn_id: id,
             name,
             params: fd.params.iter().map(|(n, _)| n.clone()).collect(),
+            returns_bool: fd.return_type == "Bool",
             lets,
             body,
         };

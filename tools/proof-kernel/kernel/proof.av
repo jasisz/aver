@@ -39,6 +39,7 @@ record Case
 
 record Def
     name: String
+    returnsBool: Bool
     params: List<String>
     lets: List<Binding>
     body: Term

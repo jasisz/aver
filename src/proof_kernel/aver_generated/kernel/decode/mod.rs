@@ -2540,7 +2540,7 @@ pub fn factOf(
     }
 }
 
-/// (def NAME (PARAM…) ((NAME TERM)…) TERM): parameters, local bindings in order, the final expression.
+/// (def NAME (PARAM…) ((NAME TERM)…) TERM [bool]): parameters, local bindings in order, the final expression; `bool` marks a function that returns a Bool.
 pub fn def(
     s @ _: &crate::proof_kernel::aver_generated::kernel::sexp::Sexp,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::proof::Def, AverStr> {
@@ -2559,7 +2559,21 @@ pub fn def(
                                 {
                                     match __pat4 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(n) => {
-            { let __list_subject = __pat5; if let Some((ps, __pat6)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat6; if let Some((ls, __pat7)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat7; if let Some((b, __pat8)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat8; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::proof::Def { name: n, params: crate::proof_kernel::aver_generated::kernel::decode::atoms(&crate::proof_kernel::aver_generated::kernel::decode::items(&ps)?)?, lets: crate::proof_kernel::aver_generated::kernel::decode::bindings(&ls)?, body: crate::proof_kernel::aver_generated::kernel::decode::term(&b)? }) } else { Err(AverStr::from("malformed def")) } } } else { Err(AverStr::from("malformed def")) } } } else { Err(AverStr::from("malformed def")) } } } else { Err(AverStr::from("malformed def")) } }
+            { let __list_subject = __pat5; if let Some((ps, __pat6)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat6; if let Some((ls, __pat7)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat7; if let Some((b, __pat8)) = aver_rt::list_uncons_cloned(&__list_subject) { aver_list_match!(__pat8, [] => Ok(crate::proof_kernel::aver_generated::kernel::proof::Def { name: n, returnsBool: false, params: crate::proof_kernel::aver_generated::kernel::decode::atoms(&crate::proof_kernel::aver_generated::kernel::decode::items(&ps)?)?, lets: crate::proof_kernel::aver_generated::kernel::decode::bindings(&ls)?, body: crate::proof_kernel::aver_generated::kernel::decode::term(&b)? }), [__pat9, __pat10] => { match __pat9 {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(__pat11) => {
+            match &*__pat11 {
+        "bool" => {
+            { let __list_subject = __pat10; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::proof::Def { name: n, returnsBool: true, params: crate::proof_kernel::aver_generated::kernel::decode::atoms(&crate::proof_kernel::aver_generated::kernel::decode::items(&ps)?)?, lets: crate::proof_kernel::aver_generated::kernel::decode::bindings(&ls)?, body: crate::proof_kernel::aver_generated::kernel::decode::term(&b)? }) } else { Err(AverStr::from("malformed def")) } }
+        },
+        _ => {
+            Err(AverStr::from("malformed def"))
+        }
+    }
+        },
+        _ => {
+            Err(AverStr::from("malformed def"))
+        }
+    } }) } else { Err(AverStr::from("malformed def")) } } } else { Err(AverStr::from("malformed def")) } } } else { Err(AverStr::from("malformed def")) } }
         },
         _ => {
             Err(AverStr::from("malformed def"))
