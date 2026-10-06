@@ -257,7 +257,12 @@ fn the_kernel_inducts_on_a_list_given_and_refuses_mutations() {
         nil: Box::new(nil),
         head: head.into(),
         tail: tail.into(),
-        ih: "ih".into(),
+        general: Vec::new(),
+        ihs: vec![super::IhAt {
+            name: "ih".into(),
+            at: Vec::new(),
+            carry: Vec::new(),
+        }],
         cons: Box::new(Proof::Trans {
             terms: vec![
                 concat(cell(head, tail), term::nil()),
@@ -849,12 +854,14 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
                         binders: Vec::new(),
                         ihs: Vec::new(),
                         carry: Vec::new(),
+                        more: Vec::new(),
                         proof: open(1, term::nil(), Vec::new()),
                     },
                     super::InductCase {
                         binders: vec!["h".into(), "t".into()],
                         ihs: vec!["ih".into()],
                         carry: vec![Vec::new()],
+                        more: Vec::new(),
                         proof: Proof::Trans {
                             terms: vec![call_g(cell("h", "t")), call_g(var("t")), i(claim)],
                             steps: vec![
@@ -1015,7 +1022,12 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
                 nil: Box::new(nil),
                 head: "h".into(),
                 tail: "t".into(),
-                ih: "ih".into(),
+                general: Vec::new(),
+                ihs: vec![super::IhAt {
+                    name: "ih".into(),
+                    at: Vec::new(),
+                    carry: Vec::new(),
+                }],
                 cons: Box::new(Proof::Trans {
                     terms: vec![
                         concat(cell("h", "t"), term::nil()),
@@ -1067,7 +1079,12 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
                 guard: "g".into(),
                 base: Box::new(base),
                 carried: Vec::new(),
-                ih: "ih".into(),
+                general: Vec::new(),
+                ihs: vec![super::IhAt {
+                    name: "ih".into(),
+                    at: Vec::new(),
+                    carry: Vec::new(),
+                }],
                 step: Box::new(Proof::Refl(var("n"))),
             },
         );

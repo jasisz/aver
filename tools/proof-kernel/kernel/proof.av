@@ -4,7 +4,7 @@ module Proof
         "laws and the script that ties them"
         "to one obligation."
         "Each step names its rule and writes out every instance; see src/ir/proof_steps/mod.rs."
-    exposes [Proof, Case, Def, Const, Law, Fact, Script, Hyp, Given, premiseOf]
+    exposes [Proof, Case, More, IhAt, Def, Const, Law, Fact, Script, Hyp, Given, premiseOf]
     depends [Kernel.Term]
     effects []
 
@@ -27,8 +27,8 @@ type Proof
     PEnum(String, Term, Term, List<Proof>)
     PAbsurd(Proof, Term, Term)
     PInduct(String, List<Term>, Term, Term, List<String>, List<Case>)
-    PListInduct(String, Term, Term, Proof, String, String, String, Proof)
-    PIntInduct(String, Term, Term, String, Proof, List<String>, List<Proof>, String, Proof)
+    PListInduct(String, Term, Term, Proof, String, String, List<String>, List<IhAt>, Proof)
+    PIntInduct(String, Term, Term, String, Proof, List<String>, List<String>, List<IhAt>, Proof)
     PRing(Term, Term)
     PLinear(Term, Bool, List<String>, List<Int>)
 
@@ -36,7 +36,17 @@ record Case
     binders: List<String>
     ihs: List<String>
     carry: List<List<Proof>>
+    more: List<More>
     proof: Proof
+
+record More
+    call: Int
+    ih: IhAt
+
+record IhAt
+    name: String
+    at: List<Term>
+    carry: List<Proof>
 
 record Def
     name: String

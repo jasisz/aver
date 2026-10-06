@@ -52,8 +52,8 @@ fn conclude(p: Proof, env: Env, path: String) -> Result<Eqn, String>
         Proof.PEnum(v, l, r, cs) -> enumStep(v, l, r, cs, env, path)
         Proof.PAbsurd(q, l, r) -> absurd(conclude(q, env, "{path}/absurd")?, l, r, path)
         Proof.PInduct(f, xs, l, r, carry, cs) -> induct(f, xs, Eqn(lhs = l, rhs = r), carry, cs, env, path)
-        Proof.PListInduct(v, l, r, n, h, t, ih, c) -> listInduct(v, Eqn(lhs = l, rhs = r), n, [h, t, ih], c, env, path)
-        Proof.PIntInduct(v, l, r, g, b, names, carry, ih, st) -> intInduct(v, Eqn(lhs = l, rhs = r), g, b, names, carry, ih, st, env, path)
+        Proof.PListInduct(v, l, r, n, h, t, general, ihs, c) -> listInduct(v, Eqn(lhs = l, rhs = r), n, h, t, general, ihs, c, env, path)
+        Proof.PIntInduct(v, l, r, g, b, names, general, ihs, st) -> intInduct(v, Eqn(lhs = l, rhs = r), g, b, names, general, ihs, st, env, path)
         Proof.PRing(l, r) -> ring(l, r, path)
         Proof.PLinear(g, v, hs, ws) -> linear(g, v, hs, ws, env, path)
 
@@ -812,7 +812,7 @@ fn inductChecked(d: Def, j: Int, arms: List<Arm>, xs: List<Term>, claim: Eqn, ca
         _ -> inductCases(d, j, arms, cs, Kernel.Induct.Call(args = xs, inner = []), claim, vr, takenNames(claim, env.hyps), carried, withHyps(env, notMentioningAny(env.hyps, varying)), path, 0)
 
 verify inductChecked
-    inductChecked(Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TUnit), 0, [], [], Eqn(lhs = Term.TVar("x"), rhs = Term.TVar("x")), [], [Case(binders = [], ihs = [], carry = [], proof = Proof.PRefl(Term.TUnit))], Varied(v = "x", general = []), emptyEnv(), "p") => Result.Err("step p: 0 arms, 1 cases")
+    inductChecked(Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TUnit), 0, [], [], Eqn(lhs = Term.TVar("x"), rhs = Term.TVar("x")), [], [Case(binders = [], ihs = [], carry = [], more = [], proof = Proof.PRefl(Term.TUnit))], Varied(v = "x", general = []), emptyEnv(), "p") => Result.Err("step p: 0 arms, 1 cases")
 
 fn notMentioningAny(hs: List<Hyp>, names: List<String>) -> List<Hyp>
     ? "The hypotheses that mention none of the names."
@@ -949,7 +949,7 @@ fn inductCase(d: Def, j: Int, a: Arm, c: Case, at: Call, claim: Eqn, vr: Varied,
         _ -> inductCaseNamed(d, j, a, c, namesToVars(c.binders), at, claim, vr, carried, env, path)
 
 verify inductCase
-    inductCase(Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TUnit), 0, Arm(pattern = Pat.PNil, body = Term.TUnit), Case(binders = ["y"], ihs = [], carry = [], proof = Proof.PRefl(Term.TUnit)), Kernel.Induct.Call(args = [], inner = []), Eqn(lhs = Term.TUnit, rhs = Term.TUnit), Varied(v = "x", general = []), [], [], emptyEnv(), "p") => Result.Err("step p: wrong number of names")
+    inductCase(Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TUnit), 0, Arm(pattern = Pat.PNil, body = Term.TUnit), Case(binders = ["y"], ihs = [], carry = [], more = [], proof = Proof.PRefl(Term.TUnit)), Kernel.Induct.Call(args = [], inner = []), Eqn(lhs = Term.TUnit, rhs = Term.TUnit), Varied(v = "x", general = []), [], [], emptyEnv(), "p") => Result.Err("step p: wrong number of names")
 
 fn refuseCase(path: String, why: String) -> Result<Unit, String>
     ? "A refusal of an induction case, naming it."
@@ -998,10 +998,10 @@ fn inductCaseNamed(d: Def, j: Int, a: Arm, c: Case, ys: List<Term>, at: Call, cl
     match (List.len(calls) == List.len(c.ihs), List.len(c.carry) == List.len(c.ihs))
         (false, _) -> refuseCase(path, "{List.len(calls)} recursive calls, {List.len(c.ihs)} hypotheses")
         (_, false) -> refuseCase(path, "one list of carried proofs per hypothesis")
-        _ -> caseProves(c.proof, goal, withHyps(scope, List.concat(ihHyps(calls, c.ihs, c.carry, rename, j, claim, vr, carried, scope, path)?, scope.hyps)), path)
+        _ -> caseProves(c.proof, goal, withHyps(scope, List.concat(moreHyps(c.more, calls, rename, j, claim, vr, carried, scope, path)?, List.concat(ihHyps(calls, c.ihs, c.carry, rename, j, claim, vr, carried, scope, path)?, scope.hyps))), path)
 
 verify inductCaseNamed
-    inductCaseNamed(Def(name = "f", returnsBool = false, params = ["x"], lets = [], body = Term.TUnit), 0, Arm(pattern = Pat.PNil, body = Term.TInt(0)), Case(binders = [], ihs = ["ih"], carry = [[]], proof = Proof.PRefl(Term.TUnit)), [], Kernel.Induct.Call(args = [Term.TVar("x")], inner = []), Eqn(lhs = Term.TVar("x"), rhs = Term.TVar("x")), Varied(v = "x", general = []), [], emptyEnv(), "p") => Result.Err("step p: 0 recursive calls, 1 hypotheses")
+    inductCaseNamed(Def(name = "f", returnsBool = false, params = ["x"], lets = [], body = Term.TUnit), 0, Arm(pattern = Pat.PNil, body = Term.TInt(0)), Case(binders = [], ihs = ["ih"], carry = [[]], more = [], proof = Proof.PRefl(Term.TUnit)), [], Kernel.Induct.Call(args = [Term.TVar("x")], inner = []), Eqn(lhs = Term.TVar("x"), rhs = Term.TVar("x")), Varied(v = "x", general = []), [], emptyEnv(), "p") => Result.Err("step p: 0 recursive calls, 1 hypotheses")
 
 fn hypsAt(hs: List<Hyp>, bs: List<Binding>, path: String) -> Result<List<Hyp>, String>
     ? "Each hypothesis at a substitution, under its own name."
@@ -1031,6 +1031,42 @@ fn ihHyps(calls: List<Kernel.Induct.Call>, ihs: List<String>, carry: List<List<P
 
 verify ihHyps
     ihHyps([], [], [], [], 0, Eqn(lhs = Term.TUnit, rhs = Term.TUnit), Varied(v = "x", general = []), [], emptyEnv(), "p") => Result.Ok([])
+
+fn moreHyps(ms: List<More>, calls: List<Kernel.Induct.Call>, rename: List<Binding>, j: Int, claim: Eqn, vr: Varied, carried: List<Hyp>, scope: Env, path: String) -> Result<List<Hyp>, String>
+    ? "One hypothesis per entry, later ones in front: the claim at the part recursive call K recurses on and at the entry's values of the varied givens, once each carried hypothesis is proved there."
+    match ms
+        [] -> Result.Ok([])
+        [m, ..rest] -> match (callAt(calls, m.call), List.len(m.ih.at) == List.len(vr.general), List.len(m.ih.carry) == List.len(carried))
+            (Option.None, _, _) -> Result.Err("step {path}: no recursive call {m.call}")
+            (_, false, _) -> Result.Err("step {path}: {m.ih.name} gives {List.len(m.ih.at)} values for {List.len(vr.general)} varied givens")
+            (_, _, false) -> Result.Err("step {path}: one proof per carried hypothesis")
+            (Option.Some(c), true, true) -> Result.Ok(List.concat(moreHyps(rest, calls, rename, j, claim, vr, carried, scope, path)?, ihHolds(List.prepend(partBinding(ihAt(c, rename, j, vr, path)?, path)?, zipBind(placeNames(vr.general), m.ih.at)), m.ih.name, m.ih.carry, claim, carried, scope, path)?))
+
+verify moreHyps
+    moreHyps([More(call = 1, ih = IhAt(name = "ih", at = [], carry = []))], [Kernel.Induct.Call(args = [Term.TVar("t")], inner = [])], [], 0, Eqn(lhs = Term.TVar("x"), rhs = Term.TVar("x")), Varied(v = "x", general = []), [], emptyEnv(), "p") => Result.Err("step p: no recursive call 1")
+    moreHyps([More(call = 0, ih = IhAt(name = "ih", at = [], carry = []))], [Kernel.Induct.Call(args = [Term.TVar("t"), Term.TVar("a")], inner = [])], [], 0, Eqn(lhs = Term.TVar("x"), rhs = Term.TVar("acc")), Varied(v = "x", general = [Place(at = 1, name = "acc")]), [], emptyEnv(), "p") => Result.Err("step p: ih gives 0 values for 1 varied givens")
+    moreHyps([More(call = 0, ih = IhAt(name = "ih", at = [Term.TInt(5)], carry = []))], [Kernel.Induct.Call(args = [Term.TVar("t"), Term.TVar("a")], inner = [])], [], 0, Eqn(lhs = Term.TVar("x"), rhs = Term.TVar("acc")), Varied(v = "x", general = [Place(at = 1, name = "acc")]), [], emptyEnv(), "p") => Result.Ok([Hyp(name = "ih", eqn = Eqn(lhs = Term.TVar("t"), rhs = Term.TInt(5)))])
+
+fn callAt(calls: List<Kernel.Induct.Call>, k: Int) -> Option<Kernel.Induct.Call>
+    ? "The recursive call at place k."
+    match calls
+        [] -> Option.None
+        [c, ..rest] -> match k == 0
+            true -> Option.Some(c)
+            false -> callAt(rest, k - 1)
+
+verify callAt
+    callAt([], 0) => Option.None
+
+fn partBinding(bs: List<Binding>, path: String) -> Result<Binding, String>
+    ? "The binding of the given inducted on, which ihAt puts first."
+    match bs
+        [b, ..rest] -> Result.Ok(b)
+        [] -> Result.Err("step {path}: a recursive call binds nothing")
+
+verify partBinding
+    partBinding([Kernel.Term.bind("x", Term.TVar("t"))], "p") => Result.Ok(Kernel.Term.bind("x", Term.TVar("t")))
+    partBinding([], "p") => Result.Err("step p: a recursive call binds nothing")
 
 fn ihTaken(c: Kernel.Induct.Call, h: String, ps: List<Proof>, rename: List<Binding>, j: Int, claim: Eqn, vr: Varied, carried: List<Hyp>, scope: Env, path: String) -> Result<List<Hyp>, String>
     ? "The hypothesis of one call, unless it is named _."
@@ -1113,42 +1149,50 @@ fn caseProves(p: Proof, goal: Eqn, env: Env, path: String) -> Result<Unit, Strin
 verify caseProves
     caseProves(Proof.PRefl(Term.TInt(1)), Eqn(lhs = Term.TInt(1), rhs = Term.TInt(2)), emptyEnv(), "p") => Result.Err("step p: the case proves a different equation")
 
-fn listInduct(v: String, claim: Eqn, n: Proof, names: List<String>, c: Proof, env: Env, path: String) -> Result<Eqn, String>
-    ? "Induction on a given of list type: the claim at [], and at List.prepend(head, tail) under a hypothesis, the claim at tail."
-    match (List.contains(env.lists, v), hypsMention(env.hyps, [v]), names)
+fn listInduct(v: String, claim: Eqn, n: Proof, h: String, t: String, general: List<String>, ihs: List<IhAt>, c: Proof, env: Env, path: String) -> Result<Eqn, String>
+    ? "Induction on a given of list type, for every value of the names in general: the claim at [], and at List.prepend(h, t) under one hypothesis per entry of ihs, the claim at t and that entry's values of general."
+    match (List.contains(env.lists, v), hypsMention(env.hyps, List.prepend(v, general)), List.contains(general, v))
         (false, _, _) -> refuse(path, "{v} is not a given of list type")
-        (_, true, _) -> refuse(path, "a hypothesis in scope mentions {v}")
-        (_, _, [h, t, ih]) -> match freshAll([h, t], takenNames(claim, env.hyps), env, [])
+        (_, true, _) -> refuse(path, "a hypothesis in scope mentions {v} or what it generalises")
+        (_, _, true) -> refuse(path, "{v} is both inducted on and generalised")
+        _ -> match freshAll([h, t], takenNames(claim, env.hyps), env, [])
             false -> refuse(path, "the names are not fresh")
-            true -> listCases(v, claim, n, h, t, ih, c, env, path)
-        _ -> refuse(path, "malformed list induction")
+            true -> listCases(v, claim, n, h, t, general, ihs, c, env, path)
 
 verify listInduct
-    listInduct("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), ["h", "t", "ih"], Proof.PRefl(Term.TUnit), emptyEnv(), "p") => Result.Err("step p: xs is not a given of list type")
+    listInduct("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), "h", "t", [], [], Proof.PRefl(Term.TUnit), emptyEnv(), "p") => Result.Err("step p: xs is not a given of list type")
+    listInduct("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("n")), Proof.PRefl(Term.TList([])), "h", "t", ["n"], [], Proof.PRefl(Term.TUnit), withHyp(listsEnv(["xs"]), "k", Term.TVar("n"), true), "p") => Result.Err("step p: a hypothesis in scope mentions xs or what it generalises")
 
-fn listCases(v: String, claim: Eqn, n: Proof, h: String, t: String, ih: String, c: Proof, env: Env, path: String) -> Result<Eqn, String>
+fn listsEnv(ns: List<String>) -> Env
+    ? "No definitions, laws or hypotheses, and these givens of list type."
+    Env(defs = [], consts = [], laws = [], hyps = [], finite = [], lists = ns, ints = [], givens = ns)
+
+verify listsEnv
+    listsEnv(["xs"]).lists => ["xs"]
+
+fn listCases(v: String, claim: Eqn, n: Proof, h: String, t: String, general: List<String>, ihs: List<IhAt>, c: Proof, env: Env, path: String) -> Result<Eqn, String>
     ? "The empty-list case, then the cell case under the claim at the tail."
     caseProves(n, instantiate(claim, [Kernel.Term.bind(v, Term.TList([]))], path)?, env, "{path}/nil")?
-    atTail = instantiate(claim, [Kernel.Term.bind(v, Term.TVar(t))], path)?
     goal = instantiate(claim, [Kernel.Term.bind(v, Term.TBi("List.prepend", [Term.TVar(h), Term.TVar(t)]))], path)?
-    caseProves(c, goal, withHyps(env, List.prepend(Hyp(name = ih, eqn = atTail), env.hyps)), "{path}/cons")?
+    caseProves(c, goal, withHyps(env, List.concat(smallerHyps(v, Term.TVar(t), general, ihs, claim, [], env, path)?, env.hyps)), "{path}/cons")?
     Result.Ok(claim)
 
 verify listCases
-    listCases("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), "h", "t", "ih", Proof.PRefl(Term.TBi("List.prepend", [Term.TVar("h"), Term.TVar("t")])), emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")))
-    listCases("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), "h", "t", "ih", Proof.PHyp("ih"), emptyEnv(), "p") => Result.Err("step p/cons: the case proves a different equation")
+    listCases("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), "h", "t", [], [IhAt(name = "ih", at = [], carry = [])], Proof.PRefl(Term.TBi("List.prepend", [Term.TVar("h"), Term.TVar("t")])), emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")))
+    listCases("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), "h", "t", [], [IhAt(name = "ih", at = [], carry = [])], Proof.PHyp("ih"), emptyEnv(), "p") => Result.Err("step p/cons: the case proves a different equation")
+    listCases("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("n")), Proof.PRefl(Term.TList([])), "h", "t", ["n"], [IhAt(name = "ih", at = [Term.TInt(3)], carry = [])], Proof.PHyp("ih"), emptyEnv(), "p") => Result.Err("step p/nil: the case proves a different equation")
 
-fn intInduct(v: String, claim: Eqn, g: String, base: Proof, names: List<String>, carry: List<Proof>, ih: String, step: Proof, env: Env, path: String) -> Result<Eqn, String>
-    ? "Induction on a given of type Int down to zero: the claim where v <= 0 (hypothesis g), and where v > 0 under hypothesis ih, the claim at v - 1. The hypotheses carried hold at v - 1 first; any other one that mentions v is out of scope."
-    match (List.contains(env.ints, v), List.len(names) == List.len(carry))
+fn intInduct(v: String, claim: Eqn, g: String, base: Proof, names: List<String>, general: List<String>, ihs: List<IhAt>, step: Proof, env: Env, path: String) -> Result<Eqn, String>
+    ? "Induction on a given of type Int down to zero, for every value of the names in general: the claim where v <= 0 (hypothesis g), and where v > 0 under one hypothesis per entry of ihs, the claim at v - 1 and that entry's values of general. The hypotheses carried hold there first; any other one that mentions v or general is out of scope."
+    match (List.contains(env.ints, v), List.contains(general, v))
         (false, _) -> refuse(path, "{v} is not a given of type Int")
-        (_, false) -> refuse(path, "one proof per carried hypothesis")
-        _ -> intCases(v, claim, g, base, namedHyps(names, env.hyps, path)?, carry, ih, step, env, path)
+        (_, true) -> refuse(path, "{v} is both inducted on and generalised")
+        _ -> intCases(v, claim, g, base, namedHyps(names, env.hyps, path)?, general, ihs, step, env, path)
 
 verify intInduct
-    intInduct("n", Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), "g", Proof.PRefl(Term.TVar("n")), [], [], "ih", Proof.PRefl(Term.TVar("n")), emptyEnv(), "p") => Result.Err("step p: n is not a given of type Int")
-    intInduct("n", Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), "g", Proof.PRefl(Term.TVar("n")), ["h"], [], "ih", Proof.PRefl(Term.TVar("n")), intsEnv(["n"]), "p") => Result.Err("step p: one proof per carried hypothesis")
-    intInduct("n", Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), "g", Proof.PRefl(Term.TVar("n")), [], [], "ih", Proof.PRefl(Term.TVar("n")), intsEnv(["n"]), "p") => Result.Ok(Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")))
+    intInduct("n", Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), "g", Proof.PRefl(Term.TVar("n")), [], [], [IhAt(name = "ih", at = [], carry = [])], Proof.PRefl(Term.TVar("n")), emptyEnv(), "p") => Result.Err("step p: n is not a given of type Int")
+    intInduct("n", Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), "g", Proof.PRefl(Term.TVar("n")), [], ["n"], [], Proof.PRefl(Term.TVar("n")), intsEnv(["n"]), "p") => Result.Err("step p: n is both inducted on and generalised")
+    intInduct("n", Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), "g", Proof.PRefl(Term.TVar("n")), [], [], [IhAt(name = "ih", at = [], carry = [])], Proof.PRefl(Term.TVar("n")), intsEnv(["n"]), "p") => Result.Ok(Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")))
 
 fn intsEnv(ns: List<String>) -> Env
     ? "No definitions, laws or hypotheses, and these givens of type Int."
@@ -1157,22 +1201,35 @@ fn intsEnv(ns: List<String>) -> Env
 verify intsEnv
     intsEnv(["n"]).ints => ["n"]
 
-fn intCases(v: String, claim: Eqn, g: String, base: Proof, cs: List<Hyp>, carry: List<Proof>, ih: String, step: Proof, env: Env, path: String) -> Result<Eqn, String>
-    ? "The case v <= 0; then, where v > 0, each carried hypothesis at v - 1, and the claim under the claim at v - 1. A case sees the carried hypotheses (the last named innermost), then g, then those that do not mention v."
+fn intCases(v: String, claim: Eqn, g: String, base: Proof, cs: List<Hyp>, general: List<String>, ihs: List<IhAt>, step: Proof, env: Env, path: String) -> Result<Eqn, String>
+    ? "The case v <= 0; then, where v > 0, the claim under its hypotheses. A case sees the carried hypotheses (the last named innermost), then g, then those that mention neither v nor general."
     guard = Term.TOp("<=", Term.TVar(v), Term.TInt(0))
-    down = [Kernel.Term.bind(v, Term.TOp("-", Term.TVar(v), Term.TInt(1)))]
-    kept = notMentioning(env.hyps, v)
+    kept = notMentioningAny(env.hyps, List.prepend(v, general))
     inner = List.reverse(cs)
     caseProves(base, claim, withHyps(env, List.concat(inner, List.prepend(Hyp(name = g, eqn = Eqn(lhs = guard, rhs = Term.TBool(true))), kept))), "{path}/base")?
     above = withHyps(env, List.concat(inner, List.prepend(Hyp(name = g, eqn = Eqn(lhs = guard, rhs = Term.TBool(false))), kept)))
-    carriedHold(cs, carry, down, above, path)?
-    caseProves(step, claim, withHyps(above, List.prepend(Hyp(name = ih, eqn = instantiate(claim, down, path)?), above.hyps)), "{path}/step")?
+    caseProves(step, claim, withHyps(above, List.concat(smallerHyps(v, Term.TOp("-", Term.TVar(v), Term.TInt(1)), general, ihs, claim, cs, above, path)?, above.hyps)), "{path}/step")?
     Result.Ok(claim)
 
 verify intCases
-    intCases("n", Eqn(lhs = Term.TVar("n"), rhs = Term.TInt(0)), "g", Proof.PRefl(Term.TVar("n")), [], [], "ih", Proof.PRefl(Term.TVar("n")), intsEnv(["n"]), "p") => Result.Err("step p/base: the case proves a different equation")
-    intCases("n", Eqn(lhs = Term.TOp("<=", Term.TVar("n"), Term.TInt(0)), rhs = Term.TBool(true)), "g", Proof.PHyp("g"), [], [], "ih", Proof.PHyp("g"), intsEnv(["n"]), "p") => Result.Err("step p/step: the case proves a different equation")
-    intCases("n", Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), "g", Proof.PHyp("h"), [], [], "ih", Proof.PRefl(Term.TVar("n")), withHyp(intsEnv(["n"]), "h", Term.TVar("n"), true), "p") => Result.Err("step p/base: hypothesis h is not in scope")
+    intCases("n", Eqn(lhs = Term.TVar("n"), rhs = Term.TInt(0)), "g", Proof.PRefl(Term.TVar("n")), [], [], [], Proof.PRefl(Term.TVar("n")), intsEnv(["n"]), "p") => Result.Err("step p/base: the case proves a different equation")
+    intCases("n", Eqn(lhs = Term.TOp("<=", Term.TVar("n"), Term.TInt(0)), rhs = Term.TBool(true)), "g", Proof.PHyp("g"), [], [], [], Proof.PHyp("g"), intsEnv(["n"]), "p") => Result.Err("step p/step: the case proves a different equation")
+    intCases("n", Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), "g", Proof.PHyp("h"), [], [], [], Proof.PRefl(Term.TVar("n")), withHyp(intsEnv(["n"]), "h", Term.TVar("n"), true), "p") => Result.Err("step p/base: hypothesis h is not in scope")
+    intCases("n", Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), "g", Proof.PRefl(Term.TVar("n")), [], ["a"], [], Proof.PHyp("h"), withHyp(intsEnv(["n"]), "h", Term.TVar("a"), true), "p") => Result.Err("step p/step: hypothesis h is not in scope")
+
+fn smallerHyps(v: String, smaller: Term, general: List<String>, ihs: List<IhAt>, claim: Eqn, cs: List<Hyp>, scope: Env, path: String) -> Result<List<Hyp>, String>
+    ? "One hypothesis per entry, later ones in front: the claim with v at the smaller value and general at the entry's values, once each carried hypothesis is proved there."
+    match ihs
+        [] -> Result.Ok([])
+        [i, ..rest] -> match (List.len(i.at) == List.len(general), List.len(i.carry) == List.len(cs))
+            (false, _) -> Result.Err("step {path}: {i.name} gives {List.len(i.at)} values for {List.len(general)} generalised givens")
+            (_, false) -> Result.Err("step {path}: one proof per carried hypothesis")
+            _ -> Result.Ok(List.concat(smallerHyps(v, smaller, general, rest, claim, cs, scope, path)?, ihHolds(List.prepend(Kernel.Term.bind(v, smaller), zipBind(general, i.at)), i.name, i.carry, claim, cs, scope, path)?))
+
+verify smallerHyps
+    smallerHyps("n", Term.TVar("m"), ["a"], [IhAt(name = "ih", at = [], carry = [])], Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("a")), [], intsEnv(["n"]), "p") => Result.Err("step p: ih gives 0 values for 1 generalised givens")
+    smallerHyps("n", Term.TVar("m"), ["a"], [IhAt(name = "ih", at = [Term.TInt(7)], carry = [])], Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("a")), [], intsEnv(["n"]), "p") => Result.Ok([Hyp(name = "ih", eqn = Eqn(lhs = Term.TVar("m"), rhs = Term.TInt(7)))])
+    smallerHyps("n", Term.TVar("m"), [], [IhAt(name = "ih", at = [], carry = [])], Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), [Hyp(name = "h", eqn = Eqn(lhs = Term.TVar("n"), rhs = Term.TBool(true)))], intsEnv(["n"]), "p") => Result.Err("step p: one proof per carried hypothesis")
 
 fn namedHyps(names: List<String>, scope: List<Hyp>, path: String) -> Result<List<Hyp>, String>
     ? "The hypotheses of these names, as they stand in scope."
@@ -1182,17 +1239,6 @@ fn namedHyps(names: List<String>, scope: List<Hyp>, path: String) -> Result<List
 
 verify namedHyps
     namedHyps(["h"], [], "p") => Result.Err("step p: hypothesis h is not in scope")
-
-fn notMentioning(hs: List<Hyp>, v: String) -> List<Hyp>
-    ? "The hypotheses that do not mention v."
-    match hs
-        [] -> []
-        [h, ..rest] -> match hypsMention([h], [v])
-            true -> notMentioning(rest, v)
-            false -> List.prepend(h, notMentioning(rest, v))
-
-verify notMentioning
-    notMentioning([Hyp(name = "h", eqn = Eqn(lhs = Term.TVar("n"), rhs = Term.TBool(true))), Hyp(name = "k", eqn = Eqn(lhs = Term.TVar("m"), rhs = Term.TBool(true)))], "n") => [Hyp(name = "k", eqn = Eqn(lhs = Term.TVar("m"), rhs = Term.TBool(true)))]
 
 fn carriedHold(cs: List<Hyp>, proofs: List<Proof>, down: List<Binding>, env: Env, path: String) -> Result<Unit, String>
     ? "Each carried hypothesis, at v - 1, proved by its proof."

@@ -91,7 +91,11 @@ fn schemas() -> Vec<Schema> {
         out.push(Schema {
             name: f.key.to_string(),
             binders: ob.givens.clone(),
-            premises: Vec::new(),
+            premises: ob
+                .premise
+                .iter()
+                .map(|p| Eqn::new(p.clone(), term::boolean(true)))
+                .collect(),
             concl: Eqn::new(ob.lhs.clone(), ob.rhs.clone()),
         });
     }

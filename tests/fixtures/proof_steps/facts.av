@@ -91,3 +91,29 @@ verify reversed law lengthIsNeverNegative
     given xs: List<Int> = [[], [1]]
     using [List.len.nonneg]
     List.len(reversed(xs)) >= 0 => true
+
+verify joined law splitsAnywhere
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    given n: Int = [-1, 0, 2, 5]
+    using [List.concat.takeDrop]
+    joined(List.take(xs, n), List.drop(xs, n)) => xs
+
+verify joined law takesNothingBelowOne
+    given xs: List<Int> = [[], [1, 2]]
+    given n: Int = [-3, 0]
+    when n <= 0
+    using [List.take.nonPositive]
+    List.take(joined(xs, xs), n) => []
+
+verify joined law dropsNothingBelowOne
+    given xs: List<Int> = [[], [1, 2]]
+    given n: Int = [-3, 0]
+    when n <= 0
+    using [List.drop.nonPositive]
+    List.drop(joined(xs, xs), n) => joined(xs, xs)
+
+verify joined law droppingShortens
+    given xs: List<Int> = [[], [1, 2]]
+    given n: Int = [-1, 1, 4]
+    using [List.len.ofDropAtMost]
+    List.len(List.drop(joined(xs, xs), n)) <= List.len(joined(xs, xs)) => true

@@ -77,3 +77,9 @@ verify revOnto law isReverseThenAppend
     given acc: List<Int> = [[], [9]]
     using [app.assoc]
     revOnto(xs, acc) => app(rev(xs), acc)
+
+verify revOnto law accumulatorLast
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given acc: List<Int> = [[], [9]]
+    using [List.concat.assoc]
+    revOnto(xs, acc) => List.concat(revOnto(xs, []), acc)

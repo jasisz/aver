@@ -32,9 +32,9 @@
 //!          | (compute TERM TERM) | (cases TERM NAME PROOF PROOF)
 //!          | (have NAME TERM PROOF PROOF)
 //!          | (enum NAME TERM TERM PROOF…) | (absurd PROOF TERM TERM)
-//!          | (induct FN (TERM…) TERM TERM (case (NAME…) (NAME…) PROOF)…)
-//!          | (listinduct NAME TERM TERM PROOF (NAME NAME NAME) PROOF)
-//!          | (intinduct NAME TERM TERM NAME PROOF (NAME…) (PROOF…) NAME PROOF)
+//!          | (induct FN (TERM…) TERM TERM [(carry NAME…)] (case (NAME…) (IH…) ((INT NAME (TERM…) (PROOF…))…) PROOF)…)
+//!          | (listinduct NAME TERM TERM PROOF (NAME NAME) (NAME…) ((NAME (TERM…) ())…) PROOF)
+//!          | (intinduct NAME TERM TERM NAME PROOF (NAME…) (NAME…) ((NAME (TERM…) (PROOF…))…) PROOF)
 //!          | (ring TERM TERM) | (linear TERM BOOL (NAME…) (INT…))
 //! ```
 
@@ -472,10 +472,16 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
                         None => ihs.push(ih.clone()),
                     }
                 }
+                let more: Vec<String> = c
+                    .more
+                    .iter()
+                    .map(|(k, ih)| Ok(format!("({k} {})", ih_body(ih, names)?)))
+                    .collect::<Result<_, String>>()?;
                 s.push_str(&format!(
-                    " (case ({}) ({}) {})",
+                    " (case ({}) ({}) ({}) {})",
                     c.binders.join(" "),
                     ihs.join(" "),
+                    more.join(" "),
                     proof(&c.proof, names)?
                 ));
             }
@@ -515,13 +521,16 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
             nil,
             head,
             tail,
-            ih,
+            general,
+            ihs,
             cons,
         } => format!(
-            "(listinduct {var} {} {} {} ({head} {tail} {ih}) {})",
+            "(listinduct {var} {} {} {} ({head} {tail}) ({}) ({}) {})",
             term(lhs, names)?,
             term(rhs, names)?,
             proof(nil, names)?,
+            general.join(" "),
+            ih_ats(ihs, names)?,
             proof(cons, names)?
         ),
         Proof::InductInt {
@@ -531,25 +540,21 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
             guard,
             base,
             carried,
-            ih,
+            general,
+            ihs,
             step,
-        } => format!(
-            "(intinduct {var} {} {} {guard} {} ({}) ({}) {ih} {})",
-            term(lhs, names)?,
-            term(rhs, names)?,
-            proof(base, names)?,
-            carried
-                .iter()
-                .map(|(n, _)| n.as_str())
-                .collect::<Vec<_>>()
-                .join(" "),
-            carried
-                .iter()
-                .map(|(_, p)| proof(p, names))
-                .collect::<Result<Vec<_>, String>>()?
-                .join(" "),
-            proof(step, names)?
-        ),
+        } => {
+            format!(
+                "(intinduct {var} {} {} {guard} {} ({}) ({}) ({}) {})",
+                term(lhs, names)?,
+                term(rhs, names)?,
+                proof(base, names)?,
+                carried.join(" "),
+                general.join(" "),
+                ih_ats(ihs, names)?,
+                proof(step, names)?
+            )
+        }
         Proof::Enum {
             var,
             lhs,
@@ -696,4 +701,30 @@ pub fn script(s: &Script, names: &dyn Names) -> Result<String, String> {
     }
     out.push_str(&format!(")\n (proof {}))\n", proof(&s.proof, names)?));
     Ok(out)
+}
+
+/// The hypotheses of an induction step: `(NAME (TERM…) (PROOF…))…`.
+fn ih_ats(ihs: &[super::IhAt], names: &dyn Names) -> Result<String, String> {
+    let out: Vec<String> = ihs
+        .iter()
+        .map(|ih| Ok(format!("({})", ih_body(ih, names)?)))
+        .collect::<Result<_, String>>()?;
+    Ok(out.join(" "))
+}
+
+/// One hypothesis without its parentheses: `NAME (TERM…) (PROOF…)`.
+fn ih_body(ih: &super::IhAt, names: &dyn Names) -> Result<String, String> {
+    let at = ih
+        .at
+        .iter()
+        .map(|t| term(t, names))
+        .collect::<Result<Vec<_>, String>>()?
+        .join(" ");
+    let carry = ih
+        .carry
+        .iter()
+        .map(|p| proof(p, names))
+        .collect::<Result<Vec<_>, String>>()?
+        .join(" ");
+    Ok(format!("{} ({at}) ({carry})", ih.name))
 }

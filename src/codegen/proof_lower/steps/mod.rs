@@ -309,14 +309,13 @@ fn split_calls(p: &Proof, out: &mut Vec<crate::ir::identity::FnId>) {
             split_calls(cons, out);
         }
         Proof::InductInt {
-            base,
-            carried,
-            step,
-            ..
+            base, ihs, step, ..
         } => {
             split_calls(base, out);
             split_calls(step, out);
-            carried.iter().for_each(|(_, q)| split_calls(q, out));
+            ihs.iter()
+                .flat_map(|i| &i.carry)
+                .for_each(|q| split_calls(q, out));
         }
         Proof::Refl(_)
         | Proof::Hyp(_)
@@ -359,12 +358,14 @@ fn uses_hyp(p: &Proof, name: &str) -> bool {
         Proof::InductInt {
             base,
             carried,
+            ihs,
             step,
             ..
         } => {
             uses_hyp(base, name)
                 || uses_hyp(step, name)
-                || carried.iter().any(|(n, p)| n == name || uses_hyp(p, name))
+                || carried.iter().any(|n| n == name)
+                || ihs.iter().flat_map(|i| &i.carry).any(|p| uses_hyp(p, name))
         }
         Proof::Refl(_)
         | Proof::UnfoldConst { .. }

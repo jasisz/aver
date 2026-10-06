@@ -250,7 +250,24 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
                             emit_expr(e, ctx)
                         };
                         pinned |= pins_int(e);
-                        text
+                        // An order comparison is a Prop in Lean; an element
+                        // is a value, so it is decided here. A long literal
+                        // does not pass the element type down to coerce it.
+                        if matches!(
+                            &e.node,
+                            ResolvedExpr::BinOp(
+                                crate::ast::BinOp::Lt
+                                    | crate::ast::BinOp::Lte
+                                    | crate::ast::BinOp::Gt
+                                    | crate::ast::BinOp::Gte,
+                                _,
+                                _
+                            )
+                        ) {
+                            format!("(decide {text})")
+                        } else {
+                            text
+                        }
                     })
                     .collect();
                 format!("[{}]", parts.join(", "))
