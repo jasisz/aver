@@ -700,6 +700,56 @@ fn a_linear_certificate_needs_nonnegative_weights_that_reach_a_negative_constant
     assert!(linear::certificate(&alone).is_none());
 }
 
+/// A chain of equalities, each two facts `p >= 0` and `-p >= 0`, is
+/// substituted away before elimination pairs bounds: eight digits of a
+/// value read back, where pairing every bound with every other would pass
+/// the row limit. The weights found still add up to a contradiction.
+#[test]
+fn a_linear_certificate_substitutes_equalities_away() {
+    use super::linear;
+    let lit = |n: i64| term::int(&n.into());
+    let cmp = |op, a, b| term::binop(op, a, b);
+    let mul = |a, k: i64| term::binop(BinOp::Mul, a, lit(k));
+    let mut atoms = Vec::new();
+    let mut facts = Vec::new();
+    // v = q1 * 256 + d0, q1 = q2 * 256 + d1, ..., with 0 <= d < 256,
+    // 0 <= v < 256^8 and 0 <= q8 < 1.
+    let digits = 8;
+    let q = |i: usize| {
+        if i == 0 {
+            var("v")
+        } else {
+            var(&format!("q{i}"))
+        }
+    };
+    let d = |i: usize| var(&format!("d{i}"));
+    for i in 0..digits {
+        let whole = add(mul(q(i + 1), 256), d(i));
+        for op in [BinOp::Lte, BinOp::Gte] {
+            facts.push(linear::as_nonneg(&cmp(op, whole.clone(), q(i)), true, &mut atoms).unwrap());
+        }
+        facts.push(linear::as_nonneg(&cmp(BinOp::Lte, lit(0), d(i)), true, &mut atoms).unwrap());
+        facts.push(linear::as_nonneg(&cmp(BinOp::Lt, d(i), lit(256)), true, &mut atoms).unwrap());
+    }
+    facts.push(linear::as_nonneg(&cmp(BinOp::Lte, lit(0), q(digits)), true, &mut atoms).unwrap());
+    facts.push(linear::as_nonneg(&cmp(BinOp::Lt, q(digits), lit(1)), true, &mut atoms).unwrap());
+    // The digits read back: not (sum <= v).
+    let mut sum = d(digits - 1);
+    for i in (0..digits - 1).rev() {
+        sum = add(mul(sum, 256), d(i));
+    }
+    facts.insert(
+        0,
+        linear::as_nonneg(&cmp(BinOp::Lte, sum, q(0)), false, &mut atoms).unwrap(),
+    );
+    let w = linear::certificate(&facts).expect("a certificate");
+    assert!(linear::contradicts(&linear::combine(&facts, &w).unwrap()));
+    // Without `0 <= q8` the digits may add up to more than `v`.
+    let mut open = facts.clone();
+    open.remove(open.len() - 2);
+    assert!(linear::certificate(&open).is_none());
+}
+
 /// The name of a step's constructor. The match has no catch-all, so a new
 /// constructor does not compile until it is named here, and
 /// [`every_step_constructor_is_accepted_and_refused_by_the_kernel`] then

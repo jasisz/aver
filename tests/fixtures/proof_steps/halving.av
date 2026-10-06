@@ -2,8 +2,13 @@ module Halving
     intent =
         "Steps on Int recursion that divides down to zero, and on Euclidean division by a literal:"
         "a definition that calls itself at `value / 256` under `value > 0` opens where its guard is"
-        "decided; the quotient and remainder of a bounded value are pinned by linear arithmetic."
-    exposes [digits, stays]
+        "decided; the quotient and remainder of a bounded value are pinned by linear arithmetic,"
+        "also four digits deep and inside a record."
+    exposes [digits, stays, Reading]
+
+record Reading
+    value: Int
+    width: Int
 
 fn digits(value: Int, acc: List<Int>) -> List<Int>
     ? "The base-256 digits of a positive value, most significant first, in front of acc."
@@ -53,3 +58,18 @@ verify digits law twoDigitsReadBack
 verify digits law exponentAbove
     given bits: Int = [0, 587202559, 587202560]
     Int.div(bits, 16777216) > 34 => bits >= 587202560
+
+verify digits law fourDigitsReadBack
+    given value: Int = [0, 1, 65536, 4294967295]
+    when Bool.and(0 <= value, value < 4294967296)
+    ((Int.mod(Int.div(Int.div(Int.div(value, 256), 256), 256), 256) * 256 + Int.mod(Int.div(Int.div(value, 256), 256), 256)) * 256 + Int.mod(Int.div(value, 256), 256)) * 256 + Int.mod(value, 256) => value
+
+verify digits law readingReadBack
+    given value: Int = [0, 1, 65535]
+    when Bool.and(0 <= value, value < 65536)
+    Reading(value = Int.mod(Int.div(value, 256), 256) * 256 + Int.mod(value, 256), width = 2) => Reading(value = value, width = 2)
+
+verify digits law readingEquals
+    given value: Int = [0, 1, 65535]
+    when Bool.and(0 <= value, value < 65536)
+    Reading(value = Int.mod(Int.div(value, 256), 256) * 256 + Int.mod(value, 256), width = 2) == Reading(value = value, width = 2) => true

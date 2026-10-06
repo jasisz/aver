@@ -113,6 +113,7 @@ fn the_producers_write_steps_for_the_shapes_they_know() {
         [
             "decode.addsLowByte",
             "decode.eightReadBack",
+            "decode.fourReadBack",
             "decodeFrom.lastDigit",
             "encode.peelsLowByte",
         ]
@@ -1416,11 +1417,14 @@ fn lean_closes_cited_orders_under_a_proved_when_by_their_steps() {
     let _ = fs::remove_dir_all(out);
 }
 
-const HALVING_LAWS: [&str; 5] = [
+const HALVING_LAWS: [&str; 8] = [
     "digits.exponentAbove",
+    "digits.fourDigitsReadBack",
     "digits.nonpositiveKeepsAcc",
     "digits.oneDigit",
     "digits.positiveStep",
+    "digits.readingEquals",
+    "digits.readingReadBack",
     "digits.twoDigitsReadBack",
 ];
 
@@ -1519,6 +1523,66 @@ fn lean_closes_a_division_down_to_zero_by_its_steps() {
     )
     .unwrap();
     for law in HALVING_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+const CITED_LOOP_LAWS: [&str; 3] = [
+    "flat.prepend",
+    "intoChunks.accumulates",
+    "pushBack.reverseOnto",
+];
+
+/// A cited law whose right side holds a call that opens straight back to
+/// the term it rewrote is not applied there, so evaluation goes on instead
+/// of opening and rewriting the same term forever; both kernels accept what
+/// it gives.
+#[test]
+fn both_kernels_accept_steps_past_a_cited_law_that_opens_back() {
+    let out = scratch("cited-loop");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("cited_loop.av", &out).into_iter().collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), CITED_LOOP_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let paths: Vec<PathBuf> = files.values().cloned().collect();
+    let result = replay(&paths);
+    assert!(result.status.success(), "{}", format_output(&result));
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_closes_steps_past_a_cited_law_that_opens_back() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("cited-loop-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "cited_loop.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "1",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in CITED_LOOP_LAWS {
         assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
     }
     let _ = fs::remove_dir_all(out);

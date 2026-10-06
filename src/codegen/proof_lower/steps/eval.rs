@@ -295,12 +295,23 @@ fn upper_bound(t: &Term, value: bool, a: &Term) -> Option<num_bigint::BigInt> {
     }
 }
 
-/// Whether `t` builds or updates a record anywhere.
-fn has_record(t: &Term) -> bool {
-    matches!(
-        t.node,
-        ResolvedExpr::RecordCreate { .. } | ResolvedExpr::RecordUpdate { .. }
-    ) || term::children(t).into_iter().any(has_record)
+/// Whether `t` builds or updates, anywhere, a record of a type that Lean
+/// states as a value with the proof of its invariant (a refined type),
+/// where a step inside the record would have to carry that proof along.
+/// A type whose bare name any module refines counts.
+fn has_refined_record(t: &Term, inputs: &crate::codegen::proof_lower::ProofLowerInputs) -> bool {
+    let refined = match &t.node {
+        ResolvedExpr::RecordCreate { type_name, .. }
+        | ResolvedExpr::RecordUpdate { type_name, .. } => {
+            let bare = type_name.rsplit('.').next().unwrap_or(type_name);
+            crate::codegen::common::refinement_info_for(bare, inputs).is_some()
+        }
+        _ => false,
+    };
+    refined
+        || term::children(t)
+            .into_iter()
+            .any(|c| has_refined_record(c, inputs))
 }
 
 /// The position of the first list literal in `t` with an element that is
@@ -548,16 +559,50 @@ impl Env<'_> {
     }
 
     /// `(a == a) = true`, by `bool.beq.refl`, for a type whose values hold
-    /// no Float (`0.0 / 0.0` is not equal to itself).
-    fn same_sides(&self, cur: &Term) -> Option<Step> {
+    /// no Float (`0.0 / 0.0` is not equal to itself). Also `(a == b) = true`
+    /// where `a` and `b` differ only in Int parts that linear arithmetic
+    /// shows equal, outside a record of a refined type: `a` is rewritten to
+    /// `b` first.
+    fn same_sides(&mut self, cur: &Term) -> Option<Step> {
         let ResolvedExpr::BinOp(BinOp::Eq, a, b) = &cur.node else {
             return None;
         };
         let ty = a.ty().or(b.ty())?;
-        if canon(a) != canon(b) || self.inputs.symbol_table.may_hold_float(ty) {
+        if self.inputs.symbol_table.may_hold_float(ty) {
             return None;
         }
-        Some(self.rule_step(WallRule::BeqRefl, vec![("a".into(), canon(a))]))
+        let (a, b) = (canon(a), canon(b));
+        if a == b {
+            return Some(self.rule_step(WallRule::BeqRefl, vec![("a".into(), a)]));
+        }
+        if is_int(&a) || has_refined_record(&a, self.inputs) || has_refined_record(&b, self.inputs)
+        {
+            return None;
+        }
+        let bridge = self.linear_bridge(&a, &b)?;
+        let ctx = term::binop(BinOp::Eq, term::hole(), b.clone());
+        let mut terms = vec![canon(cur)];
+        let mut steps = Vec::new();
+        for (proof, to) in bridge {
+            steps.push(Proof::Congr {
+                ctx: ctx.clone(),
+                inner: Box::new(proof),
+            });
+            terms.push(canon(&term::binop(BinOp::Eq, to, b.clone())));
+        }
+        if steps.is_empty() {
+            return None;
+        }
+        steps.push(Proof::Rule {
+            rule: WallRule::BeqRefl,
+            subst: vec![("a".into(), b)],
+            premises: Vec::new(),
+        });
+        terms.push(term::boolean(true));
+        Some(Step::Progress(Box::new((
+            Proof::Trans { terms, steps },
+            term::boolean(true),
+        ))))
     }
 
     /// The first call in `t` of a definition without parameters, not a
@@ -2008,6 +2053,29 @@ impl Env<'_> {
     /// A law the author cited, applied left to right to a term evaluation
     /// stopped at. Two cited laws that rewrite it to different terms are a
     /// refusal: the result would depend on which is tried first.
+    /// Whether `t` holds a call of a definition that does not recurse and
+    /// is not a `match`, whose body at the call's arguments is `target`:
+    /// evaluation would open that call straight back to `target`.
+    fn opens_to(&mut self, t: &Term, target: &Term) -> bool {
+        if let ResolvedExpr::Call(ResolvedCallee::Fn(id), args) = &t.node
+            && !self.inputs.recursive_fns.contains(id)
+            && let Some(def) = self.def(*id)
+            && def.lets.is_empty()
+            && !matches!(def.body.node, ResolvedExpr::Match { .. })
+            && let Ok(outer) = def.outer(args)
+            && let Ok(body) = term::subst(&def.body, &outer)
+            && canon(&body) == *target
+        {
+            return true;
+        }
+        term::children(t)
+            .into_iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .iter()
+            .any(|c| self.opens_to(c, target))
+    }
+
     fn rewrite_with_cited(&mut self, cur: &Term) -> Result<Option<(Proof, Term)>, String> {
         use super::rewrite::Equation;
         let mut found: Vec<(String, Proof, Term)> = Vec::new();
@@ -2015,8 +2083,11 @@ impl Env<'_> {
             let eq = Equation::Law(Box::new(law.clone()));
             if let Some((p, to)) = self.try_equation(&eq, cur) {
                 // A result that holds the term it rewrote would be rewritten
-                // again forever (`f(x, [])` to `g(f(x, []))`).
-                if !holds(&to, &canon(cur)) {
+                // again forever (`f(x, [])` to `g(f(x, []))`), and so would
+                // one that holds a call whose definition opens to it
+                // (`intoBytes(ops, [])` to `List.concat([], bytesOf(ops))`
+                // where `bytesOf(ops)` is `intoBytes(ops, [])`).
+                if !holds(&to, &canon(cur)) && !self.opens_to(&to, &canon(cur)) {
                     found.push((law.key.clone(), p, to));
                 }
             }
@@ -2104,10 +2175,10 @@ impl Env<'_> {
         }
         // Two terms that differ only in Int parts that are one polynomial
         // (`(u + d) - u` and `d` inside a text): a ring step at each part.
-        // Not inside a record literal, which Lean may state as a value with
-        // the proof of its invariant (a refined type).
-        if !has_record(nl.cur())
-            && !has_record(nr.cur())
+        // Not inside a record of a refined type, which Lean states as a
+        // value with the proof of its invariant.
+        if !has_refined_record(nl.cur(), self.inputs)
+            && !has_refined_record(nr.cur(), self.inputs)
             && let Some(steps) = super::rewrite::ring_bridge(nl.cur(), nr.cur())
             && !steps.is_empty()
         {
@@ -2117,8 +2188,8 @@ impl Env<'_> {
             return Ok(Ok(meet(nl, nr)));
         }
         // The same, where linear arithmetic shows such parts equal.
-        if !has_record(nl.cur())
-            && !has_record(nr.cur())
+        if !has_refined_record(nl.cur(), self.inputs)
+            && !has_refined_record(nr.cur(), self.inputs)
             && let Some(steps) = self.linear_bridge(nl.cur(), nr.cur())
             && !steps.is_empty()
         {
