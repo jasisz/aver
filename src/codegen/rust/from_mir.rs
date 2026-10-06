@@ -75,7 +75,7 @@ use super::ownership::{
     align_equality_operands, emits_direct_borrow, local_of, materialize_borrowed,
     materialize_owned, materialize_scoped_thread_capture, projection_root_local,
 };
-use super::pattern::emit_pattern;
+use super::pattern::{emit_pattern, emit_pattern_with_guard};
 use super::syntax::{aver_name_to_rust, generated_ident};
 
 /// Walker-side emit context. Holds the slice of the
@@ -3421,7 +3421,11 @@ fn emit_mir_match_with(
 
     let mut arm_strs = Vec::with_capacity(arms.len());
     for (idx, arm) in arms.iter().enumerate() {
-        let pat = emit_pattern(&arm.pattern, needs_as_str, codegen);
+        let (pat, guard) = emit_pattern_with_guard(&arm.pattern, needs_as_str, codegen);
+        let pat = match guard {
+            Some(guard) => format!("{pat} if {guard}"),
+            None => pat,
+        };
         let body = arm_bodies[idx].clone();
         let mut rebindings = emit_pattern_rebindings(&arm.pattern, codegen);
         if match_on_ref {
@@ -3484,11 +3488,11 @@ fn pattern_needs_guard_chain(pat: &ResolvedPattern) -> bool {
 /// `subj` is the already-emitted, by-VALUE subject expression. The supported
 /// arm shapes (after list / table / bool matches are peeled off upstream):
 /// top-level `Literal(Int)` / `Wildcard` / `Ident`, and `Tuple(..)` whose
-/// elements are the set [`lower_int_literal_subpatterns`] lowers — an `Int`
-/// or `Bool` literal, `[]`, `[head, ..tail]`, a built-in `Result` or
+/// elements are the set [`lower_int_literal_subpatterns`] lowers — an `Int`,
+/// `Bool` or `String` literal, `[]`, `[head, ..tail]`, a built-in `Result` or
 /// `Option` constructor, `Wildcard`, `Ident`, or a nested tuple of the same.
-/// Returns `None` for any other shape (a `String` or `Float` literal, a user
-/// variant) — the caller then emits a hard diagnostic.
+/// Returns `None` for any other shape (a `Float` literal, a user variant) —
+/// the caller then emits a hard diagnostic.
 fn try_emit_int_literal_match(
     subj: &str,
     arms: &[ResolvedMatchArm],
@@ -3668,7 +3672,7 @@ fn try_emit_int_literal_match(
 /// Recursively lower one tuple-subpattern of a guard-chain match against a
 /// `place` expression (a Rust expression denoting the *value place* of the
 /// element, e.g. `(*__lit0)` or `(*__lit1).0`). Appends one guard for every
-/// testing LEAF (at any depth) — an `Int` or `Bool` literal compares, `[]`
+/// testing LEAF (at any depth) — an `Int`, `Bool` or `String` literal compares, `[]`
 /// and `[head, ..tail]` ask `is_empty`, a `Result` or `Option` constructor
 /// asks its tag — binds identifier leaves and the payloads of a `Cons` or a
 /// constructor into `prelude`, and ignores wildcards. The element set is the
@@ -3676,8 +3680,8 @@ fn try_emit_int_literal_match(
 /// field-index access (`{place}.{i}`) — no fresh `match` bindings, so
 /// hygiene is automatic.
 ///
-/// Returns `false` if any leaf is an unsupported shape (a `String` or `Float`
-/// literal, a user variant, …); the caller then bails to the hard codegen
+/// Returns `false` if any leaf is an unsupported shape (a `Float` literal, a
+/// user variant, …); the caller then bails to the hard codegen
 /// diagnostic. This is the arbitrarily-nested generalization of the
 /// one-level element loop above.
 fn lower_int_literal_subpatterns(
@@ -3753,6 +3757,11 @@ fn lower_int_literal_subpatterns(
                 "&{} == &{:?}.parse::<aver_rt::AverInt>().unwrap()",
                 place, s
             ));
+            true
+        }
+        // `place` is an `AverStr` value place; `&{place}` derefs to `&str`.
+        ResolvedPattern::Literal(crate::ast::Literal::Str(s)) => {
+            conds.push(format!("str::eq(&{}, {:?})", place, s));
             true
         }
         ResolvedPattern::Wildcard => true,

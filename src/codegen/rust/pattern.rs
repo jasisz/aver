@@ -6,6 +6,8 @@ use crate::ir::SemanticConstructor;
 use crate::ir::WrapperKind;
 use crate::ir::hir::{ResolvedCtor, ResolvedPattern, semantic_constructor_from_resolved_ctor};
 
+use super::syntax::generated_ident;
+
 /// Emit a Rust pattern from a resolved Aver pattern.
 pub fn emit_pattern(pat: &ResolvedPattern, string_context: bool, ctx: &CodegenContext) -> String {
     match pat {
@@ -32,6 +34,54 @@ pub fn emit_pattern(pat: &ResolvedPattern, string_context: bool, ctx: &CodegenCo
             format!("({})", parts.join(", "))
         }
         ResolvedPattern::Ctor(ctor, bindings) => emit_constructor_pattern(ctor, bindings, ctx),
+    }
+}
+
+/// Emit a match-arm pattern together with the guard its string literals need.
+///
+/// A string literal standing as the whole pattern is matched against `&str`
+/// (the caller derefs the subject). Inside a tuple it cannot be: the element is
+/// an `AverStr`, and Rust has no literal pattern for it. Each such literal, at
+/// any tuple depth, becomes a fresh compiler-owned binder and one conjunct of
+/// the arm's `if` guard, `str::eq(&binder, "lit")`. The `&` coerces through
+/// `AverStr`'s `Deref` whether the binder is owned or a reference (a match on a
+/// borrowed subject), and a guard only borrows, so a failed guard moves
+/// nothing out of the subject.
+pub fn emit_pattern_with_guard(
+    pat: &ResolvedPattern,
+    string_context: bool,
+    ctx: &CodegenContext,
+) -> (String, Option<String>) {
+    let ResolvedPattern::Tuple(pats) = pat else {
+        return (emit_pattern(pat, string_context, ctx), None);
+    };
+    let mut guards = Vec::new();
+    let text = emit_tuple_with_str_guards(pats, ctx, &mut guards);
+    let guard = (!guards.is_empty()).then(|| guards.join(" && "));
+    (text, guard)
+}
+
+fn emit_tuple_with_str_guards(
+    pats: &[ResolvedPattern],
+    ctx: &CodegenContext,
+    guards: &mut Vec<String>,
+) -> String {
+    let parts: Vec<String> = pats
+        .iter()
+        .map(|p| match p {
+            ResolvedPattern::Literal(Literal::Str(s)) => {
+                let binder = generated_ident(&format!("str_lit{}", guards.len()));
+                guards.push(format!("str::eq(&{binder}, {s:?})"));
+                binder
+            }
+            ResolvedPattern::Tuple(inner) => emit_tuple_with_str_guards(inner, ctx, guards),
+            other => emit_pattern(other, false, ctx),
+        })
+        .collect();
+    if parts.len() == 1 {
+        format!("({},)", parts[0])
+    } else {
+        format!("({})", parts.join(", "))
     }
 }
 
