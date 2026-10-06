@@ -1974,7 +1974,7 @@ pub fn unfold(
             match (
                 (aver_rt::AverInt::from_i64(d.params.len() as i64)
                     == aver_rt::AverInt::from_i64(xs.len() as i64)),
-                crate::proof_kernel::aver_generated::kernel::induct::structuralParam(&d),
+                crate::proof_kernel::aver_generated::kernel::induct::openGate(&d),
             ) {
                 (_, Err(why)) => {
                     crate::proof_kernel::aver_generated::kernel::check::refuse(path, why)

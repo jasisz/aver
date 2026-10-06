@@ -623,6 +623,58 @@ pub(crate) fn ring_bridge(a: &Term, b: &Term) -> Option<Vec<(Proof, Term)>> {
 }
 
 impl Env<'_> {
+    /// Steps proving `a = b` when the two differ only in Int parts that
+    /// are one polynomial or that linear arithmetic shows equal (`d % 256`
+    /// and `d` for `0 <= d < 256`), by `int.eq.of_beq`, under congruence.
+    /// `None` when they differ anywhere else.
+    pub(crate) fn linear_bridge(&mut self, a: &Term, b: &Term) -> Option<Vec<(Proof, Term)>> {
+        let (a, b) = (canon(a), canon(b));
+        if let Some(steps) = ring_bridge(&a, &b) {
+            return Some(steps);
+        }
+        if is_int_term(&a) && is_int_term(&b) {
+            let eq = canon(&term::binop(crate::ast::BinOp::Eq, a.clone(), b.clone()));
+            let (premise, value) = self.decide_linearly(&eq)?;
+            if term::bool_value(&value) != Some(true) {
+                return None;
+            }
+            let proof = Proof::Rule {
+                rule: WallRule::EqOfBeq,
+                subst: vec![("a".into(), a), ("b".into(), b.clone())],
+                premises: vec![premise],
+            };
+            return Some(vec![(proof, b)]);
+        }
+        if !head_eq(&a, &b) || matches!(a.node, ResolvedExpr::Match { .. }) {
+            return None;
+        }
+        let n = term::children(&a).len();
+        if n != term::children(&b).len() || n == 0 {
+            return None;
+        }
+        let mut steps = Vec::new();
+        let mut cur = a.clone();
+        for i in 0..n {
+            let (x, y) = (
+                term::children(&cur)[i].clone(),
+                term::children(&b)[i].clone(),
+            );
+            for (proof, to) in self.linear_bridge(&x, &y)? {
+                let ctx = term::context_at(&cur, &[i]);
+                let next = canon(&term::plug(&ctx, &to));
+                steps.push((
+                    Proof::Congr {
+                        ctx,
+                        inner: Box::new(proof),
+                    },
+                    next.clone(),
+                ));
+                cur = next;
+            }
+        }
+        (cur == b).then_some(steps)
+    }
+
     /// `x = y` by one instance of a cited law, either way round: one side
     /// of the law matches its side of the equation, which fixes every
     /// given, and the other side of the instance is the other side of the

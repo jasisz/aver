@@ -165,6 +165,59 @@ pub fn countdown(def: &Def) -> Option<usize> {
         .then_some(j)
 }
 
+/// The place of the Int parameter `def` divides down to zero, when its
+/// body is `match p > 0` with arm `false` free of recursive calls and every
+/// recursive call in arm `true` passing `p / k` at `p`'s place, for a
+/// literal `k >= 2` and `p` not rebound around it: for `p > 0` the
+/// Euclidean quotient is at least 0 and below `p`, so the recursion stops.
+/// Such a definition may be opened; no induction follows it.
+pub fn halving(def: &Def) -> Option<usize> {
+    use crate::ast::{BinOp, Literal};
+    use crate::ir::hir::{BuiltinIntrinsic, ResolvedPattern};
+    if !def.lets.is_empty() {
+        return None;
+    }
+    let ResolvedExpr::Match { subject, arms } = &def.body.node else {
+        return None;
+    };
+    let ResolvedExpr::BinOp(BinOp::Gt, p, zero) = &subject.node else {
+        return None;
+    };
+    let (ResolvedExpr::Ident(p), Some(z)) = (&p.node, term::int_value(zero)) else {
+        return None;
+    };
+    if z != 0.into() {
+        return None;
+    }
+    let j = def.params.iter().position(|n| n == p)?;
+    let value = |arm: &ResolvedMatchArm| match arm.pattern {
+        ResolvedPattern::Literal(Literal::Bool(b)) => Some(b),
+        _ => None,
+    };
+    let (go, stop) = match arms.as_slice() {
+        [a, b] if value(a) == Some(true) && value(b) == Some(false) => (a, b),
+        [a, b] if value(a) == Some(false) && value(b) == Some(true) => (b, a),
+        _ => return None,
+    };
+    if !self_calls(&stop.body, def.fn_id).is_empty() {
+        return None;
+    }
+    let divided = |t: &Term| match &t.node {
+        ResolvedExpr::Call(ResolvedCallee::Intrinsic(BuiltinIntrinsic::IntDivEuclid), xs) => {
+            xs.len() == 2
+                && matches!(&xs[0].node, ResolvedExpr::Ident(n) if n == p)
+                && term::int_value(&xs[1]).is_some_and(|k| k >= 2.into())
+        }
+        _ => false,
+    };
+    let calls = self_calls(&go.body, def.fn_id);
+    (!calls.is_empty()
+        && calls.iter().all(|(args, inner)| {
+            args.len() == def.params.len() && divided(&args[j]) && !inner.contains(p)
+        }))
+    .then_some(j)
+}
+
 /// The given at the matched place `j`, and the other givens among `args`
 /// that vary with the recursion, with their places. A given that appears
 /// twice varies at its first place only.

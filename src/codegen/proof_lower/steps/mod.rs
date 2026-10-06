@@ -405,7 +405,18 @@ fn prove_part(
     } else {
         let mut refusals: Vec<String> = Vec::new();
         let mut found = None;
-        for attempt in 0..4 {
+        // The attempts run again with a call that divides an Int down to
+        // zero kept whole, when opening one did not close the part.
+        let mut met_halving = false;
+        for attempt in 0..8 {
+            if attempt == 4 {
+                if !met_halving {
+                    break;
+                }
+                refusals.clear();
+            }
+            env.open_halving = attempt < 4;
+            let attempt = attempt % 4;
             let outcome = match attempt {
                 0 => match using {
                     // One instance of a cited law, either way round, first.
@@ -435,6 +446,7 @@ fn prove_part(
                             hints.push(h);
                         }
                     }
+                    met_halving |= env.met_halving.get();
                     env = fresh_env(inputs, ob, known, using);
                 }
             }

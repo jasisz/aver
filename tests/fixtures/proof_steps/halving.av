@@ -1,0 +1,55 @@
+module Halving
+    intent =
+        "Steps on Int recursion that divides down to zero, and on Euclidean division by a literal:"
+        "a definition that calls itself at `value / 256` under `value > 0` opens where its guard is"
+        "decided; the quotient and remainder of a bounded value are pinned by linear arithmetic."
+    exposes [digits, stays]
+
+fn digits(value: Int, acc: List<Int>) -> List<Int>
+    ? "The base-256 digits of a positive value, most significant first, in front of acc."
+    match value > 0
+        true -> digits(Int.div(value, 256), List.prepend(Int.mod(value, 256), acc))
+        false -> acc
+
+verify digits
+    digits(0, []) => []
+    digits(300, []) => [1, 44]
+
+verify digits law nonpositiveKeepsAcc
+    given value: Int = [-3, 0]
+    given acc: List<Int> = [[], [7]]
+    when value <= 0
+    digits(value, acc) => acc
+
+verify digits law positiveStep
+    given value: Int = [1, 256, 65535]
+    when value > 0
+    digits(value, []) => digits(Int.div(value, 256), [Int.mod(value, 256)])
+
+verify digits law oneDigit
+    given digit: Int = [1, 127, 255]
+    when Bool.and(digit > 0, digit < 256)
+    digits(digit, []) => [digit]
+
+fn stays(value: Int) -> Int
+    ? "Divides by one, so it never stops on a positive value: not a division the steps open."
+    match value > 0
+        true -> stays(Int.div(value, 1))
+        false -> 0
+
+verify stays
+    stays(0) => 0
+
+verify stays law zeroBelow
+    given value: Int = [-1, 0]
+    when value <= 0
+    stays(value) => 0
+
+verify digits law twoDigitsReadBack
+    given value: Int = [0, 1, 255, 256, 65535]
+    when Bool.and(0 <= value, value < 65536)
+    Int.mod(Int.div(value, 256), 256) * 256 + Int.mod(value, 256) => value
+
+verify digits law exponentAbove
+    given bits: Int = [0, 587202559, 587202560]
+    Int.div(bits, 16777216) > 34 => bits >= 587202560

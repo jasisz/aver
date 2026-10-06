@@ -46,6 +46,12 @@ pub(crate) struct Env<'a> {
     /// Whether the `when` of a cited law is being proved, so that a cited
     /// law with a `when` is not offered again inside it.
     pub proving_cited_when: bool,
+    /// Whether a definition that divides an Int down to zero may be
+    /// opened; an attempt that opened one and failed is tried again
+    /// without, so the call stays whole as before.
+    pub open_halving: bool,
+    /// Whether such a definition was opened.
+    pub met_halving: std::cell::Cell<bool>,
 }
 
 impl<'a> Env<'a> {
@@ -69,6 +75,8 @@ impl<'a> Env<'a> {
             opened: Vec::new(),
             barren: Vec::new(),
             proving_cited_when: false,
+            open_halving: true,
+            met_halving: std::cell::Cell::new(false),
         }
     }
 
@@ -201,14 +209,18 @@ impl<'a> Env<'a> {
             body,
         };
         // A recursive function opens only when its own recursion passes the
-        // gate; one recursive only through others never does.
+        // gate, a descent into a part or a division of an Int down to zero;
+        // one recursive only through others never does.
         if self.inputs.recursive_fns.contains(&id)
             && !matches!(
                 crate::ir::proof_steps::induct::structural_param(&def),
                 Ok(Some(_))
             )
         {
-            return None;
+            if !self.open_halving || crate::ir::proof_steps::induct::halving(&def).is_none() {
+                return None;
+            }
+            self.met_halving.set(true);
         }
         Some(def)
     }
