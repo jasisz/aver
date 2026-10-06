@@ -282,10 +282,28 @@ impl Env<'_> {
         match eq {
             Equation::Law(law) => {
                 let mut found = Vec::new();
-                if !matches(&law.lhs, t, &law.givens, &mut found) {
-                    return None;
+                // The law as written, or with its list literals written as
+                // cells, the way evaluation has written them in `t`.
+                let celled = !matches(&law.lhs, t, &law.givens, &mut found);
+                if celled {
+                    found.clear();
+                    let (_, cells) = super::eval::as_cells(&law.lhs)?;
+                    if !matches(&cells, t, &law.givens, &mut found) {
+                        return None;
+                    }
                 }
                 let subst = ordered(&law.givens, found)?;
+                let bridge = match celled {
+                    false => None,
+                    true => {
+                        let instance = canon(&term::subst(&law.lhs, &subst).ok()?);
+                        let (bridge, cells) = super::eval::as_cells(&instance)?;
+                        if cells != canon(t) {
+                            return None;
+                        }
+                        Some((instance, bridge))
+                    }
+                };
                 let premise = match &law.premise {
                     Some(when) => {
                         let when = term::subst(when, &subst).ok()?;
@@ -301,14 +319,19 @@ impl Env<'_> {
                     None => None,
                 };
                 let rhs = term::subst(&law.rhs, &subst).ok()?;
-                Some((
-                    Proof::Law {
-                        law: law.key.clone(),
-                        subst,
-                        premise,
+                let proof = Proof::Law {
+                    law: law.key.clone(),
+                    subst,
+                    premise,
+                };
+                let proof = match bridge {
+                    None => proof,
+                    Some((instance, bridge)) => Proof::Trans {
+                        terms: vec![canon(t), instance, canon(&rhs)],
+                        steps: vec![Proof::Symm(Box::new(bridge)), proof],
                     },
-                    rhs,
-                ))
+                };
+                Some((proof, rhs))
             }
             Equation::Unfold(id) => {
                 let ResolvedExpr::Call(ResolvedCallee::Fn(f), args) = &t.node else {

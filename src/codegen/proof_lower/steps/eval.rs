@@ -150,6 +150,55 @@ fn with_cell(mut chain: Chain, cell: bool) -> Chain {
     chain
 }
 
+/// The position of the first list literal in `t` with an element that is
+/// not a closed value, outside any `match`.
+fn open_literal_path(t: &Term) -> Option<Vec<usize>> {
+    if matches!(t.node, ResolvedExpr::Match { .. }) {
+        return None;
+    }
+    if let ResolvedExpr::List(xs) = &t.node
+        && !xs.is_empty()
+        && term::eval_closed(t).is_none()
+    {
+        return Some(Vec::new());
+    }
+    term::children(t)
+        .into_iter()
+        .enumerate()
+        .find_map(|(i, c)| {
+            let mut path = open_literal_path(c)?;
+            path.insert(0, i);
+            Some(path)
+        })
+}
+
+/// `t = t'`, where `t'` writes every list literal of `t` with an open
+/// element as cells, one [`Proof::Cell`] step each; `None` when there is
+/// none.
+pub(crate) fn as_cells(t: &Term) -> Option<(Proof, Term)> {
+    let mut cur = canon(t);
+    let mut terms = vec![cur.clone()];
+    let mut steps = Vec::new();
+    while let Some(path) = open_literal_path(&cur) {
+        if steps.len() >= 32 {
+            return None;
+        }
+        let list = term::at(&cur, &path).clone();
+        let ctx = term::context_at(&cur, &path);
+        cur = canon(&term::plug(&ctx, &term::cell_of(&list)?));
+        steps.push(Proof::Congr {
+            ctx,
+            inner: Box::new(Proof::Cell { list }),
+        });
+        terms.push(cur.clone());
+    }
+    match steps.len() {
+        0 => None,
+        1 => Some((steps.pop()?, cur)),
+        _ => Some((Proof::Trans { terms, steps }, cur)),
+    }
+}
+
 fn is_bool_value(t: &Term) -> bool {
     term::bool_value(t).is_some()
 }
@@ -224,6 +273,9 @@ impl Env<'_> {
         if let Some((name, value)) = self.hyp_for(cur) {
             return Ok(Some(Step::Progress(Box::new((Proof::Hyp(name), value)))));
         }
+        if let Some(step) = self.hyp_as_cells(cur) {
+            return Ok(Some(step));
+        }
         if let Some(proof) = self.conjunct_of_hyp(cur) {
             return Ok(Some(Step::Progress(Box::new((proof, term::boolean(true))))));
         }
@@ -243,6 +295,104 @@ impl Env<'_> {
             return Ok(Some(Step::Progress(Box::new((proof, to)))));
         }
         Ok(None)
+    }
+
+    /// A hypothesis whose left side is `cur` once its list literals with an
+    /// open element are written as cells, the way evaluation writes them
+    /// (`[d]` as `List.prepend(d, [])`): an induction hypothesis states the
+    /// claim as written, while the case has evaluated it.
+    ///
+    /// Also a hypothesis that names a constant (a definition without
+    /// parameters whose body computes to a value, `capBytes()`) where `cur`
+    /// has its value.
+    fn hyp_as_cells(&mut self, cur: &Term) -> Option<Step> {
+        let t = canon(cur);
+        for (name, e) in self.hyps.clone().into_iter().rev() {
+            let lhs = canon(&e.lhs);
+            let mut chain = Chain::new(&lhs);
+            if let Some((p, to)) = as_cells(&lhs) {
+                chain.push(p, to);
+            }
+            if let Some((p, to)) = self.fold_constants(&chain.cur().clone()) {
+                chain.push(p, to);
+            }
+            if chain.is_empty() || *chain.cur() != t {
+                continue;
+            }
+            let (_, bridge) = chain.finish();
+            let proof = Proof::Trans {
+                terms: vec![t.clone(), lhs, canon(&e.rhs)],
+                steps: vec![Proof::Symm(Box::new(bridge)), Proof::Hyp(name)],
+            };
+            return Some(Step::Progress(Box::new((proof, canon(&e.rhs)))));
+        }
+        None
+    }
+
+    /// `t = t'`, where `t'` has the value of each constant `t` names; `None`
+    /// when it names none.
+    pub(crate) fn fold_constants(&mut self, t: &Term) -> Option<(Proof, Term)> {
+        let mut chain = Chain::new(&canon(t));
+        for _ in 0..32 {
+            let Some((path, p, to)) = self.constant_call(&chain.cur().clone()) else {
+                break;
+            };
+            chain.push_at(&path, p, &to);
+        }
+        if chain.is_empty() {
+            return None;
+        }
+        let (to, proof) = chain.finish();
+        Some((proof, canon(&to)))
+    }
+
+    /// The first call in `t` of a definition without parameters, not a
+    /// `match` and not recursive, whose body computes to a value: its
+    /// position, `f() = value`, and the value.
+    fn constant_call(&mut self, t: &Term) -> Option<(Vec<usize>, Proof, Term)> {
+        if matches!(t.node, ResolvedExpr::Match { .. }) {
+            return None;
+        }
+        if let ResolvedExpr::Call(ResolvedCallee::Fn(id), args) = &t.node
+            && args.is_empty()
+            && !self.inputs.recursive_fns.contains(id)
+            && let Some(def) = self.def(*id)
+            && !matches!(def.body.node, ResolvedExpr::Match { .. })
+            && let Some(value) = term::eval_closed(&canon(&def.body))
+        {
+            self.mark_used(*id);
+            let body = canon(&def.body);
+            let unfold = Proof::Unfold {
+                fn_id: *id,
+                arm: 0,
+                args: Vec::new(),
+                binders: Vec::new(),
+                premise: None,
+            };
+            let proof = if body == value {
+                unfold
+            } else {
+                Proof::Trans {
+                    terms: vec![canon(t), body.clone(), value.clone()],
+                    steps: vec![
+                        unfold,
+                        Proof::Compute {
+                            lhs: body,
+                            rhs: value.clone(),
+                        },
+                    ],
+                }
+            };
+            return Some((Vec::new(), proof, value));
+        }
+        for (i, c) in term::children(t).into_iter().enumerate() {
+            let c = c.clone();
+            if let Some((mut path, p, v)) = self.constant_call(&c) {
+                path.insert(0, i);
+                return Some((path, p, v));
+            }
+        }
+        None
     }
 
     /// `(x == y) = true` for Int sides one cited law instance makes equal:
@@ -550,14 +700,16 @@ impl Env<'_> {
                     ))));
                 };
                 let s = term::subst(subject, &outer)?;
-                // A countdown opens only where a hypothesis states its guard
-                // or the guard computes: opening it one level wherever
-                // arithmetic could decide the guard would trade a call the
-                // facts in scope talk about for one they do not.
+                // A countdown opens only where a hypothesis states its guard,
+                // or its complement (`width > 0` for `width <= 0`), or the
+                // guard computes: opening it one level wherever arithmetic
+                // could decide the guard would trade a call the facts in
+                // scope talk about for one they do not.
                 let countdown = crate::ir::proof_steps::induct::countdown(&def).is_some();
                 if countdown
                     && term::eval_closed(&canon(&s)).is_none()
                     && self.hyp_for(&s).is_none()
+                    && self.complement(&canon(&s)).is_none()
                 {
                     return self.settle(cur, None);
                 }
@@ -660,7 +812,13 @@ impl Env<'_> {
                         Ok(Step::Progress(Box::new((arm, eq.rhs))))
                     }
                     None => {
-                        let g = ev.blocked.or_else(|| Some(value.clone()));
+                        // Only a Bool is split on: a subject of another
+                        // type (a list) is neither `true` nor `false`.
+                        let g = ev.blocked.or_else(|| {
+                            (matches!(value.ty(), Some(crate::ast::Type::Bool))
+                                || matches!(value.node, ResolvedExpr::BinOp(..)))
+                            .then_some(value.clone())
+                        });
                         self.settle(cur, g)
                     }
                 }
@@ -1537,6 +1695,90 @@ impl Env<'_> {
         }
     }
 
+    /// Where evaluation has no Bool to split on: the parts below the heads,
+    /// a ring step, contradicting hypotheses, a disjunction or predicate in
+    /// scope; failing those, an undecided Int comparison inside a `Bool.and`,
+    /// `Bool.or` or `Bool.not` where a side stopped, returned to split on.
+    fn nothing_to_split(
+        &mut self,
+        lhs: &Term,
+        rhs: &Term,
+        l: &Eval,
+        r: &Eval,
+        depth: usize,
+    ) -> Result<Result<Proof, Term>, String> {
+        // Nothing to split on: look below the heads, at the parts of a
+        // constructor and the arguments of a call evaluation stopped at.
+        let mut nl = self.normalize(lhs, 8)?;
+        let nr = self.normalize(rhs, 8)?;
+        if canon(nl.cur()) == canon(nr.cur()) {
+            return Ok(Ok(meet(nl, nr)));
+        }
+        // Two Int terms that are one polynomial: the ring step.
+        if is_int(nl.cur()) && crate::ir::proof_steps::ring::same_polynomial(nl.cur(), nr.cur()) {
+            let (from, to) = (nl.cur().clone(), nr.cur().clone());
+            nl.push(
+                Proof::Ring {
+                    lhs: from,
+                    rhs: to.clone(),
+                },
+                to,
+            );
+            return Ok(Ok(meet(nl, nr)));
+        }
+        // Hypotheses that contradict each other linearly: the case
+        // cannot happen.
+        if let Some(contradiction) = self.refute_linearly() {
+            return Ok(Ok(Proof::Absurd {
+                contradiction: Box::new(contradiction),
+                lhs: canon(lhs),
+                rhs: canon(rhs),
+            }));
+        }
+        // A disjunction in scope: split on its left side, and where
+        // that is false, its right side holds.
+        if depth > 0
+            && let Some(proof) = self.split_disjunction(nl.cur(), nr.cur(), depth)?
+        {
+            let rc = nr.cur().clone();
+            nl.push(proof, rc);
+            return Ok(Ok(meet(nl, nr)));
+        }
+        // A predicate hypothesis that chooses by a Bool: open it at the
+        // arm its guard selects, splitting on the guard when it is open.
+        if depth > 0
+            && let Some(proof) = self.open_hypothesis(lhs, rhs, depth)?
+        {
+            return Ok(Ok(proof));
+        }
+        if depth > 0
+            && let Some(g) = [l.chain.cur(), r.chain.cur()]
+                .into_iter()
+                .find_map(|t| self.connective_comparison(t))
+        {
+            return Ok(Err(g));
+        }
+        Err(self.stopped_at(nl.cur(), nr.cur()))
+    }
+
+    /// The first Int comparison, not decided by a hypothesis, among the
+    /// leaves of the `Bool.and` / `Bool.or` / `Bool.not` tree `t`.
+    fn connective_comparison(&self, t: &Term) -> Option<Term> {
+        match &t.node {
+            ResolvedExpr::Call(ResolvedCallee::Builtin(b), args)
+                if matches!(b.as_str(), "Bool.and" | "Bool.or" | "Bool.not") =>
+            {
+                args.iter().find_map(|a| self.connective_comparison(a))
+            }
+            ResolvedExpr::BinOp(
+                BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte | BinOp::Eq | BinOp::Neq,
+                a,
+                b,
+            ) if (is_int(a) || is_int(b)) && self.hyp_for(t).is_none() => Some(canon(t)),
+            _ => None,
+        }
+    }
+
     /// Prove `lhs = rhs` by evaluating both sides, splitting on the first
     /// undecided Bool either side stops at.
     pub(crate) fn prove_by_evaluation(
@@ -1550,53 +1792,12 @@ impl Env<'_> {
         if canon(l.chain.cur()) == canon(r.chain.cur()) {
             return Ok(meet(l.chain, r.chain));
         }
-        let Some(g) = l.blocked.or(r.blocked) else {
-            // Nothing to split on: look below the heads, at the parts of a
-            // constructor and the arguments of a call evaluation stopped at.
-            let mut nl = self.normalize(lhs, 8)?;
-            let nr = self.normalize(rhs, 8)?;
-            if canon(nl.cur()) == canon(nr.cur()) {
-                return Ok(meet(nl, nr));
-            }
-            // Two Int terms that are one polynomial: the ring step.
-            if is_int(nl.cur()) && crate::ir::proof_steps::ring::same_polynomial(nl.cur(), nr.cur())
-            {
-                let (from, to) = (nl.cur().clone(), nr.cur().clone());
-                nl.push(
-                    Proof::Ring {
-                        lhs: from,
-                        rhs: to.clone(),
-                    },
-                    to,
-                );
-                return Ok(meet(nl, nr));
-            }
-            // Hypotheses that contradict each other linearly: the case
-            // cannot happen.
-            if let Some(contradiction) = self.refute_linearly() {
-                return Ok(Proof::Absurd {
-                    contradiction: Box::new(contradiction),
-                    lhs: canon(lhs),
-                    rhs: canon(rhs),
-                });
-            }
-            // A disjunction in scope: split on its left side, and where
-            // that is false, its right side holds.
-            if depth > 0
-                && let Some(proof) = self.split_disjunction(nl.cur(), nr.cur(), depth)?
-            {
-                let rc = nr.cur().clone();
-                nl.push(proof, rc);
-                return Ok(meet(nl, nr));
-            }
-            // A predicate hypothesis that chooses by a Bool: open it at the
-            // arm its guard selects, splitting on the guard when it is open.
-            if depth > 0
-                && let Some(proof) = self.open_hypothesis(lhs, rhs, depth)?
-            {
-                return Ok(proof);
-            }
-            return Err(self.stopped_at(nl.cur(), nr.cur()));
+        let g = match l.blocked.clone().or(r.blocked.clone()) {
+            Some(g) => g,
+            None => match self.nothing_to_split(lhs, rhs, &l, &r, depth)? {
+                Ok(proof) => return Ok(proof),
+                Err(g) => g,
+            },
         };
         if depth == 0 || is_bool_value(&g) || self.hyp_for(&g).is_some() {
             return Err(self.stopped_at(l.chain.cur(), r.chain.cur()));
