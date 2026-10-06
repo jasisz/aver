@@ -75,6 +75,60 @@ pub fn contradicts(p: &Poly) -> bool {
     }
 }
 
+/// The rows with one equality used up: for the first pair of rows `p >= 0`
+/// and `-p >= 0` with a monomial `m`, every other row that has `m` gets
+/// `|e|` times the one of the two whose `m` cancels its own (`e` its
+/// coefficient), after being scaled by `|c|` (`c` the coefficient of `m`
+/// in `p`). The weights stay nonnegative, so the result is still a sum the
+/// kernels check. `None` when no row has its opposite.
+fn substitute_equality(rows: &[(Poly, Vec<BigInt>)]) -> Option<Vec<(Poly, Vec<BigInt>)>> {
+    let negated = |p: &Poly| -> Poly { p.iter().map(|(k, c)| (k.clone(), -c)).collect() };
+    let (i, j, m) = rows.iter().enumerate().find_map(|(i, (p, _))| {
+        let m = p.keys().find(|m| !m.is_empty())?.clone();
+        let opposite = negated(p);
+        let j = rows
+            .iter()
+            .enumerate()
+            .position(|(j, (q, _))| j > i && *q == opposite)?;
+        Some((i, j, m))
+    })?;
+    let (p, wp) = &rows[i];
+    let (q, wq) = &rows[j];
+    let c = p[&m].clone();
+    let mut out = Vec::new();
+    for (k, (r, wr)) in rows.iter().enumerate() {
+        if k == i || k == j {
+            continue;
+        }
+        let Some(e) = r.get(&m) else {
+            out.push((r.clone(), wr.clone()));
+            continue;
+        };
+        // The row whose `m` has the opposite sign to `e`.
+        let (x, wx) = if e.is_positive() == c.is_positive() {
+            (q, wq)
+        } else {
+            (p, wp)
+        };
+        let (scale, times) = (c.abs(), e.abs());
+        let mut sum = Poly::new();
+        for (key, v) in r {
+            *sum.entry(key.clone()).or_default() += v * &scale;
+        }
+        for (key, v) in x {
+            *sum.entry(key.clone()).or_default() += v * &times;
+        }
+        sum.retain(|_, v| !v.is_zero());
+        let w = wr
+            .iter()
+            .zip(wx)
+            .map(|(a, b)| a * &scale + b * &times)
+            .collect();
+        out.push((sum, w));
+    }
+    Some(out)
+}
+
 /// Weights, one per inequality, that add up to a contradiction, if
 /// Fourier–Motzkin elimination over the monomials finds them.
 pub fn certificate(ps: &[Poly]) -> Option<Vec<BigInt>> {
@@ -90,6 +144,16 @@ pub fn certificate(ps: &[Poly]) -> Option<Vec<BigInt>> {
         })
         .collect();
     for _ in 0..16 {
+        // An equality, two rows `p >= 0` and `-p >= 0`, removes a monomial
+        // of `p` from every other row by substitution, which keeps the
+        // number of rows down where pairing every positive with every
+        // negative row would multiply it. Each one takes two rows away.
+        while let Some(next) = substitute_equality(&rows) {
+            if let Some((_, w)) = rows.iter().find(|(p, _)| contradicts(p)) {
+                return Some(w.clone());
+            }
+            rows = next;
+        }
         if let Some((_, w)) = rows.iter().find(|(p, _)| contradicts(p)) {
             return Some(w.clone());
         }

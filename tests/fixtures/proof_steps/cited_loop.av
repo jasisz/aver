@@ -1,0 +1,56 @@
+module CitedLoop
+    intent =
+        "Steps that cite a law whose right side opens back to the term it rewrote:"
+        "`intoChunks(ops, [])` rewritten by `intoChunks.accumulates` holds `flat(ops)`, whose"
+        "definition is `intoChunks(ops, [])` again, so that rewrite is refused and evaluation goes on."
+    exposes [flat]
+
+fn chunk(op: Int) -> List<Int>
+    ? "One op's bytes: the op and its double."
+    [op, op * 2]
+
+verify chunk
+    chunk(1) => [1, 2]
+
+fn pushBack(bytes: List<Int>, acc: List<Int>) -> List<Int>
+    ? "Push a run of bytes onto an accumulator built backwards."
+    match bytes
+        [] -> acc
+        [head, ..tail] -> pushBack(tail, List.prepend(head, acc))
+
+verify pushBack
+    pushBack([1, 2], [9]) => [2, 1, 9]
+
+verify pushBack law reverseOnto
+    given bytes: List<Int> = [[], [1, 2]]
+    given acc: List<Int> = [[], [9]]
+    using [List.concat.assoc]
+    pushBack(bytes, acc) => List.concat(List.reverse(bytes), acc)
+
+fn flat(ops: List<Int>) -> List<Int>
+    ? "Every op's bytes, in order."
+    intoChunks(ops, [])
+
+verify flat
+    flat([1, 3]) => [1, 2, 3, 6]
+
+fn intoChunks(ops: List<Int>, acc: List<Int>) -> List<Int>
+    ? "Accumulator form, turned round at the end."
+    match ops
+        [] -> List.reverse(acc)
+        [head, ..tail] -> intoChunks(tail, pushBack(chunk(head), acc))
+
+verify intoChunks
+    intoChunks([1], []) => [1, 2]
+
+verify intoChunks law accumulates
+    given ops: List<Int> = [[], [1], [1, 3]]
+    given acc: List<Int> = [[], [9, 8]]
+    using [pushBack.reverseOnto, List.reverse.ofConcat, List.concat.rightIdentity, List.concat.assoc]
+    intoChunks(ops, acc) => List.concat(List.reverse(acc), flat(ops))
+
+verify flat law prepend
+    given head: Int = [1, 5]
+    given tail: List<Int> = [[], [3]]
+    using [intoChunks.accumulates, pushBack.reverseOnto, List.concat.rightIdentity, List.reverse.involutive]
+    flat(List.prepend(head, tail)) => List.concat(chunk(head), flat(tail))
