@@ -1,0 +1,104 @@
+module CitedWhen
+    intent = "Laws closed by an order a cited law states under a `when`, used only where that `when` is proved."
+    exposes [pow2, multiplyLe, multiplyLt, positiveProduct, productOfPowers, scaledPower]
+    effects []
+
+fn pow2(n: Int) -> Int
+    ? "Two to the n, and 1 at or below zero."
+    match n <= 0
+        true -> 1
+        false -> 2 * pow2(n - 1)
+
+verify pow2
+    pow2(0) => 1
+    pow2(3) => 8
+
+verify pow2 law positive
+    given n: Int = [-2, 0, 3]
+    pow2(n) >= 1 holds
+
+fn multiplyLe(a: Int, b: Int, c: Int) -> Bool
+    ? "Multiplication preserves a weak inequality when the common factor is nonnegative."
+    a * c <= b * c
+
+verify multiplyLe
+    multiplyLe(1, 2, 3) => true
+
+verify multiplyLe law nonnegativeFactor
+    given a: Int = [-3, 0, 2]
+    given b: Int = [-2, 0, 5]
+    given c: Int = [0, 1, 4]
+    when a <= b
+    when c >= 0
+    because multiplyLeReason(a, b, c)
+    using []
+    multiplyLe(a, b, c) holds
+
+fn multiplyLeReason(a: Int, b: Int, c: Int) -> Bool
+    ? "Descend through the nonnegative factor; each step adds the original inequality."
+    match c <= 0
+        true -> multiplyLe(a, b, c)
+        false -> Bool.and(multiplyLeReason(a, b, c - 1), multiplyLe(a, b, c))
+
+verify multiplyLeReason
+    multiplyLeReason(-2, 3, 4) => true
+
+fn multiplyLt(a: Int, b: Int, c: Int) -> Bool
+    ? "A positive common factor preserves a strict integer inequality."
+    a * c < b * c
+
+verify multiplyLt
+    multiplyLt(1, 2, 3) => true
+
+verify multiplyLt law positiveFactor
+    given a: Int = [-3, 0, 2]
+    given b: Int = [-2, 1, 5]
+    given c: Int = [1, 2, 4]
+    when a < b
+    when c > 0
+    because multiplyLe(a, b - 1, c)
+    using [multiplyLe.nonnegativeFactor]
+    multiplyLt(a, b, c) holds
+
+fn positiveProduct(a: Int, b: Int) -> Bool
+    ? "The product of two positive integers is positive."
+    a * b > 0
+
+verify positiveProduct
+    positiveProduct(2, 3) => true
+
+verify positiveProduct law positiveFactors
+    given a: Int = [1, 2, 3]
+    given b: Int = [1, 2, 5]
+    when a > 0
+    when b > 0
+    because multiplyLt(0, a, b)
+    using [multiplyLt.positiveFactor]
+    positiveProduct(a, b) holds
+
+fn productOfPowers(k: Int, n: Int) -> Bool
+    ? "Two to the minus k times two to the n is positive."
+    pow2(0 - k) * pow2(n) > 0
+
+verify productOfPowers
+    productOfPowers(2, 3) => true
+
+verify productOfPowers law positive
+    given k: Int = [-1, 0, 2]
+    given n: Int = [-1, 0, 3]
+    using [pow2.positive, positiveProduct.positiveFactors]
+    productOfPowers(k, n) holds
+
+fn scaledPower(x: Int, n: Int) -> Bool
+    ? "x times two to the n is positive."
+    x * pow2(n) > 0
+
+verify scaledPower
+    scaledPower(1, 3) => true
+
+verify scaledPower law positiveScale
+    given x: Int = [1, 2]
+    given n: Int = [0, 3]
+    when x >= 1
+    using [pow2.positive, positiveProduct.positiveFactors]
+    scaledPower(x, n) holds

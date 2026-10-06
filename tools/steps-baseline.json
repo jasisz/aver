@@ -104,9 +104,10 @@
  },
  "projects/k5_fdiv/domain/awaymodel.av": {
   "obligations": [
-   "rawValuePositive.positivePrecision.because1",
-   "rawValuePositive.positivePrecision.because2",
-   "rawValuePositive.positivePrecision.because3"
+   "transferredValue.sameRawValue.because1"
+  ],
+  "steps": [
+   "rawValuePositive.positivePrecision"
   ]
  },
  "projects/k5_fdiv/domain/binadeorder.av": {
@@ -177,6 +178,7 @@
    "fracExpo.rationalMagnitude.because4",
    "fracExpo.rationalMagnitude.because5",
    "modelAway.normalizedModel.implication",
+   "modelCeiling.normalizedModel.because10",
    "modelCeiling.normalizedModel.because11",
    "modelCeiling.normalizedModel.because2",
    "modelCeiling.normalizedModel.because3",
@@ -194,10 +196,15 @@
    "modelStickyHalf.normalizedModel.because2",
    "modelStickyHalf.normalizedModel.because3",
    "modelStickyHalf.normalizedModel.because4",
+   "modelTruncation.normalizedModel.because2",
    "modelTruncation.normalizedModel.because4",
    "modelTruncation.normalizedModel.because5",
    "modelTruncation.normalizedModel.because6",
+   "normalizedValueExponent.executableExponent.because1",
    "normalizedValueExponent.executableExponent.implication",
+   "sameAway.normalizedModel.because2",
+   "sameSticky.normalizedModel.because2",
+   "sameTruncation.normalizedModel.because2",
    "singleBitHalf.normalizedModel.because10",
    "singleBitHalf.normalizedModel.because11",
    "singleBitHalf.normalizedModel.because3",
@@ -220,10 +227,6 @@
    "modelWindow.normalizedMagnitude.because3",
    "modelWindow.normalizedMagnitude.because4",
    "modelWindow.normalizedMagnitude.because5",
-   "nonzeroValue.normalizedValue.because1",
-   "nonzeroValue.normalizedValue.because2",
-   "nonzeroValue.normalizedValue.because3",
-   "nonzeroValue.normalizedValue.because4",
    "scaledWindow.normalizedSignificand.because1",
    "scaledWindow.normalizedSignificand.because2",
    "scaledWindow.normalizedSignificand.because3",
@@ -231,6 +234,9 @@
    "scaledWindow.normalizedSignificand.because5",
    "scaledWindow.normalizedSignificand.implication",
    "uniqueWindow.uniqueExponent.implication"
+  ],
+  "steps": [
+   "nonzeroValue.normalizedValue"
   ]
  },
  "projects/k5_fdiv/domain/rational.av": {

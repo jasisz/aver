@@ -61,6 +61,25 @@ fn occurs(part: &Term, t: &Term) -> bool {
         || term::children(t).into_iter().any(|c| occurs(part, c))
 }
 
+/// Every ordering of the factors of a product.
+fn permutations(m: &[usize]) -> Vec<Vec<usize>> {
+    if m.len() <= 1 {
+        return vec![m.to_vec()];
+    }
+    let mut out = Vec::new();
+    for i in 0..m.len() {
+        let mut rest = m.to_vec();
+        let first = rest.remove(i);
+        for mut tail in permutations(&rest) {
+            tail.insert(0, first);
+            if !out.contains(&tail) {
+                out.push(tail);
+            }
+        }
+    }
+    out
+}
+
 /// The arm of a match whose pattern head the value `v` has, with the
 /// pattern's bindings, and whether `v` is a list literal the arm reads as a
 /// cell (so the premise ends with a [`Proof::Cell`] step). `None` when no
@@ -1322,10 +1341,16 @@ impl Env<'_> {
         Some(proof)
     }
 
-    /// The instances of the cited laws that state an Int comparison, with
-    /// no `when`, at the atoms of `goal` they are about: each with its
-    /// proof. A law's givens are fixed by one of its atoms matching one of
-    /// the goal's, so only facts about what the goal mentions are offered.
+    /// The instances of the cited laws that state an Int comparison at the
+    /// atoms of `goal` they are about, each with its proof. A law's givens
+    /// are fixed by one of its atoms matching one of the goal's, or by one
+    /// of its products matching a product of the goal factor by factor, so
+    /// only facts about what the goal mentions are offered. A law may state
+    /// its comparison through a predicate that only names it (no `match`,
+    /// no recursion), read through that one unfolding. A law with a `when`
+    /// is used only where its `when` at the instance is proved by the facts
+    /// in scope, never assumed; while that `when` is being proved, only
+    /// laws without one are offered, so the search does not feed itself.
     fn cited_comparisons(
         &mut self,
         goal: &Term,
@@ -1333,41 +1358,114 @@ impl Env<'_> {
         use super::rewrite::{matches, ordered};
         use crate::ir::proof_steps::linear;
         let mut goal_atoms = Vec::new();
-        if linear::as_nonneg(goal, true, &mut goal_atoms).is_none() {
+        let Some(goal_poly) = linear::as_nonneg(goal, true, &mut goal_atoms) else {
             return Vec::new();
-        }
+        };
         let mut out: Vec<(Term, Proof, crate::ir::proof_steps::LawRef)> = Vec::new();
         for law in self.cited_all.clone() {
-            if term::bool_value(&law.rhs) != Some(true) || law.premise.is_some() {
+            if term::bool_value(&law.rhs) != Some(true)
+                || (law.premise.is_some() && self.proving_cited_when)
+            {
                 continue;
             }
+            // The comparison the law states, as written or through one
+            // unfolding of a predicate that only names it.
+            let stated = if linear::as_nonneg(&law.lhs, true, &mut Vec::new()).is_some() {
+                law.lhs.clone()
+            } else {
+                match self.wrapper_unfold(&law.lhs) {
+                    Some((_, body))
+                        if linear::as_nonneg(&body, true, &mut Vec::new()).is_some() =>
+                    {
+                        body
+                    }
+                    _ => continue,
+                }
+            };
             let mut law_atoms = Vec::new();
-            if linear::as_nonneg(&law.lhs, true, &mut law_atoms).is_none() {
+            let Some(law_poly) = linear::as_nonneg(&stated, true, &mut law_atoms) else {
                 continue;
-            }
+            };
+            // Pairs of law terms and goal terms, matched part by part.
+            let mut pairs: Vec<Vec<(Term, Term)>> = Vec::new();
             for pat in &law_atoms {
                 for atom in &goal_atoms {
-                    let mut found = Vec::new();
-                    if !matches(pat, atom, &law.givens, &mut found) {
-                        continue;
-                    }
-                    let Some(subst) = ordered(&law.givens, found) else {
-                        continue;
-                    };
-                    let Ok(fact) = term::subst(&law.lhs, &subst) else {
-                        continue;
-                    };
-                    let fact = canon(&fact);
-                    if out.iter().any(|(f, _, _)| *f == fact) {
-                        continue;
-                    }
-                    let proof = Proof::Law {
-                        law: law.key.clone(),
-                        subst,
-                        premise: None,
-                    };
-                    out.push((fact, proof, law.clone()));
+                    pairs.push(vec![(pat.clone(), atom.clone())]);
                 }
+            }
+            for lm in law_poly.keys().filter(|m| m.len() > 1 && m.len() <= 3) {
+                for gm in goal_poly.keys().filter(|m| m.len() == lm.len()) {
+                    for order in permutations(gm) {
+                        pairs.push(
+                            lm.iter()
+                                .zip(&order)
+                                .map(|(l, g)| (law_atoms[*l].clone(), goal_atoms[*g].clone()))
+                                .collect(),
+                        );
+                    }
+                }
+            }
+            for pair in pairs {
+                let mut found = Vec::new();
+                if !pair
+                    .iter()
+                    .all(|(pat, atom)| matches(pat, atom, &law.givens, &mut found))
+                {
+                    continue;
+                }
+                let Some(subst) = ordered(&law.givens, found) else {
+                    continue;
+                };
+                let Ok(lhs) = term::subst(&law.lhs, &subst) else {
+                    continue;
+                };
+                let lhs = canon(&lhs);
+                let Ok(fact) = term::subst(&stated, &subst) else {
+                    continue;
+                };
+                let fact = canon(&fact);
+                if out.iter().any(|(f, _, _)| *f == fact) {
+                    continue;
+                }
+                let premise = match &law.premise {
+                    None => None,
+                    Some(when) => {
+                        let Ok(when) = term::subst(when, &subst) else {
+                            continue;
+                        };
+                        self.proving_cited_when = true;
+                        let proof = self.discharge(&when);
+                        self.proving_cited_when = false;
+                        match proof {
+                            Some(p) => Some(Box::new(p)),
+                            None => continue,
+                        }
+                    }
+                };
+                let by_law = Proof::Law {
+                    law: law.key.clone(),
+                    subst,
+                    premise,
+                };
+                let proof = if fact == lhs {
+                    by_law
+                } else {
+                    // `fact` is the body of the predicate call `lhs`.
+                    let Some((unfold, body)) = self.wrapper_unfold(&lhs) else {
+                        continue;
+                    };
+                    if body != fact {
+                        continue;
+                    }
+                    if let ResolvedExpr::Call(ResolvedCallee::Fn(id), _) = &lhs.node {
+                        self.mark_used(*id);
+                    }
+                    Proof::Trans {
+                        terms: vec![fact.clone(), lhs, term::boolean(true)],
+                        steps: vec![Proof::Symm(Box::new(unfold)), by_law],
+                    }
+                };
+                out.push((fact, proof, law.clone()));
             }
         }
         out
