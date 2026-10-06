@@ -30,6 +30,15 @@
    "size.emptyHasZeroSize"
   ]
  },
+ "examples/formal/equal_sides.av": {
+  "steps": [
+   "aboveBound.one",
+   "eqOrNe.opposites",
+   "strictBoth.zero",
+   "swappedEq.one",
+   "swappedNe.zero"
+  ]
+ },
  "examples/formal/law_auto.av": {
   "steps": [
    "add.associative",

@@ -214,6 +214,9 @@ impl Env<'_> {
         if let Some(step) = self.cited_int_equality(cur) {
             return Ok(Some(step));
         }
+        if let Some(step) = self.decide_before_rewrite(cur) {
+            return Ok(Some(step));
+        }
         if let Some(step) = self.equal_by_hypothesis(cur) {
             return Ok(Some(step));
         }
@@ -266,15 +269,7 @@ impl Env<'_> {
             return None;
         }
         let t = canon(cur);
-        let stated_lhs: Vec<Term> = self
-            .hyps
-            .iter()
-            .filter(|(_, e)| term::bool_value(&e.rhs) == Some(true))
-            .filter_map(|(_, e)| match &e.lhs.node {
-                ResolvedExpr::BinOp(BinOp::Eq, a, _) => Some(canon(a)),
-                _ => None,
-            })
-            .collect();
+        let stated_lhs = self.stated_equalities();
         let candidates: Vec<(String, Term, Term)> = self
             .hyps
             .iter()
@@ -399,32 +394,90 @@ impl Env<'_> {
         if let Some(step) = self.decide_linearly(cur) {
             return Ok(Step::Progress(Box::new(step)));
         }
-        if let ResolvedExpr::BinOp(op, a, b) = &cur.node
-            && is_int(a)
-        {
-            for (p, v, q, w, rule) in COMPLEMENTS {
-                if q != *op {
-                    continue;
-                }
-                let premise = term::binop(p, (**a).clone(), (**b).clone());
-                if let Some((name, value)) = self.hyp_for(&premise)
-                    && term::bool_value(&value) == Some(v)
-                {
-                    return Ok(Step::Progress(Box::new((
-                        Proof::Rule {
-                            rule,
-                            subst: vec![("a".into(), (**a).clone()), ("b".into(), (**b).clone())],
-                            premises: vec![Proof::Hyp(name)],
-                        },
-                        term::boolean(w),
-                    ))));
-                }
-            }
+        if let Some(step) = self.complement(cur) {
+            return Ok(step);
         }
         Ok(match blocked {
             Some(g) => Step::Blocked(g),
             None => Step::Done,
         })
+    }
+
+    /// `(a Q b) = w` by a complement rule from `(a P b) = v`: a hypothesis
+    /// states it, or, for `P` an Int equality, the two orders decide it
+    /// (`b != b` is false by `b == b`).
+    fn complement(&mut self, cur: &Term) -> Option<Step> {
+        let ResolvedExpr::BinOp(op, a, b) = &cur.node else {
+            return None;
+        };
+        if !is_int(a) {
+            return None;
+        }
+        for (p, v, q, w, rule) in COMPLEMENTS {
+            if q != *op {
+                continue;
+            }
+            let premise = canon(&term::binop(p, (**a).clone(), (**b).clone()));
+            let proof = match self.hyp_for(&premise) {
+                Some((name, value)) if term::bool_value(&value) == Some(v) => Proof::Hyp(name),
+                _ if p == BinOp::Eq => match self.decide_linearly(&premise) {
+                    Some((proof, value)) if term::bool_value(&value) == Some(v) => proof,
+                    _ => continue,
+                },
+                _ => continue,
+            };
+            return Some(Step::Progress(Box::new((
+                Proof::Rule {
+                    rule,
+                    subst: vec![("a".into(), (**a).clone()), ("b".into(), (**b).clone())],
+                    premises: vec![proof],
+                },
+                term::boolean(w),
+            ))));
+        }
+        None
+    }
+
+    /// An Int comparison decided as it stands, before a stated equality
+    /// rewrites one of its parts: the hypotheses about those parts still
+    /// name them as written, so after the rewrite they would no longer apply.
+    fn decide_before_rewrite(&mut self, cur: &Term) -> Option<Step> {
+        let ResolvedExpr::BinOp(op, a, _) = &cur.node else {
+            return None;
+        };
+        if !is_int(a)
+            || !matches!(
+                op,
+                BinOp::Lt | BinOp::Lte | BinOp::Gt | BinOp::Gte | BinOp::Eq | BinOp::Neq
+            )
+        {
+            return None;
+        }
+        let t = canon(cur);
+        let rewritten = self
+            .stated_equalities()
+            .iter()
+            .any(|l| *l != t && term::children(&t).into_iter().any(|c| holds(c, l)));
+        if !rewritten {
+            return None;
+        }
+        if let Some(step) = self.complement(&t) {
+            return Some(step);
+        }
+        self.decide_linearly(&t)
+            .map(|step| Step::Progress(Box::new(step)))
+    }
+
+    /// The left sides of the true equalities in scope, `(a == k) = true`.
+    fn stated_equalities(&self) -> Vec<Term> {
+        self.hyps
+            .iter()
+            .filter(|(_, e)| term::bool_value(&e.rhs) == Some(true))
+            .filter_map(|(_, e)| match &e.lhs.node {
+                ResolvedExpr::BinOp(BinOp::Eq, a, _) => Some(canon(a)),
+                _ => None,
+            })
+            .collect()
     }
 
     fn head_step(&mut self, cur: &Term) -> Result<Step, String> {
