@@ -435,13 +435,18 @@ fn top_level_interpolation_matches_between_rust_and_vm() {
 /// arm has no structural Rust pattern and lowers to a guard chain over the
 /// cloned elements instead. Only a build proves that chain: the `pick`
 /// shape is exhaustive over its `Option` tags and ends in no default arm,
-/// which the chain builder used to close with an unbraced `else`. Every
-/// arm of the four shapes must print what the VM prints.
+/// which the chain builder used to close with an unbraced `else`. Three
+/// more shapes put a `String` literal in an element (`("==", Option.Some(s))`,
+/// `(0, ("zero", true))`, `(Shape.Circle(r), "big")`): the element is an
+/// `AverStr`, which Rust cannot match against a `&str` literal, so the
+/// literal becomes a guard — on the arm of a plain `match`, or one more
+/// conjunct of the chain when an `Int` literal sits beside it. Every arm of
+/// every shape must print what the VM prints.
 #[test]
 fn tuple_match_with_list_literal_and_option_elements_matches_between_rust_and_vm() {
     const FIXTURE: &str = "tests/fixtures/tuple_match_element_patterns_app.av";
     let vm = run_vm(&repo_root().join(FIXTURE), None).unwrap_or_else(|e| panic!("{e}"));
-    assert_eq!(vm.lines().count(), 11, "one line per arm:\n{vm}");
+    assert_eq!(vm.lines().count(), 21, "one line per arm:\n{vm}");
     assert_plain_parity(FIXTURE, None).unwrap_or_else(|e| panic!("{e}"));
 }
 
