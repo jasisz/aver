@@ -538,8 +538,14 @@ impl Renderer<'_> {
         use crate::codegen::proof_recognize::peano_type_named;
         match v.ty() {
             Some(Type::List(_)) => Ok(("List.rec".into(), vec!["nil".into(), "cons".into()])),
-            Some(ty @ Type::Named { name, .. }) => {
-                if peano_type_named(self.ctx, name).is_some() {
+            Some(ty @ Type::Named { .. }) => {
+                use crate::codegen::common::{backend_named_type_key, backend_type_def_key};
+                let key = backend_named_type_key(self.ctx, ty)
+                    .ok_or("induct: the matched type has no name")?;
+                // The Peano registry is keyed by the bare name, as the Lean
+                // surface is flat.
+                let bare = key.rsplit('.').next().unwrap_or(&key);
+                if peano_type_named(self.ctx, bare).is_some() {
                     return Ok(("Nat.rec".into(), vec!["zero".into(), "succ".into()]));
                 }
                 let variants = self
@@ -548,9 +554,11 @@ impl Renderer<'_> {
                     .iter()
                     .chain(self.ctx.modules.iter().flat_map(|m| m.type_defs.iter()))
                     .find_map(|t| match t {
-                        crate::ast::TypeDef::Sum {
-                            name: n, variants, ..
-                        } if n == name => Some(variants),
+                        crate::ast::TypeDef::Sum { variants, .. }
+                            if backend_type_def_key(self.ctx, t) == key =>
+                        {
+                            Some(variants)
+                        }
                         _ => None,
                     })
                     .ok_or("induct: no definition of the matched type")?;
