@@ -161,6 +161,39 @@ fn the_kernel_checks_every_wall_rule() {
     }
 }
 
+/// A true `a == b` between Floats does not make `a` and `b` the same value
+/// (`0.0 == -0.0`, and `String.fromFloat` tells them apart), so the
+/// equality rule refuses it: Float `==` is spelled `==.`, also inside a
+/// list, while between Ints it rewrites.
+#[test]
+fn a_float_equality_does_not_rewrite() {
+    use crate::ast::Type;
+    let typed_var = |name: &str, ty: Type| {
+        let t = var(name);
+        t.set_ty(ty);
+        t
+    };
+    for (ty, accepted) in [
+        (Type::Int, true),
+        (Type::Float, false),
+        (Type::List(Box::new(Type::Float)), false),
+    ] {
+        let (a, b) = (typed_var("a", ty.clone()), typed_var("b", ty.clone()));
+        let show = |x: super::Term| term::builtin("String.fromFloat", vec![x], None);
+        let step = Proof::Congr {
+            ctx: show(term::hole()),
+            inner: Box::new(Proof::Rule {
+                rule: WallRule::EqOfBeq,
+                subst: vec![("a".into(), a.clone()), ("b".into(), b.clone())],
+                premises: vec![Proof::Hyp("when".into())],
+            }),
+        };
+        let mut s = script(show(a.clone()), show(b.clone()), step);
+        s.obligation.premise = Some(term::binop(BinOp::Eq, a, b));
+        assert_eq!(kernel(&s).is_ok(), accepted, "{ty:?}: {:?}", kernel(&s));
+    }
+}
+
 /// `List.concat(xs, []) = xs` by induction on `xs`, a given of list type:
 /// the kernel accepts it, and refuses it when `xs` is not declared a list,
 /// when the hypothesis is used in the empty-list case, when the cell's two

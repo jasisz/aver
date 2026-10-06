@@ -51,6 +51,11 @@ use super::{FORMAT_VERSION, Finite, Proof, Script};
 pub trait Names {
     fn fn_name(&self, id: FnId) -> String;
     fn ctor_name(&self, ctor: &ResolvedCtor) -> String;
+    /// Whether a value of this type may hold a Float; a named type is
+    /// assumed to unless the names know its fields.
+    fn may_hold_float(&self, ty: &crate::ast::Type) -> bool {
+        crate::ir::SymbolTable::default().may_hold_float(ty)
+    }
 }
 
 /// Names for data that mentions no user function or type: the builtin
@@ -71,6 +76,10 @@ impl Names for BuiltinsOnly {
 }
 
 impl Names for crate::ir::SymbolTable {
+    fn may_hold_float(&self, ty: &crate::ast::Type) -> bool {
+        crate::ir::SymbolTable::may_hold_float(self, ty)
+    }
+
     fn fn_name(&self, id: FnId) -> String {
         let key = &self.fn_entry(id).key;
         match key.scope_str() {
@@ -144,15 +153,20 @@ fn op_symbol(op: BinOp) -> &'static str {
 /// An operator spelled by the type it works on, so that a rule about Int
 /// arithmetic never applies to joining texts or to Float arithmetic, which
 /// have other laws (`+` on texts does not commute; on Floats it does not
-/// associate). Int keeps the plain symbols.
-fn typed_op_symbol(op: BinOp, ty: Option<&crate::ast::Type>) -> String {
+/// associate). Int keeps the plain symbols. `==` and `!=` between values
+/// that may hold a Float are `==.` and `!=.`: there `a == b` does not make
+/// `a` and `b` the same value (`0.0 == -0.0`), and `a == a` can be false
+/// (NaN), so no rule about equality applies to them.
+fn typed_op_symbol(op: BinOp, ty: Option<&crate::ast::Type>, names: &dyn Names) -> String {
     use crate::ast::Type;
     let plain = op_symbol(op);
     let arithmetic = matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div);
     let ordering = matches!(op, BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte);
+    let equality = matches!(op, BinOp::Eq | BinOp::Neq);
     match ty {
         Some(Type::Str) if op == BinOp::Add => "++".to_string(),
         Some(Type::Float) if arithmetic || ordering => format!("{plain}."),
+        Some(ty) if equality && names.may_hold_float(ty) => format!("{plain}."),
         _ => plain.to_string(),
     }
 }
@@ -241,7 +255,8 @@ pub fn term(t: &Term, names: &dyn Names) -> Result<String, String> {
                     t.ty()
                         .filter(|ty| **ty != crate::ast::Type::Bool)
                         .or(a.ty())
-                        .or(b.ty())
+                        .or(b.ty()),
+                    names
                 ),
                 term(a, names)?,
                 term(b, names)?
