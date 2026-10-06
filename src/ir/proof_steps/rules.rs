@@ -49,6 +49,8 @@ pub enum WallRule {
     EqFalseOfGt,
     // A true Int equality lets one side stand for the other.
     EqOfBeq,
+    // Equality (not on a value that may hold a Float) is reflexive.
+    BeqRefl,
     // Ring laws of Int.
     AddComm,
     MulComm,
@@ -62,6 +64,7 @@ pub enum WallRule {
     // Euclidean division by a positive divisor.
     DivModRecompose,
     DivRange,
+    ModRange,
     // Constructor equations of the list builtins: each builtin on `[]` and
     // on `List.prepend(x, a)`, with Aver's truncation of a count (a count
     // at or below zero takes nothing and drops nothing).
@@ -107,7 +110,7 @@ pub enum WallRule {
 }
 
 impl WallRule {
-    pub const ALL: [WallRule; 71] = [
+    pub const ALL: [WallRule; 73] = [
         WallRule::AndTrueL,
         WallRule::AndFalseL,
         WallRule::AndTrueR,
@@ -136,6 +139,7 @@ impl WallRule {
         WallRule::EqFalseOfLt,
         WallRule::EqFalseOfGt,
         WallRule::EqOfBeq,
+        WallRule::BeqRefl,
         WallRule::AddComm,
         WallRule::MulComm,
         WallRule::AddAssoc,
@@ -147,6 +151,7 @@ impl WallRule {
         WallRule::SubZero,
         WallRule::DivModRecompose,
         WallRule::DivRange,
+        WallRule::ModRange,
         WallRule::ConcatNil,
         WallRule::ConcatCons,
         WallRule::LenNil,
@@ -212,6 +217,7 @@ impl WallRule {
             WallRule::EqFalseOfLt => "int.eq.false_of_lt",
             WallRule::EqFalseOfGt => "int.eq.false_of_gt",
             WallRule::EqOfBeq => "int.eq.of_beq",
+            WallRule::BeqRefl => "bool.beq.refl",
             WallRule::AddComm => "int.add_comm",
             WallRule::MulComm => "int.mul_comm",
             WallRule::AddAssoc => "int.add_assoc",
@@ -223,6 +229,7 @@ impl WallRule {
             WallRule::SubZero => "int.sub_zero",
             WallRule::DivModRecompose => "int.div_mod_recompose",
             WallRule::DivRange => "int.div_range",
+            WallRule::ModRange => "int.mod_range",
             WallRule::ConcatNil => "list.concat.nil",
             WallRule::ConcatCons => "list.concat.cons",
             WallRule::LenNil => "list.len.nil",
@@ -278,7 +285,8 @@ impl WallRule {
             | WallRule::OneMul
             | WallRule::SubZero => &["a"],
             WallRule::AddAssoc | WallRule::MulAssoc => &["a", "b", "c"],
-            WallRule::DivModRecompose => &["a", "k"],
+            WallRule::DivModRecompose | WallRule::ModRange => &["a", "k"],
+            WallRule::BeqRefl => &["a"],
             WallRule::DivRange => &["a", "k", "m", "n"],
             WallRule::ConcatNil => &["b"],
             WallRule::ConcatCons => &["x", "a", "b"],
@@ -416,6 +424,7 @@ impl WallRule {
             WallRule::EqFalseOfLt => compl(BinOp::Lt, true, BinOp::Eq, false),
             WallRule::EqFalseOfGt => compl(BinOp::Gt, true, BinOp::Eq, false),
             WallRule::EqOfBeq => (vec![is(cmp(BinOp::Eq, a(), b()), true)], Eqn::new(a(), b())),
+            WallRule::BeqRefl => (vec![], is(cmp(BinOp::Eq, a(), a()), true)),
             WallRule::AddComm => (
                 vec![],
                 Eqn::new(binop(BinOp::Add, a(), b()), binop(BinOp::Add, b(), a())),
@@ -472,6 +481,16 @@ impl WallRule {
                     bool_and(
                         cmp(BinOp::Lte, i(0), div(a(), var("k"))),
                         cmp(BinOp::Lt, div(a(), var("k")), var("n")),
+                    ),
+                    true,
+                ),
+            ),
+            WallRule::ModRange => (
+                vec![is(cmp(BinOp::Gt, var("k"), i(0)), true)],
+                is(
+                    bool_and(
+                        cmp(BinOp::Lte, i(0), modu(a(), var("k"))),
+                        cmp(BinOp::Lt, modu(a(), var("k")), var("k")),
                     ),
                     true,
                 ),

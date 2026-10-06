@@ -76,6 +76,11 @@ theorem eq_false_of_gt (a b : Int) (h : decide (a > b) = true) : (a == b) = fals
   beq_eq_false_iff_ne.mpr (Int.ne_of_gt (of_decide_eq_true h))
 theorem eq_of_beq (a b : Int) (h : (a == b) = true) : a = b :=
   beq_iff_eq.mp h
+theorem beq_refl {α : Type} [BEq α] [ReflBEq α] (a : α) : (a == a) = true := beq_self_eq_true a
+theorem mod_range (a k : Int) (h : decide (k > 0) = true) :
+    (decide (0 <= a % k) && decide (a % k < k)) = true := by
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at h ⊢
+  exact ⟨Int.emod_nonneg a (by omega), Int.emod_lt_of_pos a h⟩
 theorem int_induct {P : Int → Prop} (base : ∀ n, decide (n <= 0) = true → P n)
     (step : ∀ n, decide (n <= 0) = false → P (n - 1) → P n) (n : Int) : P n := by
   have key : ∀ (k : Nat) (m : Int), m.toNat = k → P m := by
@@ -216,6 +221,7 @@ fn lemma(rule: WallRule) -> &'static str {
         WallRule::EqFalseOfLt => "AverSteps.eq_false_of_lt",
         WallRule::EqFalseOfGt => "AverSteps.eq_false_of_gt",
         WallRule::EqOfBeq => "AverSteps.eq_of_beq",
+        WallRule::BeqRefl => "AverSteps.beq_refl",
         WallRule::AddComm => "AverSteps.add_comm",
         WallRule::MulComm => "AverSteps.mul_comm",
         WallRule::AddAssoc => "AverSteps.add_assoc",
@@ -227,6 +233,7 @@ fn lemma(rule: WallRule) -> &'static str {
         WallRule::SubZero => "AverSteps.sub_zero",
         WallRule::DivModRecompose => "AverSteps.div_mod_recompose",
         WallRule::DivRange => "AverSteps.div_range",
+        WallRule::ModRange => "AverSteps.mod_range",
         WallRule::ConcatNil => "AverSteps.list_concat_nil",
         WallRule::ConcatCons => "AverSteps.list_concat_cons",
         WallRule::LenNil => "AverSteps.list_len_nil",
