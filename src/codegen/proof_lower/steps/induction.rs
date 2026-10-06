@@ -13,7 +13,7 @@ use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
 use crate::ir::identity::FnId;
 use crate::ir::proof_steps::induct;
 use crate::ir::proof_steps::term::{self, Term, canon};
-use crate::ir::proof_steps::{InductCase, Obligation, Proof};
+use crate::ir::proof_steps::{Eqn, InductCase, Obligation, Proof};
 
 use super::env::Env;
 
@@ -56,19 +56,6 @@ fn recursive_in_claim(env: &mut Env, ob: &Obligation) -> Vec<String> {
         .into_iter()
         .map(|id| env.inputs.symbol_table.fn_name(id))
         .collect()
-}
-
-/// Whether `t` holds a `match` with a call of `f` in one of its arms.
-fn split_holds_self_call(t: &Term, f: FnId) -> bool {
-    if let ResolvedExpr::Match { subject, arms } = &t.node {
-        return split_holds_self_call(subject, f)
-            || arms
-                .iter()
-                .any(|a| !induct::self_calls(&a.body, f).is_empty());
-    }
-    term::children(t)
-        .into_iter()
-        .any(|c| split_holds_self_call(c, f))
 }
 
 fn fresh(base: &str, taken: &[String]) -> String {
@@ -147,66 +134,108 @@ impl Env<'_> {
         let mut taken = Vec::new();
         term::free_vars(&ob.lhs, &mut taken);
         term::free_vars(&ob.rhs, &mut taken);
-        for (_, e) in &self.hyps {
+        let mentions = |e: &Eqn| {
             let mut fv = Vec::new();
             term::free_vars(&e.lhs, &mut fv);
             term::free_vars(&e.rhs, &mut fv);
-            if fv.iter().any(|n| varying.contains(&n)) {
-                return Err(format!(
-                    "induction along {f_name}: the `when` mentions a given the induction varies, which steps do not induct under yet"
-                ));
+            fv.iter().any(|n| varying.contains(&n))
+        };
+        // The hypotheses that mention what the induction varies are carried:
+        // each holds at a case's pattern, and a recursive call's hypothesis
+        // is taken where they are proved at the call's arguments. Each name
+        // once, as it stands innermost.
+        let mut carried: Vec<(String, Eqn)> = Vec::new();
+        for (i, (name, e)) in self.hyps.iter().enumerate() {
+            term::free_vars(&e.lhs, &mut taken);
+            term::free_vars(&e.rhs, &mut taken);
+            let shadowed = self.hyps[i + 1..].iter().any(|(n, _)| n == name);
+            if !shadowed && mentions(e) {
+                carried.push((name.clone(), e.clone()));
             }
-            taken.extend(fv);
         }
+        let kept: Vec<(String, Eqn)> = self
+            .hyps
+            .iter()
+            .filter(|(_, e)| !mentions(e))
+            .cloned()
+            .collect();
         taken.extend(ob.givens.iter().cloned());
         let ResolvedExpr::Match { arms, .. } = &def.body.node else {
             return Err("induction: the body is not a match".into());
         };
-        // Lean's induction principle for `f` splits a case further at every
-        // `match` (an `if` included) that holds a recursive call; one case
-        // per arm would not line up with it.
-        if arms.iter().any(|arm| split_holds_self_call(&arm.body, f)) {
-            return Err(format!(
-                "induction along {f_name}: a recursive call sits inside a case split of an arm, where Lean's induction principle for {f_name} splits the case further"
-            ));
-        }
         self.mark_used(f);
-        let mut cases = Vec::new();
-        for (i, arm) in arms.iter().enumerate() {
-            let mut binders = Vec::new();
-            for name in term::pattern_binders(&arm.pattern) {
-                let b = fresh(&name, &taken);
-                taken.push(b.clone());
-                binders.push(b);
+        let saved = std::mem::take(&mut self.hyps);
+        let result = (|| -> Result<Vec<InductCase>, String> {
+            let mut cases = Vec::new();
+            for (i, arm) in arms.iter().enumerate() {
+                let in_case = |m: String| format!("induction along {f_name}, case {}: {m}", i + 1);
+                let mut binders = Vec::new();
+                for name in term::pattern_binders(&arm.pattern) {
+                    let b = fresh(&name, &taken);
+                    taken.push(b.clone());
+                    binders.push(b);
+                }
+                let n = induct::self_calls(&arm.body, f).len();
+                let names: Vec<String> = (0..n)
+                    .map(|_| {
+                        self.next_ih += 1;
+                        format!("ih{}", self.next_ih)
+                    })
+                    .collect();
+                let case = induct::case(
+                    &def, &args, j, &v, &general, arm, &binders, &names, &ob.lhs, &ob.rhs,
+                )
+                .map_err(in_case)?;
+                let here = [(v.clone(), case.value.clone())];
+                self.hyps = kept.clone();
+                for (name, e) in &carried {
+                    let at = Eqn::new(term::subst(&e.lhs, &here)?, term::subst(&e.rhs, &here)?);
+                    self.hyps.push((name.clone(), at));
+                }
+                // A call's hypothesis is taken where every carried one is
+                // proved at its arguments; the case may do without it.
+                let mut ihs = Vec::new();
+                let mut carry = Vec::new();
+                let mut taken_ihs = Vec::new();
+                for ((ih, e), tau) in case.ihs.iter().zip(&case.at) {
+                    let mut proofs = Vec::new();
+                    for (_, c) in &carried {
+                        let at = (term::subst(&c.lhs, tau)?, term::subst(&c.rhs, tau)?);
+                        match self.prove_by_evaluation(&at.0, &at.1, depth) {
+                            Ok(p) => proofs.push(p),
+                            Err(_) => break,
+                        }
+                    }
+                    if proofs.len() == carried.len() {
+                        ihs.push(ih.clone());
+                        carry.push(proofs);
+                        taken_ihs.push((ih.clone(), e.clone()));
+                    } else {
+                        ihs.push("_".to_string());
+                        carry.push(Vec::new());
+                    }
+                }
+                self.hyps.extend(taken_ihs);
+                let proof = self
+                    .prove_by_evaluation(&case.goal.lhs, &case.goal.rhs, depth)
+                    .map_err(in_case)?;
+                cases.push(InductCase {
+                    binders,
+                    ihs,
+                    carry,
+                    proof,
+                });
             }
-            let n = induct::self_calls(&arm.body, f).len();
-            let ihs: Vec<String> = (0..n)
-                .map(|_| {
-                    self.next_ih += 1;
-                    format!("ih{}", self.next_ih)
-                })
-                .collect();
-            let (goal, hyps) = induct::case(
-                &def, &args, j, &v, &general, arm, &binders, &ihs, &ob.lhs, &ob.rhs,
-            )
-            .map_err(|m| format!("induction along {f_name}, case {}: {m}", i + 1))?;
-            let saved = self.hyps.len();
-            self.hyps.extend(hyps);
-            let proof = self.prove_by_evaluation(&goal.lhs, &goal.rhs, depth);
-            self.hyps.truncate(saved);
-            let proof =
-                proof.map_err(|m| format!("induction along {f_name}, case {}: {m}", i + 1))?;
-            cases.push(InductCase {
-                binders,
-                ihs,
-                proof,
-            });
-        }
+            Ok(cases)
+        })();
+        self.hyps = saved;
+        let cases = result?;
         Ok(Proof::Induct {
             fn_id: f,
             args,
             lhs: canon(&ob.lhs),
             rhs: canon(&ob.rhs),
+            carried: carried.into_iter().map(|(n, _)| n).collect(),
             cases,
         })
     }

@@ -265,6 +265,7 @@
  },
  "projects/k5_fdiv/domain/rational.av": {
   "steps": [
+   "isNonNeg.nonNegOfPositive",
    "minus.equalsPlusNegate",
    "negate.involutive",
    "plus.associative",
@@ -294,6 +295,7 @@
  },
  "projects/k5_fdiv/domain/roundscale.av": {
   "obligations": [
+   "ceilingFromWindow.euclideanWindow.implication",
    "remainderQuotient.smallRemainder.implication",
    "scaledCeiling.positiveScale.because1",
    "scaledCeiling.positiveScale.because2",
@@ -331,6 +333,26 @@
    "qrev.accGeneralizes"
   ]
  },
+ "proof-corpus/decomposed/isaplanner/prop_03.av": {
+  "steps": [
+   "count.countConcatMonotone"
+  ]
+ },
+ "proof-corpus/decomposed/isaplanner/prop_20.av": {
+  "steps": [
+   "insort.insortPreservesLength"
+  ]
+ },
+ "proof-corpus/decomposed/isaplanner/prop_28.av": {
+  "steps": [
+   "eqNat.eqNatRefl"
+  ]
+ },
+ "proof-corpus/decomposed/isaplanner/prop_60.av": {
+  "steps": [
+   "last.lastConsNonEmpty"
+  ]
+ },
  "proof-corpus/decomposed/isaplanner/prop_85.av": {
   "steps": [
    "len.lenSnocSucc"
@@ -338,6 +360,7 @@
  },
  "proof-corpus/decomposed/prod/lemma_05.av": {
   "steps": [
+   "drop.dropDropCons",
    "drop.dropSuccCons"
   ]
  },
@@ -456,12 +479,43 @@
  "proof-corpus/decomposed/prod/prop_44.av": {
   "steps": [
    "barbar.barbarTrueLeft",
-   "elem.elemConcatSingleton"
+   "elem.elemConcatSingleton",
+   "eqNat.eqNatRefl"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_48.av": {
+  "steps": [
+   "insert.insertPreservesLength"
+  ]
+ },
+ "proof-corpus/tip/isaplanner-mono/prop_35.av": {
+  "steps": [
+   "dropWhileF.dropWhileFalseId"
+  ]
+ },
+ "proof-corpus/tip/isaplanner-mono/prop_36.av": {
+  "steps": [
+   "takeWhileT.takeWhileTrueId"
+  ]
+ },
+ "proof-corpus/tip/isaplanner-mono/prop_43.av": {
+  "steps": [
+   "takeWhileZ.takeDropWhileAppend"
   ]
  },
  "proof-corpus/tip/isaplanner/prop_05.av": {
   "steps": [
    "count.countCons"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_06.av": {
+  "steps": [
+   "minus.minusPlusZero"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_10.av": {
+  "steps": [
+   "minus.minusSelf"
   ]
  },
  "proof-corpus/tip/isaplanner/prop_11.av": {
@@ -474,9 +528,29 @@
    "drop.dropSuccCons"
   ]
  },
+ "proof-corpus/tip/isaplanner/prop_15.av": {
+  "steps": [
+   "ins.lenInsSucc"
+  ]
+ },
  "proof-corpus/tip/isaplanner/prop_16.av": {
   "steps": [
    "last.lastSingleton"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_17.av": {
+  "steps": [
+   "le.leZeroEqZero"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_21.av": {
+  "steps": [
+   "le.leNAddNM"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_26.av": {
+  "steps": [
+   "elem.elemConcat"
   ]
  },
  "proof-corpus/tip/isaplanner/prop_39.av": {
@@ -510,6 +584,11 @@
    "zip.zipSelf"
   ]
  },
+ "proof-corpus/tip/isaplanner/prop_62.av": {
+  "steps": [
+   "last.lastConsNonEmpty"
+  ]
+ },
  "proof-corpus/tip/prod/lemma_01.av": {
   "steps": [
    "plus.plusSuccRight"
@@ -518,6 +597,11 @@
  "proof-corpus/tip/prod/lemma_03.av": {
   "steps": [
    "length.lengthSnoc"
+  ]
+ },
+ "proof-corpus/tip/prod/lemma_05.av": {
+  "steps": [
+   "drop.dropDropCons"
   ]
  },
  "proof-corpus/tip/prod/lemma_08.av": {
@@ -540,9 +624,24 @@
    "length.insertLength"
   ]
  },
+ "proof-corpus/tip/prod/lemma_19.av": {
+  "steps": [
+   "elem.insertElemImplies"
+  ]
+ },
+ "proof-corpus/tip/prod/lemma_21.av": {
+  "steps": [
+   "count.countInsertNeq"
+  ]
+ },
  "proof-corpus/tip/prod/prop_12.av": {
   "steps": [
    "qrev.qrevRevAppend"
+  ]
+ },
+ "proof-corpus/tip/prod/prop_47.av": {
+  "steps": [
+   "elem.insertElem"
   ]
  }
 }

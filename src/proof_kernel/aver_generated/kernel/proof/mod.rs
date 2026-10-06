@@ -73,6 +73,7 @@ pub enum Proof {
         aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
         crate::proof_kernel::aver_generated::kernel::term::Term,
         crate::proof_kernel::aver_generated::kernel::term::Term,
+        aver_rt::AverList<AverStr>,
         aver_rt::AverList<Case>,
     ),
     PListInduct(
@@ -195,13 +196,14 @@ impl Ord for Proof {
             (Proof::PHyp(a0), Proof::PHyp(b0)) => {
                 std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
             }
-            (Proof::PInduct(a0, a1, a2, a3, a4), Proof::PInduct(b0, b1, b2, b3, b4)) => {
+            (Proof::PInduct(a0, a1, a2, a3, a4, a5), Proof::PInduct(b0, b1, b2, b3, b4, b5)) => {
                 std::cmp::Ordering::Equal
                     .then_with(|| a0.cmp(b0))
                     .then_with(|| a1.cmp(b1))
                     .then_with(|| a2.cmp(b2))
                     .then_with(|| a3.cmp(b3))
                     .then_with(|| a4.cmp(b4))
+                    .then_with(|| a5.cmp(b5))
             }
             (
                 Proof::PIntInduct(a0, a1, a2, a3, a4, a5, a6, a7, a8),
@@ -370,14 +372,15 @@ impl aver_rt::AverDisplay for Proof {
                 ]
                 .join(", ")
             ),
-            Proof::PInduct(f0, f1, f2, f3, f4) => format!(
+            Proof::PInduct(f0, f1, f2, f3, f4, f5) => format!(
                 "PInduct({})",
                 vec![
                     f0.aver_display_inner(),
                     f1.aver_display_inner(),
                     f2.aver_display_inner(),
                     f3.aver_display_inner(),
-                    f4.aver_display_inner()
+                    f4.aver_display_inner(),
+                    f5.aver_display_inner()
                 ]
                 .join(", ")
             ),
@@ -435,6 +438,7 @@ impl aver_rt::AverDisplay for Proof {
 pub struct Case {
     pub binders: aver_rt::AverList<AverStr>,
     pub ihs: aver_rt::AverList<AverStr>,
+    pub carry: aver_rt::AverList<aver_rt::AverList<Proof>>,
     pub proof: Proof,
 }
 
@@ -448,6 +452,7 @@ impl Ord for Case {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         std::cmp::Ordering::Equal
             .then_with(|| self.binders.cmp(&other.binders))
+            .then_with(|| self.carry.cmp(&other.carry))
             .then_with(|| self.ihs.cmp(&other.ihs))
             .then_with(|| self.proof.cmp(&other.proof))
     }
@@ -460,6 +465,7 @@ impl aver_rt::AverDisplay for Case {
             vec![
                 format!("binders: {}", self.binders.aver_display_inner()),
                 format!("ihs: {}", self.ihs.aver_display_inner()),
+                format!("carry: {}", self.carry.aver_display_inner()),
                 format!("proof: {}", self.proof.aver_display_inner())
             ]
             .join(", ")

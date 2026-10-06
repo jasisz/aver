@@ -1527,7 +1527,7 @@ fn joining_texts_is_never_read_as_int_arithmetic() {
     // step applies to it, even in a script made by hand.
     let script = |op: &str| {
         format!(
-            "(steps 7 (obligation k (a b) (none) (op {op} (v a) (v b)) (op {op} (v b) (v a))) (defs) (consts) (laws) (proof (ring (op {op} (v a) (v b)) (op {op} (v b) (v a)))))"
+            "(steps 8 (obligation k (a b) (none) (op {op} (v a) (v b)) (op {op} (v b) (v a))) (defs) (consts) (laws) (proof (ring (op {op} (v a) (v b)) (op {op} (v b) (v a)))))"
         )
     };
     assert_eq!(
@@ -1949,25 +1949,120 @@ fn aver_facts_lists_the_facts_with_their_statements() {
     );
 }
 
-/// Induction along a function whose arm splits (`if`) around its
-/// recursive call is refused by name: Lean's induction principle for it
-/// has one case per branch, not one per arm.
+const SPLIT_LAWS: [&str; 3] = ["double.keepsPositive", "ins.growsByOne", "minus.minusSelf"];
+
+/// Induction along a function whose arm splits again around its recursive
+/// call (a `match` on a comparison, a `match` on another parameter), and
+/// under a `when` about the given the induction varies, which every case
+/// carries. Both kernels accept the step scripts, and the kernel written in
+/// Aver refuses a hypothesis taken without proving the carried `when` at
+/// the call, one taken on a wrong proof of it, and one the case uses after
+/// doing without it.
 #[test]
-fn induction_refuses_a_recursive_call_inside_a_split_arm() {
-    let dir = scratch("split-arm");
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(
-        dir.join("split.av"),
-        "module Split\n    intent = \"Insertion with an if around the recursive call.\"\n    exposes [ins, size]\n    effects []\n\nfn size(xs: List<Int>) -> Int\n    ? \"Length.\"\n    match xs\n        [] -> 0\n        [h, ..t] -> size(t) + 1\n\nverify size\n    size([1]) => 1\n\nfn ins(x: Int, xs: List<Int>) -> List<Int>\n    ? \"Insert before the first larger element.\"\n    match xs\n        [] -> [x]\n        [h, ..t] -> match x < h\n            true -> List.prepend(x, xs)\n            false -> List.prepend(h, ins(x, t))\n\nverify ins\n    ins(2, [1, 3]) => [1, 2, 3]\n\nverify ins law growsByOne\n    given x: Int = [0, 2]\n    given xs: List<Int> = [[], [1, 3]]\n    size(ins(x, xs)) => size(xs) + 1\n",
+fn both_kernels_induct_through_a_split_arm_and_under_a_carried_when() {
+    let out = scratch("split-arm");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("induction_split.av", &out)
+            .into_iter()
+            .collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), SPLIT_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let law = read("double.keepsPositive");
+    assert!(law.contains(" (carry when) "), "{law}");
+    // The hypothesis of the cell case with the proof of the carried `when`
+    // at its call: `(ih1 PROOF)`.
+    let ih_open = law.find("((ih1 ").expect("a carried hypothesis") + 1;
+    let ih_close = closing(&law, ih_open);
+    let (proof_from, proof_to) = sub_forms(&law, ih_open)[0];
+    for (kind, text) in [
+        (
+            "the hypothesis without the carried proof",
+            format!("{}ih1{}", &law[..ih_open], &law[ih_close + 1..]),
+        ),
+        ("nothing carried", law.replacen(" (carry when)", "", 1)),
+        (
+            "a wrong proof of the carried `when`",
+            format!("{}(hyp when){}", &law[..proof_from], &law[proof_to..]),
+        ),
+        (
+            "the hypothesis done without but used",
+            format!("{}(_{}", &law[..ih_open], &law[ih_open + 4..]),
+        ),
+    ] {
+        let refused = aver::proof_kernel::verdict(&text);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "{kind}: {refused:?}\n{text}"
+        );
+        let path = out.join("mutant.steps");
+        fs::write(&path, &text).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(
+            !result.status.success(),
+            "{kind}: {}",
+            format_output(&result)
+        );
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_inducts_through_a_split_arm_and_under_a_carried_when() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("split-arm-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "induction_split.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "0",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
     )
     .unwrap();
-    let result = aver_in(&dir, &["proof", "split.av", "--backend", "aver"]);
-    let text = format_output(&result);
+    for law in SPLIT_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let lean = fs::read_to_string(out.join("InductionSplit.lean")).unwrap();
+    let line = exact_line(&lean, "double_law_keepsPositive").to_string();
+    // The recursor's motive is the claim under the carried `when`, and the
+    // recursor is applied to the `when` itself at the end.
+    let carried = " xs (show (allPos xs : Bool) = (true : Bool) from h_when))";
     assert!(
-        text.contains("induction along ins: a recursive call sits inside a case split of an arm"),
-        "{text}"
+        line.contains("List.rec (motive := fun xs => (allPos xs : Bool) = (true : Bool) → ")
+            && line.contains(carried),
+        "{line}"
     );
-    let _ = fs::remove_dir_all(dir);
+    let unapplied = line.replacen(carried, " xs)", 1);
+    assert!(
+        lean_refuses(
+            &out,
+            "InductionSplit.lean",
+            &lean.replacen(&line, &unapplied, 1),
+            "double.keepsPositive"
+        ),
+        "the `when` left unapplied: Lean must refuse the step term"
+    );
+    let _ = fs::remove_dir_all(out);
 }
 
 const MAP_LAWS: [&str; 8] = [

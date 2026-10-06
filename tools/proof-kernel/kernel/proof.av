@@ -26,7 +26,7 @@ type Proof
     PHave(String, Term, Proof, Proof)
     PEnum(String, Term, Term, List<Proof>)
     PAbsurd(Proof, Term, Term)
-    PInduct(String, List<Term>, Term, Term, List<Case>)
+    PInduct(String, List<Term>, Term, Term, List<String>, List<Case>)
     PListInduct(String, Term, Term, Proof, String, String, String, Proof)
     PIntInduct(String, Term, Term, String, Proof, List<String>, List<Proof>, String, Proof)
     PRing(Term, Term)
@@ -35,6 +35,7 @@ type Proof
 record Case
     binders: List<String>
     ihs: List<String>
+    carry: List<List<Proof>>
     proof: Proof
 
 record Def

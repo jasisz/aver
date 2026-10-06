@@ -523,23 +523,81 @@ verify intInductProof
     intInductProof([]) => Result.Err("malformed intinduct")
 
 fn inductProof(args: List<Sexp>) -> Result<Proof, String>
-    ? "(induct FN (TERM…) TERM TERM (case (NAME…) (NAME…) PROOF)…)"
+    ? "(induct FN (TERM…) TERM TERM [(carry NAME…)] (case (NAME…) (IH…) PROOF)…)"
     match args
-        [Sexp.Atom(f), xs, l, r, ..cs] -> Result.Ok(Proof.PInduct(f, termList(xs)?, term(l)?, term(r)?, cases(cs)?))
+        [Sexp.Atom(f), xs, l, r, ..rest] -> inductWith(f, termList(xs)?, term(l)?, term(r)?, carried(rest)?)
         _ -> Result.Err("malformed induct")
 
 verify inductProof
     inductProof([]) => Result.Err("malformed induct")
 
+fn inductWith(f: String, xs: List<Term>, l: Term, r: Term, rest: Tuple<List<String>, List<Sexp>>) -> Result<Proof, String>
+    ? "The induction step, once the carried names are split off its cases."
+    match rest
+        (ns, cs) -> Result.Ok(Proof.PInduct(f, xs, l, r, ns, cases(cs)?))
+
+verify inductWith
+    inductWith("f", [], Term.TUnit, Term.TUnit, (["h"], [])) => Result.Ok(Proof.PInduct("f", [], Term.TUnit, Term.TUnit, ["h"], []))
+
+fn carried(ss: List<Sexp>) -> Result<Tuple<List<String>, List<Sexp>>, String>
+    ? "The names after carry, when the first form is (carry NAME…), and the forms after it."
+    match ss
+        [] -> Result.Ok(([], []))
+        [s, ..rest] -> match s
+            Sexp.Node([Sexp.Atom("carry"), ..ns]) -> Result.Ok((atoms(ns)?, rest))
+            _ -> Result.Ok(([], ss))
+
+verify carried
+    carried([Sexp.Node([Sexp.Atom("carry"), Sexp.Atom("h")])]) => Result.Ok((["h"], []))
+    carried([Sexp.Atom("x")]) => Result.Ok(([], [Sexp.Atom("x")]))
+
 fn cases(ss: List<Sexp>) -> Result<List<Case>, String>
-    ? "(case (NAME…) (NAME…) PROOF)…"
+    ? "(case (NAME…) (IH…) PROOF)…, each IH a NAME or (NAME PROOF…) with the proofs of the carried hypotheses."
     match ss
         [] -> Result.Ok([])
-        [Sexp.Node([Sexp.Atom("case"), bs, hs, p]), ..rest] -> Result.Ok(List.prepend(Case(binders = atoms(items(bs)?)?, ihs = atoms(items(hs)?)?, proof = proof(p)?), cases(rest)?))
+        [Sexp.Node([Sexp.Atom("case"), bs, hs, p]), ..rest] -> Result.Ok(List.prepend(Case(binders = atoms(items(bs)?)?, ihs = ihNames(items(hs)?)?, carry = ihCarry(items(hs)?)?, proof = proof(p)?), cases(rest)?))
         _ -> Result.Err("malformed case")
 
 verify cases
     cases([Sexp.Atom("x")]) => Result.Err("malformed case")
+
+fn ihNames(ss: List<Sexp>) -> Result<List<String>, String>
+    ? "The name of each induction hypothesis."
+    match ss
+        [] -> Result.Ok([])
+        [s, ..rest] -> Result.Ok(List.prepend(ihName(s)?, ihNames(rest)?))
+
+verify ihNames
+    ihNames([Sexp.Atom("ih1"), Sexp.Node([Sexp.Atom("ih2")])]) => Result.Ok(["ih1", "ih2"])
+
+fn ihName(s: Sexp) -> Result<String, String>
+    ? "NAME or (NAME PROOF…)."
+    match s
+        Sexp.Atom(n) -> Result.Ok(n)
+        Sexp.Node([Sexp.Atom(n), ..ps]) -> Result.Ok(n)
+        _ -> Result.Err("malformed hypothesis")
+
+verify ihName
+    ihName(Sexp.Node([])) => Result.Err("malformed hypothesis")
+
+fn ihCarry(ss: List<Sexp>) -> Result<List<List<Proof>>, String>
+    ? "The proofs of the carried hypotheses for each induction hypothesis."
+    match ss
+        [] -> Result.Ok([])
+        [s, ..rest] -> Result.Ok(List.prepend(ihProofs(s)?, ihCarry(rest)?))
+
+verify ihCarry
+    ihCarry([Sexp.Atom("ih1")]) => Result.Ok([[]])
+
+fn ihProofs(s: Sexp) -> Result<List<Proof>, String>
+    ? "None for a bare NAME; the proofs after the name otherwise."
+    match s
+        Sexp.Atom(n) -> Result.Ok([])
+        Sexp.Node([Sexp.Atom(n), ..ps]) -> proofs(ps)
+        _ -> Result.Err("malformed hypothesis")
+
+verify ihProofs
+    ihProofs(Sexp.Atom("ih")) => Result.Ok([])
 
 fn absurdProof(args: List<Sexp>) -> Result<Proof, String>
     ? "(absurd PROOF TERM TERM)"
@@ -728,9 +786,9 @@ verify consts
     consts([]) => Result.Ok([])
 
 fn script(s: Sexp) -> Result<Script, String>
-    ? "(steps 7 (obligation …) (defs …) (consts …) (laws …) (proof …)); version 7 only."
+    ? "(steps 8 (obligation …) (defs …) (consts …) (laws …) (proof …)); version 8 only."
     match s
-        Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("7"), o, Sexp.Node([Sexp.Atom("defs"), ..ds]), Sexp.Node([Sexp.Atom("consts"), ..cs]), Sexp.Node([Sexp.Atom("laws"), ..ls]), Sexp.Node([Sexp.Atom("proof"), p])]) -> scriptOf(obligation(o)?, defs(ds)?, consts(cs)?, laws(ls)?, proof(p)?)
+        Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("8"), o, Sexp.Node([Sexp.Atom("defs"), ..ds]), Sexp.Node([Sexp.Atom("consts"), ..cs]), Sexp.Node([Sexp.Atom("laws"), ..ls]), Sexp.Node([Sexp.Atom("proof"), p])]) -> scriptOf(obligation(o)?, defs(ds)?, consts(cs)?, laws(ls)?, proof(p)?)
         Sexp.Node([Sexp.Atom("steps"), Sexp.Atom(v), ..rest]) -> Result.Err("unsupported step format version {v}")
         _ -> Result.Err("not a step script")
 

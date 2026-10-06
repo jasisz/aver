@@ -300,7 +300,10 @@ fn split_calls(p: &Proof, out: &mut Vec<crate::ir::identity::FnId>) {
             split_calls(proof, out);
             split_calls(body, out);
         }
-        Proof::Induct { cases, .. } => cases.iter().for_each(|c| split_calls(&c.proof, out)),
+        Proof::Induct { cases, .. } => cases.iter().for_each(|c| {
+            split_calls(&c.proof, out);
+            c.carry.iter().flatten().for_each(|q| split_calls(q, out));
+        }),
         Proof::InductList { nil, cons, .. } => {
             split_calls(nil, out);
             split_calls(cons, out);
@@ -346,7 +349,12 @@ fn uses_hyp(p: &Proof, name: &str) -> bool {
             if_true, if_false, ..
         } => uses_hyp(if_true, name) || uses_hyp(if_false, name),
         Proof::Have { proof, body, .. } => uses_hyp(proof, name) || uses_hyp(body, name),
-        Proof::Induct { cases, .. } => cases.iter().any(|c| uses_hyp(&c.proof, name)),
+        Proof::Induct { carried, cases, .. } => {
+            carried.iter().any(|n| n == name)
+                || cases.iter().any(|c| {
+                    uses_hyp(&c.proof, name) || c.carry.iter().flatten().any(|q| uses_hyp(q, name))
+                })
+        }
         Proof::InductList { nil, cons, .. } => uses_hyp(nil, name) || uses_hyp(cons, name),
         Proof::InductInt {
             base,

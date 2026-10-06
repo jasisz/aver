@@ -40,6 +40,9 @@ pub(crate) struct Env<'a> {
     /// Predicate hypotheses opened on the way to the current case, so
     /// none is opened twice.
     pub opened: Vec<Term>,
+    /// Predicate hypotheses whose evaluation gave nothing new in this
+    /// attempt, so none is evaluated again.
+    pub barren: Vec<Term>,
     /// Whether the `when` of a cited law is being proved, so that a cited
     /// law with a `when` is not offered again inside it.
     pub proving_cited_when: bool,
@@ -64,6 +67,7 @@ impl<'a> Env<'a> {
             hints: Vec::new(),
             open_premises: Vec::new(),
             opened: Vec::new(),
+            barren: Vec::new(),
             proving_cited_when: false,
         }
     }
