@@ -48,6 +48,7 @@ fn conclude(p: Proof, env: Env, path: String) -> Result<Eqn, String>
         Proof.PLaw(k, bs, ps) -> lawStep(k, bs, ps, env, path)
         Proof.PCompute(a, b) -> compute(a, b, path)
         Proof.PCases(on, h, t, f) -> cases(on, h, t, f, env, path)
+        Proof.PSplit(f, xs, on, h, cs) -> split(f, xs, on, h, cs, env, path)
         Proof.PHave(h, fact, q, body) -> have(h, fact, q, body, env, path)
         Proof.PEnum(v, l, r, cs) -> enumStep(v, l, r, cs, env, path)
         Proof.PAbsurd(q, l, r) -> absurd(conclude(q, env, "{path}/absurd")?, l, r, path)
@@ -269,6 +270,124 @@ fn casesOfBool(on: Term, h: String, t: Proof, f: Proof, env: Env, path: String) 
 
 verify casesOfBool
     casesOfBool(Term.TVar("c"), "h", Proof.PHyp("h"), Proof.PHyp("h"), emptyEnv(), "p") => Result.Err("step p: the two branches prove different equations")
+
+fn split(f: String, xs: List<Term>, on: Term, h: String, cs: List<SplitCase>, env: Env, path: String) -> Result<Eqn, String>
+    ? "A split on the constructor of on, the subject of the match that is f's body at xs: the arms' patterns give on its type, and there is one case per constructor of it."
+    match findDef(f, env.defs)
+        Option.None -> refuse(path, "no definition of {f}")
+        Option.Some(d) -> match (List.len(d.params) == List.len(xs), d.body)
+            (true, Term.TMatch(s, arms)) -> splitOn(Kernel.Subst.subst(s, bindLets(d.lets, List.reverse(zipBind(d.params, xs)))?)? == on, arms, on, h, cs, env, path)
+            _ -> refuse(path, "{f} at these arguments is not a match")
+
+verify split
+    split("f", [], Term.TVar("x"), "h", [], emptyEnv(), "p") => Result.Err("step p: no definition of f")
+
+fn splitOn(isSubject: Bool, arms: List<Arm>, on: Term, h: String, cs: List<SplitCase>, env: Env, path: String) -> Result<Eqn, String>
+    ? "The term split on is the match's subject, and the cases are the constructors its patterns read: [] and [h, ..t] for a list, for a sum one per constructor, every one an arm names among them."
+    readsList = Bool.and(Bool.and(splitCtors(cs) == ["nil", "cons"], binderCounts(cs) == [0, 2]), Bool.or(hasNil(arms), hasCons(arms)))
+    match (isSubject, Bool.or(readsList, armsName(arms, splitCtors(cs))))
+        (false, _) -> refuse(path, "the term split on is not the subject of the match")
+        (true, true) -> splitCases(cs, on, h, [], env, path)
+        (true, false) -> refuse(path, "the cases are not the constructors the patterns read")
+
+verify splitOn
+    splitOn(false, [], Term.TVar("x"), "h", [], emptyEnv(), "p") => Result.Err("step p: the term split on is not the subject of the match")
+    splitOn(true, [Arm(pattern = Pat.PNil, body = Term.TInt(0)), Arm(pattern = Pat.PWild, body = Term.TInt(1))], Term.TVar("x"), "h", [SplitCase(ctor = "nil", binders = [], proof = Proof.PRefl(Term.TInt(0)))], emptyEnv(), "p") => Result.Err("step p: the cases are not the constructors the patterns read")
+    splitOn(true, [Arm(pattern = Pat.PCtor("C.A", []), body = Term.TInt(0)), Arm(pattern = Pat.PWild, body = Term.TInt(1))], Term.TVar("x"), "h", [SplitCase(ctor = "C.B", binders = [], proof = Proof.PRefl(Term.TInt(0)))], emptyEnv(), "p") => Result.Err("step p: the cases are not the constructors the patterns read")
+    splitOn(true, [Arm(pattern = Pat.PCtor("C.A", []), body = Term.TInt(0))], Term.TVar("x"), "h", [SplitCase(ctor = "C.A", binders = [], proof = Proof.PRefl(Term.TInt(0))), SplitCase(ctor = "C.B", binders = [], proof = Proof.PRefl(Term.TInt(0)))], emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TInt(0), rhs = Term.TInt(0)))
+
+fn splitCtors(cs: List<SplitCase>) -> List<String>
+    ? "The constructor of each case."
+    match cs
+        [] -> []
+        [c, ..rest] -> List.prepend(c.ctor, splitCtors(rest))
+
+verify splitCtors
+    splitCtors([]) => []
+
+fn binderCounts(cs: List<SplitCase>) -> List<Int>
+    ? "How many names each case binds."
+    match cs
+        [] -> []
+        [c, ..rest] -> List.prepend(List.len(c.binders), binderCounts(rest))
+
+verify binderCounts
+    binderCounts([]) => []
+
+fn armsName(arms: List<Arm>, ctors: List<String>) -> Bool
+    ? "Some arm reads a constructor, every constructor an arm reads is among ctors, no arm reads a list, and ctors repeat none."
+    Bool.and(Bool.and(hasCtor(arms), ctorsAmong(arms, ctors)), Bool.and(Bool.not(Bool.or(hasNil(arms), hasCons(arms))), distinct(ctors)))
+
+verify armsName
+    armsName([Arm(pattern = Pat.PCtor("C.A", []), body = Term.TUnit)], ["C.A", "C.A"]) => false
+    armsName([Arm(pattern = Pat.PWild, body = Term.TUnit)], ["C.A"]) => false
+
+fn hasCtor(arms: List<Arm>) -> Bool
+    ? "An arm with a constructor pattern."
+    match arms
+        [] -> false
+        [a, ..rest] -> match a.pattern
+            Pat.PCtor(c, ns) -> true
+            _ -> hasCtor(rest)
+
+verify hasCtor
+    hasCtor([]) => false
+
+fn ctorsAmong(arms: List<Arm>, ctors: List<String>) -> Bool
+    ? "Every constructor an arm reads is among ctors."
+    match arms
+        [] -> true
+        [a, ..rest] -> match a.pattern
+            Pat.PCtor(c, ns) -> Bool.and(List.contains(ctors, c), ctorsAmong(rest, ctors))
+            _ -> ctorsAmong(rest, ctors)
+
+verify ctorsAmong
+    ctorsAmong([Arm(pattern = Pat.PCtor("C.A", []), body = Term.TUnit)], ["C.B"]) => false
+
+fn distinct(ns: List<String>) -> Bool
+    ? "No name twice."
+    match ns
+        [] -> true
+        [n, ..rest] -> Bool.and(Bool.not(List.contains(rest, n)), distinct(rest))
+
+verify distinct
+    distinct(["a", "b", "a"]) => false
+
+fn splitValue(c: SplitCase) -> Term
+    ? "The constructor of a case applied to its names."
+    match (c.ctor, c.binders)
+        ("nil", _) -> Term.TList([])
+        ("cons", [a, b]) -> Term.TBi("List.prepend", [Term.TVar(a), Term.TVar(b)])
+        _ -> Term.TCtor(c.ctor, namesToVars(c.binders))
+
+verify splitValue
+    splitValue(SplitCase(ctor = "cons", binders = ["a", "b"], proof = Proof.PRefl(Term.TUnit))) => Term.TBi("List.prepend", [Term.TVar("a"), Term.TVar("b")])
+    splitValue(SplitCase(ctor = "C.S", binders = ["a"], proof = Proof.PRefl(Term.TUnit))) => Term.TCtor("C.S", [Term.TVar("a")])
+
+fn splitCases(cs: List<SplitCase>, on: Term, h: String, before: List<Eqn>, env: Env, path: String) -> Result<Eqn, String>
+    ? "Each case under h : on = its constructor at names fresh for on, the hypotheses, the givens and the constants; every case proves the same equation, which names none of them."
+    match cs
+        [] -> match before
+            [e, ..rest] -> Result.Ok(e)
+            [] -> refuse(path, "a split with no cases")
+        [c, ..rest] -> match freshAll(c.binders, List.concat(Kernel.Subst.freeVars(on), hypNames(env.hyps)), env, [])
+            false -> refuse(path, "the names of case {c.ctor} are not fresh")
+            true -> splitNext(conclude(c.proof, withHyps(env, List.prepend(Hyp(name = h, eqn = Eqn(lhs = on, rhs = splitValue(c))), env.hyps)), "{path}/split.{c.ctor}")?, c, rest, on, h, before, env, path)
+
+verify splitCases
+    splitCases([], Term.TVar("x"), "h", [], emptyEnv(), "p") => Result.Err("step p: a split with no cases")
+    splitCases([SplitCase(ctor = "C.A", binders = ["x"], proof = Proof.PRefl(Term.TUnit))], Term.TVar("x"), "h", [], emptyEnv(), "p") => Result.Err("step p: the names of case C.A are not fresh")
+
+fn splitNext(e: Eqn, c: SplitCase, rest: List<SplitCase>, on: Term, h: String, before: List<Eqn>, env: Env, path: String) -> Result<Eqn, String>
+    ? "One case's equation: it names none of the case's names, and it is the one every earlier case proved."
+    match (anyIn(List.concat(Kernel.Subst.freeVars(e.lhs), Kernel.Subst.freeVars(e.rhs)), c.binders), Bool.or(List.len(before) == 0, before == [e]))
+        (true, _) -> refuse(path, "case {c.ctor} proves an equation about its own names")
+        (_, false) -> refuse(path, "the cases prove different equations")
+        _ -> splitCases(rest, on, h, [e], env, path)
+
+verify splitNext
+    splitNext(Eqn(lhs = Term.TVar("a"), rhs = Term.TVar("a")), SplitCase(ctor = "C.A", binders = ["a"], proof = Proof.PRefl(Term.TUnit)), [], Term.TVar("x"), "h", [], emptyEnv(), "p") => Result.Err("step p: case C.A proves an equation about its own names")
+    splitNext(Eqn(lhs = Term.TInt(1), rhs = Term.TInt(1)), SplitCase(ctor = "C.A", binders = [], proof = Proof.PRefl(Term.TUnit)), [], Term.TVar("x"), "h", [Eqn(lhs = Term.TInt(2), rhs = Term.TInt(2))], emptyEnv(), "p") => Result.Err("step p: the cases prove different equations")
 
 fn have(h: String, fact: Term, q: Proof, body: Proof, env: Env, path: String) -> Result<Eqn, String>
     ? "A cut: q proves fact = true in the current scope, then body is checked with it as hypothesis h."

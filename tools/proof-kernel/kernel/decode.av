@@ -344,6 +344,7 @@ fn proofOf(tag: String, args: List<Sexp>) -> Result<Proof, String>
         "law" -> instanceProof(args, "law")
         "compute" -> computeProof(args)
         "cases" -> casesProof(args)
+        "split" -> splitProof(args)
         "have" -> haveProof(args)
         "enum" -> enumProof(args)
         "absurd" -> absurdProof(args)
@@ -455,6 +456,26 @@ fn casesProof(args: List<Sexp>) -> Result<Proof, String>
 
 verify casesProof
     casesProof([]) => Result.Err("malformed cases")
+
+fn splitProof(args: List<Sexp>) -> Result<Proof, String>
+    ? "(split FN (TERM…) TERM NAME (case CTOR (NAME…) PROOF)…)"
+    match args
+        [Sexp.Atom(f), xs, on, Sexp.Atom(h), ..cs] -> Result.Ok(Proof.PSplit(f, termList(xs)?, term(on)?, h, splitCases(cs)?))
+        _ -> Result.Err("malformed split")
+
+verify splitProof
+    splitProof([]) => Result.Err("malformed split")
+    splitProof([Sexp.Atom("f"), Sexp.Node([]), Sexp.Node([Sexp.Atom("v"), Sexp.Atom("x")]), Sexp.Atom("h"), Sexp.Node([Sexp.Atom("case"), Sexp.Atom("nil"), Sexp.Node([]), Sexp.Node([Sexp.Atom("hyp"), Sexp.Atom("h")])])]) => Result.Ok(Proof.PSplit("f", [], Term.TVar("x"), "h", [SplitCase(ctor = "nil", binders = [], proof = Proof.PHyp("h"))]))
+
+fn splitCases(ss: List<Sexp>) -> Result<List<SplitCase>, String>
+    ? "(case CTOR (NAME…) PROOF)…"
+    match ss
+        [] -> Result.Ok([])
+        [Sexp.Node([Sexp.Atom("case"), Sexp.Atom(c), bs, p]), ..rest] -> Result.Ok(List.prepend(SplitCase(ctor = c, binders = atoms(items(bs)?)?, proof = proof(p)?), splitCases(rest)?))
+        _ -> Result.Err("malformed split case")
+
+verify splitCases
+    splitCases([Sexp.Atom("x")]) => Result.Err("malformed split case")
 
 fn haveProof(args: List<Sexp>) -> Result<Proof, String>
     ? "(have NAME TERM PROOF PROOF)"
@@ -810,9 +831,9 @@ verify consts
     consts([]) => Result.Ok([])
 
 fn script(s: Sexp) -> Result<Script, String>
-    ? "(steps 9 (obligation …) (defs …) (consts …) (laws …) (proof …)); version 9 only."
+    ? "(steps 10 (obligation …) (defs …) (consts …) (laws …) (proof …)); version 10 only."
     match s
-        Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("9"), o, Sexp.Node([Sexp.Atom("defs"), ..ds]), Sexp.Node([Sexp.Atom("consts"), ..cs]), Sexp.Node([Sexp.Atom("laws"), ..ls]), Sexp.Node([Sexp.Atom("proof"), p])]) -> scriptOf(obligation(o)?, defs(ds)?, consts(cs)?, laws(ls)?, proof(p)?)
+        Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("10"), o, Sexp.Node([Sexp.Atom("defs"), ..ds]), Sexp.Node([Sexp.Atom("consts"), ..cs]), Sexp.Node([Sexp.Atom("laws"), ..ls]), Sexp.Node([Sexp.Atom("proof"), p])]) -> scriptOf(obligation(o)?, defs(ds)?, consts(cs)?, laws(ls)?, proof(p)?)
         Sexp.Node([Sexp.Atom("steps"), Sexp.Atom(v), ..rest]) -> Result.Err("unsupported step format version {v}")
         _ -> Result.Err("not a step script")
 

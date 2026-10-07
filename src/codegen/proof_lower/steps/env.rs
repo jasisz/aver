@@ -52,6 +52,13 @@ pub(crate) struct Env<'a> {
     pub open_halving: bool,
     /// Whether such a definition was opened.
     pub met_halving: std::cell::Cell<bool>,
+    /// The obligation's givens, which a fresh name must avoid.
+    pub givens: Vec<String>,
+    /// The givens of a finite type, which a split into every value covers.
+    pub finite: Vec<String>,
+    /// The names a constructor split has bound so far: a term that
+    /// mentions one is not split on again (see [`super::split`]).
+    pub split_binders: Vec<String>,
 }
 
 impl<'a> Env<'a> {
@@ -77,6 +84,9 @@ impl<'a> Env<'a> {
             proving_cited_when: false,
             open_halving: true,
             met_halving: std::cell::Cell::new(false),
+            givens: Vec::new(),
+            finite: Vec::new(),
+            split_binders: Vec::new(),
         }
     }
 

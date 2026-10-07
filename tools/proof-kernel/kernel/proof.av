@@ -4,7 +4,7 @@ module Proof
         "laws and the script that ties them"
         "to one obligation."
         "Each step names its rule and writes out every instance; see src/ir/proof_steps/mod.rs."
-    exposes [Proof, Case, More, IhAt, Def, Const, Law, Fact, Script, Hyp, Given, premiseOf]
+    exposes [Proof, Case, SplitCase, More, IhAt, Def, Const, Law, Fact, Script, Hyp, Given, premiseOf]
     depends [Kernel.Term]
     effects []
 
@@ -23,6 +23,7 @@ type Proof
     PLaw(String, List<Binding>, List<Proof>)
     PCompute(Term, Term)
     PCases(Term, String, Proof, Proof)
+    PSplit(String, List<Term>, Term, String, List<SplitCase>)
     PHave(String, Term, Proof, Proof)
     PEnum(String, Term, Term, List<Proof>)
     PAbsurd(Proof, Term, Term)
@@ -37,6 +38,11 @@ record Case
     ihs: List<String>
     carry: List<List<Proof>>
     more: List<More>
+    proof: Proof
+
+record SplitCase
+    ctor: String
+    binders: List<String>
     proof: Proof
 
 record More

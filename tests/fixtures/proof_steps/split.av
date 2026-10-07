@@ -1,0 +1,105 @@
+module Split
+    intent =
+        "Steps that split on the constructor of a subject a `match` stops at: a sum with fields"
+        "behind a catch-all arm, an Option, a Result, and a list read by a hypothesis that calls"
+        "a recursive function."
+    exposes [switchOff, bump, twice, double]
+
+type Light
+    Off
+    Dim(Int)
+    Full
+
+record Lamp
+    light: Light
+    watts: Int
+
+fn isOn(l: Lamp) -> Bool
+    ? "Whether the lamp gives light."
+    match l.light
+        Light.Off -> false
+        _ -> true
+
+verify isOn
+    isOn(Lamp(light = Light.Off, watts = 5)) => false
+    isOn(Lamp(light = Light.Dim(2), watts = 5)) => true
+
+fn switchOff(l: Lamp) -> Lamp
+    ? "The lamp switched off, its watts kept."
+    match l.light
+        Light.Off -> l
+        _ -> Lamp(light = Light.Off, watts = l.watts)
+
+verify switchOff
+    switchOff(Lamp(light = Light.Full, watts = 5)) => Lamp(light = Light.Off, watts = 5)
+
+verify switchOff law staysDark
+    given l: Lamp = [Lamp(light = Light.Off, watts = 5), Lamp(light = Light.Dim(2), watts = 5), Lamp(light = Light.Full, watts = 9)]
+    isOn(switchOff(l)) => false
+
+fn bump(o: Option<Int>) -> Option<Int>
+    ? "One more than the value, if there is one."
+    match o
+        Option.None -> Option.None
+        Option.Some(v) -> Option.Some(v + 1)
+
+verify bump
+    bump(Option.Some(1)) => Option.Some(2)
+
+fn present(o: Option<Int>) -> Bool
+    ? "Whether there is a value."
+    match o
+        Option.None -> false
+        Option.Some(v) -> true
+
+verify present
+    present(Option.None) => false
+
+verify bump law keepsPresence
+    given o: Option<Int> = [Option.None, Option.Some(3)]
+    present(bump(o)) => present(o)
+
+fn twice(r: Result<Int, String>) -> Result<Int, String>
+    ? "The value doubled, an error kept."
+    match r
+        Result.Ok(v) -> Result.Ok(v * 2)
+        Result.Err(e) -> Result.Err(e)
+
+verify twice
+    twice(Result.Ok(2)) => Result.Ok(4)
+
+fn succeeded(r: Result<Int, String>) -> Bool
+    ? "Whether the result is a value."
+    match r
+        Result.Ok(v) -> true
+        Result.Err(e) -> false
+
+verify succeeded
+    succeeded(Result.Err("no")) => false
+
+verify twice law keepsSuccess
+    given r: Result<Int, String> = [Result.Ok(3), Result.Err("no")]
+    succeeded(twice(r)) => succeeded(r)
+
+fn double(xs: List<Int>) -> List<Int>
+    ? "Every element doubled."
+    match xs
+        [] -> []
+        [h, ..t] -> List.prepend(h * 2, double(t))
+
+verify double
+    double([1, 2]) => [2, 4]
+
+fn sameLength(xs: List<Int>) -> Bool
+    ? "Doubling keeps the length, here and at every tail."
+    match xs
+        [] -> List.len(double(xs)) == List.len(xs)
+        [h, ..t] -> Bool.and(sameLength(t), List.len(double(xs)) == List.len(xs))
+
+verify sameLength
+    sameLength([1, 2]) => true
+
+verify double law keepsLength
+    given xs: List<Int> = [[], [1], [1, 2]]
+    because sameLength(xs)
+    List.len(double(xs)) => List.len(xs)

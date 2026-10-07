@@ -51,6 +51,13 @@ pub enum Proof {
         std::sync::Arc<Proof>,
         std::sync::Arc<Proof>,
     ),
+    PSplit(
+        AverStr,
+        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+        crate::proof_kernel::aver_generated::kernel::term::Term,
+        AverStr,
+        aver_rt::AverList<SplitCase>,
+    ),
     PHave(
         AverStr,
         crate::proof_kernel::aver_generated::kernel::term::Term,
@@ -132,9 +139,10 @@ impl Proof {
             Proof::PRefl(..) => 16,
             Proof::PRing(..) => 17,
             Proof::PRule(..) => 18,
-            Proof::PSymm(..) => 19,
-            Proof::PTrans(..) => 20,
-            Proof::PUnfold(..) => 21,
+            Proof::PSplit(..) => 19,
+            Proof::PSymm(..) => 20,
+            Proof::PTrans(..) => 21,
+            Proof::PUnfold(..) => 22,
         }
     }
 }
@@ -256,6 +264,14 @@ impl Ord for Proof {
                 .then_with(|| a0.cmp(b0))
                 .then_with(|| a1.cmp(b1))
                 .then_with(|| a2.cmp(b2)),
+            (Proof::PSplit(a0, a1, a2, a3, a4), Proof::PSplit(b0, b1, b2, b3, b4)) => {
+                std::cmp::Ordering::Equal
+                    .then_with(|| a0.cmp(b0))
+                    .then_with(|| a1.cmp(b1))
+                    .then_with(|| a2.cmp(b2))
+                    .then_with(|| a3.cmp(b3))
+                    .then_with(|| a4.cmp(b4))
+            }
             (Proof::PSymm(a0), Proof::PSymm(b0)) => {
                 std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
             }
@@ -342,6 +358,17 @@ impl aver_rt::AverDisplay for Proof {
                     f1.aver_display_inner(),
                     f2.aver_display_inner(),
                     f3.aver_display_inner()
+                ]
+                .join(", ")
+            ),
+            Proof::PSplit(f0, f1, f2, f3, f4) => format!(
+                "PSplit({})",
+                vec![
+                    f0.aver_display_inner(),
+                    f1.aver_display_inner(),
+                    f2.aver_display_inner(),
+                    f3.aver_display_inner(),
+                    f4.aver_display_inner()
                 ]
                 .join(", ")
             ),
@@ -472,6 +499,45 @@ impl aver_rt::AverDisplay for Case {
                 format!("ihs: {}", self.ihs.aver_display_inner()),
                 format!("carry: {}", self.carry.aver_display_inner()),
                 format!("more: {}", self.more.aver_display_inner()),
+                format!("proof: {}", self.proof.aver_display_inner())
+            ]
+            .join(", ")
+        )
+    }
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SplitCase {
+    pub ctor: AverStr,
+    pub binders: aver_rt::AverList<AverStr>,
+    pub proof: Proof,
+}
+
+impl PartialOrd for SplitCase {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SplitCase {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        std::cmp::Ordering::Equal
+            .then_with(|| self.binders.cmp(&other.binders))
+            .then_with(|| self.ctor.cmp(&other.ctor))
+            .then_with(|| self.proof.cmp(&other.proof))
+    }
+}
+
+impl aver_rt::AverDisplay for SplitCase {
+    fn aver_display(&self) -> String {
+        format!(
+            "SplitCase({})",
+            vec![
+                format!("ctor: {}", self.ctor.aver_display_inner()),
+                format!("binders: {}", self.binders.aver_display_inner()),
                 format!("proof: {}", self.proof.aver_display_inner())
             ]
             .join(", ")

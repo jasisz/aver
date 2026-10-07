@@ -567,6 +567,8 @@ impl Renderer<'_> {
         use crate::codegen::proof_recognize::peano_type_named;
         match v.ty() {
             Some(Type::List(_)) => Ok(("List.rec".into(), vec!["nil".into(), "cons".into()])),
+            Some(Type::Option(_)) => Ok(("Option.rec".into(), vec!["none".into(), "some".into()])),
+            Some(Type::Result(..)) => Ok(("Except.rec".into(), vec!["error".into(), "ok".into()])),
             Some(ty @ Type::Named { .. }) => {
                 use crate::codegen::common::{backend_named_type_key, backend_type_def_key};
                 let key = backend_named_type_key(self.ctx, ty)
@@ -692,7 +694,7 @@ impl Renderer<'_> {
                     .ty()
                     .filter(|ty| crate::types::checker::type_is_fully_concrete(ty))
                 {
-                    Some(ty) => format!("({HOLE} : {})", type_to_lean(ty)),
+                    Some(ty) => format!("({HOLE} : {})", super::types::term_type_to_lean(ty)),
                     None => HOLE.to_string(),
                 };
                 let body = self.expr(ctx);
@@ -829,6 +831,39 @@ impl Renderer<'_> {
                     "AverSteps.bool_cases {} (fun {hyp} => {pf}) (fun {hyp} => {pt})",
                     self.expr(on)
                 )
+            }
+            // `T.casesOn` with the motive `on = x → claim`, applied to `on`
+            // and `rfl`: one function per constructor, over its fields and
+            // the hypothesis that `on` is it.
+            Proof::Split { on, hyp, cases, .. } => {
+                let (recursor, order) = self.recursor(on)?;
+                let cases_on = recursor
+                    .strip_suffix(".rec")
+                    .ok_or("split: no recursor")?
+                    .to_string()
+                    + ".casesOn";
+                if order.len() != cases.len() {
+                    return Err("split: one case per constructor".into());
+                }
+                self.by_recursor = true;
+                let lean = super::syntax::aver_name_to_lean;
+                let h = self.hyp_name(hyp);
+                let mut s = format!(
+                    "({cases_on} (motive := fun steps_split => {} = steps_split → {}) ({})",
+                    self.expr(on),
+                    self.eqn(&eq),
+                    self.expr(on)
+                );
+                for case in cases {
+                    let mut scope = hyps.clone();
+                    scope.push((hyp.clone(), Eqn::new(on.clone(), case.value())));
+                    let body = self.proof(&case.proof, &scope)?;
+                    let mut names: Vec<String> = case.binders.iter().map(|b| lean(b)).collect();
+                    names.push(h.clone());
+                    s.push_str(&format!(" (fun {} => {body})", names.join(" ")));
+                }
+                s.push_str(" rfl)");
+                s
             }
             // `f.induct`, the functional induction principle Lean derives
             // from `f`'s own recursion, with the claim as its motive and
@@ -1456,7 +1491,9 @@ fn arm_tactic(pat: &ResolvedPattern, subject: &Term, h: &str) -> Result<String, 
             } else if positive {
                 h.to_string()
             } else {
-                format!("(by simp [{h}])")
+                // A connective as subject (`Bool.and(a, b == false)`)
+                // normalises differently in `h` and in the goal.
+                format!("(by first | (simp [{h}]; done) | simp_all)")
             };
             if positive {
                 format!("exact ite_eq_left {evidence}")

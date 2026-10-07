@@ -16,7 +16,7 @@ use super::env::Env;
 /// Largest number of cases a split may produce, over all its givens.
 const MAX_CASES: usize = 64;
 
-fn type_def<'a>(
+pub(crate) fn type_def<'a>(
     inputs: &'a ProofLowerInputs,
     scope: Option<&str>,
     name: &str,
@@ -167,7 +167,7 @@ impl Env<'_> {
     /// A proof that `true` and `false` are equal, when a hypothesis in
     /// scope says a term is one and the term evaluates to the other: the
     /// case cannot happen.
-    fn refute_a_hypothesis(&mut self) -> Result<Option<Proof>, String> {
+    pub(crate) fn refute_a_hypothesis(&mut self) -> Result<Option<Proof>, String> {
         for (name, e) in self.hyps.clone() {
             let Some(said) = term::bool_value(&e.rhs) else {
                 continue;
