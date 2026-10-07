@@ -1583,6 +1583,202 @@ fn lean_closes_a_division_down_to_zero_by_its_steps() {
     let _ = fs::remove_dir_all(out);
 }
 
+const DESCENTS_LAWS: [&str; 2] = ["mixed.atLeastAcc", "splits.nonnegative"];
+
+/// An Int counted toward zero whose recursive calls descend differently:
+/// two calls dividing by different literals, and `n - 1` beside `n / 4`
+/// with an accumulator. Each call gives its own hypothesis at its own Int.
+#[test]
+fn both_kernels_induct_along_calls_that_descend_differently_and_refuse_mutations() {
+    let out = scratch("descents");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("descents.av", &out).into_iter().collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), DESCENTS_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let splits = read("splits.nonnegative");
+    let mixed = read("mixed.atLeastAcc");
+    assert!(splits.contains("(proof (induct splits "), "{splits}");
+    assert!(mixed.contains("(proof (induct mixed "), "{mixed}");
+    let mutants = [
+        // One of the two divisions divides by one, everywhere it is written.
+        (&splits, splits.replace("(v n) (i 3))", "(v n) (i 1))")),
+        // The dividing case without the second call's hypothesis.
+        (
+            &splits,
+            splits.replacen("(case (h_steps1) (ih1 ih2) ", "(case (h_steps1) (ih1) ", 1),
+        ),
+        // The step down subtracts nothing, everywhere it is written.
+        (
+            &mixed,
+            mixed.replace("(op - (v n) (i 1))", "(op - (v n) (i 0))"),
+        ),
+        // The carried hypothesis of the dividing call proved at another value.
+        (
+            &mixed,
+            mixed.replacen(
+                "(ih2 (compute (op >= (i 0) (i 0)) (b true)))",
+                "(ih2 (compute (op >= (i 1) (i 0)) (b true)))",
+                1,
+            ),
+        ),
+    ];
+    for (i, (source, mutant)) in mutants.iter().enumerate() {
+        assert_ne!(mutant, *source, "mutant {i} changed nothing");
+        let verdict = aver::proof_kernel::verdict(mutant);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "mutant {i}: {verdict:?}\n{mutant}"
+        );
+        let path = out.join(format!("mutant{i}.steps"));
+        fs::write(&path, mutant).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(!result.status.success(), "{}", format_output(&result));
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_closes_calls_that_descend_differently_by_their_steps() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("descents-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "descents.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "0",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in DESCENTS_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+/// One table for the termination gate steps open a definition through and
+/// the Lean classifier that decides which definitions Lean models as a
+/// well-founded def on `n.toNat`: each recursive arm below sits under
+/// `match n > 0`, and both read the same source. Where the gate accepts,
+/// Lean models; where it refuses, Lean does not, except a countdown by a
+/// literal above one, which Lean has modelled since before steps existed.
+#[test]
+fn the_gate_and_the_lean_classifier_agree_on_ints_counted_toward_zero() {
+    // (the recursive arm, whether the gate opens it, whether Lean models it)
+    let table: [(&str, bool, bool); 10] = [
+        ("1 + f(Int.div(n, 2)) + f(Int.div(n, 3))", true, true),
+        ("1 + f(n - 1) + f(Int.div(n, 4))", true, true),
+        ("1 + f(Int.div(n, 256))", true, true),
+        ("1 + f(n - 1)", true, true),
+        ("1 + f(Int.div(n, 1)) + f(n - 1)", false, false),
+        (
+            "1 + f(Int.div(n, 2)) + f(Result.withDefault(Int.div(n, n), 0))",
+            false,
+            false,
+        ),
+        ("1 + f(n - 0) + f(Int.div(n, 2))", false, false),
+        ("1 + f(n + 1) + f(Int.div(n, 2))", false, false),
+        (
+            "1 + f(Result.withDefault(Int.div(n, 0 - 2), 0))",
+            false,
+            false,
+        ),
+        ("1 + f(n - 2)", false, true),
+    ];
+    let out = scratch("descent-table");
+    for (i, (arm, gate, lean)) in table.iter().enumerate() {
+        let dir = out.join(format!("row{i}"));
+        fs::create_dir_all(&dir).unwrap();
+        let source = format!(
+            "module Table\n    intent = \"One row of the descent table.\"\n    exposes [f]\n    effects []\n\n\
+             fn f(n: Int) -> Int\n    ? \"A row.\"\n    match n > 0\n        true -> {arm}\n        false -> 0\n\n\
+             verify f law nonnegative\n    given n: Int = [-1, 0]\n    f(n) >= 0 holds\n"
+        );
+        fs::write(dir.join("table.av"), source).unwrap();
+        let steps = aver_in(&dir, &["proof", "table.av", "--backend", "aver"]);
+        let text = String::from_utf8_lossy(&steps.stdout).to_string();
+        assert_eq!(
+            text.contains("f.nonnegative: closed by steps"),
+            *gate,
+            "row {i} `{arm}`, the gate: {}",
+            format_output(&steps)
+        );
+        assert_eq!(
+            text.contains("steps do not open `f`"),
+            !gate,
+            "row {i} `{arm}`, the gate: {}",
+            format_output(&steps)
+        );
+        let lean_out = dir.join("lean");
+        let emitted = aver_in(
+            &dir,
+            &["proof", "table.av", "-o", lean_out.to_str().unwrap()],
+        );
+        assert!(emitted.status.success(), "{}", format_output(&emitted));
+        let model = fs::read_to_string(lean_out.join("Table.lean")).unwrap();
+        assert_eq!(
+            model.contains("termination_by n.toNat"),
+            *lean,
+            "row {i} `{arm}`, Lean:\n{model}"
+        );
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+/// A definition two functions recurse through together is refused by the
+/// gate, and the classifier for one function counting an Int toward zero
+/// does not model it either: a mutual group with a division is outside
+/// what Lean models.
+#[test]
+fn neither_the_gate_nor_the_classifier_takes_mutual_recursion_with_a_division() {
+    let out = scratch("descent-mutual");
+    fs::create_dir_all(&out).unwrap();
+    let source = "module Pair\n    intent = \"Two functions that call each other.\"\n    exposes [ping, pong]\n    effects []\n\n\
+                  fn ping(n: Int) -> Int\n    ? \"Ping.\"\n    match n > 0\n        true -> 1 + pong(Int.div(n, 2))\n        false -> 0\n\n\
+                  fn pong(n: Int) -> Int\n    ? \"Pong.\"\n    match n > 0\n        true -> 1 + ping(n - 1)\n        false -> 0\n\n\
+                  verify ping law nonnegative\n    given n: Int = [-1, 0]\n    ping(n) >= 0 holds\n";
+    fs::write(out.join("pair.av"), source).unwrap();
+    let steps = aver_in(&out, &["proof", "pair.av", "--backend", "aver"]);
+    let text = String::from_utf8_lossy(&steps.stdout).to_string();
+    assert!(
+        !text.contains("ping.nonnegative: closed by steps"),
+        "{}",
+        format_output(&steps)
+    );
+    let lean_out = out.join("lean");
+    let emitted = aver_in(
+        &out,
+        &["proof", "pair.av", "-o", lean_out.to_str().unwrap()],
+    );
+    let model = fs::read_to_string(lean_out.join("Pair.lean")).unwrap_or_default();
+    assert!(
+        !model.contains("termination_by n.toNat"),
+        "{}\n{model}",
+        format_output(&emitted)
+    );
+    let _ = fs::remove_dir_all(out);
+}
+
 const CITED_LOOP_LAWS: [&str; 3] = [
     "flat.prepend",
     "intoChunks.accumulates",

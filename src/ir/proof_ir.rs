@@ -328,32 +328,28 @@ pub enum RecursionContract {
     /// Well-founded native def on `param.toNat` — graduates a fn out
     /// of the fuel/partial encoding so it stays kernel-transparent
     /// (Lean: `termination_by param.toNat` + a `decreasing_by` the
-    /// kernel re-checks). Two validated sources:
-    ///
-    /// - `floor_div: Some(..)` — every self-call shrinks `param` by a
-    ///   literal-divisor floor division (bare `Int.div(p, k)` in the
-    ///   discharged total form, or the legacy
-    ///   `Result.withDefault(Int.div(p, k), d)` wrapper, literal k >= 2,
-    ///   possibly through a unary wrapper fn), and the classifier
-    ///   verified the guard chain enclosing every self-call site
-    ///   implies `p >= 1` — so `p / k < p` and the measure strictly
-    ///   drops. Never guessed: a fn whose guards don't justify the
-    ///   shrink keeps its prior (partial/opaque) emission.
-    /// - `floor_div: None` — guard-protected subtractive countdown
-    ///   (`p - k`, literal k >= 1, guards imply `p >= 1`), graduated
-    ///   independently of law shapes. Every self-call is checked
-    ///   with the same positivity analysis as floor-division descent.
+    /// kernel re-checks). One validated source: an `Int` counted toward
+    /// zero where every self-call passes `p - k` (literal `k >= 1`) or a
+    /// literal-divisor floor division (bare `Int.div(p, k)` in the
+    /// discharged total form, or the legacy
+    /// `Result.withDefault(Int.div(p, k), d)` wrapper, literal `k >= 2`,
+    /// possibly through a unary wrapper fn), calls free to descend
+    /// differently, and the classifier verified the guard chain enclosing
+    /// every self-call site implies `p >= 1` — so every argument is below
+    /// `p` and the measure strictly drops. Never guessed: a fn whose
+    /// guards don't justify the descent keeps its prior (fuel/opaque)
+    /// emission.
     WellFoundedToNat {
         /// The decreasing Int parameter (source name).
         param: String,
-        /// `Some` for the floor-division shrink; `None` for the
-        /// guarded subtractive countdown.
-        floor_div: Option<FloorDivShrink>,
+        /// The distinct floor-division shrinks the self-calls use, in
+        /// first-use order; empty when every call subtracts.
+        divisions: Vec<FloorDivShrink>,
     },
 }
 
-/// Payload of [`RecursionContract::WellFoundedToNat`] for the
-/// floor-division shrink shape.
+/// One floor-division shrink a [`RecursionContract::WellFoundedToNat`]
+/// self-call uses.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FloorDivShrink {
     /// The literal divisor (>= 2).

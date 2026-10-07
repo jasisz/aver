@@ -2170,10 +2170,12 @@ fn populate_fn_contracts_for_scope(
                     FnContract {
                         source_name: fn_name.clone(),
                         recursion: Some(
-                            if detect::has_guarded_subtractive_descent(fd, *param_index) {
+                            if detect::guarded_int_descent_at(fd, *param_index, inputs)
+                                .is_some_and(|divisions| divisions.is_empty())
+                            {
                                 RecursionContract::WellFoundedToNat {
                                     param: param_name.clone(),
-                                    floor_div: None,
+                                    divisions: Vec::new(),
                                 }
                             } else {
                                 RecursionContract::Fuel { fuel_metric }
@@ -2185,16 +2187,14 @@ fn populate_fn_contracts_for_scope(
             continue;
         }
 
-        // IntFloorDivCountdown — guard-validated literal-divisor
-        // floor-division shrink. The classifier proved both
-        // side-conditions (every self-call shrinks the param through
-        // `Result.withDefault(Int.div(p, k), d)` with literal k >= 2,
-        // and every self-call site's guard chain implies `p >= 1`),
-        // so backends emit a native well-founded def on `p.toNat`.
-        if let RecursionPlan::IntFloorDivCountdown {
+        // IntGuardedDescent — an Int counted toward zero by subtraction
+        // or literal-divisor floor division, at least one call dividing.
+        // The classifier proved every call's shrink and that every
+        // self-call site's guard chain implies `p >= 1`, so backends emit
+        // a native well-founded def on `p.toNat`.
+        if let RecursionPlan::IntGuardedDescent {
             param_index,
-            divisor,
-            helper_fn,
+            divisions,
         } = plan
         {
             if let Some((param_name, _)) = fd.params.get(*param_index) {
@@ -2204,10 +2204,7 @@ fn populate_fn_contracts_for_scope(
                         source_name: fn_name.clone(),
                         recursion: Some(RecursionContract::WellFoundedToNat {
                             param: param_name.clone(),
-                            floor_div: Some(crate::ir::FloorDivShrink {
-                                divisor: *divisor,
-                                helper_fn: helper_fn.clone(),
-                            }),
+                            divisions: divisions.clone(),
                         }),
                     },
                 );

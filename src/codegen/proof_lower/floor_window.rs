@@ -434,11 +434,12 @@ fn is_binade_exp_shape(
         .symbol_table
         .resolve_fn_id_in(&fd.name, inputs.fn_owning_scope(fd))?;
     let contract = fn_contracts.get(&fn_id)?;
-    let Some(crate::ir::RecursionContract::WellFoundedToNat {
-        floor_div: Some(shrink),
-        ..
-    }) = &contract.recursion
+    let Some(crate::ir::RecursionContract::WellFoundedToNat { divisions, .. }) =
+        &contract.recursion
     else {
+        return None;
+    };
+    let [shrink] = divisions.as_slice() else {
         return None;
     };
     if shrink.divisor != 2 {

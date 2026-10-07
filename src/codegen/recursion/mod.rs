@@ -85,23 +85,22 @@ pub enum RecursionPlan {
         param_index: usize,
         bound: Spanned<Expr>,
     },
-    /// Single-fn recursion where an `Int` parameter shrinks by a
-    /// literal-divisor floor division at every self-call —
-    /// `Result.withDefault(Int.div(p, k), d)` with literal `k >= 2`,
-    /// either inlined at the call site or through a unary wrapper fn
-    /// (`half(p)`) whose body is exactly that expression. Validated,
-    /// never guessed: the classifier additionally proves that the
-    /// guard chain enclosing every self-call site implies `p >= 1`
-    /// (so `p / k < p` and `p.toNat` strictly decreases). Backends
-    /// emit a native well-founded def — Lean
-    /// `termination_by p.toNat` (kernel re-checks the measure).
-    IntFloorDivCountdown {
+    /// Single-fn recursion counting an `Int` parameter toward zero where
+    /// every self-call passes `p - k` (literal `k >= 1`) or a floor
+    /// division of `p` by a literal `k >= 2` — `Int.div(p, k)` (or the
+    /// legacy `Result.withDefault(Int.div(p, k), d)`), inlined or through
+    /// a unary wrapper fn (`half(p)`) — and at least one call divides
+    /// (a countdown that only subtracts is [`Self::IntCountdown`]). Calls
+    /// may descend differently (`f(p / 2) + f(p / 3)`, `p - 1` beside
+    /// `p / 4`). Validated, never guessed: the guard chain enclosing every
+    /// self-call implies `p >= 1`, so every argument is below `p` and
+    /// `p.toNat` strictly decreases. Backends emit a native well-founded
+    /// def — Lean `termination_by p.toNat` (kernel re-checks the measure).
+    IntGuardedDescent {
         param_index: usize,
-        /// The literal divisor (>= 2).
-        divisor: i64,
-        /// `Some(name)` when the shrink goes through a unary wrapper
-        /// fn; `None` for the inlined form.
-        helper_fn: Option<String>,
+        /// The distinct floor-division shrinks the calls use, in
+        /// first-use order (never empty).
+        divisions: Vec<crate::ir::FloorDivShrink>,
     },
     /// Affine second-order recurrence like `fib(n) = fib(n-1) + fib(n-2)`
     /// with `0 / 1` bases and an `n < 0` guard. Emitted through a
