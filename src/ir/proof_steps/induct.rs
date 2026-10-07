@@ -218,6 +218,49 @@ pub fn halving(def: &Def) -> Option<usize> {
     .then_some(j)
 }
 
+/// The place [`halving`] finds and the literal `k` every recursive call
+/// divides by, when they all divide by the same one: an induction along
+/// such a definition is [`super::Proof::InductInt`] with that divisor.
+pub fn halving_divisor(def: &Def) -> Option<(usize, num_bigint::BigInt)> {
+    use crate::ir::hir::BuiltinIntrinsic;
+    let j = halving(def)?;
+    let mut ks = self_calls(&def.body, def.fn_id)
+        .into_iter()
+        .map(|(args, _)| match &args[j].node {
+            ResolvedExpr::Call(ResolvedCallee::Intrinsic(BuiltinIntrinsic::IntDivEuclid), xs) => {
+                term::int_value(&xs[1])
+            }
+            _ => None,
+        });
+    let k = ks.next()??;
+    ks.all(|other| other.as_ref() == Some(&k)).then_some((j, k))
+}
+
+/// How an Int induction on `var` descends: the guard it splits on, the
+/// guard's value in the base case, and the smaller value the step's
+/// hypotheses are about. Without a divisor, `var <= 0` (base `true`) and
+/// `var - 1`; with a divisor `k`, `var > 0` (base `false`) and `var / k`.
+pub fn int_descent(var: &str, divisor: Option<&num_bigint::BigInt>) -> (Term, bool, Term) {
+    use crate::ast::BinOp;
+    use crate::ir::hir::BuiltinIntrinsic;
+    let zero = term::int(&0.into());
+    match divisor {
+        None => (
+            term::binop(BinOp::Lte, term::var(var), zero),
+            true,
+            term::binop(BinOp::Sub, term::var(var), term::int(&1.into())),
+        ),
+        Some(k) => (
+            term::binop(BinOp::Gt, term::var(var), zero),
+            false,
+            term::intrinsic(
+                BuiltinIntrinsic::IntDivEuclid,
+                vec![term::var(var), term::int(k)],
+            ),
+        ),
+    }
+}
+
 /// The given at the matched place `j`, and the other givens among `args`
 /// that vary with the recursion, with their places. A given that appears
 /// twice varies at its first place only.

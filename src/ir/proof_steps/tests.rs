@@ -775,14 +775,17 @@ fn constructor(p: &Proof) -> &'static str {
         Proof::Absurd { .. } => "absurd",
         Proof::Induct { .. } => "induct",
         Proof::InductList { .. } => "listinduct",
-        Proof::InductInt { .. } => "intinduct",
+        Proof::InductInt { divisor: None, .. } => "intinduct",
+        Proof::InductInt {
+            divisor: Some(_), ..
+        } => "inthalve",
         Proof::Linear { .. } => "linear",
         Proof::Ring { .. } => "ring",
         Proof::Enum { .. } => "enum",
     }
 }
 
-const CONSTRUCTORS: [&str; 23] = [
+const CONSTRUCTORS: [&str; 24] = [
     "have",
     "refl",
     "symm",
@@ -803,6 +806,7 @@ const CONSTRUCTORS: [&str; 23] = [
     "induct",
     "listinduct",
     "intinduct",
+    "inthalve",
     "linear",
     "ring",
     "enum",
@@ -1120,12 +1124,13 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
 
     // n = n down to zero; the changed sample reads the claim at n - 1 in
     // the case n <= 0, where it is not in scope.
-    let int_induct = |base: Proof| {
+    let int_induct_by = |divisor: Option<i64>, base: Proof| {
         let mut s = script(
             var("n"),
             var("n"),
             Proof::InductInt {
                 var: "n".into(),
+                divisor: divisor.map(Into::into),
                 lhs: var("n"),
                 rhs: var("n"),
                 guard: "g".into(),
@@ -1144,6 +1149,9 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
         s.obligation.ints = vec!["n".into()];
         s
     };
+    let int_induct = |base: Proof| int_induct_by(None, base);
+    // The same, dividing n by 2 down to zero.
+    let int_halve = |base: Proof| int_induct_by(Some(2), base);
 
     let linear = |bound: i64| {
         with_premise(
@@ -1292,6 +1300,10 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
             int_induct(Proof::Refl(var("n"))),
             int_induct(Proof::Hyp("ih".into())),
         ),
+        (
+            int_halve(Proof::Refl(var("n"))),
+            int_halve(Proof::Hyp("ih".into())),
+        ),
         (linear(1), linear(0)),
         (ring(2), ring(3)),
         (enum_split(vec![false, true]), enum_split(vec![false])),
@@ -1319,6 +1331,75 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
     for name in CONSTRUCTORS {
         assert!(seen.contains(&name), "{name}: no sample in this table");
     }
+}
+
+/// Induction dividing an Int down to zero: `n > 0` in the step reads the
+/// claim at `n / k` (the guard, from the step's own hypothesis). The kernel
+/// accepts it for a literal of at least 2 and refuses it for 1 or 0 (where
+/// `n / k` is not below `n`), with the hypothesis read in the base case,
+/// with the guard read at its base value in the step, and on a given that
+/// is not an Int.
+#[test]
+fn an_int_induction_dividing_down_needs_a_divisor_of_at_least_two() {
+    let n = || var("n");
+    let zero = term::int(&0.into());
+    let positive = term::binop(BinOp::Gt, n(), zero);
+    // (n > 0) = (n > 0): the base reads the guard false, the step reads it
+    // true; each proves its value equals itself.
+    let halve = |k: i64, base: Proof, step: Proof, ints: Vec<String>| {
+        let mut s = script(
+            positive.clone(),
+            positive.clone(),
+            Proof::InductInt {
+                var: "n".into(),
+                divisor: Some(k.into()),
+                lhs: positive.clone(),
+                rhs: positive.clone(),
+                guard: "g".into(),
+                base: Box::new(base),
+                carried: Vec::new(),
+                general: Vec::new(),
+                ihs: vec![super::IhAt {
+                    name: "ih".into(),
+                    at: Vec::new(),
+                    carry: Vec::new(),
+                }],
+                step: Box::new(step),
+            },
+        );
+        s.obligation.givens = vec!["n".into()];
+        s.obligation.ints = ints;
+        s
+    };
+    let ints = || vec!["n".to_string()];
+    let refl = || Proof::Refl(positive.clone());
+    assert_eq!(kernel(&halve(2, refl(), refl(), ints())), Ok(()));
+    assert_eq!(kernel(&halve(256, refl(), refl(), ints())), Ok(()));
+    for k in [1, 0, -2] {
+        assert!(
+            kernel(&halve(k, refl(), refl(), ints())).is_err(),
+            "divisor {k} accepted"
+        );
+    }
+    // The claim at n / 2 is not in scope in the base case.
+    let at_half = Proof::Hyp("ih".into());
+    assert!(kernel(&halve(2, at_half.clone(), refl(), ints())).is_err());
+    // The step's hypothesis is the claim at n / 2, `(n / 2 > 0) = (n / 2 >
+    // 0)`, not the claim at n.
+    assert!(
+        kernel(&halve(2, refl(), at_half, ints())).is_err(),
+        "the hypothesis at n / 2 proved the claim at n"
+    );
+    // `(n > 0) = false` holds by the guard in the base case only.
+    let g = Proof::Hyp("g".into());
+    let mut by_guard = halve(2, g.clone(), g, ints());
+    by_guard.obligation.rhs = term::boolean(false);
+    if let Proof::InductInt { rhs, .. } = &mut by_guard.proof {
+        *rhs = term::boolean(false);
+    }
+    assert!(kernel(&by_guard).is_err());
+    // Not a given of type Int.
+    assert!(kernel(&halve(2, refl(), refl(), Vec::new())).is_err());
 }
 
 /// A split on a constructor: `f(a) >= 0` for `f(x) = match x { [] -> 0,

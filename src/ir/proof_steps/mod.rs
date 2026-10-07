@@ -35,7 +35,7 @@ pub use term::Term;
 use crate::ir::identity::FnId;
 
 /// Version of the step data. Bump on any change a replayer could observe.
-pub const FORMAT_VERSION: u32 = 10;
+pub const FORMAT_VERSION: u32 = 11;
 
 /// An equation `lhs = rhs` between two terms.
 #[derive(Debug, Clone, PartialEq)]
@@ -273,8 +273,14 @@ pub enum Proof {
     /// hypothesis of the step they are first proved at its values. Any
     /// other hypothesis that mentions `var` or a name in `general` is out of
     /// scope.
+    ///
+    /// With a `divisor` `k` (a literal of at least 2) the induction divides
+    /// `var` down to zero instead: `base` under `guard : var > 0 = false`,
+    /// `step` under `guard : var > 0 = true` with the claim at `var / k`
+    /// (Euclidean), which for `var > 0` is at least 0 and below `var`.
     InductInt {
         var: String,
+        divisor: Option<num_bigint::BigInt>,
         lhs: Term,
         rhs: Term,
         guard: String,

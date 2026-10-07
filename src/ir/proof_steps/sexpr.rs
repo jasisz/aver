@@ -564,6 +564,7 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
         ),
         Proof::InductInt {
             var,
+            divisor,
             lhs,
             rhs,
             guard,
@@ -573,8 +574,12 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
             ihs,
             step,
         } => {
+            let head = match divisor {
+                None => format!("intinduct {var}"),
+                Some(k) => format!("inthalve {var} {k}"),
+            };
             format!(
-                "(intinduct {var} {} {} {guard} {} ({}) ({}) ({}) {})",
+                "({head} {} {} {guard} {} ({}) ({}) ({}) {})",
                 term(lhs, names)?,
                 term(rhs, names)?,
                 proof(base, names)?,

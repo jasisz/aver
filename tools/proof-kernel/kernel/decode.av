@@ -351,6 +351,7 @@ fn proofOf(tag: String, args: List<Sexp>) -> Result<Proof, String>
         "induct" -> inductProof(args)
         "listinduct" -> listInductProof(args)
         "intinduct" -> intInductProof(args)
+        "inthalve" -> intHalveProof(args)
         "ring" -> ringProof(args)
         "linear" -> linearProof(args)
         _ -> Result.Err("unknown rule {tag}")
@@ -542,6 +543,15 @@ fn intInductProof(args: List<Sexp>) -> Result<Proof, String>
 
 verify intInductProof
     intInductProof([]) => Result.Err("malformed intinduct")
+
+fn intHalveProof(args: List<Sexp>) -> Result<Proof, String>
+    ? "(inthalve NAME K TERM TERM GUARD PROOF (CARRIED…) (GENERAL…) ((IH (TERM…) (PROOF…))…) PROOF)"
+    match args
+        [Sexp.Atom(v), Sexp.Atom(k), l, r, Sexp.Atom(g), b, ns, gs, hs, st] -> Result.Ok(Proof.PIntHalve(v, Int.fromString(k)?, term(l)?, term(r)?, g, proof(b)?, atoms(items(ns)?)?, atoms(items(gs)?)?, ihAts(items(hs)?)?, proof(st)?))
+        _ -> Result.Err("malformed inthalve")
+
+verify intHalveProof
+    intHalveProof([]) => Result.Err("malformed inthalve")
 
 fn ihAts(ss: List<Sexp>) -> Result<List<IhAt>, String>
     ? "(IH (TERM…) (PROOF…))…: a hypothesis, the values of the generalised givens, the proofs of the carried hypotheses there."
@@ -831,9 +841,9 @@ verify consts
     consts([]) => Result.Ok([])
 
 fn script(s: Sexp) -> Result<Script, String>
-    ? "(steps 10 (obligation …) (defs …) (consts …) (laws …) (proof …)); version 10 only."
+    ? "(steps 11 (obligation …) (defs …) (consts …) (laws …) (proof …)); version 11 only."
     match s
-        Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("10"), o, Sexp.Node([Sexp.Atom("defs"), ..ds]), Sexp.Node([Sexp.Atom("consts"), ..cs]), Sexp.Node([Sexp.Atom("laws"), ..ls]), Sexp.Node([Sexp.Atom("proof"), p])]) -> scriptOf(obligation(o)?, defs(ds)?, consts(cs)?, laws(ls)?, proof(p)?)
+        Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("11"), o, Sexp.Node([Sexp.Atom("defs"), ..ds]), Sexp.Node([Sexp.Atom("consts"), ..cs]), Sexp.Node([Sexp.Atom("laws"), ..ls]), Sexp.Node([Sexp.Atom("proof"), p])]) -> scriptOf(obligation(o)?, defs(ds)?, consts(cs)?, laws(ls)?, proof(p)?)
         Sexp.Node([Sexp.Atom("steps"), Sexp.Atom(v), ..rest]) -> Result.Err("unsupported step format version {v}")
         _ -> Result.Err("not a step script")
 

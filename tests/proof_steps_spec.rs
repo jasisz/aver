@@ -1417,7 +1417,8 @@ fn lean_closes_cited_orders_under_a_proved_when_by_their_steps() {
     let _ = fs::remove_dir_all(out);
 }
 
-const HALVING_LAWS: [&str; 8] = [
+const HALVING_LAWS: [&str; 9] = [
+    "digits.accumulatorAppends",
     "digits.exponentAbove",
     "digits.fourDigitsReadBack",
     "digits.nonpositiveKeepsAcc",
@@ -1429,9 +1430,10 @@ const HALVING_LAWS: [&str; 8] = [
 ];
 
 /// A definition that divides an Int down to zero opens where its guard is
-/// decided, and Euclidean division by a literal is pinned by linear
-/// arithmetic; both kernels refuse a definition that divides by one and a
-/// quotient bound the dividend's range does not give.
+/// decided, a law about it is proved by induction dividing the same way,
+/// and Euclidean division by a literal is pinned by linear arithmetic; both
+/// kernels refuse a definition that divides by one, an induction that
+/// divides by one, and a quotient bound the dividend's range does not give.
 #[test]
 fn both_kernels_open_a_division_down_to_zero_and_refuse_mutations() {
     let out = scratch("halving");
@@ -1444,9 +1446,17 @@ fn both_kernels_open_a_division_down_to_zero_and_refuse_mutations() {
     }
     let step = read("digits.positiveStep");
     let one = read("digits.oneDigit");
+    let appends = read("digits.accumulatorAppends");
     assert!(step.contains("(unfold digits 1 "), "{step}");
     assert!(one.contains("(rule int.div_range "), "{one}");
+    assert!(appends.contains("(inthalve value 256 "), "{appends}");
     let mutants = [
+        // The induction divides by one: the claim at `value / 1` is the
+        // claim itself.
+        (
+            &appends,
+            appends.replacen("(inthalve value 256 ", "(inthalve value 1 ", 1),
+        ),
         // The definition divides by one, everywhere it is written.
         (&step, step.replace("(i 256)", "(i 1)")),
         // A quotient bound read from a range the dividend is not shown in.
@@ -1897,7 +1907,7 @@ fn joining_texts_is_never_read_as_int_arithmetic() {
     // step applies to it, even in a script made by hand.
     let script = |op: &str| {
         format!(
-            "(steps 10 (obligation k (a b) (none) (op {op} (v a) (v b)) (op {op} (v b) (v a))) (defs) (consts) (laws) (proof (ring (op {op} (v a) (v b)) (op {op} (v b) (v a)))))"
+            "(steps 11 (obligation k (a b) (none) (op {op} (v a) (v b)) (op {op} (v b) (v a))) (defs) (consts) (laws) (proof (ring (op {op} (v a) (v b)) (op {op} (v b) (v a)))))"
         )
     };
     assert_eq!(
