@@ -628,9 +628,12 @@ fn a_recursive_definition_opens_only_when_it_recurses_on_a_part_of_its_match() {
         }),
     };
     let on_tail = def(call(vec![var("t")]));
-    assert_eq!(super::induct::structural_param(&on_tail), Ok(Some(0)));
+    assert_eq!(
+        super::induct::recursion(&on_tail),
+        Ok(Some(super::induct::Recursion { at: 0, guard: None }))
+    );
     let on_itself = def(call(vec![var("xs")]));
-    assert!(super::induct::structural_param(&on_itself).is_err());
+    assert!(super::induct::recursion(&on_itself).is_err());
 }
 
 #[test]
@@ -775,17 +778,13 @@ fn constructor(p: &Proof) -> &'static str {
         Proof::Absurd { .. } => "absurd",
         Proof::Induct { .. } => "induct",
         Proof::InductList { .. } => "listinduct",
-        Proof::InductInt { divisor: None, .. } => "intinduct",
-        Proof::InductInt {
-            divisor: Some(_), ..
-        } => "inthalve",
         Proof::Linear { .. } => "linear",
         Proof::Ring { .. } => "ring",
         Proof::Enum { .. } => "enum",
     }
 }
 
-const CONSTRUCTORS: [&str; 24] = [
+const CONSTRUCTORS: [&str; 22] = [
     "have",
     "refl",
     "symm",
@@ -805,8 +804,6 @@ const CONSTRUCTORS: [&str; 24] = [
     "absurd",
     "induct",
     "listinduct",
-    "intinduct",
-    "inthalve",
     "linear",
     "ring",
     "enum",
@@ -1122,37 +1119,6 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
         premises: Vec::new(),
     };
 
-    // n = n down to zero; the changed sample reads the claim at n - 1 in
-    // the case n <= 0, where it is not in scope.
-    let int_induct_by = |divisor: Option<i64>, base: Proof| {
-        let mut s = script(
-            var("n"),
-            var("n"),
-            Proof::InductInt {
-                var: "n".into(),
-                divisor: divisor.map(Into::into),
-                lhs: var("n"),
-                rhs: var("n"),
-                guard: "g".into(),
-                base: Box::new(base),
-                carried: Vec::new(),
-                general: Vec::new(),
-                ihs: vec![super::IhAt {
-                    name: "ih".into(),
-                    at: Vec::new(),
-                    carry: Vec::new(),
-                }],
-                step: Box::new(Proof::Refl(var("n"))),
-            },
-        );
-        s.obligation.givens = vec!["n".into()];
-        s.obligation.ints = vec!["n".into()];
-        s
-    };
-    let int_induct = |base: Proof| int_induct_by(None, base);
-    // The same, dividing n by 2 down to zero.
-    let int_halve = |base: Proof| int_induct_by(Some(2), base);
-
     let linear = |bound: i64| {
         with_premise(
             script(
@@ -1296,14 +1262,6 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
             list_induct(concat_nil.clone()),
             list_induct(Proof::Hyp("ih".into())),
         ),
-        (
-            int_induct(Proof::Refl(var("n"))),
-            int_induct(Proof::Hyp("ih".into())),
-        ),
-        (
-            int_halve(Proof::Refl(var("n"))),
-            int_halve(Proof::Hyp("ih".into())),
-        ),
         (linear(1), linear(0)),
         (ring(2), ring(3)),
         (enum_split(vec![false, true]), enum_split(vec![false])),
@@ -1333,73 +1291,475 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
     }
 }
 
-/// Induction dividing an Int down to zero: `n > 0` in the step reads the
-/// claim at `n / k` (the guard, from the step's own hypothesis). The kernel
-/// accepts it for a literal of at least 2 and refuses it for 1 or 0 (where
-/// `n / k` is not below `n`), with the hypothesis read in the base case,
-/// with the guard read at its base value in the step, and on a given that
-/// is not an Int.
-#[test]
-fn an_int_induction_dividing_down_needs_a_divisor_of_at_least_two() {
-    let n = || var("n");
-    let zero = term::int(&0.into());
-    let positive = term::binop(BinOp::Gt, n(), zero);
-    // (n > 0) = (n > 0): the base reads the guard false, the step reads it
-    // true; each proves its value equals itself.
-    let halve = |k: i64, base: Proof, step: Proof, ints: Vec<String>| {
+/// Pieces of scripts that induct along a function counting an Int toward
+/// zero: `f` (FnId 9) over parameters `params`, matching `subject` with
+/// the arm `true` first.
+mod toward_zero {
+    use super::{kernel, script};
+    use crate::ast::{BinOp, Literal, Spanned};
+    use crate::ir::hir::{
+        BuiltinIntrinsic, ResolvedCallee, ResolvedExpr, ResolvedMatchArm, ResolvedPattern,
+    };
+    use crate::ir::identity::FnId;
+    use crate::ir::proof_steps::term::{self, var};
+    use crate::ir::proof_steps::{Def, IhAt, InductCase, Proof, Script, Term};
+
+    pub const F: FnId = FnId(9);
+
+    pub fn i(n: i64) -> Term {
+        term::int(&n.into())
+    }
+    pub fn call(args: Vec<Term>) -> Term {
+        Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(F), args))
+    }
+    pub fn div(x: Term, k: Term) -> Term {
+        term::intrinsic(BuiltinIntrinsic::IntDivEuclid, vec![x, k])
+    }
+    pub fn less(x: Term, k: i64) -> Term {
+        term::binop(BinOp::Sub, x, i(k))
+    }
+    pub fn gt0(x: Term) -> Term {
+        term::binop(BinOp::Gt, x, i(0))
+    }
+    pub fn arm(pattern: ResolvedPattern, body: Term) -> ResolvedMatchArm {
+        ResolvedMatchArm {
+            pattern,
+            body: Box::new(body),
+            binding_slots: std::sync::OnceLock::new(),
+        }
+    }
+    pub fn when(b: bool) -> ResolvedPattern {
+        ResolvedPattern::Literal(Literal::Bool(b))
+    }
+    /// `f(params) = match subject { true -> on_true, false -> on_false }`.
+    pub fn def(params: &[&str], subject: Term, on_true: Term, on_false: Term) -> Def {
+        Def {
+            fn_id: F,
+            name: "__fn_9".into(),
+            params: params.iter().map(|p| p.to_string()).collect(),
+            returns_bool: false,
+            lets: Vec::new(),
+            body: Spanned::bare(ResolvedExpr::Match {
+                subject: Box::new(subject),
+                arms: vec![arm(when(true), on_true), arm(when(false), on_false)],
+            }),
+        }
+    }
+    /// `f(n) = match n > 0 { true -> f(go), false -> 0 }`.
+    pub fn halving(go: Term) -> Def {
+        def(&["n"], gt0(var("n")), call(vec![go]), i(0))
+    }
+    pub fn case(guard: &str, ihs: &[&str], more: Vec<(usize, IhAt)>, proof: Proof) -> InductCase {
+        InductCase {
+            binders: vec![guard.into()],
+            ihs: ihs.iter().map(|h| h.to_string()).collect(),
+            carry: ihs.iter().map(|_| Vec::new()).collect(),
+            more,
+            proof,
+        }
+    }
+    pub fn ih(name: &str, at: Vec<Term>) -> IhAt {
+        IhAt {
+            name: name.into(),
+            at,
+            carry: Vec::new(),
+        }
+    }
+    /// The claim `lhs = rhs` by induction along `d` at `args`, the cases in
+    /// arm order (`true`, then `false`); `n`, and the givens `more_givens`,
+    /// are givens, `n` of type Int.
+    pub fn along(
+        d: Def,
+        args: Vec<Term>,
+        lhs: Term,
+        rhs: Term,
+        cases: Vec<InductCase>,
+        more_givens: &[&str],
+    ) -> Script {
         let mut s = script(
-            positive.clone(),
-            positive.clone(),
-            Proof::InductInt {
-                var: "n".into(),
-                divisor: Some(k.into()),
-                lhs: positive.clone(),
-                rhs: positive.clone(),
-                guard: "g".into(),
-                base: Box::new(base),
+            lhs.clone(),
+            rhs.clone(),
+            Proof::Induct {
+                fn_id: F,
+                args,
+                lhs,
+                rhs,
                 carried: Vec::new(),
-                general: Vec::new(),
-                ihs: vec![super::IhAt {
-                    name: "ih".into(),
-                    at: Vec::new(),
-                    carry: Vec::new(),
-                }],
-                step: Box::new(step),
+                cases,
             },
         );
-        s.obligation.givens = vec!["n".into()];
-        s.obligation.ints = ints;
+        s.obligation.givens = std::iter::once("n")
+            .chain(more_givens.iter().copied())
+            .map(String::from)
+            .collect();
+        s.obligation.ints = vec!["n".into()];
+        s.defs.push(d);
         s
-    };
-    let ints = || vec!["n".to_string()];
-    let refl = || Proof::Refl(positive.clone());
-    assert_eq!(kernel(&halve(2, refl(), refl(), ints())), Ok(()));
-    assert_eq!(kernel(&halve(256, refl(), refl(), ints())), Ok(()));
-    for k in [1, 0, -2] {
-        assert!(
-            kernel(&halve(k, refl(), refl(), ints())).is_err(),
-            "divisor {k} accepted"
+    }
+    /// `(n > 0) = (n > 0)` along `d`, each case proved by `proofs`.
+    pub fn trivially(d: Def, ihs: &[&str], on_true: Proof, on_false: Proof) -> Script {
+        let c = gt0(var("n"));
+        along(
+            d,
+            vec![var("n")],
+            c.clone(),
+            c,
+            vec![
+                case("g", ihs, Vec::new(), on_true),
+                case("g", &[], Vec::new(), on_false),
+            ],
+            &[],
+        )
+    }
+    pub fn refl() -> Proof {
+        Proof::Refl(gt0(var("n")))
+    }
+    pub fn accepted(s: &Script) {
+        assert_eq!(kernel(s), Ok(()));
+    }
+    pub fn refused(s: &Script, why: &str) {
+        match kernel(s) {
+            Ok(()) => panic!("accepted: {why}"),
+            Err(m) => assert!(m.contains(why), "refused for another reason: {m}"),
+        }
+    }
+}
+
+/// The gate decides which descents an induction along a function that
+/// counts an Int toward zero may follow: `n - 1` and `n / k` for a literal
+/// `k` of at least 2, under `n <= 0` false or `n > 0` true. Every other
+/// descent, a call in the arm where `n` is at most 0, a comparison other
+/// than those two, and `n` rebound around the call are refused, both by
+/// the kernel and by the gate the producer and Lean read.
+#[test]
+fn an_induction_toward_zero_follows_only_the_descents_the_gate_checked() {
+    use toward_zero::*;
+    let n = || var("n");
+    for go in [less(n(), 1), div(n(), i(2)), div(n(), i(256))] {
+        let d = halving(go);
+        assert!(matches!(
+            super::induct::recursion(&d),
+            Ok(Some(super::induct::Recursion {
+                at: 0,
+                guard: Some(_)
+            }))
+        ));
+        accepted(&trivially(d, &["ih"], refl(), refl()));
+    }
+    // Under `n <= 0` false as well, the arm `false` first in the body.
+    let counted = def(
+        &["n"],
+        term::binop(BinOp::Lte, n(), i(0)),
+        i(0),
+        call(vec![div(n(), i(3))]),
+    );
+    let c = gt0(n());
+    accepted(&along(
+        counted,
+        vec![n()],
+        c.clone(),
+        c,
+        vec![
+            case("g", &[], Vec::new(), refl()),
+            case("g", &["ih"], Vec::new(), refl()),
+        ],
+        &[],
+    ));
+    let forged = [
+        less(n(), 0),
+        less(n(), 2),
+        term::binop(BinOp::Add, n(), i(1)),
+        div(n(), i(1)),
+        div(n(), i(0)),
+        div(n(), i(-2)),
+        div(n(), var("n")),
+        div(var("m"), i(2)),
+        term::intrinsic(
+            crate::ir::hir::BuiltinIntrinsic::IntModEuclid,
+            vec![n(), i(2)],
+        ),
+        n(),
+    ];
+    for go in forged {
+        let d = halving(go.clone());
+        assert!(super::induct::recursion(&d).is_err(), "gate took {go:?}");
+        refused(
+            &trivially(d, &["ih"], refl(), refl()),
+            "does not count n down to zero",
         );
     }
-    // The claim at n / 2 is not in scope in the base case.
-    let at_half = Proof::Hyp("ih".into());
-    assert!(kernel(&halve(2, at_half.clone(), refl(), ints())).is_err());
-    // The step's hypothesis is the claim at n / 2, `(n / 2 > 0) = (n / 2 >
-    // 0)`, not the claim at n.
-    assert!(
-        kernel(&halve(2, refl(), at_half, ints())).is_err(),
-        "the hypothesis at n / 2 proved the claim at n"
+    // A recursive call where n is at most 0.
+    let stops_late = def(&["n"], gt0(n()), i(0), call(vec![less(n(), 1)]));
+    refused(
+        &trivially(stops_late, &[], refl(), refl()),
+        "does not count n down to zero",
     );
-    // `(n > 0) = false` holds by the guard in the base case only.
-    let g = Proof::Hyp("g".into());
-    let mut by_guard = halve(2, g.clone(), g, ints());
-    by_guard.obligation.rhs = term::boolean(false);
-    if let Proof::InductInt { rhs, .. } = &mut by_guard.proof {
-        *rhs = term::boolean(false);
+    // `n >= 0` lets n = 0 call itself at n - 1.
+    let at_zero = def(
+        &["n"],
+        term::binop(BinOp::Gte, n(), i(0)),
+        call(vec![less(n(), 1)]),
+        i(0),
+    );
+    refused(
+        &trivially(at_zero, &["ih"], refl(), refl()),
+        "does not count n down to zero",
+    );
+    // n rebound by an inner arm around the call.
+    let rebound = halving(Spanned::bare(ResolvedExpr::Match {
+        subject: Box::new(i(5)),
+        arms: vec![arm(
+            ResolvedPattern::Ident("n".into()),
+            call(vec![less(n(), 1)]),
+        )],
+    }));
+    assert!(super::induct::recursion(&rebound).is_err());
+    refused(
+        &trivially(rebound, &["ih"], refl(), refl()),
+        "does not count n down to zero",
+    );
+}
+
+/// An induction hypothesis exists only where the comparison lets the call
+/// happen: none in the case where `n` is at most 0, as a named one or a
+/// further one; and the hypothesis at `n / 2` does not prove the claim at
+/// `n`. The comparison's value is the case's own: read at the other value
+/// it proves nothing. The given must be an Int, and the case's one name
+/// is the comparison's hypothesis.
+#[test]
+fn an_induction_toward_zero_has_no_hypothesis_outside_the_comparison() {
+    use toward_zero::*;
+    let n = || var("n");
+    let d = || halving(div(n(), i(2)));
+    // A hypothesis in the case where n is at most 0.
+    let mut base_ih = trivially(d(), &["ih"], refl(), refl());
+    if let Proof::Induct { cases, .. } = &mut base_ih.proof {
+        cases[1].ihs = vec!["ih".into()];
+        cases[1].carry = vec![Vec::new()];
     }
-    assert!(kernel(&by_guard).is_err());
-    // Not a given of type Int.
-    assert!(kernel(&halve(2, refl(), refl(), Vec::new())).is_err());
+    refused(&base_ih, "0 recursive calls, 1 hypotheses");
+    let mut base_more = trivially(d(), &["ih"], refl(), refl());
+    if let Proof::Induct { cases, .. } = &mut base_more.proof {
+        cases[1].more = vec![(0, ih("m", Vec::new()))];
+    }
+    refused(&base_more, "no recursive call 0");
+    // The hypothesis is the claim at n / 2, not at n.
+    refused(
+        &trivially(d(), &["ih"], Proof::Hyp("ih".into()), refl()),
+        "the case proves a different equation",
+    );
+    // `(n > 0) = true` holds by the comparison where it is true only.
+    let holds = |on_false: Proof| {
+        along(
+            d(),
+            vec![n()],
+            gt0(n()),
+            term::boolean(true),
+            vec![
+                case("g", &["_"], Vec::new(), Proof::Hyp("g".into())),
+                case("g", &[], Vec::new(), on_false),
+            ],
+            &[],
+        )
+    };
+    refused(
+        &holds(Proof::Hyp("g".into())),
+        "the case proves a different equation",
+    );
+    // Not an Int.
+    let mut untyped = trivially(d(), &["ih"], refl(), refl());
+    untyped.obligation.ints.clear();
+    refused(&untyped, "n is not a given of type Int");
+    // The comparison's hypothesis has one name.
+    let mut unnamed = trivially(d(), &["ih"], refl(), refl());
+    if let Proof::Induct { cases, .. } = &mut unnamed.proof {
+        cases[0].binders.clear();
+    }
+    refused(&unnamed, "wrong number of names");
+}
+
+/// `f(n) = 0` for `f(n) = match n > 0 { true -> f(n / 2) + f(n / 3),
+/// false -> 0 }`, for every Int, zero and the negative ones in the case
+/// where the comparison is false: each recursive call has its own
+/// hypothesis at its own divisor, so swapping them is refused.
+#[test]
+fn an_induction_toward_zero_gives_each_call_its_own_descent() {
+    use toward_zero::*;
+    let n = || var("n");
+    let half = || div(n(), i(2));
+    let third = || div(n(), i(3));
+    let d = def(
+        &["n"],
+        gt0(n()),
+        term::binop(BinOp::Add, call(vec![half()]), call(vec![third()])),
+        i(0),
+    );
+    let open = |arm: u32| Proof::Unfold {
+        fn_id: F,
+        arm,
+        args: vec![n()],
+        binders: Vec::new(),
+        premise: Some(Box::new(Proof::Hyp("g".into()))),
+    };
+    let plus = |a: super::Term, b: super::Term| term::binop(BinOp::Add, a, b);
+    let proof = |first: &str, second: &str| {
+        let step = Proof::Trans {
+            terms: vec![
+                call(vec![n()]),
+                plus(call(vec![half()]), call(vec![third()])),
+                plus(i(0), call(vec![third()])),
+                plus(i(0), i(0)),
+                i(0),
+            ],
+            steps: vec![
+                open(1),
+                Proof::Congr {
+                    ctx: plus(term::hole(), call(vec![third()])),
+                    inner: Box::new(Proof::Hyp(first.into())),
+                },
+                Proof::Congr {
+                    ctx: plus(i(0), term::hole()),
+                    inner: Box::new(Proof::Hyp(second.into())),
+                },
+                Proof::Compute {
+                    lhs: plus(i(0), i(0)),
+                    rhs: i(0),
+                },
+            ],
+        };
+        along(
+            d.clone(),
+            vec![n()],
+            call(vec![n()]),
+            i(0),
+            vec![
+                case("g", &["a", "b"], Vec::new(), step),
+                case("g", &[], Vec::new(), open(2)),
+            ],
+            &[],
+        )
+    };
+    accepted(&proof("a", "b"));
+    refused(&proof("b", "a"), "the step does not join the written terms");
+}
+
+/// An accumulator the recursive call changes is generalised: the call's
+/// hypothesis is the claim at its own value of it, and a further one is
+/// the claim at any value, at the Int that call passes. A name an inner
+/// match binds may stand there only where it is not generalised.
+#[test]
+fn an_induction_toward_zero_generalises_what_the_call_changes() {
+    use toward_zero::*;
+    let n = || var("n");
+    let acc = || var("acc");
+    // f(n, acc) = match n > 0 { true -> f(n / 2, acc + 1), false -> acc }
+    let d = def(
+        &["n", "acc"],
+        gt0(n()),
+        call(vec![div(n(), i(2)), term::binop(BinOp::Add, acc(), i(1))]),
+        acc(),
+    );
+    // acc = acc: the hypothesis is `acc + 1 = acc + 1`, a further one
+    // `7 = 7`; neither is the claim.
+    let claim = |on_true: Proof, more: Vec<(usize, super::IhAt)>| {
+        along(
+            d.clone(),
+            vec![n(), acc()],
+            acc(),
+            acc(),
+            vec![
+                case("g", &["ih"], more, on_true),
+                case("g", &[], Vec::new(), Proof::Refl(acc())),
+            ],
+            &["acc"],
+        )
+    };
+    accepted(&claim(Proof::Refl(acc()), Vec::new()));
+    refused(
+        &claim(Proof::Hyp("ih".into()), Vec::new()),
+        "the case proves a different equation",
+    );
+    accepted(&claim(Proof::Refl(acc()), vec![(0, ih("m", vec![i(7)]))]));
+    refused(
+        &claim(Proof::Hyp("m".into()), vec![(0, ih("m", vec![i(7)]))]),
+        "the case proves a different equation",
+    );
+    refused(
+        &claim(Proof::Refl(acc()), vec![(0, ih("m", Vec::new()))]),
+        "gives 0 values for 1 varied givens",
+    );
+    // A hypothesis about the accumulator is out of scope unless carried.
+    let positive = gt0(acc());
+    let mut about_acc = along(
+        d.clone(),
+        vec![n(), acc()],
+        positive.clone(),
+        term::boolean(true),
+        vec![
+            case("g", &["_"], Vec::new(), Proof::Hyp("when".into())),
+            case("g", &[], Vec::new(), Proof::Hyp("when".into())),
+        ],
+        &["acc"],
+    );
+    about_acc.obligation.premise = Some(positive);
+    refused(&about_acc, "hypothesis when is not in scope");
+    // f(n, xs) = match n > 0 { true -> match xs { [] -> 0, [h, ..t] ->
+    // f(n - 1, t) }, false -> 0 }: `t` is bound inside the arm.
+    let inner = def(
+        &["n", "xs"],
+        gt0(n()),
+        Spanned::bare(ResolvedExpr::Match {
+            subject: Box::new(var("xs")),
+            arms: vec![
+                arm(ResolvedPattern::EmptyList, i(0)),
+                arm(
+                    ResolvedPattern::Cons("h".into(), "t".into()),
+                    call(vec![less(n(), 1), var("t")]),
+                ),
+            ],
+        }),
+        i(0),
+    );
+    let on = |second: super::Term, givens: &[&str]| {
+        let c = gt0(n());
+        along(
+            inner.clone(),
+            vec![n(), second],
+            c.clone(),
+            c,
+            vec![
+                case("g", &["ih"], Vec::new(), refl()),
+                case("g", &[], Vec::new(), refl()),
+            ],
+            givens,
+        )
+    };
+    refused(
+        &on(var("ys"), &["ys"]),
+        "a recursive call reads a name an inner match binds",
+    );
+    accepted(&on(term::nil(), &[]));
+}
+
+/// Two definitions that call each other are refused before any induction,
+/// counting toward zero or not.
+#[test]
+fn an_induction_toward_zero_through_another_definition_is_refused() {
+    use crate::ir::identity::FnId;
+    use toward_zero::*;
+    let n = || var("n");
+    let mut s = trivially(halving(less(n(), 1)), &["ih"], refl(), refl());
+    let other = Spanned::bare(crate::ir::hir::ResolvedExpr::Call(
+        crate::ir::hir::ResolvedCallee::Fn(FnId(10)),
+        vec![less(n(), 1)],
+    ));
+    s.defs[0] = def(&["n"], gt0(n()), other, i(0));
+    s.defs.push(super::Def {
+        fn_id: FnId(10),
+        name: "__fn_10".into(),
+        ..halving(less(n(), 1))
+    });
+    refused(&s, "part of a mutual recursion");
 }
 
 /// A split on a constructor: `f(a) >= 0` for `f(x) = match x { [] -> 0,

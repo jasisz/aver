@@ -35,7 +35,7 @@ pub use term::Term;
 use crate::ir::identity::FnId;
 
 /// Version of the step data. Bump on any change a replayer could observe.
-pub const FORMAT_VERSION: u32 = 11;
+pub const FORMAT_VERSION: u32 = 12;
 
 /// An equation `lhs = rhs` between two terms.
 #[derive(Debug, Clone, PartialEq)]
@@ -263,33 +263,6 @@ pub enum Proof {
         ihs: Vec<IhAt>,
         cons: Box<Proof>,
     },
-    /// Induction on a given of type Int down to zero, apart from any
-    /// function's recursion, for every value of the givens in `general`:
-    /// `base` proves the claim `lhs = rhs` under hypothesis
-    /// `guard : var <= 0 = true`; `step` proves it under
-    /// `guard : var <= 0 = false` and one hypothesis per entry of `ihs`, the
-    /// claim at `var - 1` and at that entry's values of `general`. The
-    /// hypotheses named in `carried` stay in scope in both cases; for each
-    /// hypothesis of the step they are first proved at its values. Any
-    /// other hypothesis that mentions `var` or a name in `general` is out of
-    /// scope.
-    ///
-    /// With a `divisor` `k` (a literal of at least 2) the induction divides
-    /// `var` down to zero instead: `base` under `guard : var > 0 = false`,
-    /// `step` under `guard : var > 0 = true` with the claim at `var / k`
-    /// (Euclidean), which for `var > 0` is at least 0 and below `var`.
-    InductInt {
-        var: String,
-        divisor: Option<num_bigint::BigInt>,
-        lhs: Term,
-        rhs: Term,
-        guard: String,
-        base: Box<Proof>,
-        carried: Vec<String>,
-        general: Vec<String>,
-        ihs: Vec<IhAt>,
-        step: Box<Proof>,
-    },
     /// `goal = value` for an Int comparison `goal`: its opposite and the
     /// hypotheses `hyps`, each read as `p >= 0` and weighted by `weights`
     /// (the opposite first), add up to a negative constant (see
@@ -392,9 +365,11 @@ impl Finite {
     }
 }
 
-/// One hypothesis of the step of an [`Proof::InductInt`]: its name, the
-/// value of each generalised given (in the order of `general`), and the
-/// proofs of the carried hypotheses there (in the order of `carried`).
+/// One induction hypothesis at chosen values of the generalised givens: its
+/// name, the value of each generalised given (in the order they vary), and
+/// the proofs of the carried hypotheses there (in the order of `carried`).
+/// A [`Proof::InductList`] step lists them; an [`InductCase`] names further
+/// ones at the part a recursive call recurses on.
 #[derive(Debug, Clone, PartialEq)]
 pub struct IhAt {
     pub name: String,
@@ -465,8 +440,8 @@ pub struct Obligation {
     /// The givens of a list type: what a [`Proof::InductList`] step may
     /// induct on.
     pub lists: Vec<String>,
-    /// The givens of type Int: what a [`Proof::InductInt`] step may induct
-    /// on.
+    /// The givens of type Int: what a [`Proof::Induct`] along a function
+    /// that counts an Int toward zero may induct on.
     pub ints: Vec<String>,
     pub premise: Option<Term>,
     pub lhs: Term,
@@ -527,17 +502,6 @@ impl Proof {
                 .map(|c| c.proof.size() + c.carry.iter().flatten().map(Proof::size).sum::<usize>())
                 .sum(),
             Proof::InductList { nil, cons, .. } => nil.size() + cons.size(),
-            Proof::InductInt {
-                base, ihs, step, ..
-            } => {
-                base.size()
-                    + ihs
-                        .iter()
-                        .flat_map(|i| &i.carry)
-                        .map(Proof::size)
-                        .sum::<usize>()
-                    + step.size()
-            }
         }
     }
 }

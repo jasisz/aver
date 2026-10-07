@@ -327,8 +327,12 @@
   ]
  },
  "projects/k5_fdiv/domain/stickyint.av": {
+  "obligations": [
+   "truncSig.truncStickyInt.because1"
+  ],
   "steps": [
    "pow2.positive",
+   "pow2.successor",
    "sigDouble.doubleIsTwice"
   ]
  },

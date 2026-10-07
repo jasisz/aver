@@ -49,7 +49,7 @@ fn recursive_in_claim(env: &mut Env, ob: &Obligation) -> Vec<String> {
         .into_iter()
         .filter(|id| {
             env.def(*id)
-                .is_some_and(|d| matches!(induct::structural_param(&d), Ok(Some(_))))
+                .is_some_and(|d| matches!(induct::recursion(&d), Ok(Some(_))))
         })
         .collect();
     recursive
@@ -79,12 +79,8 @@ impl Env<'_> {
         use crate::ir::proof_steps::sexpr::Names;
         let f_name = self.inputs.symbol_table.fn_name(f);
         let def = self.def(f);
-        // A definition that divides an Int down to zero is followed by an
-        // induction on that Int, dividing it the same way.
-        let halving = def.as_ref().and_then(induct::halving_divisor);
-        let j = match def.as_ref().map(induct::structural_param) {
-            Some(Ok(Some(j))) => j,
-            _ if halving.is_some() => halving.as_ref().expect("matched").0,
+        let rec = match def.as_ref().map(induct::recursion) {
+            Some(Ok(Some(rec))) => rec,
             Some(Err(why)) => return Err(format!("induction: {why}")),
             _ => {
                 let others = recursive_in_claim(self, ob);
@@ -99,6 +95,7 @@ impl Env<'_> {
             }
         };
         let def = def.expect("matched above");
+        let j = rec.at;
         let mut calls = Vec::new();
         calls_of(&ob.lhs, f, &mut calls);
         calls_of(&ob.rhs, f, &mut calls);
@@ -123,35 +120,13 @@ impl Env<'_> {
                 "induction: {f_name} recurses on {v} in one call and on {other} in another; which to follow is a choice the law has to make"
             ));
         }
-        // A countdown recurses on an Int given: induction down to zero on
-        // that given, the hypotheses about it carried along.
-        let divisor = halving.map(|(_, k)| k);
-        if induct::countdown(&def).is_some() || divisor.is_some() {
-            self.mark_used(f);
-            let fuel = self.fuel;
-            let fixed = self.prove_by_int_induction(&f_name, &v, divisor.as_ref(), ob, depth);
-            if fixed.is_ok() {
-                return fixed;
-            }
-            // The claim for every value of the givens the recursive call
-            // changes, as the function's own recursion passes them on.
-            let general = changed_givens(&def, first, j, &ob.givens)?;
-            if general.is_empty() {
-                return fixed;
-            }
-            self.fuel = fuel;
-            return self.prove_by_general_int_induction(
-                f,
-                &f_name,
-                &def,
-                first,
-                j,
-                &v,
-                divisor.as_ref(),
-                &general,
-                ob,
-                depth,
-            );
+        // Along a count toward zero the given is an Int; each case holds the
+        // comparison's value, and a recursive call's hypothesis is the claim
+        // at the Int it passes, closer to zero.
+        if rec.guard.is_some() && !ob.ints.contains(&v) {
+            return Err(format!(
+                "induction along {f_name}: {v} is not a given of type Int"
+            ));
         }
         // The scheme follows the first of them, outermost first on the left.
         let args = (*first).clone();
@@ -198,10 +173,14 @@ impl Env<'_> {
             for (i, arm) in arms.iter().enumerate() {
                 let in_case = |m: String| format!("induction along {f_name}, case {}: {m}", i + 1);
                 let mut binders = Vec::new();
-                for name in term::pattern_binders(&arm.pattern) {
-                    let b = fresh(&name, &taken);
-                    taken.push(b.clone());
-                    binders.push(b);
+                if rec.guard.is_some() {
+                    binders.push(self.fresh_hyp());
+                } else {
+                    for name in term::pattern_binders(&arm.pattern) {
+                        let b = fresh(&name, &taken);
+                        taken.push(b.clone());
+                        binders.push(b);
+                    }
                 }
                 let n = induct::self_calls(&arm.body, f).len();
                 let names: Vec<String> = (0..n)
@@ -211,11 +190,12 @@ impl Env<'_> {
                     })
                     .collect();
                 let case = induct::case(
-                    &def, &args, j, &v, &general, arm, &binders, &names, &ob.lhs, &ob.rhs,
+                    &def, &rec, &args, &v, &general, arm, &binders, &names, &ob.lhs, &ob.rhs,
                 )
                 .map_err(in_case)?;
                 let here = [(v.clone(), case.value.clone())];
                 self.hyps = kept.clone();
+                self.hyps.extend(case.guard.clone());
                 for (name, e) in &carried {
                     let at = Eqn::new(term::subst(&e.lhs, &here)?, term::subst(&e.rhs, &here)?);
                     self.hyps.push((name.clone(), at));
@@ -345,308 +325,6 @@ impl Env<'_> {
             carried: carried.into_iter().map(|(n, _)| n).collect(),
             cases,
         })
-    }
-
-    /// Prove `ob` by induction on the Int given `v` down to zero, as the
-    /// countdown `f_name` recurses: the case `v <= 0`, then the case
-    /// `v > 0` with the claim at `v - 1`. Every hypothesis that mentions
-    /// `v` is carried: it stays in scope, and in the step it is first
-    /// proved at `v - 1` by evaluation, so the claim there holds.
-    fn prove_by_int_induction(
-        &mut self,
-        f_name: &str,
-        v: &str,
-        divisor: Option<&num_bigint::BigInt>,
-        ob: &Obligation,
-        depth: usize,
-    ) -> Result<Proof, String> {
-        if !ob.ints.iter().any(|g| g == v) {
-            return Err(format!(
-                "induction along {f_name}: {v} is not a given of type Int"
-            ));
-        }
-        let mentions = |e: &crate::ir::proof_steps::Eqn| {
-            let mut fv = Vec::new();
-            term::free_vars(&e.lhs, &mut fv);
-            term::free_vars(&e.rhs, &mut fv);
-            fv.iter().any(|n| n == v)
-        };
-        // Each name once, as it stands innermost, in scope order.
-        let mut carried: Vec<(String, crate::ir::proof_steps::Eqn)> = Vec::new();
-        for (i, (name, e)) in self.hyps.iter().enumerate() {
-            let shadowed = self.hyps[i + 1..].iter().any(|(n, _)| n == name);
-            if !shadowed && mentions(e) {
-                carried.push((name.clone(), e.clone()));
-            }
-        }
-        let kept: Vec<(String, crate::ir::proof_steps::Eqn)> = self
-            .hyps
-            .iter()
-            .filter(|(_, e)| !mentions(e))
-            .cloned()
-            .collect();
-        let guard = self.fresh_hyp();
-        self.next_ih += 1;
-        let ih = format!("ih{}", self.next_ih);
-        let (at, at_base, smaller) = induct::int_descent(v, divisor);
-        let names = case_names(v, divisor);
-        let down = [(v.to_string(), smaller)];
-        let saved = std::mem::take(&mut self.hyps);
-        let scope = |value: bool| {
-            let mut h = kept.clone();
-            h.push((
-                guard.clone(),
-                crate::ir::proof_steps::Eqn::new(at.clone(), term::boolean(value)),
-            ));
-            h.extend(carried.iter().cloned());
-            h
-        };
-        let in_case = |env: &mut Self,
-                       value: bool,
-                       extra: Option<(String, crate::ir::proof_steps::Eqn)>,
-                       lhs: &Term,
-                       rhs: &Term| {
-            env.hyps = scope(value);
-            env.hyps.extend(extra);
-            env.prove_by_evaluation(lhs, rhs, depth)
-        };
-        let result = (|| -> Result<Proof, String> {
-            let base = in_case(self, at_base, None, &ob.lhs, &ob.rhs)
-                .map_err(|m| format!("induction on {v} along {f_name}, case {}: {m}", names.0))?;
-            let mut proved = Vec::new();
-            for (name, e) in &carried {
-                let at_less = (term::subst(&e.lhs, &down)?, term::subst(&e.rhs, &down)?);
-                let p = in_case(self, !at_base, None, &at_less.0, &at_less.1).map_err(|m| {
-                    format!(
-                        "induction on {v} along {f_name}: `{name}` at {}: {m}",
-                        names.2
-                    )
-                })?;
-                proved.push((name.clone(), p));
-            }
-            let at_ih = crate::ir::proof_steps::Eqn::new(
-                term::subst(&ob.lhs, &down)?,
-                term::subst(&ob.rhs, &down)?,
-            );
-            let step = in_case(self, !at_base, Some((ih.clone(), at_ih)), &ob.lhs, &ob.rhs)
-                .map_err(|m| format!("induction on {v} along {f_name}, case {}: {m}", names.1))?;
-            Ok(Proof::InductInt {
-                var: v.to_string(),
-                divisor: divisor.cloned(),
-                lhs: canon(&ob.lhs),
-                rhs: canon(&ob.rhs),
-                guard: guard.clone(),
-                base: Box::new(base),
-                carried: proved.iter().map(|(n, _)| n.clone()).collect(),
-                general: Vec::new(),
-                ihs: vec![IhAt {
-                    name: ih.clone(),
-                    at: Vec::new(),
-                    carry: proved.into_iter().map(|(_, p)| p).collect(),
-                }],
-                step: Box::new(step),
-            })
-        })();
-        self.hyps = saved;
-        result
-    }
-}
-
-/// How the cases of an Int induction read in a refusal: the base case,
-/// the step case, and the smaller value (`n <= 0`, `n > 0`, `n - 1`).
-fn case_names(v: &str, divisor: Option<&num_bigint::BigInt>) -> (String, String, String) {
-    let smaller = match divisor {
-        None => format!("{v} - 1"),
-        Some(k) => format!("{v} / {k}"),
-    };
-    (format!("{v} <= 0"), format!("{v} > 0"), smaller)
-}
-
-/// The givens the claim passes to the countdown `def` at `args` at a place
-/// other than `j` whose parameter a recursive call changes: what an
-/// induction along it holds for every value of, with each place.
-fn changed_givens(
-    def: &crate::ir::proof_steps::Def,
-    args: &[Term],
-    j: usize,
-    givens: &[String],
-) -> Result<Vec<(usize, String)>, String> {
-    use crate::ir::hir::ResolvedExpr;
-    let (_, general) = induct::varied(args, j, givens)?;
-    let calls = induct::self_calls(&def.body, def.fn_id);
-    Ok(general
-        .into_iter()
-        .filter(|(k, _)| {
-            calls.iter().any(|(call, _)| {
-                !matches!(&call[*k].node, ResolvedExpr::Ident(n) if *n == def.params[*k])
-            })
-        })
-        .collect())
-}
-
-impl Env<'_> {
-    /// Prove `ob` by induction on the Int given `v` down to zero along the
-    /// countdown `f`, for every value of the givens in `general`: in the
-    /// step, the claim at `v - 1` holds wherever the givens in `general`
-    /// take the values of `f`'s own recursive call, and at the values of
-    /// any call of `f` at `v - 1` the two sides evaluate to. Every
-    /// hypothesis that mentions `v` or a generalised given is carried and
-    /// proved at each of those values.
-    #[allow(clippy::too_many_arguments)]
-    fn prove_by_general_int_induction(
-        &mut self,
-        f: FnId,
-        f_name: &str,
-        def: &crate::ir::proof_steps::Def,
-        args: &[Term],
-        j: usize,
-        v: &str,
-        divisor: Option<&num_bigint::BigInt>,
-        general: &[(usize, String)],
-        ob: &Obligation,
-        depth: usize,
-    ) -> Result<Proof, String> {
-        let names: Vec<String> = general.iter().map(|(_, g)| g.clone()).collect();
-        let mentions = |e: &Eqn| {
-            let mut fv = Vec::new();
-            term::free_vars(&e.lhs, &mut fv);
-            term::free_vars(&e.rhs, &mut fv);
-            fv.iter().any(|n| n == v || names.contains(n))
-        };
-        let mut carried: Vec<(String, Eqn)> = Vec::new();
-        for (i, (name, e)) in self.hyps.iter().enumerate() {
-            let shadowed = self.hyps[i + 1..].iter().any(|(n, _)| n == name);
-            if !shadowed && mentions(e) {
-                carried.push((name.clone(), e.clone()));
-            }
-        }
-        let kept: Vec<(String, Eqn)> = self
-            .hyps
-            .iter()
-            .filter(|(_, e)| !mentions(e))
-            .cloned()
-            .collect();
-        let guard = self.fresh_hyp();
-        let (at, at_base, less) = induct::int_descent(v, divisor);
-        let shown = case_names(v, divisor);
-        let scope = |value: bool| {
-            let mut h = kept.clone();
-            h.push((guard.clone(), Eqn::new(at.clone(), term::boolean(value))));
-            h.extend(carried.iter().cloned());
-            h
-        };
-        let instance = |values: &[Term]| -> Result<Vec<(String, Term)>, String> {
-            let mut down = vec![(v.to_string(), less.clone())];
-            down.extend(names.iter().cloned().zip(values.iter().cloned()));
-            Ok(down)
-        };
-        let claim_at = |values: &[Term]| -> Result<Eqn, String> {
-            let down = instance(values)?;
-            Ok(Eqn::new(
-                term::subst(&ob.lhs, &down)?,
-                term::subst(&ob.rhs, &down)?,
-            ))
-        };
-        // The values the function's own recursive calls pass.
-        let outer = def.outer(args)?;
-        let mut values: Vec<Vec<Term>> = Vec::new();
-        for (call, _) in induct::self_calls(&def.body, f) {
-            let at: Vec<Term> = general
-                .iter()
-                .map(|(k, _)| term::subst(&call[*k], &outer).map(|t| canon(&t)))
-                .collect::<Result<_, _>>()?;
-            if !values.contains(&at) {
-                values.push(at);
-            }
-        }
-        let saved = std::mem::take(&mut self.hyps);
-        let result = (|| -> Result<Proof, String> {
-            self.hyps = scope(at_base);
-            let base = self
-                .prove_by_evaluation(&ob.lhs, &ob.rhs, depth)
-                .map_err(|m| format!("induction on {v} along {f_name}, case {}: {m}", shown.0))?;
-            let mut last = String::new();
-            // Each round adds the values of the calls at `v - 1` the sides
-            // evaluate to under the hypotheses so far; a few rounds suffice
-            // for a claim that applies the function on each side.
-            for _ in 0..3 {
-                let mut ihs = Vec::new();
-                let mut stated = Vec::new();
-                for at in &values {
-                    let down = instance(at)?;
-                    self.hyps = scope(!at_base);
-                    let mut carry = Vec::new();
-                    for (_, c) in &carried {
-                        let lhs = term::subst(&c.lhs, &down)?;
-                        let rhs = term::subst(&c.rhs, &down)?;
-                        match self.prove_by_evaluation(&lhs, &rhs, depth) {
-                            Ok(p) => carry.push(p),
-                            Err(_) => break,
-                        }
-                    }
-                    if carry.len() != carried.len() {
-                        continue;
-                    }
-                    self.next_ih += 1;
-                    let name = format!("ih{}", self.next_ih);
-                    stated.push((name.clone(), claim_at(at)?));
-                    ihs.push(IhAt {
-                        name,
-                        at: at.clone(),
-                        carry,
-                    });
-                }
-                self.hyps = scope(!at_base);
-                self.hyps.extend(stated);
-                match self.prove_by_evaluation(&ob.lhs, &ob.rhs, depth) {
-                    Ok(step) => {
-                        return Ok(Proof::InductInt {
-                            var: v.to_string(),
-                            divisor: divisor.cloned(),
-                            lhs: canon(&ob.lhs),
-                            rhs: canon(&ob.rhs),
-                            guard: guard.clone(),
-                            base: Box::new(base),
-                            carried: carried.iter().map(|(n, _)| n.clone()).collect(),
-                            general: names.clone(),
-                            ihs,
-                            step: Box::new(step),
-                        });
-                    }
-                    Err(m) => last = m,
-                }
-                // The calls of `f` at `v - 1` the sides stop at.
-                let mut found = Vec::new();
-                for side in [&ob.lhs, &ob.rhs] {
-                    if let Ok(chain) = self.normalize(side, 8) {
-                        calls_of(chain.cur(), f, &mut found);
-                    }
-                }
-                let before = values.len();
-                for call in found {
-                    if canon(&call[j]) != canon(&less) {
-                        continue;
-                    }
-                    let at: Vec<Term> = general.iter().map(|(k, _)| canon(&call[*k])).collect();
-                    let e = claim_at(&at)?;
-                    self.hyps = scope(!at_base);
-                    if values.contains(&at) || self.rewrites_forever(&e) {
-                        continue;
-                    }
-                    values.push(at);
-                }
-                if values.len() == before {
-                    break;
-                }
-            }
-            Err(format!(
-                "induction on {v} along {f_name}, for every {}, case {}: {last}",
-                names.join(", "),
-                shown.1
-            ))
-        })();
-        self.hyps = saved;
-        result
     }
 }
 
