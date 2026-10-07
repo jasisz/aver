@@ -123,7 +123,7 @@ impl Env<'_> {
         // Along a count toward zero the given is an Int; each case holds the
         // comparison's value, and a recursive call's hypothesis is the claim
         // at the Int it passes, closer to zero.
-        if rec.guard.is_some() && !ob.ints.iter().any(|g| *g == v) {
+        if rec.guard.is_some() && !ob.ints.contains(&v) {
             return Err(format!(
                 "induction along {f_name}: {v} is not a given of type Int"
             ));
