@@ -30,6 +30,7 @@ type Proof
     PInduct(String, List<Term>, Term, Term, List<String>, List<Case>)
     PListInduct(String, Term, Term, Proof, String, String, List<String>, List<IhAt>, Proof)
     PIntInduct(String, Term, Term, String, Proof, List<String>, List<String>, List<IhAt>, Proof)
+    PIntHalve(String, Int, Term, Term, String, Proof, List<String>, List<String>, List<IhAt>, Proof)
     PRing(Term, Term)
     PLinear(Term, Bool, List<String>, List<Int>)
 

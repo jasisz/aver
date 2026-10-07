@@ -55,6 +55,7 @@ fn conclude(p: Proof, env: Env, path: String) -> Result<Eqn, String>
         Proof.PInduct(f, xs, l, r, carry, cs) -> induct(f, xs, Eqn(lhs = l, rhs = r), carry, cs, env, path)
         Proof.PListInduct(v, l, r, n, h, t, general, ihs, c) -> listInduct(v, Eqn(lhs = l, rhs = r), n, h, t, general, ihs, c, env, path)
         Proof.PIntInduct(v, l, r, g, b, names, general, ihs, st) -> intInduct(v, Eqn(lhs = l, rhs = r), g, b, names, general, ihs, st, env, path)
+        Proof.PIntHalve(v, k, l, r, g, b, names, general, ihs, st) -> intHalve(v, k, Eqn(lhs = l, rhs = r), g, b, names, general, ihs, st, env, path)
         Proof.PRing(l, r) -> ring(l, r, path)
         Proof.PLinear(g, v, hs, ws) -> linear(g, v, hs, ws, env, path)
 
@@ -1313,6 +1314,20 @@ verify intInduct
     intInduct("n", Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), "g", Proof.PRefl(Term.TVar("n")), [], ["n"], [], Proof.PRefl(Term.TVar("n")), intsEnv(["n"]), "p") => Result.Err("step p: n is both inducted on and generalised")
     intInduct("n", Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), "g", Proof.PRefl(Term.TVar("n")), [], [], [IhAt(name = "ih", at = [], carry = [])], Proof.PRefl(Term.TVar("n")), intsEnv(["n"]), "p") => Result.Ok(Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")))
 
+fn intHalve(v: String, k: Int, claim: Eqn, g: String, base: Proof, names: List<String>, general: List<String>, ihs: List<IhAt>, step: Proof, env: Env, path: String) -> Result<Eqn, String>
+    ? "Induction on a given of type Int divided down to zero by a literal k of at least 2, for every value of the names in general: the claim where v > 0 is false (hypothesis g), and where it is true under one hypothesis per entry of ihs, the claim at v / k and that entry's values of general. For v > 0 the Euclidean quotient is at least 0 and below v, so the descent ends. Hypotheses as for intInduct."
+    match (k >= 2, List.contains(env.ints, v), List.contains(general, v))
+        (false, _, _) -> refuse(path, "{v} is divided by {k}, which is below 2")
+        (_, false, _) -> refuse(path, "{v} is not a given of type Int")
+        (_, _, true) -> refuse(path, "{v} is both inducted on and generalised")
+        _ -> intCasesBy(IntDescent(v = v, guard = Term.TOp(">", Term.TVar(v), Term.TInt(0)), base = false, smaller = Term.TBi("__int_div_euclid", [Term.TVar(v), Term.TInt(k)])), claim, g, base, namedHyps(names, env.hyps, path)?, general, ihs, step, env, path)
+
+verify intHalve
+    intHalve("n", 1, Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), "g", Proof.PRefl(Term.TVar("n")), [], [], [IhAt(name = "ih", at = [], carry = [])], Proof.PRefl(Term.TVar("n")), intsEnv(["n"]), "p") => Result.Err("step p: n is divided by 1, which is below 2")
+    intHalve("n", 2, Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), "g", Proof.PRefl(Term.TVar("n")), [], [], [IhAt(name = "ih", at = [], carry = [])], Proof.PRefl(Term.TVar("n")), emptyEnv(), "p") => Result.Err("step p: n is not a given of type Int")
+    intHalve("n", 2, Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), "g", Proof.PRefl(Term.TVar("n")), [], ["n"], [], Proof.PRefl(Term.TVar("n")), intsEnv(["n"]), "p") => Result.Err("step p: n is both inducted on and generalised")
+    intHalve("n", 256, Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), "g", Proof.PRefl(Term.TVar("n")), [], [], [IhAt(name = "ih", at = [], carry = [])], Proof.PRefl(Term.TVar("n")), intsEnv(["n"]), "p") => Result.Ok(Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")))
+
 fn intsEnv(ns: List<String>) -> Env
     ? "No definitions, laws or hypotheses, and these givens of type Int."
     Env(defs = [], consts = [], laws = [], hyps = [], finite = [], lists = [], ints = ns, givens = ns)
@@ -1320,21 +1335,34 @@ fn intsEnv(ns: List<String>) -> Env
 verify intsEnv
     intsEnv(["n"]).ints => ["n"]
 
+record IntDescent
+    v: String
+    guard: Term
+    base: Bool
+    smaller: Term
+
 fn intCases(v: String, claim: Eqn, g: String, base: Proof, cs: List<Hyp>, general: List<String>, ihs: List<IhAt>, step: Proof, env: Env, path: String) -> Result<Eqn, String>
-    ? "The case v <= 0; then, where v > 0, the claim under its hypotheses. A case sees the carried hypotheses (the last named innermost), then g, then those that mention neither v nor general."
-    guard = Term.TOp("<=", Term.TVar(v), Term.TInt(0))
-    kept = notMentioningAny(env.hyps, List.prepend(v, general))
-    inner = List.reverse(cs)
-    caseProves(base, claim, withHyps(env, List.concat(inner, List.prepend(Hyp(name = g, eqn = Eqn(lhs = guard, rhs = Term.TBool(true))), kept))), "{path}/base")?
-    above = withHyps(env, List.concat(inner, List.prepend(Hyp(name = g, eqn = Eqn(lhs = guard, rhs = Term.TBool(false))), kept)))
-    caseProves(step, claim, withHyps(above, List.concat(smallerHyps(v, Term.TOp("-", Term.TVar(v), Term.TInt(1)), general, ihs, claim, cs, above, path)?, above.hyps)), "{path}/step")?
-    Result.Ok(claim)
+    ? "The case v <= 0; then, where v > 0, the claim under its hypotheses at v - 1."
+    intCasesBy(IntDescent(v = v, guard = Term.TOp("<=", Term.TVar(v), Term.TInt(0)), base = true, smaller = Term.TOp("-", Term.TVar(v), Term.TInt(1))), claim, g, base, cs, general, ihs, step, env, path)
 
 verify intCases
     intCases("n", Eqn(lhs = Term.TVar("n"), rhs = Term.TInt(0)), "g", Proof.PRefl(Term.TVar("n")), [], [], [], Proof.PRefl(Term.TVar("n")), intsEnv(["n"]), "p") => Result.Err("step p/base: the case proves a different equation")
     intCases("n", Eqn(lhs = Term.TOp("<=", Term.TVar("n"), Term.TInt(0)), rhs = Term.TBool(true)), "g", Proof.PHyp("g"), [], [], [], Proof.PHyp("g"), intsEnv(["n"]), "p") => Result.Err("step p/step: the case proves a different equation")
     intCases("n", Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), "g", Proof.PHyp("h"), [], [], [], Proof.PRefl(Term.TVar("n")), withHyp(intsEnv(["n"]), "h", Term.TVar("n"), true), "p") => Result.Err("step p/base: hypothesis h is not in scope")
     intCases("n", Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), "g", Proof.PRefl(Term.TVar("n")), [], ["a"], [], Proof.PHyp("h"), withHyp(intsEnv(["n"]), "h", Term.TVar("a"), true), "p") => Result.Err("step p/step: hypothesis h is not in scope")
+
+fn intCasesBy(d: IntDescent, claim: Eqn, g: String, base: Proof, cs: List<Hyp>, general: List<String>, ihs: List<IhAt>, step: Proof, env: Env, path: String) -> Result<Eqn, String>
+    ? "The base case, where the guard has the base value; then the step, where it has the other, under one hypothesis per entry of ihs at the smaller value. A case sees the carried hypotheses (the last named innermost), then g, then those that mention neither v nor general."
+    kept = notMentioningAny(env.hyps, List.prepend(d.v, general))
+    inner = List.reverse(cs)
+    caseProves(base, claim, withHyps(env, List.concat(inner, List.prepend(Hyp(name = g, eqn = Eqn(lhs = d.guard, rhs = Term.TBool(d.base))), kept))), "{path}/base")?
+    above = withHyps(env, List.concat(inner, List.prepend(Hyp(name = g, eqn = Eqn(lhs = d.guard, rhs = Term.TBool(Bool.not(d.base)))), kept)))
+    caseProves(step, claim, withHyps(above, List.concat(smallerHyps(d.v, d.smaller, general, ihs, claim, cs, above, path)?, above.hyps)), "{path}/step")?
+    Result.Ok(claim)
+
+verify intCasesBy
+    intCasesBy(IntDescent(v = "n", guard = Term.TOp(">", Term.TVar("n"), Term.TInt(0)), base = false, smaller = Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(2)])), Eqn(lhs = Term.TOp(">", Term.TVar("n"), Term.TInt(0)), rhs = Term.TBool(false)), "g", Proof.PHyp("g"), [], [], [], Proof.PHyp("g"), intsEnv(["n"]), "p") => Result.Err("step p/step: the case proves a different equation")
+    intCasesBy(IntDescent(v = "n", guard = Term.TOp(">", Term.TVar("n"), Term.TInt(0)), base = false, smaller = Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(2)])), Eqn(lhs = Term.TVar("n"), rhs = Term.TInt(0)), "g", Proof.PRefl(Term.TInt(0)), [], [], [IhAt(name = "ih", at = [], carry = [])], Proof.PHyp("ih"), intsEnv(["n"]), "p") => Result.Err("step p/base: the case proves a different equation")
 
 fn smallerHyps(v: String, smaller: Term, general: List<String>, ihs: List<IhAt>, claim: Eqn, cs: List<Hyp>, scope: Env, path: String) -> Result<List<Hyp>, String>
     ? "One hypothesis per entry, later ones in front: the claim with v at the smaller value and general at the entry's values, once each carried hypothesis is proved there."

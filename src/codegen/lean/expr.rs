@@ -229,12 +229,14 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
         ResolvedExpr::List(elements) => {
             if elements.is_empty() {
                 // A sampled empty given carries its checked element type even
-                // when an enclosing polymorphic operation has no type stamp.
+                // when an enclosing polymorphic operation has no type stamp;
+                // a user type in it is spelled by its owner, as a step term
+                // of another module may carry it.
                 match expr
                     .ty()
                     .filter(|ty| crate::types::checker::type_is_fully_concrete(ty))
                 {
-                    Some(ty) => format!("([] : {})", super::types::type_to_lean(ty)),
+                    Some(ty) => format!("([] : {})", super::types::term_type_to_lean(ty)),
                     None => "[]".to_string(),
                 }
             } else {

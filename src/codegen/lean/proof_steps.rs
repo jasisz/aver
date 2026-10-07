@@ -74,7 +74,7 @@ theorem eq_false_of_lt (a b : Int) (h : decide (a < b) = true) : (a == b) = fals
   beq_eq_false_iff_ne.mpr (Int.ne_of_lt (of_decide_eq_true h))
 theorem eq_false_of_gt (a b : Int) (h : decide (a > b) = true) : (a == b) = false :=
   beq_eq_false_iff_ne.mpr (Int.ne_of_gt (of_decide_eq_true h))
-theorem eq_of_beq (a b : Int) (h : (a == b) = true) : a = b :=
+theorem eq_of_beq {α : Type} [BEq α] [LawfulBEq α] (a b : α) (h : (a == b) = true) : a = b :=
   beq_iff_eq.mp h
 theorem beq_refl {α : Type} [BEq α] [ReflBEq α] (a : α) : (a == a) = true := beq_self_eq_true a
 theorem mod_range (a k : Int) (h : decide (k > 0) = true) :
@@ -89,6 +89,26 @@ theorem int_induct {P : Int → Prop} (base : ∀ n, decide (n <= 0) = true → 
     | zero => intro m h; exact base m (decide_eq_true (by omega))
     | succ k ih => intro m h; exact step m (decide_eq_false (by omega)) (ih (m - 1) (by omega))
   exact key n.toNat n rfl
+theorem int_halve_induct {P : Int → Prop} (k : Int) (hk : decide (k >= 2) = true)
+    (base : ∀ n, decide (n > 0) = false → P n)
+    (step : ∀ n, decide (n > 0) = true → P (n / k) → P n) (n : Int) : P n := by
+  have k2 : 2 ≤ k := of_decide_eq_true hk
+  have key : ∀ (m : Nat) (x : Int), x.toNat ≤ m → P x := by
+    intro m
+    induction m with
+    | zero => intro x hx; exact base x (decide_eq_false (by omega))
+    | succ m ih =>
+      intro x hx
+      by_cases h : x > 0
+      · apply step x (decide_eq_true h)
+        apply ih
+        have h0 : 0 ≤ x / k := Int.ediv_nonneg (by omega) (by omega)
+        have h1 : x / k < x := Int.ediv_lt_of_lt_mul (by omega) (by
+          have : x * 1 < x * k := Int.mul_lt_mul_of_pos_left (by omega) h
+          omega)
+        omega
+      · exact base x (decide_eq_false h)
+  exact key n.toNat n (Nat.le_refl _)
 theorem add_comm (a b : Int) : a + b = b + a := Int.add_comm a b
 theorem mul_comm (a b : Int) : a * b = b * a := Int.mul_comm a b
 theorem add_assoc (a b c : Int) : a + b + c = a + (b + c) := Int.add_assoc a b c
@@ -1046,6 +1066,7 @@ impl Renderer<'_> {
             // given.
             Proof::InductInt {
                 var,
+                divisor,
                 guard,
                 base,
                 carried,
@@ -1071,7 +1092,8 @@ impl Renderer<'_> {
                     stated.push((name.clone(), e.clone()));
                 }
                 let kept: Hyps = hyps.iter().filter(|(_, e)| !mentions(e)).cloned().collect();
-                let at = term::binop(BinOp::Lte, term::var(var), term::int(&0.into()));
+                let (at, at_base, smaller) =
+                    crate::ir::proof_steps::induct::int_descent(var, divisor.as_ref());
                 let scope = |value: bool| -> Hyps {
                     let mut h = kept.clone();
                     h.push((guard.clone(), Eqn::new(at.clone(), term::boolean(value))));
@@ -1092,14 +1114,12 @@ impl Renderer<'_> {
                     .iter()
                     .map(|n| self.proof(&Proof::Hyp(n.clone()), hyps))
                     .collect::<Result<_, _>>()?;
-                // Each hypothesis of the step: the claim at `var - 1` and its
-                // values of the generalised givens.
+                // Each hypothesis of the step: the claim at the smaller value
+                // (`var - 1`, or `var / k`) and its values of the
+                // generalised givens.
                 let mut at_ih: Vec<(String, Eqn)> = Vec::new();
                 for ih in ihs {
-                    let mut down = vec![(
-                        var.clone(),
-                        term::binop(BinOp::Sub, term::var(var), term::int(&1.into())),
-                    )];
+                    let mut down = vec![(var.clone(), smaller.clone())];
                     down.extend(general.iter().cloned().zip(ih.at.iter().cloned()));
                     let e = Eqn::new(term::subst(&eq.lhs, &down)?, term::subst(&eq.rhs, &down)?);
                     at_ih.push((ih.name.clone(), e));
@@ -1111,8 +1131,8 @@ impl Renderer<'_> {
                 self.prop_hyps
                     .retain(|h| h != guard && !ihs.iter().any(|i| &i.name == h));
                 let g = self.hyp_name(guard);
-                let pb = self.proof(base, &scope(true));
-                let above = scope(false);
+                let pb = self.proof(base, &scope(at_base));
+                let above = scope(!at_base);
                 let haves = (|| -> Result<String, String> {
                     let mut text = String::new();
                     for (ih, (name, e)) in ihs.iter().zip(&at_ih) {
@@ -1143,8 +1163,12 @@ impl Renderer<'_> {
                 let rebound = bound.join(" ");
                 let mut applied: Vec<String> = gs.clone();
                 applied.extend(outer);
+                let principle = match divisor {
+                    None => "AverSteps.int_induct".to_string(),
+                    Some(k) => format!("AverSteps.int_halve_induct {k} (by decide)"),
+                };
                 format!(
-                    "(AverSteps.int_induct (P := fun {v} => {motive}) (fun {v} {g} {rebound} => {pb}) (fun {v} {g} {g}_all {rebound} => ({haves}{ps})) {v} {})",
+                    "({principle} (P := fun {v} => {motive}) (fun {v} {g} {rebound} => {pb}) (fun {v} {g} {g}_all {rebound} => ({haves}{ps})) {v} {})",
                     applied.join(" "),
                     v = lean(var),
                 )
@@ -1383,7 +1407,7 @@ impl Renderer<'_> {
         for (i, (_, ty)) in fd.params.iter().enumerate() {
             binders.push_str(&format!(
                 " (x{i} : {})",
-                super::types::type_annotation_to_lean(ty)
+                super::types::fn_annotation_to_lean(ty, fn_id)
             ));
             names.push(format!("x{i}"));
         }

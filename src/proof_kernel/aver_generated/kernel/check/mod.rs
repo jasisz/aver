@@ -56,6 +56,48 @@ impl aver_rt::AverDisplay for Env {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct IntDescent {
+    pub v: AverStr,
+    pub guard: crate::proof_kernel::aver_generated::kernel::term::Term,
+    pub base: bool,
+    pub smaller: crate::proof_kernel::aver_generated::kernel::term::Term,
+}
+
+impl PartialOrd for IntDescent {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for IntDescent {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        std::cmp::Ordering::Equal
+            .then_with(|| self.base.cmp(&other.base))
+            .then_with(|| self.guard.cmp(&other.guard))
+            .then_with(|| self.smaller.cmp(&other.smaller))
+            .then_with(|| self.v.cmp(&other.v))
+    }
+}
+
+impl aver_rt::AverDisplay for IntDescent {
+    fn aver_display(&self) -> String {
+        format!(
+            "IntDescent({})",
+            vec![
+                format!("v: {}", self.v.aver_display_inner()),
+                format!("guard: {}", self.guard.aver_display_inner()),
+                format!("base: {}", self.base.aver_display_inner()),
+                format!("smaller: {}", self.smaller.aver_display_inner())
+            ]
+            .join(", ")
+        )
+    }
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
+}
+
 #[allow(non_camel_case_types)]
 enum __MutualTco1 {
     Conclude(
@@ -300,6 +342,37 @@ fn __mutual_tco_trampoline_1(
                         let st = (*st).clone();
                         return crate::proof_kernel::aver_generated::kernel::check::intInduct(
                             v,
+                            &crate::proof_kernel::aver_generated::kernel::term::Eqn {
+                                lhs: l,
+                                rhs: r,
+                            },
+                            g,
+                            b,
+                            &names,
+                            &general,
+                            &ihs,
+                            st,
+                            &env,
+                            path,
+                        );
+                    }
+                    crate::proof_kernel::aver_generated::kernel::proof::Proof::PIntHalve(
+                        v,
+                        k,
+                        l,
+                        r,
+                        g,
+                        b,
+                        names,
+                        general,
+                        ihs,
+                        st,
+                    ) => {
+                        let b = (*b).clone();
+                        let st = (*st).clone();
+                        return crate::proof_kernel::aver_generated::kernel::check::intHalve(
+                            v,
+                            k,
                             &crate::proof_kernel::aver_generated::kernel::term::Eqn {
                                 lhs: l,
                                 rhs: r,
@@ -4796,6 +4869,116 @@ pub fn intInduct(
     }
 }
 
+/// Induction on a given of type Int divided down to zero by a literal k of at least 2, for every value of the names in general: the claim where v > 0 is false (hypothesis g), and where it is true under one hypothesis per entry of ihs, the claim at v / k and that entry's values of general. For v > 0 the Euclidean quotient is at least 0 and below v, so the descent ends. Hypotheses as for intInduct.
+pub fn intHalve(
+    v @ _: AverStr,
+    k @ _: aver_rt::AverInt,
+    claim @ _: &crate::proof_kernel::aver_generated::kernel::term::Eqn,
+    g @ _: AverStr,
+    mut base @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
+    names @ _: &aver_rt::AverList<AverStr>,
+    general @ _: &aver_rt::AverList<AverStr>,
+    ihs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::IhAt>,
+    mut step @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
+    env @ _: &Env,
+    path @ _: AverStr,
+) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    match (
+        (k >= aver_rt::AverInt::from_i64(2)),
+        env.ints.contains(&v),
+        general.contains(&v),
+    ) {
+        (false, _, _) => crate::proof_kernel::aver_generated::kernel::check::refuse(
+            path,
+            aver_rt::AverStr::from({
+                let mut __b = {
+                    let mut __b = {
+                        let mut __b = {
+                            let mut __b = aver_rt::Buffer::with_capacity(
+                                (aver_rt::AverInt::from_i64(65)).to_usize().unwrap_or(0),
+                            );
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v))));
+                            __b
+                        };
+                        __b.push_str(&AverStr::from(" is divided by "));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(k))));
+                    __b
+                };
+                __b.push_str(&AverStr::from(", which is below 2"));
+                __b
+            }),
+        ),
+        (_, false, _) => crate::proof_kernel::aver_generated::kernel::check::refuse(
+            path,
+            aver_rt::AverStr::from({
+                let mut __b = {
+                    let mut __b = aver_rt::Buffer::with_capacity(
+                        (aver_rt::AverInt::from_i64(43)).to_usize().unwrap_or(0),
+                    );
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v))));
+                    __b
+                };
+                __b.push_str(&AverStr::from(" is not a given of type Int"));
+                __b
+            }),
+        ),
+        (_, _, true) => crate::proof_kernel::aver_generated::kernel::check::refuse(
+            path,
+            aver_rt::AverStr::from({
+                let mut __b = {
+                    let mut __b = aver_rt::Buffer::with_capacity(
+                        (aver_rt::AverInt::from_i64(52)).to_usize().unwrap_or(0),
+                    );
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v))));
+                    __b
+                };
+                __b.push_str(&AverStr::from(" is both inducted on and generalised"));
+                __b
+            }),
+        ),
+        _ => crate::proof_kernel::aver_generated::kernel::check::intCasesBy(
+            &crate::proof_kernel::aver_generated::kernel::check::IntDescent {
+                v: v.clone(),
+                guard: crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
+                    AverStr::from(">"),
+                    std::sync::Arc::new(
+                        crate::proof_kernel::aver_generated::kernel::term::Term::TVar(v.clone()),
+                    ),
+                    std::sync::Arc::new(
+                        crate::proof_kernel::aver_generated::kernel::term::Term::TInt(
+                            aver_rt::AverInt::from_i64(0),
+                        ),
+                    ),
+                ),
+                base: false,
+                smaller: crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
+                    AverStr::from("__int_div_euclid"),
+                    aver_rt::AverList::from_vec(vec![
+                        crate::proof_kernel::aver_generated::kernel::term::Term::TVar(v),
+                        crate::proof_kernel::aver_generated::kernel::term::Term::TInt(k),
+                    ]),
+                ),
+            },
+            claim,
+            g,
+            base,
+            &crate::proof_kernel::aver_generated::kernel::check::namedHyps(
+                names,
+                &env.hyps,
+                path.clone(),
+            )?,
+            general,
+            ihs,
+            step,
+            env,
+            path,
+        ),
+    }
+}
+
 /// No definitions, laws or hypotheses, and these givens of type Int.
 pub fn intsEnv(ns @ _: &aver_rt::AverList<AverStr>) -> Env {
     crate::proof_kernel::cancel_checkpoint();
@@ -4811,7 +4994,7 @@ pub fn intsEnv(ns @ _: &aver_rt::AverList<AverStr>) -> Env {
     }
 }
 
-/// The case v <= 0; then, where v > 0, the claim under its hypotheses. A case sees the carried hypotheses (the last named innermost), then g, then those that mention neither v nor general.
+/// The case v <= 0; then, where v > 0, the claim under its hypotheses at v - 1.
 pub fn intCases(
     v @ _: AverStr,
     claim @ _: &crate::proof_kernel::aver_generated::kernel::term::Eqn,
@@ -4825,20 +5008,62 @@ pub fn intCases(
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    let guard @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
-        AverStr::from("<="),
-        std::sync::Arc::new(
-            crate::proof_kernel::aver_generated::kernel::term::Term::TVar(v.clone()),
-        ),
-        std::sync::Arc::new(
-            crate::proof_kernel::aver_generated::kernel::term::Term::TInt(
-                aver_rt::AverInt::from_i64(0),
+    crate::proof_kernel::aver_generated::kernel::check::intCasesBy(
+        &crate::proof_kernel::aver_generated::kernel::check::IntDescent {
+            v: v.clone(),
+            guard: crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
+                AverStr::from("<="),
+                std::sync::Arc::new(
+                    crate::proof_kernel::aver_generated::kernel::term::Term::TVar(v.clone()),
+                ),
+                std::sync::Arc::new(
+                    crate::proof_kernel::aver_generated::kernel::term::Term::TInt(
+                        aver_rt::AverInt::from_i64(0),
+                    ),
+                ),
             ),
-        ),
-    );
+            base: true,
+            smaller: crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
+                AverStr::from("-"),
+                std::sync::Arc::new(
+                    crate::proof_kernel::aver_generated::kernel::term::Term::TVar(v),
+                ),
+                std::sync::Arc::new(
+                    crate::proof_kernel::aver_generated::kernel::term::Term::TInt(
+                        aver_rt::AverInt::from_i64(1),
+                    ),
+                ),
+            ),
+        },
+        claim,
+        g,
+        base,
+        cs,
+        general,
+        ihs,
+        step,
+        env,
+        path,
+    )
+}
+
+/// The base case, where the guard has the base value; then the step, where it has the other, under one hypothesis per entry of ihs at the smaller value. A case sees the carried hypotheses (the last named innermost), then g, then those that mention neither v nor general.
+pub fn intCasesBy(
+    d @ _: &IntDescent,
+    claim @ _: &crate::proof_kernel::aver_generated::kernel::term::Eqn,
+    g @ _: AverStr,
+    mut base @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
+    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
+    general @ _: &aver_rt::AverList<AverStr>,
+    ihs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::IhAt>,
+    mut step @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
+    env @ _: &Env,
+    path @ _: AverStr,
+) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
     let kept @ _ = crate::proof_kernel::aver_generated::kernel::check::notMentioningAny(
         env.hyps.clone(),
-        aver_rt::AverList::prepend(v.clone(), &general.clone()),
+        aver_rt::AverList::prepend(d.v.clone(), &general.clone()),
     );
     let inner @ _ = cs.reverse();
     crate::proof_kernel::aver_generated::kernel::check::caseProves(
@@ -4852,9 +5077,9 @@ pub fn intCases(
                     crate::proof_kernel::aver_generated::kernel::proof::Hyp {
                         name: g.clone(),
                         eqn: crate::proof_kernel::aver_generated::kernel::term::Eqn {
-                            lhs: guard.clone(),
+                            lhs: d.guard.clone(),
                             rhs: crate::proof_kernel::aver_generated::kernel::term::Term::TBool(
-                                true,
+                                d.base,
                             ),
                         },
                     },
@@ -4882,8 +5107,10 @@ pub fn intCases(
                 crate::proof_kernel::aver_generated::kernel::proof::Hyp {
                     name: g,
                     eqn: crate::proof_kernel::aver_generated::kernel::term::Eqn {
-                        lhs: guard,
-                        rhs: crate::proof_kernel::aver_generated::kernel::term::Term::TBool(false),
+                        lhs: d.guard.clone(),
+                        rhs: crate::proof_kernel::aver_generated::kernel::term::Term::TBool(
+                            (!d.base),
+                        ),
                     },
                 },
                 &kept,
@@ -4897,18 +5124,8 @@ pub fn intCases(
             &above.clone(),
             &aver_rt::AverList::concat(
                 &crate::proof_kernel::aver_generated::kernel::check::smallerHyps(
-                    v.clone(),
-                    &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
-                        AverStr::from("-"),
-                        std::sync::Arc::new(
-                            crate::proof_kernel::aver_generated::kernel::term::Term::TVar(v),
-                        ),
-                        std::sync::Arc::new(
-                            crate::proof_kernel::aver_generated::kernel::term::Term::TInt(
-                                aver_rt::AverInt::from_i64(1),
-                            ),
-                        ),
-                    ),
+                    d.v.clone(),
+                    &d.smaller,
                     general,
                     ihs,
                     claim,

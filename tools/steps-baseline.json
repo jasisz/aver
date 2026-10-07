@@ -305,6 +305,9 @@
   ]
  },
  "projects/k5_fdiv/domain/round.av": {
+  "obligations": [
+   "truncStickyComposes.composesThroughSticky.implication"
+  ],
   "steps": [
    "awayExpInRange.exponentInRange",
    "stickyErrorReconstructs.reconstructsValue",

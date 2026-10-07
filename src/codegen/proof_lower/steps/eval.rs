@@ -371,6 +371,13 @@ fn is_bool_value(t: &Term) -> bool {
 const HYPOTHESIS_FUEL: usize = 100;
 
 impl Env<'_> {
+    /// Whether a true `t == u` makes `t` and `u` the same value, by `t`'s
+    /// type (see [`crate::ir::SymbolTable::beq_is_equality`]).
+    fn beq_is_equality(&self, t: &Term) -> bool {
+        t.ty()
+            .is_some_and(|ty| self.inputs.symbol_table.beq_is_equality(ty))
+    }
+
     pub(crate) fn whnf(&mut self, t: &Term) -> Result<Eval, String> {
         // Each nested evaluation is a frame on the compiler's own stack; a
         // recursive definition over long data would exhaust it.
@@ -709,7 +716,8 @@ impl Env<'_> {
             })
             .filter(|(_, a, k)| {
                 term::int_value(k).is_some()
-                    || (is_int(a) && is_int(k) && !stated_lhs.iter().any(|l| occurs(l, k)))
+                    || ((is_int(a) && is_int(k) || self.beq_is_equality(a))
+                        && !stated_lhs.iter().any(|l| occurs(l, k)))
             })
             .collect();
         for (n, a, k) in candidates {

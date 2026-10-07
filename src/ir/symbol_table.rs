@@ -1001,6 +1001,55 @@ impl SymbolTable {
         }
     }
 
+    /// Whether a true `a == b` between values of this type makes `a` and
+    /// `b` the same value, and Lean's model proves it (`LawfulBEq`): no
+    /// Float anywhere inside, no Map or Vector, and a declared type only
+    /// when it does not contain itself (Lean derives `LawfulBEq` for those
+    /// alone). A type this table cannot read answers no.
+    pub fn beq_is_equality(&self, ty: &crate::ast::Type) -> bool {
+        self.beq_reflects(ty, &mut Vec::new())
+    }
+
+    fn beq_reflects(&self, ty: &crate::ast::Type, seen: &mut Vec<TypeId>) -> bool {
+        use crate::ast::Type;
+        match ty {
+            Type::Int | Type::Str | Type::Bool | Type::Unit => true,
+            Type::Option(a) | Type::List(a) => self.beq_reflects(a, seen),
+            Type::Result(a, b) => self.beq_reflects(a, seen) && self.beq_reflects(b, seen),
+            Type::Tuple(items) => items.iter().all(|t| self.beq_reflects(t, seen)),
+            Type::Named { id, name } => {
+                let ids = match id {
+                    Some(id) => vec![*id],
+                    None => {
+                        let bare = name.rsplit('.').next().unwrap_or(name);
+                        self.type_name_index.get(bare).cloned().unwrap_or_default()
+                    }
+                };
+                !ids.is_empty()
+                    && ids.into_iter().all(|id| {
+                        if seen.contains(&id) {
+                            return false;
+                        }
+                        let Some(fields) = self.type_fields.get(&id) else {
+                            return false;
+                        };
+                        seen.push(id);
+                        let all = fields
+                            .iter()
+                            .all(|f| self.beq_reflects(&crate::types::parse_type_str(f), seen));
+                        seen.pop();
+                        all
+                    })
+            }
+            Type::Map(..)
+            | Type::Vector(_)
+            | Type::Float
+            | Type::Fn(..)
+            | Type::Var(_)
+            | Type::Invalid => false,
+        }
+    }
+
     pub fn type_entry(&self, id: TypeId) -> &TypeEntry {
         self.type_entry_if_present(id)
             .unwrap_or_else(|| panic!("TypeId({}) does not belong to this symbol table", id.0))

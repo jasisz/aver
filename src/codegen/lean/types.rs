@@ -120,8 +120,28 @@ fn owner_qualified_type_name(name: &str) -> Option<String> {
 /// [`type_to_lean`] for a term's own type, where a user type carries its
 /// identity: the type is spelled from that identity, so a type of another
 /// module that the emitted module does not name itself (`Policy` reached
-/// through a field of a `Rules`) is still qualified by its owner.
+/// through a field of a `Rules`) is still qualified by its owner, also
+/// inside a list, an option, a result or a tuple (`List Packet` of another
+/// module where the emitted one declares a `Packet` of its own).
 pub(crate) fn term_type_to_lean(ty: &Type) -> String {
+    let atom = |t: &Type| {
+        let s = term_type_to_lean(t);
+        if s.contains(' ') && !s.starts_with('(') {
+            format!("({s})")
+        } else {
+            s
+        }
+    };
+    match ty {
+        Type::List(inner) => return format!("List {}", atom(inner)),
+        Type::Option(inner) => return format!("Option {}", atom(inner)),
+        Type::Result(ok, err) => return format!("Except {} {}", atom(err), atom(ok)),
+        Type::Tuple(items) => {
+            let parts: Vec<String> = items.iter().map(term_type_to_lean).collect();
+            return format!("({})", parts.join(" × "));
+        }
+        _ => {}
+    }
     if let Type::Named { id: Some(id), name } = ty
         && !is_canonical_peano(name)
         && let Some(spelled) = TYPE_OWNERS.with(|s| {
@@ -137,6 +157,47 @@ pub(crate) fn term_type_to_lean(ty: &Type) -> String {
         return spelled;
     }
     type_to_lean(ty)
+}
+
+/// A parameter annotation of the function `f`, read in `f`'s own module:
+/// each user type it names is resolved there and then spelled by its owner
+/// as [`term_type_to_lean`] does, so `List<Packet>` written in a dependency
+/// stays that dependency's `Packet` where the module being emitted declares
+/// a `Packet` of its own. A function of the entry, or a name that does not
+/// resolve, keeps [`type_annotation_to_lean`].
+pub(crate) fn fn_annotation_to_lean(ann: &str, f: crate::ir::identity::FnId) -> String {
+    fn identify(ty: &Type, symbols: &crate::ir::SymbolTable, scope: &str) -> Option<Type> {
+        Some(match ty {
+            Type::Named { id: None, name } => Type::Named {
+                id: Some(symbols.resolve_type_id_in(name, Some(scope))?),
+                name: name.clone(),
+            },
+            Type::List(a) => Type::List(Box::new(identify(a, symbols, scope)?)),
+            Type::Option(a) => Type::Option(Box::new(identify(a, symbols, scope)?)),
+            Type::Result(a, b) => Type::Result(
+                Box::new(identify(a, symbols, scope)?),
+                Box::new(identify(b, symbols, scope)?),
+            ),
+            Type::Tuple(items) => Type::Tuple(
+                items
+                    .iter()
+                    .map(|t| identify(t, symbols, scope))
+                    .collect::<Option<_>>()?,
+            ),
+            other => other.clone(),
+        })
+    }
+    let ty = crate::types::parse_type_str(ann);
+    let identified = TYPE_OWNERS.with(|s| {
+        let owners = s.borrow();
+        let owners = owners.as_ref()?;
+        let scope = owners.symbols.fn_entry(f).key.scope_str()?.to_string();
+        identify(&ty, &owners.symbols, &scope)
+    });
+    match identified {
+        Some(ty) => term_type_to_lean(&ty),
+        None => type_to_lean(&ty),
+    }
 }
 
 pub(crate) fn scope_capability_resources(names: HashSet<String>) -> CapabilityResourceGuard {
