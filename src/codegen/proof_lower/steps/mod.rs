@@ -28,6 +28,7 @@ mod eval;
 mod finite;
 mod induction;
 mod rewrite;
+mod split;
 
 use crate::codegen::proof_lower::ProofLowerInputs;
 use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
@@ -215,6 +216,8 @@ fn fresh_env<'a>(
     using: &Option<Vec<LawRef>>,
 ) -> Env<'a> {
     let mut env = Env::new(inputs);
+    env.givens = ob.givens.clone();
+    env.finite = ob.finite.iter().map(|(n, _)| n.clone()).collect();
     if let Some(p) = &ob.premise {
         env.hyps.push(("when".into(), chain::eqn_true(p)));
     }
@@ -296,6 +299,7 @@ fn split_calls(p: &Proof, out: &mut Vec<crate::ir::identity::FnId>) {
         Proof::Trans { steps, .. } => all(steps),
         Proof::Rule { premises, .. } => all(premises),
         Proof::Enum { cases, .. } => all(cases),
+        Proof::Split { cases, .. } => cases.iter().for_each(|c| split_calls(&c.proof, out)),
         Proof::Have { proof, body, .. } => {
             split_calls(proof, out);
             split_calls(body, out);
@@ -347,6 +351,7 @@ fn uses_hyp(p: &Proof, name: &str) -> bool {
         Proof::Cases {
             if_true, if_false, ..
         } => uses_hyp(if_true, name) || uses_hyp(if_false, name),
+        Proof::Split { cases, .. } => cases.iter().any(|c| uses_hyp(&c.proof, name)),
         Proof::Have { proof, body, .. } => uses_hyp(proof, name) || uses_hyp(body, name),
         Proof::Induct { carried, cases, .. } => {
             carried.iter().any(|n| n == name)

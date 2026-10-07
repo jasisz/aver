@@ -4,6 +4,11 @@
    "flattenThenCount.countViaFlatten"
   ]
  },
+ "examples/data/map.av": {
+  "steps": [
+   "incCount.keyPresent"
+  ]
+ },
  "examples/data/rational.av": {
   "steps": [
    "minus.equalsPlusNegate",
@@ -55,6 +60,7 @@
    "add.identityZeroLeft",
    "addOne.identityViaAdd",
    "id.reflexive",
+   "incCount.keyPresent",
    "mul.associative",
    "mul.commutative",
    "mul.identityOne",
@@ -99,6 +105,8 @@
    "resolveLip.noFalseMiss",
    "startBoard.conserves",
    "stepAll.leftFold",
+   "stepChute.belowLipStays",
+   "stepChute.eggRowStaysInRange",
    "tallyHit.monotone"
   ]
  },
@@ -120,6 +128,17 @@
    "answer.knownFactsAnswer",
    "verdictOf.preservesFlag",
    "verdictOf.roundtrip"
+  ]
+ },
+ "projects/durable_promise/domain/promise.av": {
+  "steps": [
+   "observe.idempotent",
+   "observe.settledIsIdentity",
+   "reject.settledIsIdentity",
+   "resolve.alwaysSettles",
+   "resolve.noDoubleSettle",
+   "resolve.noResurrection",
+   "resolve.settledIsIdentity"
   ]
  },
  "projects/k5_fdiv/domain/awaymodel.av": {
@@ -355,6 +374,18 @@
    "last.lastConsNonEmpty"
   ]
  },
+ "proof-corpus/decomposed/isaplanner/prop_77.av": {
+  "steps": [
+   "sorted.sortTail",
+   "sorted.sortedConsLeHead"
+  ]
+ },
+ "proof-corpus/decomposed/isaplanner/prop_78.av": {
+  "steps": [
+   "sorted.sortTail",
+   "sorted.sortedConsLeHead"
+  ]
+ },
  "proof-corpus/decomposed/isaplanner/prop_85.av": {
   "steps": [
    "len.lenSnocSucc"
@@ -371,6 +402,12 @@
    "append.appendBridge",
    "append.appendRightId",
    "rev.revSingleton"
+  ]
+ },
+ "proof-corpus/decomposed/prod/lemma_12.av": {
+  "steps": [
+   "sorted.sortTail",
+   "sorted.sortedConsLeHead"
   ]
  },
  "proof-corpus/decomposed/prod/lemma_16.av": {
@@ -410,6 +447,12 @@
   "steps": [
    "app.appBridge",
    "app.appRightId"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_14.av": {
+  "steps": [
+   "sorted.sortedConsLeHead",
+   "sorted.sortedTail"
   ]
  },
  "proof-corpus/decomposed/prod/prop_16.av": {
@@ -570,6 +613,11 @@
    "take.takeConsShift"
   ]
  },
+ "proof-corpus/tip/isaplanner/prop_44.av": {
+  "steps": [
+   "zip.zipConcatEq"
+  ]
+ },
  "proof-corpus/tip/isaplanner/prop_45.av": {
   "steps": [
    "zip.zipConsCons"
@@ -589,6 +637,16 @@
  "proof-corpus/tip/isaplanner/prop_62.av": {
   "steps": [
    "last.lastConsNonEmpty"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_71.av": {
+  "steps": [
+   "elem.insElem"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_76.av": {
+  "steps": [
+   "count.countAppendSingleton"
   ]
  },
  "proof-corpus/tip/prod/lemma_01.av": {
@@ -639,6 +697,16 @@
  "proof-corpus/tip/prod/prop_12.av": {
   "steps": [
    "qrev.qrevRevAppend"
+  ]
+ },
+ "proof-corpus/tip/prod/prop_40.av": {
+  "steps": [
+   "union.subsetUnion"
+  ]
+ },
+ "proof-corpus/tip/prod/prop_41.av": {
+  "steps": [
+   "intersect.subsetIntersect"
   ]
  },
  "proof-corpus/tip/prod/prop_47.av": {

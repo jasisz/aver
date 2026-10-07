@@ -242,6 +242,12 @@ pub fn claim(p: &Proof, script: &Script, hyps: &Hyps) -> Result<Eqn, String> {
             h.push((hyp.clone(), Eqn::new(canon(on), term::boolean(true))));
             claim(if_true, script, &h)
         }
+        Proof::Split { on, hyp, cases, .. } => {
+            let case = cases.first().ok_or("split: no cases")?;
+            let mut h = hyps.clone();
+            h.push((hyp.clone(), Eqn::new(canon(on), case.value())));
+            claim(&case.proof, script, &h)
+        }
         Proof::Have {
             name, fact, body, ..
         } => {

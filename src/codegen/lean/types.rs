@@ -117,6 +117,28 @@ fn owner_qualified_type_name(name: &str) -> Option<String> {
     })
 }
 
+/// [`type_to_lean`] for a term's own type, where a user type carries its
+/// identity: the type is spelled from that identity, so a type of another
+/// module that the emitted module does not name itself (`Policy` reached
+/// through a field of a `Rules`) is still qualified by its owner.
+pub(crate) fn term_type_to_lean(ty: &Type) -> String {
+    if let Type::Named { id: Some(id), name } = ty
+        && !is_canonical_peano(name)
+        && let Some(spelled) = TYPE_OWNERS.with(|s| {
+            let owners = s.borrow();
+            let owners = owners.as_ref()?;
+            let entry = owners.symbols.type_entry_if_present(*id)?;
+            if entry.key.scope_str() == owners.emitting.as_deref() {
+                return None;
+            }
+            Some(super::syntax::aver_path_to_lean(&entry.key.canonical()))
+        })
+    {
+        return spelled;
+    }
+    type_to_lean(ty)
+}
+
 pub(crate) fn scope_capability_resources(names: HashSet<String>) -> CapabilityResourceGuard {
     CAPABILITY_RESOURCES.with(|s| *s.borrow_mut() = names);
     CapabilityResourceGuard

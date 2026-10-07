@@ -1588,6 +1588,72 @@ fn lean_closes_steps_past_a_cited_law_that_opens_back() {
     let _ = fs::remove_dir_all(out);
 }
 
+const CTOR_SPLIT_LAWS: [&str; 4] = [
+    "bump.keepsPresence",
+    "double.keepsLength",
+    "switchOff.staysDark",
+    "twice.keepsSuccess",
+];
+
+/// Where a `match` stops at a subject of a sum type (with fields, behind a
+/// catch-all arm), an Option, a Result, or a list a hypothesis reads, the
+/// proof goes on in one case per constructor; both kernels accept what it
+/// gives.
+#[test]
+fn both_kernels_accept_a_split_on_a_constructor() {
+    let out = scratch("split");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("split.av", &out).into_iter().collect();
+    let mut expected: Vec<String> = CTOR_SPLIT_LAWS.iter().map(|l| l.to_string()).collect();
+    expected.push("double.keepsLength.because1".into());
+    expected.push("double.keepsLength.implication".into());
+    expected.sort();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), expected);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert!(read(law).contains("(split "), "{law}: no split");
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let paths: Vec<PathBuf> = files.values().cloned().collect();
+    let result = replay(&paths);
+    assert!(result.status.success(), "{}", format_output(&result));
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_closes_a_split_on_a_constructor() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("split-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "split.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "1",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in CTOR_SPLIT_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
 const CONSTRUCTOR_LAWS: [&str; 3] = [
     "refusal.longSilenceIsRefused",
     "verdictOf.preservesFlag",
@@ -1831,7 +1897,7 @@ fn joining_texts_is_never_read_as_int_arithmetic() {
     // step applies to it, even in a script made by hand.
     let script = |op: &str| {
         format!(
-            "(steps 9 (obligation k (a b) (none) (op {op} (v a) (v b)) (op {op} (v b) (v a))) (defs) (consts) (laws) (proof (ring (op {op} (v a) (v b)) (op {op} (v b) (v a)))))"
+            "(steps 10 (obligation k (a b) (none) (op {op} (v a) (v b)) (op {op} (v b) (v a))) (defs) (consts) (laws) (proof (ring (op {op} (v a) (v b)) (op {op} (v b) (v a)))))"
         )
     };
     assert_eq!(

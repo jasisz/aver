@@ -30,6 +30,7 @@
 //!          | (arm ARM (TERM…) TERM PROOF) | (proj TERM) | (cell TERM) | (hyp NAME)
 //!          | (rule RULE ((NAME TERM)…) PROOF…) | (law KEY ((NAME TERM)…) [PROOF])
 //!          | (compute TERM TERM) | (cases TERM NAME PROOF PROOF)
+//!          | (split FN (TERM…) TERM NAME (case CTOR (NAME…) PROOF)…)   ; CTOR: nil, cons or a constructor
 //!          | (have NAME TERM PROOF PROOF)
 //!          | (enum NAME TERM TERM PROOF…) | (absurd PROOF TERM TERM)
 //!          | (induct FN (TERM…) TERM TERM [(carry NAME…)] (case (NAME…) (IH…) ((INT NAME (TERM…) (PROOF…))…) PROOF)…)
@@ -429,6 +430,34 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
             proof(if_true, names)?,
             proof(if_false, names)?
         ),
+        Proof::Split {
+            fn_id,
+            args,
+            on,
+            hyp,
+            cases,
+        } => {
+            let mut s = format!(
+                "(split {} ({}) {} {hyp}",
+                names.fn_name(*fn_id),
+                list(args, names)?,
+                term(on, names)?
+            );
+            for c in cases {
+                let ctor = match &c.ctor {
+                    super::SplitCtor::Nil => "nil".to_string(),
+                    super::SplitCtor::Cons => "cons".to_string(),
+                    super::SplitCtor::Ctor(c) => names.ctor_name(c),
+                };
+                s.push_str(&format!(
+                    " (case {ctor} ({}) {})",
+                    c.binders.join(" "),
+                    proof(&c.proof, names)?
+                ));
+            }
+            s.push(')');
+            s
+        }
         Proof::Have {
             name,
             fact,

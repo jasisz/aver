@@ -770,6 +770,7 @@ fn constructor(p: &Proof) -> &'static str {
         Proof::Law { .. } => "law",
         Proof::Compute { .. } => "compute",
         Proof::Cases { .. } => "cases",
+        Proof::Split { .. } => "split",
         Proof::Have { .. } => "have",
         Proof::Absurd { .. } => "absurd",
         Proof::Induct { .. } => "induct",
@@ -781,7 +782,7 @@ fn constructor(p: &Proof) -> &'static str {
     }
 }
 
-const CONSTRUCTORS: [&str; 22] = [
+const CONSTRUCTORS: [&str; 23] = [
     "have",
     "refl",
     "symm",
@@ -797,6 +798,7 @@ const CONSTRUCTORS: [&str; 22] = [
     "law",
     "compute",
     "cases",
+    "split",
     "absurd",
     "induct",
     "listinduct",
@@ -1293,6 +1295,7 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
         (linear(1), linear(0)),
         (ring(2), ring(3)),
         (enum_split(vec![false, true]), enum_split(vec![false])),
+        (list_split(true), list_split(false)),
     ];
     let mut seen = Vec::new();
     for (good, bad) in &samples {
@@ -1316,4 +1319,234 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
     for name in CONSTRUCTORS {
         assert!(seen.contains(&name), "{name}: no sample in this table");
     }
+}
+
+/// A split on a constructor: `f(a) >= 0` for `f(x) = match x { [] -> 0,
+/// [h, ..t] -> 1 }`, one case per constructor of the list `a` under
+/// `a = []` and `a = [h1, ..t1]`. The kernel refuses it without a case,
+/// on a term that is not the subject of `f`'s match, with a name that is
+/// not fresh, or with a cell case that does not bind two names; and, for
+/// a sum, with a constructor an arm reads left out, or with a case that
+/// proves an equation about its own names.
+#[test]
+fn a_split_on_a_constructor_covers_the_type_with_fresh_names() {
+    use super::{Def, SplitCase, SplitCtor};
+    use crate::ir::hir::{ResolvedCallee, ResolvedCtor};
+    use crate::ir::identity::{CtorId, FnId, TypeId};
+    let zero = term::int(&0.into());
+    let one = term::int(&1.into());
+    let arm = |pattern: ResolvedPattern, body: super::Term| ResolvedMatchArm {
+        pattern,
+        body: Box::new(body),
+        binding_slots: std::sync::OnceLock::new(),
+    };
+    let def = |arms: Vec<ResolvedMatchArm>| Def {
+        fn_id: FnId(0),
+        name: "__fn_0".into(),
+        params: vec!["x".into()],
+        returns_bool: false,
+        lets: Vec::new(),
+        body: Spanned::bare(ResolvedExpr::Match {
+            subject: Box::new(var("x")),
+            arms,
+        }),
+    };
+    let call = Spanned::bare(ResolvedExpr::Call(
+        ResolvedCallee::Fn(FnId(0)),
+        vec![var("a")],
+    ));
+    let ge = |t: super::Term| term::binop(BinOp::Gte, t, zero.clone());
+    // `f(a) >= 0` from arm `k` of `f` at `a`, chosen by `h`, giving `value`.
+    let case = |k: u32, binders: Vec<&str>, value: &super::Term| Proof::Trans {
+        terms: vec![ge(call.clone()), ge(value.clone()), term::boolean(true)],
+        steps: vec![
+            Proof::Congr {
+                ctx: ge(term::hole()),
+                inner: Box::new(Proof::Unfold {
+                    fn_id: FnId(0),
+                    arm: k,
+                    args: vec![var("a")],
+                    binders: binders.into_iter().map(var).collect(),
+                    premise: Some(Box::new(Proof::Hyp("h".into()))),
+                }),
+            },
+            Proof::Compute {
+                lhs: ge(value.clone()),
+                rhs: term::boolean(true),
+            },
+        ],
+    };
+    let split = |on: super::Term, cases: Vec<SplitCase>| Proof::Split {
+        fn_id: FnId(0),
+        args: vec![var("a")],
+        on,
+        hyp: "h".into(),
+        cases,
+    };
+    let nil = SplitCase {
+        ctor: SplitCtor::Nil,
+        binders: Vec::new(),
+        proof: case(1, vec![], &zero),
+    };
+    let cons = |h: &str| SplitCase {
+        ctor: SplitCtor::Cons,
+        binders: vec![h.into(), "t1".into()],
+        proof: case(2, vec![h, "t1"], &one),
+    };
+    let list = def(vec![
+        arm(ResolvedPattern::EmptyList, zero.clone()),
+        arm(ResolvedPattern::Cons("h".into(), "t".into()), one.clone()),
+    ]);
+    let run = |proof: Proof, d: Def| {
+        let mut s = script(ge(call.clone()), term::boolean(true), proof);
+        s.defs = vec![d];
+        kernel(&s)
+    };
+    assert_eq!(
+        run(split(var("a"), vec![nil.clone(), cons("h1")]), list.clone()),
+        Ok(())
+    );
+    assert!(
+        run(split(var("a"), vec![nil.clone()]), list.clone()).is_err(),
+        "a case left out"
+    );
+    assert!(
+        run(split(var("b"), vec![nil.clone(), cons("h1")]), list.clone()).is_err(),
+        "not the subject"
+    );
+    assert!(
+        run(split(var("a"), vec![nil.clone(), cons("a")]), list.clone()).is_err(),
+        "a name not fresh"
+    );
+    let short = SplitCase {
+        binders: vec!["h1".into()],
+        ..cons("h1")
+    };
+    assert!(
+        run(split(var("a"), vec![nil.clone(), short]), list.clone()).is_err(),
+        "one name for a cell"
+    );
+
+    // A sum: `C.A` and `C.B(n)`.
+    let ctor = |k: u32, name: &str| ResolvedCtor::User {
+        ctor_id: CtorId(k),
+        type_id: TypeId(0),
+        name: name.into(),
+    };
+    let sum = def(vec![
+        arm(
+            ResolvedPattern::Ctor(ctor(0, "C.A"), Vec::new()),
+            zero.clone(),
+        ),
+        arm(
+            ResolvedPattern::Ctor(ctor(1, "C.B"), vec!["n".into()]),
+            one.clone(),
+        ),
+    ]);
+    let a = SplitCase {
+        ctor: SplitCtor::Ctor(ctor(0, "C.A")),
+        binders: Vec::new(),
+        proof: case(1, vec![], &zero),
+    };
+    let b = SplitCase {
+        ctor: SplitCtor::Ctor(ctor(1, "C.B")),
+        binders: vec!["n1".into()],
+        proof: case(2, vec!["n1"], &one),
+    };
+    assert_eq!(
+        run(split(var("a"), vec![a.clone(), b.clone()]), sum.clone()),
+        Ok(())
+    );
+    assert!(
+        run(split(var("a"), vec![a.clone()]), sum.clone()).is_err(),
+        "C.B left out"
+    );
+    let about_own = |c: SplitCase| SplitCase {
+        proof: Proof::Refl(var("n1")),
+        ..c
+    };
+    let mut s = script(
+        var("n1"),
+        var("n1"),
+        split(var("a"), vec![about_own(a), about_own(b)]),
+    );
+    s.defs = vec![sum];
+    assert!(kernel(&s).is_err(), "a case about its own names");
+}
+
+/// `f(a) >= 0` for `f(x) = match x { [] -> 0, [h, ..t] -> 1 }` by a split
+/// on the list `a`, with both cases or with the cell case left out.
+fn list_split(both: bool) -> Script {
+    use super::{Def, SplitCase, SplitCtor};
+    use crate::ir::hir::ResolvedCallee;
+    use crate::ir::identity::FnId;
+    let zero = term::int(&0.into());
+    let one = term::int(&1.into());
+    let arm = |pattern: ResolvedPattern, body: super::Term| ResolvedMatchArm {
+        pattern,
+        body: Box::new(body),
+        binding_slots: std::sync::OnceLock::new(),
+    };
+    let call = Spanned::bare(ResolvedExpr::Call(
+        ResolvedCallee::Fn(FnId(0)),
+        vec![var("a")],
+    ));
+    let ge = |t: super::Term| term::binop(BinOp::Gte, t, zero.clone());
+    let case = |k: u32, binders: Vec<&str>, value: &super::Term| Proof::Trans {
+        terms: vec![ge(call.clone()), ge(value.clone()), term::boolean(true)],
+        steps: vec![
+            Proof::Congr {
+                ctx: ge(term::hole()),
+                inner: Box::new(Proof::Unfold {
+                    fn_id: FnId(0),
+                    arm: k,
+                    args: vec![var("a")],
+                    binders: binders.into_iter().map(var).collect(),
+                    premise: Some(Box::new(Proof::Hyp("h".into()))),
+                }),
+            },
+            Proof::Compute {
+                lhs: ge(value.clone()),
+                rhs: term::boolean(true),
+            },
+        ],
+    };
+    let mut cases = vec![SplitCase {
+        ctor: SplitCtor::Nil,
+        binders: Vec::new(),
+        proof: case(1, vec![], &zero),
+    }];
+    if both {
+        cases.push(SplitCase {
+            ctor: SplitCtor::Cons,
+            binders: vec!["h1".into(), "t1".into()],
+            proof: case(2, vec!["h1", "t1"], &one),
+        });
+    }
+    let mut s = script(
+        ge(call.clone()),
+        term::boolean(true),
+        Proof::Split {
+            fn_id: FnId(0),
+            args: vec![var("a")],
+            on: var("a"),
+            hyp: "h".into(),
+            cases,
+        },
+    );
+    s.defs = vec![Def {
+        fn_id: FnId(0),
+        name: "__fn_0".into(),
+        params: vec!["x".into()],
+        returns_bool: false,
+        lets: Vec::new(),
+        body: Spanned::bare(ResolvedExpr::Match {
+            subject: Box::new(var("x")),
+            arms: vec![
+                arm(ResolvedPattern::EmptyList, zero.clone()),
+                arm(ResolvedPattern::Cons("h".into(), "t".into()), one.clone()),
+            ],
+        }),
+    }];
+    s
 }

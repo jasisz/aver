@@ -35,7 +35,7 @@ pub use term::Term;
 use crate::ir::identity::FnId;
 
 /// Version of the step data. Bump on any change a replayer could observe.
-pub const FORMAT_VERSION: u32 = 9;
+pub const FORMAT_VERSION: u32 = 10;
 
 /// An equation `lhs = rhs` between two terms.
 #[derive(Debug, Clone, PartialEq)]
@@ -201,6 +201,19 @@ pub enum Proof {
         hyp: String,
         if_true: Box<Proof>,
         if_false: Box<Proof>,
+    },
+    /// Case split on the constructor of `on`, the subject of the `match`
+    /// that is the body of `fn_id` at `args` (which gives `on` the type the
+    /// arms' patterns have): one case per constructor of that type, in
+    /// declaration order, `[]` before `[h, ..t]` for a list. Case `i` is
+    /// checked with hypothesis `hyp : on = C_i(binders)`, its binders fresh;
+    /// every case proves the same equation, which mentions no binder.
+    Split {
+        fn_id: FnId,
+        args: Vec<Term>,
+        on: Term,
+        hyp: String,
+        cases: Vec<SplitCase>,
     },
     /// A cut: `proof` proves `fact = true` under the hypotheses in scope,
     /// and `body` is checked with hypothesis `name : fact = true` added;
@@ -400,6 +413,41 @@ pub struct InductCase {
     pub proof: Proof,
 }
 
+/// The constructor a case of a [`Proof::Split`] is about.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SplitCtor {
+    /// `[]`.
+    Nil,
+    /// `[h, ..t]`, two binders.
+    Cons,
+    /// A constructor of a sum type, one binder per field.
+    Ctor(crate::ir::hir::ResolvedCtor),
+}
+
+/// One case of a [`Proof::Split`]: the constructor, fresh names for its
+/// fields, and the proof under `on = C(binders)`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SplitCase {
+    pub ctor: SplitCtor,
+    pub binders: Vec<String>,
+    pub proof: Proof,
+}
+
+impl SplitCase {
+    /// The constructor applied to the binders: what the case's hypothesis
+    /// says the split term is.
+    pub fn value(&self) -> Term {
+        use crate::ast::Spanned;
+        use crate::ir::hir::ResolvedExpr;
+        let vars: Vec<Term> = self.binders.iter().map(|b| term::var(b)).collect();
+        match &self.ctor {
+            SplitCtor::Nil => term::nil(),
+            SplitCtor::Cons => term::builtin("List.prepend", vars, None),
+            SplitCtor::Ctor(c) => Spanned::bare(ResolvedExpr::Ctor(c.clone(), vars)),
+        }
+    }
+}
+
 /// The obligation a step script closes: a law's claim under its givens.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Obligation {
@@ -464,6 +512,7 @@ impl Proof {
             Proof::Cases {
                 if_true, if_false, ..
             } => if_true.size() + if_false.size(),
+            Proof::Split { cases, .. } => cases.iter().map(|c| c.proof.size()).sum(),
             Proof::Have { proof, body, .. } => proof.size() + body.size(),
             Proof::Enum { cases, .. } => cases.iter().map(Proof::size).sum(),
             Proof::Absurd { contradiction, .. } => contradiction.size(),

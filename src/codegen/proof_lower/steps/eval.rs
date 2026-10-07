@@ -84,7 +84,7 @@ fn permutations(m: &[usize]) -> Vec<Vec<usize>> {
 /// pattern's bindings, and whether `v` is a list literal the arm reads as a
 /// cell (so the premise ends with a [`Proof::Cell`] step). `None` when no
 /// arm can be selected syntactically.
-fn select_arm(
+pub(super) fn select_arm(
     arms: &[crate::ir::hir::ResolvedMatchArm],
     v: &Term,
 ) -> Option<(u32, Vec<Term>, bool)> {
@@ -2237,6 +2237,28 @@ impl Env<'_> {
                 .find_map(|t| self.connective_comparison(t))
         {
             return Ok(Err(g));
+        }
+        // A `match` stopped at a subject of a sum or list type, in a side
+        // or else in a hypothesis that calls a function: one case per
+        // constructor, where the hypothesis then evaluates.
+        if depth > 0 {
+            let mut found = [nl.cur().clone(), nr.cur().clone()]
+                .iter()
+                .find_map(|t| self.stuck_subject(t, false));
+            for (_, e) in self.hyps.clone().iter().rev() {
+                if found.is_some() {
+                    break;
+                }
+                if matches!(e.lhs.node, ResolvedExpr::Call(ResolvedCallee::Fn(_), _))
+                    && term::bool_value(&e.rhs).is_some()
+                    && !self.opened.contains(&canon(&e.lhs))
+                {
+                    found = self.stuck_subject(&e.lhs, true);
+                }
+            }
+            if let Some(st) = found {
+                return self.split_on(st, lhs, rhs, depth).map(Ok);
+            }
         }
         Err(self.stopped_at(nl.cur(), nr.cur()))
     }
