@@ -81,34 +81,38 @@ theorem mod_range (a k : Int) (h : decide (k > 0) = true) :
     (decide (0 <= a % k) && decide (a % k < k)) = true := by
   simp only [Bool.and_eq_true, decide_eq_true_eq] at h ⊢
   exact ⟨Int.emod_nonneg a (by omega), Int.emod_lt_of_pos a h⟩
-theorem int_induct {P : Int → Prop} (base : ∀ n, decide (n <= 0) = true → P n)
-    (step : ∀ n, decide (n <= 0) = false → P (n - 1) → P n) (n : Int) : P n := by
-  have key : ∀ (k : Nat) (m : Int), m.toNat = k → P m := by
+theorem int_measure_induct {P : Int → Prop} (g : Int → Bool)
+    (on_true : ∀ n, g n = true → (∀ m, m.toNat < n.toNat → P m) → P n)
+    (on_false : ∀ n, g n = false → (∀ m, m.toNat < n.toNat → P m) → P n) (n : Int) : P n := by
+  have key : ∀ (k : Nat) (x : Int), x.toNat ≤ k → P x := by
     intro k
     induction k with
-    | zero => intro m h; exact base m (decide_eq_true (by omega))
-    | succ k ih => intro m h; exact step m (decide_eq_false (by omega)) (ih (m - 1) (by omega))
-  exact key n.toNat n rfl
-theorem int_halve_induct {P : Int → Prop} (k : Int) (hk : decide (k >= 2) = true)
-    (base : ∀ n, decide (n > 0) = false → P n)
-    (step : ∀ n, decide (n > 0) = true → P (n / k) → P n) (n : Int) : P n := by
-  have k2 : 2 ≤ k := of_decide_eq_true hk
-  have key : ∀ (m : Nat) (x : Int), x.toNat ≤ m → P x := by
-    intro m
-    induction m with
-    | zero => intro x hx; exact base x (decide_eq_false (by omega))
-    | succ m ih =>
+    | zero =>
       intro x hx
-      by_cases h : x > 0
-      · apply step x (decide_eq_true h)
-        apply ih
-        have h0 : 0 ≤ x / k := Int.ediv_nonneg (by omega) (by omega)
-        have h1 : x / k < x := Int.ediv_lt_of_lt_mul (by omega) (by
-          have : x * 1 < x * k := Int.mul_lt_mul_of_pos_left (by omega) h
-          omega)
-        omega
-      · exact base x (decide_eq_false h)
+      have below : ∀ m, m.toNat < x.toNat → P m := fun m hm => absurd hm (by omega)
+      cases h : g x
+      · exact on_false x h below
+      · exact on_true x h below
+    | succ k ih =>
+      intro x hx
+      have below : ∀ m, m.toNat < x.toNat → P m := fun m hm => ih m (by omega)
+      cases h : g x
+      · exact on_false x h below
+      · exact on_true x h below
   exact key n.toNat n (Nat.le_refl _)
+theorem pos_of_le_false {n : Int} (h : decide (n <= 0) = false) : 0 < n := by
+  have := of_decide_eq_false h
+  omega
+theorem pos_of_gt_true {n : Int} (h : decide (n > 0) = true) : 0 < n := of_decide_eq_true h
+theorem sub_one_lt {n : Int} (h : 0 < n) : (n - 1).toNat < n.toNat := by omega
+theorem ediv_lt {n : Int} (k : Int) (hk : decide (k >= 2) = true) (h : 0 < n) :
+    (n / k).toNat < n.toNat := by
+  have k2 : 2 ≤ k := of_decide_eq_true hk
+  have h0 : 0 ≤ n / k := Int.ediv_nonneg (by omega) (by omega)
+  have h1 : n / k < n := Int.ediv_lt_of_lt_mul (by omega) (by
+    have : n * 1 < n * k := Int.mul_lt_mul_of_pos_left (by omega) h
+    omega)
+  omega
 theorem add_comm (a b : Int) : a + b = b + a := Int.add_comm a b
 theorem mul_comm (a b : Int) : a * b = b * a := Int.mul_comm a b
 theorem add_assoc (a b c : Int) : a + b + c = a + (b + c) := Int.add_assoc a b c
@@ -418,8 +422,8 @@ impl Renderer<'_> {
     fn induct_by_cases_of_type(
         &mut self,
         def: &crate::ir::proof_steps::Def,
+        rec: &crate::ir::proof_steps::induct::Recursion,
         args: &[Term],
-        j: usize,
         v: &str,
         general: &[(usize, String)],
         arms: &[crate::ir::hir::ResolvedMatchArm],
@@ -430,6 +434,7 @@ impl Renderer<'_> {
     ) -> Result<String, String> {
         use crate::ir::proof_steps::induct;
         let lean = super::syntax::aver_name_to_lean;
+        let j = rec.at;
         let varying: Vec<String> = std::iter::once(v.to_string())
             .chain(general.iter().map(|(_, g)| g.clone()))
             .collect();
@@ -481,8 +486,8 @@ impl Renderer<'_> {
             names.extend(hs.iter().cloned());
             let stated_case = induct::case(
                 def,
+                rec,
                 args,
-                j,
                 v,
                 general,
                 arm,
@@ -671,6 +676,197 @@ impl Renderer<'_> {
             }
             _ => Err("induct: an arm is not one constructor".into()),
         }
+    }
+
+    /// Induction along a function that counts an Int toward zero:
+    /// `AverSteps.int_measure_induct`, strong induction on the Int's
+    /// `toNat`, split on the comparison the function matches on, with the
+    /// claim for every value of the varied givens and under the carried
+    /// hypotheses as its motive. Each case binds the given, the comparison's
+    /// value, the claim at every Int whose `toNat` is smaller, the varied
+    /// givens and the carried hypotheses; each hypothesis of a recursive
+    /// call is that claim at the call's Int, which a prelude lemma shows
+    /// smaller from the comparison (`n - 1` or `n / k` where `n > 0`).
+    #[allow(clippy::too_many_arguments)]
+    fn induct_toward_zero(
+        &mut self,
+        def: &crate::ir::proof_steps::Def,
+        rec: &crate::ir::proof_steps::induct::Recursion,
+        args: &[Term],
+        v: &str,
+        general: &[(usize, String)],
+        arms: &[crate::ir::hir::ResolvedMatchArm],
+        carried: &[String],
+        cases: &[crate::ir::proof_steps::InductCase],
+        eq: &Eqn,
+        hyps: &Hyps,
+    ) -> Result<String, String> {
+        use crate::ir::proof_steps::induct::{self, Descent};
+        let lean = super::syntax::aver_name_to_lean;
+        let guard = rec
+            .guard
+            .as_ref()
+            .ok_or("induct: not a count toward zero")?;
+        let p = &def.params[rec.at];
+        let varying: Vec<String> = std::iter::once(v.to_string())
+            .chain(general.iter().map(|(_, g)| g.clone()))
+            .collect();
+        let mentions = |e: &Eqn| {
+            let mut fv = Vec::new();
+            term::free_vars(&e.lhs, &mut fv);
+            term::free_vars(&e.rhs, &mut fv);
+            fv.iter().any(|n| varying.contains(n))
+        };
+        let mut stated: Vec<(String, Eqn)> = Vec::new();
+        for name in carried {
+            let (_, e) = hyps
+                .iter()
+                .rev()
+                .find(|(h, _)| h == name)
+                .ok_or_else(|| format!("induct: {name} is not in scope"))?;
+            stated.push((name.clone(), e.clone()));
+        }
+        let kept: Hyps = hyps.iter().filter(|(_, e)| !mentions(e)).cloned().collect();
+        let gs: Vec<String> = general.iter().map(|(_, g)| lean(g)).collect();
+        let hs: Vec<String> = carried.iter().map(|n| self.hyp_name(n)).collect();
+        let mut motive = String::new();
+        if !gs.is_empty() {
+            motive.push_str(&format!("∀ {}, ", gs.join(" ")));
+        }
+        for (_, e) in &stated {
+            motive.push_str(&format!("{} → ", self.eqn(e)));
+        }
+        motive.push_str(&self.eqn(eq));
+        // The carried hypotheses as they stand outside, before the cases
+        // rebind them as the equations of Bools the steps read.
+        let outer: Vec<String> = carried
+            .iter()
+            .map(|n| self.proof(&Proof::Hyp(n.clone()), hyps))
+            .collect::<Result<_, _>>()?;
+        let all = format!("steps_below_{}", lean(v));
+        let saved = self.prop_hyps.clone();
+        self.prop_hyps.retain(|h| !carried.contains(h));
+        for c in cases {
+            self.prop_hyps.retain(|h| {
+                !c.binders.contains(h)
+                    && !c.ihs.contains(h)
+                    && !c.more.iter().any(|(_, m)| &m.name == h)
+            });
+        }
+        let rendered = (|| -> Result<(String, String, String), String> {
+            let mut on = [String::new(), String::new()];
+            let mut subject = String::new();
+            for (arm, case) in arms.iter().zip(cases) {
+                let stated_case = induct::case(
+                    def,
+                    rec,
+                    args,
+                    v,
+                    general,
+                    arm,
+                    &case.binders,
+                    &case.ihs,
+                    &eq.lhs,
+                    &eq.rhs,
+                )?;
+                let (g, at) = stated_case
+                    .guard
+                    .clone()
+                    .ok_or("induct: a case without the comparison")?;
+                let value =
+                    term::bool_value(&at.rhs).ok_or("induct: the comparison has no value")?;
+                subject = self.expr(&at.lhs);
+                let mut scope = kept.clone();
+                scope.push((g.clone(), at.clone()));
+                scope.extend(stated.iter().cloned());
+                let g_name = self.hyp_name(&g);
+                let positive = if guard.stop {
+                    format!("(AverSteps.pos_of_le_false {g_name})")
+                } else {
+                    format!("(AverSteps.pos_of_gt_true {g_name})")
+                };
+                let calls = induct::self_calls(&arm.body, def.fn_id);
+                // The claim at the Int recursive call `k` passes and at
+                // `values` of the varied givens, under the name `name`.
+                let mut haves = String::new();
+                let mut taken: Hyps = Vec::new();
+                let mut instance = |this: &mut Self,
+                                    k: usize,
+                                    name: &str,
+                                    values: &[Term],
+                                    carry: &[Proof]|
+                 -> Result<(), String> {
+                    let (call, _) = calls.get(k).ok_or("induct: no such recursive call")?;
+                    let below = match induct::descent(&call[rec.at], p) {
+                        Some(Descent::Less) => format!("(AverSteps.sub_one_lt {positive})"),
+                        Some(Descent::Divide(d)) => {
+                            format!("(AverSteps.ediv_lt {d} (by decide) {positive})")
+                        }
+                        None => return Err("induct: a recursive call does not descend".into()),
+                    };
+                    let smaller = &stated_case.at[k][0].1;
+                    let mut at = vec![(v.to_string(), smaller.clone())];
+                    at.extend(
+                        general
+                            .iter()
+                            .map(|(_, g)| g.clone())
+                            .zip(values.iter().cloned()),
+                    );
+                    let e = Eqn::new(term::subst(&eq.lhs, &at)?, term::subst(&eq.rhs, &at)?);
+                    let mut app = format!("{all} ({}) {below}", this.expr(smaller));
+                    for t in values {
+                        app.push_str(&format!(" ({})", this.expr(t)));
+                    }
+                    for q in carry {
+                        app.push_str(&format!(" {}", this.proof(q, &scope)?));
+                    }
+                    // In parentheses: the arguments may sit on a line that
+                    // starts left of the `have`.
+                    haves.push_str(&format!(
+                        "have {} : {} := ({app}); ",
+                        this.hyp_name(name),
+                        this.eqn(&e)
+                    ));
+                    taken.push((name.to_string(), e));
+                    Ok(())
+                };
+                for (k, (ih, _)) in stated_case.ihs.iter().enumerate() {
+                    if ih == "_" {
+                        continue;
+                    }
+                    let values: Vec<Term> = stated_case.at[k][1..]
+                        .iter()
+                        .map(|(_, t)| t.clone())
+                        .collect();
+                    let carry = case.carry.get(k).cloned().unwrap_or_default();
+                    instance(self, k, ih, &values, &carry)?;
+                }
+                for (k, more) in &case.more {
+                    instance(self, *k, &more.name, &more.at, &more.carry)?;
+                }
+                let mut with_ihs = scope.clone();
+                with_ihs.extend(taken);
+                let body = self.proof(&case.proof, &with_ihs)?;
+                let mut names = vec![
+                    lean(v),
+                    format!("({g_name} : {})", self.eqn(&at)),
+                    all.clone(),
+                ];
+                names.extend(gs.iter().cloned());
+                names.extend(hs.iter().cloned());
+                on[usize::from(!value)] = format!("(fun {} => ({haves}{body}))", names.join(" "));
+            }
+            Ok((subject, on[0].clone(), on[1].clone()))
+        })();
+        self.prop_hyps = saved;
+        let (subject, on_true, on_false) = rendered?;
+        let mut applied: Vec<String> = gs.clone();
+        applied.extend(outer);
+        Ok(format!(
+            "(AverSteps.int_measure_induct (P := fun {v} => {motive}) (fun {v} => {subject}) {on_true} {on_false} {v} {})",
+            applied.join(" "),
+            v = lean(v),
+        ))
     }
 
     fn hyp_name(&self, name: &str) -> String {
@@ -898,8 +1094,9 @@ impl Renderer<'_> {
                 ..
             } => {
                 let def = self.script.def(*fn_id).ok_or("induct: no definition")?;
-                let j = crate::ir::proof_steps::induct::structural_param(def)?
+                let rec = crate::ir::proof_steps::induct::recursion(def)?
                     .ok_or("induct: the function does not recurse")?;
+                let j = rec.at;
                 let (v, general) = crate::ir::proof_steps::induct::varied(
                     args,
                     j,
@@ -908,12 +1105,16 @@ impl Renderer<'_> {
                 let ResolvedExpr::Match { arms, .. } = &def.body.node else {
                     return Err("induct: the body is not a match".into());
                 };
-                if crate::ir::proof_steps::induct::nested_split(def)
+                if rec.guard.is_some() {
+                    self.induct_toward_zero(
+                        def, &rec, args, &v, &general, arms, carried, cases, &eq, hyps,
+                    )?
+                } else if crate::ir::proof_steps::induct::nested_split(def)
                     || !carried.is_empty()
                     || cases.iter().any(|c| !c.more.is_empty())
                 {
                     self.induct_by_cases_of_type(
-                        def, args, j, &v, &general, arms, carried, cases, &eq, hyps,
+                        def, &rec, args, &v, &general, arms, carried, cases, &eq, hyps,
                     )?
                 } else {
                     let lean = super::syntax::aver_name_to_lean;
@@ -957,8 +1158,8 @@ impl Renderer<'_> {
                     for (arm, case) in arms.iter().zip(cases) {
                         let ihs = crate::ir::proof_steps::induct::case(
                             def,
+                            &rec,
                             args,
-                            j,
                             &v,
                             &general,
                             arm,
@@ -1053,123 +1254,6 @@ impl Renderer<'_> {
                     lean(head),
                     lean(tail),
                     gs.iter().map(|g| format!(" {g}")).collect::<String>(),
-                    v = lean(var),
-                )
-            }
-            // `AverSteps.int_induct` with the claim, for every value of the
-            // generalised givens and under the carried hypotheses, as its
-            // motive: the case `var <= 0`, then the case `var > 0` with the
-            // claim at `var - 1`, applied at each hypothesis's values once
-            // each carried hypothesis is proved there. The cases see what
-            // the kernel gives them: the carried hypotheses rebound, the
-            // guard, and those that mention neither `var` nor a generalised
-            // given.
-            Proof::InductInt {
-                var,
-                divisor,
-                guard,
-                base,
-                carried,
-                general,
-                ihs,
-                step,
-                ..
-            } => {
-                let lean = super::syntax::aver_name_to_lean;
-                let mentions = |e: &Eqn| {
-                    let mut fv = Vec::new();
-                    term::free_vars(&e.lhs, &mut fv);
-                    term::free_vars(&e.rhs, &mut fv);
-                    fv.iter().any(|n| n == var || general.contains(n))
-                };
-                let mut stated: Vec<(String, Eqn)> = Vec::new();
-                for name in carried {
-                    let (_, e) = hyps
-                        .iter()
-                        .rev()
-                        .find(|(h, _)| h == name)
-                        .ok_or_else(|| format!("intinduct: {name} is not in scope"))?;
-                    stated.push((name.clone(), e.clone()));
-                }
-                let kept: Hyps = hyps.iter().filter(|(_, e)| !mentions(e)).cloned().collect();
-                let (at, at_base, smaller) =
-                    crate::ir::proof_steps::induct::int_descent(var, divisor.as_ref());
-                let scope = |value: bool| -> Hyps {
-                    let mut h = kept.clone();
-                    h.push((guard.clone(), Eqn::new(at.clone(), term::boolean(value))));
-                    h.extend(stated.iter().cloned());
-                    h
-                };
-                let names: Vec<String> = stated.iter().map(|(n, _)| self.hyp_name(n)).collect();
-                let gs: Vec<String> = general.iter().map(|g| lean(g)).collect();
-                let mut motive = String::new();
-                if !gs.is_empty() {
-                    motive.push_str(&format!("∀ {}, ", gs.join(" ")));
-                }
-                for (_, e) in &stated {
-                    motive.push_str(&format!("{} → ", self.eqn(e)));
-                }
-                motive.push_str(&self.eqn(&eq));
-                let outer: Vec<String> = carried
-                    .iter()
-                    .map(|n| self.proof(&Proof::Hyp(n.clone()), hyps))
-                    .collect::<Result<_, _>>()?;
-                // Each hypothesis of the step: the claim at the smaller value
-                // (`var - 1`, or `var / k`) and its values of the
-                // generalised givens.
-                let mut at_ih: Vec<(String, Eqn)> = Vec::new();
-                for ih in ihs {
-                    let mut down = vec![(var.clone(), smaller.clone())];
-                    down.extend(general.iter().cloned().zip(ih.at.iter().cloned()));
-                    let e = Eqn::new(term::subst(&eq.lhs, &down)?, term::subst(&eq.rhs, &down)?);
-                    at_ih.push((ih.name.clone(), e));
-                }
-                // Inside the cases the carried hypotheses are rebound as the
-                // equations of Bools the steps read.
-                let saved = self.prop_hyps.clone();
-                self.prop_hyps.retain(|h| !carried.contains(h));
-                self.prop_hyps
-                    .retain(|h| h != guard && !ihs.iter().any(|i| &i.name == h));
-                let g = self.hyp_name(guard);
-                let pb = self.proof(base, &scope(at_base));
-                let above = scope(!at_base);
-                let haves = (|| -> Result<String, String> {
-                    let mut text = String::new();
-                    for (ih, (name, e)) in ihs.iter().zip(&at_ih) {
-                        let mut app = format!("{g}_all");
-                        for t in &ih.at {
-                            app.push_str(&format!(" ({})", self.expr(t)));
-                        }
-                        for q in &ih.carry {
-                            app.push_str(&format!(" {}", self.proof(q, &above)?));
-                        }
-                        // In parentheses: the arguments may sit on a line
-                        // that starts left of the `have`.
-                        text.push_str(&format!(
-                            "have {} : {} := ({app}); ",
-                            self.hyp_name(name),
-                            self.eqn(e)
-                        ));
-                    }
-                    Ok(text)
-                })();
-                let mut with_ih = above.clone();
-                with_ih.extend(at_ih.iter().cloned());
-                let ps = self.proof(step, &with_ih);
-                self.prop_hyps = saved;
-                let (pb, haves, ps) = (pb?, haves?, ps?);
-                let mut bound: Vec<String> = gs.clone();
-                bound.extend(names.iter().cloned());
-                let rebound = bound.join(" ");
-                let mut applied: Vec<String> = gs.clone();
-                applied.extend(outer);
-                let principle = match divisor {
-                    None => "AverSteps.int_induct".to_string(),
-                    Some(k) => format!("AverSteps.int_halve_induct {k} (by decide)"),
-                };
-                format!(
-                    "({principle} (P := fun {v} => {motive}) (fun {v} {g} {rebound} => {pb}) (fun {v} {g} {g}_all {rebound} => ({haves}{ps})) {v} {})",
-                    applied.join(" "),
                     v = lean(var),
                 )
             }

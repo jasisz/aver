@@ -4,23 +4,25 @@
 //! A definition may call itself only when its body is a `match` on one
 //! parameter and every recursive call passes, at that parameter's place, a
 //! name the enclosing arm's pattern binds: a strict part of the value
-//! matched, so the recursion stops. That is the gate for both opening a
-//! definition ([`super::Proof::Unfold`]) and inducting along it
-//! ([`super::Proof::Induct`]). Definitions that call each other are
-//! refused outright.
-//!
-//! A definition may also count an Int parameter down to zero
-//! ([`countdown`]): `match n <= 0`, arm `true` without a recursive call,
-//! arm `false` calling itself with `n - 1` in that parameter's place. It
-//! stops for every Int, a negative one included; an induction along it is
-//! [`super::Proof::InductInt`] on the given in that place.
+//! matched, so the recursion stops. Or it counts an Int parameter `p`
+//! toward zero: a `match` on `p <= 0` or `p > 0`, the arm where `p` is at
+//! most 0 without a recursive call, and every call in the other passing
+//! `p - 1` or `p / k` (a literal `k` of at least 2) in `p`'s place, which
+//! for `p > 0` is at least 0 and below `p`; it stops for every Int, a
+//! negative one included. The gate returns what it checked
+//! ([`recursion`]), and both opening a definition ([`super::Proof::Unfold`])
+//! and inducting along it ([`super::Proof::Induct`]) read that.
+//! Definitions that call each other are refused outright.
 //!
 //! An induction step names its leading function `f` and the arguments the
 //! claim applies it to. The argument at the matched place must be a given;
 //! the other arguments that are givens are generalised. Each arm of `f` is
-//! one case: the given becomes the arm's pattern over fresh names, and each
-//! recursive call in the arm gives one induction hypothesis, the claim at
-//! that call's arguments.
+//! one case. On a match on the value, the given becomes the arm's pattern
+//! over fresh names; on an Int counted toward zero, the given stays and the
+//! case's one name is the hypothesis that the comparison has the arm's
+//! value. Each recursive call in the arm gives one induction hypothesis,
+//! the claim at that call's arguments: a part of the value, or an Int
+//! closer to zero where the comparison lets the call happen.
 
 use crate::ir::hir::{ResolvedCallee, ResolvedExpr, ResolvedMatchArm};
 use crate::ir::identity::FnId;
@@ -78,9 +80,48 @@ fn walk_arm(
     bound.truncate(before);
 }
 
-/// `None` when `def` does not call itself; the place of the parameter it
-/// recurses on when it passes the gate; why not otherwise.
-pub fn structural_param(def: &Def) -> Result<Option<usize>, String> {
+/// What the termination gate checked about a definition that calls
+/// itself, which opening it and an induction along it both read.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Recursion {
+    /// The place of the parameter it recurses on.
+    pub at: usize,
+    /// For a definition that counts that Int toward zero, the comparison
+    /// its match splits on; `None` for a match on the value itself, whose
+    /// every recursive call passes a part of it.
+    pub guard: Option<Guard>,
+}
+
+/// The comparison a definition that counts an Int toward zero matches on:
+/// `p <= 0` (it stops where it is `true`) or `p > 0` (where it is `false`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Guard {
+    /// The comparison, over the definition's parameters.
+    pub subject: Term,
+    /// Its value in the arm without a recursive call.
+    pub stop: bool,
+}
+
+/// How a recursive call of a definition that counts an Int `p` toward
+/// zero descends at `p`'s place: `p - 1`, or `p / k` for a literal `k` of
+/// at least 2. Where `p > 0` each is at least 0 and below `p`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Descent {
+    Less,
+    Divide(num_bigint::BigInt),
+}
+
+/// `None` when `def` does not call itself; what the gate checked when it
+/// passes ([`Recursion`]); why not otherwise. The gate: no local
+/// bindings, and a body that is a `match` either on a parameter, every
+/// recursive call passing at its place a name the arm's pattern binds and
+/// no inner arm rebinds, or on `p <= 0` / `p > 0` for a parameter `p`, one
+/// arm per truth value, the arm where `p` is at most 0 without a recursive
+/// call and every call in the other descending ([`descent`]) at `p`'s
+/// place, `p` not rebound around it.
+pub fn recursion(def: &Def) -> Result<Option<Recursion>, String> {
+    use crate::ast::{BinOp, Literal};
+    use crate::ir::hir::ResolvedPattern;
     let f = def.fn_id;
     let in_lets: usize = def.lets.iter().map(|(_, v)| self_calls(v, f).len()).sum();
     let in_body = self_calls(&def.body, f);
@@ -94,13 +135,58 @@ pub fn structural_param(def: &Def) -> Result<Option<usize>, String> {
     let ResolvedExpr::Match { subject, arms } = &def.body.node else {
         return refuse("outside a match on a parameter");
     };
-    if let Some(j) = countdown(def) {
-        return Ok(Some(j));
+    let place = |p: &str| def.params.iter().position(|n| n == p);
+    if let ResolvedExpr::BinOp(op, p, zero) = &subject.node
+        && let ResolvedExpr::Ident(p) = &p.node
+        && term::int_value(zero) == Some(0.into())
+    {
+        let Some(j) = place(p) else {
+            return refuse("on a match whose subject is not a parameter");
+        };
+        let stop = match op {
+            BinOp::Lte => true,
+            BinOp::Gt => false,
+            _ => return Err(format!("{} does not count {p} down to zero", def.name)),
+        };
+        let value = |arm: &ResolvedMatchArm| match arm.pattern {
+            ResolvedPattern::Literal(Literal::Bool(b)) => Some(b),
+            _ => None,
+        };
+        let counts = match arms.as_slice() {
+            [a, b] if value(a).is_some() && value(b).is_some() && value(a) != value(b) => {
+                arms.iter().all(|arm| {
+                    let calls = self_calls(&arm.body, f);
+                    if value(arm) == Some(stop) {
+                        calls.is_empty()
+                    } else {
+                        calls.iter().all(|(args, inner)| {
+                            args.len() == def.params.len()
+                                && descent(&args[j], p).is_some()
+                                && !inner.contains(p)
+                        })
+                    }
+                })
+            }
+            _ => false,
+        };
+        if !counts {
+            return Err(format!("{} does not count {p} down to zero", def.name));
+        }
+        return Ok(Some(Recursion {
+            at: j,
+            guard: Some(Guard {
+                subject: (**subject).clone(),
+                stop,
+            }),
+        }));
+    }
+    if let ResolvedExpr::BinOp(..) = &subject.node {
+        return refuse("outside a match on a parameter");
     }
     let ResolvedExpr::Ident(p) = &subject.node else {
         return refuse("on a match whose subject is not a parameter");
     };
-    let Some(j) = def.params.iter().position(|n| n == p) else {
+    let Some(j) = place(p) else {
         return refuse("on a match whose subject is not a parameter");
     };
     for arm in arms {
@@ -115,150 +201,44 @@ pub fn structural_param(def: &Def) -> Result<Option<usize>, String> {
             }
         }
     }
-    Ok(Some(j))
+    Ok(Some(Recursion { at: j, guard: None }))
 }
 
-/// The place of the Int parameter `def` counts down by one to zero, when
-/// its body is `match p <= 0` with arm `true` free of recursive calls and
-/// every recursive call in arm `false` passing `p - 1` at `p`'s place, `p`
-/// not rebound around it.
-pub fn countdown(def: &Def) -> Option<usize> {
-    use crate::ast::{BinOp, Literal};
-    if !def.lets.is_empty() {
-        return None;
-    }
-    let ResolvedExpr::Match { subject, arms } = &def.body.node else {
-        return None;
-    };
-    let ResolvedExpr::BinOp(BinOp::Lte, p, zero) = &subject.node else {
-        return None;
-    };
-    let (ResolvedExpr::Ident(p), Some(z)) = (&p.node, term::int_value(zero)) else {
-        return None;
-    };
-    if z != 0.into() {
-        return None;
-    }
-    let j = def.params.iter().position(|n| n == p)?;
-    let [stop, go] = arms.as_slice() else {
-        return None;
-    };
-    let is = |pat: &crate::ir::hir::ResolvedPattern, v: bool| matches!(pat, crate::ir::hir::ResolvedPattern::Literal(Literal::Bool(b)) if *b == v);
-    if !is(&stop.pattern, true) || !is(&go.pattern, false) {
-        return None;
-    }
-    if !self_calls(&stop.body, def.fn_id).is_empty() {
-        return None;
-    }
-    let one_less = |t: &Term| match &t.node {
-        ResolvedExpr::BinOp(BinOp::Sub, x, one) => {
-            matches!(&x.node, ResolvedExpr::Ident(n) if n == p)
-                && term::int_value(one) == Some(1.into())
-        }
-        _ => false,
-    };
-    self_calls(&go.body, def.fn_id)
-        .iter()
-        .all(|(args, inner)| {
-            args.len() == def.params.len() && one_less(&args[j]) && !inner.contains(p)
-        })
-        .then_some(j)
-}
-
-/// The place of the Int parameter `def` divides down to zero, when its
-/// body is `match p > 0` with arm `false` free of recursive calls and every
-/// recursive call in arm `true` passing `p / k` at `p`'s place, for a
-/// literal `k >= 2` and `p` not rebound around it: for `p > 0` the
-/// Euclidean quotient is at least 0 and below `p`, so the recursion stops.
-/// Such a definition may be opened; no induction follows it.
-pub fn halving(def: &Def) -> Option<usize> {
-    use crate::ast::{BinOp, Literal};
-    use crate::ir::hir::{BuiltinIntrinsic, ResolvedPattern};
-    if !def.lets.is_empty() {
-        return None;
-    }
-    let ResolvedExpr::Match { subject, arms } = &def.body.node else {
-        return None;
-    };
-    let ResolvedExpr::BinOp(BinOp::Gt, p, zero) = &subject.node else {
-        return None;
-    };
-    let (ResolvedExpr::Ident(p), Some(z)) = (&p.node, term::int_value(zero)) else {
-        return None;
-    };
-    if z != 0.into() {
-        return None;
-    }
-    let j = def.params.iter().position(|n| n == p)?;
-    let value = |arm: &ResolvedMatchArm| match arm.pattern {
-        ResolvedPattern::Literal(Literal::Bool(b)) => Some(b),
-        _ => None,
-    };
-    let (go, stop) = match arms.as_slice() {
-        [a, b] if value(a) == Some(true) && value(b) == Some(false) => (a, b),
-        [a, b] if value(a) == Some(false) && value(b) == Some(true) => (b, a),
-        _ => return None,
-    };
-    if !self_calls(&stop.body, def.fn_id).is_empty() {
-        return None;
-    }
-    let divided = |t: &Term| match &t.node {
-        ResolvedExpr::Call(ResolvedCallee::Intrinsic(BuiltinIntrinsic::IntDivEuclid), xs) => {
-            xs.len() == 2
-                && matches!(&xs[0].node, ResolvedExpr::Ident(n) if n == p)
-                && term::int_value(&xs[1]).is_some_and(|k| k >= 2.into())
-        }
-        _ => false,
-    };
-    let calls = self_calls(&go.body, def.fn_id);
-    (!calls.is_empty()
-        && calls.iter().all(|(args, inner)| {
-            args.len() == def.params.len() && divided(&args[j]) && !inner.contains(p)
-        }))
-    .then_some(j)
-}
-
-/// The place [`halving`] finds and the literal `k` every recursive call
-/// divides by, when they all divide by the same one: an induction along
-/// such a definition is [`super::Proof::InductInt`] with that divisor.
-pub fn halving_divisor(def: &Def) -> Option<(usize, num_bigint::BigInt)> {
-    use crate::ir::hir::BuiltinIntrinsic;
-    let j = halving(def)?;
-    let mut ks = self_calls(&def.body, def.fn_id)
-        .into_iter()
-        .map(|(args, _)| match &args[j].node {
-            ResolvedExpr::Call(ResolvedCallee::Intrinsic(BuiltinIntrinsic::IntDivEuclid), xs) => {
-                term::int_value(&xs[1])
-            }
-            _ => None,
-        });
-    let k = ks.next()??;
-    ks.all(|other| other.as_ref() == Some(&k)).then_some((j, k))
-}
-
-/// How an Int induction on `var` descends: the guard it splits on, the
-/// guard's value in the base case, and the smaller value the step's
-/// hypotheses are about. Without a divisor, `var <= 0` (base `true`) and
-/// `var - 1`; with a divisor `k`, `var > 0` (base `false`) and `var / k`.
-pub fn int_descent(var: &str, divisor: Option<&num_bigint::BigInt>) -> (Term, bool, Term) {
+/// How `t`, a recursive call's argument at the place of the Int `p`,
+/// descends: `p - 1`, or `p / k` for a literal `k` of at least 2.
+pub fn descent(t: &Term, p: &str) -> Option<Descent> {
     use crate::ast::BinOp;
     use crate::ir::hir::BuiltinIntrinsic;
-    let zero = term::int(&0.into());
-    match divisor {
-        None => (
-            term::binop(BinOp::Lte, term::var(var), zero),
-            true,
-            term::binop(BinOp::Sub, term::var(var), term::int(&1.into())),
-        ),
-        Some(k) => (
-            term::binop(BinOp::Gt, term::var(var), zero),
-            false,
-            term::intrinsic(
-                BuiltinIntrinsic::IntDivEuclid,
-                vec![term::var(var), term::int(k)],
-            ),
-        ),
+    let is_p = |x: &Term| matches!(&x.node, ResolvedExpr::Ident(n) if n == p);
+    match &t.node {
+        ResolvedExpr::BinOp(BinOp::Sub, x, one)
+            if is_p(x) && term::int_value(one) == Some(1.into()) =>
+        {
+            Some(Descent::Less)
+        }
+        ResolvedExpr::Call(ResolvedCallee::Intrinsic(BuiltinIntrinsic::IntDivEuclid), xs)
+            if xs.len() == 2 && is_p(&xs[0]) =>
+        {
+            term::int_value(&xs[1])
+                .filter(|k| *k >= 2.into())
+                .map(Descent::Divide)
+        }
+        _ => None,
     }
+}
+
+/// Whether `def` counts an Int toward zero with some recursive call that
+/// divides it, which opens only where its guard is decided.
+pub fn divides_down(def: &Def) -> bool {
+    let Ok(Some(Recursion { at, guard: Some(_) })) = recursion(def) else {
+        return false;
+    };
+    self_calls(&def.body, def.fn_id).iter().any(|(args, _)| {
+        matches!(
+            descent(&args[at], &def.params[at]),
+            Some(Descent::Divide(_))
+        )
+    })
 }
 
 /// The given at the matched place `j`, and the other givens among `args`
@@ -287,16 +267,19 @@ pub fn varied(
     Ok((v, general))
 }
 
-/// Case `arm` of an induction along `def` at `args`, with `binders` for the
-/// arm's pattern variables: the claim `lhs = rhs` at the arm's pattern, and
-/// one hypothesis per recursive call in the arm, named by `ihs`, the claim
-/// at that call's arguments, with the substitution that puts it there.
-/// `v` and `general` are what [`varied`] found.
+/// Case `arm` of an induction along `def` at `args`, as `rec` describes
+/// its recursion, with `binders` for the names the case introduces: the
+/// claim `lhs = rhs` in the case (at the arm's pattern, on a match on the
+/// value), on an Int counted toward zero the hypothesis that the
+/// comparison has the arm's value, and one hypothesis per recursive call
+/// in the arm, named by `ihs`, the claim at that call's arguments, with
+/// the substitution that puts it there. `v` and `general` are what
+/// [`varied`] found.
 #[allow(clippy::too_many_arguments)]
 pub fn case(
     def: &Def,
+    rec: &Recursion,
     args: &[Term],
-    j: usize,
     v: &str,
     general: &[(usize, String)],
     arm: &ResolvedMatchArm,
@@ -305,12 +288,34 @@ pub fn case(
     lhs: &Term,
     rhs: &Term,
 ) -> Result<Case, String> {
+    let j = rec.at;
     let names = term::pattern_binders(&arm.pattern);
-    if binders.len() != names.len() {
+    let wanted = if rec.guard.is_some() { 1 } else { names.len() };
+    if binders.len() != wanted {
         return Err("wrong number of names".into());
     }
     let ys: Vec<Term> = binders.iter().map(|b| term::var(b)).collect();
-    let value = super::claim::pattern_term(&arm.pattern, &ys)?;
+    let mut map: Vec<(String, Term)> = def
+        .outer(args)?
+        .into_iter()
+        .filter(|(n, _)| !names.contains(n))
+        .collect();
+    let (value, guard) = match &rec.guard {
+        None => {
+            map.extend(names.iter().cloned().zip(ys.iter().cloned()));
+            (super::claim::pattern_term(&arm.pattern, &ys)?, None)
+        }
+        Some(g) => {
+            let crate::ir::hir::ResolvedPattern::Literal(crate::ast::Literal::Bool(b)) =
+                arm.pattern
+            else {
+                return Err("the arm is not one value of the comparison".into());
+            };
+            let at = Eqn::new(term::subst(&g.subject, &map)?, term::boolean(b));
+            // The given stays as the claim writes it, its type kept.
+            (args[j].clone(), Some((binders[0].clone(), at)))
+        }
+    };
     let here = [(v.to_string(), value.clone())];
     let goal = Eqn::new(term::subst(lhs, &here)?, term::subst(rhs, &here)?);
     let calls = self_calls(&arm.body, def.fn_id);
@@ -321,12 +326,6 @@ pub fn case(
             ihs.len()
         ));
     }
-    let mut map: Vec<(String, Term)> = def
-        .outer(args)?
-        .into_iter()
-        .filter(|(n, _)| !names.contains(n))
-        .collect();
-    map.extend(names.iter().cloned().zip(ys));
     let mut out = Vec::new();
     let mut at = Vec::new();
     for ((call, inner), ih) in calls.iter().zip(ihs) {
@@ -357,6 +356,7 @@ pub fn case(
     Ok(Case {
         value,
         goal,
+        guard,
         ihs: out,
         at,
     })
@@ -364,10 +364,14 @@ pub fn case(
 
 /// One case of an induction, as [`case`] states it.
 pub struct Case {
-    /// The arm's pattern over the case's names.
+    /// Where the case puts the given inducted on: the arm's pattern over
+    /// the case's names, or the given itself on an Int counted toward zero.
     pub value: Term,
     /// The claim there.
     pub goal: Eqn,
+    /// On an Int counted toward zero, the case's hypothesis: the comparison
+    /// at the claim's arguments has the arm's value.
+    pub guard: Option<(String, Eqn)>,
     /// One hypothesis per recursive call: the claim at its arguments.
     pub ihs: Vec<(String, Eqn)>,
     /// For each, the substitution that puts the claim there.

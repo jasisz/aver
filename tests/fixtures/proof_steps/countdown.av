@@ -1,6 +1,6 @@
 module Countdown
     intent = "Laws proved by induction on an Int counting down to zero, and by a true Int equality."
-    exposes [pow2, below, belowReason, scaled, shifted, halves, digitsInto]
+    exposes [pow2, climbs, below, belowReason, scaled, shifted, halves, digitsInto]
     effects []
 
 fn pow2(n: Int) -> Int
@@ -16,6 +16,20 @@ verify pow2
 verify pow2 law positive
     given n: Int = [-2, 0, 3]
     pow2(n) >= 1 holds
+
+fn climbs(n: Int) -> Int
+    ? "Counts n down by one while n > 0: the comparison the other way round."
+    match n > 0
+        true -> 1 + climbs(n - 1)
+        false -> 0
+
+verify climbs
+    climbs(0) => 0
+    climbs(3) => 3
+
+verify climbs law nonnegative
+    given n: Int = [-2, 0, 4]
+    climbs(n) >= 0 holds
 
 fn below(a: Int, b: Int, c: Int) -> Bool
     ? "A nonnegative factor keeps an order."

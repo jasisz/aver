@@ -105,7 +105,7 @@ impl<'a> Env<'a> {
 
     /// A definition steps may open: pure, local bindings then one
     /// expression, and, if it calls itself, through the termination gate of
-    /// [`crate::ir::proof_steps::induct::structural_param`].
+    /// [`crate::ir::proof_steps::induct::recursion`].
     pub(crate) fn def(&mut self, id: FnId) -> Option<Def> {
         if let Some(found) = self.defs.get(&id) {
             return found.clone();
@@ -221,16 +221,16 @@ impl<'a> Env<'a> {
         // A recursive function opens only when its own recursion passes the
         // gate, a descent into a part or a division of an Int down to zero;
         // one recursive only through others never does.
-        if self.inputs.recursive_fns.contains(&id)
-            && !matches!(
-                crate::ir::proof_steps::induct::structural_param(&def),
-                Ok(Some(_))
-            )
-        {
-            if !self.open_halving || crate::ir::proof_steps::induct::halving(&def).is_none() {
+        if self.inputs.recursive_fns.contains(&id) {
+            if !matches!(crate::ir::proof_steps::induct::recursion(&def), Ok(Some(_))) {
                 return None;
             }
-            self.met_halving.set(true);
+            if crate::ir::proof_steps::induct::divides_down(&def) {
+                if !self.open_halving {
+                    return None;
+                }
+                self.met_halving.set(true);
+            }
         }
         Some(def)
     }

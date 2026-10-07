@@ -562,33 +562,6 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
             ih_ats(ihs, names)?,
             proof(cons, names)?
         ),
-        Proof::InductInt {
-            var,
-            divisor,
-            lhs,
-            rhs,
-            guard,
-            base,
-            carried,
-            general,
-            ihs,
-            step,
-        } => {
-            let head = match divisor {
-                None => format!("intinduct {var}"),
-                Some(k) => format!("inthalve {var} {k}"),
-            };
-            format!(
-                "({head} {} {} {guard} {} ({}) ({}) ({}) {})",
-                term(lhs, names)?,
-                term(rhs, names)?,
-                proof(base, names)?,
-                carried.join(" "),
-                general.join(" "),
-                ih_ats(ihs, names)?,
-                proof(step, names)?
-            )
-        }
         Proof::Enum {
             var,
             lhs,

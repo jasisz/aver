@@ -1055,10 +1055,11 @@ fn lean_inducts_with_the_functional_induction_principle_and_refuses_mutations() 
     let _ = fs::remove_dir_all(out);
 }
 
-const COUNTDOWN_LAWS: [&str; 8] = [
+const COUNTDOWN_LAWS: [&str; 9] = [
     "below.nonnegativeFactor",
     "below.nonnegativeFactor.because1",
     "below.nonnegativeFactor.implication",
+    "climbs.nonnegative",
     "digitsInto.accumulatorFirst",
     "digitsInto.length",
     "pow2.positive",
@@ -1066,9 +1067,17 @@ const COUNTDOWN_LAWS: [&str; 8] = [
     "shifted.atThree",
 ];
 
-/// `text` with the sub-form `index` of its first `(intinduct …)` replaced.
-fn reinduct(text: &str, index: usize, to: &str) -> String {
-    let (from, end) = nth_form(text, "(intinduct ", index);
+/// `text` with the sub-form `index` of its `case`-th `(case …)` replaced:
+/// (case (NAME) (IH…) (MORE…) PROOF), the comparison's hypothesis sub-form
+/// 0, the hypotheses of the recursive calls 1, the further ones 2, the
+/// proof 3.
+fn replace_in_case(text: &str, case: usize, index: usize, to: &str) -> String {
+    let open = text
+        .match_indices("(case ")
+        .nth(case)
+        .unwrap_or_else(|| panic!("no case {case}"))
+        .0;
+    let (from, end) = sub_forms(text, open)[index];
     format!("{}{to}{}", &text[..from], &text[end..])
 }
 
@@ -1086,41 +1095,58 @@ fn both_kernels_induct_on_an_int_down_to_zero_and_refuse_mutations() {
     let reason = read("below.nonnegativeFactor.because1");
     let at_three = read("shifted.atThree");
     let digits = read("digitsInto.accumulatorFirst");
-    assert!(pow2.contains("(proof (intinduct n "), "{pow2}");
+    // One induction along the function, its case where n is at most 0
+    // first, without a hypothesis.
+    assert!(pow2.contains("(proof (induct pow2 ((v n)) "), "{pow2}");
+    assert!(pow2.contains("(case (h_steps1) () () "), "{pow2}");
     assert!(pow2.contains("((n (tint)))"), "{pow2}");
-    // The `when` and its line about `c` are carried down with `c`.
-    assert!(reason.contains(" (when when2) ("), "{reason}");
+    // The `when` and its lines about `a`, `b` and `c` are carried down
+    // with `c`, `a` and `b` generalised.
+    assert!(reason.contains(" (carry when when1 when2) "), "{reason}");
     assert!(at_three.contains("(rule int.eq.of_beq "), "{at_three}");
     // The accumulator and the value change with the recursive call, so the
-    // claim is proved for every value of them; the right side's call needs
-    // the claim at another accumulator than the left side's.
-    assert!(digits.contains(" () (value acc) ((ih"), "{digits}");
-    // (intinduct VAR LHS RHS GUARD BASE (CARRIED…) (GENERAL…)
-    // ((IH (VALUE…) (PROOF…))…) STEP): the base case is sub-form 2, the
-    // carried hypotheses sub-form 3, the generalised givens sub-form 4, the
-    // hypotheses of the step with their values and proofs sub-form 5.
+    // claim holds for every value of them; the right side's call needs the
+    // claim at another accumulator than the left side's.
+    assert!(
+        digits.contains(
+            "(case (h_steps2) (ih1) ((0 ih2 ((bi __int_div_euclid (v value) (i 10)) (bi List.prepend"
+        ),
+        "{digits}"
+    );
     for (kind, text) in [
         (
-            "the hypothesis used in the base case",
-            reinduct(&pow2, 2, "(hyp ih1)"),
+            "a hypothesis in the case where n is at most 0",
+            replace_in_case(&pow2, 0, 1, "(ih1)"),
         ),
         (
-            "the step at n - 2",
-            mutate_proof(&pow2, "(op - (v n) (i 1))", "(op - (v n) (i 2))"),
+            "the hypothesis read in the case where n is at most 0",
+            replace_in_case(&pow2, 0, 3, "(hyp ih1)"),
+        ),
+        (
+            "the hypothesis of the case where n is above 0 read as the claim",
+            replace_in_case(&pow2, 1, 3, "(hyp ih1)"),
+        ),
+        (
+            "the definition counting down by two",
+            pow2.replacen("(op - (v n) (i 1))", "(op - (v n) (i 2))", 1),
+        ),
+        (
+            "the definition counting down by nothing",
+            pow2.replacen("(op - (v n) (i 1))", "(op - (v n) (i 0))", 1),
+        ),
+        (
+            "the comparison read the other way round",
+            pow2.replacen("(op <= (v n) (i 0))", "(op >= (v n) (i 0))", 1),
         ),
         (
             "the carried hypotheses left out",
-            reinduct(&reinduct(&reason, 5, "((ih1 () ()))"), 3, "()"),
+            reason.replacen(" (carry when when1 when2) ", " ", 1),
         ),
         (
-            "the generalised givens left out",
-            reinduct(&digits, 4, "()"),
-        ),
-        (
-            "a hypothesis at the value the claim has, not the recursive call's",
+            "a further hypothesis at the value the claim has, not the recursive call's",
             digits.replacen(
-                "((ih3 ((bi __int_div_euclid (v value) (i 10))",
-                "((ih3 ((v value)",
+                "((0 ih2 ((bi __int_div_euclid (v value) (i 10))",
+                "((0 ih2 ((v value)",
                 1,
             ),
         ),
@@ -1214,16 +1240,17 @@ fn lean_inducts_on_an_int_down_to_zero_and_refuses_a_mutation() {
         .expect("the law's theorem");
     let line = lean[start..]
         .lines()
-        .find(|l| l.contains("AverSteps.int_induct (P :="))
+        .find(|l| l.contains("AverSteps.int_measure_induct (P :="))
         .expect("the steps branch")
         .to_string();
     let at = line
-        .find("AverSteps.int_induct (P :=")
+        .find("AverSteps.int_measure_induct (P :=")
         .unwrap_or_else(|| panic!("{line}"));
-    // AverSteps.int_induct (P := …) BASE STEP n: the base case and the step
-    // case are the two forms after the motive.
-    let motive_open = at + "AverSteps.int_induct ".len();
-    let base_open = closing(&line, motive_open) + 2;
+    // AverSteps.int_measure_induct (P := …) (fun n => GUARD) ON_TRUE
+    // ON_FALSE n: the two cases are the forms after the comparison.
+    let motive_open = at + "AverSteps.int_measure_induct ".len();
+    let guard_open = closing(&line, motive_open) + 2;
+    let base_open = closing(&line, guard_open) + 2;
     let base_close = closing(&line, base_open);
     let step_open = base_close + 2;
     let step_close = closing(&line, step_open);
@@ -1430,10 +1457,11 @@ const HALVING_LAWS: [&str; 9] = [
 ];
 
 /// A definition that divides an Int down to zero opens where its guard is
-/// decided, a law about it is proved by induction dividing the same way,
-/// and Euclidean division by a literal is pinned by linear arithmetic; both
-/// kernels refuse a definition that divides by one, an induction that
-/// divides by one, and a quotient bound the dividend's range does not give.
+/// decided, a law about it is proved by induction along it, and Euclidean
+/// division by a literal is pinned by linear arithmetic; both kernels
+/// refuse a definition that divides by one, opened or followed, a
+/// hypothesis in the case where the value is at most 0, and a quotient
+/// bound the dividend's range does not give.
 #[test]
 fn both_kernels_open_a_division_down_to_zero_and_refuse_mutations() {
     let out = scratch("halving");
@@ -1449,13 +1477,30 @@ fn both_kernels_open_a_division_down_to_zero_and_refuse_mutations() {
     let appends = read("digits.accumulatorAppends");
     assert!(step.contains("(unfold digits 1 "), "{step}");
     assert!(one.contains("(rule int.div_range "), "{one}");
-    assert!(appends.contains("(inthalve value 256 "), "{appends}");
+    assert!(
+        appends.contains("(proof (induct digits ((v value) (v acc)) "),
+        "{appends}"
+    );
     let mutants = [
-        // The induction divides by one: the claim at `value / 1` is the
-        // claim itself.
+        // The definition the induction follows divides by one: the claim
+        // at `value / 1` is the claim itself.
         (
             &appends,
-            appends.replacen("(inthalve value 256 ", "(inthalve value 1 ", 1),
+            appends.replacen(
+                "(call digits (bi __int_div_euclid (v value) (i 256))",
+                "(call digits (bi __int_div_euclid (v value) (i 1))",
+                1,
+            ),
+        ),
+        // A further hypothesis in the case where value is at most 0.
+        (
+            &appends,
+            replace_in_case(&appends, 1, 2, "((0 ih9 ((list)) ()))"),
+        ),
+        // The dividing case without its call's hypothesis name.
+        (
+            &appends,
+            appends.replacen("(case (h_steps1) (ih1) ", "(case (h_steps1) () ", 1),
         ),
         // The definition divides by one, everywhere it is written.
         (&step, step.replace("(i 256)", "(i 1)")),
@@ -1907,7 +1952,7 @@ fn joining_texts_is_never_read_as_int_arithmetic() {
     // step applies to it, even in a script made by hand.
     let script = |op: &str| {
         format!(
-            "(steps 11 (obligation k (a b) (none) (op {op} (v a) (v b)) (op {op} (v b) (v a))) (defs) (consts) (laws) (proof (ring (op {op} (v a) (v b)) (op {op} (v b) (v a)))))"
+            "(steps 12 (obligation k (a b) (none) (op {op} (v a) (v b)) (op {op} (v b) (v a))) (defs) (consts) (laws) (proof (ring (op {op} (v a) (v b)) (op {op} (v b) (v a)))))"
         )
     };
     assert_eq!(
