@@ -647,28 +647,64 @@ pub(crate) fn countdown_invariant_floor(
     floor
 }
 
-/// Reuse the countdown shrink and guard checks for a native `param.toNat`
-/// measure. Every recursive call must subtract a positive literal under a
-/// guard proving the old parameter positive; no law shape is involved.
-pub(crate) fn has_guarded_subtractive_descent(fd: &FnDef, param_index: usize) -> bool {
-    let Some((param, ty)) = fd.params.get(param_index) else {
-        return false;
-    };
-    let calls: Vec<_> = collect_calls_from_body(fd.body.as_ref())
+/// Classifier for an `Int` counted toward zero at place `param_index`:
+/// every self-call passes there either `p - k` (literal `k >= 1`) or a
+/// floor division of `p` by a literal `k >= 2` (see
+/// [`floor_div_shrink_of`]), the calls free to descend differently
+/// (`f(p / 2) + f(p / 3)`, or `p - 1` beside `p / 4`), and the guard chain
+/// around every self-call implies `p >= 1` (see
+/// [`guards_imply_param_ge_one`]), so each call's argument is below `p` and
+/// `p.toNat` strictly drops. This covers every descent the steps kernel's
+/// termination gate accepts (`p - 1` or `p / k` under `p > 0`).
+///
+/// Returns the distinct floor-division shrinks the calls use, in first-use
+/// order; empty when every call subtracts. `None` when a call does
+/// neither or a guard chain does not justify the drop: never guessed.
+pub(crate) fn guarded_int_descent_at(
+    fd: &FnDef,
+    param_index: usize,
+    inputs: &ProofLowerInputs,
+) -> Option<Vec<crate::ir::FloorDivShrink>> {
+    let (param, ty) = fd.params.get(param_index)?;
+    if ty != "Int" {
+        return None;
+    }
+    let calls: Vec<Vec<&Spanned<Expr>>> = collect_calls_from_body(fd.body.as_ref())
         .into_iter()
         .filter(|(name, _)| call_matches(name, &fd.name))
+        .map(|(_, args)| args)
         .collect();
     let chains = collect_self_call_guard_chains(fd);
-    ty == "Int"
-        && !calls.is_empty()
-        && chains.len() == calls.len()
-        && calls.iter().all(|(_, args)| {
-            args.get(param_index)
-                .is_some_and(|arg| is_int_minus_positive(arg, param))
-        })
-        && chains
+    if calls.is_empty()
+        || chains.len() != calls.len()
+        || !chains
             .iter()
             .all(|chain| guards_imply_param_ge_one(chain, param))
+    {
+        return None;
+    }
+    let mut divisions: Vec<crate::ir::FloorDivShrink> = Vec::new();
+    for args in &calls {
+        let arg = args.get(param_index).copied()?;
+        if is_int_minus_positive(arg, param) {
+            continue;
+        }
+        let (divisor, helper_fn) = floor_div_shrink_of(arg, param, inputs)?;
+        let shrink = crate::ir::FloorDivShrink { divisor, helper_fn };
+        if !divisions.contains(&shrink) {
+            divisions.push(shrink);
+        }
+    }
+    Some(divisions)
+}
+
+/// [`guarded_int_descent_at`] at the first `Int` parameter it accepts.
+pub(crate) fn guarded_int_descent(
+    fd: &FnDef,
+    inputs: &ProofLowerInputs,
+) -> Option<(usize, Vec<crate::ir::FloorDivShrink>)> {
+    (0..fd.params.len())
+        .find_map(|at| guarded_int_descent_at(fd, at, inputs).map(|divisions| (at, divisions)))
 }
 
 /// **syntax-discovery-only**: recognize a floor-division shrink of
@@ -912,65 +948,6 @@ fn guard_bounds_ident_ge_one(guard: &Spanned<Expr>, name: &str) -> bool {
         BinOp::Lt => is_ident(right, name) && lit(left).is_some_and(|l| l >= 0),
         _ => false,
     }
-}
-
-/// Classifier for [`RecursionPlan::IntFloorDivCountdown`]: a single
-/// `Int` param that EVERY self-call shrinks by the same
-/// literal-divisor floor division (see [`floor_div_shrink_of`]),
-/// with every self-call site's guard chain implying the param is
-/// `>= 1` (see [`guards_imply_param_ge_one`]) so the shrink is a
-/// genuine strict decrease. Returns
-/// `(param_index, divisor, helper_fn)`.
-pub(crate) fn single_int_floor_div_countdown(
-    fd: &FnDef,
-    inputs: &ProofLowerInputs,
-) -> Option<(usize, i64, Option<String>)> {
-    let recursive_calls: Vec<Vec<&Spanned<Expr>>> = collect_calls_from_body(fd.body.as_ref())
-        .into_iter()
-        .filter(|(name, _)| call_matches(name, &fd.name))
-        .map(|(_, args)| args)
-        .collect();
-    if recursive_calls.is_empty() {
-        return None;
-    }
-
-    let (param_index, divisor, helper_fn) =
-        fd.params
-            .iter()
-            .enumerate()
-            .find_map(|(idx, (param_name, param_ty))| {
-                if param_ty != "Int" {
-                    return None;
-                }
-                let mut shrink: Option<(i64, Option<String>)> = None;
-                for args in &recursive_calls {
-                    let arg = args.get(idx).copied()?;
-                    let this = floor_div_shrink_of(arg, param_name, inputs)?;
-                    match &shrink {
-                        None => shrink = Some(this),
-                        Some(prev) if *prev == this => {}
-                        Some(_) => return None,
-                    }
-                }
-                shrink.map(|(divisor, helper)| (idx, divisor, helper))
-            })?;
-
-    // Guard validation: every self-call site must sit under a guard
-    // chain that implies the shrinking param is >= 1. The chains come
-    // back one per self-call in body-walk order; a missing or
-    // too-weak chain declines the whole plan — never guess.
-    let (param_name, _) = fd.params.get(param_index)?;
-    let chains = collect_self_call_guard_chains(fd);
-    if chains.len() != recursive_calls.len() || chains.is_empty() {
-        return None;
-    }
-    if !chains
-        .iter()
-        .all(|chain| guards_imply_param_ge_one(chain, param_name))
-    {
-        return None;
-    }
-    Some((param_index, divisor, helper_fn))
 }
 
 pub(crate) fn has_negative_guarded_ascent(fd: &FnDef, param_name: &str) -> bool {
@@ -2664,21 +2641,19 @@ pub fn analyze_plans_in_scope(
             } else {
                 plans.insert(fd.name.clone(), RecursionPlan::IntCountdown { param_index });
             }
-        } else if let Some((param_index, divisor, helper_fn)) =
-            single_int_floor_div_countdown(fd, inputs)
+        } else if let Some((param_index, divisions)) =
+            guarded_int_descent(fd, inputs).filter(|(_, divisions)| !divisions.is_empty())
         {
-            // Floor-division countdown — every self-call shrinks an
-            // Int param by `Result.withDefault(Int.div(p, k), d)`
-            // (literal k >= 2, possibly through a unary wrapper fn)
-            // and the guard chain at every self-call site implies
-            // `p >= 1`. Both side-conditions are validated above;
-            // backends emit a native well-founded def.
+            // An Int counted toward zero with at least one call dividing it
+            // (a call subtracting only is the countdown above): every call
+            // passes `p - k` or `p / k` by a literal, calls free to differ,
+            // and the guards at every call imply `p >= 1`. Both validated
+            // above; backends emit a native well-founded def.
             plans.insert(
                 fd.name.clone(),
-                RecursionPlan::IntFloorDivCountdown {
+                RecursionPlan::IntGuardedDescent {
                     param_index,
-                    divisor,
-                    helper_fn,
+                    divisions,
                 },
             );
         } else if let Some((sequence_index, bound_index)) = super::sequence_growth::detect(fd) {
@@ -2714,7 +2689,7 @@ pub fn analyze_plans_in_scope(
             issues.push(ProofModeIssue {
                 line: fd.line,
                 message: format!(
-                    "recursive function '{}' is outside proof subset (currently supported: Int countdown, guard-validated Int floor-division countdown by a literal divisor, second-order affine Int recurrences with pair-state worker, structural recursion on List/recursive ADTs, String+position, mutual Int countdown, two-phase Int walk, mutual String+position, and ranked sizeOf recursion)",
+                    "recursive function '{}' is outside proof subset (currently supported: Int countdown, guard-validated Int descent toward zero by subtraction or literal floor division, second-order affine Int recurrences with pair-state worker, structural recursion on List/recursive ADTs, String+position, mutual Int countdown, two-phase Int walk, mutual String+position, and ranked sizeOf recursion)",
                     fd.name
                 ),
             });

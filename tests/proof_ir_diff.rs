@@ -2936,7 +2936,7 @@ fn native_subtractive_measure_requires_positive_guards_at_every_call() {
             .as_ref()
             .unwrap();
         assert_eq!(
-            matches!(recursion, RecursionContract::WellFoundedToNat { param, floor_div: None } if param == "width"),
+            matches!(recursion, RecursionContract::WellFoundedToNat { param, divisions } if param == "width" && divisions.is_empty()),
             native,
             "{body}: {recursion:?}"
         );

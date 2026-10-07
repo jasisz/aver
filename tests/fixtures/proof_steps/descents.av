@@ -1,0 +1,37 @@
+module Descents
+    intent =
+        "Laws proved by induction on an Int counted toward zero where the recursive calls descend"
+        "in different ways: two calls dividing by different literals, and `n - 1` beside `n / 4`."
+    exposes [splits, mixed]
+    effects []
+
+fn splits(n: Int) -> Int
+    ? "One more than the splits of n / 2 and n / 3 while n > 0, and 0 at or below zero."
+    match n > 0
+        true -> 1 + splits(Int.div(n, 2)) + splits(Int.div(n, 3))
+        false -> 0
+
+verify splits
+    splits(0) => 0
+    splits(1) => 1
+    splits(6) => 6
+
+verify splits law nonnegative
+    given n: Int = [-2, 0, 1, 6, 12]
+    splits(n) >= 0 holds
+
+fn mixed(n: Int, acc: Int) -> Int
+    ? "Adds one to acc for every step down by one and every quarter, while n > 0."
+    match n <= 0
+        true -> acc
+        false -> mixed(n - 1, acc + 1) + mixed(Int.div(n, 4), 0)
+
+verify mixed
+    mixed(0, 5) => 5
+    mixed(1, 0) => 1
+
+verify mixed law atLeastAcc
+    given n: Int = [-1, 0, 1, 5]
+    given acc: Int = [0, 3]
+    when acc >= 0
+    mixed(n, acc) >= acc holds

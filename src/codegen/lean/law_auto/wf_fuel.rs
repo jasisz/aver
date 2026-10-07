@@ -252,9 +252,9 @@ fn wf_shrink_is_inline(ctx: &CodegenContext, fd: &FnDef) -> bool {
         return false;
     };
     match contract.recursion.as_ref() {
-        Some(crate::ir::RecursionContract::WellFoundedToNat { floor_div, .. }) => floor_div
-            .as_ref()
-            .is_none_or(|shrink| shrink.helper_fn.is_none()),
+        Some(crate::ir::RecursionContract::WellFoundedToNat { divisions, .. }) => {
+            divisions.iter().all(|shrink| shrink.helper_fn.is_none())
+        }
         _ => false,
     }
 }

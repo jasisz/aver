@@ -5171,26 +5171,38 @@ fn render_proof_ir_dump(ir: &aver::ir::ProofIR, symbols: &aver::ir::SymbolTable)
                 )
                 .unwrap();
             }
-            Some(RecursionContract::WellFoundedToNat { param, floor_div }) => match floor_div {
-                Some(shrink) => writeln!(
-                    out,
-                    "WellFoundedToNat {{ measure: toNat({}), floor_div: /{}{} }}",
-                    param,
-                    shrink.divisor,
-                    shrink
-                        .helper_fn
-                        .as_ref()
-                        .map(|h| format!(" via {}", h))
-                        .unwrap_or_default(),
-                )
-                .unwrap(),
-                None => writeln!(
-                    out,
-                    "WellFoundedToNat {{ measure: toNat({}), guarded countdown }}",
-                    param,
-                )
-                .unwrap(),
-            },
+            Some(RecursionContract::WellFoundedToNat { param, divisions }) => {
+                if divisions.is_empty() {
+                    writeln!(
+                        out,
+                        "WellFoundedToNat {{ measure: toNat({}), guarded countdown }}",
+                        param,
+                    )
+                    .unwrap();
+                } else {
+                    let shown: Vec<String> = divisions
+                        .iter()
+                        .map(|shrink| {
+                            format!(
+                                "/{}{}",
+                                shrink.divisor,
+                                shrink
+                                    .helper_fn
+                                    .as_ref()
+                                    .map(|h| format!(" via {}", h))
+                                    .unwrap_or_default()
+                            )
+                        })
+                        .collect();
+                    writeln!(
+                        out,
+                        "WellFoundedToNat {{ measure: toNat({}), floor_div: {} }}",
+                        param,
+                        shown.join(", "),
+                    )
+                    .unwrap();
+                }
+            }
             Some(RecursionContract::Native {
                 precondition,
                 measure,

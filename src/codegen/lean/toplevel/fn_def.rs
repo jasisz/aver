@@ -189,16 +189,16 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
     }
 
     // WellFoundedToNat — native well-founded def on `param.toNat`.
-    // Two validated sources (see the contract docs): the
-    // guard-validated floor-division countdown (`floor_div: Some`)
-    // and the guard-validated subtractive countdown (`floor_div: None`). The kernel
+    // An Int counted toward zero under guards implying it is positive,
+    // every self-call subtracting a literal or dividing by one (see the
+    // contract docs). The kernel
     // re-checks the measure through `decreasing_by`: the branch
     // hypotheses of the emitted if/else chain land in the decreasing
     // goals' context, `simp [<wrapper>, Except.withDefault]` reduces
     // the literal-divisor zero-guard, and `omega` (which understands
     // `Int.toNat` and ediv by literals) closes the strict decrease.
     if let Some(contract) = crate::codegen::common::find_fn_contract_for_fn(ctx, fd)
-        && let Some(crate::ir::RecursionContract::WellFoundedToNat { param, floor_div }) =
+        && let Some(crate::ir::RecursionContract::WellFoundedToNat { param, divisions }) =
             contract.recursion.as_ref()
     {
         let mut lines = Vec::new();
@@ -221,15 +221,24 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
         lines.push(emit_fn_body_for(fd, body, ctx));
         lines.push(format!("termination_by {}.toNat", aver_name_to_lean(param)));
         lines.push("decreasing_by".to_string());
-        match floor_div {
-            Some(shrink) => match &shrink.helper_fn {
-                Some(helper) => lines.push(format!(
-                    "  all_goals (simp [{}, Except.withDefault] <;> omega)",
-                    aver_name_to_lean(helper)
-                )),
-                None => lines.push("  all_goals (simp [Except.withDefault] <;> omega)".to_string()),
-            },
-            None => lines.push("  all_goals omega".to_string()),
+        if divisions.is_empty() {
+            lines.push("  all_goals omega".to_string());
+        } else {
+            let mut unfold: Vec<String> = Vec::new();
+            for helper in divisions
+                .iter()
+                .filter_map(|shrink| shrink.helper_fn.as_ref())
+            {
+                let helper = aver_name_to_lean(helper);
+                if !unfold.contains(&helper) {
+                    unfold.push(helper);
+                }
+            }
+            unfold.push("Except.withDefault".to_string());
+            lines.push(format!(
+                "  all_goals (simp [{}] <;> omega)",
+                unfold.join(", ")
+            ));
         }
         return Some(lines.join("\n"));
     }

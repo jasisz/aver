@@ -504,21 +504,19 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
         // Subtractive countdown equations expose fixed-width steps. Keep
         // floor-division recursion opaque: its equations recursively grow
         // the arithmetic search even when cited laws already summarize it.
+        let recursion = common::find_fn_contract_for_fn(ctx, fd).and_then(|c| c.recursion.as_ref());
         let subtractive = matches!(
-            common::find_fn_contract_for_fn(ctx, fd).and_then(|c| c.recursion.as_ref()),
-            Some(crate::ir::RecursionContract::WellFoundedToNat {
-                floor_div: None,
-                ..
-            })
+            recursion,
+            Some(crate::ir::RecursionContract::WellFoundedToNat { divisions, .. })
+                if divisions.is_empty()
         );
         if matches!(
-            common::find_fn_contract_for_fn(ctx, fd).and_then(|c| c.recursion.as_ref()),
-            Some(
-                crate::ir::RecursionContract::WellFoundedToNat {
-                    floor_div: Some(_),
-                    ..
-                } | crate::ir::RecursionContract::WellFoundedSequenceGap { .. }
-            )
+            recursion,
+            Some(crate::ir::RecursionContract::WellFoundedToNat { divisions, .. })
+                if !divisions.is_empty()
+        ) || matches!(
+            recursion,
+            Some(crate::ir::RecursionContract::WellFoundedSequenceGap { .. })
         ) {
             unfold_once.push(lean_name(fd, ctx));
         }
