@@ -762,7 +762,23 @@ pub fn prepare_verify_for_items_vm_with_checked_loaded(
     source_file: &str,
     marked: &crate::config::MarkedCapabilities,
 ) -> Result<PreparedVmVerify, String> {
-    prepare_verify_for_items_vm_with_loaded(items, loaded, source_file, marked)
+    prepare_verify_for_items_vm_with_loaded(items, loaded, source_file, marked, false)
+}
+
+/// The same, with only the module's `law` blocks made runnable. The whole
+/// module is still checked, cases-form blocks included, so a module refused
+/// here is exactly a module the full preparation refuses; only the cases of
+/// its cases-form blocks are neither compiled nor run. `aver proof` without
+/// `--examples` exports no cases-form block, so it has no use for their
+/// results.
+#[cfg(feature = "runtime")]
+pub fn prepare_law_verify_for_items_vm_with_checked_loaded(
+    items: Vec<TopLevel>,
+    loaded: Vec<crate::source::LoadedModule>,
+    source_file: &str,
+    marked: &crate::config::MarkedCapabilities,
+) -> Result<PreparedVmVerify, String> {
+    prepare_verify_for_items_vm_with_loaded(items, loaded, source_file, marked, true)
 }
 
 #[cfg(feature = "runtime")]
@@ -771,6 +787,7 @@ fn prepare_verify_for_items_vm_with_loaded(
     loaded: Vec<crate::source::LoadedModule>,
     source_file: &str,
     marked: &crate::config::MarkedCapabilities,
+    laws_only: bool,
 ) -> Result<PreparedVmVerify, String> {
     let mode = crate::ir::TypecheckMode::WithCheckedLoaded(&loaded);
     let user_program_len = items.len();
@@ -779,11 +796,12 @@ fn prepare_verify_for_items_vm_with_loaded(
         return Err(format_type_errors(&typecheck.errors));
     }
 
-    prepare_verify_for_prechecked_items_vm_with_loaded(
+    prepare_prechecked_items_vm(
         items,
         loaded,
         source_file,
         typecheck.capabilities,
+        laws_only,
     )
 }
 
@@ -796,12 +814,26 @@ fn prepare_verify_for_items_vm_with_loaded(
 /// accidentally skip checking unless they explicitly hold the checked state.
 #[cfg(feature = "runtime")]
 pub fn prepare_verify_for_prechecked_items_vm_with_loaded(
-    mut items: Vec<TopLevel>,
+    items: Vec<TopLevel>,
     loaded: Vec<crate::source::LoadedModule>,
     source_file: &str,
     capabilities: crate::capability::CapabilityRegistry,
 ) -> Result<PreparedVmVerify, String> {
-    let verify_blocks = merge_verify_blocks(&items);
+    prepare_prechecked_items_vm(items, loaded, source_file, capabilities, false)
+}
+
+#[cfg(feature = "runtime")]
+fn prepare_prechecked_items_vm(
+    mut items: Vec<TopLevel>,
+    loaded: Vec<crate::source::LoadedModule>,
+    source_file: &str,
+    capabilities: crate::capability::CapabilityRegistry,
+    laws_only: bool,
+) -> Result<PreparedVmVerify, String> {
+    let mut verify_blocks = merge_verify_blocks(&items);
+    if laws_only {
+        verify_blocks.retain(|block| matches!(block.kind, VerifyKind::Law(_)));
+    }
     let plans = build_verify_vm_plans(&mut items, &verify_blocks);
     crate::ir::pipeline::resolve(&mut items);
     if plans.is_empty() {

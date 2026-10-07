@@ -53,3 +53,32 @@ fn proof_states_verify_examples_only_with_the_examples_flag() {
     );
     let _ = std::fs::remove_dir_all(root);
 }
+
+const LITERAL_DEP: &str = "module Dep\n    exposes [inc]\n    intent = \"A dependency whose example and law sample read another function.\"\n\nfn inc(n: Int) -> Int\n    n + 1\n\nfn plusOne(n: Int) -> Int\n    1 + n\n\nverify inc\n    inc(1) => plusOne(1)\n\nverify inc law incIsPlusOne\n    given n: Int = [3, 4]\n    inc(n) => plusOne(n)\n";
+
+const LITERAL_MAIN: &str = "module Main\n    depends [Dep]\n    intent = \"An entry that imports the dependency.\"\n\nfn twice(n: Int) -> Int\n    Dep.inc(n) + n - 1\n\nverify twice law doubling\n    given n: Int = [5]\n    twice(n) => n * 2\n";
+
+/// A dependency's law sample carries the value the program computed, with or
+/// without `--examples`: the export runs the dependency's laws against the
+/// one loaded program even when it states no example.
+#[test]
+fn proof_literalizes_a_dependency_law_sample_in_both_modes() {
+    let root = temp_output_dir("aver-proof-dependency-literal");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("main.av"), LITERAL_MAIN).unwrap();
+    std::fs::write(root.join("dep.av"), LITERAL_DEP).unwrap();
+
+    let (_, dep) = export(&root, &[], "laws-only");
+    assert!(
+        dep.contains("theorem inc_law_incIsPlusOne_sample_1 : Dep.inc 3 = (4 : Int)"),
+        "without --examples the law sample is the program's value:\n{dep}"
+    );
+
+    let (_, dep) = export(&root, &["--examples"], "with-examples");
+    assert!(
+        dep.contains("theorem inc_law_incIsPlusOne_sample_1 : Dep.inc 3 = (4 : Int)")
+            && dep.contains("example : Dep.inc 1 = (2 : Int)"),
+        "--examples keeps the law sample and states the example with the program's value:\n{dep}"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}

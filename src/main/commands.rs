@@ -8256,7 +8256,7 @@ pub(super) fn cmd_proof(
     // build instead of kernel-certifying a vacuous equation. A failed
     // or impossible verify run yields an empty table → unchanged
     // emission.
-    let ground_truth = collect_verify_ground_truth(file, &module_root);
+    let ground_truth = collect_verify_ground_truth(file, &module_root, examples);
     ctx.sample_expected = ground_truth.expected;
     ctx.declined_cases = ground_truth.declined;
     ctx.vm_passed_cases = ground_truth.passed;
@@ -8376,7 +8376,10 @@ pub(super) fn cmd_proof(
 /// A module that cannot run contributes no entries; successfully verified
 /// modules still keep their ground truth. Emission falls back to the source
 /// RHS for every miss, as before.
-fn collect_verify_ground_truth(file: &str, module_root: &str) -> VerifyGroundTruth {
+///
+/// Without `examples` only `law` blocks run: the export states no
+/// cases-form block then, so their results would never be read.
+fn collect_verify_ground_truth(file: &str, module_root: &str, examples: bool) -> VerifyGroundTruth {
     use aver::checker::VerifyCaseOutcome;
 
     let mut out = VerifyGroundTruth::default();
@@ -8388,36 +8391,77 @@ fn collect_verify_ground_truth(file: &str, module_root: &str) -> VerifyGroundTru
         Ok(c) => c,
         Err(_) => return out,
     };
-    // Each unit with the scope the Lean emitter keys its cases by: none for
-    // the entry, the dependency's path name (`Infra.Store`) for a dependency.
-    // The name the module declares (`Store`) is only the last segment of it,
-    // and keying by it lost every dependency's ground truth.
-    let units: Vec<(String, Option<String>, Vec<aver::ast::TopLevel>)> = program
-        .report_units()
-        .map(|module| {
-            if module.is_entry {
-                (file.to_string(), None, module.items.clone())
-            } else {
-                (
-                    module.path.to_string_lossy().to_string(),
-                    Some(module.dep_name.clone()),
-                    module.items.clone(),
-                )
+    // The program is loaded and walked once, and every unit is prepared
+    // against the dependency forms that one walk already parsed and lowered,
+    // the way `aver verify` does. Running each unit through the standalone
+    // runner instead re-loaded, re-lowered and re-checked its whole
+    // dependency cone from disk, once per unit.
+    //
+    // Units come leaves-first, so a dependency is prepared before any module
+    // that imports it. Each unit's own check trusts the checked forms of its
+    // dependencies, so a unit whose dependency failed is refused here, as the
+    // standalone runner refused it when it re-checked that dependency.
+    let mut failed: HashSet<PathBuf> = HashSet::new();
+    for module in program.report_units() {
+        let key = aver::source::canonicalize_path(&module.path);
+        let loaded = match program.loaded_dependencies_for(module) {
+            Ok(loaded) if module.fault.is_none() => loaded,
+            _ => {
+                failed.insert(key);
+                continue;
             }
-        })
-        .collect();
-    for (path, scope, items) in units {
-        if !items.iter().any(|item| matches!(item, TopLevel::Verify(_))) {
+        };
+        let dependency_failed = loaded.iter().any(|dependency| {
+            !dependency.path.starts_with("<aver-stdlib>")
+                && failed.contains(&aver::source::canonicalize_path(&dependency.path))
+        });
+        if dependency_failed {
+            failed.insert(key);
             continue;
         }
-        let results = match aver::diagnostics::vm_verify::run_verify_for_items_vm(
-            items,
+        // Each unit with the scope the Lean emitter keys its cases by: none
+        // for the entry, the dependency's path name (`Infra.Store`) for a
+        // dependency. The name the module declares (`Store`) is only the last
+        // segment of it, and keying by it lost every dependency's ground
+        // truth.
+        let (path, scope) = if module.is_entry {
+            (file.to_string(), None)
+        } else {
+            (
+                module.path.to_string_lossy().to_string(),
+                Some(module.dep_name.clone()),
+            )
+        };
+        // A unit without verify blocks is still checked: a module that
+        // imports it must not run against a dependency that does not check.
+        let prepare = if examples {
+            aver::diagnostics::vm_verify::prepare_verify_for_items_vm_with_checked_loaded
+        } else {
+            aver::diagnostics::vm_verify::prepare_law_verify_for_items_vm_with_checked_loaded
+        };
+        let prepared = match prepare(
+            module.items.clone(),
+            loaded,
+            &path,
+            &unit_marked(program.marked().clone(), module.is_entry),
+        ) {
+            Ok(prepared) => prepared,
+            Err(_) => {
+                failed.insert(key);
+                continue;
+            }
+        };
+        // A unit that checks but cannot run contributes no entries of its
+        // own; the modules that import it still run.
+        let Ok(results) = aver::diagnostics::vm_verify::run_prepared_verify_vm_with_bindings(
+            prepared,
             config.clone(),
             Some(module_root),
             &path,
-        ) {
-            Ok(results) => results,
-            _ => continue,
+            &[],
+            false,
+        ) else {
+            continue;
         };
 
         let mut seen = HashSet::new();
