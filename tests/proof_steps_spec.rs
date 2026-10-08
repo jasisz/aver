@@ -1931,6 +1931,30 @@ fn both_kernels_accept_a_split_on_a_constructor() {
     let paths: Vec<PathBuf> = files.values().cloned().collect();
     let result = replay(&paths);
     assert!(result.status.success(), "{}", format_output(&result));
+
+    // `switchOff` reads `Light.Off` and a catch-all: a split that covers
+    // only `Light.Off`, the one constructor an arm names, leaves `Dim` and
+    // `Full` out, which the program declares.
+    let dark = read("switchOff.staysDark");
+    let open = dark.find("(split ").expect("a split");
+    // (split FN (ARGS) ON HYP CASE…): the first two sub-forms are the
+    // arguments and the subject.
+    let cases = sub_forms(&dark, open)[2..].to_vec();
+    assert_eq!(cases.len(), 3, "{dark}");
+    let only_named = format!("{}{}", &dark[..cases[1].0], &dark[cases[2].1..]);
+    for (i, mutant) in [only_named].iter().enumerate() {
+        let verdict = aver::proof_kernel::verdict(mutant);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "mutant {i}: {verdict:?}\n{mutant}"
+        );
+        let path = out.join(format!("mutant{i}.steps"));
+        fs::write(&path, mutant).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(!result.status.success(), "{}", format_output(&result));
+    }
     let _ = fs::remove_dir_all(out);
 }
 
@@ -2308,7 +2332,7 @@ fn joining_texts_is_never_read_as_int_arithmetic() {
     // step applies to it, even in a script made by hand.
     let script = |op: &str| {
         format!(
-            "(steps 12 (obligation k (a b) (none) (op {op} (v a) (v b)) (op {op} (v b) (v a))) (defs) (consts) (laws) (proof (ring (op {op} (v a) (v b)) (op {op} (v b) (v a)))))"
+            "(steps 13 (obligation k (a b) (none) (op {op} (v a) (v b)) (op {op} (v b) (v a))) (defs) (consts) (sums) (laws) (proof (ring (op {op} (v a) (v b)) (op {op} (v b) (v a)))))"
         )
     };
     assert_eq!(

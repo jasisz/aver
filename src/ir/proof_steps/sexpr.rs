@@ -661,6 +661,14 @@ pub fn script(s: &Script, names: &dyn Names) -> Result<String, String> {
             term(&c.value, names)?
         ));
     }
+    out.push_str(")\n (sums");
+    for sum in &s.sums {
+        out.push_str("\n  (sum");
+        for (c, n) in sum {
+            out.push_str(&format!(" ({} {n})", names.ctor_name(c)));
+        }
+        out.push(')');
+    }
     out.push_str(")\n (laws");
     // A cited fact comes after every fact its own proof cites, each once.
     fn with_facts<'a>(laws: &'a [super::LawRef], out: &mut Vec<&'a super::LawRef>) {

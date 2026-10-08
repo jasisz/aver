@@ -12,6 +12,9 @@ pub struct Env {
     pub lists: aver_rt::AverList<AverStr>,
     pub ints: aver_rt::AverList<AverStr>,
     pub givens: aver_rt::AverList<AverStr>,
+    pub sums: aver_rt::AverList<
+        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Variant>,
+    >,
 }
 
 impl PartialOrd for Env {
@@ -31,6 +34,7 @@ impl Ord for Env {
             .then_with(|| self.ints.cmp(&other.ints))
             .then_with(|| self.laws.cmp(&other.laws))
             .then_with(|| self.lists.cmp(&other.lists))
+            .then_with(|| self.sums.cmp(&other.sums))
     }
 }
 
@@ -46,7 +50,8 @@ impl aver_rt::AverDisplay for Env {
                 format!("finite: {}", self.finite.aver_display_inner()),
                 format!("lists: {}", self.lists.aver_display_inner()),
                 format!("ints: {}", self.ints.aver_display_inner()),
-                format!("givens: {}", self.givens.aver_display_inner())
+                format!("givens: {}", self.givens.aver_display_inner()),
+                format!("sums: {}", self.sums.aver_display_inner())
             ]
             .join(", ")
         )
@@ -1147,7 +1152,7 @@ fn __mutual_tco_trampoline_7(mut __state: __MutualTco7) -> Result<(), AverStr> {
         __state = match __state {
             __MutualTco7::CheckFacts(mut fs @ _, mut earlier @ _) => {
                 crate::proof_kernel::cancel_checkpoint();
-                aver_list_match!(fs, [] => { return Ok(()) }, [f, rest] => __MutualTco7::CheckFactThen(crate::proof_kernel::aver_generated::kernel::check::checkScript(crate::proof_kernel::aver_generated::kernel::proof::Script { obligation: f.law.clone(), finite: aver_rt::AverList::empty(), lists: f.lists, ints: aver_rt::AverList::empty(), defs: aver_rt::AverList::empty(), consts: aver_rt::AverList::empty(), laws: earlier.clone(), facts: aver_rt::AverList::empty(), proof: f.proof }), f.law.clone(), rest, earlier))
+                aver_list_match!(fs, [] => { return Ok(()) }, [f, rest] => __MutualTco7::CheckFactThen(crate::proof_kernel::aver_generated::kernel::check::checkScript(crate::proof_kernel::aver_generated::kernel::proof::Script { obligation: f.law.clone(), finite: aver_rt::AverList::empty(), lists: f.lists, ints: aver_rt::AverList::empty(), defs: aver_rt::AverList::empty(), consts: aver_rt::AverList::empty(), sums: aver_rt::AverList::empty(), laws: earlier.clone(), facts: aver_rt::AverList::empty(), proof: f.proof }), f.law.clone(), rest, earlier))
             }
             __MutualTco7::CheckFactThen(
                 mut done @ _,
@@ -1225,6 +1230,7 @@ pub fn emptyEnv() -> Env {
         lists: aver_rt::AverList::empty(),
         ints: aver_rt::AverList::empty(),
         givens: aver_rt::AverList::empty(),
+        sums: aver_rt::AverList::empty(),
     }
 }
 
@@ -1852,7 +1858,7 @@ pub fn split(
     }
 }
 
-/// The term split on is the match's subject, and the cases are the constructors its patterns read ([] and [h, ..t] for a list, for a sum one per constructor, every one an arm names among them), or the arms themselves when they are literals and a last catch-all.
+/// The term split on is the match's subject, and the cases are the constructors its patterns read ([] and [h, ..t] for a list, for a sum every constructor of a sum the program declares, with its arity, every one an arm names among them), or the arms themselves when they are literals and a last catch-all.
 pub fn splitOn(
     isSubject @ _: bool,
     arms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
@@ -1881,15 +1887,15 @@ pub fn splitOn(
                         arms,
                         aver_rt::AverInt::from_i64(0),
                     ))));
-    match (
-        isSubject,
-        readsLiterals,
-        (readsList
-            || crate::proof_kernel::aver_generated::kernel::check::armsName(
-                arms,
-                &crate::proof_kernel::aver_generated::kernel::check::splitCtors(cs),
-            )),
-    ) {
+    let readsSum @ _ = (crate::proof_kernel::aver_generated::kernel::check::armsName(
+        arms,
+        &crate::proof_kernel::aver_generated::kernel::check::splitCtors(cs),
+    ) && crate::proof_kernel::aver_generated::kernel::check::declared(
+        &crate::proof_kernel::aver_generated::kernel::check::splitCtors(cs),
+        &crate::proof_kernel::aver_generated::kernel::check::binderCounts(cs),
+        &env.sums,
+    ));
+    match (isSubject, readsLiterals, (readsList || readsSum)) {
         (false, _, _) => crate::proof_kernel::aver_generated::kernel::check::refuse(
             path,
             AverStr::from("the term split on is not the subject of the match"),
@@ -1921,6 +1927,48 @@ pub fn splitOn(
             AverStr::from("the cases are not the constructors the patterns read"),
         ),
     }
+}
+
+/// Some sum the program declares has exactly these constructors, in order, with these arities.
+#[inline(always)]
+pub fn declared(
+    ctors @ _: &aver_rt::AverList<AverStr>,
+    counts @ _: &aver_rt::AverIntList,
+    sums @ _: &aver_rt::AverList<
+        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Variant>,
+    >,
+) -> bool {
+    crate::proof_kernel::cancel_checkpoint();
+    aver_list_match!(sums.clone(), [] => false, [v, rest] => (((&(crate::proof_kernel::aver_generated::kernel::check::variantNames(&v)) == ctors) && (&(crate::proof_kernel::aver_generated::kernel::check::variantArities(&v)) == counts)) || crate::proof_kernel::aver_generated::kernel::check::declared(ctors, counts, &rest)))
+}
+
+/// The constructors of a sum, in order.
+#[inline(always)]
+pub fn variantNames(
+    vs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Variant>,
+) -> aver_rt::AverList<AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    aver_list_match!(vs.clone(), [] => aver_rt::AverList::empty(), [v, rest] => aver_rt::AverList::prepend(v.name, &crate::proof_kernel::aver_generated::kernel::check::variantNames(&rest)))
+}
+
+/// How many fields each constructor of a sum has, in order.
+#[inline(always)]
+pub fn variantArities(
+    vs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Variant>,
+) -> aver_rt::AverIntList {
+    crate::proof_kernel::cancel_checkpoint();
+    aver_list_match!(vs.clone(), [] => aver_rt::AverIntList::empty(), [v, rest] => aver_rt::AverIntList::prepend(v.arity, &crate::proof_kernel::aver_generated::kernel::check::variantArities(&rest)))
+}
+
+/// Every constructor of every declared sum.
+#[inline(always)]
+pub fn sumNames(
+    sums @ _: &aver_rt::AverList<
+        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Variant>,
+    >,
+) -> aver_rt::AverList<AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    aver_list_match!(sums.clone(), [] => aver_rt::AverList::empty(), [v, rest] => aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::check::variantNames(&v), &crate::proof_kernel::aver_generated::kernel::check::sumNames(&rest)))
 }
 
 /// The constructor of each case.
@@ -2266,6 +2314,7 @@ pub fn withHyp(
         lists: env.lists.clone(),
         ints: env.ints.clone(),
         givens: env.givens.clone(),
+        sums: env.sums.clone(),
     }
 }
 
@@ -2457,6 +2506,7 @@ pub fn withHyps(
         lists: env.lists.clone(),
         ints: env.ints.clone(),
         givens: env.givens.clone(),
+        sums: env.sums.clone(),
     }
 }
 
@@ -3706,6 +3756,7 @@ pub fn checkScript(
 ) -> Result<AverStr, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
     crate::proof_kernel::aver_generated::kernel::induct::refuseMutualRecursion(&s.defs)?;
+    crate::proof_kernel::aver_generated::kernel::check::sumsDistinct(&s.sums)?;
     crate::proof_kernel::aver_generated::kernel::check::checkFacts(
         s.facts.clone(),
         aver_rt::AverList::empty(),
@@ -3722,6 +3773,7 @@ pub fn checkScript(
         lists: s.lists,
         ints: s.ints,
         givens: s.obligation.givens.clone(),
+        sums: s.sums,
     };
     let e @ _ = crate::proof_kernel::aver_generated::kernel::check::conclude(
         s.proof,
@@ -3738,6 +3790,25 @@ pub fn checkScript(
     } else {
         Err(AverStr::from(
             "step proof: the proof ends at a different equation than the claim",
+        ))
+    }
+}
+
+/// No constructor belongs to two declared sums, or twice to one.
+#[inline(always)]
+pub fn sumsDistinct(
+    sums @ _: &aver_rt::AverList<
+        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Variant>,
+    >,
+) -> Result<(), AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    if crate::proof_kernel::aver_generated::kernel::check::distinct(
+        &crate::proof_kernel::aver_generated::kernel::check::sumNames(sums),
+    ) {
+        Ok(())
+    } else {
+        Err(AverStr::from(
+            "step proof: a constructor is declared in two sums",
         ))
     }
 }
@@ -4994,6 +5065,7 @@ pub fn listsEnv(ns @ _: &aver_rt::AverList<AverStr>) -> Env {
         lists: ns.clone(),
         ints: aver_rt::AverList::empty(),
         givens: ns.clone(),
+        sums: aver_rt::AverList::empty(),
     }
 }
 
@@ -5100,6 +5172,7 @@ pub fn intsEnv(ns @ _: &aver_rt::AverList<AverStr>) -> Env {
         lists: aver_rt::AverList::empty(),
         ints: ns.clone(),
         givens: ns.clone(),
+        sums: aver_rt::AverList::empty(),
     }
 }
 

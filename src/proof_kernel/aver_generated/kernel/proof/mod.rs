@@ -665,6 +665,42 @@ impl aver_rt::AverDisplay for Const {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Variant {
+    pub name: AverStr,
+    pub arity: aver_rt::AverInt,
+}
+
+impl PartialOrd for Variant {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Variant {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        std::cmp::Ordering::Equal
+            .then_with(|| self.arity.cmp(&other.arity))
+            .then_with(|| self.name.cmp(&other.name))
+    }
+}
+
+impl aver_rt::AverDisplay for Variant {
+    fn aver_display(&self) -> String {
+        format!(
+            "Variant({})",
+            vec![
+                format!("name: {}", self.name.aver_display_inner()),
+                format!("arity: {}", self.arity.aver_display_inner())
+            ]
+            .join(", ")
+        )
+    }
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Law {
     pub key: AverStr,
     pub givens: aver_rt::AverList<AverStr>,
@@ -792,6 +828,7 @@ pub struct Script {
     pub ints: aver_rt::AverList<AverStr>,
     pub defs: aver_rt::AverList<Def>,
     pub consts: aver_rt::AverList<Const>,
+    pub sums: aver_rt::AverList<aver_rt::AverList<Variant>>,
     pub laws: aver_rt::AverList<Law>,
     pub facts: aver_rt::AverList<Fact>,
     pub proof: Proof,
@@ -815,6 +852,7 @@ impl Ord for Script {
             .then_with(|| self.lists.cmp(&other.lists))
             .then_with(|| self.obligation.cmp(&other.obligation))
             .then_with(|| self.proof.cmp(&other.proof))
+            .then_with(|| self.sums.cmp(&other.sums))
     }
 }
 
@@ -829,6 +867,7 @@ impl aver_rt::AverDisplay for Script {
                 format!("ints: {}", self.ints.aver_display_inner()),
                 format!("defs: {}", self.defs.aver_display_inner()),
                 format!("consts: {}", self.consts.aver_display_inner()),
+                format!("sums: {}", self.sums.aver_display_inner()),
                 format!("laws: {}", self.laws.aver_display_inner()),
                 format!("facts: {}", self.facts.aver_display_inner()),
                 format!("proof: {}", self.proof.aver_display_inner())

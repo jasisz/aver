@@ -35,7 +35,7 @@ pub use term::Term;
 use crate::ir::identity::FnId;
 
 /// Version of the step data. Bump on any change a replayer could observe.
-pub const FORMAT_VERSION: u32 = 12;
+pub const FORMAT_VERSION: u32 = 13;
 
 /// An equation `lhs = rhs` between two terms.
 #[derive(Debug, Clone, PartialEq)]
@@ -499,6 +499,10 @@ pub struct Script {
     pub defs: Vec<Def>,
     pub consts: Vec<Const>,
     pub laws: Vec<LawRef>,
+    /// Every sum type a [`Proof::Split`] splits on, as the program declares
+    /// it: each constructor in order with how many fields it has. The
+    /// kernel takes a split's cases from here, not from the split.
+    pub sums: Vec<Vec<(crate::ir::hir::ResolvedCtor, usize)>>,
     pub proof: Proof,
 }
 

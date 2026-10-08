@@ -21,6 +21,7 @@ fn script(lhs: super::Term, rhs: super::Term, proof: Proof) -> Script {
         defs: Vec::new(),
         consts: Vec::new(),
         laws: Vec::new(),
+        sums: Vec::new(),
         proof,
     }
 }
@@ -1838,9 +1839,17 @@ fn a_split_on_a_constructor_covers_the_type_with_fresh_names() {
         arm(ResolvedPattern::EmptyList, zero.clone()),
         arm(ResolvedPattern::Cons("h".into(), "t".into()), one.clone()),
     ]);
+    // `C.A` and `C.B(n)`, as the program declares the sum.
+    let ctor = |k: u32, name: &str| ResolvedCtor::User {
+        ctor_id: CtorId(k),
+        type_id: TypeId(0),
+        name: name.into(),
+    };
+    let declared = vec![vec![(ctor(0, "C.A"), 0), (ctor(1, "C.B"), 1)]];
     let run = |proof: Proof, d: Def| {
         let mut s = script(ge(call.clone()), term::boolean(true), proof);
         s.defs = vec![d];
+        s.sums = declared.clone();
         kernel(&s)
     };
     assert_eq!(
@@ -1869,11 +1878,6 @@ fn a_split_on_a_constructor_covers_the_type_with_fresh_names() {
     );
 
     // A sum: `C.A` and `C.B(n)`.
-    let ctor = |k: u32, name: &str| ResolvedCtor::User {
-        ctor_id: CtorId(k),
-        type_id: TypeId(0),
-        name: name.into(),
-    };
     let sum = def(vec![
         arm(
             ResolvedPattern::Ctor(ctor(0, "C.A"), Vec::new()),
@@ -1902,6 +1906,62 @@ fn a_split_on_a_constructor_covers_the_type_with_fresh_names() {
         run(split(var("a"), vec![a.clone()]), sum.clone()).is_err(),
         "C.B left out"
     );
+    // Behind a catch-all arm, `f(x) = match x { C.A -> 0, _ -> 1 }`: the
+    // split covers every constructor the program declares, not only the
+    // ones an arm names, and not a sum the program does not declare.
+    let behind = def(vec![
+        arm(
+            ResolvedPattern::Ctor(ctor(0, "C.A"), Vec::new()),
+            zero.clone(),
+        ),
+        arm(ResolvedPattern::Wildcard, one.clone()),
+    ]);
+    let b_value = Spanned::bare(ResolvedExpr::Ctor(ctor(1, "C.B"), vec![var("n1")]));
+    let b_other = SplitCase {
+        proof: case(2, vec![], &one),
+        ..b.clone()
+    };
+    let b_other = SplitCase {
+        proof: match b_other.proof {
+            Proof::Trans { terms, mut steps } => {
+                if let Proof::Congr { inner, .. } = &mut steps[0]
+                    && let Proof::Unfold { binders, .. } = inner.as_mut()
+                {
+                    *binders = vec![b_value.clone()];
+                }
+                Proof::Trans { terms, steps }
+            }
+            other => other,
+        },
+        ..b_other
+    };
+    assert_eq!(
+        run(
+            split(var("a"), vec![a.clone(), b_other.clone()]),
+            behind.clone()
+        ),
+        Ok(())
+    );
+    assert!(
+        run(split(var("a"), vec![a.clone()]), behind.clone()).is_err(),
+        "only the constructor an arm names"
+    );
+    let mut undeclared = script(
+        ge(call.clone()),
+        term::boolean(true),
+        split(var("a"), vec![a.clone(), b_other.clone()]),
+    );
+    undeclared.defs = vec![behind.clone()];
+    assert!(
+        kernel(&undeclared).is_err(),
+        "a sum the program does not declare"
+    );
+    let mut twice = undeclared.clone();
+    twice.sums = vec![declared[0].clone(), vec![(ctor(0, "C.A"), 0)]];
+    assert!(
+        kernel(&twice).is_err(),
+        "a constructor declared in two sums"
+    );
     let about_own = |c: SplitCase| SplitCase {
         proof: Proof::Refl(var("n1")),
         ..c
@@ -1912,6 +1972,7 @@ fn a_split_on_a_constructor_covers_the_type_with_fresh_names() {
         split(var("a"), vec![about_own(a), about_own(b)]),
     );
     s.defs = vec![sum];
+    s.sums = declared.clone();
     assert!(kernel(&s).is_err(), "a case about its own names");
 }
 

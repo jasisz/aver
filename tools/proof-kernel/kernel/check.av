@@ -16,10 +16,11 @@ record Env
     lists: List<String>
     ints: List<String>
     givens: List<String>
+    sums: List<List<Variant>>
 
 fn emptyEnv() -> Env
     ? "No definitions, laws or hypotheses."
-    Env(defs = [], consts = [], laws = [], hyps = [], finite = [], lists = [], ints = [], givens = [])
+    Env(defs = [], consts = [], laws = [], hyps = [], finite = [], lists = [], ints = [], givens = [], sums = [])
 
 verify emptyEnv
     emptyEnv().hyps => []
@@ -282,10 +283,11 @@ verify split
     split("f", [], Term.TVar("x"), "h", [], emptyEnv(), "p") => Result.Err("step p: no definition of f")
 
 fn splitOn(isSubject: Bool, arms: List<Arm>, on: Term, h: String, cs: List<SplitCase>, env: Env, path: String) -> Result<Eqn, String>
-    ? "The term split on is the match's subject, and the cases are the constructors its patterns read ([] and [h, ..t] for a list, for a sum one per constructor, every one an arm names among them), or the arms themselves when they are literals and a last catch-all."
+    ? "The term split on is the match's subject, and the cases are the constructors its patterns read ([] and [h, ..t] for a list, for a sum every constructor of a sum the program declares, with its arity, every one an arm names among them), or the arms themselves when they are literals and a last catch-all."
     readsList = Bool.and(Bool.and(splitCtors(cs) == ["nil", "cons"], binderCounts(cs) == [0, 2]), Bool.or(hasNil(arms), hasCons(arms)))
     readsLiterals = Bool.and(literalArms(arms, false), Bool.and(splitCtors(cs) == litCtors(arms), binderCounts(cs) == litCounts(arms, 0)))
-    match (isSubject, readsLiterals, Bool.or(readsList, armsName(arms, splitCtors(cs))))
+    readsSum = Bool.and(armsName(arms, splitCtors(cs)), declared(splitCtors(cs), binderCounts(cs), env.sums))
+    match (isSubject, readsLiterals, Bool.or(readsList, readsSum))
         (false, _, _) -> refuse(path, "the term split on is not the subject of the match")
         (true, true, _) -> splitCases(cs, litHyps(arms, cs, on, h, []), on, [], env, path)
         (true, false, true) -> splitCases(cs, ctorHyps(cs, on, h), on, [], env, path)
@@ -295,7 +297,48 @@ verify splitOn
     splitOn(false, [], Term.TVar("x"), "h", [], emptyEnv(), "p") => Result.Err("step p: the term split on is not the subject of the match")
     splitOn(true, [Arm(pattern = Pat.PNil, body = Term.TInt(0)), Arm(pattern = Pat.PWild, body = Term.TInt(1))], Term.TVar("x"), "h", [SplitCase(ctor = "nil", binders = [], proof = Proof.PRefl(Term.TInt(0)))], emptyEnv(), "p") => Result.Err("step p: the cases are not the constructors the patterns read")
     splitOn(true, [Arm(pattern = Pat.PCtor("C.A", []), body = Term.TInt(0)), Arm(pattern = Pat.PWild, body = Term.TInt(1))], Term.TVar("x"), "h", [SplitCase(ctor = "C.B", binders = [], proof = Proof.PRefl(Term.TInt(0)))], emptyEnv(), "p") => Result.Err("step p: the cases are not the constructors the patterns read")
-    splitOn(true, [Arm(pattern = Pat.PCtor("C.A", []), body = Term.TInt(0))], Term.TVar("x"), "h", [SplitCase(ctor = "C.A", binders = [], proof = Proof.PRefl(Term.TInt(0))), SplitCase(ctor = "C.B", binders = [], proof = Proof.PRefl(Term.TInt(0)))], emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TInt(0), rhs = Term.TInt(0)))
+    splitOn(true, [Arm(pattern = Pat.PCtor("C.A", []), body = Term.TInt(0))], Term.TVar("x"), "h", [SplitCase(ctor = "C.A", binders = [], proof = Proof.PRefl(Term.TInt(0))), SplitCase(ctor = "C.B", binders = [], proof = Proof.PRefl(Term.TInt(0)))], Env(defs = [], consts = [], laws = [], hyps = [], finite = [], lists = [], ints = [], givens = [], sums = [[Variant(name = "C.A", arity = 0), Variant(name = "C.B", arity = 0)]]), "p") => Result.Ok(Eqn(lhs = Term.TInt(0), rhs = Term.TInt(0)))
+    splitOn(true, [Arm(pattern = Pat.PCtor("C.A", []), body = Term.TInt(0))], Term.TVar("x"), "h", [SplitCase(ctor = "C.A", binders = [], proof = Proof.PRefl(Term.TInt(0))), SplitCase(ctor = "C.B", binders = [], proof = Proof.PRefl(Term.TInt(0)))], emptyEnv(), "p") => Result.Err("step p: the cases are not the constructors the patterns read")
+    splitOn(true, [Arm(pattern = Pat.PCtor("C.A", []), body = Term.TInt(0)), Arm(pattern = Pat.PWild, body = Term.TInt(0))], Term.TVar("x"), "h", [SplitCase(ctor = "C.A", binders = [], proof = Proof.PRefl(Term.TInt(0)))], Env(defs = [], consts = [], laws = [], hyps = [], finite = [], lists = [], ints = [], givens = [], sums = [[Variant(name = "C.A", arity = 0), Variant(name = "C.B", arity = 0)]]), "p") => Result.Err("step p: the cases are not the constructors the patterns read")
+
+fn declared(ctors: List<String>, counts: List<Int>, sums: List<List<Variant>>) -> Bool
+    ? "Some sum the program declares has exactly these constructors, in order, with these arities."
+    match sums
+        [] -> false
+        [v, ..rest] -> Bool.or(Bool.and(variantNames(v) == ctors, variantArities(v) == counts), declared(ctors, counts, rest))
+
+verify declared
+    declared(["C.A", "C.B"], [0, 1], [[Variant(name = "C.A", arity = 0), Variant(name = "C.B", arity = 1)]]) => true
+    declared(["C.A"], [0], [[Variant(name = "C.A", arity = 0), Variant(name = "C.B", arity = 1)]]) => false
+    declared(["C.A", "C.B"], [0, 0], [[Variant(name = "C.A", arity = 0), Variant(name = "C.B", arity = 1)]]) => false
+    declared(["C.A"], [0], []) => false
+
+fn variantNames(vs: List<Variant>) -> List<String>
+    ? "The constructors of a sum, in order."
+    match vs
+        [] -> []
+        [v, ..rest] -> List.prepend(v.name, variantNames(rest))
+
+verify variantNames
+    variantNames([Variant(name = "C.A", arity = 0)]) => ["C.A"]
+
+fn variantArities(vs: List<Variant>) -> List<Int>
+    ? "How many fields each constructor of a sum has, in order."
+    match vs
+        [] -> []
+        [v, ..rest] -> List.prepend(v.arity, variantArities(rest))
+
+verify variantArities
+    variantArities([Variant(name = "C.A", arity = 2)]) => [2]
+
+fn sumNames(sums: List<List<Variant>>) -> List<String>
+    ? "Every constructor of every declared sum."
+    match sums
+        [] -> []
+        [v, ..rest] -> List.concat(variantNames(v), sumNames(rest))
+
+verify sumNames
+    sumNames([[Variant(name = "C.A", arity = 0)], [Variant(name = "D.A", arity = 0)]]) => ["C.A", "D.A"]
 
 fn splitCtors(cs: List<SplitCase>) -> List<String>
     ? "The constructor of each case."
@@ -491,7 +534,7 @@ verify have
 
 fn withHyp(env: Env, h: String, on: Term, value: Bool) -> Env
     ? "The environment with one more hypothesis in front."
-    Env(defs = env.defs, consts = env.consts, laws = env.laws, hyps = List.prepend(Hyp(name = h, eqn = Eqn(lhs = on, rhs = Term.TBool(value))), env.hyps), finite = env.finite, lists = env.lists, ints = env.ints, givens = env.givens)
+    Env(defs = env.defs, consts = env.consts, laws = env.laws, hyps = List.prepend(Hyp(name = h, eqn = Eqn(lhs = on, rhs = Term.TBool(value))), env.hyps), finite = env.finite, lists = env.lists, ints = env.ints, givens = env.givens, sums = env.sums)
 
 verify withHyp
     List.len(withHyp(emptyEnv(), "h", Term.TVar("c"), true).hyps) => 1
@@ -593,7 +636,7 @@ verify substHyps
 
 fn withHyps(env: Env, hs: List<Hyp>) -> Env
     ? "The environment with its hypotheses replaced."
-    Env(defs = env.defs, consts = env.consts, laws = env.laws, hyps = hs, finite = env.finite, lists = env.lists, ints = env.ints, givens = env.givens)
+    Env(defs = env.defs, consts = env.consts, laws = env.laws, hyps = hs, finite = env.finite, lists = env.lists, ints = env.ints, givens = env.givens, sums = env.sums)
 
 verify withHyps
     withHyps(emptyEnv(), []).hyps => []
@@ -983,16 +1026,26 @@ verify lawPremises
 fn checkScript(s: Script) -> Result<String, String>
     ? "The proof must prove exactly the obligation, under its when; every cited builtin fact is checked first."
     Kernel.Induct.refuseMutualRecursion(s.defs)?
+    sumsDistinct(s.sums)?
     checkFacts(s.facts, [])?
-    env = Env(defs = s.defs, consts = s.consts, laws = List.concat(s.laws, factLaws(s.facts)), hyps = lawHyps(s.obligation), finite = s.finite, lists = s.lists, ints = s.ints, givens = s.obligation.givens)
+    env = Env(defs = s.defs, consts = s.consts, laws = List.concat(s.laws, factLaws(s.facts)), hyps = lawHyps(s.obligation), finite = s.finite, lists = s.lists, ints = s.ints, givens = s.obligation.givens, sums = s.sums)
     e = conclude(s.proof, env, "proof")?
     match e == Eqn(lhs = s.obligation.lhs, rhs = s.obligation.rhs)
         true -> Result.Ok(s.obligation.key)
         false -> Result.Err("step proof: the proof ends at a different equation than the claim")
 
 verify checkScript
-    checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], laws = [], facts = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Ok("k")
-    checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2)), finite = [], lists = [], ints = [], defs = [], consts = [], laws = [], facts = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Err("step proof: the proof ends at a different equation than the claim")
+    checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Ok("k")
+    checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Err("step proof: the proof ends at a different equation than the claim")
+
+fn sumsDistinct(sums: List<List<Variant>>) -> Result<Unit, String>
+    ? "No constructor belongs to two declared sums, or twice to one."
+    match distinct(sumNames(sums))
+        true -> Result.Ok(Unit)
+        false -> Result.Err("step proof: a constructor is declared in two sums")
+
+verify sumsDistinct
+    sumsDistinct([[Variant(name = "C.A", arity = 0)], [Variant(name = "C.A", arity = 0), Variant(name = "C.B", arity = 0)]]) => Result.Err("step proof: a constructor is declared in two sums")
 
 fn lawHyps(ob: Law) -> List<Hyp>
     ? "The obligation's when, as hypothesis `when`."
@@ -1021,8 +1074,8 @@ fn induct(f: String, xs: List<Term>, claim: Eqn, carry: List<String>, cs: List<C
 
 verify induct
     induct("f", [], Eqn(lhs = Term.TUnit, rhs = Term.TUnit), [], [], emptyEnv(), "p") => Result.Err("step p: no definition of f")
-    induct("f", [Term.TVar("n")], Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), [], [], Env(defs = [Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TVar("n"))], consts = [], laws = [], hyps = [], finite = [], lists = [], ints = ["n"], givens = ["n"]), "p") => Result.Err("step p: f does not recurse")
-    induct("f", [Term.TVar("n")], Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), [], [], Env(defs = [Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TMatch(Term.TOp(">", Term.TVar("n"), Term.TInt(0)), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TCall("f", [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(1)])])), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(0))]))], consts = [], laws = [], hyps = [], finite = [], lists = [], ints = ["n"], givens = ["n"]), "p") => Result.Err("step p: f does not count n down to zero")
+    induct("f", [Term.TVar("n")], Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), [], [], Env(defs = [Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TVar("n"))], consts = [], laws = [], hyps = [], finite = [], lists = [], ints = ["n"], givens = ["n"], sums = []), "p") => Result.Err("step p: f does not recurse")
+    induct("f", [Term.TVar("n")], Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), [], [], Env(defs = [Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TMatch(Term.TOp(">", Term.TVar("n"), Term.TInt(0)), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TCall("f", [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(1)])])), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(0))]))], consts = [], laws = [], hyps = [], finite = [], lists = [], ints = ["n"], givens = ["n"], sums = []), "p") => Result.Err("step p: f does not count n down to zero")
 
 fn inductOn(d: Def, r: Recursion, xs: List<Term>, claim: Eqn, carry: List<String>, cs: List<Case>, env: Env, path: String) -> Result<Eqn, String>
     ? "The arguments, the varied givens and the shape of the arms, then every case."
@@ -1454,7 +1507,7 @@ verify listInduct
 
 fn listsEnv(ns: List<String>) -> Env
     ? "No definitions, laws or hypotheses, and these givens of list type."
-    Env(defs = [], consts = [], laws = [], hyps = [], finite = [], lists = ns, ints = [], givens = ns)
+    Env(defs = [], consts = [], laws = [], hyps = [], finite = [], lists = ns, ints = [], givens = ns, sums = [])
 
 verify listsEnv
     listsEnv(["xs"]).lists => ["xs"]
@@ -1473,7 +1526,7 @@ verify listCases
 
 fn intsEnv(ns: List<String>) -> Env
     ? "No definitions, laws or hypotheses, and these givens of type Int."
-    Env(defs = [], consts = [], laws = [], hyps = [], finite = [], lists = [], ints = ns, givens = ns)
+    Env(defs = [], consts = [], laws = [], hyps = [], finite = [], lists = [], ints = ns, givens = ns, sums = [])
 
 verify intsEnv
     intsEnv(["n"]).ints => ["n"]
@@ -1523,7 +1576,7 @@ fn checkFacts(fs: List<Fact>, earlier: List<Law>) -> Result<Unit, String>
     ? "Each builtin fact proves its statement over builtins and the facts before it: no definitions, no other laws, no when."
     match fs
         [] -> Result.Ok(Unit)
-        [f, ..rest] -> checkFactThen(checkScript(Script(obligation = f.law, finite = [], lists = f.lists, ints = [], defs = [], consts = [], laws = earlier, facts = [], proof = f.proof)), f.law, rest, earlier)
+        [f, ..rest] -> checkFactThen(checkScript(Script(obligation = f.law, finite = [], lists = f.lists, ints = [], defs = [], consts = [], sums = [], laws = earlier, facts = [], proof = f.proof)), f.law, rest, earlier)
 
 verify checkFacts
     checkFacts([], []) => Result.Ok(Unit)

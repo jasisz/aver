@@ -272,9 +272,14 @@ fn cuts_used(p: &Proof) -> bool {
     (1..=64).any(|k| uses_hyp(p, &format!("when_value{k}")))
 }
 
-/// The user functions whose calls `p` splits into the true and false cases.
-fn split_calls(p: &Proof, out: &mut Vec<crate::ir::identity::FnId>) {
-    let mut all = |ps: &[Proof]| ps.iter().for_each(|q| split_calls(q, out));
+/// The user functions whose calls `p` splits into the true and false cases,
+/// and a constructor of each sum type `p` splits on.
+fn split_calls(
+    p: &Proof,
+    out: &mut Vec<crate::ir::identity::FnId>,
+    ctors: &mut Vec<crate::ir::hir::ResolvedCtor>,
+) {
+    let mut all = |ps: &[Proof]| ps.iter().for_each(|q| split_calls(q, out, ctors));
     match p {
         Proof::Cases {
             on,
@@ -285,32 +290,41 @@ fn split_calls(p: &Proof, out: &mut Vec<crate::ir::identity::FnId>) {
             if let ResolvedExpr::Call(ResolvedCallee::Fn(id), _) = &on.node {
                 out.push(*id);
             }
-            split_calls(if_true, out);
-            split_calls(if_false, out);
+            split_calls(if_true, out, ctors);
+            split_calls(if_false, out, ctors);
         }
-        Proof::Symm(q) | Proof::Congr { inner: q, .. } => split_calls(q, out),
-        Proof::Absurd { contradiction, .. } => split_calls(contradiction, out),
-        Proof::Arm { premise, .. } => split_calls(premise, out),
+        Proof::Symm(q) | Proof::Congr { inner: q, .. } => split_calls(q, out, ctors),
+        Proof::Absurd { contradiction, .. } => split_calls(contradiction, out, ctors),
+        Proof::Arm { premise, .. } => split_calls(premise, out, ctors),
         Proof::Unfold { premise, .. } | Proof::Law { premise, .. } => {
             if let Some(q) = premise {
-                split_calls(q, out);
+                split_calls(q, out, ctors);
             }
         }
         Proof::Trans { steps, .. } => all(steps),
         Proof::Rule { premises, .. } => all(premises),
         Proof::Enum { cases, .. } => all(cases),
-        Proof::Split { cases, .. } => cases.iter().for_each(|c| split_calls(&c.proof, out)),
+        Proof::Split { cases, .. } => {
+            if let Some(crate::ir::proof_steps::SplitCtor::Ctor(c)) = cases.first().map(|c| &c.ctor)
+            {
+                ctors.push(c.clone());
+            }
+            cases.iter().for_each(|c| split_calls(&c.proof, out, ctors))
+        }
         Proof::Have { proof, body, .. } => {
-            split_calls(proof, out);
-            split_calls(body, out);
+            split_calls(proof, out, ctors);
+            split_calls(body, out, ctors);
         }
         Proof::Induct { cases, .. } => cases.iter().for_each(|c| {
-            split_calls(&c.proof, out);
-            c.carry.iter().flatten().for_each(|q| split_calls(q, out));
+            split_calls(&c.proof, out, ctors);
+            c.carry
+                .iter()
+                .flatten()
+                .for_each(|q| split_calls(q, out, ctors));
         }),
         Proof::InductList { nil, cons, .. } => {
-            split_calls(nil, out);
-            split_calls(cons, out);
+            split_calls(nil, out, ctors);
+            split_calls(cons, out, ctors);
         }
         Proof::Refl(_)
         | Proof::Hyp(_)
@@ -366,6 +380,7 @@ struct Part {
     defs: Vec<crate::ir::proof_steps::Def>,
     consts: Vec<crate::ir::proof_steps::Const>,
     laws: Vec<LawRef>,
+    sums: Vec<Vec<(crate::ir::hir::ResolvedCtor, usize)>>,
 }
 
 /// Prove one obligation of the law: `ob` under `known` besides the `when`.
@@ -450,16 +465,31 @@ fn prove_part(
     };
     // The kernel splits on a call only when its definition says the call
     // is a Bool, so a function split on comes with its definition.
+    // A split on a constructor comes with its type as the program
+    // declares it.
     let mut split = Vec::new();
-    split_calls(&proof, &mut split);
+    let mut ctors = Vec::new();
+    split_calls(&proof, &mut split, &mut ctors);
     for id in split {
         env.mark_used(id);
+    }
+    let mut sums: Vec<Vec<(crate::ir::hir::ResolvedCtor, usize)>> = Vec::new();
+    for c in &ctors {
+        let sum: Vec<_> = split::variants_of(inputs, c, None)
+            .ok_or("split: the type of a constructor split on is not a sum")?
+            .into_iter()
+            .map(|(ctor, fields)| (ctor, fields.len()))
+            .collect();
+        if !sums.contains(&sum) {
+            sums.push(sum);
+        }
     }
     Ok(Part {
         proof,
         defs: env.used_defs(),
         consts: env.used_consts(),
         laws: env.laws.clone(),
+        sums,
     })
 }
 
@@ -523,6 +553,11 @@ fn merge_into(script: &mut Script, part: &Part) {
     for l in &part.laws {
         if !script.laws.iter().any(|x| x.key == l.key) {
             script.laws.push(l.clone());
+        }
+    }
+    for s in &part.sums {
+        if !script.sums.contains(s) {
+            script.sums.push(s.clone());
         }
     }
 }
@@ -773,6 +808,7 @@ fn produce(
                     defs: Vec::new(),
                     consts: Vec::new(),
                     laws: Vec::new(),
+                    sums: Vec::new(),
                     proof,
                 };
                 merge_into(&mut script, part);
@@ -804,6 +840,7 @@ fn produce(
         defs: Vec::new(),
         consts: Vec::new(),
         laws: Vec::new(),
+        sums: Vec::new(),
         proof,
     };
     for part in parts {

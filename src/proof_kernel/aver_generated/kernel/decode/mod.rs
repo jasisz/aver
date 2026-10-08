@@ -2865,7 +2865,73 @@ pub fn consts(
     aver_list_match!(ss.clone(), [] => Ok(aver_rt::AverList::empty()), [s, rest] => Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::constant(&s)?, &crate::proof_kernel::aver_generated::kernel::decode::consts(&rest)?)))
 }
 
-/// (steps 12 (obligation …) (defs …) (consts …) (laws …) (proof …)); version 12 only.
+/// (sum (CTOR ARITY)…)…: the sum types the program declares, each constructor in order.
+#[inline(always)]
+pub fn sums(
+    ss @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::sexp::Sexp>,
+) -> Result<
+    aver_rt::AverList<
+        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Variant>,
+    >,
+    AverStr,
+> {
+    crate::proof_kernel::cancel_checkpoint();
+    aver_list_match!(ss.clone(), [] => Ok(aver_rt::AverList::empty()), [__pat0, rest] => { match __pat0 {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat1) => {
+            { let __list_subject = __pat1; if let Some((__pat2, vs)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat2 {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(__pat3) => {
+            match &*__pat3 {
+        "sum" => {
+            Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::variants(&vs)?, &crate::proof_kernel::aver_generated::kernel::decode::sums(&rest)?))
+        },
+        _ => {
+            Err(AverStr::from("malformed sum"))
+        }
+    }
+        },
+        _ => {
+            Err(AverStr::from("malformed sum"))
+        }
+    } } else { Err(AverStr::from("malformed sum")) } }
+        },
+        _ => {
+            Err(AverStr::from("malformed sum"))
+        }
+    } })
+}
+
+/// (CTOR ARITY)…
+#[inline(always)]
+pub fn variants(
+    vs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::sexp::Sexp>,
+) -> Result<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Variant>, AverStr>
+{
+    crate::proof_kernel::cancel_checkpoint();
+    aver_list_match!(vs.clone(), [] => Ok(aver_rt::AverList::empty()), [__pat0, rest] => { match __pat0 {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat1) => {
+            { let __list_subject = __pat1; if let Some((__pat2, __pat3)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat2 {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(c) => {
+            { let __list_subject = __pat3; if let Some((__pat4, __pat5)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat4 {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(n) => {
+            { let __list_subject = __pat5; if __list_subject.is_empty() { Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::proof::Variant { name: c, arity: ({ let __s = &(n); __s.parse::<aver_rt::AverInt>().map_err(|_| format!("Cannot parse '{}' as Int", __s)) }).into_aver()? }, &crate::proof_kernel::aver_generated::kernel::decode::variants(&rest)?)) } else { Err(AverStr::from("malformed constructor of a sum")) } }
+        },
+        _ => {
+            Err(AverStr::from("malformed constructor of a sum"))
+        }
+    } } else { Err(AverStr::from("malformed constructor of a sum")) } }
+        },
+        _ => {
+            Err(AverStr::from("malformed constructor of a sum"))
+        }
+    } } else { Err(AverStr::from("malformed constructor of a sum")) } }
+        },
+        _ => {
+            Err(AverStr::from("malformed constructor of a sum"))
+        }
+    } })
+}
+
+/// (steps 13 (obligation …) (defs …) (consts …) (sums …) (laws …) (proof …)); version 13 only.
 pub fn script(
     s @ _: &crate::proof_kernel::aver_generated::kernel::sexp::Sexp,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::proof::Script, AverStr> {
@@ -2885,7 +2951,7 @@ pub fn script(
                                     match __pat4 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(v) => {
             match &*v.clone() {
-        "12" => {
+        "13" => {
             { let __list_subject = rest; if let Some((o, __pat5)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat5; if let Some((__pat6, __pat7)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat6 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat8) => {
             { let __list_subject = __pat8; if let Some((__pat9, ds)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat9 {
@@ -2900,17 +2966,38 @@ pub fn script(
         "consts" => {
             { let __list_subject = __pat12; if let Some((__pat16, __pat17)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat16 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat18) => {
-            { let __list_subject = __pat18; if let Some((__pat19, ls)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat19 {
+            { let __list_subject = __pat18; if let Some((__pat19, ss)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat19 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(__pat20) => {
             match &*__pat20 {
-        "laws" => {
+        "sums" => {
             { let __list_subject = __pat17; if let Some((__pat21, __pat22)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat21 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat23) => {
-            { let __list_subject = __pat23; if let Some((__pat24, __pat25)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat24 {
-        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(__pat26) => {
-            match &*__pat26 {
+            { let __list_subject = __pat23; if let Some((__pat24, ls)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat24 {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(__pat25) => {
+            match &*__pat25 {
+        "laws" => {
+            { let __list_subject = __pat22; if let Some((__pat26, __pat27)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat26 {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat28) => {
+            { let __list_subject = __pat28; if let Some((__pat29, __pat30)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat29 {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(__pat31) => {
+            match &*__pat31 {
         "proof" => {
-            { let __list_subject = __pat25; if let Some((p, __pat27)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat27; if __list_subject.is_empty() { { let __list_subject = __pat22; if __list_subject.is_empty() { crate::proof_kernel::aver_generated::kernel::decode::scriptOf(&crate::proof_kernel::aver_generated::kernel::decode::obligation(&o)?, &crate::proof_kernel::aver_generated::kernel::decode::defs(&ds)?, &crate::proof_kernel::aver_generated::kernel::decode::consts(&cs)?, &crate::proof_kernel::aver_generated::kernel::decode::laws(&ls)?, &crate::proof_kernel::aver_generated::kernel::decode::proof(&p)?) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+            { let __list_subject = __pat30; if let Some((p, __pat32)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat32; if __list_subject.is_empty() { { let __list_subject = __pat27; if __list_subject.is_empty() { crate::proof_kernel::aver_generated::kernel::decode::scriptOf(&crate::proof_kernel::aver_generated::kernel::decode::obligation(&o)?, &crate::proof_kernel::aver_generated::kernel::decode::defs(&ds)?, &crate::proof_kernel::aver_generated::kernel::decode::consts(&cs)?, &crate::proof_kernel::aver_generated::kernel::decode::sums(&ss)?, &crate::proof_kernel::aver_generated::kernel::decode::laws(&ls)?, &crate::proof_kernel::aver_generated::kernel::decode::proof(&p)?) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+        }
+    }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+        }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+        }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
         },
         _ => {
             Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
@@ -3006,6 +3093,9 @@ pub fn scriptOf(
     ),
     ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
     cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
+    ss @ _: &aver_rt::AverList<
+        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Variant>,
+    >,
     ls @ _: &Cited,
     p @ _: &crate::proof_kernel::aver_generated::kernel::proof::Proof,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::proof::Script, AverStr> {
@@ -3019,6 +3109,7 @@ pub fn scriptOf(
             ints: gs.ints,
             defs: ds.clone(),
             consts: cs.clone(),
+            sums: ss.clone(),
             laws: ls.laws.clone(),
             facts: ls.facts.clone(),
             proof: p.clone(),
