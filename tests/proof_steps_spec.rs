@@ -980,6 +980,69 @@ fn induction_follows_only_the_function_the_law_is_about() {
 }
 
 #[test]
+fn an_induction_line_names_the_given_the_induction_follows() {
+    let out = scratch("induct-named");
+    let (result, summary) = aver_backend_json("induction_named.av", &out, None);
+    assert_eq!(summary["steps_rejected"], serde_json::json!([]));
+    let closed = &summary["closed_by"];
+    // `append` recurses on `x` in one call and on `y` in another: the law
+    // that names `x` closes, and the others are refused.
+    assert_eq!(closed["append.assoc"], "steps", "{summary}");
+    for law in [
+        "append.assocUnnamed",
+        "append.assocAlongY",
+        "append.assocAlongZ",
+    ] {
+        assert_eq!(closed[law], "open", "{law}: {summary}");
+    }
+    let text = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "induction_named.av",
+            "--backend",
+            "aver",
+            "-o",
+            out.to_str().unwrap(),
+        ],
+    );
+    let text = String::from_utf8_lossy(&text.stdout);
+    let line = |law: &str| {
+        text.lines()
+            .find(|l| l.trim_start().starts_with(&format!("{law}:")))
+            .unwrap_or_else(|| panic!("no line for {law}: {text}"))
+            .to_string()
+    };
+    assert!(
+        line("append.assocUnnamed").contains(
+            "append recurses on x in one call and on y in another; which to follow is a choice the law has to make: name one with `induction x` or `induction y`"
+        ),
+        "{}",
+        format_output(&result)
+    );
+    assert!(
+        line("append.assocAlongZ")
+            .contains("the law names z, but no call of append passes z where append recurses"),
+        "{text}"
+    );
+    assert!(
+        line("append.assocAlongY").contains("induction along append, case 1"),
+        "{text}"
+    );
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("induction_named.av", &out)
+            .into_iter()
+            .collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), ["append.assoc"]);
+    let law = fs::read_to_string(&files["append.assoc"]).unwrap();
+    assert_eq!(
+        aver::proof_kernel::verdict(&law),
+        Ok("append.assoc".to_string())
+    );
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
 fn lean_inducts_with_the_functional_induction_principle_and_refuses_mutations() {
     if !lean_required::lake_available() {
         eprintln!("skipping the Lean half: `lake` is not available");

@@ -304,9 +304,22 @@ verify identity law positive
 
 Each explanation must return `Bool`. It may call a normal function whose `match` branches describe the argument. `verify` and `verify --hostile` check every explanation under the original `when`, in addition to checking the claim. A false explanation fails even when the claim is true. An explanation never restricts the law's domain.
 
-A recursive explanation can guide induction when it has a checked structural descent on a list, or a native, checked integer countdown (including floor division by a positive literal). The recursive step must establish the original guard and any earlier reason premises for its own arguments. This is ordinary function recursion; there is no separate induction syntax.
+A recursive explanation can guide induction when it has a checked structural descent on a list, or a native, checked integer countdown (including floor division by a positive literal). The recursive step must establish the original guard and any earlier reason premises for its own arguments. This is ordinary function recursion.
 
-`because` entries are ordered, so the proof of a later fact can use the earlier ones. The optional `using [function.law, Module.function.law]` list selects an unordered set of lemmas. Leaving it out keeps automatic selection, and `using []` selects none. Ordinary local bindings may appear between these clauses. They remain expression shortcuts and are not assertions. The first proof implementation targets Lean; see [law explanations](lean.md#law-explanations-in-aver) for the obligations, diagnostics and limits.
+`because` entries are ordered, so the proof of a later fact can use the earlier ones. The optional `using [function.law, Module.function.law]` list selects an unordered set of lemmas. Leaving it out keeps automatic selection, and `using []` selects none. Ordinary local bindings may appear between these clauses. They remain expression shortcuts and are not assertions.
+
+An optional `induction x` line names the given that induction along the law's own function follows. It is needed only when the claim passes that function different givens at the place it recurses on: in `append(append(xs, ys), zs) => append(xs, append(ys, zs))`, `append` recurses on its first argument and receives `xs` in one call and `ys` in another, so the law says `induction xs`. A law has at most one such line, and it must name one of the law's givens. `aver format` puts it after `because` and `using`, as the last line before the claim:
+
+```aver
+verify append law appendAssoc
+    given xs: List<Int> = [[], [1], [2, 3]]
+    given ys: List<Int> = [[], [4]]
+    given zs: List<Int> = [[], [5]]
+    using []
+    induction xs
+    append(append(xs, ys), zs) => append(xs, append(ys, zs))
+```
+ The first proof implementation targets Lean; see [law explanations](lean.md#law-explanations-in-aver) for the obligations, diagnostics and limits.
 
 `verify` is deterministic, not random. Regular cases run exactly as written. `verify ... law ...` expands the cartesian product of the explicit `given` domains, capped at `10_000` cases. A project that needs more says so in `aver.toml`: `[verify] max-cases` for the whole project, or `max-cases` in a `[[verify.costly]]` entry for the blocks of one function.
 

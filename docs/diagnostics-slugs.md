@@ -132,6 +132,7 @@ All format slugs have `warning` severity. They fire from `aver format --check` (
 | `excess-blank` | More than 2 consecutive blank lines inside a block. |
 | `module-intent-reshape` | Module intent block needs the canonical multiline form. |
 | `decision-inline` | Decision fields packed on a single line; each should be on its own line. |
+| `law-induction-position` | A law's `induction` line is not directly before its claim. |
 | `trailing-whitespace` | Line ends with whitespace. |
 | `missing-final-newline` | File does not end with a newline. |
 

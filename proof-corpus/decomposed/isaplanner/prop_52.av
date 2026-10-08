@@ -42,6 +42,7 @@ verify count law countHomo
     given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
     given xs: List<Nat> = [[Nat.Z], [Nat.S(Nat.Z), Nat.Z]]
     given ys: List<Nat> = [[Nat.Z], [Nat.S(Nat.Z), Nat.Z]]
+    induction xs
     count(n, List.concat(xs, ys)) => plus(count(n, xs), count(n, ys))
 
 verify count law countRev

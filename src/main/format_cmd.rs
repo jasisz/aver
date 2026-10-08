@@ -957,7 +957,8 @@ fn normalize_source_lines_tracked(
     let lines = normalize_match_arm_patterns_tracked(lines, violations, Some(&line_offset));
     let lines = normalize_module_intent_blocks_tracked(lines, violations, Some(&line_offset));
     let lines = normalize_module_effects_blocks_tracked(lines, violations, Some(&line_offset));
-    normalize_inline_decision_fields_tracked(lines, violations, Some(&line_offset))
+    let lines = normalize_inline_decision_fields_tracked(lines, violations, Some(&line_offset));
+    normalize_law_induction_line_tracked(lines, violations, Some(&line_offset))
 }
 
 fn normalize_module_effects_blocks_tracked(
@@ -1288,6 +1289,63 @@ fn split_inline_decision_fields(content: &str) -> Vec<String> {
     }
 }
 
+/// A law's `induction x` line goes last among its lines, directly before
+/// the claim: after every `given`, `when`, `because`, `using` and local.
+/// The claim is the last line of the law at the law's own indentation (a
+/// claim written over several lines continues deeper), so the move never
+/// reads an expression.
+fn normalize_law_induction_line_tracked(
+    mut lines: Vec<String>,
+    violations: &mut Vec<aver::diagnostics::model::FormatViolation>,
+    line_offset: Option<&[usize]>,
+) -> Vec<String> {
+    let is_induction_line = |line: &str| {
+        line.strip_prefix("    induction ").is_some_and(|name| {
+            !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
+    };
+    let mut start = 0;
+    while start < lines.len() {
+        let header = &lines[start];
+        let is_law =
+            header.starts_with("verify ") && header.split_whitespace().nth(2) == Some("law");
+        let mut end = start + 1;
+        while end < lines.len() && (lines[end].is_empty() || lines[end].starts_with(' ')) {
+            end += 1;
+        }
+        if is_law {
+            let at_law_indent = |line: &str| {
+                line.starts_with("    ")
+                    && !line.starts_with("     ")
+                    && !line.trim_start().starts_with("//")
+            };
+            let claim = (start + 1..end).rev().find(|&i| at_law_indent(&lines[i]));
+            let induction = (start + 1..end).find(|&i| is_induction_line(&lines[i]));
+            if let (Some(claim), Some(at)) = (claim, induction)
+                && at + 1 != claim
+                && at != claim
+            {
+                let line = lines.remove(at);
+                let target = if at < claim { claim - 1 } else { claim };
+                lines.insert(target, line);
+                violations.push(aver::diagnostics::model::FormatViolation {
+                    line: line_offset
+                        .and_then(|off| off.get(at))
+                        .copied()
+                        .unwrap_or(at + 1),
+                    col: 1,
+                    rule: "law-induction-position",
+                    message: "a law's `induction` line goes directly before its claim".to_string(),
+                    before: None,
+                    after: None,
+                });
+            }
+        }
+        start = end;
+    }
+    lines
+}
+
 fn normalize_inline_decision_fields_tracked(
     lines: Vec<String>,
     violations: &mut Vec<aver::diagnostics::model::FormatViolation>,
@@ -1461,6 +1519,28 @@ mod tests {
                 .filter(|v| v.rule == "bad-match-pattern")
                 .count(),
             4
+        );
+    }
+
+    #[test]
+    fn puts_a_law_induction_line_directly_before_the_claim() {
+        let fun =
+            "fn f(x: Int, y: Int) -> Int\n    ? \"t\"\n    x\n\nverify f\n    f(1, 2) => 1\n\n";
+        let canonical = format!(
+            "{fun}verify f law named\n    given x: Int = [0]\n    given y: Int = [1]\n    because x >= 0\n    using []\n    induction y\n    f(x, y) => x\n"
+        );
+        assert_eq!(format_source(&canonical), canonical);
+        let moved = format!(
+            "{fun}verify f law named\n    given x: Int = [0]\n    given y: Int = [1]\n    induction y\n    because x >= 0\n    using []\n    f(x, y) => x\n"
+        );
+        assert_eq!(format_source(&moved), canonical);
+        let (_, violations) = try_format_source(&moved).expect("format");
+        assert_eq!(
+            violations
+                .iter()
+                .filter(|v| v.rule == "law-induction-position")
+                .count(),
+            1
         );
     }
 

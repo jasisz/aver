@@ -26,6 +26,7 @@ verify app law appAssoc
     given a: List<Int> = [[], [1], [1, 2, 3]]
     given b: List<Int> = [[], [9], [8, 7]]
     given c: List<Int> = [[], [4], [5, 6]]
+    induction a
     app(app(a, b), c) => app(a, app(b, c))
 
 verify rev law revAppDistributes

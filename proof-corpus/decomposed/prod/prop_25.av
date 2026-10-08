@@ -27,6 +27,7 @@ fn plus(x: Nat, y: Nat) -> Nat
 verify length law lengthConcatHomo
     given x: List<Int> = [[1], [2, 3], [4, 5, 6]]
     given y: List<Int> = [[7], [8, 9], [0]]
+    induction x
     length(List.concat(x, y)) => plus(length(x), length(y))
 
 verify plus law plusComm

@@ -369,7 +369,8 @@ struct Part {
 }
 
 /// Prove one obligation of the law: `ob` under `known` besides the `when`.
-/// `induct_on` is the function induction may follow; `algebra` is set for
+/// `induct_on` is the function induction may follow, with the given the
+/// law's `induction` line names for it, if any; `algebra` is set for
 /// the claim of a law with an algebraic strategy.
 #[allow(clippy::too_many_arguments)]
 fn prove_part(
@@ -378,7 +379,7 @@ fn prove_part(
     ob: &Obligation,
     known: &[(String, Term)],
     using: &Option<Vec<LawRef>>,
-    induct_on: Option<crate::ir::identity::FnId>,
+    induct_on: Option<(crate::ir::identity::FnId, Option<&str>)>,
     algebraic: bool,
     hints: &mut Vec<String>,
 ) -> Result<Part, String> {
@@ -415,7 +416,7 @@ fn prove_part(
                 2 if ob.finite.is_empty() => continue,
                 2 => env.prove_by_cases(&ob.finite, &ob.lhs, &ob.rhs, SPLIT_DEPTH),
                 _ => match induct_on {
-                    Some(f) => env.prove_by_induction(f, ob, SPLIT_DEPTH),
+                    Some((f, named)) => env.prove_by_induction(f, named, ob, SPLIT_DEPTH),
                     None => continue,
                 },
             };
@@ -649,7 +650,7 @@ fn produce(
             (
                 Some(Some(_)),
                 crate::ir::hir::ResolvedExpr::Call(crate::ir::hir::ResolvedCallee::Fn(f), _),
-            ) => Some(*f),
+            ) => Some((*f, None)),
             _ => None,
         };
         let known = known_of(&cuts);
@@ -679,7 +680,7 @@ fn produce(
         &last_ob,
         &known,
         &using,
-        Some(t.fn_id),
+        Some((t.fn_id, t.induction_given.as_deref())),
         algebraic && n == 0,
         hints,
     )

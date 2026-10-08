@@ -869,6 +869,9 @@ pub struct VerifyLaw {
     pub because: Vec<Spanned<Expr>>,
     /// Explicit law dependencies; `None` retains automatic selection.
     pub using: Option<Vec<String>>,
+    /// The given an `induction x` line names: the one induction along the
+    /// law's function follows when the claim passes it several.
+    pub induction: Option<String>,
     /// Template assertion from source before given-domain expansion.
     pub lhs: Spanned<Expr>,
     pub rhs: Spanned<Expr>,

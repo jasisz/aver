@@ -11181,6 +11181,7 @@ fn build_candidate_law(
         rhs: clone_expr(&goal.claim.1),
         because: Vec::new(),
         using: None,
+        induction: None,
         sample_guards: vec![],
     };
     let block = VerifyBlock {
@@ -13109,6 +13110,7 @@ mod tests {
             rhs: t(),
             because: Vec::new(),
             using: None,
+            induction: None,
             sample_guards: vec![],
         }));
         super::TopLevel::Verify(VerifyBlock::new_unspanned(

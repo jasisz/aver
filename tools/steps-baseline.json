@@ -376,6 +376,11 @@
    "eqNat.eqNatRefl"
   ]
  },
+ "proof-corpus/decomposed/isaplanner/prop_52.av": {
+  "steps": [
+   "count.countHomo"
+  ]
+ },
  "proof-corpus/decomposed/isaplanner/prop_60.av": {
   "steps": [
    "last.lastConsNonEmpty"
@@ -422,6 +427,11 @@
    "plus.plusSuccRight"
   ]
  },
+ "proof-corpus/decomposed/prod/prop_02.av": {
+  "steps": [
+   "length.lengthConcatHomo"
+  ]
+ },
  "proof-corpus/decomposed/prod/prop_03.av": {
   "steps": [
    "plus.plusSuccRight",
@@ -430,6 +440,7 @@
  },
  "proof-corpus/decomposed/prod/prop_04.av": {
   "steps": [
+   "length.lengthAppend",
    "plus.plusSuccRight",
    "plus.plusZeroRight"
   ]
@@ -441,17 +452,20 @@
  },
  "proof-corpus/decomposed/prod/prop_06.av": {
   "steps": [
+   "length.lengthAppend",
    "plus.plusSuccRight"
   ]
  },
  "proof-corpus/decomposed/prod/prop_10.av": {
   "steps": [
+   "append.appendAssoc",
    "append.appendBridge",
    "append.appendRightId"
   ]
  },
  "proof-corpus/decomposed/prod/prop_11.av": {
   "steps": [
+   "app.appAssoc",
    "app.appBridge",
    "app.appRightId"
   ]
@@ -469,13 +483,24 @@
  },
  "proof-corpus/decomposed/prod/prop_19.av": {
   "steps": [
+   "append.appendAssoc",
    "append.appendNilR"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_22.av": {
+  "steps": [
+   "length.lengthAppendHomo"
   ]
  },
  "proof-corpus/decomposed/prod/prop_23.av": {
   "steps": [
    "plus.plusSuccRight",
    "plus.plusZeroRight"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_25.av": {
+  "steps": [
+   "length.lengthConcatHomo"
   ]
  },
  "proof-corpus/decomposed/prod/prop_27.av": {
@@ -485,6 +510,7 @@
  },
  "proof-corpus/decomposed/prod/prop_28.av": {
   "steps": [
+   "append.appendAssoc",
    "append.appendConcatBridge",
    "append.appendRightId"
   ]
@@ -497,6 +523,11 @@
  "proof-corpus/decomposed/prod/prop_30.av": {
   "steps": [
    "rev.revSnoc"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_31.av": {
+  "steps": [
+   "qrev.qrevMaster"
   ]
  },
  "proof-corpus/decomposed/prod/prop_33.av": {
@@ -540,6 +571,11 @@
    "insert.insertPreservesLength"
   ]
  },
+ "proof-corpus/tip/isaplanner-mono/prop_14.av": {
+  "steps": [
+   "filterZ.filterAppendDistribute"
+  ]
+ },
  "proof-corpus/tip/isaplanner-mono/prop_35.av": {
   "steps": [
    "dropWhileF.dropWhileFalseId"
@@ -553,6 +589,11 @@
  "proof-corpus/tip/isaplanner-mono/prop_43.av": {
   "steps": [
    "takeWhileZ.takeDropWhileAppend"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_02.av": {
+  "steps": [
+   "count.countPlusConcat"
   ]
  },
  "proof-corpus/tip/isaplanner/prop_05.av": {

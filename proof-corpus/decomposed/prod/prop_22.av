@@ -37,6 +37,7 @@ verify plus law plusComm
 verify length law lengthAppendHomo
     given x: List<Int> = [[], [1], [1, 2], [1, 2, 3]]
     given y: List<Int> = [[], [9], [8, 7], [5, 6, 7]]
+    induction x
     length(append(x, y)) => plus(length(x), length(y))
 
 verify even law evenPlusComm

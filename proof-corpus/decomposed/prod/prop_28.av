@@ -36,6 +36,7 @@ verify append law appendAssoc
     given a: List<Int> = [[], [1], [1, 2]]
     given b: List<Int> = [[], [3], [4, 5]]
     given c: List<Int> = [[], [6], [7, 8]]
+    induction a
     append(append(a, b), c) => append(a, append(b, c))
 
 verify qrevflat law qrevflatSpec
