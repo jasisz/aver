@@ -21,6 +21,7 @@ verify append law appendAssoc
     given x: List<Int> = [[], [1], [1, 2]]
     given y: List<Int> = [[], [4], [4, 5]]
     given z: List<Int> = [[], [7], [7, 8]]
+    induction x
     append(append(x, y), z) => append(x, append(y, z))
 
 verify rev law revDist

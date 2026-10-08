@@ -3882,6 +3882,7 @@ mod tests {
             rhs,
             because: Vec::new(),
             using: None,
+            induction: None,
             sample_guards: Vec::new(),
         }
     }

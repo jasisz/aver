@@ -31,4 +31,5 @@ fn append(x: List<Nat>, y: List<Nat>) -> List<Nat>
 verify filterZ law filterAppendDistribute
     given xs: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.Z], [Nat.Z, Nat.S(Nat.Z), Nat.Z]]
     given ys: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z)], [Nat.Z, Nat.Z]]
+    induction xs
     filterZ(append(xs, ys)) => append(filterZ(xs), filterZ(ys))

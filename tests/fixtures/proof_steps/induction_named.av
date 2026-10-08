@@ -1,0 +1,40 @@
+module InductionNamed
+    intent = "A claim that passes the law's function two givens where it recurses: the law names the one induction follows."
+    exposes [append]
+    effects []
+
+fn append(xs: List<Int>, ys: List<Int>) -> List<Int>
+    ? "Append, recursing on the first list."
+    match xs
+        [] -> ys
+        [h, ..t] -> List.prepend(h, append(t, ys))
+
+verify append
+    append([1], [2]) => [1, 2]
+
+verify append law assoc
+    given x: List<Int> = [[], [1], [1, 2]]
+    given y: List<Int> = [[], [3]]
+    given z: List<Int> = [[], [4]]
+    induction x
+    append(append(x, y), z) => append(x, append(y, z))
+
+verify append law assocUnnamed
+    given x: List<Int> = [[], [1], [1, 2]]
+    given y: List<Int> = [[], [3]]
+    given z: List<Int> = [[], [4]]
+    append(append(x, y), z) => append(x, append(y, z))
+
+verify append law assocAlongY
+    given x: List<Int> = [[], [1], [1, 2]]
+    given y: List<Int> = [[], [3]]
+    given z: List<Int> = [[], [4]]
+    induction y
+    append(append(x, y), z) => append(x, append(y, z))
+
+verify append law assocAlongZ
+    given x: List<Int> = [[], [1], [1, 2]]
+    given y: List<Int> = [[], [3]]
+    given z: List<Int> = [[], [4]]
+    induction z
+    append(append(x, y), z) => append(x, append(y, z))

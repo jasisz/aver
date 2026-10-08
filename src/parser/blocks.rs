@@ -24,6 +24,18 @@ impl Parser {
         matches!(&self.current().kind, TokenKind::Ident(name) if name == expected)
     }
 
+    /// True when the current line is `induction <name>`: the word, one
+    /// identifier, and the end of the line. A claim that calls a function
+    /// named `induction` does not match.
+    fn induction_line_ahead(&self) -> bool {
+        self.current_ident_is("induction")
+            && matches!(self.peek(1).kind, TokenKind::Ident(_))
+            && matches!(
+                self.peek(2).kind,
+                TokenKind::Newline | TokenKind::Dedent | TokenKind::Eof
+            )
+    }
+
     /// True when current position looks like `name = expr` — an Ident
     /// followed by `=` (Assign), not `=>` (FatArrow). Used in
     /// verify-trace blocks to distinguish local bindings from case
@@ -393,12 +405,14 @@ impl Parser {
 
                 let mut because = Vec::new();
                 let mut using = None;
+                let mut induction: Option<String> = None;
                 // Law locals remain ordinary expression shortcuts. Resolve
                 // them as they are declared, including in subsequent reasons.
                 let mut law_locals: Vec<(String, Spanned<Expr>)> = Vec::new();
                 while self.looks_like_binding()
                     || self.current_ident_is("because")
                     || self.current_ident_is("using")
+                    || self.induction_line_ahead()
                 {
                     if self.looks_like_binding() {
                         let name = self.expect_user_identifier(
@@ -418,6 +432,25 @@ impl Parser {
                             substitute_ident(&mut reason, name, value);
                         }
                         because.push(reason);
+                    } else if self.induction_line_ahead() {
+                        self.advance(); // induction
+                        if induction.is_some() {
+                            return Err(
+                                self.error("A law may have only one 'induction' line".to_string())
+                            );
+                        }
+                        let name = self.expect_user_identifier(
+                            "Expected a given name after 'induction'",
+                            "induction givens",
+                        )?;
+                        if !givens.iter().any(|g: &VerifyGiven| g.name == name) {
+                            let names: Vec<&str> = givens.iter().map(|g| g.name.as_str()).collect();
+                            return Err(self.error(format!(
+                                "'induction {name}' must name one of the law's givens ({})",
+                                names.join(", ")
+                            )));
+                        }
+                        induction = Some(name);
                     } else {
                         self.advance();
                         if using.is_some() {
@@ -511,6 +544,7 @@ impl Parser {
                     when,
                     because,
                     using,
+                    induction,
                     lhs: left,
                     rhs: right,
                     sample_guards,

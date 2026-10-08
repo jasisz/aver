@@ -2565,6 +2565,7 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             reason_inductions,
             function_cone,
             using: law.using.clone(),
+            induction_given: law.induction.clone(),
             steps: None,
             steps_refusal: None,
             steps_hints: Vec::new(),

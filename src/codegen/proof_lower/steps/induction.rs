@@ -70,9 +70,12 @@ fn fresh(base: &str, taken: &[String]) -> String {
 
 impl Env<'_> {
     /// Prove `ob` by induction along `f`, the function the law is about.
+    /// `named` is the given the law's `induction` line names: only the
+    /// calls that pass it where `f` recurses are followed.
     pub(crate) fn prove_by_induction(
         &mut self,
         f: FnId,
+        named: Option<&str>,
         ob: &Obligation,
         depth: usize,
     ) -> Result<Proof, String> {
@@ -100,24 +103,40 @@ impl Env<'_> {
         calls_of(&ob.lhs, f, &mut calls);
         calls_of(&ob.rhs, f, &mut calls);
         // The calls whose argument at the recursive place is a given: they
-        // must all name the same one, or which to follow would be a guess.
+        // must all name the same one, or which to follow would be a guess,
+        // unless the law names the one to follow.
         let candidates: Vec<&Vec<Term>> = calls
             .iter()
-            .filter(|c| induct::varied(c, j, &ob.givens).is_ok())
+            .filter(|c| {
+                induct::varied(c, j, &ob.givens).is_ok_and(|(v, _)| named.is_none_or(|n| v == n))
+            })
             .collect();
         let Some(first) = candidates.first() else {
-            return Err(format!(
-                "induction: the claim never passes a given where {f_name} recurses"
-            ));
+            return Err(match named {
+                Some(n) => format!(
+                    "induction: the law names {n}, but no call of {f_name} passes {n} where {f_name} recurses"
+                ),
+                None => {
+                    format!("induction: the claim never passes a given where {f_name} recurses")
+                }
+            });
         };
         let (v, _) = induct::varied(first, j, &ob.givens)?;
-        if let Some(other) = candidates
-            .iter()
-            .map(|c| induct::varied(c, j, &ob.givens).expect("filtered").0)
-            .find(|o| *o != v)
-        {
+        let mut others: Vec<String> = Vec::new();
+        for c in &candidates {
+            let o = induct::varied(c, j, &ob.givens).expect("filtered").0;
+            if o != v && !others.contains(&o) {
+                others.push(o);
+            }
+        }
+        if let Some(other) = others.first() {
+            let choices: Vec<String> = std::iter::once(&v)
+                .chain(others.iter())
+                .map(|n| format!("`induction {n}`"))
+                .collect();
             return Err(format!(
-                "induction: {f_name} recurses on {v} in one call and on {other} in another; which to follow is a choice the law has to make"
+                "induction: {f_name} recurses on {v} in one call and on {other} in another; which to follow is a choice the law has to make: name one with {}",
+                choices.join(" or ")
             ));
         }
         // Along a count toward zero the given is an Int; each case holds the

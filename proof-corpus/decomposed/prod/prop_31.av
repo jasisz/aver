@@ -11,6 +11,7 @@ fn qrev(x: List<Int>, y: List<Int>) -> List<Int>
 verify qrev law qrevMaster
     given x: List<Int> = [[], [1], [1, 2], [1, 2, 3]]
     given y: List<Int> = [[], [9], [8, 7], [6]]
+    induction x
     qrev(qrev(x, y), []) => qrev(y, x)
 
 verify qrev law qrevQrev

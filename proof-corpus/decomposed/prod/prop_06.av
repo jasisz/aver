@@ -35,6 +35,7 @@ verify plus law plusSuccRight
 verify length law lengthAppend
     given x: List<Int> = [[], [1], [1, 2, 3]]
     given y: List<Int> = [[], [2], [4, 5]]
+    induction x
     length(append(x, y)) => plus(length(x), length(y))
 
 verify length law lengthRev

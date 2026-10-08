@@ -62,6 +62,52 @@ fn law_reasons_preserve_order_and_do_not_become_guards() {
 }
 
 #[test]
+fn a_law_names_the_given_its_induction_follows() {
+    let law_of = |src: &str| {
+        let items = parse(src);
+        let TopLevel::Verify(block) = &items[0] else {
+            panic!()
+        };
+        let VerifyKind::Law(law) = &block.kind else {
+            panic!()
+        };
+        law.as_ref().clone()
+    };
+    let law = law_of(
+        "verify f law named\n    given x: Int = [0]\n    given y: Int = [1]\n    because x >= 0\n    using []\n    induction y\n    f(x, y) => x\n",
+    );
+    assert_eq!(law.induction.as_deref(), Some("y"));
+    assert_eq!(law.using.as_deref(), Some(&[][..]));
+    assert_eq!(aver::checker::expr_to_str(&law.lhs), "f(x, y)");
+    // Anywhere among the reasons and `using`, as `using` itself.
+    let law = law_of(
+        "verify f law early\n    given x: Int = [0]\n    induction x\n    because x >= 0\n    f(x) => x\n",
+    );
+    assert_eq!(law.induction.as_deref(), Some("x"));
+    assert_eq!(law.because.len(), 1);
+    // A claim that calls a function named `induction` is still the claim.
+    let law = law_of("verify f law call\n    given x: Int = [0]\n    induction(x) => x\n");
+    assert_eq!(law.induction, None);
+    assert_eq!(aver::checker::expr_to_str(&law.lhs), "induction(x)");
+    let law = law_of("verify f law plain\n    given x: Int = [0]\n    f(x) => x\n");
+    assert_eq!(law.induction, None);
+    let twice = parse_error(
+        "verify f law twice\n    given x: Int = [0]\n    induction x\n    induction x\n    f(x) => x\n",
+    );
+    assert!(
+        twice.contains("A law may have only one 'induction' line"),
+        "{twice}"
+    );
+    let unknown = parse_error(
+        "verify f law unknown\n    given x: Int = [0]\n    given y: Int = [0]\n    induction z\n    f(x) => x\n",
+    );
+    assert!(
+        unknown.contains("'induction z' must name one of the law's givens (x, y)"),
+        "{unknown}"
+    );
+}
+
+#[test]
 fn law_locals_expand_in_reasons_and_later_bindings() {
     let items = parse(
         "verify f law reasoned\n    given x: Int = [0]\n    a = x + 1\n    because a > x\n    b = a + 1\n    using []\n    because b > a\n    f(b) => b\n",
