@@ -394,12 +394,14 @@ fn prove_part(
         // The attempts run again with a call that divides an Int down to
         // zero kept whole, when opening one did not close the part.
         let mut met_halving = false;
+        // The first pass's refusals, kept once the second pass runs.
+        let mut opened: Option<Vec<String>> = None;
         for attempt in 0..8 {
             if attempt == 4 {
                 if !met_halving {
                     break;
                 }
-                refusals.clear();
+                opened = Some(std::mem::take(&mut refusals));
             }
             env.open_halving = attempt < 4;
             let attempt = attempt % 4;
@@ -437,7 +439,14 @@ fn prove_part(
                 }
             }
         }
-        found.ok_or_else(|| refusals.join("; "))?
+        found.ok_or_else(|| match &opened {
+            Some(first) => format!(
+                "{}; with the call that divides down to zero kept whole: {}",
+                first.join("; "),
+                refusals.join("; ")
+            ),
+            None => refusals.join("; "),
+        })?
     };
     // The kernel splits on a call only when its definition says the call
     // is a Bool, so a function split on comes with its definition.

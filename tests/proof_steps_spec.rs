@@ -1968,6 +1968,103 @@ fn lean_closes_a_split_on_a_constructor() {
     let _ = fs::remove_dir_all(out);
 }
 
+const MATCH_ARMS_LAWS: [&str; 7] = [
+    "height.ofASquare",
+    "isBox.unlessADot",
+    "isMany.exceptZeroAndOne",
+    "okOr.errorIsZero",
+    "restLength.afterOne",
+    "width.sameAsComparisons",
+    "widthBits.eightPerByte",
+];
+
+/// The split follows the arms of a `match` whatever their patterns: one
+/// case per arm of Int literals and a last catch-all, the catch-all chosen
+/// where hypotheses rule out every literal arm before it (from the split or
+/// from Bool splits on `==`), and a wildcard field of a constructor or a
+/// cell taking its place among the binders. The kernel refuses the
+/// catch-all case one hypothesis short, a literal case turned into a second
+/// catch-all, and the catch-all case's proof without the split around it.
+#[test]
+fn both_kernels_split_on_the_arms_of_a_match_and_refuse_mutations() {
+    let out = scratch("match-arms");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("match_arms.av", &out).into_iter().collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), MATCH_ARMS_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let paths: Vec<PathBuf> = files.values().cloned().collect();
+    let result = replay(&paths);
+    assert!(result.status.success(), "{}", format_output(&result));
+
+    let bits = read("widthBits.eightPerByte");
+    let other = "(case else (h_steps2 h_steps3 h_steps4) ";
+    assert!(bits.contains("(proof (split widthBits "), "{bits}");
+    let at = bits.find(other).expect("the catch-all case");
+    let body_at = at + other.len();
+    let body = &bits[body_at..=closing(&bits, body_at)];
+    let proof_at = bits.find("(proof ").unwrap();
+    let mutants = [
+        // The catch-all case without the hypothesis that rules out 78.
+        bits.replacen(other, "(case else (h_steps2 h_steps3) ", 1),
+        // The first literal case read as a second catch-all.
+        bits.replacen("(case lit () ", "(case else () ", 1),
+        // The catch-all arm chosen with no literal arm ruled out.
+        format!("{}(proof {body}))", &bits[..proof_at]),
+    ];
+    for (i, mutant) in mutants.iter().enumerate() {
+        assert_ne!(*mutant, bits, "mutant {i} changed nothing");
+        let verdict = aver::proof_kernel::verdict(mutant);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "mutant {i}: {verdict:?}\n{mutant}"
+        );
+        let path = out.join(format!("mutant{i}.steps"));
+        fs::write(&path, mutant).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(!result.status.success(), "{}", format_output(&result));
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_closes_a_split_on_the_arms_of_a_match() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("match-arms-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "match_arms.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "0",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in MATCH_ARMS_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
 const CONSTRUCTOR_LAWS: [&str; 3] = [
     "refusal.longSilenceIsRefused",
     "verdictOf.preservesFlag",

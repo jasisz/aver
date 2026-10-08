@@ -106,6 +106,7 @@
    "startBoard.conserves",
    "stepAll.leftFold",
    "stepChute.belowLipStays",
+   "stepChute.conserves",
    "stepChute.eggRowStaysInRange",
    "tallyHit.monotone"
   ]

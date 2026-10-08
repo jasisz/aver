@@ -1,0 +1,144 @@
+module MatchArms
+    intent =
+        "Steps that split on the arms of a `match` whatever their patterns: Int and text literals"
+        "with a last catch-all arm, Bool splits on `==` that rule literal arms out, and"
+        "constructor and list patterns with a wildcard field."
+    exposes [width, widthByComparisons, widthBits, isMany, height, isBox, isDot, restLength, okOr]
+
+type Shape
+    Dot
+    Box(Int, Int)
+
+fn width(code: Int) -> Int
+    ? "How many bytes hold the length of a wide push; zero when it is not one."
+    match code
+        76 -> 1
+        77 -> 2
+        78 -> 4
+        _ -> 0
+
+verify width
+    width(76) => 1
+    width(79) => 0
+
+fn widthByComparisons(code: Int) -> Int
+    ? "The same width, read by comparisons."
+    match code == 76
+        true -> 1
+        false -> match code == 77
+            true -> 2
+            false -> match code == 78
+                true -> 4
+                false -> 0
+
+verify widthByComparisons
+    widthByComparisons(77) => 2
+    widthByComparisons(0) => 0
+
+verify width law sameAsComparisons
+    given code: Int = [0, 76, 77, 78, 79]
+    width(code) => widthByComparisons(code)
+
+fn widthBits(code: Int) -> Int
+    ? "The width in bits."
+    match code
+        76 -> 8
+        77 -> 16
+        78 -> 32
+        _ -> 0
+
+verify widthBits
+    widthBits(78) => 32
+
+verify widthBits law eightPerByte
+    given code: Int = [0, 76, 77, 78, 79]
+    widthBits(code) => width(code) * 8
+
+fn named(code: Int) -> String
+    ? "A name for a code."
+    match code
+        0 -> "zero"
+        1 -> "one"
+        _ -> "many"
+
+verify named
+    named(1) => "one"
+
+fn isMany(code: Int) -> Bool
+    ? "Whether a code is named many."
+    match named(code)
+        "many" -> true
+        _ -> false
+
+verify isMany
+    isMany(0) => false
+    isMany(5) => true
+
+verify isMany law exceptZeroAndOne
+    given code: Int = [0, 1, 2, 3]
+    isMany(code) => Bool.not(Bool.or(code == 0, code == 1))
+
+fn height(s: Shape) -> Int
+    ? "The height of a box; a dot has none."
+    match s
+        Shape.Dot -> 0
+        Shape.Box(_, h) -> h
+
+verify height
+    height(Shape.Dot) => 0
+    height(Shape.Box(1, 2)) => 2
+
+verify height law ofASquare
+    given h: Int = [0, 1, 2]
+    height(Shape.Box(h, h)) => h
+
+fn isBox(s: Shape) -> Bool
+    ? "Whether a shape is a box."
+    match s
+        Shape.Box(_, _) -> true
+        _ -> false
+
+fn isDot(s: Shape) -> Bool
+    ? "Whether a shape is a dot."
+    match s
+        Shape.Dot -> true
+        Shape.Box(_, _) -> false
+
+verify isBox
+    isBox(Shape.Dot) => false
+
+verify isDot
+    isDot(Shape.Dot) => true
+
+verify isBox law unlessADot
+    given s: Shape = [Shape.Dot, Shape.Box(1, 2)]
+    isBox(s) => Bool.not(isDot(s))
+
+fn restLength(xs: List<Int>) -> Int
+    ? "How many items follow the first; zero for none."
+    match xs
+        [] -> 0
+        [_, ..rest] -> List.len(rest)
+
+verify restLength
+    restLength([]) => 0
+    restLength([1, 2]) => 1
+
+verify restLength law afterOne
+    given x: Int = [1, 2]
+    given xs: List<Int> = [[], [3]]
+    restLength(List.prepend(x, xs)) => List.len(xs)
+
+fn okOr(r: Result<Int, String>) -> Int
+    ? "The value, or zero for an error."
+    match r
+        Result.Ok(v) -> v
+        Result.Err(_) -> 0
+
+verify okOr
+    okOr(Result.Err("x")) => 0
+    okOr(Result.Ok(3)) => 3
+
+verify okOr law errorIsZero
+    given e: String = ["a", "b"]
+    okOr(Result.Err(e)) => 0

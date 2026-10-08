@@ -926,7 +926,7 @@ impl Renderer<'_> {
                 binders,
                 premise,
             } => {
-                let (name, extra) = self.unfold_lemma(*fn_id, *arm, binders)?;
+                let (name, extra, unequal) = self.unfold_lemma(*fn_id, *arm, binders)?;
                 let mut s = name;
                 for a in args.iter().chain(&extra) {
                     s.push(' ');
@@ -935,6 +935,19 @@ impl Renderer<'_> {
                 if let Some(p) = premise {
                     s.push(' ');
                     s.push_str(&self.proof(p, hyps)?);
+                }
+                // The hypotheses that rule out the earlier literal arms.
+                for e in &unequal {
+                    let lhs = term::canon(&e.lhs);
+                    let (h, _) = hyps
+                        .iter()
+                        .rev()
+                        .find(|(_, h)| {
+                            term::canon(&h.lhs) == lhs && term::bool_value(&h.rhs) == Some(false)
+                        })
+                        .ok_or("unfold: no hypothesis rules out an earlier arm")?;
+                    s.push(' ');
+                    s.push_str(&self.hyp_name(h));
                 }
                 s
             }
@@ -1051,6 +1064,45 @@ impl Renderer<'_> {
             // `T.casesOn` with the motive `on = x → claim`, applied to `on`
             // and `rfl`: one function per constructor, over its fields and
             // the hypothesis that `on` is it.
+            // A split on the arms of a literal match: one `bool_cases` on
+            // `on == k` per literal, whose true branch is that literal's
+            // case under `hyp : on = k` (from `eq_of_beq`) and whose false
+            // branch names the catch-all case's hypothesis `(on == k) =
+            // false`; the catch-all case is innermost.
+            Proof::Split { on, hyp, cases, .. }
+                if matches!(
+                    cases.last().map(|c| &c.ctor),
+                    Some(crate::ir::proof_steps::SplitCtor::Other)
+                ) =>
+            {
+                let lean = super::syntax::aver_name_to_lean;
+                let hss = crate::ir::proof_steps::split_hyps(on, hyp, cases);
+                let (other, lits) = cases.split_last().ok_or("split: no cases")?;
+                if other.binders.len() != lits.len() {
+                    return Err("split: one hypothesis per literal".into());
+                }
+                let mut scope = hyps.clone();
+                scope.extend(hss[lits.len()].iter().cloned());
+                let mut acc = self.proof(&other.proof, &scope)?;
+                let h = self.hyp_name(hyp);
+                for (i, case) in lits.iter().enumerate().rev() {
+                    let k = case
+                        .value()
+                        .ok_or("split: a literal case has its literal")?;
+                    let mut scope = hyps.clone();
+                    scope.extend(hss[i].iter().cloned());
+                    let body = self.proof(&case.proof, &scope)?;
+                    let cond = term::binop(BinOp::Eq, on.clone(), k.clone());
+                    acc = format!(
+                        "(AverSteps.bool_cases {} (fun {} => {acc}) (fun {h}_beq => (fun {h} => {body}) (AverSteps.eq_of_beq {} {} {h}_beq)))",
+                        self.expr(&cond),
+                        lean(&other.binders[i]),
+                        self.expr(on),
+                        self.expr(&k),
+                    );
+                }
+                acc
+            }
             Proof::Split { on, hyp, cases, .. } => {
                 let (recursor, order) = self.recursor(on)?;
                 let cases_on = recursor
@@ -1070,9 +1122,12 @@ impl Renderer<'_> {
                     self.eqn(&eq),
                     self.expr(on)
                 );
-                for case in cases {
+                for (case, hs) in cases
+                    .iter()
+                    .zip(crate::ir::proof_steps::split_hyps(on, hyp, cases))
+                {
                     let mut scope = hyps.clone();
-                    scope.push((hyp.clone(), Eqn::new(on.clone(), case.value())));
+                    scope.extend(hs);
                     let body = self.proof(&case.proof, &scope)?;
                     let mut names: Vec<String> = case.binders.iter().map(|b| lean(b)).collect();
                     names.push(h.clone());
@@ -1442,14 +1497,16 @@ impl Renderer<'_> {
     ///
     /// A catch-all arm holds only for values the earlier arms exclude, so
     /// its lemma is stated for the one value the step chose (its free
-    /// variables quantified); the returned terms are what the step passes
-    /// after the arguments.
+    /// variables quantified), and an earlier literal arm `k` the value does
+    /// not exclude by its shape is ruled out by a premise `(value == k) =
+    /// false`; the returned terms are what the step passes after the
+    /// arguments, and the equations those premises state at the value.
     fn unfold_lemma(
         &mut self,
         fn_id: FnId,
         arm: u32,
         chosen: &[Term],
-    ) -> Result<(String, Vec<Term>), String> {
+    ) -> Result<(String, Vec<Term>, Vec<Eqn>), String> {
         let catch_all = self
             .script
             .def(fn_id)
@@ -1472,8 +1529,37 @@ impl Renderer<'_> {
             (true, _) => return Err("unfold: a catch-all arm takes its value".into()),
             (false, _) => (String::new(), chosen.to_vec()),
         };
+        // The earlier literal arms the chosen value does not exclude.
+        let ruled: Vec<Term> = match (
+            catch_all,
+            chosen,
+            self.script.def(fn_id).map(|d| &d.body.node),
+        ) {
+            (true, [v], Some(ResolvedExpr::Match { arms, .. })) => arms[..arm as usize - 1]
+                .iter()
+                .filter(|a| !crate::ir::proof_steps::claim::excludes(&a.pattern, v))
+                .map(|a| match &a.pattern {
+                    ResolvedPattern::Literal(l) => {
+                        let k = Spanned::bare(ResolvedExpr::Literal(l.clone()));
+                        if let Some(ty) = v.ty() {
+                            k.set_ty(ty.clone());
+                        }
+                        Ok(k)
+                    }
+                    _ => Err("unfold: an earlier arm can also match".to_string()),
+                })
+                .collect::<Result<_, _>>()?,
+            _ => Vec::new(),
+        };
+        let unequal: Vec<Eqn> = match chosen {
+            [v] => ruled
+                .iter()
+                .map(|k| crate::ir::proof_steps::unequal(v, k))
+                .collect(),
+            _ => Vec::new(),
+        };
         if let Some(name) = self.unfolds.get(&(fn_id, arm, value_key.clone())) {
-            return Ok((name.clone(), extra));
+            return Ok((name.clone(), extra, unequal));
         }
         let def = self
             .script
@@ -1514,7 +1600,7 @@ impl Renderer<'_> {
             let n = if catch_all {
                 extra.len()
             } else {
-                term::pattern_binders(pat).len()
+                term::pattern_parts(pat).len()
             };
             let ys: Vec<Term> = (0..n).map(|i| term::var(&format!("y{i}"))).collect();
             for i in 0..n {
@@ -1544,6 +1630,13 @@ impl Renderer<'_> {
             let (premise, body) = arm_equation(subject, arms, arm, &outer, &selected)?;
             binders.push_str(&format!(" (h : {})", self.eqn(&premise)));
             names.push("h".to_string());
+            if let Some(v) = &value {
+                for (i, k) in ruled.iter().enumerate() {
+                    let e = crate::ir::proof_steps::unequal(v, k);
+                    binders.push_str(&format!(" (h_ne{i} : {})", self.eqn(&e)));
+                    names.push(format!("h_ne{i}"));
+                }
+            }
             statement = format!("{} = {}", self.expr(&call), self.expr(&body));
             let subject = term::subst(subject, &outer)?;
             // A catch-all chosen for a Bool is the branch of that literal.
@@ -1558,6 +1651,8 @@ impl Renderer<'_> {
             // A match the statement writes out is elaborated apart from the
             // definition's, so the two need not be equal by `rfl` alone.
             tactic = match arm_tactic(pat, &subject, "h")?.as_str() {
+                // Each earlier literal arm is refuted by its premise.
+                _ if !ruled.is_empty() => "rw [h]; split <;> simp_all".to_string(),
                 "subst h; rfl" => format!("subst h; first | rfl | {SAME_MATCHES}"),
                 "rw [h]; try rfl" => format!("rw [h]; all_goals first | rfl | {SAME_MATCHES}"),
                 other => other.to_string(),
@@ -1580,7 +1675,7 @@ impl Renderer<'_> {
             "have {name} : {quantified} := (by {intro}(conv => lhs; unfold {f_name}); all_goals ({tactic}))"
         ));
         self.unfolds.insert((fn_id, arm, value_key), name.clone());
-        Ok((name, extra))
+        Ok((name, extra, unequal))
     }
 }
 

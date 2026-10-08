@@ -1,8 +1,11 @@
-//! A split on a constructor: where evaluation stops at a call of a
-//! definition whose body is a `match` on a subject of a sum or list type
-//! that is not a constructor yet, the proof goes on in one case per
-//! constructor of that type, with the subject stated equal to it. The
-//! cases are the ones the `match` itself reads, so nothing is guessed.
+//! A split on a `match` subject: where evaluation stops at a call of a
+//! definition whose body is a `match` on a subject that is not a
+//! constructor or a literal yet, the proof goes on in one case per
+//! constructor of the subject's sum or list type, with the subject stated
+//! equal to it, or, where the arms are literals and a last catch-all, in one
+//! case per arm: the subject equal to each literal, then different from all
+//! of them. The cases are the ones the `match` itself reads, so nothing is
+//! guessed.
 
 use crate::ast::Type;
 use crate::ir::hir::{ResolvedCallee, ResolvedCtor, ResolvedExpr, ResolvedPattern};
@@ -32,16 +35,40 @@ fn mentions_any(t: &Term, names: &[String]) -> bool {
 }
 
 impl Env<'_> {
-    /// The constructors a `match` with these arms splits its subject into:
-    /// `[]` and `[h, ..t]` for a list pattern, every variant of the sum type
-    /// of a constructor pattern otherwise. `None` for literal or tuple
-    /// patterns, a record, or Option and Result.
+    /// The cases a `match` with these arms splits its subject into: `[]`
+    /// and `[h, ..t]` for a list pattern, every variant of the sum type of
+    /// a constructor pattern, and one per arm for Int, text or Bool
+    /// literals with a last catch-all. `None` for tuple patterns, a record,
+    /// or literals without a last catch-all.
     fn split_ctors(
         &self,
         arms: &[crate::ir::hir::ResolvedMatchArm],
         subject_ty: Option<&Type>,
     ) -> Option<Vec<(SplitCtor, Fields)>> {
+        use crate::ast::Literal;
         use crate::ir::hir::BuiltinCtor;
+        if let [lits @ .., last] = arms
+            && !lits.is_empty()
+            && crate::ir::proof_steps::claim::is_catch_all(&last.pattern)
+            && lits.iter().all(|a| {
+                matches!(
+                    &a.pattern,
+                    ResolvedPattern::Literal(
+                        Literal::Int(_) | Literal::BigInt(_) | Literal::Str(_) | Literal::Bool(_)
+                    )
+                )
+            })
+        {
+            let mut out: Vec<(SplitCtor, Fields)> = lits
+                .iter()
+                .filter_map(|a| match &a.pattern {
+                    ResolvedPattern::Literal(l) => Some((SplitCtor::Lit(l.clone()), Vec::new())),
+                    _ => None,
+                })
+                .collect();
+            out.push((SplitCtor::Other, Vec::new()));
+            return Some(out);
+        }
         let mut list = false;
         let mut sum = None;
         let mut builtin = None;
@@ -211,7 +238,7 @@ impl Env<'_> {
         let ev = self.whnf(&on);
         self.fuel = fuel;
         let ev = ev.ok()?;
-        if !ev.chain.is_empty() || super::eval::select_arm(arms, &on).is_some() {
+        if !ev.chain.is_empty() || super::eval::select_arm(arms, &on, &self.hyps).is_some() {
             return None;
         }
         Some(Stuck {
@@ -242,9 +269,27 @@ impl Env<'_> {
             term::free_vars(&e.rhs, &mut taken);
         }
         taken.extend(self.split_binders.iter().cloned());
+        let lits: Vec<Term> = st
+            .ctors
+            .iter()
+            .filter_map(|(c, _)| match c {
+                SplitCtor::Lit(l) => {
+                    let k = canon(&crate::ast::Spanned::bare(ResolvedExpr::Literal(l.clone())));
+                    if let Some(ty) = st.on.ty() {
+                        k.set_ty(ty.clone());
+                    }
+                    Some(k)
+                }
+                _ => None,
+            })
+            .collect();
         let mut cases = Vec::new();
         for (ctor, fields) in st.ctors {
             let mut binders = Vec::new();
+            // The catch-all case names one hypothesis per literal.
+            if matches!(ctor, SplitCtor::Other) {
+                binders = lits.iter().map(|_| self.fresh_hyp()).collect();
+            }
             for (base, _) in &fields {
                 let start = self.split_binders.len();
                 let name = (0..)
@@ -259,29 +304,40 @@ impl Env<'_> {
                 binders: binders.clone(),
                 proof: Proof::Refl(term::boolean(true)),
             };
-            let value = case.value();
-            if let ResolvedExpr::Ctor(_, vars) | ResolvedExpr::Call(_, vars) = &value.node {
-                for (v, (_, ty)) in vars.iter().zip(&fields) {
-                    if let Some(ty) = ty {
-                        v.set_ty(ty.clone());
-                    }
-                }
-            }
-            if let Some(ty) = st.on.ty() {
-                value.set_ty(ty.clone());
-            }
             // A hypothesis that evaluated no further before may now.
             let saved = self.split_binders.len();
             let barren = std::mem::take(&mut self.barren);
-            self.split_binders.extend(binders);
-            self.hyps
-                .push((hyp.clone(), Eqn::new(st.on.clone(), value.clone())));
-            // Each hypothesis about `st.on` is stated again about the
-            // constructor, so it still applies once evaluation has read
-            // `st.on` as it; then one stated before the split may evaluate
-            // to the other Bool, and the case cannot happen.
-            let cuts = self.restated(&st.on, &hyp, &value);
-            let before = self.hyps.len();
+            let base = self.hyps.len();
+            let cuts = match case.value() {
+                Some(value) => {
+                    if let ResolvedExpr::Ctor(_, vars) | ResolvedExpr::Call(_, vars) = &value.node {
+                        for (v, (_, ty)) in vars.iter().zip(&fields) {
+                            if let Some(ty) = ty {
+                                v.set_ty(ty.clone());
+                            }
+                        }
+                    }
+                    if let Some(ty) = st.on.ty() {
+                        value.set_ty(ty.clone());
+                    }
+                    self.split_binders.extend(binders);
+                    self.hyps
+                        .push((hyp.clone(), Eqn::new(st.on.clone(), value.clone())));
+                    // Each hypothesis about `st.on` is stated again about
+                    // the constructor, so it still applies once evaluation
+                    // has read `st.on` as it; then one stated before the
+                    // split may evaluate to the other Bool, and the case
+                    // cannot happen.
+                    self.restated(&st.on, &hyp, &value)
+                }
+                None => {
+                    for (name, k) in binders.iter().zip(&lits) {
+                        self.hyps
+                            .push((name.clone(), crate::ir::proof_steps::unequal(&st.on, k)));
+                    }
+                    Vec::new()
+                }
+            };
             for (name, fact, said, _, _) in &cuts {
                 self.hyps
                     .push((name.clone(), Eqn::new(fact.clone(), term::boolean(*said))));
@@ -338,8 +394,7 @@ impl Env<'_> {
                         }
                     })
             });
-            self.hyps.truncate(before);
-            self.hyps.pop();
+            self.hyps.truncate(base);
             self.split_binders.truncate(saved);
             self.barren = barren;
             cases.push(SplitCase {

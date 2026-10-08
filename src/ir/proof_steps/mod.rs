@@ -202,12 +202,16 @@ pub enum Proof {
         if_true: Box<Proof>,
         if_false: Box<Proof>,
     },
-    /// Case split on the constructor of `on`, the subject of the `match`
-    /// that is the body of `fn_id` at `args` (which gives `on` the type the
-    /// arms' patterns have): one case per constructor of that type, in
-    /// declaration order, `[]` before `[h, ..t]` for a list. Case `i` is
-    /// checked with hypothesis `hyp : on = C_i(binders)`, its binders fresh;
-    /// every case proves the same equation, which mentions no binder.
+    /// Case split on `on`, the subject of the `match` that is the body of
+    /// `fn_id` at `args` (which gives `on` the type the arms' patterns
+    /// have): one case per constructor of that type, in declaration order,
+    /// `[]` before `[h, ..t]` for a list, each checked with hypothesis
+    /// `hyp : on = C_i(binders)`, its binders fresh. Where the arms are
+    /// literals and a last catch-all, one case per arm instead: a literal
+    /// `k` under `hyp : on = k`, the catch-all under `(on == k) = false`
+    /// for every literal, each named by one of its binders (see
+    /// [`split_hyps`]). Every case proves the same equation, which
+    /// mentions no binder.
     Split {
         fn_id: FnId,
         args: Vec<Term>,
@@ -403,6 +407,11 @@ pub enum SplitCtor {
     Cons,
     /// A constructor of a sum type, one binder per field.
     Ctor(crate::ir::hir::ResolvedCtor),
+    /// A literal arm: the subject is the literal, no binders.
+    Lit(crate::ast::Literal),
+    /// The catch-all arm after literal arms: the subject is none of them,
+    /// one binder per literal naming that hypothesis.
+    Other,
 }
 
 /// One case of a [`Proof::Split`]: the constructor, fresh names for its
@@ -415,18 +424,52 @@ pub struct SplitCase {
 }
 
 impl SplitCase {
-    /// The constructor applied to the binders: what the case's hypothesis
-    /// says the split term is.
-    pub fn value(&self) -> Term {
+    /// The constructor applied to the binders, or the literal: what the
+    /// case's hypothesis says the split term is. `None` for the catch-all
+    /// case of a literal split.
+    pub fn value(&self) -> Option<Term> {
         use crate::ast::Spanned;
         use crate::ir::hir::ResolvedExpr;
         let vars: Vec<Term> = self.binders.iter().map(|b| term::var(b)).collect();
-        match &self.ctor {
+        Some(match &self.ctor {
             SplitCtor::Nil => term::nil(),
             SplitCtor::Cons => term::builtin("List.prepend", vars, None),
             SplitCtor::Ctor(c) => Spanned::bare(ResolvedExpr::Ctor(c.clone(), vars)),
-        }
+            SplitCtor::Lit(l) => Spanned::bare(ResolvedExpr::Literal(l.clone())),
+            SplitCtor::Other => return None,
+        })
     }
+}
+
+/// The hypotheses each case of a split on `on` is checked under: `hyp : on
+/// = value`, or for the catch-all case of a literal split, `(on == k) =
+/// false` for each literal case, named by its binders in order.
+pub fn split_hyps(on: &Term, hyp: &str, cases: &[SplitCase]) -> Vec<Vec<(String, Eqn)>> {
+    let lits: Vec<Term> = cases
+        .iter()
+        .filter(|c| matches!(c.ctor, SplitCtor::Lit(_)))
+        .filter_map(SplitCase::value)
+        .collect();
+    cases
+        .iter()
+        .map(|c| match c.value() {
+            Some(v) => vec![(hyp.to_string(), Eqn::new(on.clone(), v))],
+            None => c
+                .binders
+                .iter()
+                .zip(&lits)
+                .map(|(n, k)| (n.clone(), unequal(on, k)))
+                .collect(),
+        })
+        .collect()
+}
+
+/// `(on == k) = false`.
+pub fn unequal(on: &Term, k: &Term) -> Eqn {
+    Eqn::new(
+        term::binop(crate::ast::BinOp::Eq, on.clone(), k.clone()),
+        term::boolean(false),
+    )
 }
 
 /// The obligation a step script closes: a law's claim under its givens.

@@ -448,6 +448,9 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
                     super::SplitCtor::Nil => "nil".to_string(),
                     super::SplitCtor::Cons => "cons".to_string(),
                     super::SplitCtor::Ctor(c) => names.ctor_name(c),
+                    // The kernel reads the literal off the arm.
+                    super::SplitCtor::Lit(_) => "lit".to_string(),
+                    super::SplitCtor::Other => "else".to_string(),
                 };
                 s.push_str(&format!(
                     " (case {ctor} ({}) {})",
