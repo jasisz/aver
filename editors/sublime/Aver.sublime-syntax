@@ -89,9 +89,9 @@ contexts:
         2: entity.name.function.aver
 
   keywords:
-    - match: '\b(depends|exposes|module|opaque|record|type)\b'
+    - match: '\b(depends|exposes|module|opaque|record|rules|type)\b'
       scope: keyword.declaration.aver
-    - match: '\b(induction|decision|because|effects|verify|given|holds|match|trace|using|when|law|fn)\b'
+    - match: '\b(induction|decision|because|effects|verify|given|holds|match|trace|using|when|law|by|fn)\b'
       scope: keyword.control.aver
     - match: '^(\s*)(intent|reason|date|chosen|rejected|impacts|author|needs)(:)'
       captures:

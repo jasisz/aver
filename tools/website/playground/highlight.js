@@ -6,10 +6,10 @@ function esc(s) {
 }
 
 const KEYWORDS = new Set([
-    "type", "record", "module", "depends", "exposes", "opaque", "fn",
-    "match", "verify", "decision", "law", "given", "when", "because",
-    "using", "induction", "holds", "effects", "trace", "intent", "reason",
-    "date", "chosen", "rejected", "impacts", "author",
+    "type", "record", "module", "depends", "exposes", "opaque", "rules",
+    "fn", "match", "verify", "decision", "law", "given", "when",
+    "because", "using", "induction", "by", "holds", "effects", "trace",
+    "intent", "reason", "date", "chosen", "rejected", "impacts", "author",
 ]);
 
 const CONSTANTS = new Set(["true", "false", "Unit"]);

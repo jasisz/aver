@@ -1,0 +1,64 @@
+module Shuffles
+    intent =
+        "Stack shuffles that read a fixed window of the item list, and laws about them"
+        "guarded by the list being at least that long. The automatic proof steps do not open"
+        "the list, so the laws name a project rule with `by`; the kernel checks what it writes."
+    exposes [shuffled]
+    effects []
+
+fn itemAt(items: List<List<Int>>, n: Int) -> List<Int>
+    ? "The nth item from the top, or an empty item past the end."
+    match items
+        [] -> []
+        [head, ..tail] -> hereOrDeeper(head, tail, n)
+
+verify itemAt
+    itemAt([[1], [2], [3]], 0) => [1]
+    itemAt([[1], [2], [3]], 2) => [3]
+    itemAt([[1]], 3) => []
+
+fn hereOrDeeper(head: List<Int>, tail: List<List<Int>>, n: Int) -> List<Int>
+    ? "Count down one position at a time."
+    match n <= 0
+        true -> head
+        false -> itemAt(tail, n - 1)
+
+verify hereOrDeeper
+    hereOrDeeper([1], [[2]], 0) => [1]
+    hereOrDeeper([1], [[2]], 1) => [2]
+
+fn shuffled(code: Int, items: List<List<Int>>) -> List<List<Int>>
+    ? "What three shuffling opcodes make of the items they reach, top first."
+    top = itemAt(items, 0)
+    second = itemAt(items, 1)
+    third = itemAt(items, 2)
+    fourth = itemAt(items, 3)
+    match code
+        114 -> [third, fourth, top, second]
+        123 -> [third, top, second]
+        124 -> [second, top]
+        _ -> items
+
+verify shuffled
+    shuffled(124, [[1], [2]]) => [[2], [1]]
+    shuffled(123, [[1], [2], [3]]) => [[3], [1], [2]]
+    shuffled(114, [[1], [2], [3], [4]]) => [[3], [4], [1], [2]]
+    shuffled(9, [[1]]) => [[1]]
+
+verify shuffled law swapTwiceIsTheTopPair
+    given items: List<List<Int>> = [[[1], [2]], [[1], [2], [3]], [[0], [7], [8], [9]]]
+    when List.len(items) >= 2
+    by Rules.Stack.openByLength
+    shuffled(124, shuffled(124, items)) => List.take(items, 2)
+
+verify shuffled law rotThreeTimesIsTheTopThree
+    given items: List<List<Int>> = [[[1], [2], [3]], [[1], [2], [3], [4]]]
+    when List.len(items) >= 3
+    by Rules.Stack.openByLength
+    shuffled(123, shuffled(123, shuffled(123, items))) => List.take(items, 3)
+
+verify shuffled law twoSwapTwiceIsTheTopFour
+    given items: List<List<Int>> = [[[1], [2], [3], [4]], [[1], [2], [3], [4], [5]]]
+    when List.len(items) >= 4
+    by Rules.Stack.openByLength
+    shuffled(114, shuffled(114, items)) => List.take(items, 4)

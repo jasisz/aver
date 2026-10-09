@@ -235,6 +235,7 @@ fn by_list_induction(
             consts: Vec::new(),
             laws: uses.iter().map(Fact::law_ref).collect(),
             sums: Vec::new(),
+            rule: None,
             proof: Proof::InductList {
                 var: "a".into(),
                 lhs,
@@ -1222,6 +1223,7 @@ fn map_fact(
             consts: Vec::new(),
             laws: Vec::new(),
             sums: Vec::new(),
+            rule: None,
             proof,
         },
     }
@@ -1341,6 +1343,7 @@ fn vector_fact(
             consts: Vec::new(),
             laws: uses.iter().map(Fact::law_ref).collect(),
             sums: Vec::new(),
+            rule: None,
             proof,
         },
     }

@@ -5,7 +5,7 @@ use std::time::SystemTime;
 use tower_lsp_server::ls_types::Uri;
 
 use aver::ast::{FnDef, TopLevel, TypeDef};
-use aver::source::{find_module_file, resolve_standard_module_source};
+use aver::source::{find_module_file, resolve_kernel_api_source, resolve_standard_module_source};
 
 use crate::completion;
 
@@ -97,6 +97,14 @@ pub fn resolve_dependencies(source: &str, base_dir: &str) -> Vec<ResolvedModule>
                 path,
                 source: mod_source,
                 items: mod_items,
+            });
+        } else if let Some(module) = resolve_kernel_api_source(dep_name) {
+            let items = completion::parse_items(&module.source);
+            modules.push(ResolvedModule {
+                name: dep_name.clone(),
+                path: module.path,
+                source: module.source,
+                items,
             });
         }
     }

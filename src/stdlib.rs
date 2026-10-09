@@ -92,6 +92,47 @@ pub(crate) fn find(name: &str) -> Option<EmbeddedModule> {
 
 /// Every module name [`find`] resolves, in one list so a reader can see the
 /// shipped set without reading the match arm by arm.
+/// The proof kernel's modules a project's proof rules build on
+/// (`rules [...]` modules, see `docs/language.md`), and the untrusted helper
+/// library for them. They resolve only when the project has no file of that
+/// name, so the kernel's own tools, which read them from
+/// `tools/proof-kernel`, see their files. `Kernel.Term`, `Kernel.Proof` and
+/// `Kernel.Lib` are the public surface; the others are what those, and the
+/// compiler's rule runner (`Kernel.Wire`), need.
+pub(crate) fn find_kernel_api(name: &str) -> Option<EmbeddedModule> {
+    match name {
+        "Kernel.Term" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/kernel/term.av",
+            source: include_str!("../tools/proof-kernel/kernel/term.av"),
+        }),
+        "Kernel.Proof" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/kernel/proof.av",
+            source: include_str!("../tools/proof-kernel/kernel/proof.av"),
+        }),
+        "Kernel.Subst" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/kernel/subst.av",
+            source: include_str!("../tools/proof-kernel/kernel/subst.av"),
+        }),
+        "Kernel.Sexp" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/kernel/sexp.av",
+            source: include_str!("../tools/proof-kernel/kernel/sexp.av"),
+        }),
+        "Kernel.Decode" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/kernel/decode.av",
+            source: include_str!("../tools/proof-kernel/kernel/decode.av"),
+        }),
+        "Kernel.Lib" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/kernel/lib.av",
+            source: include_str!("../tools/proof-kernel/lib/lib.av"),
+        }),
+        "Kernel.Wire" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/kernel/wire.av",
+            source: include_str!("../tools/proof-kernel/lib/wire.av"),
+        }),
+        _ => None,
+    }
+}
+
 pub(crate) const EMBEDDED_MODULES: &[&str] = &[
     "Bytes",
     "Crypto.Digest32",

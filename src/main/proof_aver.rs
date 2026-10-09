@@ -60,8 +60,15 @@ pub(super) fn run(
     let mut obligation_cites: BTreeMap<String, Vec<String>> = BTreeMap::new();
     // Builtin facts that would rewrite where the producer stopped, by law.
     let mut hints: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // The laws a project rule proved, and how a report names that proof.
+    let mut by_rule: BTreeMap<String, String> = BTreeMap::new();
     for theorem in &ctx.proof_ir.law_theorems {
         let key = law_key(&ctx.symbol_table, theorem);
+        if let Some(script) = &theorem.steps
+            && let Some(rule) = &script.rule
+        {
+            by_rule.insert(key.clone(), rule.describe(script.proof.size()));
+        }
         if !theorem.steps_hints.is_empty() {
             hints.insert(key.clone(), theorem.steps_hints.clone());
         }
@@ -254,7 +261,10 @@ pub(super) fn run(
     } else {
         for (key, verdict) in &verdicts {
             let line = match verdict {
-                Verdict::Steps => "closed by steps".to_string(),
+                Verdict::Steps => match by_rule.get(key) {
+                    Some(rule) => format!("closed by steps ({rule})"),
+                    None => "closed by steps".to_string(),
+                },
                 Verdict::Open(None) => "not closed by this backend".to_string(),
                 Verdict::Open(Some(why)) => format!("not closed by this backend (steps: {why})"),
                 Verdict::Refused(why) => format!("not closed by this backend (kernel: {why})"),

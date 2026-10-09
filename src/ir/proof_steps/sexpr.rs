@@ -5,7 +5,8 @@
 //! to be the format's own documentation:
 //!
 //! ```text
-//! script  := (steps VERSION (obligation KEY (OGIVEN…) PREMISE TERM TERM)
+//! script  := [; proof by RULE sha256:HEX, N steps]   ; the rule that wrote it, for audit only
+//!            (steps VERSION (obligation KEY (OGIVEN…) PREMISE TERM TERM)
 //!                    (defs (def NAME (PARAM…) ((NAME TERM)…) TERM [bool])…)
 //!                    (consts (const NAME TERM)…)
 //!                    (laws (law KEY (GIVEN…) PREMISE TERM TERM)…
@@ -651,8 +652,18 @@ pub fn script(s: &Script, names: &dyn Names) -> Result<String, String> {
             None => g.clone(),
         })
         .collect();
+    // Which rule wrote the proof: a comment, which no checker reads.
+    let provenance = match &s.rule {
+        Some(rule) => format!(
+            "; proof by {} sha256:{}, {} steps\n",
+            rule.name,
+            rule.hash,
+            s.proof.size()
+        ),
+        None => String::new(),
+    };
     let mut out = format!(
-        "(steps {FORMAT_VERSION}\n (obligation {} ({}) {} {} {})\n (defs",
+        "{provenance}(steps {FORMAT_VERSION}\n (obligation {} ({}) {} {} {})\n (defs",
         o.key,
         givens.join(" "),
         premise(&o.premise, names)?,

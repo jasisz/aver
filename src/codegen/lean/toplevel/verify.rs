@@ -630,6 +630,7 @@ fn emit_verify_trace_block_proofs(
         because: Vec::new(),
         using: None,
         induction: None,
+        by_rule: None,
         sample_guards: Vec::new(),
     };
 
@@ -1115,6 +1116,7 @@ fn emit_verify_law_block(
             .collect(),
         using: law.using.clone(),
         induction: law.induction.clone(),
+        by_rule: law.by_rule.clone(),
         lhs: law_lhs.clone(),
         rhs: law_rhs.clone(),
         sample_guards: law.sample_guards.clone(),

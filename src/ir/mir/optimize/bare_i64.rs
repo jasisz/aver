@@ -2400,6 +2400,7 @@ mod tests {
             symbol_table: symbols,
             program_shape: None,
             scope: None,
+            rules_root: None,
         };
         crate::codegen::proof_lower::carrier_interval_table(&inputs)
     }
@@ -3655,6 +3656,7 @@ fn main() -> Int
             symbol_table: &result.symbol_table,
             program_shape: None,
             scope: None,
+            rules_root: None,
         };
         crate::codegen::proof_lower::field_carrier_interval_table(&inputs)
     }

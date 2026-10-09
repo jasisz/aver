@@ -327,9 +327,18 @@ pub fn emit_verify_law_forall_auto_proof(
         None
     } else {
         law_steps_for(ctx, &vb.fn_name, &law.name).and_then(|script| {
-            super::proof_steps::render(&script, ctx)
-                .ok()
-                .map(|r| (script.obligation.key.clone(), r))
+            match super::proof_steps::render(&script, ctx) {
+                Ok(r) => Some((script.obligation.key.clone(), r)),
+                Err(why) => {
+                    if std::env::var_os("AVER_STEPS_DEBUG").is_some() {
+                        eprintln!(
+                            "steps: {}: not rendered in Lean: {why}",
+                            script.obligation.key
+                        );
+                    }
+                    None
+                }
+            }
         })
     };
     // A literal bit mask (`Bits.and(x, 128)`) is a closed form no portfolio

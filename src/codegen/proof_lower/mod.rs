@@ -127,6 +127,9 @@ pub struct ProofLowerInputs<'a> {
     /// The module whose file is being emitted, when the caller runs under a
     /// dependency scope: a bare call name there is that module's own fn.
     pub scope: Option<String>,
+    /// The project's module root, where a law's `by Module.rule` finds its
+    /// rules module; `None` leaves such a law open.
+    pub rules_root: Option<&'a str>,
 }
 
 impl<'a> ProofLowerInputs<'a> {
@@ -143,6 +146,7 @@ impl<'a> ProofLowerInputs<'a> {
             symbol_table: &ctx.symbol_table,
             program_shape: ctx.program_shape.as_ref(),
             scope: ctx.active_module_scope(),
+            rules_root: None,
         }
     }
 
@@ -2566,6 +2570,7 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             function_cone,
             using: law.using.clone(),
             induction_given: law.induction.clone(),
+            by_rule: law.by_rule.clone(),
             steps: None,
             steps_refusal: None,
             steps_hints: Vec::new(),

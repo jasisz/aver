@@ -27,6 +27,9 @@ pub fn collect_module_effects_warnings_in(
     // modules don't need a boundary.
     let Some((declared_opt, declared_line, module_name, module_line)) =
         items.iter().find_map(|i| match i {
+            // A rules module is pure by definition; the type checker
+            // refuses any effect in it.
+            TopLevel::Module(m) if m.rules.is_some() => None,
             TopLevel::Module(m) => {
                 Some((m.effects.clone(), m.effects_line, m.name.clone(), m.line))
             }

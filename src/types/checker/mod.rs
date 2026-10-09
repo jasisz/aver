@@ -32,6 +32,7 @@ mod modules;
 pub mod oracle_subtypes;
 mod process_imports;
 pub mod proof_trust_header;
+pub(crate) mod rules_module;
 
 #[cfg(test)]
 mod tests;
@@ -382,6 +383,7 @@ fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCh
             .entry(k.clone())
             .or_insert_with(|| (sig.params.clone(), sig.ret.clone(), sig.effects.clone()));
     }
+    rules_module::check_rules_module(items, &fn_sigs, &mut checker.errors);
 
     check_capability_effect_shorthand(items, &checker.capabilities, &mut checker.errors);
     check_bare_effect_names(items, &checker.capabilities, &mut checker.errors);

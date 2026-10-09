@@ -1,0 +1,294 @@
+module Wire
+    intent =
+        "How a proof rule meets the compiler, imported as Kernel.Wire: the goal arrives as step data"
+        "(the grammar at the top of src/ir/proof_steps/sexpr.rs, with a placeholder proof) and the rule's proof"
+        "leaves in the same grammar. The compiler reads the proof back and hands the whole script to the kernel."
+        "Not trusted: a goal read wrongly or a proof written wrongly only makes the script fail to check."
+    exposes [goal, proofText, termText, answer]
+    depends [Kernel.Term, Kernel.Proof, Kernel.Sexp, Kernel.Decode]
+    effects []
+
+fn goal(text: String) -> Result<Goal, String>
+    ? "The goal a step script states, its proof left out."
+    s = Kernel.Decode.script(Kernel.Sexp.readAll(text)?)?
+    Result.Ok(Goal(obligation = s.obligation, finite = s.finite, lists = s.lists, ints = s.ints, defs = s.defs, consts = s.consts, sums = s.sums, laws = s.laws, facts = s.facts))
+
+verify goal
+    goal("(steps 13 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (laws) (proof (refl (i 1))))") => Result.Ok(Goal(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = []))
+    goal("(a") => Result.Err("unexpected end of data")
+
+fn answer(r: Result<Proof, String>) -> String
+    ? "What the compiler reads back from a rule: `proof` and the proof, or `refused` and the rule's reason, each on the line after the word."
+    match r
+        Result.Ok(p) -> "proof\n{proofText(p)}"
+        Result.Err(why) -> "refused\n{why}"
+
+verify answer
+    answer(Result.Ok(Proof.PHyp("when"))) => "proof\n(hyp when)"
+    answer(Result.Err("no")) => "refused\nno"
+
+fn quote(s: String) -> String
+    ? "A text in quotes; a quote, a backslash and a line break are escaped."
+    "\"{escaped(String.chars(s), "")}\""
+
+verify quote
+    quote("a\"b") => "\"a\\\"b\""
+
+fn escaped(cs: List<String>, acc: String) -> String
+    ? "The characters with quotes, backslashes and line breaks escaped."
+    match cs
+        [] -> acc
+        [c, ..rest] -> escaped(rest, acc + escapeOne(c))
+
+verify escaped
+    escaped(["a", "\n"], "") => "a\\n"
+
+fn escapeOne(c: String) -> String
+    ? "One character, escaped when it has to be."
+    match c
+        "\"" -> "\\\""
+        "\\" -> "\\\\"
+        "\n" -> "\\n"
+        _ -> c
+
+verify escapeOne
+    escapeOne("x") => "x"
+    escapeOne("\\") => "\\\\"
+
+fn spaced(xs: List<String>) -> String
+    ? "Items separated by single spaces."
+    String.join(xs, " ")
+
+verify spaced
+    spaced(["a", "b"]) => "a b"
+
+fn headed(head: String, xs: List<String>) -> String
+    ? "(HEAD X…), or (HEAD) when there is nothing after the head."
+    match xs
+        [] -> "({head})"
+        _ -> "({head} {spaced(xs)})"
+
+verify headed
+    headed("list", []) => "(list)"
+    headed("call f", ["(i 1)"]) => "(call f (i 1))"
+
+fn termText(t: Term) -> String
+    ? "One term in the step grammar."
+    match t
+        Term.TInt(i) -> "(i {i})"
+        Term.TBool(b) -> "(b {b})"
+        Term.TStr(s) -> "(s {quote(s)})"
+        Term.TUnit -> "(unit)"
+        Term.TVar(n) -> "(v {n})"
+        Term.THole -> "(hole)"
+        Term.TGet(o, f) -> "(get {termText(o)} {f})"
+        Term.TCall(f, xs) -> headed("call {f}", termTexts(xs))
+        Term.TBi(f, xs) -> headed("bi {f}", termTexts(xs))
+        Term.TCtor(c, xs) -> headed("ctor {c}", termTexts(xs))
+        Term.TOp(o, a, b) -> "(op {o} {termText(a)} {termText(b)})"
+        Term.TNeg(a) -> "(neg {termText(a)})"
+        Term.TMatch(s, arms) -> headed("match {termText(s)}", armTexts(arms))
+        Term.TParts(xs) -> headed("str", termTexts(xs))
+        Term.TList(xs) -> headed("list", termTexts(xs))
+        Term.TTuple(xs) -> headed("tuple", termTexts(xs))
+        Term.TRec(ty, fs) -> headed("rec {ty}", fieldTexts(fs))
+        Term.TUpd(ty, b, fs) -> headed("upd {ty} {termText(b)}", fieldTexts(fs))
+
+verify termText
+    termText(Term.TOp("+", Term.TVar("x"), Term.TInt(0 - 2))) => "(op + (v x) (i -2))"
+    termText(Term.TCall("f", [])) => "(call f)"
+    termText(Term.TStr("a")) => "(s \"a\")"
+    termText(Term.TMatch(Term.TVar("x"), [Arm(pattern = Pat.PCons("h", "t"), body = Term.TVar("h"))])) => "(match (v x) (arm (pcons h t) (v h)))"
+    termText(Term.TRec("P", [Field(name = "a", value = Term.TUnit)])) => "(rec P (a (unit)))"
+
+fn termTexts(xs: List<Term>) -> List<String>
+    ? "Each term in the step grammar."
+    match xs
+        [] -> []
+        [x, ..rest] -> List.prepend(termText(x), termTexts(rest))
+
+verify termTexts
+    termTexts([Term.TUnit]) => ["(unit)"]
+
+fn fieldTexts(fs: List<Field>) -> List<String>
+    ? "(FIELD TERM) for each field."
+    match fs
+        [] -> []
+        [f, ..rest] -> List.prepend("({f.name} {termText(f.value)})", fieldTexts(rest))
+
+verify fieldTexts
+    fieldTexts([]) => []
+
+fn armTexts(arms: List<Arm>) -> List<String>
+    ? "(arm PAT TERM) for each arm."
+    match arms
+        [] -> []
+        [a, ..rest] -> List.prepend("(arm {patText(a.pattern)} {termText(a.body)})", armTexts(rest))
+
+verify armTexts
+    armTexts([Arm(pattern = Pat.PWild, body = Term.TUnit)]) => ["(arm (pw) (unit))"]
+
+fn patText(p: Pat) -> String
+    ? "One pattern in the step grammar."
+    match p
+        Pat.PWild -> "(pw)"
+        Pat.PVar(n) -> "(pv {n})"
+        Pat.PLit(t) -> "(pl {termText(t)})"
+        Pat.PNil -> "(pnil)"
+        Pat.PCons(h, t) -> "(pcons {h} {t})"
+        Pat.PTuple(ps) -> "(pt {spaced(patTexts(ps))})"
+        Pat.PCtor(c, ns) -> headed("pc {c}", ns)
+
+verify patText
+    patText(Pat.PCtor("Shape.Dot", [])) => "(pc Shape.Dot)"
+    patText(Pat.PTuple([Pat.PNil, Pat.PWild])) => "(pt (pnil) (pw))"
+
+fn patTexts(ps: List<Pat>) -> List<String>
+    ? "Each pattern."
+    match ps
+        [] -> []
+        [p, ..rest] -> List.prepend(patText(p), patTexts(rest))
+
+verify patTexts
+    patTexts([]) => []
+
+fn bindingsText(bs: List<Binding>) -> String
+    ? "((NAME TERM)…)"
+    "({spaced(bindingTexts(bs))})"
+
+verify bindingsText
+    bindingsText([Kernel.Term.bind("x", Term.TUnit)]) => "((x (unit)))"
+    bindingsText([]) => "()"
+
+fn bindingTexts(bs: List<Binding>) -> List<String>
+    ? "(NAME TERM) for each binding."
+    match bs
+        [] -> []
+        [b, ..rest] -> List.prepend("({b.name} {termText(b.value)})", bindingTexts(rest))
+
+verify bindingTexts
+    bindingTexts([]) => []
+
+fn proofText(p: Proof) -> String
+    ? "One proof in the step grammar."
+    match p
+        Proof.PRefl(t) -> "(refl {termText(t)})"
+        Proof.PSymm(q) -> "(symm {proofText(q)})"
+        Proof.PTrans(ts, ps) -> headed("trans ({spaced(termTexts(ts))})", proofTexts(ps))
+        Proof.PCongr(c, q) -> "(congr {termText(c)} {proofText(q)})"
+        Proof.PUnfold(f, k, xs, ys, pre) -> headed("unfold {f} {k} ({spaced(termTexts(xs))}) ({spaced(termTexts(ys))})", proofTexts(pre))
+        Proof.PConst(n) -> "(const {n})"
+        Proof.PArm(k, ys, t, q) -> "(arm {k} ({spaced(termTexts(ys))}) {termText(t)} {proofText(q)})"
+        Proof.PProj(t) -> "(proj {termText(t)})"
+        Proof.PCell(t) -> "(cell {termText(t)})"
+        Proof.PHyp(h) -> "(hyp {h})"
+        Proof.PRule(id, bs, ps) -> headed("rule {id} {bindingsText(bs)}", proofTexts(ps))
+        Proof.PLaw(k, bs, ps) -> headed("law {k} {bindingsText(bs)}", proofTexts(ps))
+        Proof.PCompute(a, b) -> "(compute {termText(a)} {termText(b)})"
+        Proof.PCases(on, h, t, f) -> "(cases {termText(on)} {h} {proofText(t)} {proofText(f)})"
+        Proof.PSplit(f, xs, on, h, cs) -> headed("split {f} ({spaced(termTexts(xs))}) {termText(on)} {h}", splitCaseTexts(cs))
+        Proof.PHave(n, fact, q, body) -> "(have {n} {termText(fact)} {proofText(q)} {proofText(body)})"
+        Proof.PEnum(v, l, r, cs) -> headed("enum {v} {termText(l)} {termText(r)}", proofTexts(cs))
+        Proof.PAbsurd(q, l, r) -> "(absurd {proofText(q)} {termText(l)} {termText(r)})"
+        Proof.PInduct(f, xs, l, r, carried, cs) -> headed("induct {f} ({spaced(termTexts(xs))}) {termText(l)} {termText(r)}{carryText(carried)}", inductCaseTexts(cs))
+        Proof.PListInduct(v, l, r, n, h, t, general, ihs, c) -> "(listinduct {v} {termText(l)} {termText(r)} {proofText(n)} ({h} {t}) ({spaced(general)}) ({spaced(ihAtTexts(ihs))}) {proofText(c)})"
+        Proof.PRing(l, r) -> "(ring {termText(l)} {termText(r)})"
+        Proof.PLinear(g, v, hs, ws) -> "(linear {termText(g)} {v} ({spaced(hs)}) ({spaced(intTexts(ws))}))"
+
+verify proofText
+    proofText(Proof.PTrans([Term.TInt(1), Term.TInt(1)], [Proof.PRefl(Term.TInt(1))])) => "(trans ((i 1) (i 1)) (refl (i 1)))"
+    proofText(Proof.PUnfold("f", 2, [Term.TVar("x")], [], [])) => "(unfold f 2 ((v x)) ())"
+    proofText(Proof.PRule("list.len.nil", [], [])) => "(rule list.len.nil ())"
+    proofText(Proof.PSplit("f", [Term.TVar("x")], Term.TVar("x"), "h", [SplitCase(ctor = "nil", binders = [], proof = Proof.PHyp("h"))])) => "(split f ((v x)) (v x) h (case nil () (hyp h)))"
+    proofText(Proof.PLinear(Term.TVar("g"), true, ["h"], [1, 2])) => "(linear (v g) true (h) (1 2))"
+
+fn proofTexts(ps: List<Proof>) -> List<String>
+    ? "Each proof."
+    match ps
+        [] -> []
+        [p, ..rest] -> List.prepend(proofText(p), proofTexts(rest))
+
+verify proofTexts
+    proofTexts([]) => []
+
+fn intTexts(ws: List<Int>) -> List<String>
+    ? "Each integer as an atom."
+    match ws
+        [] -> []
+        [w, ..rest] -> List.prepend("{w}", intTexts(rest))
+
+verify intTexts
+    intTexts([0 - 1]) => ["-1"]
+
+fn splitCaseTexts(cs: List<SplitCase>) -> List<String>
+    ? "(case CTOR (NAME…) PROOF) for each case."
+    match cs
+        [] -> []
+        [c, ..rest] -> List.prepend("(case {c.ctor} ({spaced(c.binders)}) {proofText(c.proof)})", splitCaseTexts(rest))
+
+verify splitCaseTexts
+    splitCaseTexts([]) => []
+
+fn carryText(ns: List<String>) -> String
+    ? "` (carry NAME…)` when an induction carries hypotheses, nothing otherwise."
+    match ns
+        [] -> ""
+        _ -> " (carry {spaced(ns)})"
+
+verify carryText
+    carryText([]) => ""
+    carryText(["h"]) => " (carry h)"
+
+fn inductCaseTexts(cs: List<Case>) -> List<String>
+    ? "(case (NAME…) (IH…) ((K IH (TERM…) (PROOF…))…) PROOF) for each case."
+    match cs
+        [] -> []
+        [c, ..rest] -> List.prepend("(case ({spaced(c.binders)}) ({spaced(ihTexts(c.ihs, c.carry))}) ({spaced(moreTexts(c.more))}) {proofText(c.proof)})", inductCaseTexts(rest))
+
+verify inductCaseTexts
+    inductCaseTexts([]) => []
+
+fn ihTexts(ihs: List<String>, carry: List<List<Proof>>) -> List<String>
+    ? "Each hypothesis name, with the proofs of its carried hypotheses when it has any."
+    match ihs
+        [] -> []
+        [h, ..rest] -> match carry
+            [] -> List.prepend(h, ihTexts(rest, []))
+            [ps, ..more] -> List.prepend(ihText(h, ps), ihTexts(rest, more))
+
+verify ihTexts
+    ihTexts(["a", "b"], [[], [Proof.PHyp("c")]]) => ["a", "(b (hyp c))"]
+
+fn ihText(h: String, ps: List<Proof>) -> String
+    ? "NAME, or (NAME PROOF…)."
+    match ps
+        [] -> h
+        _ -> "({h} {spaced(proofTexts(ps))})"
+
+verify ihText
+    ihText("a", []) => "a"
+
+fn moreTexts(ms: List<More>) -> List<String>
+    ? "(K IH (TERM…) (PROOF…)) for each further hypothesis."
+    match ms
+        [] -> []
+        [m, ..rest] -> List.prepend("({m.call} {ihAtBody(m.ih)})", moreTexts(rest))
+
+verify moreTexts
+    moreTexts([]) => []
+
+fn ihAtTexts(ihs: List<IhAt>) -> List<String>
+    ? "(IH (TERM…) (PROOF…)) for each hypothesis."
+    match ihs
+        [] -> []
+        [ih, ..rest] -> List.prepend("({ihAtBody(ih)})", ihAtTexts(rest))
+
+verify ihAtTexts
+    ihAtTexts([IhAt(name = "ih", at = [], carry = [])]) => ["(ih () ())"]
+
+fn ihAtBody(ih: IhAt) -> String
+    ? "IH (TERM…) (PROOF…), without the outer parentheses."
+    "{ih.name} ({spaced(termTexts(ih.at))}) ({spaced(proofTexts(ih.carry))})"
+
+verify ihAtBody
+    ihAtBody(IhAt(name = "ih", at = [Term.TUnit], carry = [])) => "ih ((unit)) ()"

@@ -203,6 +203,16 @@ pub fn resolve_standard_module_source(name: &str) -> Option<ModuleSource> {
     })
 }
 
+/// The proof kernel's modules that proof rules build on (`Kernel.Term`,
+/// `Kernel.Proof`, `Kernel.Lib`, …), embedded in the compiler. They resolve
+/// only where the project has no file of that name.
+pub fn resolve_kernel_api_source(name: &str) -> Option<ModuleSource> {
+    crate::stdlib::find_kernel_api(name).map(|module| ModuleSource {
+        path: PathBuf::from(module.virtual_path),
+        source: module.source.to_string(),
+    })
+}
+
 /// Project file that [`find_module_file`] would resolve for `name`, present
 /// even though the embedded standard library reserves the name. `Some` means
 /// module resolution silently ignores the on-disk file.
@@ -307,7 +317,9 @@ pub fn resolve_module_source(
     }
 
     let Some(path) = find_module_file(name, module_root) else {
-        return Ok(None);
+        // The proof kernel's modules for proof rules, when the project has
+        // no file of that name (see `crate::stdlib::find_kernel_api`).
+        return Ok(resolve_kernel_api_source(name));
     };
     let source = std::fs::read_to_string(&path)
         .map_err(|e| format!("Cannot read '{}': {}", path.display(), e))?;

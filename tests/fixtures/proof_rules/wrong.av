@@ -1,0 +1,51 @@
+module Wrong
+    intent =
+        "Laws a rule must not close: a false law the rule refuses, a rule whose proof the kernel"
+        "refuses, and a rule that never returns."
+    exposes [swapped]
+    effects []
+
+fn itemAt(items: List<List<Int>>, n: Int) -> List<Int>
+    ? "The nth item from the top, or an empty item past the end."
+    match items
+        [] -> []
+        [head, ..tail] -> hereOrDeeper(head, tail, n)
+
+verify itemAt
+    itemAt([[1], [2]], 1) => [2]
+    itemAt([], 0) => []
+
+fn hereOrDeeper(head: List<Int>, tail: List<List<Int>>, n: Int) -> List<Int>
+    ? "Count down one position at a time."
+    match n <= 0
+        true -> head
+        false -> itemAt(tail, n - 1)
+
+verify hereOrDeeper
+    hereOrDeeper([1], [[2]], 0) => [1]
+    hereOrDeeper([1], [[2]], 1) => [2]
+
+fn swapped(items: List<List<Int>>) -> List<List<Int>>
+    ? "The top two items, swapped."
+    [itemAt(items, 1), itemAt(items, 0)]
+
+verify swapped
+    swapped([[1], [2]]) => [[2], [1]]
+
+verify swapped law swapOnceIsTheTopPair
+    given items: List<List<Int>> = [[[1], [1]], [[2], [2], [3]]]
+    when List.len(items) >= 2
+    by Rules.Stack.openByLength
+    swapped(items) => List.take(items, 2)
+
+verify swapped law swapIsTheSwap
+    given items: List<List<Int>> = [[[1], [2]], [[2], [2], [3]]]
+    when List.len(items) >= 2
+    by Rules.Broken.claimsTheWhen
+    swapped(items) => swapped(items)
+
+verify swapped law swapAgain
+    given items: List<List<Int>> = [[[1], [2]]]
+    when List.len(items) >= 2
+    by Rules.Broken.spins
+    swapped(items) => swapped(items)
