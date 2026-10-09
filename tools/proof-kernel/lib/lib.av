@@ -8,7 +8,7 @@ module Lib
         "match arms are counted from 1; a chain of n steps lists n + 1 terms;"
         "a computation step is written only between literals; a list split replaces the split variable"
         "in the claim and in every hypothesis, the `when` among them."
-    exposes [Rw, Known, Scope, scope, assume, refl, isRefl, chain, trans, evaluate, bothSides, whenName, whenOf, whenHolds, absurdByWhen, whenRefutes, substitute, unfold, selectArm, letBindings, compute, fresh, cons, readGoal, writeAnswer]
+    exposes [Rw, Known, Scope, scope, assume, refl, isRefl, chain, trans, evaluate, bothSides, whenName, whenOf, whenHolds, absurdByWhen, whenRefutes, substitute, unfold, selectArm, letBindings, compute, fresh, taken, cons, readGoal, writeAnswer]
     depends [Kernel.Term, Kernel.Proof, Kernel.Subst, Kernel.Wire]
     effects []
 
@@ -485,25 +485,54 @@ fn patternBinds(p: Pat, parts: List<Term>) -> List<Binding>
 verify patternBinds
     patternBinds(Pat.PCons("h", "t"), [Term.TInt(1), Term.TList([])]) => [Kernel.Term.bind("h", Term.TInt(1)), Kernel.Term.bind("t", Term.TList([]))]
 
-fn fresh(base: String, taken: List<String>) -> String
-    ? "base, or base followed by the first number that makes a name not in taken: a hypothesis or binder name must not clash with one in scope."
-    match List.contains(taken, base)
+fn fresh(base: String, used: List<String>) -> String
+    ? "base, or base followed by the first number that makes a name not in used (often taken(goal)): a hypothesis or binder name must not clash with one in scope."
+    match List.contains(used, base)
         false -> base
-        true -> freshFrom(base, taken, 1)
+        true -> freshFrom(base, used, 1)
 
 verify fresh
     fresh("h", []) => "h"
     fresh("h", ["h", "h1"]) => "h2"
 
-fn freshFrom(base: String, taken: List<String>, k: Int) -> String
-    ? "The first base followed by a number from k on not in taken."
+fn freshFrom(base: String, used: List<String>, k: Int) -> String
+    ? "The first base followed by a number from k on not in used."
     name = "{base}{k}"
-    match List.contains(taken, name)
+    match List.contains(used, name)
         false -> name
-        true -> freshFrom(base, taken, k + 1)
+        true -> freshFrom(base, used, k + 1)
 
 verify freshFrom
     freshFrom("h", [], 1) => "h1"
+
+fn taken(goal: Goal) -> List<String>
+    ? "Every name a goal already uses, for fresh to avoid: the givens, the variables of the claim and of the `when`, the hypothesis `when` itself, the module-level bindings and the list variables."
+    ob = goal.obligation
+    vars = Kernel.Subst.freeVarsAll(List.concat([ob.lhs, ob.rhs], ob.premise))
+    List.concat(List.concat(ob.givens, vars), List.concat(List.concat(whenLabel(goal), constNames(goal.consts)), goal.lists))
+
+verify taken
+    taken(Goal(obligation = Law(key = "k", givens = ["xs"], premise = [Term.TOp(">=", Term.TBi("List.len", [Term.TVar("xs")]), Term.TVar("n"))], lhs = Term.TVar("xs"), rhs = Term.TVar("top")), finite = [], lists = ["xs"], ints = [], defs = [], consts = [Const(name = "top", value = Term.TInt(1))], sums = [], laws = [], facts = [])) => ["xs", "xs", "top", "xs", "n", "when", "top", "xs"]
+    taken(Goal(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [])) => []
+    fresh("when", taken(Goal(obligation = Law(key = "k", givens = [], premise = [Term.TBool(true)], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = []))) => "when1"
+
+fn whenLabel(goal: Goal) -> List<String>
+    ? "The name of the `when` hypothesis, when the law has one."
+    match whenOf(goal)
+        Option.None -> []
+        Option.Some(_) -> [whenName()]
+
+verify whenLabel
+    whenLabel(Goal(obligation = Law(key = "k", givens = [], premise = [Term.TBool(true)], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [])) => ["when"]
+
+fn constNames(cs: List<Const>) -> List<String>
+    ? "The names of module-level bindings."
+    match cs
+        [] -> []
+        [c, ..rest] -> List.prepend(c.name, constNames(rest))
+
+verify constNames
+    constNames([Const(name = "top", value = Term.TInt(1))]) => ["top"]
 
 fn readGoal(text: String) -> Result<Goal, String>
     ? "The goal step data states, its proof left out: how the compiler hands a plan its goal."

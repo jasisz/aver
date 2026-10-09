@@ -1,8 +1,10 @@
 module Stack
     intent =
         "Proof plans for laws about the top of a stack held as a list."
-        "openByLength: a law under `when List.len(v) >= k` holds once v is opened into its first k cells"
-        "and both sides are evaluated; a case with fewer cells contradicts the `when`."
+        "openByLength: for a law under `when List.len(v) >= k` with a literal k, split v k times into"
+        "its first k cells and the rest; each shorter case contradicts the `when`, and in the last case"
+        "both sides are evaluated with the rest still a variable, or, when they do not meet that way,"
+        "after one more split of the rest."
     depends [Kernel.Term, Kernel.Proof, Kernel.Lib]
     plans [openByLength]
 
@@ -12,7 +14,7 @@ fn openByLength(goal: Goal) -> Result<Proof, String>
         Option.None -> Result.Err("the law has no `when`")
         Option.Some(w) -> match lengthBound(w)
             Option.None -> Result.Err("the `when` is not `List.len(v) >= k` with a literal k")
-            Option.Some((v, k)) -> openCells(Kernel.Lib.scope(goal), goal.obligation.lhs, goal.obligation.rhs, w, v, 1, k)
+            Option.Some((v, k)) -> openCells(Kernel.Lib.scope(goal), goal.obligation.lhs, goal.obligation.rhs, w, v, k, Kernel.Lib.taken(goal))
 
 verify openByLength
     openByLength(Goal(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [])) => Result.Err("the law has no `when`")
@@ -27,20 +29,61 @@ verify lengthBound
     lengthBound(Term.TOp(">=", Term.TBi("List.len", [Term.TVar("xs")]), Term.TInt(2))) => Option.Some(("xs", 2))
     lengthBound(Term.TBool(true)) => Option.None
 
-fn openCells(s: Scope, lhs: Term, rhs: Term, w: Term, cur: String, depth: Int, k: Int) -> Result<Proof, String>
-    ? "Split cur into [] and [hd, ..tl], k + 1 times down the list: an empty case with fewer than k cells above it contradicts the `when`, and the last split closes both cases by evaluating the two sides, since a count read past the k cells still needs to see the rest end or go on."
-    hd = "c_hd{depth}"
-    tl = "c_tl{depth}"
-    cell = Kernel.Lib.cons(Term.TVar(hd), Term.TVar(tl))
-    nilProof = match depth <= k
-        true -> Kernel.Lib.whenRefutes(s, Kernel.Lib.substitute(w, cur, Term.TList([]))?, Kernel.Lib.substitute(lhs, cur, Term.TList([]))?, Kernel.Lib.substitute(rhs, cur, Term.TList([]))?)?
-        false -> Kernel.Lib.bothSides(s, Kernel.Lib.substitute(lhs, cur, Term.TList([]))?, Kernel.Lib.substitute(rhs, cur, Term.TList([]))?)?
-    cellLhs = Kernel.Lib.substitute(lhs, cur, cell)?
-    cellRhs = Kernel.Lib.substitute(rhs, cur, cell)?
-    cellProof = match depth <= k
-        true -> openCells(s, cellLhs, cellRhs, Kernel.Lib.substitute(w, cur, cell)?, tl, depth + 1, k)?
-        false -> Kernel.Lib.bothSides(s, cellLhs, cellRhs)?
-    Result.Ok(Proof.PListCases(cur, lhs, rhs, nilProof, hd, tl, cellProof))
+fn openCells(s: Scope, lhs: Term, rhs: Term, w: Term, cur: String, k: Int, taken: List<String>) -> Result<Proof, String>
+    ? "With k cells still to open, split cur into [] and [hd, ..tl]: the empty case contradicts the `when`, and the cell case opens tl for the k - 1 cells left."
+      "With none left, evaluate both sides with the rest of the list still a variable, and only if they do not meet, split the rest once more and evaluate both of its cases."
+    match k <= 0
+        true -> match Kernel.Lib.bothSides(s, lhs, rhs)
+            Result.Ok(p) -> Result.Ok(p)
+            Result.Err(_) -> splitRest(s, lhs, rhs, cur, taken)
+        false -> splitCell(s, lhs, rhs, w, cur, k, taken)
 
 verify openCells
-    openCells(Scope(defs = [], known = []), Term.TVar("xs"), Term.TVar("xs"), Term.TBool(true), "xs", 2, 1) => Result.Ok(Proof.PListCases("xs", Term.TVar("xs"), Term.TVar("xs"), Proof.PTrans([Term.TList([]), Term.TList([]), Term.TList([])], [Proof.PRefl(Term.TList([])), Proof.PSymm(Proof.PRefl(Term.TList([])))]), "c_hd2", "c_tl2", Proof.PTrans([Term.TBi("List.prepend", [Term.TVar("c_hd2"), Term.TVar("c_tl2")]), Term.TBi("List.prepend", [Term.TVar("c_hd2"), Term.TVar("c_tl2")]), Term.TBi("List.prepend", [Term.TVar("c_hd2"), Term.TVar("c_tl2")])], [Proof.PRefl(Term.TBi("List.prepend", [Term.TVar("c_hd2"), Term.TVar("c_tl2")])), Proof.PSymm(Proof.PRefl(Term.TBi("List.prepend", [Term.TVar("c_hd2"), Term.TVar("c_tl2")])))])))
+    refusal(openCells(Scope(defs = [], known = []), Term.TVar("xs"), Term.TVar("xs"), Term.TBool(true), "xs", 0, ["xs"])) => ""
+    openCells(Scope(defs = [], known = []), Term.TVar("xs"), Term.TVar("xs"), Term.TBool(true), "xs", 1, ["xs"]) => Result.Err("the `when` does not evaluate to false here")
+
+fn splitCell(s: Scope, lhs: Term, rhs: Term, w: Term, cur: String, k: Int, taken: List<String>) -> Result<Proof, String>
+    ? "One split of cur: the empty case is refuted by the `when`, the cell case goes on with its tail."
+      "The names for the first cell and the rest are fresh against every name already in the law."
+    hd = Kernel.Lib.fresh("hd", taken)
+    seen = List.prepend(hd, taken)
+    tl = Kernel.Lib.fresh("tl", seen)
+    cell = Kernel.Lib.cons(Term.TVar(hd), Term.TVar(tl))
+    empty = Kernel.Lib.whenRefutes(s, at(w, cur, Term.TList([]))?, at(lhs, cur, Term.TList([]))?, at(rhs, cur, Term.TList([]))?)?
+    opened = openCells(s, at(lhs, cur, cell)?, at(rhs, cur, cell)?, at(w, cur, cell)?, tl, k - 1, List.prepend(tl, seen))?
+    Result.Ok(Proof.PListCases(cur, lhs, rhs, empty, hd, tl, opened))
+
+verify splitCell
+    refusal(splitCell(Scope(defs = [], known = []), Term.TVar("xs"), Term.TVar("xs"), Term.TOp(">=", Term.TBi("List.len", [Term.TVar("xs")]), Term.TInt(1)), "xs", 1, ["xs"])) => ""
+    splitCell(Scope(defs = [], known = []), Term.TVar("xs"), Term.TVar("xs"), Term.TBool(true), "xs", 1, ["xs"]) => Result.Err("the `when` does not evaluate to false here")
+
+fn splitRest(s: Scope, lhs: Term, rhs: Term, cur: String, taken: List<String>) -> Result<Proof, String>
+    ? "One more split of the rest, for a side that needs to see whether the list ends there, such as `List.take` reaching the last cell: both cases are evaluated."
+    hd = Kernel.Lib.fresh("hd", taken)
+    tl = Kernel.Lib.fresh("tl", List.prepend(hd, taken))
+    cell = Kernel.Lib.cons(Term.TVar(hd), Term.TVar(tl))
+    empty = Kernel.Lib.bothSides(s, at(lhs, cur, Term.TList([]))?, at(rhs, cur, Term.TList([]))?)?
+    more = Kernel.Lib.bothSides(s, at(lhs, cur, cell)?, at(rhs, cur, cell)?)?
+    Result.Ok(Proof.PListCases(cur, lhs, rhs, empty, hd, tl, more))
+
+verify splitRest
+    refusal(splitRest(Scope(defs = [], known = []), Term.TVar("xs"), Term.TVar("xs"), "xs", ["xs"])) => ""
+    splitRest(Scope(defs = [], known = []), Term.TVar("xs"), Term.TInt(1), "xs", ["xs"]) => Result.Err("the two sides evaluate to different terms")
+
+fn at(t: Term, v: String, value: Term) -> Result<Term, String>
+    ? "t with the variable v replaced by value, the way a list split reads each of its two cases."
+    Kernel.Lib.substitute(t, v, value)
+
+verify at
+    at(Term.TVar("xs"), "xs", Term.TList([])) => Result.Ok(Term.TList([]))
+    at(Term.TVar("ys"), "xs", Term.TList([])) => Result.Ok(Term.TVar("ys"))
+
+fn refusal(r: Result<Proof, String>) -> String
+    ? "Why a plan refused, or nothing when it wrote a proof; keeps the examples readable."
+    match r
+        Result.Ok(_) -> ""
+        Result.Err(reason) -> reason
+
+verify refusal
+    refusal(Result.Ok(Proof.PRefl(Term.TInt(1)))) => ""
+    refusal(Result.Err("no")) => "no"
