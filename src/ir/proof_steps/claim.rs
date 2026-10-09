@@ -265,7 +265,8 @@ pub fn claim(p: &Proof, script: &Script, hyps: &Hyps) -> Result<Eqn, String> {
         | Proof::Absurd { lhs, rhs, .. }
         | Proof::Enum { lhs, rhs, .. }
         | Proof::Induct { lhs, rhs, .. }
-        | Proof::InductList { lhs, rhs, .. } => Ok(Eqn::new(canon(lhs), canon(rhs))),
+        | Proof::InductList { lhs, rhs, .. }
+        | Proof::ListCases { lhs, rhs, .. } => Ok(Eqn::new(canon(lhs), canon(rhs))),
         Proof::Linear { goal, value, .. } => Ok(Eqn::new(canon(goal), term::boolean(*value))),
     }
 }

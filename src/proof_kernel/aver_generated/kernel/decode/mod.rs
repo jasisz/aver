@@ -1055,7 +1055,7 @@ pub fn proofOf(
                                                                             {
                                                                                 crate::proof_kernel::aver_generated::kernel::decode::absurdProof(args)
                                                                             } else {
-                                                                                if &*__dispatch_subject == "induct" { crate::proof_kernel::aver_generated::kernel::decode::inductProof(args) } else { if &*__dispatch_subject == "listinduct" { crate::proof_kernel::aver_generated::kernel::decode::listInductProof(args) } else { if &*__dispatch_subject == "ring" { crate::proof_kernel::aver_generated::kernel::decode::ringProof(args) } else { if &*__dispatch_subject == "linear" { crate::proof_kernel::aver_generated::kernel::decode::linearProof(args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(29)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown rule ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(tag)))); __b })) } } } }
+                                                                                if &*__dispatch_subject == "induct" { crate::proof_kernel::aver_generated::kernel::decode::inductProof(args) } else { if &*__dispatch_subject == "listinduct" { crate::proof_kernel::aver_generated::kernel::decode::listInductProof(args) } else { if &*__dispatch_subject == "listcases" { crate::proof_kernel::aver_generated::kernel::decode::listCasesProof(args) } else { if &*__dispatch_subject == "ring" { crate::proof_kernel::aver_generated::kernel::decode::ringProof(args) } else { if &*__dispatch_subject == "linear" { crate::proof_kernel::aver_generated::kernel::decode::linearProof(args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(29)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown rule ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(tag)))); __b })) } } } } }
                                                                             }
                                                                         }
                                                                     }
@@ -1788,6 +1788,78 @@ pub fn listInductProof(
             }
         } else {
             Err(AverStr::from("malformed listinduct"))
+        }
+    }
+}
+
+/// (listcases NAME TERM TERM PROOF (HEAD TAIL) PROOF)
+pub fn listCasesProof(
+    args @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::sexp::Sexp>,
+) -> Result<crate::proof_kernel::aver_generated::kernel::proof::Proof, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __list_subject = args.clone();
+        if let Some((__pat0, __pat1)) = aver_rt::list_uncons_cloned(&__list_subject) {
+            match __pat0 {
+                crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(v) => {
+                    let __list_subject = __pat1;
+                    if let Some((l, __pat2)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                        {
+                            let __list_subject = __pat2;
+                            if let Some((r, __pat3)) = aver_rt::list_uncons_cloned(&__list_subject)
+                            {
+                                {
+                                    let __list_subject = __pat3;
+                                    if let Some((n, __pat4)) =
+                                        aver_rt::list_uncons_cloned(&__list_subject)
+                                    {
+                                        {
+                                            let __list_subject = __pat4;
+                                            if let Some((__pat5, __pat6)) =
+                                                aver_rt::list_uncons_cloned(&__list_subject)
+                                            {
+                                                match __pat5 {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat7) => {
+            { let __list_subject = __pat7; if let Some((__pat8, __pat9)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat8 {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(h) => {
+            { let __list_subject = __pat9; if let Some((__pat10, __pat11)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat10 {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(t) => {
+            { let __list_subject = __pat11; if __list_subject.is_empty() { { let __list_subject = __pat6; if let Some((c, __pat12)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat12; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PListCases(v, crate::proof_kernel::aver_generated::kernel::decode::term(&l)?, crate::proof_kernel::aver_generated::kernel::decode::term(&r)?, std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::decode::proof(&n)?), h, t, std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::decode::proof(&c)?))) } else { Err(AverStr::from("malformed listcases")) } } } else { Err(AverStr::from("malformed listcases")) } } } else { Err(AverStr::from("malformed listcases")) } }
+        },
+        _ => {
+            Err(AverStr::from("malformed listcases"))
+        }
+    } } else { Err(AverStr::from("malformed listcases")) } }
+        },
+        _ => {
+            Err(AverStr::from("malformed listcases"))
+        }
+    } } else { Err(AverStr::from("malformed listcases")) } }
+        },
+        _ => {
+            Err(AverStr::from("malformed listcases"))
+        }
+    }
+                                            } else {
+                                                Err(AverStr::from("malformed listcases"))
+                                            }
+                                        }
+                                    } else {
+                                        Err(AverStr::from("malformed listcases"))
+                                    }
+                                }
+                            } else {
+                                Err(AverStr::from("malformed listcases"))
+                            }
+                        }
+                    } else {
+                        Err(AverStr::from("malformed listcases"))
+                    }
+                }
+                _ => Err(AverStr::from("malformed listcases")),
+            }
+        } else {
+            Err(AverStr::from("malformed listcases"))
         }
     }
 }

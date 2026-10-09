@@ -631,6 +631,76 @@ fn both_kernels_split_a_finite_given_into_every_value_and_refuse_mutations() {
     let _ = fs::remove_dir_all(out);
 }
 
+/// A hand-written script: no producer writes a list split yet, but a rule
+/// a project ships may. `xs` is split into `[]`, where the `when` read at
+/// `[]` is false, and `[hd, ..tl]`, where `isEmpty` takes its second arm.
+#[test]
+fn both_kernels_split_a_list_given_into_its_two_cases_and_refuse_mutations() {
+    let out = scratch("list-cases");
+    fs::create_dir_all(&out).unwrap();
+    let path = repo_root().join(FIXTURES).join("list_cases.steps");
+    let script = fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        aver::proof_kernel::verdict(&script),
+        Ok("isEmpty.falseWhenLong".to_string())
+    );
+    let result = replay(std::slice::from_ref(&path));
+    assert!(result.status.success(), "{}", format_output(&result));
+    let open = script.find("(listcases ").unwrap();
+    let forms = sub_forms(&script, open);
+    let (nil_from, nil_to) = forms[2];
+    let (cons_from, cons_to) = forms[4];
+    for (kind, text, why) in [
+        (
+            "a split of a given that is not a list",
+            script.replace("((xs (tlist)))", "(xs)"),
+            "xs is not a variable of list type",
+        ),
+        (
+            "a head named like the variable split",
+            script.replace("(hd tl)", "(xs tl)"),
+            "the names are not fresh",
+        ),
+        (
+            "a tail named like a hypothesis in scope",
+            script.replace("(hd tl)", "(hd when)"),
+            "the names are not fresh",
+        ),
+        (
+            "the two cases swapped",
+            format!(
+                "{}{}{}{}{}",
+                &script[..nil_from],
+                &script[cons_from..cons_to],
+                &script[nil_to..cons_from],
+                &script[nil_from..nil_to],
+                &script[cons_to..]
+            ),
+            "the case proves a different equation",
+        ),
+        (
+            "a missing case",
+            format!("{}{}", &script[..cons_from], &script[cons_to..]),
+            "malformed listcases",
+        ),
+    ] {
+        let refused = aver::proof_kernel::verdict(&text);
+        assert!(
+            refused.as_ref().is_err_and(|e| e.contains(why)),
+            "{kind}: {refused:?}"
+        );
+        let mutant = out.join("mutant.steps");
+        fs::write(&mutant, &text).unwrap();
+        let result = replay(std::slice::from_ref(&mutant));
+        assert!(
+            !result.status.success(),
+            "{kind}: {}",
+            format_output(&result)
+        );
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
 #[test]
 fn lean_splits_a_finite_given_and_refuses_a_missing_case() {
     if !lean_required::lake_available() {

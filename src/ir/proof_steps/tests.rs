@@ -861,13 +861,14 @@ fn constructor(p: &Proof) -> &'static str {
         Proof::Absurd { .. } => "absurd",
         Proof::Induct { .. } => "induct",
         Proof::InductList { .. } => "listinduct",
+        Proof::ListCases { .. } => "listcases",
         Proof::Linear { .. } => "linear",
         Proof::Ring { .. } => "ring",
         Proof::Enum { .. } => "enum",
     }
 }
 
-const CONSTRUCTORS: [&str; 22] = [
+const CONSTRUCTORS: [&str; 23] = [
     "have",
     "refl",
     "symm",
@@ -887,6 +888,7 @@ const CONSTRUCTORS: [&str; 22] = [
     "absurd",
     "induct",
     "listinduct",
+    "listcases",
     "linear",
     "ring",
     "enum",
@@ -1196,6 +1198,25 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
         s.obligation.lists = vec!["xs".into()];
         s
     };
+    // xs = xs, split into [] and [h, ..t]; `cons` proves the cell case.
+    let list_cases = |cons: Proof| {
+        let mut s = script(
+            var("xs"),
+            var("xs"),
+            Proof::ListCases {
+                var: "xs".into(),
+                lhs: var("xs"),
+                rhs: var("xs"),
+                nil: Box::new(Proof::Refl(term::nil())),
+                head: "h".into(),
+                tail: "t".into(),
+                cons: Box::new(cons),
+            },
+        );
+        s.obligation.givens = vec!["xs".into()];
+        s.obligation.lists = vec!["xs".into()];
+        s
+    };
     let concat_nil = Proof::Rule {
         rule: WallRule::ConcatNil,
         subst: vec![("b".into(), term::nil())],
@@ -1344,6 +1365,10 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
         (
             list_induct(concat_nil.clone()),
             list_induct(Proof::Hyp("ih".into())),
+        ),
+        (
+            list_cases(Proof::Refl(cell("h", "t"))),
+            list_cases(Proof::Refl(var("xs"))),
         ),
         (linear(1), linear(0)),
         (ring(2), ring(3)),

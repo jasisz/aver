@@ -325,7 +325,7 @@ fn split_calls(
                 .flatten()
                 .for_each(|q| split_calls(q, out, ctors));
         }),
-        Proof::InductList { nil, cons, .. } => {
+        Proof::InductList { nil, cons, .. } | Proof::ListCases { nil, cons, .. } => {
             split_calls(nil, out, ctors);
             split_calls(cons, out, ctors);
         }
@@ -367,7 +367,9 @@ fn uses_hyp(p: &Proof, name: &str) -> bool {
                     uses_hyp(&c.proof, name) || c.carry.iter().flatten().any(|q| uses_hyp(q, name))
                 })
         }
-        Proof::InductList { nil, cons, .. } => uses_hyp(nil, name) || uses_hyp(cons, name),
+        Proof::InductList { nil, cons, .. } | Proof::ListCases { nil, cons, .. } => {
+            uses_hyp(nil, name) || uses_hyp(cons, name)
+        }
         Proof::Refl(_)
         | Proof::UnfoldConst { .. }
         | Proof::Proj { .. }
