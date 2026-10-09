@@ -165,6 +165,7 @@ fn kernel_computes(t: &Term, value: &Term) -> Result<String, String> {
         defs: Vec::new(),
         consts: Vec::new(),
         laws: Vec::new(),
+        sums: Vec::new(),
         proof: Proof::Compute {
             lhs: t.clone(),
             rhs: value.clone(),
