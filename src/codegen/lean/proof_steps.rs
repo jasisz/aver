@@ -1561,6 +1561,12 @@ impl Renderer<'_> {
         if let Some(name) = self.unfolds.get(&(fn_id, arm, value_key.clone())) {
             return Ok((name.clone(), extra, unequal));
         }
+        // The lemma's `match`es are stated without generalising: a `match`
+        // on a pattern variable of the arm (`y0`) would otherwise take the
+        // premise `h`, which mentions it, along, and no longer be the
+        // definition's.
+        let ctx = self.ctx;
+        let _fixed = FixedMatches::new(&ctx.lean_match_fixed);
         let def = self
             .script
             .def(fn_id)
@@ -1681,6 +1687,26 @@ impl Renderer<'_> {
 
 /// The tactic that selects a known arm of the unfolded body, given
 /// `h : subject = pattern`.
+/// Every `match` emitted while this lives is stated with `(generalizing :=
+/// false)`; the setting before it comes back when it is dropped.
+struct FixedMatches<'c> {
+    cell: &'c std::cell::Cell<bool>,
+    previous: bool,
+}
+
+impl<'c> FixedMatches<'c> {
+    fn new(cell: &'c std::cell::Cell<bool>) -> Self {
+        let previous = cell.replace(true);
+        FixedMatches { cell, previous }
+    }
+}
+
+impl Drop for FixedMatches<'_> {
+    fn drop(&mut self) {
+        self.cell.set(self.previous);
+    }
+}
+
 fn arm_tactic(pat: &ResolvedPattern, subject: &Term, h: &str) -> Result<String, String> {
     Ok(match pat {
         ResolvedPattern::Literal(crate::ast::Literal::Bool(v)) => {
