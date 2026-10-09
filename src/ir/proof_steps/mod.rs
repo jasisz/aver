@@ -267,6 +267,21 @@ pub enum Proof {
         ihs: Vec<IhAt>,
         cons: Box<Proof>,
     },
+    /// Case split on a list variable (a given of list type, or the tail an
+    /// enclosing split named): `nil` proves the claim `lhs = rhs` with
+    /// `var` replaced by `[]`, `cons` with `var` replaced by
+    /// `List.prepend(head, tail)`, the hypotheses in scope replaced the same
+    /// way. `head` and `tail` are fresh for everything in scope, and `tail`
+    /// may be split in turn.
+    ListCases {
+        var: String,
+        lhs: Term,
+        rhs: Term,
+        nil: Box<Proof>,
+        head: String,
+        tail: String,
+        cons: Box<Proof>,
+    },
     /// `goal = value` for an Int comparison `goal`: its opposite and the
     /// hypotheses `hyps`, each read as `p >= 0` and weighted by `weights`
     /// (the opposite first), add up to a negative constant (see
@@ -548,7 +563,9 @@ impl Proof {
                 .iter()
                 .map(|c| c.proof.size() + c.carry.iter().flatten().map(Proof::size).sum::<usize>())
                 .sum(),
-            Proof::InductList { nil, cons, .. } => nil.size() + cons.size(),
+            Proof::InductList { nil, cons, .. } | Proof::ListCases { nil, cons, .. } => {
+                nil.size() + cons.size()
+            }
         }
     }
 }

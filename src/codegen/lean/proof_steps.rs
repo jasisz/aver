@@ -1420,36 +1420,13 @@ impl Renderer<'_> {
                     .iter()
                     .find(|(n, _)| n == var)
                     .ok_or_else(|| format!("enum: {var} is not of finite type"))?;
-                let dependent: Vec<String> = hyps
-                    .iter()
-                    .filter(|(_, e)| {
-                        let mut fv = Vec::new();
-                        term::free_vars(&e.lhs, &mut fv);
-                        term::free_vars(&e.rhs, &mut fv);
-                        fv.contains(var)
-                    })
-                    .map(|(n, _)| self.hyp_name(n))
-                    .fold(Vec::new(), |mut acc, n| {
-                        if !acc.contains(&n) {
-                            acc.push(n);
-                        }
-                        acc
-                    });
+                let dependent = self.dependent_hyps(var, hyps);
                 let mut discriminants = vec![super::syntax::aver_name_to_lean(var)];
                 discriminants.extend(dependent.iter().cloned());
                 let mut s = format!("(match {} with", discriminants.join(", "));
                 let patterns = self.match_patterns(ty);
                 for ((value, pattern), case) in ty.values().iter().zip(patterns).zip(cases) {
-                    let at = [(var.clone(), value.clone())];
-                    let scoped: Hyps = hyps
-                        .iter()
-                        .map(|(n, e)| {
-                            Ok((
-                                n.clone(),
-                                Eqn::new(term::subst(&e.lhs, &at)?, term::subst(&e.rhs, &at)?),
-                            ))
-                        })
-                        .collect::<Result<_, String>>()?;
+                    let scoped = hyps_at(hyps, &[(var.clone(), value.clone())])?;
                     let mut heads = vec![pattern];
                     heads.extend(dependent.iter().cloned());
                     s.push_str(&format!(
@@ -1461,8 +1438,52 @@ impl Renderer<'_> {
                 s.push(')');
                 s
             }
+            // The same term-mode `match`, on the list variable: `[]` and
+            // `head :: tail`, with every hypothesis that mentions it matched
+            // alongside.
+            Proof::ListCases {
+                var,
+                nil,
+                head,
+                tail,
+                cons,
+                ..
+            } => {
+                let lean = super::syntax::aver_name_to_lean;
+                let dependent = self.dependent_hyps(var, hyps);
+                let cell =
+                    term::builtin("List.prepend", vec![term::var(head), term::var(tail)], None);
+                let on_nil = self.proof(nil, &hyps_at(hyps, &[(var.clone(), term::nil())])?)?;
+                let on_cons = self.proof(cons, &hyps_at(hyps, &[(var.clone(), cell)])?)?;
+                let rest: String = dependent.iter().map(|d| format!(", {d}")).collect();
+                format!(
+                    "(match {}{rest} with | []{rest} => {on_nil} | {} :: {}{rest} => {on_cons})",
+                    lean(var),
+                    lean(head),
+                    lean(tail)
+                )
+            }
         };
         Ok(format!("(show {} from {body})", self.eqn(&eq)))
+    }
+
+    /// The Lean names of the hypotheses in scope that mention `var`, each
+    /// once: what a `match` on `var` matches alongside it.
+    fn dependent_hyps(&self, var: &str, hyps: &Hyps) -> Vec<String> {
+        hyps.iter()
+            .filter(|(_, e)| {
+                let mut fv = Vec::new();
+                term::free_vars(&e.lhs, &mut fv);
+                term::free_vars(&e.rhs, &mut fv);
+                fv.iter().any(|v| v == var)
+            })
+            .map(|(n, _)| self.hyp_name(n))
+            .fold(Vec::new(), |mut acc, n| {
+                if !acc.contains(&n) {
+                    acc.push(n);
+                }
+                acc
+            })
     }
 
     /// One Lean pattern per value of a finite type, in the order
@@ -1923,6 +1944,19 @@ fn law_theorem(key: &str, ctx: &CodegenContext) -> Option<String> {
 
 /// `t` as a `Lean.Grind.CommRing.Expr`, the way [`crate::ir::proof_steps::ring`]
 /// reads it: ring operations on Int, every other subterm an atom.
+/// The hypotheses in scope with a variable replaced: what a case of a split
+/// on that variable is checked under.
+fn hyps_at(hyps: &Hyps, at: &[(String, Term)]) -> Result<Hyps, String> {
+    hyps.iter()
+        .map(|(n, e)| {
+            Ok((
+                n.clone(),
+                Eqn::new(term::subst(&e.lhs, at)?, term::subst(&e.rhs, at)?),
+            ))
+        })
+        .collect()
+}
+
 fn reify(t: &Term, atoms: &mut Vec<Term>) -> String {
     use crate::ast::Type;
     let e = "Lean.Grind.CommRing.Expr";

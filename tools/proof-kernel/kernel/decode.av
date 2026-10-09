@@ -350,6 +350,7 @@ fn proofOf(tag: String, args: List<Sexp>) -> Result<Proof, String>
         "absurd" -> absurdProof(args)
         "induct" -> inductProof(args)
         "listinduct" -> listInductProof(args)
+        "listcases" -> listCasesProof(args)
         "ring" -> ringProof(args)
         "linear" -> linearProof(args)
         _ -> Result.Err("unknown rule {tag}")
@@ -532,6 +533,16 @@ fn listInductProof(args: List<Sexp>) -> Result<Proof, String>
 
 verify listInductProof
     listInductProof([]) => Result.Err("malformed listinduct")
+
+fn listCasesProof(args: List<Sexp>) -> Result<Proof, String>
+    ? "(listcases NAME TERM TERM PROOF (HEAD TAIL) PROOF)"
+    match args
+        [Sexp.Atom(v), l, r, n, Sexp.Node([Sexp.Atom(h), Sexp.Atom(t)]), c] -> Result.Ok(Proof.PListCases(v, term(l)?, term(r)?, proof(n)?, h, t, proof(c)?))
+        _ -> Result.Err("malformed listcases")
+
+verify listCasesProof
+    listCasesProof([]) => Result.Err("malformed listcases")
+    listCasesProof([Sexp.Atom("xs"), Sexp.Node([Sexp.Atom("v"), Sexp.Atom("xs")]), Sexp.Node([Sexp.Atom("v"), Sexp.Atom("xs")]), Sexp.Node([Sexp.Atom("refl"), Sexp.Node([Sexp.Atom("list")])]), Sexp.Node([Sexp.Atom("h"), Sexp.Atom("t")]), Sexp.Node([Sexp.Atom("hyp"), Sexp.Atom("k")])]) => Result.Ok(Proof.PListCases("xs", Term.TVar("xs"), Term.TVar("xs"), Proof.PRefl(Term.TList([])), "h", "t", Proof.PHyp("k")))
 
 fn ihAts(ss: List<Sexp>) -> Result<List<IhAt>, String>
     ? "(IH (TERM…) (PROOF…))…: a hypothesis, the values of the generalised givens, the proofs of the carried hypotheses there."

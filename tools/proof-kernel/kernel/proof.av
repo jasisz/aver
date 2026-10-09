@@ -29,6 +29,7 @@ type Proof
     PAbsurd(Proof, Term, Term)
     PInduct(String, List<Term>, Term, Term, List<String>, List<Case>)
     PListInduct(String, Term, Term, Proof, String, String, List<String>, List<IhAt>, Proof)
+    PListCases(String, Term, Term, Proof, String, String, Proof)
     PRing(Term, Term)
     PLinear(Term, Bool, List<String>, List<Int>)
 

@@ -35,6 +35,7 @@
 //!          | (enum NAME TERM TERM PROOF…) | (absurd PROOF TERM TERM)
 //!          | (induct FN (TERM…) TERM TERM [(carry NAME…)] (case (NAME…) (IH…) ((INT NAME (TERM…) (PROOF…))…) PROOF)…)
 //!          | (listinduct NAME TERM TERM PROOF (NAME NAME) (NAME…) ((NAME (TERM…) ())…) PROOF)
+//!          | (listcases NAME TERM TERM PROOF (NAME NAME) PROOF)
 //!          | (intinduct NAME TERM TERM NAME PROOF (NAME…) (NAME…) ((NAME (TERM…) (PROOF…))…) PROOF)
 //!          | (ring TERM TERM) | (linear TERM BOOL (NAME…) (INT…))
 //! ```
@@ -563,6 +564,21 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
             proof(nil, names)?,
             general.join(" "),
             ih_ats(ihs, names)?,
+            proof(cons, names)?
+        ),
+        Proof::ListCases {
+            var,
+            lhs,
+            rhs,
+            nil,
+            head,
+            tail,
+            cons,
+        } => format!(
+            "(listcases {var} {} {} {} ({head} {tail}) {})",
+            term(lhs, names)?,
+            term(rhs, names)?,
+            proof(nil, names)?,
             proof(cons, names)?
         ),
         Proof::Enum {

@@ -94,6 +94,15 @@ pub enum Proof {
         aver_rt::AverList<IhAt>,
         std::sync::Arc<Proof>,
     ),
+    PListCases(
+        AverStr,
+        crate::proof_kernel::aver_generated::kernel::term::Term,
+        crate::proof_kernel::aver_generated::kernel::term::Term,
+        std::sync::Arc<Proof>,
+        AverStr,
+        AverStr,
+        std::sync::Arc<Proof>,
+    ),
     PRing(
         crate::proof_kernel::aver_generated::kernel::term::Term,
         crate::proof_kernel::aver_generated::kernel::term::Term,
@@ -122,15 +131,16 @@ impl Proof {
             Proof::PInduct(..) => 10,
             Proof::PLaw(..) => 11,
             Proof::PLinear(..) => 12,
-            Proof::PListInduct(..) => 13,
-            Proof::PProj(..) => 14,
-            Proof::PRefl(..) => 15,
-            Proof::PRing(..) => 16,
-            Proof::PRule(..) => 17,
-            Proof::PSplit(..) => 18,
-            Proof::PSymm(..) => 19,
-            Proof::PTrans(..) => 20,
-            Proof::PUnfold(..) => 21,
+            Proof::PListCases(..) => 13,
+            Proof::PListInduct(..) => 14,
+            Proof::PProj(..) => 15,
+            Proof::PRefl(..) => 16,
+            Proof::PRing(..) => 17,
+            Proof::PRule(..) => 18,
+            Proof::PSplit(..) => 19,
+            Proof::PSymm(..) => 20,
+            Proof::PTrans(..) => 21,
+            Proof::PUnfold(..) => 22,
         }
     }
 }
@@ -213,6 +223,17 @@ impl Ord for Proof {
                     .then_with(|| a2.cmp(b2))
                     .then_with(|| a3.cmp(b3))
             }
+            (
+                Proof::PListCases(a0, a1, a2, a3, a4, a5, a6),
+                Proof::PListCases(b0, b1, b2, b3, b4, b5, b6),
+            ) => std::cmp::Ordering::Equal
+                .then_with(|| a0.cmp(b0))
+                .then_with(|| a1.cmp(b1))
+                .then_with(|| a2.cmp(b2))
+                .then_with(|| a3.cmp(b3))
+                .then_with(|| a4.cmp(b4))
+                .then_with(|| a5.cmp(b5))
+                .then_with(|| a6.cmp(b6)),
             (
                 Proof::PListInduct(a0, a1, a2, a3, a4, a5, a6, a7, a8),
                 Proof::PListInduct(b0, b1, b2, b3, b4, b5, b6, b7, b8),
@@ -400,6 +421,19 @@ impl aver_rt::AverDisplay for Proof {
                     f6.aver_display_inner(),
                     f7.aver_display_inner(),
                     f8.aver_display_inner()
+                ]
+                .join(", ")
+            ),
+            Proof::PListCases(f0, f1, f2, f3, f4, f5, f6) => format!(
+                "PListCases({})",
+                vec![
+                    f0.aver_display_inner(),
+                    f1.aver_display_inner(),
+                    f2.aver_display_inner(),
+                    f3.aver_display_inner(),
+                    f4.aver_display_inner(),
+                    f5.aver_display_inner(),
+                    f6.aver_display_inner()
                 ]
                 .join(", ")
             ),

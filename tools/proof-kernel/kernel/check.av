@@ -55,6 +55,7 @@ fn conclude(p: Proof, env: Env, path: String) -> Result<Eqn, String>
         Proof.PAbsurd(q, l, r) -> absurd(conclude(q, env, "{path}/absurd")?, l, r, path)
         Proof.PInduct(f, xs, l, r, carry, cs) -> induct(f, xs, Eqn(lhs = l, rhs = r), carry, cs, env, path)
         Proof.PListInduct(v, l, r, n, h, t, general, ihs, c) -> listInduct(v, Eqn(lhs = l, rhs = r), n, h, t, general, ihs, c, env, path)
+        Proof.PListCases(v, l, r, n, h, t, c) -> splitList(v, Eqn(lhs = l, rhs = r), n, h, t, c, env, path)
         Proof.PRing(l, r) -> ring(l, r, path)
         Proof.PLinear(g, v, hs, ws) -> linear(g, v, hs, ws, env, path)
 
@@ -1277,12 +1278,13 @@ verify refuseCase
     refuseCase("p", "no") => Result.Err("step p: no")
 
 fn freshAll(bs: List<String>, taken: List<String>, env: Env, before: List<String>) -> Bool
-    ? "No name is taken, a given, a module-level binding, or repeated."
+    ? "No name is taken, a given, a list variable (a tail an earlier split named, too), a module-level binding, or repeated."
     match bs
         [] -> true
-        [b, ..rest] -> Bool.and(Bool.not(Bool.or(Bool.or(List.contains(taken, b), List.contains(env.givens, b)), Bool.or(isConst(b, env.consts), List.contains(before, b)))), freshAll(rest, taken, env, List.prepend(b, before)))
+        [b, ..rest] -> Bool.and(Bool.not(Bool.or(Bool.or(List.contains(taken, b), Bool.or(List.contains(env.givens, b), List.contains(env.lists, b))), Bool.or(isConst(b, env.consts), List.contains(before, b)))), freshAll(rest, taken, env, List.prepend(b, before)))
 
 verify freshAll
+    freshAll(["t"], [], withList(emptyEnv(), "t"), []) => false
     freshAll(["y", "y"], [], emptyEnv(), []) => false
     freshAll(["y"], ["x"], emptyEnv(), []) => true
 
@@ -1523,6 +1525,52 @@ verify listCases
     listCases("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), "h", "t", [], [IhAt(name = "ih", at = [], carry = [])], Proof.PRefl(Term.TBi("List.prepend", [Term.TVar("h"), Term.TVar("t")])), emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")))
     listCases("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), "h", "t", [], [IhAt(name = "ih", at = [], carry = [])], Proof.PHyp("ih"), emptyEnv(), "p") => Result.Err("step p/cons: the case proves a different equation")
     listCases("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("n")), Proof.PRefl(Term.TList([])), "h", "t", ["n"], [IhAt(name = "ih", at = [Term.TInt(3)], carry = [])], Proof.PHyp("ih"), emptyEnv(), "p") => Result.Err("step p/nil: the case proves a different equation")
+
+fn splitList(v: String, claim: Eqn, n: Proof, h: String, t: String, c: Proof, env: Env, path: String) -> Result<Eqn, String>
+    ? "A split of a list variable (a given of list type, or a tail an earlier split named) into [] and List.prepend(h, t), the names fresh for everything in scope: each case proves the claim with v replaced, in the hypotheses too, and the tail is a list variable in its case."
+    match (List.contains(env.lists, v), freshAll([h, t], List.prepend(v, List.concat(takenNames(claim, env.hyps), hypLabels(env.hyps))), env, []))
+        (false, _) -> refuse(path, "{v} is not a variable of list type")
+        (_, false) -> refuse(path, "the names are not fresh")
+        _ -> splitListCases(v, claim, n, h, t, c, env, path)
+
+verify splitList
+    splitList("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), "h", "t", Proof.PRefl(Term.TUnit), emptyEnv(), "p") => Result.Err("step p: xs is not a variable of list type")
+    splitList("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("t")), Proof.PRefl(Term.TList([])), "h", "t", Proof.PRefl(Term.TUnit), listsEnv(["xs"]), "p") => Result.Err("step p: the names are not fresh")
+    splitList("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), "k", "t", Proof.PRefl(Term.TUnit), withHyp(listsEnv(["xs"]), "k", Term.TBool(true), true), "p") => Result.Err("step p: the names are not fresh")
+    splitList("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), "xs", "t", Proof.PRefl(Term.TUnit), listsEnv(["xs"]), "p") => Result.Err("step p: the names are not fresh")
+    splitList("xs", Eqn(lhs = Term.TBool(true), rhs = Term.TBool(true)), Proof.PRefl(Term.TBool(true)), "t", "u", Proof.PRefl(Term.TBool(true)), withList(listsEnv(["xs"]), "t"), "p") => Result.Err("step p: the names are not fresh")
+    splitList("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), "h", "t", Proof.PRefl(Term.TBi("List.prepend", [Term.TVar("h"), Term.TVar("t")])), listsEnv(["xs"]), "p") => Result.Ok(Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")))
+
+fn splitListCases(v: String, claim: Eqn, n: Proof, h: String, t: String, c: Proof, env: Env, path: String) -> Result<Eqn, String>
+    ? "The empty-list case, then the cell case; each under the hypotheses in scope at its value of v."
+    atNil = [Kernel.Term.bind(v, Term.TList([]))]
+    caseProves(n, instantiate(claim, atNil, path)?, withHyps(env, hypsAt(env.hyps, atNil, path)?), "{path}/nil")?
+    atCell = [Kernel.Term.bind(v, Term.TBi("List.prepend", [Term.TVar(h), Term.TVar(t)]))]
+    caseProves(c, instantiate(claim, atCell, path)?, withList(withHyps(env, hypsAt(env.hyps, atCell, path)?), t), "{path}/cons")?
+    Result.Ok(claim)
+
+verify splitListCases
+    splitListCases("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TVar("xs")), "h", "t", Proof.PRefl(Term.TBi("List.prepend", [Term.TVar("h"), Term.TVar("t")])), listsEnv(["xs"]), "p") => Result.Err("step p/nil: the case proves a different equation")
+    splitListCases("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), "h", "t", Proof.PRefl(Term.TVar("xs")), listsEnv(["xs"]), "p") => Result.Err("step p/cons: the case proves a different equation")
+    splitListCases("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), "h", "t", Proof.PHyp("k"), withHyp(listsEnv(["xs"]), "k", Term.TOp("==", Term.TVar("xs"), Term.TList([])), false), "p") => Result.Err("step p/cons: the case proves a different equation")
+    splitListCases("xs", Eqn(lhs = Term.TOp("==", Term.TVar("xs"), Term.TList([])), rhs = Term.TBool(false)), Proof.PHyp("k"), "h", "t", Proof.PHyp("k"), withHyp(listsEnv(["xs"]), "k", Term.TOp("==", Term.TVar("xs"), Term.TList([])), false), "p") => Result.Ok(Eqn(lhs = Term.TOp("==", Term.TVar("xs"), Term.TList([])), rhs = Term.TBool(false)))
+    splitListCases("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), "h", "t", Proof.PListCases("t", Term.TBi("List.prepend", [Term.TVar("h"), Term.TVar("t")]), Term.TBi("List.prepend", [Term.TVar("h"), Term.TVar("t")]), Proof.PRefl(Term.TBi("List.prepend", [Term.TVar("h"), Term.TList([])])), "h2", "t2", Proof.PRefl(Term.TBi("List.prepend", [Term.TVar("h"), Term.TBi("List.prepend", [Term.TVar("h2"), Term.TVar("t2")])]))), listsEnv(["xs"]), "p") => Result.Ok(Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")))
+
+fn hypLabels(hs: List<Hyp>) -> List<String>
+    ? "The names of the hypotheses in scope."
+    match hs
+        [] -> []
+        [x, ..rest] -> List.prepend(x.name, hypLabels(rest))
+
+verify hypLabels
+    hypLabels([Hyp(name = "when", eqn = Eqn(lhs = Term.TBool(true), rhs = Term.TBool(true)))]) => ["when"]
+
+fn withList(env: Env, t: String) -> Env
+    ? "The environment with one more variable of list type."
+    Env(defs = env.defs, consts = env.consts, laws = env.laws, hyps = env.hyps, finite = env.finite, lists = List.prepend(t, env.lists), ints = env.ints, givens = env.givens, sums = env.sums)
+
+verify withList
+    withList(emptyEnv(), "t").lists => ["t"]
 
 fn intsEnv(ns: List<String>) -> Env
     ? "No definitions, laws or hypotheses, and these givens of type Int."
