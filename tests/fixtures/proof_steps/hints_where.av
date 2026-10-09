@@ -1,0 +1,61 @@
+module HintsWhere
+    intent =
+        "Stuck laws whose hint is found in a subject split on, in a `holds` comparison, in a case"
+        "of an induction, in an earlier law, or in the line that names an induction; and a fact"
+        "whose `when` is false where its left side matches, which is no hint."
+    exposes [first, tail, firstTwo, count]
+    effects []
+
+fn first(xs: List<Int>) -> Int
+    ? "The head of a list, or 0."
+    match xs
+        [] -> 0
+        [h, ..t] -> h
+
+verify first
+    first([4, 5]) => 4
+
+verify first law ofTwiceReversed
+    given xs: List<Int> = [[], [1, 2]]
+    first(List.reverse(List.reverse(xs))) => first(xs)
+
+fn tail(xs: List<Int>, n: Int) -> List<Int>
+    ? "The list without its first n items."
+    List.drop(xs, n)
+
+verify tail
+    tail([1, 2], 1) => [2]
+
+verify tail law neverLonger
+    given xs: List<Int> = [[], [1, 2]]
+    given n: Int = [-1, 0, 1, 3]
+    List.len(tail(xs, n)) <= List.len(xs) holds
+
+fn firstTwo(xs: List<Int>) -> List<Int>
+    ? "At most the first two items."
+    List.take(xs, 2)
+
+verify firstTwo
+    firstTwo([1, 2, 3]) => [1, 2]
+
+verify firstTwo law twiceIsOnce
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    firstTwo(firstTwo(xs)) => firstTwo(xs)
+
+fn count(xs: List<Int>) -> Int
+    ? "How many items the list holds."
+    match xs
+        [] -> 0
+        [h, ..t] -> 1 + count(t)
+
+verify count
+    count([7, 8]) => 2
+
+verify count law ofJoined
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given ys: List<Int> = [[], [3]]
+    count(List.concat(xs, ys)) => count(xs) + count(ys)
+
+verify count law ofReversed
+    given xs: List<Int> = [[], [1, 2]]
+    count(List.reverse(xs)) => count(xs)

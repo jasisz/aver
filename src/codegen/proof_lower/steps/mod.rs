@@ -208,12 +208,14 @@ fn citations(env: &mut Env, laws: Vec<LawRef>, ob: &Obligation) -> Result<Proof,
 
 /// An environment for one attempt: the law's `when` in scope, each of its
 /// lines and each reason proved so far as a hypothesis of its own, and
-/// its cited laws, minus any that would loop, as rewrite rules.
+/// its cited laws, minus any that would loop, as rewrite rules; the
+/// earlier laws it does not cite only as hints.
 fn fresh_env<'a>(
     inputs: &'a ProofLowerInputs<'a>,
     ob: &Obligation,
     known: &[(String, Term)],
     using: &Option<Vec<LawRef>>,
+    earlier: &[LawRef],
 ) -> Env<'a> {
     let mut env = Env::new(inputs);
     env.givens = ob.givens.clone();
@@ -231,6 +233,7 @@ fn fresh_env<'a>(
         .cloned()
         .collect();
     env.cited_all = using.iter().flatten().cloned().collect();
+    env.hint_laws = earlier.to_vec();
     env
 }
 
@@ -394,13 +397,14 @@ fn prove_part(
     ob: &Obligation,
     known: &[(String, Term)],
     using: &Option<Vec<LawRef>>,
+    earlier: &[LawRef],
     induct_on: Option<(crate::ir::identity::FnId, Option<&str>)>,
     algebraic: bool,
     hints: &mut Vec<String>,
 ) -> Result<Part, String> {
     // Each attempt starts from a fresh environment: a failed one may have
     // opened definitions and bound hypothesis names.
-    let mut env = fresh_env(inputs, ob, known, using);
+    let mut env = fresh_env(inputs, ob, known, using, earlier);
     let proof = if algebraic {
         algebra(&mut env, t, ob)?
     } else {
@@ -450,7 +454,7 @@ fn prove_part(
                         }
                     }
                     met_halving |= env.met_halving.get();
-                    env = fresh_env(inputs, ob, known, using);
+                    env = fresh_env(inputs, ob, known, using, earlier);
                 }
             }
         }
@@ -584,8 +588,8 @@ fn under_cuts(cuts: &[Cut], body: Proof, with_proofs: bool) -> Proof {
     proof
 }
 
-/// Prove `t` by steps; `hints` collects the facts that would rewrite where
-/// a failed attempt stopped.
+/// Prove law `i` by steps; `hints` collects the facts and earlier laws
+/// that would rewrite where a failed attempt stopped.
 ///
 /// A law with `because` lines is proved the way the user argued it: with
 /// guard `H` and reasons `R1 … Rn`, each `Ri` under `H` and the reasons
@@ -595,12 +599,8 @@ fn under_cuts(cuts: &[Cut], body: Proof, with_proofs: bool) -> Proof {
 /// an earlier one did not close. When all close, the law's own script
 /// proves it by one cut ([`Proof::Have`]) per reason, so the kernel
 /// checks the composition too.
-fn produce(
-    inputs: &ProofLowerInputs,
-    ir: &ProofIR,
-    t: &LawTheorem,
-    hints: &mut Vec<String>,
-) -> Produced {
+fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize, hints: &mut Vec<String>) -> Produced {
+    let t = &ir.law_theorems[i];
     let refuse = |why: String| Produced {
         law: Err(why),
         obligations: Vec::new(),
@@ -616,6 +616,13 @@ fn produce(
         },
         _ => None,
     };
+    // The laws before this one, as a `using` list may name them: hints
+    // only, where one would rewrite a stuck term.
+    let earlier: Vec<LawRef> = ir.law_theorems[..i]
+        .iter()
+        .map(|c| law_ref(inputs, c))
+        .filter(|l| rewrite::loops(l).is_none())
+        .collect();
     let algebraic = matches!(
         t.strategy,
         ProofStrategy::Commutative { .. }
@@ -698,8 +705,10 @@ fn produce(
             _ => None,
         };
         let known = known_of(&cuts);
-        let part = prove_part(inputs, t, &part_ob, &known, &using, induct_on, false, hints)
-            .map_err(|why| format!("reason {} of {n}: {why}", i + 1));
+        let part = prove_part(
+            inputs, t, &part_ob, &known, &using, &earlier, induct_on, false, hints,
+        )
+        .map_err(|why| format!("reason {} of {n}: {why}", i + 1));
         let proof = part.as_ref().ok().map(|p| p.proof.clone());
         results.push((part, cuts.len()));
         cuts.push(Cut {
@@ -724,6 +733,7 @@ fn produce(
         &last_ob,
         &known,
         &using,
+        &earlier,
         Some((t.fn_id, t.induction_given.as_deref())),
         algebraic && n == 0,
         hints,
@@ -858,7 +868,7 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
     let debug = std::env::var_os("AVER_STEPS_DEBUG").is_some();
     for i in 0..ir.law_theorems.len() {
         let mut hints = Vec::new();
-        let produced = produce(inputs, ir, &ir.law_theorems[i], &mut hints);
+        let produced = produce(inputs, ir, i, &mut hints);
         ir.law_theorems[i].obligation_steps = produced.obligations;
         let result = produced.law;
         if debug {
