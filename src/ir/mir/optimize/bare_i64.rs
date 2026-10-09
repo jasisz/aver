@@ -2401,6 +2401,7 @@ mod tests {
             program_shape: None,
             scope: None,
             plans_root: None,
+            plan_step_limit_knob: false,
         };
         crate::codegen::proof_lower::carrier_interval_table(&inputs)
     }
@@ -3657,6 +3658,7 @@ fn main() -> Int
             program_shape: None,
             scope: None,
             plans_root: None,
+            plan_step_limit_knob: false,
         };
         crate::codegen::proof_lower::field_carrier_interval_table(&inputs)
     }

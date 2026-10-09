@@ -24,9 +24,6 @@ pub(in crate::codegen::lean) struct ReasonClaim<'a> {
     pub binders: &'a [(String, String)],
     pub prop: &'a str,
     pub guard: Option<&'a str>,
-    /// Whether a proof written as data may lead (never in a certificate
-    /// model, whose text gate admits only its own vocabulary).
-    pub allow_steps: bool,
 }
 
 pub(in crate::codegen::lean) fn dependencies(
@@ -583,9 +580,7 @@ pub(in crate::codegen::lean) fn emit_reason_law(
                 }),
             None => None,
         };
-        if claim.allow_steps
-            && let Some((steps_key, rendered)) = steps
-        {
+        if let Some((steps_key, rendered)) = steps {
             let structured = lines.split_off(strategy_start);
             lines.push("  first".to_string());
             lines.push(format!("  | ({})", rendered.tactic()));

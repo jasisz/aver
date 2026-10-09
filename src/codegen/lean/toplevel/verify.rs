@@ -1142,16 +1142,25 @@ fn emit_verify_law_block(
     // premises in the quantifier types and is a claim as before.
     let all_lifted =
         !lifted_vars.is_empty() && law.givens.iter().all(|g| lifted_vars.contains_key(&g.name));
-    // Outside the certificate a `when`-law with a `by` line has its plan's
-    // steps and no arm behind them, so it is an attempt like any law handed
-    // to no arm: a law its plan did not close is declined. The certificate
-    // model states no step proof for any law, so there a law its plan closed
-    // is classed and proved like every other law closed by steps.
+    // A `when`-law with a `by` line has its plan's steps and no arm behind
+    // them, so it is an attempt like any law handed to no arm: a law its
+    // plan did not close is declined.
     let attempt = law.when.is_some()
         && !all_lifted
         && !guided
-        && ((by_plan && !cert_model)
+        && (by_plan
             || !super::law_auto::when_law_is_claim(vb, &law_for_auto_proof, ctx, cert_model));
+    // The certificate model has no attempts: a refusal there would decline
+    // the whole package, so an attempt is left out of it. An attempt with a
+    // step proof is the exception: there it is a claim proved by its steps
+    // with `sorry` behind them and no speculative arm, so Lean either accepts
+    // the steps or the law is reported as not credited.
+    let cert_steps_body = if cert_model && attempt {
+        super::law_auto::steps_or_sorry(vb, &law_for_auto_proof, ctx)
+    } else {
+        None
+    };
+    let attempt = attempt && cert_steps_body.is_none();
     let mut universal_fell_to_sorry = false;
     // The universal statement of the theorem the law-class marker names, as
     // the emitter assembled it — the certificate producer's law-claim is built
@@ -1218,12 +1227,18 @@ fn emit_verify_law_block(
                     binders: &quant_binders,
                     prop: &prop,
                     guard: when_template.as_deref(),
-                    allow_steps: !cert_model,
                 },
             ));
             if cert_model {
                 claim_statement = Some(universal_statement(&quant_params, &prop));
             }
+        } else if let Some(body) = cert_steps_body {
+            claim_statement = Some(universal_statement(&quant_params, &prop));
+            lines.push(format!(
+                "theorem {} : ∀ {}, {} := by",
+                theorem_base, quant_params, prop
+            ));
+            lines.extend(body.render_body());
         } else if let Some(auto_proof) = emit_verify_law_forall_auto_proof(
             vb,
             &law_for_auto_proof,

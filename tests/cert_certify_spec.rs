@@ -3243,3 +3243,138 @@ fn a_program_that_fails_its_run_or_reads_its_turns_is_certified() {
         assert!(ok, "{fixture}: certificate check failed:\n{report}");
     }
 }
+
+/// Every `.lean` file under `dir`, recursively.
+fn lean_files(dir: &std::path::Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            out.extend(lean_files(&path));
+        } else if path.extension().is_some_and(|ext| ext == "lean") {
+            out.push(path);
+        }
+    }
+    out
+}
+
+/// The certificate model proves a law with its kernel-checked steps, exactly
+/// as `aver proof` does: the step term leads, the tactics stay behind it, and
+/// the wall rules the term uses travel in the model's prelude. Every package
+/// file passes the checker's token gate with them.
+#[test]
+fn cert_model_leads_a_law_with_its_steps_and_passes_the_token_gate() {
+    let (out_dir, manifest) =
+        certify_fixture("examples/data/rational.av", &[], "certify-steps-rational");
+    let cert = out_dir.join("cert");
+    let laws: BTreeSet<&str> = manifest["laws"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|law| law["label"].as_str().unwrap())
+        .collect();
+    assert!(laws.contains("plus.commutative"), "{laws:?}");
+    for file in lean_files(&cert) {
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(
+            aver_cert::lean_gate::code_exec_token(&text),
+            None,
+            "{} must pass the token gate",
+            file.display()
+        );
+    }
+    let model = std::fs::read_to_string(cert.join("AverModel/Rational.lean")).unwrap();
+    assert!(
+        model.contains("trace \"AVER_STEPS_REJECTED:plus.commutative\""),
+        "the law must be led by its steps in the certificate model"
+    );
+    let common = std::fs::read_to_string(cert.join("AverModel/AverCommon.lean")).unwrap();
+    assert!(
+        common.contains("namespace AverSteps"),
+        "the wall rules the steps use must be in the model's prelude"
+    );
+}
+
+/// A law with a `by` line is proved in the certificate model as in `aver
+/// proof`: by its plan's steps with `sorry` behind them, never by tactics.
+#[test]
+fn cert_model_proves_a_by_law_by_its_plan_steps_only() {
+    let (out_dir, manifest) = certify_fixture(
+        "tests/fixtures/proof_plans/shuffles.av",
+        &["--module-root", "tests/fixtures/proof_plans"],
+        "certify-steps-by-plan",
+    );
+    let laws: Vec<&str> = manifest["laws"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|law| law["label"].as_str().unwrap())
+        .collect();
+    assert!(laws.contains(&"shuffled.swapTwiceIsTheTopPair"), "{laws:?}");
+    let model = std::fs::read_to_string(out_dir.join("cert/AverModel/Shuffles.lean")).unwrap();
+    for law in &laws {
+        assert!(
+            model.contains(&format!("trace \"AVER_STEPS_REJECTED:{law}\"\n    sorry\n")),
+            "only `sorry` may stand behind the plan's steps of {law}:\n{model}"
+        );
+    }
+}
+
+/// A `when`-law no deterministic arm claims is left out of the certificate
+/// model, unless it has a step proof: then it is a law-claim proved by its
+/// steps with only `sorry` behind them. Lean accepts the steps and the claim
+/// is credited. If Lean rejects them (here the step arm is broken by hand),
+/// that one law is not credited, named with the axiom that sank it, and the
+/// package still checks.
+#[test]
+fn cert_when_law_with_steps_is_a_claim_and_broken_steps_cost_only_that_law() {
+    let (out_dir, manifest) = certify_fixture(
+        "examples/formal/equal_sides.av",
+        &[],
+        "certify-steps-when-law",
+    );
+    let laws: Vec<&str> = manifest["laws"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|law| law["label"].as_str().unwrap())
+        .collect();
+    assert!(laws.contains(&"aboveBound.one"), "{laws:?}");
+    let total = laws.len();
+    let model = std::fs::read_to_string(out_dir.join("cert/AverModel/EqualSides.lean")).unwrap();
+    let theorem = model
+        .find("theorem aboveBound_law_one :")
+        .expect("the law's theorem is in the model");
+    let proof = &model[theorem..];
+    let proof = &proof[..proof.find("\nend ").unwrap_or(proof.len())];
+    assert!(
+        proof.contains("trace \"AVER_STEPS_REJECTED:aboveBound.one\"\n    sorry\n"),
+        "only `sorry` may stand behind the steps of such a law:\n{proof}"
+    );
+    if !lean_required::lake_available() {
+        eprintln!("skipping when-law steps check: `lake` not available");
+        return;
+    }
+    let (ok, report) = check_certificate(&out_dir.join("equal_sides.wasm"), &out_dir.join("cert"));
+    assert!(
+        ok && report.contains(&format!("law-claims: {total} of {total} credited")),
+        "Lean must accept the steps:\n{report}"
+    );
+
+    let broken = temp_dir("certify-steps-when-law-broken");
+    copy_dir_all(&out_dir, &broken);
+    let intro = theorem + proof.find("intro a b c h_when;").unwrap();
+    let mut tampered = model.clone();
+    tampered.insert_str(intro, "fail \"broken steps\"; ");
+    std::fs::write(broken.join("cert/AverModel/EqualSides.lean"), tampered).unwrap();
+    let (ok, report) = check_certificate(&broken.join("equal_sides.wasm"), &broken.join("cert"));
+    assert!(
+        ok && report.contains("5 checked exports"),
+        "broken steps must not touch the export verdict:\n{report}"
+    );
+    assert!(
+        report.contains(&format!("law-claims: {} of {total} credited", total - 1))
+            && report.contains("law-claim not credited: aboveBound.one (proof depends on sorryAx)"),
+        "exactly the law with broken steps must lose its credit:\n{report}"
+    );
+}

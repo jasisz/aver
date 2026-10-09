@@ -48,6 +48,7 @@ fn analyze_src(src: &str) -> IntervalAnalysisResult {
             run_build_symbols: true,
             dep_modules: &[],
             plans_root: None,
+            plan_step_limit_knob: false,
             alloc_policy: None,
             on_after_pass: None,
         },
@@ -82,6 +83,7 @@ fn analyze_multi(entry: &str, deps: &[(&str, &str)]) -> IntervalAnalysisResult {
             run_analyze: true,
             dep_modules: &modules,
             plans_root: None,
+            plan_step_limit_knob: false,
             ..Default::default()
         },
     );
@@ -564,6 +566,7 @@ fn carrier_table(
         program_shape: None,
         scope: None,
         plans_root: None,
+        plan_step_limit_knob: false,
     };
     aver::codegen::proof_lower::carrier_interval_table(&inputs)
 }

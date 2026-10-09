@@ -50,6 +50,7 @@ pub(super) fn run(
         true,
         true,
         true,
+        true,
     );
     let started = std::time::Instant::now();
     let steps_dir = std::path::Path::new(output_dir).join("proof_steps");

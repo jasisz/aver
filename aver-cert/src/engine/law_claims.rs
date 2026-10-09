@@ -482,7 +482,9 @@ fn statement_items(statement: &str) -> Vec<StatementItem<'_>> {
                 }
             }
             items.push(StatementItem::Other(c));
-        } else if is_ident_char(c) {
+        } else if is_ident_char(c) && !matches!(c, '!' | '?') {
+            // `!` and `?` continue a name (`get!`) but never start one: a
+            // leading `!` is Bool negation (`!atLip egg`).
             let mut end = at + c.len_utf8();
             while let Some(&(next_at, next)) = chars.peek() {
                 if !is_ident_char(next) {
@@ -687,6 +689,11 @@ mod root_qualify_tests {
         assert_eq!(
             root_qualify_statement("_root_.Json.escape 'e' = escape \"e\"", "Json", &names),
             "_root_.Json.escape 'e' = _root_.Json.escape \"e\""
+        );
+        // A name after Bool negation is qualified; the `!` stays an operator.
+        assert_eq!(
+            root_qualify_statement("(!escape s) = true", "Json", &names),
+            "(!_root_.Json.escape s) = true"
         );
     }
 }

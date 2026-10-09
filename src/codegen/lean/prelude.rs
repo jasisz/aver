@@ -1864,8 +1864,8 @@ pub(super) fn build_common_lean(union_body: &str, cert_model: bool) -> String {
         parts.push(LEAN_PRELUDE_NONLINEAR_NONNEG.to_string());
     }
     // The wall rules proof steps are rendered with, demand-driven like the
-    // order kit.
-    if union_body.contains("AverSteps.") && !cert_model {
+    // order kit. Plain theorems, so the certificate model carries them too.
+    if union_body.contains("AverSteps.") {
         parts.push(super::proof_steps::LEAN_PRELUDE_AVER_STEPS.to_string());
     }
     if needs_case_ground {
