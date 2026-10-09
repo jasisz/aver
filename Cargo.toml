@@ -32,6 +32,15 @@ include = [
     "/.claude/commands/aver.md",
     "/.claude/commands/aver-tooling.md",
     "/tools/website/llms.txt",
+    # The proof kernel's modules a project's proof rules build on, and the
+    # helper library for them; `src/stdlib.rs` `include_str!`s each one.
+    "/tools/proof-kernel/kernel/term.av",
+    "/tools/proof-kernel/kernel/proof.av",
+    "/tools/proof-kernel/kernel/subst.av",
+    "/tools/proof-kernel/kernel/sexp.av",
+    "/tools/proof-kernel/kernel/decode.av",
+    "/tools/proof-kernel/lib/lib.av",
+    "/tools/proof-kernel/lib/wire.av",
 ]
 
 [lib]

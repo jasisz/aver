@@ -1,0 +1,83 @@
+module Conventions
+    intent =
+        "The kernel's hidden conventions, each named and held to by Kernel.Lib, checked against the kernel itself:"
+        "the `when` is the hypothesis named `when` and states `premise = true`; match arms count from 1;"
+        "a chain of n steps lists n + 1 terms; a computation step is only between literals."
+        "Run with `aver verify lib/conventions.av --module-root .` from tools/proof-kernel."
+    exposes [law]
+    depends [Kernel.Term, Kernel.Proof, Kernel.Check, Kernel.Lib]
+    effects []
+
+fn law(premise: List<Term>, lhs: Term, rhs: Term) -> Law
+    ? "An obligation over the given b."
+    Law(key = "k", givens = ["b"], premise = premise, lhs = lhs, rhs = rhs)
+
+verify law
+    law([], Term.TInt(1), Term.TInt(1)) => Law(key = "k", givens = ["b"], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))
+
+fn pick() -> Def
+    ? "pick(x) is 10 when x is 1 and 20 otherwise: a literal arm, then a catch-all."
+    Def(name = "pick", returnsBool = false, params = ["x"], lets = [], body = Term.TMatch(Term.TVar("x"), [Arm(pattern = Pat.PLit(Term.TInt(1)), body = Term.TInt(10)), Arm(pattern = Pat.PWild, body = Term.TInt(20))]))
+
+verify pick
+    pick().name => "pick"
+
+fn check(ob: Law, defs: List<Def>, proof: Proof) -> Result<String, String>
+    ? "The kernel's verdict on one proof of ob."
+    Kernel.Check.checkScript(Script(obligation = ob, finite = [], lists = [], ints = [], defs = defs, consts = [], sums = [], laws = [], facts = [], proof = proof))
+
+verify check
+    check(law([], Term.TInt(1), Term.TInt(1)), [], Proof.PRefl(Term.TInt(1))) => Result.Ok("k")
+
+verify check law theWhenIsTheHypothesisNamedWhen
+    given b: Bool = [true, false]
+    check(law([Term.TVar("b")], Term.TVar("b"), Term.TBool(true)), [], Kernel.Lib.whenHolds()) => Result.Ok("k")
+
+verify check law noOtherNameHoldsTheWhen
+    given b: Bool = [true, false]
+    check(law([Term.TVar("b")], Term.TVar("b"), Term.TBool(true)), [], Proof.PHyp("premise")) == Result.Ok("k") => false
+
+verify check law armsCountFromOne
+    given b: Bool = [true, false]
+    check(law([], Term.TCall("pick", [Term.TInt(1)]), Term.TInt(10)), [pick()], unfolded(1)) => Result.Ok("k")
+
+verify check law armZeroIsTheWholeBody
+    given b: Bool = [true, false]
+    check(law([], Term.TCall("pick", [Term.TInt(1)]), Term.TInt(10)), [pick()], Proof.PUnfold("pick", 0, [Term.TInt(1)], [], [Proof.PRefl(Term.TInt(1))])) == Result.Ok("k") => false
+
+verify check law theCatchAllTakesItsValue
+    given b: Bool = [true, false]
+    check(law([], Term.TCall("pick", [Term.TInt(7)]), Term.TInt(20)), [pick()], unfolded(7)) => Result.Ok("k")
+
+verify check law aChainListsOneTermMoreThanItsSteps
+    given b: Bool = [true, false]
+    check(law([], Term.TOp("+", Term.TInt(1), Term.TInt(1)), Term.TInt(2)), [], Proof.PTrans([Term.TOp("+", Term.TInt(1), Term.TInt(1)), Term.TInt(2)], [Proof.PCompute(Term.TOp("+", Term.TInt(1), Term.TInt(1)), Term.TInt(2))])) => Result.Ok("k")
+
+verify check law aChainWithAsManyTermsAsStepsIsRefused
+    given b: Bool = [true, false]
+    check(law([], Term.TOp("+", Term.TInt(1), Term.TInt(1)), Term.TInt(2)), [], Proof.PTrans([Term.TInt(2)], [Proof.PCompute(Term.TOp("+", Term.TInt(1), Term.TInt(1)), Term.TInt(2))])) == Result.Ok("k") => false
+
+verify check law computationIsOnlyBetweenLiterals
+    given b: Bool = [true, false]
+    check(law([], Term.TOp("+", Term.TVar("b"), Term.TInt(0)), Term.TVar("b")), [], Proof.PCompute(Term.TOp("+", Term.TVar("b"), Term.TInt(0)), Term.TVar("b"))) == Result.Ok("k") => false
+
+verify check law libComputesOnlyLiterals
+    given b: Bool = [true, false]
+    Kernel.Lib.compute(Term.TOp("+", Term.TVar("b"), Term.TInt(0))).proof => Proof.PRefl(Term.TOp("+", Term.TVar("b"), Term.TInt(0)))
+
+fn scope(defs: List<Def>) -> Scope
+    ? "Lib's scope over some definitions."
+    Scope(defs = defs, known = [])
+
+verify scope
+    scope([]) => Scope(defs = [], known = [])
+
+fn unfolded(arg: Int) -> Proof
+    ? "Lib's unfold of pick(arg), as a proof."
+    match Kernel.Lib.unfold(scope([pick()]), "pick", [Term.TInt(arg)])
+        Result.Ok(Option.Some(r)) -> r.proof
+        _ -> Proof.PRefl(Term.TUnit)
+
+verify unfolded
+    unfolded(1) => Proof.PUnfold("pick", 1, [Term.TInt(1)], [], [Proof.PRefl(Term.TInt(1))])
+    unfolded(7) => Proof.PUnfold("pick", 2, [Term.TInt(7)], [Term.TInt(7)], [Proof.PRefl(Term.TInt(7))])

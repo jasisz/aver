@@ -915,6 +915,63 @@ impl aver_rt::AverDisplay for Script {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Goal {
+    pub obligation: Law,
+    pub finite: aver_rt::AverList<Given>,
+    pub lists: aver_rt::AverList<AverStr>,
+    pub ints: aver_rt::AverList<AverStr>,
+    pub defs: aver_rt::AverList<Def>,
+    pub consts: aver_rt::AverList<Const>,
+    pub sums: aver_rt::AverList<aver_rt::AverList<Variant>>,
+    pub laws: aver_rt::AverList<Law>,
+    pub facts: aver_rt::AverList<Fact>,
+}
+
+impl PartialOrd for Goal {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Goal {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        std::cmp::Ordering::Equal
+            .then_with(|| self.consts.cmp(&other.consts))
+            .then_with(|| self.defs.cmp(&other.defs))
+            .then_with(|| self.facts.cmp(&other.facts))
+            .then_with(|| self.finite.cmp(&other.finite))
+            .then_with(|| self.ints.cmp(&other.ints))
+            .then_with(|| self.laws.cmp(&other.laws))
+            .then_with(|| self.lists.cmp(&other.lists))
+            .then_with(|| self.obligation.cmp(&other.obligation))
+            .then_with(|| self.sums.cmp(&other.sums))
+    }
+}
+
+impl aver_rt::AverDisplay for Goal {
+    fn aver_display(&self) -> String {
+        format!(
+            "Goal({})",
+            vec![
+                format!("obligation: {}", self.obligation.aver_display_inner()),
+                format!("finite: {}", self.finite.aver_display_inner()),
+                format!("lists: {}", self.lists.aver_display_inner()),
+                format!("ints: {}", self.ints.aver_display_inner()),
+                format!("defs: {}", self.defs.aver_display_inner()),
+                format!("consts: {}", self.consts.aver_display_inner()),
+                format!("sums: {}", self.sums.aver_display_inner()),
+                format!("laws: {}", self.laws.aver_display_inner()),
+                format!("facts: {}", self.facts.aver_display_inner())
+            ]
+            .join(", ")
+        )
+    }
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Hyp {
     pub name: AverStr,
     pub eqn: crate::proof_kernel::aver_generated::kernel::term::Eqn,

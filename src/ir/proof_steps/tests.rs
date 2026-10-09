@@ -22,6 +22,7 @@ fn script(lhs: super::Term, rhs: super::Term, proof: Proof) -> Script {
         consts: Vec::new(),
         laws: Vec::new(),
         sums: Vec::new(),
+        rule: None,
         proof,
     }
 }

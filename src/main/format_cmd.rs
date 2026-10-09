@@ -1289,20 +1289,43 @@ fn split_inline_decision_fields(content: &str) -> Vec<String> {
     }
 }
 
-/// A law's `induction x` line goes last among its lines, directly before
-/// the claim: after every `given`, `when`, `because`, `using` and local.
-/// The claim is the last line of the law at the law's own indentation (a
-/// claim written over several lines continues deeper), so the move never
-/// reads an expression.
+/// A law's `induction x` or `by Module.rule` line goes last among its
+/// lines, directly before the claim: after every `given`, `when`,
+/// `because`, `using` and local. The claim is the last line of the law at
+/// the law's own indentation (a claim written over several lines continues
+/// deeper), so the move never reads an expression.
 fn normalize_law_induction_line_tracked(
     mut lines: Vec<String>,
     violations: &mut Vec<aver::diagnostics::model::FormatViolation>,
     line_offset: Option<&[usize]>,
 ) -> Vec<String> {
-    let is_induction_line = |line: &str| {
-        line.strip_prefix("    induction ").is_some_and(|name| {
-            !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-        })
+    let is_name = |name: &str, dotted: bool| {
+        !name.is_empty()
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || (dotted && c == '.'))
+            && (!dotted || name.contains('.'))
+    };
+    let proof_line = |line: &str| -> Option<(&'static str, &'static str)> {
+        if line
+            .strip_prefix("    induction ")
+            .is_some_and(|name| is_name(name, false))
+        {
+            Some((
+                "law-induction-position",
+                "a law's `induction` line goes directly before its claim",
+            ))
+        } else if line
+            .strip_prefix("    by ")
+            .is_some_and(|name| is_name(name, true))
+        {
+            Some((
+                "law-by-position",
+                "a law's `by` line goes directly before its claim",
+            ))
+        } else {
+            None
+        }
     };
     let mut start = 0;
     while start < lines.len() {
@@ -1320,8 +1343,8 @@ fn normalize_law_induction_line_tracked(
                     && !line.trim_start().starts_with("//")
             };
             let claim = (start + 1..end).rev().find(|&i| at_law_indent(&lines[i]));
-            let induction = (start + 1..end).find(|&i| is_induction_line(&lines[i]));
-            if let (Some(claim), Some(at)) = (claim, induction)
+            let found = (start + 1..end).find_map(|i| proof_line(&lines[i]).map(|r| (i, r)));
+            if let (Some(claim), Some((at, (rule, message)))) = (claim, found)
                 && at + 1 != claim
                 && at != claim
             {
@@ -1334,8 +1357,8 @@ fn normalize_law_induction_line_tracked(
                         .copied()
                         .unwrap_or(at + 1),
                     col: 1,
-                    rule: "law-induction-position",
-                    message: "a law's `induction` line goes directly before its claim".to_string(),
+                    rule,
+                    message: message.to_string(),
                     before: None,
                     after: None,
                 });
@@ -1539,6 +1562,27 @@ mod tests {
             violations
                 .iter()
                 .filter(|v| v.rule == "law-induction-position")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn puts_a_law_by_line_directly_before_the_claim() {
+        let fun = "fn f(x: Int) -> Int\n    ? \"t\"\n    x\n\nverify f\n    f(1) => 1\n\n";
+        let canonical = format!(
+            "{fun}verify f law named\n    given x: Int = [0]\n    when x >= 0\n    using []\n    by Rules.same\n    f(x) => x\n"
+        );
+        assert_eq!(format_source(&canonical), canonical);
+        let moved = format!(
+            "{fun}verify f law named\n    given x: Int = [0]\n    by Rules.same\n    when x >= 0\n    using []\n    f(x) => x\n"
+        );
+        assert_eq!(format_source(&moved), canonical);
+        let (_, violations) = try_format_source(&moved).expect("format");
+        assert_eq!(
+            violations
+                .iter()
+                .filter(|v| v.rule == "law-by-position")
                 .count(),
             1
         );

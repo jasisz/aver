@@ -36,6 +36,28 @@ impl Parser {
             )
     }
 
+    /// True when the current line is `by Module.rule`: the word, a dotted
+    /// name, and the end of the line. A claim that calls a function named
+    /// `by` does not match.
+    fn by_line_ahead(&self) -> bool {
+        if !self.current_ident_is("by") || !matches!(self.peek(1).kind, TokenKind::Ident(_)) {
+            return false;
+        }
+        let mut at = 2;
+        let mut dotted = false;
+        while matches!(self.peek(at).kind, TokenKind::Dot)
+            && matches!(self.peek(at + 1).kind, TokenKind::Ident(_))
+        {
+            dotted = true;
+            at += 2;
+        }
+        dotted
+            && matches!(
+                self.peek(at).kind,
+                TokenKind::Newline | TokenKind::Dedent | TokenKind::Eof
+            )
+    }
+
     /// True when current position looks like `name = expr` — an Ident
     /// followed by `=` (Assign), not `=>` (FatArrow). Used in
     /// verify-trace blocks to distinguish local bindings from case
@@ -406,6 +428,7 @@ impl Parser {
                 let mut because = Vec::new();
                 let mut using = None;
                 let mut induction: Option<String> = None;
+                let mut by_rule: Option<String> = None;
                 // Law locals remain ordinary expression shortcuts. Resolve
                 // them as they are declared, including in subsequent reasons.
                 let mut law_locals: Vec<(String, Spanned<Expr>)> = Vec::new();
@@ -413,6 +436,7 @@ impl Parser {
                     || self.current_ident_is("because")
                     || self.current_ident_is("using")
                     || self.induction_line_ahead()
+                    || self.by_line_ahead()
                 {
                     if self.looks_like_binding() {
                         let name = self.expect_user_identifier(
@@ -432,8 +456,26 @@ impl Parser {
                             substitute_ident(&mut reason, name, value);
                         }
                         because.push(reason);
+                    } else if self.by_line_ahead() {
+                        self.advance(); // by
+                        if by_rule.is_some() {
+                            return Err(self.error("A law may have only one 'by' line".to_string()));
+                        }
+                        if induction.is_some() {
+                            return Err(self.error(
+                                "A law with a 'by' line gets its whole proof from the rule; it cannot also name an 'induction'"
+                                    .to_string(),
+                            ));
+                        }
+                        by_rule = Some(self.parse_qualified_ident()?);
                     } else if self.induction_line_ahead() {
                         self.advance(); // induction
+                        if by_rule.is_some() {
+                            return Err(self.error(
+                                "A law with a 'by' line gets its whole proof from the rule; it cannot also name an 'induction'"
+                                    .to_string(),
+                            ));
+                        }
                         if induction.is_some() {
                             return Err(
                                 self.error("A law may have only one 'induction' line".to_string())
@@ -491,6 +533,12 @@ impl Parser {
                     self.skip_newlines();
                 }
 
+                if by_rule.is_some() && !because.is_empty() {
+                    return Err(self.error(
+                        "A law with a 'by' line gets its whole proof from the rule; it cannot also have 'because' lines"
+                            .to_string(),
+                    ));
+                }
                 let law_start_line = self.current().line;
                 let law_start_col = self.current().col;
                 let mut left = self.parse_expr()?;
@@ -545,6 +593,7 @@ impl Parser {
                     because,
                     using,
                     induction,
+                    by_rule,
                     lhs: left,
                     rhs: right,
                     sample_guards,

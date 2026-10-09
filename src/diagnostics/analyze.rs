@@ -277,7 +277,13 @@ fn analyze_prechecked_items_impl(
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let source_index = SourceIndex::new(source);
 
-    for te in &tc_result.errors {
+    // A law's `by` line must name a rule of this project, which only a
+    // check that knows the project's files can tell.
+    let by_errors = match options.module_base_dir.as_deref() {
+        Some(root) => crate::types::checker::rules_module::check_by_lines(items, root),
+        None => Vec::new(),
+    };
+    for te in tc_result.errors.iter().chain(&by_errors) {
         diagnostics.push(from_type_error_with_index(
             te,
             &source_index,

@@ -294,6 +294,46 @@ pub fn emit_verify_law_forall_auto_proof(
     cert_model: bool,
     speculative: bool,
 ) -> Option<AutoProof> {
+    // A law that names its proof rule is closed by that rule's steps or
+    // not at all: no tactic stands behind them, so a law never says
+    // `by Module.rule` while something else closed it. The certificate
+    // model states no step proof for any law: there a law its rule closed
+    // (the kernel accepted the steps) is proved like every other law closed
+    // by steps, and one its rule did not close gets no proof, so it is left
+    // out like any other law that did not close.
+    let rule_closed = law.by_rule.is_some() && law_steps_for(ctx, &vb.fn_name, &law.name).is_some();
+    if law.by_rule.is_some() && cert_model && !rule_closed {
+        return None;
+    }
+    if law.by_rule.is_some() && !cert_model {
+        let body = match law_steps_for(ctx, &vb.fn_name, &law.name).and_then(|script| {
+            super::proof_steps::render(&script, ctx)
+                .ok()
+                .map(|r| (script.obligation.key.clone(), r))
+        }) {
+            Some((key, rendered)) => {
+                let givens: Vec<String> = law
+                    .givens
+                    .iter()
+                    .map(|g| aver_name_to_lean(&g.name))
+                    .collect();
+                let intro = extend_intro_names_with_premises(law, &givens);
+                super::proof_steps::lead_portfolio(
+                    &rendered,
+                    &intro,
+                    &key,
+                    super::tactic_ir::Tactic::Sorry,
+                )
+            }
+            None => super::tactic_ir::Tactic::Sorry,
+        };
+        return Some(AutoProof {
+            support_lines: Vec::new(),
+            body,
+            replaces_theorem: false,
+            first_arm_is_guaranteed_closer: false,
+        });
+    }
     let inner = emit_verify_law_forall_auto_proof_inner(
         vb,
         law,
@@ -327,9 +367,18 @@ pub fn emit_verify_law_forall_auto_proof(
         None
     } else {
         law_steps_for(ctx, &vb.fn_name, &law.name).and_then(|script| {
-            super::proof_steps::render(&script, ctx)
-                .ok()
-                .map(|r| (script.obligation.key.clone(), r))
+            match super::proof_steps::render(&script, ctx) {
+                Ok(r) => Some((script.obligation.key.clone(), r)),
+                Err(why) => {
+                    if std::env::var_os("AVER_STEPS_DEBUG").is_some() {
+                        eprintln!(
+                            "steps: {}: not rendered in Lean: {why}",
+                            script.obligation.key
+                        );
+                    }
+                    None
+                }
+            }
         })
     };
     // A literal bit mask (`Bits.and(x, 128)`) is a closed form no portfolio

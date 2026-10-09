@@ -20,8 +20,12 @@
 //! fact for linear arithmetic at the calls it matches, also under a `when`
 //! proved at that instance.
 //!
+//! A law with a `by Module.rule` line is proved by that project rule
+//! instead ([`by_rule`]); none of the producers above runs for it.
+//!
 //! A law no producer handles keeps `steps: None` and its tactic portfolio.
 
+mod by_rule;
 mod chain;
 mod env;
 mod eval;
@@ -821,6 +825,7 @@ fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize, hints: &mut Vec<St
                     consts: Vec::new(),
                     laws: Vec::new(),
                     sums: Vec::new(),
+                    rule: None,
                     proof,
                 };
                 merge_into(&mut script, part);
@@ -853,6 +858,7 @@ fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize, hints: &mut Vec<St
         consts: Vec::new(),
         laws: Vec::new(),
         sums: Vec::new(),
+        rule: None,
         proof,
     };
     for part in parts {
@@ -868,9 +874,18 @@ fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize, hints: &mut Vec<St
 /// Fill `LawTheorem::steps` for every law a producer can prove.
 pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
     let debug = std::env::var_os("AVER_STEPS_DEBUG").is_some();
+    let mut rules = by_rule::Rules::default();
     for i in 0..ir.law_theorems.len() {
         let mut hints = Vec::new();
-        let produced = produce(inputs, ir, i, &mut hints);
+        // A law that names its rule is proved by that rule alone.
+        let produced = if ir.law_theorems[i].by_rule.is_some() {
+            Produced {
+                law: by_rule::produce(inputs, ir, i, &mut rules),
+                obligations: Vec::new(),
+            }
+        } else {
+            produce(inputs, ir, i, &mut hints)
+        };
         ir.law_theorems[i].obligation_steps = produced.obligations;
         let result = produced.law;
         if debug {

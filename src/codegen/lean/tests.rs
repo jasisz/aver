@@ -129,6 +129,7 @@ fn ctx_from_source(source: &str, project_name: &str) -> CodegenContext {
             // table since the FnKey → FnId migration).
             run_build_symbols: true,
             dep_modules: &[],
+            rules_root: None,
             alloc_policy: None,
             on_after_pass: None,
         },
@@ -767,6 +768,7 @@ fn empty_ctx_with_verify_law() -> CodegenContext {
             because: Vec::new(),
             using: None,
             induction: None,
+            by_rule: None,
             sample_guards: vec![],
         })),
         trace: false,
@@ -1536,6 +1538,7 @@ fn transpile_auto_proves_reflexive_law_with_rfl() {
             because: Vec::new(),
             using: None,
             induction: None,
+            by_rule: None,
             sample_guards: vec![],
         })),
         trace: false,
@@ -1602,6 +1605,7 @@ fn transpile_auto_proves_identity_law_for_int_add_wrapper() {
             because: Vec::new(),
             using: None,
             induction: None,
+            by_rule: None,
             sample_guards: vec![],
         })),
         trace: false,
@@ -1709,6 +1713,7 @@ fn transpile_auto_proves_associative_law_for_int_add_wrapper() {
             because: Vec::new(),
             using: None,
             induction: None,
+            by_rule: None,
             sample_guards: vec![],
         })),
         trace: false,
@@ -1790,6 +1795,7 @@ fn transpile_auto_proves_sub_laws() {
             because: Vec::new(),
             using: None,
             induction: None,
+            by_rule: None,
             sample_guards: vec![],
         })),
         trace: false,
@@ -1853,6 +1859,7 @@ fn transpile_auto_proves_sub_laws() {
             because: Vec::new(),
             using: None,
             induction: None,
+            by_rule: None,
             sample_guards: vec![],
         })),
         trace: false,
@@ -1957,6 +1964,7 @@ fn transpile_auto_proves_unary_wrapper_equivalence_law() {
             because: Vec::new(),
             using: None,
             induction: None,
+            by_rule: None,
             sample_guards: vec![],
         })),
         trace: false,
@@ -2095,6 +2103,7 @@ fn transpile_auto_proves_direct_map_set_laws() {
             because: Vec::new(),
             using: None,
             induction: None,
+            by_rule: None,
             sample_guards: vec![],
         })),
         trace: false,
@@ -2156,6 +2165,7 @@ fn transpile_auto_proves_direct_map_set_laws() {
             because: Vec::new(),
             using: None,
             induction: None,
+            by_rule: None,
             sample_guards: vec![],
         })),
         trace: false,
@@ -2483,6 +2493,7 @@ fn transpile_auto_proves_map_update_laws() {
             because: Vec::new(),
             using: None,
             induction: None,
+            by_rule: None,
             sample_guards: vec![],
         })),
         trace: false,
@@ -2552,6 +2563,7 @@ fn transpile_auto_proves_map_update_laws() {
             because: Vec::new(),
             using: None,
             induction: None,
+            by_rule: None,
             sample_guards: vec![],
         })),
         trace: false,
@@ -2657,6 +2669,7 @@ fn transpile_parenthesizes_negative_int_call_args_in_law_samples() {
             because: Vec::new(),
             using: None,
             induction: None,
+            by_rule: None,
             sample_guards: vec![],
         })),
         trace: false,
@@ -2735,6 +2748,7 @@ fn verify_law_numbering_is_scoped_per_law_name() {
             because: Vec::new(),
             using: None,
             induction: None,
+            by_rule: None,
             sample_guards: vec![],
         })),
         trace: false,
@@ -5805,3 +5819,83 @@ verify roll
 
 #[path = "tests/verify_identity.rs"]
 mod verify_identity;
+
+/// A law whose `by` rule closed it is stated in the certificate like any law
+/// closed by steps (the certificate model states no step proof for any
+/// law); one its rule did not close is left out, like any law that did not
+/// close.
+#[test]
+fn cert_model_states_a_law_its_rule_closed_and_leaves_out_one_it_did_not() {
+    let mut ctx = ctx_from_source(
+        r#"
+module Ruled
+    intent = "Laws that name a proof rule."
+    effects []
+
+fn identity(n: Int) -> Int
+    ? "Itself."
+    n
+
+verify identity
+    identity(1) => 1
+
+verify identity law closedByRule
+    given n: Int = [0, 1]
+    by Rules.Same.same
+    identity(n) => n
+
+verify identity law openAfterRule
+    given n: Int = [0, 1]
+    by Rules.Same.same
+    identity(n) => n
+"#,
+        "ruled",
+    );
+    // No rule runs in this context; give the first law the script a rule
+    // that closed it would leave.
+    let theorem = ctx
+        .proof_ir
+        .law_theorems
+        .iter_mut()
+        .find(|t| t.law_name == "closedByRule")
+        .expect("the law's theorem");
+    let lhs = crate::ir::proof_steps::term::var("n");
+    theorem.steps = Some(crate::ir::proof_steps::Script {
+        obligation: crate::ir::proof_steps::Obligation {
+            key: "identity.closedByRule".into(),
+            givens: vec!["n".into()],
+            finite: Vec::new(),
+            lists: Vec::new(),
+            ints: Vec::new(),
+            premise: None,
+            lhs: lhs.clone(),
+            rhs: lhs.clone(),
+        },
+        defs: Vec::new(),
+        consts: Vec::new(),
+        laws: Vec::new(),
+        sums: Vec::new(),
+        proof: crate::ir::proof_steps::Proof::Refl(lhs),
+        rule: Some(crate::ir::proof_steps::RuleUse {
+            name: "Rules.Same.same".into(),
+            hash: "00".into(),
+        }),
+    });
+    let lean = generated_lean_file(&transpile_for_cert_model(&mut ctx));
+    assert!(
+        lean.contains(
+            "-- aver:law-class identity_law_closedByRule universal identity.closedByRule"
+        ),
+        "a law its rule closed is a law-claim:\n{lean}"
+    );
+    assert!(
+        lean.contains(
+            "cert-model law identity.openAfterRule: universal proof did not close; not exported"
+        ),
+        "a law its rule did not close is left out:\n{lean}"
+    );
+    assert!(
+        !lean.contains("identity_law_openAfterRule"),
+        "no theorem for the open law:\n{lean}"
+    );
+}

@@ -238,15 +238,32 @@ pub fn isBlank(c @ _: AverStr) -> bool {
     }
 }
 
-/// Drop leading blanks.
+/// Drop leading blanks and comments: a comment runs from `;` to the end of its line, and the reader never sees it.
 #[inline(always)]
 pub fn skipBlank(mut cs @ _: aver_rt::AverList<AverStr>) -> aver_rt::AverList<AverStr> {
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        aver_list_match!(cs.clone(), [] => { return aver_rt::AverList::empty(); }, [c, rest] => { if crate::proof_kernel::aver_generated::kernel::sexp::isBlank(c) { {
+        aver_list_match!(cs.clone(), [] => { return aver_rt::AverList::empty(); }, [c, rest] => { { let __int_match_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&c)); if __int_match_subject == aver_rt::AverInt::from_i64(59) { {
+            let __tco0 = crate::proof_kernel::aver_generated::kernel::sexp::skipLine(rest);
+            cs = __tco0;
+            continue;
+        } } else { if crate::proof_kernel::aver_generated::kernel::sexp::isBlank(c) { {
             let __tco0 = rest;
             cs = __tco0;
             continue;
-        } } else { return cs; } })
+        } } else { return cs; } } } })
+    }
+}
+
+/// Drop everything up to and including the next line break.
+#[inline(always)]
+pub fn skipLine(mut cs @ _: aver_rt::AverList<AverStr>) -> aver_rt::AverList<AverStr> {
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        aver_list_match!(cs, [] => { return aver_rt::AverList::empty(); }, [c, rest] => { { let __int_match_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&c)); if __int_match_subject == aver_rt::AverInt::from_i64(10) { return rest; } else { {
+            let __tco0 = rest;
+            cs = __tco0;
+            continue;
+        } } } })
     }
 }

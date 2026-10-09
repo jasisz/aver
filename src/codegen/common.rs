@@ -3883,6 +3883,7 @@ mod tests {
             because: Vec::new(),
             using: None,
             induction: None,
+            by_rule: None,
             sample_guards: Vec::new(),
         }
     }

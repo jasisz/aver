@@ -1,0 +1,28 @@
+module Broken
+    intent =
+        "Proof rules that are wrong on purpose, for the tests: what each returns is checked by the kernel like any proof."
+    depends [Kernel.Term, Kernel.Proof, Kernel.Lib]
+    rules [claimsTheWhen, spins]
+
+fn claimsTheWhen(goal: Goal) -> Result<Proof, String>
+    ? "Offers the law's `when` as the proof of its claim, which proves something else."
+    Result.Ok(Kernel.Lib.whenHolds())
+
+verify claimsTheWhen
+    claimsTheWhen(Goal(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [])) => Result.Ok(Proof.PHyp("when"))
+
+fn spins(goal: Goal) -> Result<Proof, String>
+    ? "Counts up from 0 to minus the number of givens: refuses at once for a law without givens, never returns for a law with some."
+    countUpTo(0, 0 - List.len(goal.obligation.givens))
+
+verify spins
+    spins(Goal(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [])) => Result.Err("stopped")
+
+fn countUpTo(n: Int, stop: Int) -> Result<Proof, String>
+    ? "Counts up from n and refuses on reaching stop, which never happens when stop is below n."
+    match n == stop
+        true -> Result.Err("stopped")
+        false -> countUpTo(n + 1, stop)
+
+verify countUpTo
+    countUpTo(0, 3) => Result.Err("stopped")

@@ -1,0 +1,46 @@
+module Stack
+    intent =
+        "Proof rules for laws about the top of a stack held as a list."
+        "openByLength: a law under `when List.len(v) >= k` holds once v is opened into its first k cells"
+        "and both sides are evaluated; a case with fewer cells contradicts the `when`."
+    depends [Kernel.Term, Kernel.Proof, Kernel.Lib]
+    rules [openByLength]
+
+fn openByLength(goal: Goal) -> Result<Proof, String>
+    ? "The proof that opens the list the `when` bounds, or why the rule does not apply."
+    match Kernel.Lib.whenOf(goal)
+        Option.None -> Result.Err("the law has no `when`")
+        Option.Some(w) -> match lengthBound(w)
+            Option.None -> Result.Err("the `when` is not `List.len(v) >= k` with a literal k")
+            Option.Some((v, k)) -> openCells(Kernel.Lib.scope(goal), goal.obligation.lhs, goal.obligation.rhs, w, v, 1, k)
+
+verify openByLength
+    openByLength(Goal(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [])) => Result.Err("the law has no `when`")
+
+fn lengthBound(w: Term) -> Option<Tuple<String, Int>>
+    ? "v and k of `List.len(v) >= k`."
+    match w
+        Term.TOp(">=", Term.TBi("List.len", [Term.TVar(v)]), Term.TInt(k)) -> Option.Some((v, k))
+        _ -> Option.None
+
+verify lengthBound
+    lengthBound(Term.TOp(">=", Term.TBi("List.len", [Term.TVar("xs")]), Term.TInt(2))) => Option.Some(("xs", 2))
+    lengthBound(Term.TBool(true)) => Option.None
+
+fn openCells(s: Scope, lhs: Term, rhs: Term, w: Term, cur: String, depth: Int, k: Int) -> Result<Proof, String>
+    ? "Split cur into [] and [hd, ..tl], k + 1 times down the list: an empty case with fewer than k cells above it contradicts the `when`, and the last split closes both cases by evaluating the two sides, since a count read past the k cells still needs to see the rest end or go on."
+    hd = "c_hd{depth}"
+    tl = "c_tl{depth}"
+    cell = Kernel.Lib.cons(Term.TVar(hd), Term.TVar(tl))
+    nilProof = match depth <= k
+        true -> Kernel.Lib.whenRefutes(s, Kernel.Lib.substitute(w, cur, Term.TList([]))?, Kernel.Lib.substitute(lhs, cur, Term.TList([]))?, Kernel.Lib.substitute(rhs, cur, Term.TList([]))?)?
+        false -> Kernel.Lib.bothSides(s, Kernel.Lib.substitute(lhs, cur, Term.TList([]))?, Kernel.Lib.substitute(rhs, cur, Term.TList([]))?)?
+    cellLhs = Kernel.Lib.substitute(lhs, cur, cell)?
+    cellRhs = Kernel.Lib.substitute(rhs, cur, cell)?
+    cellProof = match depth <= k
+        true -> openCells(s, cellLhs, cellRhs, Kernel.Lib.substitute(w, cur, cell)?, tl, depth + 1, k)?
+        false -> Kernel.Lib.bothSides(s, cellLhs, cellRhs)?
+    Result.Ok(Proof.PListCases(cur, lhs, rhs, nilProof, hd, tl, cellProof))
+
+verify openCells
+    openCells(Scope(defs = [], known = []), Term.TVar("xs"), Term.TVar("xs"), Term.TBool(true), "xs", 2, 1) => Result.Ok(Proof.PListCases("xs", Term.TVar("xs"), Term.TVar("xs"), Proof.PTrans([Term.TList([]), Term.TList([]), Term.TList([])], [Proof.PRefl(Term.TList([])), Proof.PSymm(Proof.PRefl(Term.TList([])))]), "c_hd2", "c_tl2", Proof.PTrans([Term.TBi("List.prepend", [Term.TVar("c_hd2"), Term.TVar("c_tl2")]), Term.TBi("List.prepend", [Term.TVar("c_hd2"), Term.TVar("c_tl2")]), Term.TBi("List.prepend", [Term.TVar("c_hd2"), Term.TVar("c_tl2")])], [Proof.PRefl(Term.TBi("List.prepend", [Term.TVar("c_hd2"), Term.TVar("c_tl2")])), Proof.PSymm(Proof.PRefl(Term.TBi("List.prepend", [Term.TVar("c_hd2"), Term.TVar("c_tl2")])))])))

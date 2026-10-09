@@ -797,6 +797,7 @@ verify count law countPlusConcat
             symbol_table: &symbols,
             program_shape: None,
             scope: None,
+            rules_root: None,
         };
         f(&inputs)
     }

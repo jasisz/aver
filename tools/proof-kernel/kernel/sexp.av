@@ -2,6 +2,7 @@ module Sexp
     intent =
         "The reader for proof-step data: S-expressions of atoms, quoted texts and lists."
         "The compiler writes the data (src/ir/proof_steps/sexpr.rs); this reads it back."
+        "A `;` starts a comment to the end of the line: the record of which proof rule wrote a script, for audit only."
     exposes [Sexp, readAll]
     effects []
 
@@ -23,6 +24,7 @@ verify readAll
     readAll(" (x (\"q \\\" r\") ()) ") => Result.Ok(Sexp.Node([Sexp.Atom("x"), Sexp.Node([Sexp.Text("q \" r")]), Sexp.Node([])]))
     readAll("(a") => Result.Err("unexpected end of data")
     readAll("a b") => Result.Err("text after the S-expression")
+    readAll("; by R.rule sha256:00\n(a)") => Result.Ok(Sexp.Node([Sexp.Atom("a")]))
 
 fn readOne(cs: List<String>) -> Result<Tuple<Sexp, List<String>>, String>
     ? "Read one S-expression from the front of the characters."
@@ -106,13 +108,26 @@ verify isBlank
     isBlank("x") => false
 
 fn skipBlank(cs: List<String>) -> List<String>
-    ? "Drop leading blanks."
+    ? "Drop leading blanks and comments: a comment runs from `;` to the end of its line, and the reader never sees it."
     match cs
         [] -> []
+        [";", ..rest] -> skipBlank(skipLine(rest))
         [c, ..rest] -> match isBlank(c)
             true -> skipBlank(rest)
             false -> cs
 
 verify skipBlank
     skipBlank([" ", "\n", "a"]) => ["a"]
+    skipBlank([";", " ", "x", "\n", "a"]) => ["a"]
     skipBlank([]) => []
+
+fn skipLine(cs: List<String>) -> List<String>
+    ? "Drop everything up to and including the next line break."
+    match cs
+        [] -> []
+        ["\n", ..rest] -> rest
+        [c, ..rest] -> skipLine(rest)
+
+verify skipLine
+    skipLine(["x", "\n", "a"]) => ["a"]
+    skipLine(["x"]) => []
