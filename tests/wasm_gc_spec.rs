@@ -643,6 +643,7 @@ fn compile_multi_module_bytes_for(
                 panic!("dep '{prefix}' parse failed: {e}\n--- dep ---\n{src}");
             }),
             path: std::path::PathBuf::from(format!("{prefix}.av")),
+            check_errors: Vec::new(),
         })
         .collect();
 
@@ -1543,6 +1544,7 @@ record Other
         dep_name: "Dep".to_string(),
         items: parse_source(dep_src).expect("dep parse"),
         path: std::path::PathBuf::from("Dep.av"),
+        check_errors: Vec::new(),
     };
     let modules = vec![aver::codegen::ModuleInfo::from_loaded(&loaded)];
     let capabilities = aver::capability::CapabilityRegistry::default();

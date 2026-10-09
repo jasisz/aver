@@ -1,0 +1,15 @@
+module Main
+    intent = "Imports a module that fails its own check."
+    depends [Dep]
+
+fn go(n: Int) -> Int
+    ? "Dep.use over n."
+    Dep.use(n)
+
+verify go
+    go(1) => 3
+
+fn main() -> Unit
+    ? "Prints a line only a program that ran would print."
+    ! [Console.print]
+    Console.print("ran: {go(1)}")

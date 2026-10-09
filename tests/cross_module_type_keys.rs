@@ -123,11 +123,13 @@ fn build_three_module_ctx() -> aver::codegen::CodegenContext {
             dep_name: "Round".to_string(),
             items: parse_source(ROUND_SRC).expect("Round parse"),
             path: PathBuf::from("Round.av"),
+            check_errors: Vec::new(),
         },
         LoadedModule {
             dep_name: "Sharp".to_string(),
             items: parse_source(SHARP_SRC).expect("Sharp parse"),
             path: PathBuf::from("Sharp.av"),
+            check_errors: Vec::new(),
         },
     ];
     let modules: Vec<ModuleInfo> = loaded.iter().map(ModuleInfo::from_loaded).collect();

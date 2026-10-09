@@ -70,6 +70,7 @@ fn analyze_multi(entry: &str, deps: &[(&str, &str)]) -> IntervalAnalysisResult {
             dep_name: name.to_string(),
             items: parse_source(src).unwrap_or_else(|e| panic!("{name} parse: {e}")),
             path: PathBuf::from(format!("{name}.av")),
+            check_errors: Vec::new(),
         })
         .collect();
     let modules: Vec<ModuleInfo> = loaded.iter().map(ModuleInfo::from_loaded).collect();
@@ -550,6 +551,7 @@ fn carrier_table(
             dep_name: name.to_string(),
             items: parse_source(src).unwrap_or_else(|e| panic!("{name} parse: {e}")),
             path: PathBuf::from(format!("{name}.av")),
+            check_errors: Vec::new(),
         })
         .collect();
     let modules: Vec<ModuleInfo> = loaded.iter().map(ModuleInfo::from_loaded).collect();

@@ -101,9 +101,9 @@ fn check_reports_an_arm_only_the_compiled_match_can_see_is_dead() {
 
 /// Runs `aver <command> main.av` in a `nested_patterns_dependency` fixture,
 /// whose `Dep` fails its own check while `Main`'s passes. The command must
-/// refuse with `Dep`'s own error; a dependency that failed its check keeps
-/// its nested patterns, and compiling the importer with it used to panic in
-/// HIR resolve.
+/// refuse with `Dep`'s own error and run nothing. A dependency that failed
+/// its check keeps its nested patterns, and compiling the importer with it
+/// used to panic in HIR resolve.
 fn refused_dependency(fixture: &str, command: &str, expected: &str) {
     let dir = repo_root()
         .join("tests/fixtures/nested_patterns_dependency")
@@ -119,6 +119,7 @@ fn refused_dependency(fixture: &str, command: &str, expected: &str) {
     let report = format_output(&out);
     assert!(!out.status.success(), "{report}");
     assert!(!report.contains("panicked"), "{report}");
+    assert!(!report.contains("ran:"), "{report}");
     assert!(report.contains(expected), "{report}");
 }
 
@@ -154,6 +155,32 @@ fn verify_refuses_an_import_with_a_dead_nested_arm() {
 #[test]
 fn run_refuses_an_import_with_a_dead_nested_arm() {
     refused_dependency("dead_arm", "run", DEAD_ARM);
+}
+
+// A dependency with no nested pattern at all is refused just the same: what
+// stops it is its own failed check, not its shape. `main` prints `ran:` only
+// if the program ran.
+const FLAT_SHADOWED_PARAM: &str = "the parameter 'base' shadows the function 'base'";
+const FLAT_TYPE_ERROR: &str = "Operator '+' requires matching types";
+
+#[test]
+fn verify_refuses_an_import_whose_flat_function_shadows_a_function() {
+    refused_dependency("flat_shadowed_param", "verify", FLAT_SHADOWED_PARAM);
+}
+
+#[test]
+fn run_refuses_an_import_whose_flat_function_shadows_a_function() {
+    refused_dependency("flat_shadowed_param", "run", FLAT_SHADOWED_PARAM);
+}
+
+#[test]
+fn verify_refuses_an_import_with_a_plain_type_error() {
+    refused_dependency("flat_type_error", "verify", FLAT_TYPE_ERROR);
+}
+
+#[test]
+fn run_refuses_an_import_with_a_plain_type_error() {
+    refused_dependency("flat_type_error", "run", FLAT_TYPE_ERROR);
 }
 
 #[test]

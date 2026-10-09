@@ -109,6 +109,7 @@ fn build_ctx_with_modules(entry_src: &str, deps: &[(&str, &str)]) -> CodegenCont
                 dep_name: (*name).to_string(),
                 items,
                 path: PathBuf::from(format!("{name}.av")),
+                check_errors: Vec::new(),
             }
         })
         .collect();

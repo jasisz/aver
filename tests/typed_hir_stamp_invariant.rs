@@ -89,6 +89,7 @@ fn run_multi(entry_source: &str, deps: &[(&str, &str)]) -> Vec<String> {
             dep_name: prefix.to_string(),
             items: parse_source(src).unwrap_or_else(|e| panic!("dep '{prefix}' parse: {e}")),
             path: std::path::PathBuf::from(format!("{prefix}.av")),
+            check_errors: Vec::new(),
         })
         .collect();
     let result = pipeline::run(

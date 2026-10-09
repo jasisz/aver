@@ -1130,6 +1130,7 @@ mod tests {
                     dep_name: prefix.to_string(),
                     items,
                     path: std::path::PathBuf::from(format!("{}.av", prefix)),
+                    check_errors: Vec::new(),
                 }
             })
             .collect();

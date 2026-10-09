@@ -1,0 +1,10 @@
+module Dep
+    intent = "A plain type error in a flat function."
+    exposes [use]
+
+fn use(n: Int) -> Int
+    ? "n plus a string, which does not type-check."
+    n + "one"
+
+verify use
+    use(1) => 2

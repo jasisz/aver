@@ -215,6 +215,7 @@ fn plain_capability_given_works_through_the_loaded_verify_entry_point() {
         dep_name: "Hash160".to_string(),
         items: aver::source::parse_source(HASH160_SOURCE).expect("parse capability module"),
         path: "Hash160.av".into(),
+        check_errors: Vec::new(),
     }];
     let results = aver::diagnostics::vm_verify::run_verify_for_items_vm_with_loaded(
         items, loaded, None, "main.av",
@@ -437,6 +438,7 @@ fn loaded_verify_path_has_the_same_case_granularity() {
         dep_name: "Hash160".to_string(),
         items: aver::source::parse_source(HASH160_SOURCE).expect("parse capability module"),
         path: "Hash160.av".into(),
+        check_errors: Vec::new(),
     }];
     let results = aver::diagnostics::vm_verify::run_verify_for_items_vm_with_loaded(
         items, loaded, None, "main.av",
