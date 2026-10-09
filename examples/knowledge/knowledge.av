@@ -210,6 +210,7 @@ verify mergeAll law appends
     given k: Knowledge = [empty(), merge(empty(), bodyOf(Bytes.fromList([9])))]
     given xs: List<Delta> = [[], [bodyOf(Bytes.fromList([1]))], [bodyOf(Bytes.fromList([1])), Delta.Verdict("b", "c", Verdict.Valid)]]
     given ys: List<Delta> = [[], [headerOf(Bytes.fromList([1]))], [bodyOf(Bytes.fromList([2])), bodyOf(Bytes.fromList([1]))]]
+    induction xs
     mergeAll(k, List.concat(xs, ys)) => mergeAll(mergeAll(k, xs), ys)
 
 verify mergeAll law orderFree

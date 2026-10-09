@@ -16,4 +16,5 @@ verify plus law plusAssoc
     given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
     given y: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
     given z: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    induction x
     plus(plus(x, y), z) => plus(x, plus(y, z))

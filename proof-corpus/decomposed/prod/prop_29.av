@@ -22,12 +22,16 @@ verify qrev law qrevRevAppend
 verify rev law revAppendHomo
     given a: List<Int> = [[1], [1, 2, 3]]
     given b: List<Int> = [[4], [4, 5]]
+    using [List.concat.assoc, List.concat.rightIdentity]
+    induction a
     rev(List.concat(a, b)) => List.concat(rev(b), rev(a))
 
 verify rev law revInvolution
     given x: List<Int> = [[], [1], [1, 2, 3]]
+    using [rev.revAppendHomo]
     rev(rev(x)) => x
 
 verify rev law revQrevNil
     given x: List<Int> = [[], [1], [1, 2, 3]]
+    using [qrev.qrevRevAppend, rev.revInvolution, List.concat.rightIdentity]
     rev(qrev(x, [])) => x

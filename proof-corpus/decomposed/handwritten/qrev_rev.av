@@ -26,4 +26,5 @@ verify qrev law accGeneralizes
 
 verify fastRev law equalsRev
     given xs: List<Int> = [[], [1], [1, 2, 3], [3, 1, 2]]
+    using [qrev.accGeneralizes, List.concat.rightIdentity]
     fastRev(xs) => rev(xs)

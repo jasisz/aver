@@ -55,6 +55,7 @@ verify len law lenSnocSucc
 
 verify len law lenRevPreserved
     given xs: List<Int> = [[], [1], [1, 2], [1, 2, 3]]
+    using [len.lenSnocSucc]
     len(rev(xs)) => len(xs)
 
 verify zip law zipSnocDistribution

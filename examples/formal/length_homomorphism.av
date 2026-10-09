@@ -97,4 +97,5 @@ verify lenCatHom
 verify len law homomorphism
     given xs: IntList = [IntList.Nil, IntList.Cons(1, IntList.Nil)]
     given ys: IntList = [IntList.Nil, IntList.Cons(2, IntList.Cons(3, IntList.Nil))]
+    induction xs
     len(cat(xs, ys)) => len(xs) + len(ys)

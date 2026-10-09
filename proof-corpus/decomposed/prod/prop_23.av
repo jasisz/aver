@@ -41,11 +41,15 @@ verify plus law plusSuccRight
 verify plus law plusComm
     given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
     given y: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    using [plus.plusZeroRight, plus.plusSuccRight]
+    induction x
     plus(x, y) => plus(y, x)
 
 verify length law lengthAppend
     given x: List<Int> = [[], [1], [1, 2, 3]]
     given y: List<Int> = [[], [2], [4, 5]]
+    using [plus.plusZeroRight, plus.plusSuccRight]
+    induction x
     length(append(x, y)) => plus(length(y), length(x))
 
 verify half law halfLengthAppendComm

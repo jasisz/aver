@@ -21,4 +21,5 @@ verify qrev law qrevSpec
 
 verify rev law revQrev
     given x: List<Int> = [[], [1], [1, 2, 3]]
+    using [qrev.qrevSpec, List.concat.rightIdentity]
     rev(x) => qrev(x, [])
