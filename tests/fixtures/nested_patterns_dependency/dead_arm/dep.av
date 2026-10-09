@@ -1,0 +1,14 @@
+module Dep
+    intent = "A match with an arm only the compiled nested patterns show to be dead."
+    exposes [pick]
+
+fn pick(o: Option<Bool>) -> Int
+    ? "1 for true, 2 for false, 0 for none."
+    match o
+        Option.Some(true) -> 1
+        Option.Some(false) -> 2
+        Option.Some(_) -> 3
+        Option.None -> 0
+
+verify pick
+    pick(Option.Some(true)) => 1

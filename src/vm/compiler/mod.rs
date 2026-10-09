@@ -280,6 +280,7 @@ fn compile_program_inner(
         }
         ModuleSource::Disk(None) => {}
         ModuleSource::Loaded(loaded) => {
+            refuse_unchecked_dependency(&loaded)?;
             for m in loaded {
                 let path = m.path.display().to_string();
                 compiler.integrate_module(&m.dep_name, &path, m.items, symbols, arena)?;
@@ -442,6 +443,60 @@ fn compile_program_inner(
 #[derive(Debug)]
 pub struct CompileError {
     pub msg: String,
+}
+
+/// Refuse a program whose dependency did not pass its own check.
+///
+/// A dependency is checked and lowered once, by its own front door, before
+/// any importer is compiled; a module whose check fails keeps its items as
+/// written, nested patterns included. The importer's own check can still
+/// pass (a rule such as shadowing is checked per module, on the module's
+/// own front door), and a caller that prepares several modules at once may
+/// reach the compiler before it learns the dependency failed. Such a module
+/// must never reach HIR resolve: this names it with its own errors instead.
+/// `modules` is leaves-first, so the errors are recomputed over the modules
+/// up to the refused one.
+fn refuse_unchecked_dependency(
+    modules: &[crate::source::LoadedModule],
+) -> Result<(), CompileError> {
+    let Some(index) = modules
+        .iter()
+        .position(|module| crate::ir::nested_patterns::has_nested_patterns(&module.items))
+    else {
+        return Ok(());
+    };
+    let module = &modules[index];
+    let mut again = modules[..=index].to_vec();
+    let (errors, _) = crate::ir::pipeline::lower_loaded_process_modules(
+        &mut again,
+        None,
+        &crate::config::MarkedCapabilities::default(),
+    );
+    let details = errors
+        .iter()
+        .map(|error| {
+            let file = error
+                .origin
+                .as_ref()
+                .map(|origin| origin.file.clone())
+                .unwrap_or_else(|| module.path.display().to_string());
+            format!("  {}:{}:{}: {}", file, error.line, error.col, error.message)
+        })
+        .collect::<Vec<_>>();
+    let msg = if details.is_empty() {
+        format!(
+            "dependency module '{}' ({}) did not pass its own check; run `aver check` on it",
+            module.dep_name,
+            module.path.display()
+        )
+    } else {
+        format!(
+            "Type errors in dependency module '{}':\n{}",
+            module.dep_name,
+            details.join("\n")
+        )
+    };
+    Err(CompileError { msg })
 }
 
 pub(super) fn operand_u8(value: usize, what: &str) -> Result<u8, CompileError> {
@@ -620,6 +675,7 @@ impl ProgramCompiler {
 
         let modules = crate::source::load_module_tree(&root_deps, module_root)
             .map_err(|e| CompileError { msg: e })?;
+        refuse_unchecked_dependency(&modules)?;
 
         for loaded in modules {
             let path = loaded.path.display().to_string();
@@ -1710,6 +1766,79 @@ mod tests {
         let (code, _globals) =
             compile_program(&resolved, &symbols, &mut arena, None).expect("vm compile should pass");
         code
+    }
+
+    fn embedded_dependency(source: &str) -> crate::source::LoadedModule {
+        crate::source::LoadedModule {
+            dep_name: "Kernel.Lib".to_string(),
+            items: parse_source(source).expect("source should parse"),
+            path: std::path::PathBuf::from("<aver-stdlib>/kernel/lib.av"),
+        }
+    }
+
+    /// A dependency the program does not report as a unit of its own (an
+    /// embedded module) whose check fails keeps its nested patterns. The
+    /// compiler refuses it with the module's own errors instead of handing
+    /// the patterns to HIR resolve, which has no form for them.
+    #[test]
+    fn dependency_that_failed_its_check_is_refused_with_its_errors() {
+        let source = r#"
+module Lib
+    intent = "t"
+    exposes [fresh]
+
+fn taken(xs: List<Int>) -> Int
+    ? "t"
+    match xs
+        [a, b, ..rest] -> a + b
+        _ -> 0
+
+fn fresh(taken: List<Int>) -> Int
+    ? "t"
+    match taken
+        [a, ..rest] -> a
+        _ -> 0
+"#;
+        let mut modules = vec![embedded_dependency(source)];
+        let (errors, failed) = crate::ir::pipeline::lower_loaded_process_modules(
+            &mut modules,
+            None,
+            &crate::config::MarkedCapabilities::default(),
+        );
+        assert!(!errors.is_empty() && failed.contains(&0), "{errors:?}");
+        let error = super::refuse_unchecked_dependency(&modules)
+            .expect_err("a dependency that failed its check must be refused");
+        assert!(error.msg.contains("'Kernel.Lib'"), "{}", error.msg);
+        assert!(
+            error
+                .msg
+                .contains("the parameter 'taken' shadows the function 'taken'"),
+            "{}",
+            error.msg
+        );
+    }
+
+    #[test]
+    fn dependency_whose_nested_patterns_were_compiled_is_accepted() {
+        let source = r#"
+module Lib
+    intent = "t"
+    exposes [first]
+
+fn first(xs: List<Int>) -> Int
+    ? "t"
+    match xs
+        [a, b, ..rest] -> a + b
+        _ -> 0
+"#;
+        let mut modules = vec![embedded_dependency(source)];
+        let (errors, _) = crate::ir::pipeline::lower_loaded_process_modules(
+            &mut modules,
+            None,
+            &crate::config::MarkedCapabilities::default(),
+        );
+        assert!(errors.is_empty(), "{errors:?}");
+        assert!(super::refuse_unchecked_dependency(&modules).is_ok());
     }
 
     #[test]

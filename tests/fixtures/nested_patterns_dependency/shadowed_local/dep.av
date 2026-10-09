@@ -1,0 +1,19 @@
+module Dep
+    intent = "A local binding shadows a function of the module, in a function whose match has a list pattern."
+    exposes [use]
+
+fn cell(o: Option<Int>) -> Int
+    ? "The value inside, or zero."
+    match o
+        Option.Some(n) -> n
+        Option.None -> 0
+
+fn use(xs: List<Int>) -> Int
+    ? "Three plus the first two items."
+    cell = 3
+    match xs
+        [a, b, ..rest] -> cell + a + b
+        _ -> 0
+
+verify use
+    use([1, 2]) => 6

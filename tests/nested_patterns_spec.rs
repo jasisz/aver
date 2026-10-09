@@ -99,6 +99,63 @@ fn check_reports_an_arm_only_the_compiled_match_can_see_is_dead() {
     );
 }
 
+/// Runs `aver <command> main.av` in a `nested_patterns_dependency` fixture,
+/// whose `Dep` fails its own check while `Main`'s passes. The command must
+/// refuse with `Dep`'s own error; a dependency that failed its check keeps
+/// its nested patterns, and compiling the importer with it used to panic in
+/// HIR resolve.
+fn refused_dependency(fixture: &str, command: &str, expected: &str) {
+    let dir = repo_root()
+        .join("tests/fixtures/nested_patterns_dependency")
+        .join(fixture);
+    let out = Command::new(aver_bin())
+        .current_dir(&dir)
+        .arg(command)
+        .arg("main.av")
+        .arg("--module-root")
+        .arg(".")
+        .output()
+        .expect("run aver");
+    let report = format_output(&out);
+    assert!(!out.status.success(), "{report}");
+    assert!(!report.contains("panicked"), "{report}");
+    assert!(report.contains(expected), "{report}");
+}
+
+const SHADOWED_LOCAL: &str = "the binding 'cell' shadows the function 'cell'";
+const SHADOWED_PARAM: &str = "the parameter 'rest' shadows the function 'rest'";
+const DEAD_ARM: &str = "Unreachable match arm: no value reaches pattern Option.Some(_)";
+
+#[test]
+fn verify_refuses_an_import_whose_local_shadows_a_function() {
+    refused_dependency("shadowed_local", "verify", SHADOWED_LOCAL);
+}
+
+#[test]
+fn run_refuses_an_import_whose_local_shadows_a_function() {
+    refused_dependency("shadowed_local", "run", SHADOWED_LOCAL);
+}
+
+#[test]
+fn verify_refuses_an_import_with_a_nested_match_under_a_tuple_arm() {
+    refused_dependency("tuple_arm", "verify", SHADOWED_PARAM);
+}
+
+#[test]
+fn run_refuses_an_import_with_a_nested_match_under_a_tuple_arm() {
+    refused_dependency("tuple_arm", "run", SHADOWED_PARAM);
+}
+
+#[test]
+fn verify_refuses_an_import_with_a_dead_nested_arm() {
+    refused_dependency("dead_arm", "verify", DEAD_ARM);
+}
+
+#[test]
+fn run_refuses_an_import_with_a_dead_nested_arm() {
+    refused_dependency("dead_arm", "run", DEAD_ARM);
+}
+
 #[test]
 fn nested_patterns_inside_a_process_are_refused() {
     let report = check(
