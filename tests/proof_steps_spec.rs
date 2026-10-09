@@ -980,6 +980,62 @@ fn induction_follows_only_the_function_the_law_is_about() {
 }
 
 #[test]
+fn a_recursion_through_a_helper_is_read_as_if_the_helper_stood_in_its_place() {
+    let out = scratch("induct-helper");
+    let (result, summary) = aver_backend_json("induction_helper.av", &out, None);
+    let closed = &summary["closed_by"];
+    // `anyNonZero` calls `nonZeroOrOn`, which calls it back on the tail.
+    assert_eq!(closed["anyNonZero.setHeadIsEnough"], "steps", "{summary}");
+    assert_eq!(closed["anyNonZero.concatenation"], "steps", "{summary}");
+    // `evenLength` and `oddLength` each descend on their own list: a
+    // mutual recursion steps still do not open.
+    assert_eq!(
+        closed["evenLength.twoMoreKeepsIt"],
+        "open",
+        "{}",
+        format_output(&result)
+    );
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("induction_helper.av", &out)
+            .into_iter()
+            .collect();
+    let law = fs::read_to_string(&files["anyNonZero.concatenation"]).unwrap();
+    assert_eq!(
+        aver::proof_kernel::verdict(&law),
+        Ok("anyNonZero.concatenation".to_string())
+    );
+    let back = "(arm (pl (b false)) (call anyNonZero (v tail)))";
+    let call = "(call nonZeroOrOn (v head) (v tail))";
+    assert!(law.contains(back) && law.contains(call), "{law}");
+    for (kind, mutated) in [
+        (
+            "the helper recurses on its own",
+            law.replace(
+                back,
+                "(arm (pl (b false)) (call nonZeroOrOn (v head) (call anyNonZero (v tail))))",
+            ),
+        ),
+        (
+            "the helper is called with the whole list",
+            law.replace(call, "(call nonZeroOrOn (v head) (v bytes))"),
+        ),
+        (
+            "the helper rebinds the part it passes back",
+            law.replace(
+                back,
+                "(arm (pl (b false)) (match (v head) (arm (pv tail) (call anyNonZero (v tail)))))",
+            ),
+        ),
+    ] {
+        assert!(
+            aver::proof_kernel::verdict(&mutated).is_err(),
+            "{kind}: {mutated}"
+        );
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
 fn an_induction_line_names_the_given_the_induction_follows() {
     let out = scratch("induct-named");
     let (result, summary) = aver_backend_json("induction_named.av", &out, None);

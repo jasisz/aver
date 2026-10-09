@@ -2600,7 +2600,7 @@ pub fn unfold(
             match (
                 (aver_rt::AverInt::from_i64(d.params.len() as i64)
                     == aver_rt::AverInt::from_i64(xs.len() as i64)),
-                crate::proof_kernel::aver_generated::kernel::induct::openGate(&d),
+                crate::proof_kernel::aver_generated::kernel::induct::openGate(d.clone(), &env.defs),
             ) {
                 (_, Err(why)) => {
                     crate::proof_kernel::aver_generated::kernel::check::refuse(path, why)
@@ -3856,28 +3856,32 @@ pub fn induct(
                 __b
             }),
         ),
-        Some(d @ _) => match crate::proof_kernel::aver_generated::kernel::induct::recursion(&d) {
-            Err(why @ _) => crate::proof_kernel::aver_generated::kernel::check::refuse(path, why),
-            Ok(__pat0 @ _) => match __pat0 {
-                None => crate::proof_kernel::aver_generated::kernel::check::refuse(
-                    path,
-                    aver_rt::AverStr::from({
-                        let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(33)).to_usize().unwrap_or(0),
-                            );
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f))));
+        Some(d @ _) => {
+            match crate::proof_kernel::aver_generated::kernel::induct::recursion(&d, &env.defs) {
+                Err(why @ _) => {
+                    crate::proof_kernel::aver_generated::kernel::check::refuse(path, why)
+                }
+                Ok(__pat0 @ _) => match __pat0 {
+                    None => crate::proof_kernel::aver_generated::kernel::check::refuse(
+                        path,
+                        aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = aver_rt::Buffer::with_capacity(
+                                    (aver_rt::AverInt::from_i64(33)).to_usize().unwrap_or(0),
+                                );
+                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f))));
+                                __b
+                            };
+                            __b.push_str(&AverStr::from(" does not recurse"));
                             __b
-                        };
-                        __b.push_str(&AverStr::from(" does not recurse"));
-                        __b
-                    }),
-                ),
-                Some(r @ _) => crate::proof_kernel::aver_generated::kernel::check::inductOn(
-                    &d, &r, xs, claim, carry, cs, env, path,
-                ),
-            },
-        },
+                        }),
+                    ),
+                    Some(r @ _) => crate::proof_kernel::aver_generated::kernel::check::inductOn(
+                        &d, &r, xs, claim, carry, cs, env, path,
+                    ),
+                },
+            }
+        }
     }
 }
 

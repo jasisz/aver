@@ -630,11 +630,93 @@ fn a_recursive_definition_opens_only_when_it_recurses_on_a_part_of_its_match() {
     };
     let on_tail = def(call(vec![var("t")]));
     assert_eq!(
-        super::induct::recursion(&on_tail),
+        super::induct::recursion(&on_tail, &[]),
         Ok(Some(super::induct::Recursion { at: 0, guard: None }))
     );
     let on_itself = def(call(vec![var("xs")]));
-    assert!(super::induct::recursion(&on_itself).is_err());
+    assert!(super::induct::recursion(&on_itself, &[]).is_err());
+}
+
+#[test]
+fn a_recursion_through_a_helper_is_checked_as_if_the_helper_stood_in_the_arm() {
+    use crate::ir::hir::ResolvedCallee;
+    use crate::ir::identity::FnId;
+    let call = |id: u32, args: Vec<super::Term>| {
+        Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(FnId(id)), args))
+    };
+    let arm = |pattern, body| ResolvedMatchArm {
+        pattern,
+        body: Box::new(body),
+        binding_slots: std::sync::OnceLock::new(),
+    };
+    // f(xs) = match xs { [] -> 0, [h, ..t] -> g(h, t) }
+    let f = super::Def {
+        fn_id: FnId(1),
+        name: "f".into(),
+        params: vec!["xs".into()],
+        returns_bool: false,
+        lets: Vec::new(),
+        body: Spanned::bare(ResolvedExpr::Match {
+            subject: Box::new(var("xs")),
+            arms: vec![
+                arm(ResolvedPattern::EmptyList, term::int(&0.into())),
+                arm(
+                    ResolvedPattern::Cons("h".into(), "t".into()),
+                    call(2, vec![var("h"), var("t")]),
+                ),
+            ],
+        }),
+    };
+    // g(first, rest) = <back>
+    let g = |back: super::Term| super::Def {
+        fn_id: FnId(2),
+        name: "g".into(),
+        params: vec!["first".into(), "rest".into()],
+        returns_bool: false,
+        lets: Vec::new(),
+        body: back,
+    };
+    let helper = g(call(1, vec![var("rest")]));
+    let ds = [f.clone(), helper.clone()];
+    let calls = super::induct::self_calls(&f.body, FnId(1), &ds).unwrap();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(term::canon(&calls[0].0[0]), var("t"));
+    assert_eq!(calls[0].1, vec!["h".to_string(), "t".to_string()]);
+    assert_eq!(
+        super::induct::recursion(&f, &ds),
+        Ok(Some(super::induct::Recursion { at: 0, guard: None }))
+    );
+    assert!(super::induct::rooted(&helper, &ds));
+    // Without the helper's definition f does not call itself.
+    assert_eq!(super::induct::recursion(&f, &[]), Ok(None));
+    // A helper that reaches itself without f is refused.
+    let looping = g(call(2, vec![var("first"), call(1, vec![var("rest")])]));
+    assert!(super::induct::recursion(&f, &[f.clone(), looping.clone()]).is_err());
+    assert!(!super::induct::rooted(
+        &looping,
+        &[f.clone(), looping.clone()]
+    ));
+    // So is one that calls f back on the whole list.
+    let whole = g(call(1, vec![term::list(vec![var("first")])]));
+    assert!(super::induct::recursion(&f, &[f.clone(), whole]).is_err());
+    // And one that rebinds the name it passes back.
+    let rebinding = g(Spanned::bare(ResolvedExpr::Match {
+        subject: Box::new(var("first")),
+        arms: vec![arm(
+            ResolvedPattern::Ident("t".into()),
+            call(1, vec![var("t")]),
+        )],
+    }));
+    assert!(super::induct::recursion(&f, &[f.clone(), rebinding]).is_err());
+    // A capture is refused, not renamed.
+    let capturing = g(Spanned::bare(ResolvedExpr::Match {
+        subject: Box::new(var("first")),
+        arms: vec![arm(
+            ResolvedPattern::Ident("t".into()),
+            call(1, vec![var("rest")]),
+        )],
+    }));
+    assert!(super::induct::recursion(&f, &[f.clone(), capturing]).is_err());
 }
 
 #[test]
@@ -1439,7 +1521,7 @@ fn an_induction_toward_zero_follows_only_the_descents_the_gate_checked() {
     for go in [less(n(), 1), div(n(), i(2)), div(n(), i(256))] {
         let d = halving(go);
         assert!(matches!(
-            super::induct::recursion(&d),
+            super::induct::recursion(&d, &[]),
             Ok(Some(super::induct::Recursion {
                 at: 0,
                 guard: Some(_)
@@ -1483,7 +1565,10 @@ fn an_induction_toward_zero_follows_only_the_descents_the_gate_checked() {
     ];
     for go in forged {
         let d = halving(go.clone());
-        assert!(super::induct::recursion(&d).is_err(), "gate took {go:?}");
+        assert!(
+            super::induct::recursion(&d, &[]).is_err(),
+            "gate took {go:?}"
+        );
         refused(
             &trivially(d, &["ih"], refl(), refl()),
             "does not count n down to zero",
@@ -1514,7 +1599,7 @@ fn an_induction_toward_zero_follows_only_the_descents_the_gate_checked() {
             call(vec![less(n(), 1)]),
         )],
     }));
-    assert!(super::induct::recursion(&rebound).is_err());
+    assert!(super::induct::recursion(&rebound, &[]).is_err());
     refused(
         &trivially(rebound, &["ih"], refl(), refl()),
         "does not count n down to zero",

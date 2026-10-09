@@ -2,7 +2,7 @@ module Subst
     intent =
         "Substitution of terms for variables, refusing any substitution a pattern binder would capture."
         "Free variables and hole counting, which the checker uses to keep substitution honest."
-    exposes [subst, substAll, lookup, freeVars, freeVarsAll, holeCount, patNames]
+    exposes [subst, substAll, lookup, freeVars, freeVarsAll, holeCount, patNames, unbind, capture, without]
     depends [Kernel.Term]
     effects []
 
