@@ -1003,14 +1003,7 @@ impl Env<'_> {
                 // A division down to zero opens the same way, or where linear
                 // arithmetic decides its guard (`digit / 256 > 0` is false
                 // for `digit < 256`).
-                let halving = crate::ir::proof_steps::induct::divides_down(&def);
-                let countdown = matches!(
-                    crate::ir::proof_steps::induct::recursion(&def),
-                    Ok(Some(crate::ir::proof_steps::induct::Recursion {
-                        guard: Some(_),
-                        ..
-                    }))
-                );
+                let (countdown, halving) = self.counts_down(&def);
                 if countdown
                     && term::eval_closed(&canon(&s)).is_none()
                     && self.hyp_for(&s).is_none()

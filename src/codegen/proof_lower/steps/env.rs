@@ -12,6 +12,11 @@ use crate::ir::proof_steps::{Const, Def, Eqn, LawRef};
 pub(crate) struct Env<'a> {
     pub inputs: &'a ProofLowerInputs<'a>,
     defs: HashMap<FnId, Option<Def>>,
+    /// Every pure definition as written, before the termination gate.
+    raw_defs: std::cell::RefCell<HashMap<FnId, Option<Def>>>,
+    /// Whether a definition counts an Int toward zero, and whether it
+    /// divides it on the way, by [`Env::counts_down`].
+    countdowns: std::cell::RefCell<HashMap<FnId, (bool, bool)>>,
     /// Definitions opened so far, in first-use order.
     pub used: Vec<FnId>,
     consts: HashMap<String, Option<Const>>,
@@ -70,6 +75,8 @@ impl<'a> Env<'a> {
         Self {
             inputs,
             defs: HashMap::new(),
+            raw_defs: std::cell::RefCell::new(HashMap::new()),
+            countdowns: std::cell::RefCell::new(HashMap::new()),
             used: Vec::new(),
             consts: HashMap::new(),
             used_consts: Vec::new(),
@@ -169,7 +176,75 @@ impl<'a> Env<'a> {
         })
     }
 
+    /// The definitions reachable from `id` through calls, `id`'s first:
+    /// what a recursion through other definitions reads.
+    pub(crate) fn reachable_defs(&self, id: FnId) -> Vec<Def> {
+        let mut out: Vec<Def> = Vec::new();
+        let mut todo = vec![id];
+        while let Some(at) = todo.pop() {
+            if out.iter().any(|d| d.fn_id == at) {
+                continue;
+            }
+            let Some(d) = self.raw_def(at) else {
+                continue;
+            };
+            let called = crate::ir::proof_steps::induct::def_callees(&d);
+            out.push(d);
+            todo.extend(called.into_iter().rev());
+        }
+        out
+    }
+
+    /// Whether `def` counts an Int toward zero, read through the helpers
+    /// it calls back through, and whether some recursive call divides it.
+    pub(crate) fn counts_down(&self, def: &Def) -> (bool, bool) {
+        use crate::ir::proof_steps::induct;
+        if let Some(found) = self.countdowns.borrow().get(&def.fn_id) {
+            return *found;
+        }
+        let ds = self.reachable_defs(def.fn_id);
+        let countdown = matches!(
+            induct::recursion(def, &ds),
+            Ok(Some(induct::Recursion { guard: Some(_), .. }))
+        );
+        let found = (countdown, induct::divides_down(def, &ds));
+        self.countdowns.borrow_mut().insert(def.fn_id, found);
+        found
+    }
+
+    /// A pure definition as written, before the termination gate.
+    pub(crate) fn raw_def(&self, id: FnId) -> Option<Def> {
+        if let Some(found) = self.raw_defs.borrow().get(&id) {
+            return found.clone();
+        }
+        let built = self.read_def(id);
+        self.raw_defs.borrow_mut().insert(id, built.clone());
+        built
+    }
+
     fn build_def(&self, id: FnId) -> Option<Def> {
+        let def = self.raw_def(id)?;
+        // A recursive function opens only when its own recursion passes the
+        // gate, a descent into a part or a division of an Int down to zero,
+        // read through the helpers it calls back through; or when every
+        // cycle through it passes one that does.
+        if self.inputs.recursive_fns.contains(&id) {
+            use crate::ir::proof_steps::induct;
+            let ds = self.reachable_defs(id);
+            if !matches!(induct::recursion(&def, &ds), Ok(Some(_))) && !induct::rooted(&def, &ds) {
+                return None;
+            }
+            if induct::divides_down(&def, &ds) {
+                if !self.open_halving {
+                    return None;
+                }
+                self.met_halving.set(true);
+            }
+        }
+        Some(def)
+    }
+
+    fn read_def(&self, id: FnId) -> Option<Def> {
         let symbols = self.inputs.symbol_table;
         let key = symbols.fn_entry(id).key.clone();
         let scope = key.scope_str();
@@ -215,29 +290,14 @@ impl<'a> Env<'a> {
             Some(prefix) => format!("{prefix}.{}", key.name),
             None => key.name.clone(),
         };
-        let def = Def {
+        Some(Def {
             fn_id: id,
             name,
             params: fd.params.iter().map(|(n, _)| n.clone()).collect(),
             returns_bool: fd.return_type == "Bool",
             lets,
             body,
-        };
-        // A recursive function opens only when its own recursion passes the
-        // gate, a descent into a part or a division of an Int down to zero;
-        // one recursive only through others never does.
-        if self.inputs.recursive_fns.contains(&id) {
-            if !matches!(crate::ir::proof_steps::induct::recursion(&def), Ok(Some(_))) {
-                return None;
-            }
-            if crate::ir::proof_steps::induct::divides_down(&def) {
-                if !self.open_halving {
-                    return None;
-                }
-                self.met_halving.set(true);
-            }
-        }
-        Some(def)
+        })
     }
 
     /// Record that law `key`, at `subst`, matched but the conjuncts `open`

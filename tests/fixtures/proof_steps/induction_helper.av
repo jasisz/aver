@@ -1,0 +1,61 @@
+module InductionHelper
+    intent = "A recursion through a helper that calls back on a part of the list, and two functions that each descend on their own."
+    exposes [anyNonZero, evenLength]
+    effects []
+
+fn anyNonZero(bytes: List<Int>) -> Bool
+    ? "Whether some byte is set."
+    match bytes
+        [] -> false
+        [head, ..tail] -> nonZeroOrOn(head, tail)
+
+verify anyNonZero
+    anyNonZero([]) => false
+    anyNonZero([0, 1]) => true
+
+verify anyNonZero law setHeadIsEnough
+    given head: Int = [-1, 1, 255]
+    given tail: List<Int> = [[], [0], [1]]
+    when head != 0
+    anyNonZero(List.prepend(head, tail)) holds
+
+verify anyNonZero law concatenation
+    given left: List<Int> = [[], [0], [1], [0, 1]]
+    given right: List<Int> = [[], [0], [1]]
+    induction left
+    anyNonZero(List.concat(left, right)) => Bool.or(anyNonZero(left), anyNonZero(right))
+
+fn nonZeroOrOn(head: Int, tail: List<Int>) -> Bool
+    ? "Stop at the first byte that is set."
+    match head != 0
+        true -> true
+        false -> anyNonZero(tail)
+
+verify nonZeroOrOn
+    nonZeroOrOn(1, []) => true
+    nonZeroOrOn(0, []) => false
+
+fn evenLength(xs: List<Int>) -> Bool
+    ? "Whether the list has an even number of items."
+    match xs
+        [] -> true
+        [h, ..t] -> oddLength(t)
+
+verify evenLength
+    evenLength([]) => true
+    evenLength([1]) => false
+
+verify evenLength law twoMoreKeepsIt
+    given a: Int = [0, 1]
+    given b: Int = [0, 1]
+    given xs: List<Int> = [[], [1], [1, 2]]
+    evenLength(List.prepend(a, List.prepend(b, xs))) => evenLength(xs)
+
+fn oddLength(xs: List<Int>) -> Bool
+    ? "Whether the list has an odd number of items; it descends on its own list."
+    match xs
+        [] -> false
+        [h, ..t] -> evenLength(t)
+
+verify oddLength
+    oddLength([1]) => true

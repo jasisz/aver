@@ -677,7 +677,7 @@ fn unfold(f: String, k: Int, xs: List<Term>, ys: List<Term>, pre: List<Proof>, e
     ? "Equation k of a definition at explicit arguments: 0 is the whole body, k is arm k of its match."
     match findDef(f, env.defs)
         Option.None -> refuse(path, "no definition of {f}")
-        Option.Some(d) -> match (List.len(d.params) == List.len(xs), Kernel.Induct.openGate(d))
+        Option.Some(d) -> match (List.len(d.params) == List.len(xs), Kernel.Induct.openGate(d, env.defs))
             (_, Result.Err(why)) -> refuse(path, why)
             (false, _) -> refuse(path, "{f} takes {List.len(d.params)} arguments")
             (true, _) -> unfoldArm(d, k, xs, ys, pre, env, path)
@@ -1067,7 +1067,7 @@ fn induct(f: String, xs: List<Term>, claim: Eqn, carry: List<String>, cs: List<C
     ? "Induction along the recursion of f at arguments xs, as its gate checked it: one case per arm of its match, each with one hypothesis per recursive call in the arm. The hypotheses named in carry hold in each case; a call's hypothesis holds once they are proved at the call's arguments."
     match findDef(f, env.defs)
         Option.None -> refuse(path, "no definition of {f}")
-        Option.Some(d) -> match Kernel.Induct.recursion(d)
+        Option.Some(d) -> match Kernel.Induct.recursion(d, env.defs)
             Result.Err(why) -> refuse(path, why)
             Result.Ok(Option.None) -> refuse(path, "{f} does not recurse")
             Result.Ok(Option.Some(r)) -> inductOn(d, r, xs, claim, carry, cs, env, path)

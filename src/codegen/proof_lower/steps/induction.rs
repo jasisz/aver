@@ -48,8 +48,9 @@ fn recursive_in_claim(env: &mut Env, ob: &Obligation) -> Vec<String> {
     let recursive: Vec<FnId> = ids
         .into_iter()
         .filter(|id| {
+            let ds = env.reachable_defs(*id);
             env.def(*id)
-                .is_some_and(|d| matches!(induct::recursion(&d), Ok(Some(_))))
+                .is_some_and(|d| matches!(induct::recursion(&d, &ds), Ok(Some(_))))
         })
         .collect();
     recursive
@@ -82,7 +83,14 @@ impl Env<'_> {
         use crate::ir::proof_steps::sexpr::Names;
         let f_name = self.inputs.symbol_table.fn_name(f);
         let def = self.def(f);
-        let rec = match def.as_ref().map(induct::recursion) {
+        let ds = self.reachable_defs(f);
+        // A definition the gate keeps closed says why.
+        if def.is_none()
+            && let Some(Err(why)) = self.raw_def(f).map(|d| induct::recursion(&d, &ds))
+        {
+            return Err(format!("induction: {why}"));
+        }
+        let rec = match def.as_ref().map(|d| induct::recursion(d, &ds)) {
             Some(Ok(Some(rec))) => rec,
             Some(Err(why)) => return Err(format!("induction: {why}")),
             _ => {
@@ -189,6 +197,11 @@ impl Env<'_> {
             return Err("induction: the body is not a match".into());
         };
         self.mark_used(f);
+        // The helpers the recursion goes through, which the kernel reads it
+        // through as well.
+        for g in induct::helpers(f, &ds) {
+            self.mark_used(g);
+        }
         let saved = std::mem::take(&mut self.hyps);
         let result = (|| -> Result<Vec<InductCase>, String> {
             let mut cases = Vec::new();
@@ -204,7 +217,7 @@ impl Env<'_> {
                         binders.push(b);
                     }
                 }
-                let n = induct::self_calls(&arm.body, f).len();
+                let n = induct::self_calls(&arm.body, f, &ds)?.len();
                 let names: Vec<String> = (0..n)
                     .map(|_| {
                         self.next_ih += 1;
@@ -212,7 +225,7 @@ impl Env<'_> {
                     })
                     .collect();
                 let case = induct::case(
-                    &def, &rec, &args, &v, &general, arm, &binders, &names, &ob.lhs, &ob.rhs,
+                    &def, &ds, &rec, &args, &v, &general, arm, &binders, &names, &ob.lhs, &ob.rhs,
                 )
                 .map_err(in_case)?;
                 let here = [(v.clone(), case.value.clone())];

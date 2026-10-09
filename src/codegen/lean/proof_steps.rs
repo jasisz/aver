@@ -486,6 +486,7 @@ impl Renderer<'_> {
             names.extend(hs.iter().cloned());
             let stated_case = induct::case(
                 def,
+                &self.script.defs,
                 rec,
                 args,
                 v,
@@ -504,7 +505,8 @@ impl Renderer<'_> {
                     Eqn::new(term::subst(&e.lhs, &here)?, term::subst(&e.rhs, &here)?),
                 ));
             }
-            let sources = induct::ih_sources(def, args, j, general, arm, &case.binders)?;
+            let sources =
+                induct::ih_sources(def, &self.script.defs, args, j, general, arm, &case.binders)?;
             let mut haves = String::new();
             let mut taken = Vec::new();
             for (k, ((ih, e), (part, at))) in stated_case.ihs.iter().zip(&sources).enumerate() {
@@ -759,6 +761,7 @@ impl Renderer<'_> {
             for (arm, case) in arms.iter().zip(cases) {
                 let stated_case = induct::case(
                     def,
+                    &self.script.defs,
                     rec,
                     args,
                     v,
@@ -785,7 +788,7 @@ impl Renderer<'_> {
                 } else {
                     format!("(AverSteps.pos_of_gt_true {g_name})")
                 };
-                let calls = induct::self_calls(&arm.body, def.fn_id);
+                let calls = induct::self_calls(&arm.body, def.fn_id, &self.script.defs)?;
                 // The claim at the Int recursive call `k` passes and at
                 // `values` of the varied givens, under the name `name`.
                 let mut haves = String::new();
@@ -1149,7 +1152,7 @@ impl Renderer<'_> {
                 ..
             } => {
                 let def = self.script.def(*fn_id).ok_or("induct: no definition")?;
-                let rec = crate::ir::proof_steps::induct::recursion(def)?
+                let rec = crate::ir::proof_steps::induct::recursion(def, &self.script.defs)?
                     .ok_or("induct: the function does not recurse")?;
                 let j = rec.at;
                 let (v, general) = crate::ir::proof_steps::induct::varied(
@@ -1164,7 +1167,7 @@ impl Renderer<'_> {
                     self.induct_toward_zero(
                         def, &rec, args, &v, &general, arms, carried, cases, &eq, hyps,
                     )?
-                } else if crate::ir::proof_steps::induct::nested_split(def)
+                } else if crate::ir::proof_steps::induct::nested_split(def, &self.script.defs)
                     || !carried.is_empty()
                     || cases.iter().any(|c| !c.more.is_empty())
                 {
@@ -1190,15 +1193,18 @@ impl Renderer<'_> {
                     );
                     // Lean leaves out of `f.induct` every parameter each
                     // recursive call passes on unchanged.
+                    let own = crate::ir::proof_steps::induct::self_calls(
+                        &def.body,
+                        *fn_id,
+                        &self.script.defs,
+                    )?;
                     let fixed: Vec<bool> = (0..args.len())
                         .map(|k| {
                             k != j
-                                && crate::ir::proof_steps::induct::self_calls(&def.body, *fn_id)
-                                    .iter()
-                                    .all(|(call, inner)| {
-                                        matches!(&call[k].node, ResolvedExpr::Ident(n)
+                                && own.iter().all(|(call, inner)| {
+                                    matches!(&call[k].node, ResolvedExpr::Ident(n)
                                         if *n == def.params[k] && !inner.contains(n))
-                                    })
+                                })
                         })
                         .collect();
                     let varies = |k: &usize| !fixed[*k];
@@ -1213,6 +1219,7 @@ impl Renderer<'_> {
                     for (arm, case) in arms.iter().zip(cases) {
                         let ihs = crate::ir::proof_steps::induct::case(
                             def,
+                            &self.script.defs,
                             &rec,
                             args,
                             &v,

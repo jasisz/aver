@@ -12,7 +12,13 @@
 //! negative one included. The gate returns what it checked
 //! ([`recursion`]), and both opening a definition ([`super::Proof::Unfold`])
 //! and inducting along it ([`super::Proof::Induct`]) read that.
-//! Definitions that call each other are refused outright.
+//! A call of another definition that calls back into the one checked
+//! counts as the recursive calls its body makes, read at the call's
+//! arguments ([`self_calls`]): a recursion through a helper is checked as
+//! if the helper's body stood in its place. A helper that reaches itself
+//! without passing the definition checked is refused, and so is any
+//! other cycle, unless it passes a definition whose recursion read this
+//! way passes the gate ([`rooted`]).
 //!
 //! An induction step names its leading function `f` and the arguments the
 //! claim applies it to. The argument at the matched place must be a given;
@@ -30,54 +36,228 @@ use crate::ir::identity::FnId;
 use super::term::{self, Term};
 use super::{Def, Eqn};
 
+/// A recursive call: its arguments, and the names inner match arms bind
+/// around it.
+pub type Call = (Vec<Term>, Vec<String>);
+
 /// The self-calls in `t`, in pre-order (a call before the calls inside
 /// its arguments; a match's subject before its arms, arms in order), each
-/// with the names that inner match arms bind around it.
-pub fn self_calls(t: &Term, f: FnId) -> Vec<(Vec<Term>, Vec<String>)> {
+/// with the names that inner match arms bind around it. A call of another
+/// definition of `ds` that calls back into `f` stands for the calls of `f`
+/// its body makes, read at the call's arguments, before the calls in its
+/// arguments: a recursion through a helper is checked as if the helper's
+/// body stood in its place. The kernel's `selfCalls` is the judge; this
+/// mirrors it so the producer writes what it will accept.
+pub fn self_calls(t: &Term, f: FnId, ds: &[Def]) -> Result<Vec<Call>, String> {
     let mut out = Vec::new();
-    walk(t, f, &mut Vec::new(), &mut out);
-    out
+    walk(t, f, ds, ds.len(), &mut Vec::new(), &mut out)?;
+    Ok(out)
 }
 
-fn walk(t: &Term, f: FnId, bound: &mut Vec<String>, out: &mut Vec<(Vec<Term>, Vec<String>)>) {
-    match &t.node {
-        ResolvedExpr::Call(ResolvedCallee::Fn(g), args) if *g == f => {
-            out.push((args.clone(), bound.clone()));
+fn walk(
+    t: &Term,
+    f: FnId,
+    ds: &[Def],
+    fuel: usize,
+    bound: &mut Vec<String>,
+    out: &mut Vec<Call>,
+) -> Result<(), String> {
+    let called = match &t.node {
+        ResolvedExpr::Call(ResolvedCallee::Fn(g), args) => Some((*g, args)),
+        ResolvedExpr::TailCall { target, args } => Some((*target, args)),
+        _ => None,
+    };
+    match (&t.node, called) {
+        (_, Some((g, args))) => {
+            if g == f {
+                out.push((args.clone(), bound.clone()));
+            } else {
+                helper_calls(g, args, f, ds, fuel, bound, out)?;
+            }
             for a in args {
-                walk(a, f, bound, out);
+                walk(a, f, ds, fuel, bound, out)?;
             }
         }
-        ResolvedExpr::TailCall { target, args } if *target == f => {
-            out.push((args.clone(), bound.clone()));
-            for a in args {
-                walk(a, f, bound, out);
-            }
-        }
-        ResolvedExpr::Match { subject, arms } => {
-            walk(subject, f, bound, out);
+        (ResolvedExpr::Match { subject, arms }, _) => {
+            walk(subject, f, ds, fuel, bound, out)?;
             for arm in arms {
-                walk_arm(arm, f, bound, out);
+                let names = term::pattern_binders(&arm.pattern);
+                let before = bound.len();
+                bound.extend(names);
+                walk(&arm.body, f, ds, fuel, bound, out)?;
+                bound.truncate(before);
             }
         }
         _ => {
             for c in term::children(t) {
-                walk(c, f, bound, out);
+                walk(c, f, ds, fuel, bound, out)?;
             }
         }
     }
+    Ok(())
 }
 
-fn walk_arm(
-    arm: &ResolvedMatchArm,
+/// The calls of `f` a call of `g` at `args` makes: none unless `g` is
+/// another definition of `ds` that calls back into `f`; then those in its
+/// body, each with `g`'s parameters replaced where no arm of `g` rebinds
+/// them (refusing a capture), reading nothing else of `g`'s scope.
+fn helper_calls(
+    g: FnId,
+    args: &[Term],
     f: FnId,
-    bound: &mut Vec<String>,
-    out: &mut Vec<(Vec<Term>, Vec<String>)>,
-) {
-    let names = term::pattern_binders(&arm.pattern);
-    let before = bound.len();
-    bound.extend(names);
-    walk(&arm.body, f, bound, out);
-    bound.truncate(before);
+    ds: &[Def],
+    fuel: usize,
+    bound: &[String],
+    out: &mut Vec<Call>,
+) -> Result<(), String> {
+    let Some(h) = ds.iter().find(|d| d.fn_id == g) else {
+        return Ok(());
+    };
+    if !reaches(g, f, ds) {
+        return Ok(());
+    }
+    let f_name = ds
+        .iter()
+        .find(|d| d.fn_id == f)
+        .map_or("the function", |d| d.name.as_str());
+    if fuel == 0 {
+        return Err(format!(
+            "{f_name} recurses through {}, which reaches itself without {f_name}",
+            h.name
+        ));
+    }
+    if !h.lets.is_empty() {
+        return Err(format!(
+            "{f_name} recurses through {}, which has local bindings",
+            h.name
+        ));
+    }
+    if h.params.len() != args.len() {
+        return Err(format!("{} takes {} arguments", h.name, h.params.len()));
+    }
+    let mut inside = Vec::new();
+    walk(&h.body, f, ds, fuel - 1, &mut Vec::new(), &mut inside)?;
+    for (call, inner) in inside {
+        let mut used = Vec::new();
+        for a in &call {
+            term::free_vars(a, &mut used);
+        }
+        if let Some(n) = used
+            .iter()
+            .find(|n| !h.params.contains(n) && !inner.contains(n))
+        {
+            return Err(format!(
+                "{} passes {n}, which it does not bind, to a recursive call",
+                h.name
+            ));
+        }
+        let map: Vec<(String, Term)> = h
+            .params
+            .iter()
+            .cloned()
+            .zip(args.iter().cloned())
+            .filter(|(p, _)| !inner.contains(p))
+            .collect();
+        for (p, v) in &map {
+            if !used.contains(p) {
+                continue;
+            }
+            let mut fv = Vec::new();
+            term::free_vars(v, &mut fv);
+            if let Some(c) = fv.iter().find(|n| inner.contains(n)) {
+                return Err(format!("substituting {p} would capture {c}"));
+            }
+        }
+        let call = call
+            .iter()
+            .map(|a| term::subst(a, &map))
+            .collect::<Result<_, _>>()?;
+        let mut names = bound.to_vec();
+        names.extend(inner);
+        out.push((call, names));
+    }
+    Ok(())
+}
+
+/// The functions `t` calls, match arms included.
+fn callees(t: &Term, out: &mut Vec<FnId>) {
+    match &t.node {
+        ResolvedExpr::Call(ResolvedCallee::Fn(g), _) | ResolvedExpr::TailCall { target: g, .. } => {
+            if !out.contains(g) {
+                out.push(*g);
+            }
+        }
+        ResolvedExpr::Match { arms, .. } => {
+            for arm in arms {
+                callees(&arm.body, out);
+            }
+        }
+        _ => {}
+    }
+    for c in term::children(t) {
+        callees(c, out);
+    }
+}
+
+/// The functions `d` calls, in its local bindings and its body.
+pub fn def_callees(d: &Def) -> Vec<FnId> {
+    let mut out = Vec::new();
+    for (_, v) in &d.lets {
+        callees(v, &mut out);
+    }
+    callees(&d.body, &mut out);
+    out
+}
+
+/// Whether `to` is reachable from `from`, another definition of `ds`,
+/// through the definitions of `ds`.
+fn reaches(from: FnId, to: FnId, ds: &[Def]) -> bool {
+    if from == to {
+        return false;
+    }
+    reachable(from, to, ds)
+}
+
+/// Whether `to` is `from` or reachable from it through the definitions of
+/// `ds`.
+fn reachable(from: FnId, to: FnId, ds: &[Def]) -> bool {
+    let mut seen = vec![from];
+    let mut todo = vec![from];
+    while let Some(at) = todo.pop() {
+        if at == to {
+            return true;
+        }
+        let Some(d) = ds.iter().find(|d| d.fn_id == at) else {
+            continue;
+        };
+        for g in def_callees(d) {
+            if g != at && !seen.contains(&g) && ds.iter().any(|d| d.fn_id == g) {
+                seen.push(g);
+                todo.push(g);
+            }
+        }
+    }
+    false
+}
+
+/// The definitions of `ds` on a cycle with `f`, other than `f`: the
+/// helpers its recursion goes through, which a script opening `f` carries.
+pub fn helpers(f: FnId, ds: &[Def]) -> Vec<FnId> {
+    ds.iter()
+        .map(|d| d.fn_id)
+        .filter(|g| *g != f && reachable(f, *g, ds) && reachable(*g, f, ds))
+        .collect()
+}
+
+/// Whether every cycle through `def` passes a definition of `ds` whose
+/// recursion, read through the others, passes the gate: `def` then stops,
+/// and steps may open it though its own recursion is not one they follow.
+pub fn rooted(def: &Def, ds: &[Def]) -> bool {
+    ds.iter().any(|r| {
+        reachable(def.fn_id, r.fn_id, ds)
+            && reachable(r.fn_id, def.fn_id, ds)
+            && matches!(recursion(r, ds), Ok(Some(_)))
+    })
 }
 
 /// What the termination gate checked about a definition that calls
@@ -118,13 +298,18 @@ pub enum Descent {
 /// no inner arm rebinds, or on `p <= 0` / `p > 0` for a parameter `p`, one
 /// arm per truth value, the arm where `p` is at most 0 without a recursive
 /// call and every call in the other descending ([`descent`]) at `p`'s
-/// place, `p` not rebound around it.
-pub fn recursion(def: &Def) -> Result<Option<Recursion>, String> {
+/// place, `p` not rebound around it. The recursive calls are those
+/// [`self_calls`] lists, a recursion through other definitions of `ds`
+/// included.
+pub fn recursion(def: &Def, ds: &[Def]) -> Result<Option<Recursion>, String> {
     use crate::ast::{BinOp, Literal};
     use crate::ir::hir::ResolvedPattern;
     let f = def.fn_id;
-    let in_lets: usize = def.lets.iter().map(|(_, v)| self_calls(v, f).len()).sum();
-    let in_body = self_calls(&def.body, f);
+    let mut in_lets = 0;
+    for (_, v) in &def.lets {
+        in_lets += self_calls(v, f, ds)?.len();
+    }
+    let in_body = self_calls(&def.body, f, ds)?;
     if in_lets == 0 && in_body.is_empty() {
         return Ok(None);
     }
@@ -152,23 +337,20 @@ pub fn recursion(def: &Def) -> Result<Option<Recursion>, String> {
             ResolvedPattern::Literal(Literal::Bool(b)) => Some(b),
             _ => None,
         };
-        let counts = match arms.as_slice() {
-            [a, b] if value(a).is_some() && value(b).is_some() && value(a) != value(b) => {
-                arms.iter().all(|arm| {
-                    let calls = self_calls(&arm.body, f);
-                    if value(arm) == Some(stop) {
-                        calls.is_empty()
-                    } else {
-                        calls.iter().all(|(args, inner)| {
-                            args.len() == def.params.len()
-                                && descent(&args[j], p).is_some()
-                                && !inner.contains(p)
-                        })
-                    }
+        let mut counts = matches!(arms.as_slice(),
+            [a, b] if value(a).is_some() && value(b).is_some() && value(a) != value(b));
+        for arm in arms {
+            let calls = self_calls(&arm.body, f, ds)?;
+            counts &= if value(arm) == Some(stop) {
+                calls.is_empty()
+            } else {
+                calls.iter().all(|(args, inner)| {
+                    args.len() == def.params.len()
+                        && descent(&args[j], p).is_some()
+                        && !inner.contains(p)
                 })
-            }
-            _ => false,
-        };
+            };
+        }
         if !counts {
             return Err(format!("{} does not count {p} down to zero", def.name));
         }
@@ -191,7 +373,7 @@ pub fn recursion(def: &Def) -> Result<Option<Recursion>, String> {
     };
     for arm in arms {
         let parts = term::pattern_binders(&arm.pattern);
-        for (args, inner) in self_calls(&arm.body, f) {
+        for (args, inner) in self_calls(&arm.body, f, ds)? {
             let smaller = match args.get(j).map(|a| &a.node) {
                 Some(ResolvedExpr::Ident(b)) => parts.contains(b) && !inner.contains(b),
                 _ => false,
@@ -229,11 +411,12 @@ pub fn descent(t: &Term, p: &str) -> Option<Descent> {
 
 /// Whether `def` counts an Int toward zero with some recursive call that
 /// divides it, which opens only where its guard is decided.
-pub fn divides_down(def: &Def) -> bool {
-    let Ok(Some(Recursion { at, guard: Some(_) })) = recursion(def) else {
+pub fn divides_down(def: &Def, ds: &[Def]) -> bool {
+    let Ok(Some(Recursion { at, guard: Some(_) })) = recursion(def, ds) else {
         return false;
     };
-    self_calls(&def.body, def.fn_id).iter().any(|(args, _)| {
+    let calls = self_calls(&def.body, def.fn_id, ds).unwrap_or_default();
+    calls.iter().any(|(args, _)| {
         matches!(
             descent(&args[at], &def.params[at]),
             Some(Descent::Divide(_))
@@ -274,10 +457,12 @@ pub fn varied(
 /// comparison has the arm's value, and one hypothesis per recursive call
 /// in the arm, named by `ihs`, the claim at that call's arguments, with
 /// the substitution that puts it there. `v` and `general` are what
-/// [`varied`] found.
+/// [`varied`] found; `ds` the definitions a recursion through others
+/// reads ([`self_calls`]).
 #[allow(clippy::too_many_arguments)]
 pub fn case(
     def: &Def,
+    ds: &[Def],
     rec: &Recursion,
     args: &[Term],
     v: &str,
@@ -318,7 +503,7 @@ pub fn case(
     };
     let here = [(v.to_string(), value.clone())];
     let goal = Eqn::new(term::subst(lhs, &here)?, term::subst(rhs, &here)?);
-    let calls = self_calls(&arm.body, def.fn_id);
+    let calls = self_calls(&arm.body, def.fn_id, ds)?;
     if calls.len() != ihs.len() {
         return Err(format!(
             "{} recursive calls, {} hypotheses",
@@ -383,6 +568,7 @@ pub struct Case {
 /// it recurses on, and its arguments at the varied places, over `binders`.
 pub fn ih_sources(
     def: &Def,
+    ds: &[Def],
     args: &[Term],
     j: usize,
     general: &[(usize, String)],
@@ -397,7 +583,7 @@ pub fn ih_sources(
         .filter(|(n, _)| !names.contains(n))
         .collect();
     map.extend(names.iter().cloned().zip(ys));
-    self_calls(&arm.body, def.fn_id)
+    self_calls(&arm.body, def.fn_id, ds)?
         .iter()
         .map(|(call, _)| {
             let part = match call.get(j).map(|a| &a.node) {
@@ -416,21 +602,26 @@ pub fn ih_sources(
 
 /// Whether an arm of `def` holds a recursive call inside a further case
 /// split (a `match` in the arm), which Lean's own induction principle for
-/// `def` splits into more cases than the arms.
-pub fn nested_split(def: &Def) -> bool {
+/// `def` splits into more cases than the arms; or a recursion through
+/// other definitions of `ds`, which that principle does not follow.
+pub fn nested_split(def: &Def, ds: &[Def]) -> bool {
     let ResolvedExpr::Match { arms, .. } = &def.body.node else {
         return false;
     };
-    arms.iter()
-        .any(|arm| split_holds_self_call(&arm.body, def.fn_id))
+    !helpers(def.fn_id, ds).is_empty()
+        || arms
+            .iter()
+            .any(|arm| split_holds_self_call(&arm.body, def.fn_id, ds))
 }
 
-fn split_holds_self_call(t: &Term, f: FnId) -> bool {
+fn split_holds_self_call(t: &Term, f: FnId, ds: &[Def]) -> bool {
     if let ResolvedExpr::Match { subject, arms } = &t.node {
-        return split_holds_self_call(subject, f)
-            || arms.iter().any(|a| !self_calls(&a.body, f).is_empty());
+        return split_holds_self_call(subject, f, ds)
+            || arms
+                .iter()
+                .any(|a| !self_calls(&a.body, f, ds).unwrap_or_default().is_empty());
     }
     term::children(t)
         .into_iter()
-        .any(|c| split_holds_self_call(c, f))
+        .any(|c| split_holds_self_call(c, f, ds))
 }
