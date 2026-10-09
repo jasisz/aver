@@ -1,0 +1,67 @@
+module ComparisonCalls
+    intent =
+        "Steps that open the calls inside an Int comparison the hypotheses decide: a call on"
+        "literals evaluated, a call whose Bool guard is open split on that guard, and a call whose"
+        "`match` reads an Int with literal arms split into one case per arm."
+    exposes [maxInt, minInt, inBand, width, widthFits]
+    effects []
+
+fn maxInt(a: Int, b: Int) -> Int
+    ? "The larger of two integers."
+    match a >= b
+        true -> a
+        false -> b
+
+verify maxInt
+    maxInt(2, 3) => 3
+    maxInt(5, 1) => 5
+
+fn minInt(a: Int, b: Int) -> Int
+    ? "The smaller of two integers."
+    match a <= b
+        true -> a
+        false -> b
+
+verify minInt
+    minInt(2, 3) => 2
+    minInt(5, 1) => 1
+
+fn inBand(base: Int, e: Int) -> Bool
+    ? "Whether e lies within a few places of base."
+    Bool.and(base - 9 <= e, e <= base + 5)
+
+verify inBand
+    inBand(0, 0) => true
+    inBand(0, 6) => false
+
+verify inBand law sumOfTwo
+    given base: Int = [0]
+    given x: Int = [0]
+    given y: Int = [0]
+    given e: Int = [0]
+    when x == base
+    when base - 2 <= y
+    when y <= base + 4
+    when 1 - maxInt(8, 8) + minInt(x, y) <= e
+    when e <= 1 + maxInt(x, y)
+    inBand(base, e) holds
+
+fn width(code: Int) -> Int
+    ? "How many bytes hold the length of a wide push; zero when it is not one."
+    match code
+        76 -> 1
+        77 -> 2
+        78 -> 4
+        _ -> 0
+
+verify width
+    width(76) => 1
+    width(75) => 0
+
+fn widthFits(code: Int) -> Bool
+    ? "Every width fits in eight bytes."
+    width(code) <= 8
+
+verify widthFits law always
+    given code: Int = [0, 76, 77, 78]
+    width(code) <= 8 holds

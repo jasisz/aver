@@ -166,11 +166,18 @@
    "divideExponentNoOverflow.section_9_3_no_overflow",
    "divideExponentNoUnderflow.section_9_3_no_underflow",
    "exponentDh.table3_row7",
+   "exponentDivide.table3_row32",
    "exponentP0.table3_row9",
+   "exponentP1.table3_row15",
+   "exponentP2.table3_row21",
+   "exponentP3.table3_row27",
    "exponentPh0.table3_row10",
    "exponentPh1.table3_row16",
    "exponentPh2.table3_row22",
    "exponentPh3.table3_row28",
+   "exponentPt1.table3_row14",
+   "exponentPt2.table3_row20",
+   "exponentPt3.table3_row26",
    "exponentQ0.table3_row11",
    "exponentQ1.table3_row17",
    "exponentQ2.table3_row23",
@@ -180,7 +187,9 @@
    "exponentQdh2.table3_row24",
    "exponentQdl0.table3_row13",
    "exponentQdl1.table3_row19",
-   "exponentQdl2.table3_row25"
+   "exponentQdl2.table3_row25",
+   "exponentQq1.table3_row31",
+   "exponentQq2.table3_row30"
   ]
  },
  "projects/k5_fdiv/domain/fprep.av": {
@@ -302,7 +311,8 @@
  },
  "projects/k5_fdiv/domain/remainder.av": {
   "steps": [
-   "awayDigitOvershoot.guarded"
+   "awayDigitOvershoot.guarded",
+   "remainderBound_8_2_3.lemma_8_2_3"
   ]
  },
  "projects/k5_fdiv/domain/round.av": {

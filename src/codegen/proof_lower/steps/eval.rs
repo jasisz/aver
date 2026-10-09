@@ -2301,6 +2301,14 @@ impl Env<'_> {
                 return self.split_on(st, lhs, rhs, depth).map(Ok);
             }
         }
+        // An Int comparison in scope whose sides call a definition that
+        // chooses by a `match`: each call evaluated, split on what its
+        // `match` reads where that is open, and its value cut in.
+        if depth > 0
+            && let Some(proof) = self.open_comparison_calls(lhs, rhs, depth)?
+        {
+            return Ok(Ok(proof));
+        }
         Err(self.stopped_at(nl.cur(), nr.cur()))
     }
 
@@ -2767,6 +2775,170 @@ impl Env<'_> {
             return Ok(Some(proof));
         }
         Ok(None)
+    }
+
+    /// The calls inside the Int comparisons the hypotheses decide, inner
+    /// ones first, each once: calls of a definition that does not recurse
+    /// and whose body is a `match`, not opened on the way here.
+    fn comparison_calls(&mut self) -> Vec<Term> {
+        fn calls(t: &Term, out: &mut Vec<Term>) {
+            for c in term::children(t) {
+                calls(c, out);
+            }
+            if matches!(t.node, ResolvedExpr::Call(ResolvedCallee::Fn(_), _)) && is_int(t) {
+                let t = canon(t);
+                if !out.contains(&t) {
+                    out.push(t);
+                }
+            }
+        }
+        let mut found = Vec::new();
+        for (_, e) in &self.hyps {
+            if term::bool_value(&e.rhs).is_none() {
+                continue;
+            }
+            if let ResolvedExpr::BinOp(
+                BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte | BinOp::Eq | BinOp::Neq,
+                a,
+                b,
+            ) = &e.lhs.node
+                && (is_int(a) || is_int(b))
+            {
+                calls(a, &mut found);
+                calls(b, &mut found);
+            }
+        }
+        found.retain(|c| {
+            let ResolvedExpr::Call(ResolvedCallee::Fn(id), _) = &c.node else {
+                return false;
+            };
+            !self.inputs.recursive_fns.contains(id) && !self.opened.contains(c)
+        });
+        found
+            .into_iter()
+            .filter(|c| {
+                let ResolvedExpr::Call(ResolvedCallee::Fn(id), _) = &c.node else {
+                    return false;
+                };
+                self.def(*id)
+                    .is_some_and(|d| matches!(d.body.node, ResolvedExpr::Match { .. }))
+            })
+            .collect()
+    }
+
+    /// `lhs = rhs` once the calls inside the Int comparisons in scope (see
+    /// [`Self::comparison_calls`]) are opened: a call evaluation takes a
+    /// step on (its arguments literals, or what its `match` reads decided
+    /// by a hypothesis) is cut in as `(call == value) = true`; one stopped
+    /// at an undecided Bool is split on that Bool first; one stopped at a
+    /// subject of a sum or list type, or an Int with literal arms, is split
+    /// into the cases its `match` reads. The cases are the `match`'s own,
+    /// so nothing is guessed. `None` when no such call opens.
+    fn open_comparison_calls(
+        &mut self,
+        lhs: &Term,
+        rhs: &Term,
+        depth: usize,
+    ) -> Result<Option<Proof>, String> {
+        let calls = self.comparison_calls();
+        if calls.is_empty() {
+            return Ok(None);
+        }
+        let saved = self.opened.len();
+        let out = self.open_calls(&calls, 0, false, lhs, rhs, depth);
+        self.opened.truncate(saved);
+        out
+    }
+
+    /// [`Self::open_comparison_calls`] from the `i`-th call on; `any` when
+    /// an earlier call was cut in.
+    fn open_calls(
+        &mut self,
+        calls: &[Term],
+        i: usize,
+        any: bool,
+        lhs: &Term,
+        rhs: &Term,
+        depth: usize,
+    ) -> Result<Option<Proof>, String> {
+        let Some(c) = calls.get(i) else {
+            if !any {
+                return Ok(None);
+            }
+            return self.prove_by_evaluation(lhs, rhs, depth - 1).map(Some);
+        };
+        if self.opened.contains(c) {
+            return self.open_calls(calls, i + 1, any, lhs, rhs, depth);
+        }
+        // A short evaluation, as for a hypothesis that calls a function.
+        let fuel = self.fuel;
+        self.fuel = fuel.min(HYPOTHESIS_FUEL);
+        let ev = self.whnf(c);
+        self.fuel = fuel - (fuel.min(HYPOTHESIS_FUEL) - self.fuel);
+        let Ok(ev) = ev else {
+            return self.open_calls(calls, i + 1, any, lhs, rhs, depth);
+        };
+        if !ev.chain.is_empty() {
+            let (to, chain) = ev.chain.finish();
+            let to = canon(&to);
+            // `(c == to) = true`: congruence to `to == to`.
+            let fact = canon(&term::binop(BinOp::Eq, c.clone(), to.clone()));
+            let same = canon(&term::binop(BinOp::Eq, to.clone(), to.clone()));
+            let proof = Proof::Trans {
+                terms: vec![fact.clone(), same, term::boolean(true)],
+                steps: vec![
+                    Proof::Congr {
+                        ctx: term::binop(BinOp::Eq, term::hole(), to.clone()),
+                        inner: Box::new(chain),
+                    },
+                    Proof::Rule {
+                        rule: WallRule::BeqRefl,
+                        subst: vec![("a".into(), to)],
+                        premises: Vec::new(),
+                    },
+                ],
+            };
+            let name = self.fresh_hyp();
+            self.hyps
+                .push((name.clone(), Eqn::new(fact.clone(), term::boolean(true))));
+            self.opened.push(c.clone());
+            let body = self.open_calls(calls, i + 1, true, lhs, rhs, depth);
+            self.opened.pop();
+            self.hyps.pop();
+            return Ok(body?.map(|body| Proof::Have {
+                name,
+                fact,
+                proof: Box::new(proof),
+                body: Box::new(body),
+            }));
+        }
+        if let Some(g) = ev.blocked.map(|g| canon(&g))
+            && !is_bool_value(&g)
+            && self.hyp_for(&g).is_none()
+        {
+            let hyp = self.fresh_hyp();
+            let mut branch = |env: &mut Self, v: bool| -> Result<Option<Proof>, String> {
+                env.hyps
+                    .push((hyp.clone(), Eqn::new(g.clone(), term::boolean(v))));
+                let out = env.open_calls(calls, i, any, lhs, rhs, depth);
+                env.hyps.pop();
+                out
+            };
+            let (Some(if_true), Some(if_false)) = (branch(self, true)?, branch(self, false)?)
+            else {
+                return Ok(None);
+            };
+            return Ok(Some(Proof::Cases {
+                on: g,
+                hyp,
+                if_true: Box::new(if_true),
+                if_false: Box::new(if_false),
+            }));
+        }
+        if let Some(st) = self.stuck_subject(c, false) {
+            return self.split_on(st, lhs, rhs, depth).map(Some);
+        }
+        self.open_calls(calls, i + 1, any, lhs, rhs, depth)
     }
 
     /// The refusal for two sides evaluation cannot bring together: both

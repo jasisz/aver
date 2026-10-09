@@ -2089,6 +2089,89 @@ fn lean_closes_a_split_on_the_arms_of_a_match() {
     let _ = fs::remove_dir_all(out);
 }
 
+const COMPARISON_CALLS_LAWS: [&str; 2] = ["inBand.sumOfTwo", "widthFits.always"];
+
+/// The calls inside an Int comparison in scope open: `maxInt(8, 8)` is
+/// evaluated and cut in as `== 8`, `minInt(x, y)` and `maxInt(x, y)` are
+/// split on their guards, `width(code)` into the arms its `match` reads;
+/// both kernels refuse a cut-in value that is wrong and an arm its guard
+/// does not select.
+#[test]
+fn both_kernels_open_the_calls_inside_a_comparison_and_refuse_mutations() {
+    let out = scratch("comparison-calls");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("comparison_calls.av", &out)
+            .into_iter()
+            .collect();
+    assert_eq!(
+        files.keys().cloned().collect::<Vec<_>>(),
+        COMPARISON_CALLS_LAWS
+    );
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let paths: Vec<PathBuf> = files.values().cloned().collect();
+    let result = replay(&paths);
+    assert!(result.status.success(), "{}", format_output(&result));
+
+    let band = read("inBand.sumOfTwo");
+    let folded = "(op == (call maxInt (i 8) (i 8)) (i 8))";
+    assert!(band.contains(&format!("{folded} ")), "{band}");
+    assert!(band.contains("(cases (op <= (v base) (v y)) "), "{band}");
+    assert!(band.contains("(unfold minInt 2 "), "{band}");
+    let mutants = [
+        // `maxInt(8, 8)` cut in with the wrong value.
+        band.replacen(folded, "(op == (call maxInt (i 8) (i 8)) (i 9))", 1),
+        // The `false` arm of `minInt` where its guard was split true.
+        band.replacen("(unfold minInt 1 ", "(unfold minInt 2 ", 1),
+    ];
+    for (i, mutant) in mutants.iter().enumerate() {
+        assert_ne!(*mutant, band, "mutant {i} changed nothing");
+        let verdict = aver::proof_kernel::verdict(mutant);
+        assert!(verdict.is_err(), "mutant {i}: {verdict:?}\n{mutant}");
+        let path = out.join(format!("mutant{i}.steps"));
+        fs::write(&path, mutant).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(!result.status.success(), "{}", format_output(&result));
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_closes_the_calls_opened_inside_a_comparison() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("comparison-calls-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "comparison_calls.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "0",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in COMPARISON_CALLS_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
 const CONSTRUCTOR_LAWS: [&str; 3] = [
     "refusal.longSilenceIsRefused",
     "verdictOf.preservesFlag",
