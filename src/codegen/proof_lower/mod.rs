@@ -130,6 +130,9 @@ pub struct ProofLowerInputs<'a> {
     /// The project's module root, where a law's `by Module.plan` finds its
     /// plans module; `None` leaves such a law open.
     pub plans_root: Option<&'a str>,
+    /// Whether `AVER_PLAN_STEP_LIMIT` may change the step limit a proof
+    /// plan runs under; off, the fixed limit holds.
+    pub plan_step_limit_knob: bool,
 }
 
 impl<'a> ProofLowerInputs<'a> {
@@ -147,6 +150,7 @@ impl<'a> ProofLowerInputs<'a> {
             program_shape: ctx.program_shape.as_ref(),
             scope: ctx.active_module_scope(),
             plans_root: None,
+            plan_step_limit_knob: false,
         }
     }
 

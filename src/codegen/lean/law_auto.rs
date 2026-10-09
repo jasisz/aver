@@ -296,40 +296,17 @@ pub fn emit_verify_law_forall_auto_proof(
 ) -> Option<AutoProof> {
     // A law that names its proof plan is closed by that plan's steps or
     // not at all: no tactic stands behind them, so a law never says
-    // `by Module.plan` while something else closed it. The certificate
-    // model states no step proof for any law: there a law its plan closed
-    // (the kernel accepted the steps) is proved like every other law closed
-    // by steps, and one its plan did not close gets no proof, so it is left
-    // out like any other law that did not close.
-    let plan_closed = law.by_plan.is_some() && law_steps_for(ctx, &vb.fn_name, &law.name).is_some();
-    if law.by_plan.is_some() && cert_model && !plan_closed {
-        return None;
-    }
-    if law.by_plan.is_some() && !cert_model {
-        let body = match law_steps_for(ctx, &vb.fn_name, &law.name).and_then(|script| {
-            super::proof_steps::render(&script, ctx)
-                .ok()
-                .map(|r| (script.obligation.key.clone(), r))
-        }) {
-            Some((key, rendered)) => {
-                let givens: Vec<String> = law
-                    .givens
-                    .iter()
-                    .map(|g| aver_name_to_lean(&g.name))
-                    .collect();
-                let intro = extend_intro_names_with_premises(law, &givens);
-                super::proof_steps::lead_portfolio(
-                    &rendered,
-                    &intro,
-                    &key,
-                    super::tactic_ir::Tactic::Sorry,
-                )
-            }
-            None => super::tactic_ir::Tactic::Sorry,
-        };
+    // `by Module.plan` while something else closed it. The certificate model
+    // proves it the same way; there a law whose plan left no steps gets no
+    // proof, so it is left out like any other law that did not close.
+    if law.by_plan.is_some() {
+        let body = steps_or_sorry(vb, law, ctx);
+        if body.is_none() && cert_model {
+            return None;
+        }
         return Some(AutoProof {
             support_lines: Vec::new(),
-            body,
+            body: body.unwrap_or(super::tactic_ir::Tactic::Sorry),
             replaces_theorem: false,
             first_arm_is_guaranteed_closer: false,
         });
@@ -363,24 +340,7 @@ pub fn emit_verify_law_forall_auto_proof(
     // first alternative, so grind can do NEW work — guaranteed closers
     // like `omega`/`rfl` are left byte-identical).
     let mut proof = maybe_wrap_with_grind_rung(vb, law, ctx, inner);
-    let steps_rendered = if cert_model {
-        None
-    } else {
-        law_steps_for(ctx, &vb.fn_name, &law.name).and_then(|script| {
-            match super::proof_steps::render(&script, ctx) {
-                Ok(r) => Some((script.obligation.key.clone(), r)),
-                Err(why) => {
-                    if std::env::var_os("AVER_STEPS_DEBUG").is_some() {
-                        eprintln!(
-                            "steps: {}: not rendered in Lean: {why}",
-                            script.obligation.key
-                        );
-                    }
-                    None
-                }
-            }
-        })
-    };
+    let steps_rendered = rendered_steps(vb, law, ctx);
     // A literal bit mask (`Bits.and(x, 128)`) is a closed form no portfolio
     // arm reaches; its arm is a fixed rewrite chain that closes or fails
     // fast, so it goes first.
@@ -429,16 +389,63 @@ pub fn emit_verify_law_forall_auto_proof(
     // A proof written as data leads: the kernel checks it, and the whole
     // portfolio above stays behind it as the fallback.
     if let Some((key, rendered)) = steps_rendered {
-        let givens: Vec<String> = law
-            .givens
-            .iter()
-            .map(|g| aver_name_to_lean(&g.name))
-            .collect();
-        let intro = extend_intro_names_with_premises(law, &givens);
         let body = std::mem::replace(&mut proof.body, super::tactic_ir::Tactic::Sorry);
-        proof.body = super::proof_steps::lead_portfolio(&rendered, &intro, &key, body);
+        proof.body = super::proof_steps::lead_portfolio(&rendered, &steps_intro(law), &key, body);
     }
     Some(proof)
+}
+
+/// The law's step proof rendered in Lean, with the key its rejection is
+/// traced under, or `None` when proof lowering wrote no steps for it or they
+/// do not render.
+fn rendered_steps(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Option<(String, super::proof_steps::Rendered)> {
+    let script = law_steps_for(ctx, &vb.fn_name, &law.name)?;
+    match super::proof_steps::render(&script, ctx) {
+        Ok(r) => Some((script.obligation.key.clone(), r)),
+        Err(why) => {
+            if std::env::var_os("AVER_STEPS_DEBUG").is_some() {
+                eprintln!(
+                    "steps: {}: not rendered in Lean: {why}",
+                    script.obligation.key
+                );
+            }
+            None
+        }
+    }
+}
+
+/// The names a step term is introduced under: the givens, then the
+/// premises.
+fn steps_intro(law: &VerifyLaw) -> Vec<String> {
+    let givens: Vec<String> = law
+        .givens
+        .iter()
+        .map(|g| aver_name_to_lean(&g.name))
+        .collect();
+    extend_intro_names_with_premises(law, &givens)
+}
+
+/// The law's step proof with `sorry` behind it and nothing else:
+/// `first | steps | (trace; sorry)`, or `None` when the law has no step proof
+/// that renders. What a law with a `by` line is proved with, and what the
+/// certificate model proves a `when`-law with when no deterministic arm
+/// claims it: a law the steps do not close then stays visibly open.
+pub(in crate::codegen::lean) fn steps_or_sorry(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Option<super::tactic_ir::Tactic> {
+    let (key, rendered) = rendered_steps(vb, law, ctx)?;
+    Some(super::proof_steps::lead_portfolio(
+        &rendered,
+        &steps_intro(law),
+        &key,
+        super::tactic_ir::Tactic::Sorry,
+    ))
 }
 
 /// The step script proof lowering produced for `(fn_name, law_name)`.

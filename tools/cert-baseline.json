@@ -63,6 +63,61 @@
    "skipWs.skipWsAdvances"
   ]
  },
+ "examples/data/rational.av": {
+  "bridges": [
+   "minus",
+   "negate",
+   "oneFraction",
+   "plus",
+   "sameValue",
+   "times",
+   "zeroFraction"
+  ],
+  "certified": {
+   "minus": "L1",
+   "negate": "L1",
+   "oneFraction": "L1",
+   "plus": "L1",
+   "sameValue": "L1",
+   "times": "L1",
+   "zeroFraction": "L1"
+  },
+  "laws": [
+   "minus.equalsPlusNegate",
+   "negate.involutive",
+   "plus.associative",
+   "plus.commutative",
+   "plus.zeroIsNeutral",
+   "times.associative",
+   "times.commutative",
+   "times.distributesOverPlus",
+   "times.oneIsNeutral",
+   "times.zeroAbsorbs"
+  ]
+ },
+ "examples/formal/equal_sides.av": {
+  "bridges": [
+   "aboveBound",
+   "eqOrNe",
+   "strictBoth",
+   "swappedEq",
+   "swappedNe"
+  ],
+  "certified": {
+   "aboveBound": "L1",
+   "eqOrNe": "L1",
+   "strictBoth": "L1",
+   "swappedEq": "L1",
+   "swappedNe": "L1"
+  },
+  "laws": [
+   "aboveBound.one",
+   "eqOrNe.opposites",
+   "strictBoth.zero",
+   "swappedEq.one",
+   "swappedNe.zero"
+  ]
+ },
  "projects/k5_fdiv/main.av": {
   "bridges": [
    "Domain_Rational_absFraction",
@@ -433,6 +488,23 @@
    "Node_validate": "L1"
   },
   "laws": []
+ },
+ "tests/fixtures/proof_plans/shuffles.av": {
+  "bridges": [
+   "hereOrDeeper",
+   "itemAt",
+   "shuffled"
+  ],
+  "certified": {
+   "hereOrDeeper": "L1",
+   "itemAt": "L1",
+   "shuffled": "L1"
+  },
+  "laws": [
+   "shuffled.rotThreeTimesIsTheTopThree",
+   "shuffled.swapTwiceIsTheTopPair",
+   "shuffled.twoSwapTwiceIsTheTopFour"
+  ]
  },
  "tools/certkit/fixtures/arity3.av": {
   "bridges": [

@@ -323,6 +323,7 @@ mod tests {
             program_shape: None,
             scope: None,
             plans_root: None,
+            plan_step_limit_knob: false,
         };
         packed_sequence_layout_table(&inputs)
     }

@@ -26,12 +26,14 @@ use super::env::Env;
 /// left not checked.
 pub(crate) const PLAN_STEP_LIMIT: u64 = 50_000_000;
 
-/// The step limit in force: [`PLAN_STEP_LIMIT`], or `AVER_PLAN_STEP_LIMIT`
-/// (a testing knob, so a test can show what running out of steps does
-/// without spending the full budget).
-fn step_limit() -> u64 {
-    std::env::var("AVER_PLAN_STEP_LIMIT")
-        .ok()
+/// The step limit in force: [`PLAN_STEP_LIMIT`], or, where the caller
+/// honours it (`knob`), `AVER_PLAN_STEP_LIMIT` (a testing knob, so a test can
+/// show what running out of steps does without spending the full budget).
+/// The certificate model does not: its package must not depend on the
+/// environment it was produced in.
+fn step_limit(knob: bool) -> u64 {
+    knob.then(|| std::env::var("AVER_PLAN_STEP_LIMIT").ok())
+        .flatten()
         .and_then(|v| v.parse().ok())
         .unwrap_or(PLAN_STEP_LIMIT)
 }
@@ -498,7 +500,8 @@ pub(super) fn produce(
     };
     let text = crate::ir::proof_steps::sexpr::script(&goal, inputs.symbol_table)
         .map_err(|why| format!("plan {path}: the goal cannot be written as step data: {why}"))?;
-    let answer = run(runner, entry, &text).map_err(|why| format!("plan {path}: {why}"))?;
+    let limit = step_limit(inputs.plan_step_limit_knob);
+    let answer = run(runner, entry, &text, limit).map_err(|why| format!("plan {path}: {why}"))?;
     let (kind, body) = answer.split_once('\n').unwrap_or((answer.as_str(), ""));
     let proof_text = match kind {
         "proof" => body,
@@ -540,7 +543,7 @@ pub(super) fn produce(
 }
 
 /// Run one generated plan function on the goal text, under the step limit.
-fn run(runner: &Runner, entry: &str, goal: &str) -> Result<String, String> {
+fn run(runner: &Runner, entry: &str, goal: &str, limit: u64) -> Result<String, String> {
     use crate::nan_value::{NanValue, NanValueConvert};
     use crate::value::Value;
     let mut machine = crate::vm::VM::new(
@@ -549,7 +552,6 @@ fn run(runner: &Runner, entry: &str, goal: &str) -> Result<String, String> {
         runner.arena.clone(),
     );
     machine.set_silent_console(true);
-    let limit = step_limit();
     machine.set_step_limit(Some(limit));
     let arg = NanValue::from_value(&Value::Str(goal.to_string()), &mut machine.arena);
     let out = machine

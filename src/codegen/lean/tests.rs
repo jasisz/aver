@@ -130,6 +130,7 @@ fn ctx_from_source(source: &str, project_name: &str) -> CodegenContext {
             run_build_symbols: true,
             dep_modules: &[],
             plans_root: None,
+            plan_step_limit_knob: false,
             alloc_policy: None,
             on_after_pass: None,
         },

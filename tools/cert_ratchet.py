@@ -43,6 +43,11 @@ DEFAULT_BASELINE = REPO_ROOT / "tools" / "cert-baseline.json"
 # Programs outside the certkit fixtures directory: (entry, module root).
 PROJECTS = [
     ("examples/data/json.av", None),
+    # Laws closed by proof steps, so a change that drops steps from the
+    # certificate model shows here.
+    ("examples/data/rational.av", None),
+    ("examples/formal/equal_sides.av", None),
+    ("tests/fixtures/proof_plans/shuffles.av", "tests/fixtures/proof_plans"),
     ("projects/k5_fdiv/main.av", "projects/k5_fdiv"),
     ("projects/payment_ops/main.av", "projects/payment_ops"),
     ("tests/fixtures/cert_work_job/main.av", "tests/fixtures/cert_work_job"),

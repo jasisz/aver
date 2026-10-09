@@ -798,6 +798,7 @@ verify count law countPlusConcat
             program_shape: None,
             scope: None,
             plans_root: None,
+            plan_step_limit_knob: false,
         };
         f(&inputs)
     }
