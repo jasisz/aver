@@ -140,6 +140,13 @@ fn a_law_names_its_proof_rule_with_by() {
         "verify f law both\n    given x: Int = [0]\n    induction x\n    by R.a\n    f(x) => x\n",
     );
     assert!(both.contains("cannot also name an 'induction'"), "{both}");
+    let reasons = parse_error(
+        "verify f law reasons\n    given x: Int = [0]\n    because x >= 0\n    by R.a\n    f(x) => x\n",
+    );
+    assert!(
+        reasons.contains("cannot also have 'because' lines"),
+        "{reasons}"
+    );
 }
 
 #[test]

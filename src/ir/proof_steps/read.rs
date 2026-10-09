@@ -716,6 +716,32 @@ impl Reader {
                     cons: Box::new(self.proof(c)?),
                 }
             }
+            ("listcases", [Sx::Atom(v), l, r, n, ht, c]) => {
+                let (head, tail) = match self.items(ht)? {
+                    [Sx::Atom(h), Sx::Atom(t)] => (h.clone(), t.clone()),
+                    _ => return Err(bad()),
+                };
+                let lhs = self.term(l)?;
+                let rhs = self.term(r)?;
+                let nil = self.proof(n)?;
+                // The cell's parts have the list's types, which the
+                // proof's later reads of them need.
+                let list = self.var_types.borrow().get(v).cloned();
+                if let Some(Type::List(elem)) = list {
+                    let mut types = self.var_types.borrow_mut();
+                    types.insert(head.clone(), (*elem).clone());
+                    types.insert(tail.clone(), Type::List(elem));
+                }
+                Proof::ListCases {
+                    var: v.clone(),
+                    lhs,
+                    rhs,
+                    nil: Box::new(nil),
+                    head,
+                    tail,
+                    cons: Box::new(self.proof(c)?),
+                }
+            }
             ("ring", [l, r]) => Proof::Ring {
                 lhs: self.term(l)?,
                 rhs: self.term(r)?,

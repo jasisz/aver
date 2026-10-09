@@ -533,6 +533,12 @@ impl Parser {
                     self.skip_newlines();
                 }
 
+                if by_rule.is_some() && !because.is_empty() {
+                    return Err(self.error(
+                        "A law with a 'by' line gets its whole proof from the rule; it cannot also have 'because' lines"
+                            .to_string(),
+                    ));
+                }
                 let law_start_line = self.current().line;
                 let law_start_col = self.current().col;
                 let mut left = self.parse_expr()?;

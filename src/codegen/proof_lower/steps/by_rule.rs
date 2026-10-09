@@ -93,12 +93,12 @@ fn compile(root: &str, module: &str) -> Result<Runner, String> {
     };
     let mut entries = HashMap::new();
     let mut entry = format!(
-        "module RuleRunner\n    intent = \"Runs the proof rules of {module} on a goal.\"\n    depends [Kernel.Wire, {module}]\n    rules []\n"
+        "module RuleRunner\n    intent = \"Runs the proof rules of {module} on a goal.\"\n    depends [Kernel.Lib, {module}]\n    rules []\n"
     );
     for (i, rule) in rules.iter().enumerate() {
         let name = format!("runRule{i}");
         entry.push_str(&format!(
-            "\nfn {name}(text: String) -> String\n    ? \"Rule {rule}.\"\n    match Kernel.Wire.goal(text)\n        Result.Err(why) -> \"goal\\n{{why}}\"\n        Result.Ok(g) -> Kernel.Wire.answer({module}.{rule}(g))\n"
+            "\nfn {name}(text: String) -> String\n    ? \"Rule {rule}.\"\n    match Kernel.Lib.readGoal(text)\n        Result.Err(why) -> \"goal\\n{{why}}\"\n        Result.Ok(g) -> Kernel.Lib.writeAnswer({module}.{rule}(g))\n"
         ));
         entries.insert(rule.clone(), name);
     }
@@ -284,7 +284,7 @@ fn goal(inputs: &ProofLowerInputs, ob: &Obligation, laws: Vec<LawRef>) -> Script
 /// reach: what the kernel and Lean need of the goal's definitions.
 fn needed_defs(goal: &Script, proof: &Proof) -> Vec<Def> {
     fn named(p: &Proof, out: &mut Vec<FnId>) {
-        let mut all = |ps: &[Proof], out: &mut Vec<FnId>| ps.iter().for_each(|q| named(q, out));
+        let all = |ps: &[Proof], out: &mut Vec<FnId>| ps.iter().for_each(|q| named(q, out));
         let mut terms: Vec<&Term> = Vec::new();
         match p {
             Proof::Refl(t) | Proof::Proj { term: t } | Proof::Cell { list: t } => terms.push(t),
@@ -405,6 +405,13 @@ fn needed_defs(goal: &Script, proof: &Proof) -> Vec<Def> {
                 nil,
                 cons,
                 ..
+            }
+            | Proof::ListCases {
+                lhs,
+                rhs,
+                nil,
+                cons,
+                ..
             } => {
                 terms.push(lhs);
                 terms.push(rhs);
@@ -456,11 +463,6 @@ pub(super) fn produce(
     let t: &LawTheorem = &ir.law_theorems[i];
     let path = t.by_rule.as_deref().expect("a law with a `by` line");
     let (module, rule) = split_rule(path)?;
-    if !t.reasons.is_empty() {
-        return Err(format!(
-            "rule {path}: a law with a `by` line gets its whole proof from the rule, and `because` lines are not supported with it yet"
-        ));
-    }
     if t.premises.len() > 1 {
         return Err(format!("rule {path}: more than one premise"));
     }
@@ -469,6 +471,9 @@ pub(super) fn produce(
             "rule {path}: this command does not run proof rules"
         ));
     };
+    if let Some(why) = crate::types::checker::rules_module::by_line_refusal(path, root) {
+        return Err(format!("rule {path}: {why}"));
+    }
     let laws = match &t.using {
         Some(names) if !names.is_empty() => match super::cited(inputs, ir, t, names) {
             Some(laws) => laws,

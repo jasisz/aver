@@ -192,7 +192,8 @@ fn proofText(p: Proof) -> String
         Proof.PAbsurd(q, l, r) -> "(absurd {proofText(q)} {termText(l)} {termText(r)})"
         Proof.PInduct(f, xs, l, r, carried, cs) -> headed("induct {f} ({spaced(termTexts(xs))}) {termText(l)} {termText(r)}{carryText(carried)}", inductCaseTexts(cs))
         Proof.PListInduct(v, l, r, n, h, t, general, ihs, c) -> "(listinduct {v} {termText(l)} {termText(r)} {proofText(n)} ({h} {t}) ({spaced(general)}) ({spaced(ihAtTexts(ihs))}) {proofText(c)})"
-        Proof.PRing(l, r) -> "(ring {termText(l)} {termText(r)})"
+        Proof.PListCases(v, l, r, n, h, t, c) -> "(listcases {v} {termText(l)} {termText(r)} {proofText(n)} ({h} {t}) {proofText(c)})"
+        Proof.PRing(l, r) ->"(ring {termText(l)} {termText(r)})"
         Proof.PLinear(g, v, hs, ws) -> "(linear {termText(g)} {v} ({spaced(hs)}) ({spaced(intTexts(ws))}))"
 
 verify proofText
@@ -200,6 +201,7 @@ verify proofText
     proofText(Proof.PUnfold("f", 2, [Term.TVar("x")], [], [])) => "(unfold f 2 ((v x)) ())"
     proofText(Proof.PRule("list.len.nil", [], [])) => "(rule list.len.nil ())"
     proofText(Proof.PSplit("f", [Term.TVar("x")], Term.TVar("x"), "h", [SplitCase(ctor = "nil", binders = [], proof = Proof.PHyp("h"))])) => "(split f ((v x)) (v x) h (case nil () (hyp h)))"
+    proofText(Proof.PListCases("xs", Term.TVar("xs"), Term.TVar("xs"), Proof.PHyp("a"), "h", "t", Proof.PHyp("b"))) => "(listcases xs (v xs) (v xs) (hyp a) (h t) (hyp b))"
     proofText(Proof.PLinear(Term.TVar("g"), true, ["h"], [1, 2])) => "(linear (v g) true (h) (1 2))"
 
 fn proofTexts(ps: List<Proof>) -> List<String>

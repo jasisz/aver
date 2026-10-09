@@ -6,9 +6,10 @@ module Lib
         "The helpers follow the kernel's conventions so a rule does not have to learn them:"
         "the law's `when` is the hypothesis named `when` and states `premise = true`;"
         "match arms are counted from 1; a chain of n steps lists n + 1 terms;"
-        "a computation step is written only between literals."
-    exposes [Rw, Known, Scope, scope, assume, refl, isRefl, chain, trans, evaluate, bothSides, whenName, whenOf, whenHolds, absurdByWhen, unfold, selectArm, letBindings, compute, fresh, cons]
-    depends [Kernel.Term, Kernel.Proof, Kernel.Subst]
+        "a computation step is written only between literals; a list split replaces the split variable"
+        "in the claim and in every hypothesis, the `when` among them."
+    exposes [Rw, Known, Scope, scope, assume, refl, isRefl, chain, trans, evaluate, bothSides, whenName, whenOf, whenHolds, absurdByWhen, whenRefutes, substitute, unfold, selectArm, letBindings, compute, fresh, cons, readGoal, writeAnswer]
+    depends [Kernel.Term, Kernel.Proof, Kernel.Subst, Kernel.Wire]
     effects []
 
 record Rw
@@ -111,19 +112,28 @@ fn absurdByWhen(s: Scope, goal: Goal) -> Result<Proof, String>
     ? "The goal's claim in a case where the `when` evaluates to false: true = when = … = false, so the case cannot happen."
     match whenOf(goal)
         Option.None -> Result.Err("the law has no `when`")
-        Option.Some(p) -> absurdAt(evaluate(s, p)?, p, goal.obligation)
+        Option.Some(p) -> whenRefutes(s, p, goal.obligation.lhs, goal.obligation.rhs)
 
 verify absurdByWhen
     absurdByWhen(Scope(defs = [], known = []), Goal(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [])) => Result.Err("the law has no `when`")
 
-fn absurdAt(r: Rw, p: Term, law: Law) -> Result<Proof, String>
-    ? "The absurd step once the `when` is evaluated."
+fn whenRefutes(s: Scope, premise: Term, lhs: Term, rhs: Term) -> Result<Proof, String>
+    ? "lhs = rhs in a case where the `when`, as it reads in that case, evaluates to false: true = premise = … = false, so the case cannot happen. Inside a list split the `when` reads with the split variable replaced, so pass it that way."
+    r = evaluate(s, premise)?
     match r.to
-        Term.TBool(false) -> Result.Ok(Proof.PAbsurd(Proof.PTrans([Term.TBool(true), p, Term.TBool(false)], [Proof.PSymm(whenHolds()), r.proof]), law.lhs, law.rhs))
+        Term.TBool(false) -> Result.Ok(Proof.PAbsurd(Proof.PTrans([Term.TBool(true), premise, Term.TBool(false)], [Proof.PSymm(whenHolds()), r.proof]), lhs, rhs))
         _ -> Result.Err("the `when` does not evaluate to false here")
 
-verify absurdAt
-    absurdAt(refl(Term.TBool(true)), Term.TBool(true), Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2))) => Result.Err("the `when` does not evaluate to false here")
+verify whenRefutes
+    whenRefutes(Scope(defs = [], known = []), Term.TOp(">=", Term.TInt(0), Term.TInt(1)), Term.TInt(1), Term.TInt(2)) => Result.Ok(Proof.PAbsurd(Proof.PTrans([Term.TBool(true), Term.TOp(">=", Term.TInt(0), Term.TInt(1)), Term.TBool(false)], [Proof.PSymm(Proof.PHyp("when")), Proof.PCompute(Term.TOp(">=", Term.TInt(0), Term.TInt(1)), Term.TBool(false))]), Term.TInt(1), Term.TInt(2)))
+    whenRefutes(Scope(defs = [], known = []), Term.TBool(true), Term.TInt(1), Term.TInt(2)) => Result.Err("the `when` does not evaluate to false here")
+
+fn substitute(t: Term, name: String, value: Term) -> Result<Term, String>
+    ? "t with the variable name replaced by value, as the kernel replaces a split variable in a list split's cases."
+    Kernel.Subst.subst(t, [Kernel.Term.bind(name, value)])
+
+verify substitute
+    substitute(Term.TOp("+", Term.TVar("x"), Term.TVar("y")), "x", Term.TInt(1)) => Result.Ok(Term.TOp("+", Term.TInt(1), Term.TVar("y")))
 
 fn bothSides(s: Scope, lhs: Term, rhs: Term) -> Result<Proof, String>
     ? "lhs = n = rhs when evaluate takes both sides to the same n."
@@ -494,3 +504,17 @@ fn freshFrom(base: String, taken: List<String>, k: Int) -> String
 
 verify freshFrom
     freshFrom("h", [], 1) => "h1"
+
+fn readGoal(text: String) -> Result<Goal, String>
+    ? "The goal step data states, its proof left out: how the compiler hands a rule its goal."
+    Kernel.Wire.goal(text)
+
+verify readGoal
+    readGoal("(a") => Result.Err("unexpected end of data")
+
+fn writeAnswer(r: Result<Proof, String>) -> String
+    ? "A rule's answer as the compiler reads it back: `proof` and the proof in step data, or `refused` and the reason."
+    Kernel.Wire.answer(r)
+
+verify writeAnswer
+    writeAnswer(Result.Err("no")) => "refused\nno"

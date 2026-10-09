@@ -295,18 +295,35 @@ fn a_program_module_may_not_depend_on_a_rules_module() {
     );
 }
 
-#[test]
-fn a_law_has_one_by_line_and_not_beside_an_induction_line() {
-    let law = |lines: &str| {
-        format!(
-            "module Laws\n    intent = \"Laws.\"\n    effects []\n\nfn f(x: Int) -> Int\n    ? \"Itself.\"\n    x\n\nverify f\n    f(1) => 1\n\nverify f law same\n    given x: Int = [1, 2]\n{lines}    f(x) => x\n"
-        )
-    };
-    let ok = check_project(
-        "one-by",
-        &[("laws.av", &law("    by Rules.Same.same\n"))],
-        "laws.av",
+/// Run `aver check laws.av` in a project with the rules module
+/// `rules/same.av` (rule `same`), the law's extra lines being `lines`.
+fn check_law(name: &str, lines: &str) -> Output {
+    let law = format!(
+        "module Laws\n    intent = \"Laws.\"\n    effects []\n\nfn f(x: Int) -> Int\n    ? \"Itself.\"\n    x\n\nverify f\n    f(1) => 1\n\nverify f law same\n    given x: Int = [1, 2]\n{lines}    f(x) => x\n"
     );
+    let plain = "module Plain\n    intent = \"Not rules.\"\n    effects []\n\nfn one() -> Int\n    ? \"One.\"\n    1\n\nverify one\n    one() => 1\n";
+    check_project(
+        name,
+        &[
+            ("laws.av", &law),
+            ("rules/same.av", GOOD_RULE),
+            ("plain.av", plain),
+        ],
+        "laws.av",
+    )
+}
+
+fn output_text(out: &Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    )
+}
+
+#[test]
+fn a_by_line_names_one_rule_of_the_project_and_stands_alone() {
+    let ok = check_law("one-by", "    by Rules.Same.same\n");
     assert!(ok.status.success(), "{}", format_output(&ok));
     for (name, lines, message) in [
         (
@@ -324,16 +341,83 @@ fn a_law_has_one_by_line_and_not_beside_an_induction_line() {
             "    induction x\n    by Rules.Same.same\n",
             "it cannot also name an 'induction'",
         ),
+        (
+            "by-because",
+            "    because x >= 1\n    by Rules.Same.same\n",
+            "it cannot also have 'because' lines",
+        ),
+        (
+            "because-after-by",
+            "    by Rules.Same.same\n    because x >= 1\n",
+            "it cannot also have 'because' lines",
+        ),
+        (
+            "no-module",
+            "    by Rules.Missing.same\n",
+            "this project has no module Rules.Missing",
+        ),
+        (
+            "no-rule",
+            "    by Rules.Same.other\n",
+            "rules module Rules.Same does not list `other`",
+        ),
+        (
+            "not-rules",
+            "    by Plain.one\n",
+            "module Plain is not a rules module",
+        ),
+        (
+            "kernel",
+            "    by Kernel.Lib.evaluate\n",
+            "Kernel.Lib is a module of the proof kernel",
+        ),
     ] {
-        let out = check_project(name, &[("laws.av", &law(lines))], "laws.av");
+        let out = check_law(name, lines);
         assert!(!out.status.success(), "{name}: {}", format_output(&out));
-        let text = format!(
-            "{}{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+        let text = output_text(&out);
         assert!(text.contains(message), "{name}: {text}");
     }
+}
+
+#[test]
+fn kernel_module_names_are_reserved_for_the_kernel() {
+    // A project file named like a kernel module is an error, never the
+    // module a dependency gets.
+    let fake = "module Lib\n    intent = \"Not the kernel's.\"\n    effects []\n\nfn one() -> Int\n    ? \"One.\"\n    1\n\nverify one\n    one() => 1\n";
+    let out = check_project(
+        "reserved",
+        &[("same.av", GOOD_RULE), ("kernel/lib.av", fake)],
+        "same.av",
+    );
+    assert!(!out.status.success(), "{}", format_output(&out));
+    assert!(
+        output_text(&out).contains("'Kernel.Lib' is a module name reserved for the proof kernel"),
+        "{}",
+        format_output(&out)
+    );
+    // Only a rules module depends on the kernel.
+    let program = "module App\n    intent = \"A program.\"\n    depends [Kernel.Lib]\n    effects []\n\nfn one() -> Int\n    ? \"One.\"\n    1\n\nverify one\n    one() => 1\n";
+    let out = check_project("program-kernel", &[("app.av", program)], "app.av");
+    assert!(!out.status.success(), "{}", format_output(&out));
+    assert!(
+        output_text(&out).contains(
+            "module 'App' depends on 'Kernel.Lib': only a rules module may depend on the proof kernel's modules"
+        ),
+        "{}",
+        format_output(&out)
+    );
+    // And only on its public modules.
+    let private = GOOD_RULE.replace(
+        "depends [Kernel.Term, Kernel.Proof, Kernel.Lib]",
+        "depends [Kernel.Term, Kernel.Proof, Kernel.Lib, Kernel.Subst]",
+    );
+    let out = check_project("rules-private", &[("same.av", &private)], "same.av");
+    assert!(!out.status.success(), "{}", format_output(&out));
+    assert!(
+        output_text(&out).contains("rules module 'Same' depends on 'Kernel.Subst'"),
+        "{}",
+        format_output(&out)
+    );
 }
 
 #[test]
@@ -377,6 +461,54 @@ fn lean_closes_the_rule_laws_by_steps() {
     assert_eq!(found["steps_rejected"], serde_json::json!([]));
     for law in SHUFFLE_LAWS {
         assert_eq!(found["closed_by"][law], "steps", "{law}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_leaves_a_law_open_when_its_rule_does_not_close_it() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("lean-open");
+    let result = aver_in(
+        &fixtures(),
+        &[
+            "proof",
+            "wrong.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "10",
+            "--declined-budget",
+            "10",
+        ],
+        &[("AVER_RULE_STEP_LIMIT", "2000000")],
+    );
+    let found = summary(&result);
+    // Two of these laws are true, and Lean's tactics would close them;
+    // a law that names its rule is closed by that rule or not at all.
+    assert_eq!(found["universal_laws"], 0, "{found}");
+    let declined = found["declined_claims"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{found}"));
+    for law in [
+        "swapped.swapAgain",
+        "swapped.swapIsTheSwap",
+        "swapped.swapOnceIsTheTopPair",
+    ] {
+        let entry = declined
+            .iter()
+            .find(|d| d["claim"] == law)
+            .unwrap_or_else(|| panic!("{law} not declined: {found}"));
+        assert!(
+            entry["reason"]
+                .as_str()
+                .is_some_and(|r| r.starts_with("rule ")),
+            "{law}: {entry}"
+        );
     }
     let _ = fs::remove_dir_all(out);
 }

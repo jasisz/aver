@@ -175,3 +175,59 @@ pub(super) fn check_rules_dependencies(
         }
     }
 }
+
+/// Why a law's `by Module.rule` names no rule of the project at
+/// `module_root`, if it names none: the module must be a project file (not
+/// one the compiler ships), a rules module, and list the rule.
+pub fn by_line_refusal(path: &str, module_root: &str) -> Option<String> {
+    let Some((module, rule)) = path
+        .rsplit_once('.')
+        .filter(|(m, f)| !m.is_empty() && !f.is_empty())
+    else {
+        return Some(format!("`by {path}` must name a rule as Module.rule"));
+    };
+    if crate::source::is_kernel_module(module) {
+        return Some(format!(
+            "`by {path}`: {module} is a module of the proof kernel, not a rules module of this project"
+        ));
+    }
+    let Some(file) = crate::source::find_module_file(module, module_root) else {
+        return Some(format!(
+            "`by {path}`: this project has no module {module}; a rule comes from a rules module of the same project"
+        ));
+    };
+    let text = std::fs::read_to_string(&file).ok()?;
+    let items = crate::source::parse_source(&text).ok()?;
+    let decl = items.iter().find_map(|i| match i {
+        TopLevel::Module(m) => Some(m),
+        _ => None,
+    })?;
+    match &decl.rules {
+        None => Some(format!(
+            "`by {path}`: module {module} is not a rules module (it has no `rules [...]` line)"
+        )),
+        Some(rules) if !rules.iter().any(|r| r == rule) => Some(format!(
+            "`by {path}`: rules module {module} does not list `{rule}` in its `rules [...]` line"
+        )),
+        Some(_) => None,
+    }
+}
+
+/// An error for every law whose `by` line names no rule of the project.
+pub fn check_by_lines(items: &[TopLevel], module_root: &str) -> Vec<TypeError> {
+    let mut out = Vec::new();
+    for item in items {
+        let TopLevel::Verify(block) = item else {
+            continue;
+        };
+        let crate::ast::VerifyKind::Law(law) = &block.kind else {
+            continue;
+        };
+        if let Some(path) = &law.by_rule
+            && let Some(why) = by_line_refusal(path, module_root)
+        {
+            out.push(error(why, block.line));
+        }
+    }
+    out
+}

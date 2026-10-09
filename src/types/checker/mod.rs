@@ -32,7 +32,7 @@ mod modules;
 pub mod oracle_subtypes;
 mod process_imports;
 pub mod proof_trust_header;
-pub(crate) mod rules_module;
+pub mod rules_module;
 
 #[cfg(test)]
 mod tests;

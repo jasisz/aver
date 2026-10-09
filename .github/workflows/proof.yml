@@ -184,7 +184,7 @@ jobs:
           | (binary(yield_verify_spec) & test(=coordinator_laws_are_universal_beside_the_vm_schedule_scenarios))
           | (binary(verify_step_budget_spec) & test(=the_proof_lane_declines_a_case_verify_did_not_answer))
           | (binary(module_bindings_spec) & (test(=proof_check_proves_the_laws_over_bindings) | test(=lean_closes_the_same_laws_over_bindings_by_steps)))
-          | (binary(proof_rules_spec) & test(=lean_closes_the_rule_laws_by_steps))
+          | (binary(proof_rules_spec) & (test(=lean_closes_the_rule_laws_by_steps) | test(=lean_leaves_a_law_open_when_its_rule_does_not_close_it)))
           | (binary(capability_grammar_spec) & (test(=a_user_type_carrying_a_resource_handle_still_proves)
           | test(=pure_capability_is_effect_free_but_still_provider_bound_and_proof_opaque)
           | test(=resource_minting_oracle_receives_an_unconstrained_token)))'

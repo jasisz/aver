@@ -6,20 +6,13 @@ module Stack
     depends [Kernel.Term, Kernel.Proof, Kernel.Lib]
     rules [openByLength]
 
-record Opening
-    splitter: Def
-    subject: String
-    goal: Goal
-
 fn openByLength(goal: Goal) -> Result<Proof, String>
     ? "The proof that opens the list the `when` bounds, or why the rule does not apply."
     match Kernel.Lib.whenOf(goal)
         Option.None -> Result.Err("the law has no `when`")
         Option.Some(w) -> match lengthBound(w)
             Option.None -> Result.Err("the `when` is not `List.len(v) >= k` with a literal k")
-            Option.Some((v, k)) -> match findSplitter(goal.defs)
-                Option.None -> Result.Err("no definition matches a list parameter on [] and [h, ..t]")
-                Option.Some((d, p)) -> openCells(Opening(splitter = d, subject = p, goal = goal), Kernel.Lib.scope(goal), v, 1, k)
+            Option.Some((v, k)) -> openCells(Kernel.Lib.scope(goal), goal.obligation.lhs, goal.obligation.rhs, w, v, 1, k)
 
 verify openByLength
     openByLength(Goal(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [])) => Result.Err("the law has no `when`")
@@ -34,72 +27,20 @@ verify lengthBound
     lengthBound(Term.TOp(">=", Term.TBi("List.len", [Term.TVar("xs")]), Term.TInt(2))) => Option.Some(("xs", 2))
     lengthBound(Term.TBool(true)) => Option.None
 
-fn findSplitter(defs: List<Def>) -> Option<Tuple<Def, String>>
-    ? "A definition whose body matches one of its parameters on [] and [h, ..t], and that parameter: the kernel splits a list at such a match."
-    match defs
-        [] -> Option.None
-        [d, ..rest] -> match splitterParam(d)
-            Option.Some(p) -> Option.Some((d, p))
-            Option.None -> findSplitter(rest)
-
-verify findSplitter
-    findSplitter([]) => Option.None
-
-fn splitterParam(d: Def) -> Option<String>
-    ? "The parameter d's body matches on [] and [h, ..t], when it has no local bindings."
-    match (d.lets, d.body)
-        ([], Term.TMatch(Term.TVar(p), arms)) -> match Bool.and(List.contains(d.params, p), nilAndCell(arms, false, false))
-            true -> Option.Some(p)
-            false -> Option.None
-        _ -> Option.None
-
-verify splitterParam
-    splitterParam(Def(name = "f", returnsBool = false, params = ["xs"], lets = [], body = Term.TMatch(Term.TVar("xs"), [Arm(pattern = Pat.PNil, body = Term.TInt(0)), Arm(pattern = Pat.PCons("h", "t"), body = Term.TInt(1))]))) => Option.Some("xs")
-
-fn nilAndCell(arms: List<Arm>, nil: Bool, cell: Bool) -> Bool
-    ? "Whether the arms read [] and [h, ..t]."
-    match arms
-        [] -> Bool.and(nil, cell)
-        [a, ..rest] -> match a.pattern
-            Pat.PNil -> nilAndCell(rest, true, cell)
-            Pat.PCons(h, t) -> nilAndCell(rest, nil, true)
-            _ -> nilAndCell(rest, nil, cell)
-
-verify nilAndCell
-    nilAndCell([Arm(pattern = Pat.PNil, body = Term.TInt(0))], false, false) => false
-
-fn splitterArgs(ps: List<String>, subject: String, cur: String) -> List<Term>
-    ? "Arguments for the splitter: the list split on in the subject's place, 0 elsewhere."
-    match ps
-        [] -> []
-        [p, ..rest] -> match p == subject
-            true -> List.prepend(Term.TVar(cur), splitterArgs(rest, subject, cur))
-            false -> List.prepend(Term.TInt(0), splitterArgs(rest, subject, cur))
-
-verify splitterArgs
-    splitterArgs(["xs", "n"], "xs", "c") => [Term.TVar("c"), Term.TInt(0)]
-
-fn openCells(o: Opening, s: Scope, cur: String, depth: Int, k: Int) -> Result<Proof, String>
-    ? "Split cur into [] and [hd, ..tl], k + 1 times down the list: an empty case with fewer than k cells above it contradicts the `when`, and the last split leaves both cases closed by evaluating the two sides, since a count read past the k cells still needs to see the rest end or go on."
-    h = "h_cell{depth}"
+fn openCells(s: Scope, lhs: Term, rhs: Term, w: Term, cur: String, depth: Int, k: Int) -> Result<Proof, String>
+    ? "Split cur into [] and [hd, ..tl], k + 1 times down the list: an empty case with fewer than k cells above it contradicts the `when`, and the last split closes both cases by evaluating the two sides, since a count read past the k cells still needs to see the rest end or go on."
     hd = "c_hd{depth}"
     tl = "c_tl{depth}"
-    nilScope = Kernel.Lib.assume(s, h, cur, Term.TList([]))
-    cellScope = Kernel.Lib.assume(s, h, cur, Kernel.Lib.cons(Term.TVar(hd), Term.TVar(tl)))
+    cell = Kernel.Lib.cons(Term.TVar(hd), Term.TVar(tl))
     nilProof = match depth <= k
-        true -> Kernel.Lib.absurdByWhen(nilScope, o.goal)?
-        false -> evaluated(o, nilScope)?
+        true -> Kernel.Lib.whenRefutes(s, Kernel.Lib.substitute(w, cur, Term.TList([]))?, Kernel.Lib.substitute(lhs, cur, Term.TList([]))?, Kernel.Lib.substitute(rhs, cur, Term.TList([]))?)?
+        false -> Kernel.Lib.bothSides(s, Kernel.Lib.substitute(lhs, cur, Term.TList([]))?, Kernel.Lib.substitute(rhs, cur, Term.TList([]))?)?
+    cellLhs = Kernel.Lib.substitute(lhs, cur, cell)?
+    cellRhs = Kernel.Lib.substitute(rhs, cur, cell)?
     cellProof = match depth <= k
-        true -> openCells(o, cellScope, tl, depth + 1, k)?
-        false -> evaluated(o, cellScope)?
-    Result.Ok(Proof.PSplit(o.splitter.name, splitterArgs(o.splitter.params, o.subject, cur), Term.TVar(cur), h, [SplitCase(ctor = "nil", binders = [], proof = nilProof), SplitCase(ctor = "cons", binders = [hd, tl], proof = cellProof)]))
+        true -> openCells(s, cellLhs, cellRhs, Kernel.Lib.substitute(w, cur, cell)?, tl, depth + 1, k)?
+        false -> Kernel.Lib.bothSides(s, cellLhs, cellRhs)?
+    Result.Ok(Proof.PListCases(cur, lhs, rhs, nilProof, hd, tl, cellProof))
 
 verify openCells
-    openCells(Opening(splitter = Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TInt(0)), subject = "xs", goal = Goal(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [])), Kernel.Lib.scope(Goal(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [])), "xs", 1, 1) => Result.Err("the law has no `when`")
-
-fn evaluated(o: Opening, s: Scope) -> Result<Proof, String>
-    ? "The claim closed by evaluating both sides."
-    Kernel.Lib.bothSides(s, o.goal.obligation.lhs, o.goal.obligation.rhs)
-
-verify evaluated
-    evaluated(Opening(splitter = Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TInt(0)), subject = "xs", goal = Goal(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [])), Kernel.Lib.scope(Goal(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = []))) => Result.Err("the two sides evaluate to different terms")
+    openCells(Scope(defs = [], known = []), Term.TVar("xs"), Term.TVar("xs"), Term.TBool(true), "xs", 2, 1) => Result.Ok(Proof.PListCases("xs", Term.TVar("xs"), Term.TVar("xs"), Proof.PTrans([Term.TList([]), Term.TList([]), Term.TList([])], [Proof.PRefl(Term.TList([])), Proof.PSymm(Proof.PRefl(Term.TList([])))]), "c_hd2", "c_tl2", Proof.PTrans([Term.TBi("List.prepend", [Term.TVar("c_hd2"), Term.TVar("c_tl2")]), Term.TBi("List.prepend", [Term.TVar("c_hd2"), Term.TVar("c_tl2")]), Term.TBi("List.prepend", [Term.TVar("c_hd2"), Term.TVar("c_tl2")])], [Proof.PRefl(Term.TBi("List.prepend", [Term.TVar("c_hd2"), Term.TVar("c_tl2")])), Proof.PSymm(Proof.PRefl(Term.TBi("List.prepend", [Term.TVar("c_hd2"), Term.TVar("c_tl2")])))])))

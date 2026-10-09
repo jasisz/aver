@@ -316,14 +316,71 @@ pub fn resolve_module_source(
         return Ok(Some(module));
     }
 
+    // `Kernel.*` names belong to the proof kernel the compiler ships (see
+    // `crate::stdlib::find_kernel_api`); a project file never takes one.
+    // Only the kernel's own source tree reads them from its files.
+    if is_kernel_module(name) && !is_kernel_source_tree(module_root) {
+        if let Some(path) = find_module_file(name, module_root) {
+            return Err(format!(
+                "'{name}' is a module name reserved for the proof kernel; the project file '{}' cannot use it",
+                path.display()
+            ));
+        }
+        return Ok(resolve_kernel_api_source(name));
+    }
     let Some(path) = find_module_file(name, module_root) else {
-        // The proof kernel's modules for proof rules, when the project has
-        // no file of that name (see `crate::stdlib::find_kernel_api`).
         return Ok(resolve_kernel_api_source(name));
     };
     let source = std::fs::read_to_string(&path)
         .map_err(|e| format!("Cannot read '{}': {}", path.display(), e))?;
     Ok(Some(ModuleSource { path, source }))
+}
+
+/// Whether `name` is in the namespace reserved for the proof kernel.
+pub fn is_kernel_module(name: &str) -> bool {
+    name.starts_with("Kernel.")
+}
+
+/// Whether `module_root` is the proof kernel's own source tree
+/// (`tools/proof-kernel` of the compiler's repository), the one place whose
+/// files are the `Kernel.*` modules.
+pub fn is_kernel_source_tree(module_root: &str) -> bool {
+    let own = Path::new(env!("CARGO_MANIFEST_DIR")).join("tools/proof-kernel");
+    canonicalize_path(Path::new(module_root)) == canonicalize_path(&own)
+}
+
+/// The modules of the proof kernel a rules module may depend on.
+pub const RULES_KERNEL_API: [&str; 3] = ["Kernel.Term", "Kernel.Proof", "Kernel.Lib"];
+
+/// Why `parent` may not depend on the kernel module `dep`, if it may not:
+/// only a rules module depends on the kernel, and only on its public
+/// modules. The kernel's own modules and its source tree are exempt.
+fn kernel_dependency_refusal(
+    parent_path: &Path,
+    parent_items: &[TopLevel],
+    dep: &str,
+    module_root: &str,
+) -> Option<String> {
+    if !is_kernel_module(dep)
+        || parent_path.starts_with("<aver-stdlib>")
+        || is_kernel_source_tree(module_root)
+    {
+        return None;
+    }
+    let decl = visibility::module_decl(parent_items)?;
+    if decl.rules.is_none() {
+        return Some(format!(
+            "module '{}' depends on '{dep}': only a rules module may depend on the proof kernel's modules",
+            decl.name
+        ));
+    }
+    (!RULES_KERNEL_API.contains(&dep)).then(|| {
+        format!(
+            "rules module '{}' depends on '{dep}': a rules module may depend on {} of the proof kernel, and on nothing else of it",
+            decl.name,
+            RULES_KERNEL_API.join(", ")
+        )
+    })
 }
 
 pub fn canonicalize_path(path: &Path) -> PathBuf {
@@ -1047,6 +1104,11 @@ impl<'a> Walk<'a> {
             .map(|declaration| declaration.depends.as_slice())
             .unwrap_or_default();
         for name in written_dependencies {
+            if let Some(why) =
+                kernel_dependency_refusal(parent_path, parent_items, name, self.module_root)
+            {
+                return Err(LoadError::Read(why));
+            }
             let resolved = self.resolve(name, Some(parent_path))?;
             self.load(name, resolved)?;
         }
