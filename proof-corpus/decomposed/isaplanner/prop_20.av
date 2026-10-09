@@ -38,4 +38,5 @@ verify insort law insortPreservesLength
 
 verify sort law sortPreservesLength
     given xs: List<Nat> = [[], [Nat.S(Nat.Z)], [Nat.S(Nat.S(Nat.Z)), Nat.Z, Nat.S(Nat.Z)]]
+    using [insort.insortPreservesLength]
     len(sort(xs)) => len(xs)

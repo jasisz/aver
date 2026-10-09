@@ -38,6 +38,7 @@ verify plus law plusSuccRight
 
 verify double law doublePlus
     given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    using [plus.plusSuccRight]
     double(n) => plus(n, n)
 
 verify length law lengthAppend
@@ -48,4 +49,5 @@ verify length law lengthAppend
 
 verify length law lengthAppendDouble
     given x: List<Int> = [[], [1], [1, 2], [1, 2, 3]]
+    using [double.doublePlus, length.lengthAppend]
     length(append(x, x)) => double(length(x))

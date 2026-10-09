@@ -25,4 +25,5 @@ verify length law lengthSnoc
 
 verify length law revPreservesLength
     given x: List<Int> = [[], [1], [1, 2, 3]]
+    using [length.lengthSnoc]
     length(rev(x)) => length(x)

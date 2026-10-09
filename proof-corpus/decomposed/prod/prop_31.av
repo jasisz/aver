@@ -16,4 +16,5 @@ verify qrev law qrevMaster
 
 verify qrev law qrevQrev
     given x: List<Int> = [[], [1], [1, 2], [1, 2, 3]]
+    using [qrev.qrevMaster]
     qrev(qrev(x, []), []) => x
