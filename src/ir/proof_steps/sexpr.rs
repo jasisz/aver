@@ -448,6 +448,9 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
                     super::SplitCtor::Nil => "nil".to_string(),
                     super::SplitCtor::Cons => "cons".to_string(),
                     super::SplitCtor::Ctor(c) => names.ctor_name(c),
+                    // The kernel reads the literal off the arm.
+                    super::SplitCtor::Lit(_) => "lit".to_string(),
+                    super::SplitCtor::Other => "else".to_string(),
                 };
                 s.push_str(&format!(
                     " (case {ctor} ({}) {})",
@@ -657,6 +660,14 @@ pub fn script(s: &Script, names: &dyn Names) -> Result<String, String> {
             c.name,
             term(&c.value, names)?
         ));
+    }
+    out.push_str(")\n (sums");
+    for sum in &s.sums {
+        out.push_str("\n  (sum");
+        for (c, n) in sum {
+            out.push_str(&format!(" ({} {n})", names.ctor_name(c)));
+        }
+        out.push(')');
     }
     out.push_str(")\n (laws");
     // A cited fact comes after every fact its own proof cites, each once.

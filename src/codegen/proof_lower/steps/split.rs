@@ -1,8 +1,11 @@
-//! A split on a constructor: where evaluation stops at a call of a
-//! definition whose body is a `match` on a subject of a sum or list type
-//! that is not a constructor yet, the proof goes on in one case per
-//! constructor of that type, with the subject stated equal to it. The
-//! cases are the ones the `match` itself reads, so nothing is guessed.
+//! A split on a `match` subject: where evaluation stops at a call of a
+//! definition whose body is a `match` on a subject that is not a
+//! constructor or a literal yet, the proof goes on in one case per
+//! constructor of the subject's sum or list type, with the subject stated
+//! equal to it, or, where the arms are literals and a last catch-all, in one
+//! case per arm: the subject equal to each literal, then different from all
+//! of them. The cases are the ones the `match` itself reads, so nothing is
+//! guessed.
 
 use crate::ast::Type;
 use crate::ir::hir::{ResolvedCallee, ResolvedCtor, ResolvedExpr, ResolvedPattern};
@@ -31,26 +34,129 @@ fn mentions_any(t: &Term, names: &[String]) -> bool {
     fv.iter().any(|n| names.contains(n))
 }
 
+/// Whether two constructors are the same one of the program.
+fn same_ctor(a: &ResolvedCtor, b: &ResolvedCtor) -> bool {
+    match (a, b) {
+        (ResolvedCtor::User { ctor_id: x, .. }, ResolvedCtor::User { ctor_id: y, .. }) => x == y,
+        (ResolvedCtor::Builtin(x), ResolvedCtor::Builtin(y)) => x == y,
+        _ => false,
+    }
+}
+
+/// Every constructor of the sum type `c` belongs to, as the program
+/// declares it, with the types of its fields: in declaration order, and
+/// for Option and Result in the order Lean declares them (`none` before
+/// `some`, `error` before `ok`), their fields typed by `subject_ty` when
+/// it is given. `None` for a record, a resource, or a type not found.
+pub(crate) fn variants_of(
+    inputs: &crate::codegen::proof_lower::ProofLowerInputs,
+    c: &ResolvedCtor,
+    subject_ty: Option<&Type>,
+) -> Option<Vec<(ResolvedCtor, Vec<Option<Type>>)>> {
+    use crate::ir::hir::BuiltinCtor;
+    let builtin = |b: BuiltinCtor, fields: Vec<Option<Type>>| (ResolvedCtor::Builtin(b), fields);
+    match c {
+        ResolvedCtor::Builtin(BuiltinCtor::OptionNone | BuiltinCtor::OptionSome) => {
+            let t = match subject_ty {
+                Some(Type::Option(t)) => Some((**t).clone()),
+                _ => None,
+            };
+            Some(vec![
+                builtin(BuiltinCtor::OptionNone, Vec::new()),
+                builtin(BuiltinCtor::OptionSome, vec![t]),
+            ])
+        }
+        ResolvedCtor::Builtin(BuiltinCtor::ResultOk | BuiltinCtor::ResultErr) => {
+            let (ok, err) = match subject_ty {
+                Some(Type::Result(ok, err)) => (Some((**ok).clone()), Some((**err).clone())),
+                _ => (None, None),
+            };
+            Some(vec![
+                builtin(BuiltinCtor::ResultErr, vec![err]),
+                builtin(BuiltinCtor::ResultOk, vec![ok]),
+            ])
+        }
+        ResolvedCtor::User { type_id, .. } => {
+            let symbols = inputs.symbol_table;
+            let entry = symbols.type_entry_if_present(*type_id)?;
+            if entry.is_product || entry.is_capability_resource {
+                return None;
+            }
+            let crate::ast::TypeDef::Sum { variants, .. } =
+                super::finite::type_def(inputs, entry.key.scope_str(), &entry.key.name)?
+            else {
+                return None;
+            };
+            if variants.len() != entry.variants.len() {
+                return None;
+            }
+            Some(
+                entry
+                    .variants
+                    .iter()
+                    .zip(variants)
+                    .map(|(id, v)| {
+                        let ctor = ResolvedCtor::User {
+                            ctor_id: *id,
+                            type_id: *type_id,
+                            name: symbols.ctor_entry(*id).name.clone(),
+                        };
+                        let types = v
+                            .fields
+                            .iter()
+                            .map(|f| Some(crate::types::parse_type_str(f)))
+                            .collect();
+                        (ctor, types)
+                    })
+                    .collect(),
+            )
+        }
+        _ => None,
+    }
+}
+
 impl Env<'_> {
-    /// The constructors a `match` with these arms splits its subject into:
-    /// `[]` and `[h, ..t]` for a list pattern, every variant of the sum type
-    /// of a constructor pattern otherwise. `None` for literal or tuple
-    /// patterns, a record, or Option and Result.
+    /// The cases a `match` with these arms splits its subject into: `[]`
+    /// and `[h, ..t]` for a list pattern, every variant of the sum type of
+    /// a constructor pattern, and one per arm for Int, text or Bool
+    /// literals with a last catch-all. `None` for tuple patterns, a record,
+    /// or literals without a last catch-all.
     fn split_ctors(
         &self,
         arms: &[crate::ir::hir::ResolvedMatchArm],
         subject_ty: Option<&Type>,
     ) -> Option<Vec<(SplitCtor, Fields)>> {
+        use crate::ast::Literal;
         use crate::ir::hir::BuiltinCtor;
+        if let [lits @ .., last] = arms
+            && !lits.is_empty()
+            && crate::ir::proof_steps::claim::is_catch_all(&last.pattern)
+            && lits.iter().all(|a| {
+                matches!(
+                    &a.pattern,
+                    ResolvedPattern::Literal(
+                        Literal::Int(_) | Literal::BigInt(_) | Literal::Str(_) | Literal::Bool(_)
+                    )
+                )
+            })
+        {
+            let mut out: Vec<(SplitCtor, Fields)> = lits
+                .iter()
+                .filter_map(|a| match &a.pattern {
+                    ResolvedPattern::Literal(l) => Some((SplitCtor::Lit(l.clone()), Vec::new())),
+                    _ => None,
+                })
+                .collect();
+            out.push((SplitCtor::Other, Vec::new()));
+            return Some(out);
+        }
         let mut list = false;
         let mut sum = None;
         let mut builtin = None;
         for arm in arms {
             match &arm.pattern {
                 ResolvedPattern::EmptyList | ResolvedPattern::Cons(..) => list = true,
-                ResolvedPattern::Ctor(ResolvedCtor::User { type_id, .. }, _) => {
-                    sum = Some(*type_id)
-                }
+                ResolvedPattern::Ctor(c @ ResolvedCtor::User { .. }, _) => sum = Some(c.clone()),
                 ResolvedPattern::Ctor(ResolvedCtor::Builtin(b), _) => builtin = Some(*b),
                 ResolvedPattern::Wildcard | ResolvedPattern::Ident(_) => {}
                 _ => return None,
@@ -70,96 +176,55 @@ impl Env<'_> {
                 .map(|s| if s == "_" { "x".to_string() } else { s })
                 .collect()
         };
-        // Option and Result in the order Lean declares them (`none`
-        // before `some`, `error` before `ok`), each field typed by the
-        // subject's type.
-        if let Some(b) = builtin {
-            if list || sum.is_some() {
-                return None;
-            }
-            let one = |c: BuiltinCtor, ty: Option<Type>| {
-                let name = names_in(
-                    &|p| matches!(p, ResolvedPattern::Ctor(ResolvedCtor::Builtin(x), _) if *x == c),
-                    1,
-                );
-                (
-                    SplitCtor::Ctor(ResolvedCtor::Builtin(c)),
-                    vec![(name[0].clone(), ty)],
-                )
-            };
-            return match (b, subject_ty) {
-                (BuiltinCtor::OptionSome | BuiltinCtor::OptionNone, Some(Type::Option(t))) => {
-                    Some(vec![
-                        (
-                            SplitCtor::Ctor(ResolvedCtor::Builtin(BuiltinCtor::OptionNone)),
-                            Vec::new(),
-                        ),
-                        one(BuiltinCtor::OptionSome, Some((**t).clone())),
-                    ])
-                }
-                (BuiltinCtor::ResultOk | BuiltinCtor::ResultErr, Some(Type::Result(ok, err))) => {
-                    Some(vec![
-                        one(BuiltinCtor::ResultErr, Some((**err).clone())),
-                        one(BuiltinCtor::ResultOk, Some((**ok).clone())),
-                    ])
-                }
+        if list && (sum.is_some() || builtin.is_some()) {
+            return None;
+        }
+        if list {
+            let elem = match subject_ty {
+                Some(Type::List(e)) => Some((**e).clone()),
                 _ => None,
             };
+            let cons = names_in(&|p| matches!(p, ResolvedPattern::Cons(..)), 2);
+            return Some(vec![
+                (SplitCtor::Nil, Vec::new()),
+                (
+                    SplitCtor::Cons,
+                    vec![
+                        (cons[0].clone(), elem),
+                        (cons[1].clone(), subject_ty.cloned()),
+                    ],
+                ),
+            ]);
         }
-        match (list, sum) {
-            (true, None) => {
-                let elem = match subject_ty {
-                    Some(Type::List(e)) => Some((**e).clone()),
-                    _ => None,
-                };
-                let cons = names_in(&|p| matches!(p, ResolvedPattern::Cons(..)), 2);
-                Some(vec![
-                    (SplitCtor::Nil, Vec::new()),
-                    (
-                        SplitCtor::Cons,
-                        vec![
-                            (cons[0].clone(), elem),
-                            (cons[1].clone(), subject_ty.cloned()),
-                        ],
-                    ),
-                ])
-            }
-            (false, Some(type_id)) => {
-                let symbols = self.inputs.symbol_table;
-                let entry = symbols.type_entry_if_present(type_id)?;
-                if entry.is_product || entry.is_capability_resource {
-                    return None;
-                }
-                let crate::ast::TypeDef::Sum { variants, .. } =
-                    super::finite::type_def(self.inputs, entry.key.scope_str(), &entry.key.name)?
-                else {
-                    return None;
-                };
-                if variants.len() != entry.variants.len() {
-                    return None;
-                }
-                let mut out = Vec::new();
-                for (c, v) in entry.variants.iter().zip(variants) {
-                    let ctor = ResolvedCtor::User {
-                        ctor_id: *c,
-                        type_id,
-                        name: symbols.ctor_entry(*c).name.clone(),
-                    };
-                    let names = names_in(
-                        &|p| matches!(p, ResolvedPattern::Ctor(ResolvedCtor::User { ctor_id, .. }, _) if ctor_id == c),
-                        v.fields.len(),
-                    );
-                    let fields = names
-                        .into_iter()
-                        .zip(&v.fields)
-                        .map(|(n, f)| (n, Some(crate::types::parse_type_str(f))))
-                        .collect();
-                    out.push((SplitCtor::Ctor(ctor), fields));
-                }
-                Some(out)
-            }
-            _ => None,
-        }
+        // Option and Result take their fields' types from the subject's.
+        let one = match (sum, builtin, subject_ty) {
+            (Some(c), None, _) => c,
+            (
+                None,
+                Some(b @ (BuiltinCtor::OptionSome | BuiltinCtor::OptionNone)),
+                Some(Type::Option(_)),
+            )
+            | (
+                None,
+                Some(b @ (BuiltinCtor::ResultOk | BuiltinCtor::ResultErr)),
+                Some(Type::Result(..)),
+            ) => ResolvedCtor::Builtin(b),
+            _ => return None,
+        };
+        let out = variants_of(self.inputs, &one, subject_ty)?
+            .into_iter()
+            .map(|(ctor, types)| {
+                let names = names_in(
+                    &|p| matches!(p, ResolvedPattern::Ctor(c, _) if same_ctor(c, &ctor)),
+                    types.len(),
+                );
+                (
+                    SplitCtor::Ctor(ctor),
+                    names.into_iter().zip(types).collect(),
+                )
+            })
+            .collect();
+        Some(out)
     }
 
     /// The innermost call in `t` of a definition whose `match` stops at its
@@ -211,7 +276,7 @@ impl Env<'_> {
         let ev = self.whnf(&on);
         self.fuel = fuel;
         let ev = ev.ok()?;
-        if !ev.chain.is_empty() || super::eval::select_arm(arms, &on).is_some() {
+        if !ev.chain.is_empty() || super::eval::select_arm(arms, &on, &self.hyps).is_some() {
             return None;
         }
         Some(Stuck {
@@ -242,9 +307,27 @@ impl Env<'_> {
             term::free_vars(&e.rhs, &mut taken);
         }
         taken.extend(self.split_binders.iter().cloned());
+        let lits: Vec<Term> = st
+            .ctors
+            .iter()
+            .filter_map(|(c, _)| match c {
+                SplitCtor::Lit(l) => {
+                    let k = canon(&crate::ast::Spanned::bare(ResolvedExpr::Literal(l.clone())));
+                    if let Some(ty) = st.on.ty() {
+                        k.set_ty(ty.clone());
+                    }
+                    Some(k)
+                }
+                _ => None,
+            })
+            .collect();
         let mut cases = Vec::new();
         for (ctor, fields) in st.ctors {
             let mut binders = Vec::new();
+            // The catch-all case names one hypothesis per literal.
+            if matches!(ctor, SplitCtor::Other) {
+                binders = lits.iter().map(|_| self.fresh_hyp()).collect();
+            }
             for (base, _) in &fields {
                 let start = self.split_binders.len();
                 let name = (0..)
@@ -259,29 +342,40 @@ impl Env<'_> {
                 binders: binders.clone(),
                 proof: Proof::Refl(term::boolean(true)),
             };
-            let value = case.value();
-            if let ResolvedExpr::Ctor(_, vars) | ResolvedExpr::Call(_, vars) = &value.node {
-                for (v, (_, ty)) in vars.iter().zip(&fields) {
-                    if let Some(ty) = ty {
-                        v.set_ty(ty.clone());
-                    }
-                }
-            }
-            if let Some(ty) = st.on.ty() {
-                value.set_ty(ty.clone());
-            }
             // A hypothesis that evaluated no further before may now.
             let saved = self.split_binders.len();
             let barren = std::mem::take(&mut self.barren);
-            self.split_binders.extend(binders);
-            self.hyps
-                .push((hyp.clone(), Eqn::new(st.on.clone(), value.clone())));
-            // Each hypothesis about `st.on` is stated again about the
-            // constructor, so it still applies once evaluation has read
-            // `st.on` as it; then one stated before the split may evaluate
-            // to the other Bool, and the case cannot happen.
-            let cuts = self.restated(&st.on, &hyp, &value);
-            let before = self.hyps.len();
+            let base = self.hyps.len();
+            let cuts = match case.value() {
+                Some(value) => {
+                    if let ResolvedExpr::Ctor(_, vars) | ResolvedExpr::Call(_, vars) = &value.node {
+                        for (v, (_, ty)) in vars.iter().zip(&fields) {
+                            if let Some(ty) = ty {
+                                v.set_ty(ty.clone());
+                            }
+                        }
+                    }
+                    if let Some(ty) = st.on.ty() {
+                        value.set_ty(ty.clone());
+                    }
+                    self.split_binders.extend(binders);
+                    self.hyps
+                        .push((hyp.clone(), Eqn::new(st.on.clone(), value.clone())));
+                    // Each hypothesis about `st.on` is stated again about
+                    // the constructor, so it still applies once evaluation
+                    // has read `st.on` as it; then one stated before the
+                    // split may evaluate to the other Bool, and the case
+                    // cannot happen.
+                    self.restated(&st.on, &hyp, &value)
+                }
+                None => {
+                    for (name, k) in binders.iter().zip(&lits) {
+                        self.hyps
+                            .push((name.clone(), crate::ir::proof_steps::unequal(&st.on, k)));
+                    }
+                    Vec::new()
+                }
+            };
             for (name, fact, said, _, _) in &cuts {
                 self.hyps
                     .push((name.clone(), Eqn::new(fact.clone(), term::boolean(*said))));
@@ -338,8 +432,7 @@ impl Env<'_> {
                         }
                     })
             });
-            self.hyps.truncate(before);
-            self.hyps.pop();
+            self.hyps.truncate(base);
             self.split_binders.truncate(saved);
             self.barren = barren;
             cases.push(SplitCase {

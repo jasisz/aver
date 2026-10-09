@@ -259,6 +259,16 @@ pub fn map_children(
 }
 
 /// Names a pattern binds.
+/// The names a pattern's parts take, in order, a wildcard part as `_`: the
+/// binders a step gives a constructor or cons pattern line up with these.
+pub fn pattern_parts(p: &ResolvedPattern) -> Vec<String> {
+    match p {
+        ResolvedPattern::Cons(h, t) => vec![h.clone(), t.clone()],
+        ResolvedPattern::Ctor(_, names) => names.clone(),
+        _ => pattern_binders(p),
+    }
+}
+
 pub fn pattern_binders(p: &ResolvedPattern) -> Vec<String> {
     match p {
         ResolvedPattern::Wildcard | ResolvedPattern::Literal(_) | ResolvedPattern::EmptyList => {

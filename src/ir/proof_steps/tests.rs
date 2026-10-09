@@ -21,6 +21,7 @@ fn script(lhs: super::Term, rhs: super::Term, proof: Proof) -> Script {
         defs: Vec::new(),
         consts: Vec::new(),
         laws: Vec::new(),
+        sums: Vec::new(),
         proof,
     }
 }
@@ -1838,9 +1839,17 @@ fn a_split_on_a_constructor_covers_the_type_with_fresh_names() {
         arm(ResolvedPattern::EmptyList, zero.clone()),
         arm(ResolvedPattern::Cons("h".into(), "t".into()), one.clone()),
     ]);
+    // `C.A` and `C.B(n)`, as the program declares the sum.
+    let ctor = |k: u32, name: &str| ResolvedCtor::User {
+        ctor_id: CtorId(k),
+        type_id: TypeId(0),
+        name: name.into(),
+    };
+    let declared = vec![vec![(ctor(0, "C.A"), 0), (ctor(1, "C.B"), 1)]];
     let run = |proof: Proof, d: Def| {
         let mut s = script(ge(call.clone()), term::boolean(true), proof);
         s.defs = vec![d];
+        s.sums = declared.clone();
         kernel(&s)
     };
     assert_eq!(
@@ -1869,11 +1878,6 @@ fn a_split_on_a_constructor_covers_the_type_with_fresh_names() {
     );
 
     // A sum: `C.A` and `C.B(n)`.
-    let ctor = |k: u32, name: &str| ResolvedCtor::User {
-        ctor_id: CtorId(k),
-        type_id: TypeId(0),
-        name: name.into(),
-    };
     let sum = def(vec![
         arm(
             ResolvedPattern::Ctor(ctor(0, "C.A"), Vec::new()),
@@ -1902,6 +1906,62 @@ fn a_split_on_a_constructor_covers_the_type_with_fresh_names() {
         run(split(var("a"), vec![a.clone()]), sum.clone()).is_err(),
         "C.B left out"
     );
+    // Behind a catch-all arm, `f(x) = match x { C.A -> 0, _ -> 1 }`: the
+    // split covers every constructor the program declares, not only the
+    // ones an arm names, and not a sum the program does not declare.
+    let behind = def(vec![
+        arm(
+            ResolvedPattern::Ctor(ctor(0, "C.A"), Vec::new()),
+            zero.clone(),
+        ),
+        arm(ResolvedPattern::Wildcard, one.clone()),
+    ]);
+    let b_value = Spanned::bare(ResolvedExpr::Ctor(ctor(1, "C.B"), vec![var("n1")]));
+    let b_other = SplitCase {
+        proof: case(2, vec![], &one),
+        ..b.clone()
+    };
+    let b_other = SplitCase {
+        proof: match b_other.proof {
+            Proof::Trans { terms, mut steps } => {
+                if let Proof::Congr { inner, .. } = &mut steps[0]
+                    && let Proof::Unfold { binders, .. } = inner.as_mut()
+                {
+                    *binders = vec![b_value.clone()];
+                }
+                Proof::Trans { terms, steps }
+            }
+            other => other,
+        },
+        ..b_other
+    };
+    assert_eq!(
+        run(
+            split(var("a"), vec![a.clone(), b_other.clone()]),
+            behind.clone()
+        ),
+        Ok(())
+    );
+    assert!(
+        run(split(var("a"), vec![a.clone()]), behind.clone()).is_err(),
+        "only the constructor an arm names"
+    );
+    let mut undeclared = script(
+        ge(call.clone()),
+        term::boolean(true),
+        split(var("a"), vec![a.clone(), b_other.clone()]),
+    );
+    undeclared.defs = vec![behind.clone()];
+    assert!(
+        kernel(&undeclared).is_err(),
+        "a sum the program does not declare"
+    );
+    let mut twice = undeclared.clone();
+    twice.sums = vec![declared[0].clone(), vec![(ctor(0, "C.A"), 0)]];
+    assert!(
+        kernel(&twice).is_err(),
+        "a constructor declared in two sums"
+    );
     let about_own = |c: SplitCase| SplitCase {
         proof: Proof::Refl(var("n1")),
         ..c
@@ -1912,6 +1972,7 @@ fn a_split_on_a_constructor_covers_the_type_with_fresh_names() {
         split(var("a"), vec![about_own(a), about_own(b)]),
     );
     s.defs = vec![sum];
+    s.sums = declared.clone();
     assert!(kernel(&s).is_err(), "a case about its own names");
 }
 
@@ -1990,4 +2051,216 @@ fn list_split(both: bool) -> Script {
         }),
     }];
     s
+}
+
+/// A split on the arms of a literal match: `f(a) >= 0` for `f(x) = match x
+/// { 1 -> 0, 2 -> 5, _ -> 7 }`, one case per arm, under `a = 1`, `a = 2`,
+/// and `(a == 1) = false`, `(a == 2) = false` for the catch-all. The
+/// catch-all arm is chosen for `a` only where hypotheses rule out every
+/// literal arm before it, from the split or from Bool splits on `a == k`;
+/// the kernel refuses the split without the catch-all case or with one
+/// hypothesis short, cases that are not the arms, and the catch-all arm
+/// chosen with a literal arm not ruled out.
+#[test]
+fn a_split_on_literal_arms_has_one_case_per_arm() {
+    use super::{Def, SplitCase, SplitCtor};
+    use crate::ast::Literal;
+    use crate::ir::hir::ResolvedCallee;
+    use crate::ir::identity::FnId;
+    let n = |k: i64| term::int(&k.into());
+    let arm = |pattern: ResolvedPattern, body: super::Term| ResolvedMatchArm {
+        pattern,
+        body: Box::new(body),
+        binding_slots: std::sync::OnceLock::new(),
+    };
+    let lit = |k: i64| ResolvedPattern::Literal(Literal::Int(k));
+    let def = |arms: Vec<ResolvedMatchArm>| Def {
+        fn_id: FnId(0),
+        name: "__fn_0".into(),
+        params: vec!["x".into()],
+        returns_bool: false,
+        lets: Vec::new(),
+        body: Spanned::bare(ResolvedExpr::Match {
+            subject: Box::new(var("x")),
+            arms,
+        }),
+    };
+    let f = def(vec![
+        arm(lit(1), n(0)),
+        arm(lit(2), n(5)),
+        arm(ResolvedPattern::Wildcard, n(7)),
+    ]);
+    let call = Spanned::bare(ResolvedExpr::Call(
+        ResolvedCallee::Fn(FnId(0)),
+        vec![var("a")],
+    ));
+    let ge = |t: super::Term| term::binop(BinOp::Gte, t, n(0));
+    // `f(a) >= 0` from arm `k` of `f` at `a`, with `binders` and `premise`.
+    let case = |k: u32, binders: Vec<super::Term>, premise: Proof, value: i64| Proof::Trans {
+        terms: vec![ge(call.clone()), ge(n(value)), term::boolean(true)],
+        steps: vec![
+            Proof::Congr {
+                ctx: ge(term::hole()),
+                inner: Box::new(Proof::Unfold {
+                    fn_id: FnId(0),
+                    arm: k,
+                    args: vec![var("a")],
+                    binders,
+                    premise: Some(Box::new(premise)),
+                }),
+            },
+            Proof::Compute {
+                lhs: ge(n(value)),
+                rhs: term::boolean(true),
+            },
+        ],
+    };
+    let other = case(3, vec![var("a")], Proof::Refl(var("a")), 7);
+    let split = |cases: Vec<SplitCase>| Proof::Split {
+        fn_id: FnId(0),
+        args: vec![var("a")],
+        on: var("a"),
+        hyp: "h".into(),
+        cases,
+    };
+    let one = SplitCase {
+        ctor: SplitCtor::Lit(Literal::Int(1)),
+        binders: Vec::new(),
+        proof: case(1, vec![], Proof::Hyp("h".into()), 0),
+    };
+    let two = SplitCase {
+        ctor: SplitCtor::Lit(Literal::Int(2)),
+        binders: Vec::new(),
+        proof: case(2, vec![], Proof::Hyp("h".into()), 5),
+    };
+    let rest = |names: Vec<&str>| SplitCase {
+        ctor: SplitCtor::Other,
+        binders: names.into_iter().map(String::from).collect(),
+        proof: other.clone(),
+    };
+    let run = |proof: Proof, d: &Def| {
+        let mut s = script(ge(call.clone()), term::boolean(true), proof);
+        s.defs = vec![d.clone()];
+        kernel(&s)
+    };
+    assert_eq!(
+        run(
+            split(vec![one.clone(), two.clone(), rest(vec!["n1", "n2"])]),
+            &f
+        ),
+        Ok(())
+    );
+    assert!(
+        run(split(vec![one.clone(), two.clone()]), &f).is_err(),
+        "the catch-all case left out"
+    );
+    assert!(
+        run(split(vec![one.clone(), two.clone(), rest(vec!["n1"])]), &f).is_err(),
+        "one hypothesis short"
+    );
+    assert!(
+        run(split(vec![one.clone(), rest(vec!["n1"])]), &f).is_err(),
+        "a literal arm left out"
+    );
+    assert!(
+        run(other.clone(), &f).is_err(),
+        "the catch-all arm with no literal arm ruled out"
+    );
+    let no_catch_all = def(vec![arm(lit(1), n(0)), arm(lit(2), n(5))]);
+    assert!(
+        run(split(vec![one.clone(), two.clone()]), &no_catch_all).is_err(),
+        "literal arms without a catch-all"
+    );
+
+    // The same from Bool splits on `a == 1` and `a == 2`: the catch-all arm
+    // where both are false, a literal arm by `eq_of_beq` where one is true.
+    let beq = |k: i64| term::binop(BinOp::Eq, var("a"), n(k));
+    let equal = |k: i64, h: &str| Proof::Rule {
+        rule: WallRule::EqOfBeq,
+        subst: vec![("a".into(), var("a")), ("b".into(), n(k))],
+        premises: vec![Proof::Hyp(h.into())],
+    };
+    let cases = |on: super::Term, h: &str, if_true: Proof, if_false: Proof| Proof::Cases {
+        on,
+        hyp: h.into(),
+        if_true: Box::new(if_true),
+        if_false: Box::new(if_false),
+    };
+    let by_bools = |inner_split: bool| {
+        let after_one = if inner_split {
+            cases(
+                beq(2),
+                "h2",
+                case(2, vec![], equal(2, "h2"), 5),
+                other.clone(),
+            )
+        } else {
+            other.clone()
+        };
+        cases(beq(1), "h1", case(1, vec![], equal(1, "h1"), 0), after_one)
+    };
+    assert_eq!(run(by_bools(true), &f), Ok(()));
+    assert!(
+        run(by_bools(false), &f).is_err(),
+        "the catch-all arm with the literal 2 not ruled out"
+    );
+}
+
+/// A constructor pattern with a wildcard field: arm `C.B(_, m)` of `g(x) =
+/// match x { C.A -> 0, C.B(_, m) -> m }` at `C.B(p, q)` gives `q`, the
+/// field the name stands at, not the first one.
+#[test]
+fn a_wildcard_field_takes_its_place_among_the_binders() {
+    use super::Def;
+    use crate::ir::hir::{ResolvedCallee, ResolvedCtor};
+    use crate::ir::identity::{CtorId, FnId, TypeId};
+    let ctor = |k: u32, name: &str| ResolvedCtor::User {
+        ctor_id: CtorId(k),
+        type_id: TypeId(0),
+        name: name.into(),
+    };
+    let arm = |pattern: ResolvedPattern, body: super::Term| ResolvedMatchArm {
+        pattern,
+        body: Box::new(body),
+        binding_slots: std::sync::OnceLock::new(),
+    };
+    let g = Def {
+        fn_id: FnId(0),
+        name: "__fn_0".into(),
+        params: vec!["x".into()],
+        returns_bool: false,
+        lets: Vec::new(),
+        body: Spanned::bare(ResolvedExpr::Match {
+            subject: Box::new(var("x")),
+            arms: vec![
+                arm(
+                    ResolvedPattern::Ctor(ctor(0, "C.A"), Vec::new()),
+                    term::int(&0.into()),
+                ),
+                arm(
+                    ResolvedPattern::Ctor(ctor(1, "C.B"), vec!["_".into(), "m".into()]),
+                    var("m"),
+                ),
+            ],
+        }),
+    };
+    let value = Spanned::bare(ResolvedExpr::Ctor(ctor(1, "C.B"), vec![var("a"), var("b")]));
+    let call = Spanned::bare(ResolvedExpr::Call(
+        ResolvedCallee::Fn(FnId(0)),
+        vec![value.clone()],
+    ));
+    let unfold = Proof::Unfold {
+        fn_id: FnId(0),
+        arm: 2,
+        args: vec![value.clone()],
+        binders: vec![var("a"), var("b")],
+        premise: Some(Box::new(Proof::Refl(value.clone()))),
+    };
+    let run = |rhs: super::Term| {
+        let mut s = script(call.clone(), rhs, unfold.clone());
+        s.defs = vec![g.clone()];
+        kernel(&s)
+    };
+    assert_eq!(run(var("b")), Ok(()));
+    assert!(run(var("a")).is_err(), "the wildcard's field");
 }

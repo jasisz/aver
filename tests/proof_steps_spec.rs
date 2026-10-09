@@ -1931,6 +1931,30 @@ fn both_kernels_accept_a_split_on_a_constructor() {
     let paths: Vec<PathBuf> = files.values().cloned().collect();
     let result = replay(&paths);
     assert!(result.status.success(), "{}", format_output(&result));
+
+    // `switchOff` reads `Light.Off` and a catch-all: a split that covers
+    // only `Light.Off`, the one constructor an arm names, leaves `Dim` and
+    // `Full` out, which the program declares.
+    let dark = read("switchOff.staysDark");
+    let open = dark.find("(split ").expect("a split");
+    // (split FN (ARGS) ON HYP CASE…): the first two sub-forms are the
+    // arguments and the subject.
+    let cases = sub_forms(&dark, open)[2..].to_vec();
+    assert_eq!(cases.len(), 3, "{dark}");
+    let only_named = format!("{}{}", &dark[..cases[1].0], &dark[cases[2].1..]);
+    for (i, mutant) in [only_named].iter().enumerate() {
+        let verdict = aver::proof_kernel::verdict(mutant);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "mutant {i}: {verdict:?}\n{mutant}"
+        );
+        let path = out.join(format!("mutant{i}.steps"));
+        fs::write(&path, mutant).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(!result.status.success(), "{}", format_output(&result));
+    }
     let _ = fs::remove_dir_all(out);
 }
 
@@ -1963,6 +1987,103 @@ fn lean_closes_a_split_on_a_constructor() {
     )
     .unwrap();
     for law in CTOR_SPLIT_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+const MATCH_ARMS_LAWS: [&str; 7] = [
+    "height.ofASquare",
+    "isBox.unlessADot",
+    "isMany.exceptZeroAndOne",
+    "okOr.errorIsZero",
+    "restLength.afterOne",
+    "width.sameAsComparisons",
+    "widthBits.eightPerByte",
+];
+
+/// The split follows the arms of a `match` whatever their patterns: one
+/// case per arm of Int literals and a last catch-all, the catch-all chosen
+/// where hypotheses rule out every literal arm before it (from the split or
+/// from Bool splits on `==`), and a wildcard field of a constructor or a
+/// cell taking its place among the binders. The kernel refuses the
+/// catch-all case one hypothesis short, a literal case turned into a second
+/// catch-all, and the catch-all case's proof without the split around it.
+#[test]
+fn both_kernels_split_on_the_arms_of_a_match_and_refuse_mutations() {
+    let out = scratch("match-arms");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("match_arms.av", &out).into_iter().collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), MATCH_ARMS_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let paths: Vec<PathBuf> = files.values().cloned().collect();
+    let result = replay(&paths);
+    assert!(result.status.success(), "{}", format_output(&result));
+
+    let bits = read("widthBits.eightPerByte");
+    let other = "(case else (h_steps2 h_steps3 h_steps4) ";
+    assert!(bits.contains("(proof (split widthBits "), "{bits}");
+    let at = bits.find(other).expect("the catch-all case");
+    let body_at = at + other.len();
+    let body = &bits[body_at..=closing(&bits, body_at)];
+    let proof_at = bits.find("(proof ").unwrap();
+    let mutants = [
+        // The catch-all case without the hypothesis that rules out 78.
+        bits.replacen(other, "(case else (h_steps2 h_steps3) ", 1),
+        // The first literal case read as a second catch-all.
+        bits.replacen("(case lit () ", "(case else () ", 1),
+        // The catch-all arm chosen with no literal arm ruled out.
+        format!("{}(proof {body}))", &bits[..proof_at]),
+    ];
+    for (i, mutant) in mutants.iter().enumerate() {
+        assert_ne!(*mutant, bits, "mutant {i} changed nothing");
+        let verdict = aver::proof_kernel::verdict(mutant);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "mutant {i}: {verdict:?}\n{mutant}"
+        );
+        let path = out.join(format!("mutant{i}.steps"));
+        fs::write(&path, mutant).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(!result.status.success(), "{}", format_output(&result));
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_closes_a_split_on_the_arms_of_a_match() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("match-arms-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "match_arms.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "0",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in MATCH_ARMS_LAWS {
         assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
     }
     let _ = fs::remove_dir_all(out);
@@ -2211,7 +2332,7 @@ fn joining_texts_is_never_read_as_int_arithmetic() {
     // step applies to it, even in a script made by hand.
     let script = |op: &str| {
         format!(
-            "(steps 12 (obligation k (a b) (none) (op {op} (v a) (v b)) (op {op} (v b) (v a))) (defs) (consts) (laws) (proof (ring (op {op} (v a) (v b)) (op {op} (v b) (v a)))))"
+            "(steps 13 (obligation k (a b) (none) (op {op} (v a) (v b)) (op {op} (v b) (v a))) (defs) (consts) (sums) (laws) (proof (ring (op {op} (v a) (v b)) (op {op} (v b) (v a)))))"
         )
     };
     assert_eq!(

@@ -16,8 +16,8 @@ use super::{Eqn, Proof, Script};
 /// A hypothesis in scope: its name and the equation it states.
 pub type Hyps = Vec<(String, Eqn)>;
 
-/// The term a pattern denotes once its variables are bound to `binders`.
-/// Wildcards and catch-all names have no such term.
+/// The term a pattern denotes once its parts are bound to `binders`, one
+/// per part, a wildcard part as well. Catch-all patterns have no such term.
 pub fn pattern_term(p: &ResolvedPattern, binders: &[Term]) -> Result<Term, String> {
     use crate::ir::hir::ResolvedCtor;
     let need = |n: usize| {
@@ -36,7 +36,7 @@ pub fn pattern_term(p: &ResolvedPattern, binders: &[Term]) -> Result<Term, Strin
             need(0)?;
             Ok(Spanned::bare(ResolvedExpr::List(Vec::new())))
         }
-        ResolvedPattern::Cons(h, t) if h != "_" && t != "_" => {
+        ResolvedPattern::Cons(..) => {
             need(2)?;
             Ok(term::builtin(
                 "List.prepend",
@@ -44,7 +44,7 @@ pub fn pattern_term(p: &ResolvedPattern, binders: &[Term]) -> Result<Term, Strin
                 None,
             ))
         }
-        ResolvedPattern::Ctor(c, names) if names.iter().all(|n| n != "_") => {
+        ResolvedPattern::Ctor(c, names) => {
             need(names.len())?;
             if matches!(c, ResolvedCtor::Unresolved { .. }) {
                 return Err("unresolved constructor".into());
@@ -89,7 +89,12 @@ pub fn arm_equation(
         return Ok((Eqn::new(subject, canon(value)), body));
     }
     let pat = pattern_term(&chosen.pattern, binders)?;
-    map.extend(names.iter().cloned().zip(binders.iter().cloned()));
+    map.extend(
+        term::pattern_parts(&chosen.pattern)
+            .into_iter()
+            .zip(binders.iter().cloned())
+            .filter(|(n, _)| n != "_"),
+    );
     let body = term::subst(&chosen.body, &map)?;
     Ok((Eqn::new(subject, pat), body))
 }
@@ -245,7 +250,7 @@ pub fn claim(p: &Proof, script: &Script, hyps: &Hyps) -> Result<Eqn, String> {
         Proof::Split { on, hyp, cases, .. } => {
             let case = cases.first().ok_or("split: no cases")?;
             let mut h = hyps.clone();
-            h.push((hyp.clone(), Eqn::new(canon(on), case.value())));
+            h.extend(super::split_hyps(&canon(on), hyp, cases).swap_remove(0));
             claim(&case.proof, script, &h)
         }
         Proof::Have {

@@ -4,7 +4,7 @@ module Proof
         "laws and the script that ties them"
         "to one obligation."
         "Each step names its rule and writes out every instance; see src/ir/proof_steps/mod.rs."
-    exposes [Proof, Case, SplitCase, More, IhAt, Def, Const, Law, Fact, Script, Hyp, Given, premiseOf]
+    exposes [Proof, Case, SplitCase, More, IhAt, Def, Const, Variant, Law, Fact, Script, Hyp, Given, premiseOf]
     depends [Kernel.Term]
     effects []
 
@@ -64,6 +64,10 @@ record Const
     name: String
     value: Term
 
+record Variant
+    name: String
+    arity: Int
+
 record Law
     key: String
     givens: List<String>
@@ -87,6 +91,7 @@ record Script
     ints: List<String>
     defs: List<Def>
     consts: List<Const>
+    sums: List<List<Variant>>
     laws: List<Law>
     facts: List<Fact>
     proof: Proof

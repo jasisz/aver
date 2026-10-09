@@ -820,20 +820,41 @@ fn consts(ss: List<Sexp>) -> Result<List<Const>, String>
 verify consts
     consts([]) => Result.Ok([])
 
+fn sums(ss: List<Sexp>) -> Result<List<List<Variant>>, String>
+    ? "(sum (CTOR ARITY)…)…: the sum types the program declares, each constructor in order."
+    match ss
+        [] -> Result.Ok([])
+        [Sexp.Node([Sexp.Atom("sum"), ..vs]), ..rest] -> Result.Ok(List.prepend(variants(vs)?, sums(rest)?))
+        _ -> Result.Err("malformed sum")
+
+verify sums
+    sums([Sexp.Atom("x")]) => Result.Err("malformed sum")
+    sums([Sexp.Node([Sexp.Atom("sum"), Sexp.Node([Sexp.Atom("C.A"), Sexp.Atom("0")]), Sexp.Node([Sexp.Atom("C.B"), Sexp.Atom("1")])])]) => Result.Ok([[Variant(name = "C.A", arity = 0), Variant(name = "C.B", arity = 1)]])
+
+fn variants(vs: List<Sexp>) -> Result<List<Variant>, String>
+    ? "(CTOR ARITY)…"
+    match vs
+        [] -> Result.Ok([])
+        [Sexp.Node([Sexp.Atom(c), Sexp.Atom(n)]), ..rest] -> Result.Ok(List.prepend(Variant(name = c, arity = Int.fromString(n)?), variants(rest)?))
+        _ -> Result.Err("malformed constructor of a sum")
+
+verify variants
+    variants([Sexp.Atom("x")]) => Result.Err("malformed constructor of a sum")
+
 fn script(s: Sexp) -> Result<Script, String>
-    ? "(steps 12 (obligation …) (defs …) (consts …) (laws …) (proof …)); version 12 only."
+    ? "(steps 13 (obligation …) (defs …) (consts …) (sums …) (laws …) (proof …)); version 13 only."
     match s
-        Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("12"), o, Sexp.Node([Sexp.Atom("defs"), ..ds]), Sexp.Node([Sexp.Atom("consts"), ..cs]), Sexp.Node([Sexp.Atom("laws"), ..ls]), Sexp.Node([Sexp.Atom("proof"), p])]) -> scriptOf(obligation(o)?, defs(ds)?, consts(cs)?, laws(ls)?, proof(p)?)
+        Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("13"), o, Sexp.Node([Sexp.Atom("defs"), ..ds]), Sexp.Node([Sexp.Atom("consts"), ..cs]), Sexp.Node([Sexp.Atom("sums"), ..ss]), Sexp.Node([Sexp.Atom("laws"), ..ls]), Sexp.Node([Sexp.Atom("proof"), p])]) -> scriptOf(obligation(o)?, defs(ds)?, consts(cs)?, sums(ss)?, laws(ls)?, proof(p)?)
         Sexp.Node([Sexp.Atom("steps"), Sexp.Atom(v), ..rest]) -> Result.Err("unsupported step format version {v}")
         _ -> Result.Err("not a step script")
 
 verify script
     script(Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("3")])) => Result.Err("unsupported step format version 3")
 
-fn scriptOf(o: Tuple<Law, Givens>, ds: List<Def>, cs: List<Const>, ls: Cited, p: Proof) -> Result<Script, String>
+fn scriptOf(o: Tuple<Law, Givens>, ds: List<Def>, cs: List<Const>, ss: List<List<Variant>>, ls: Cited, p: Proof) -> Result<Script, String>
     ? "The script once its parts are read."
     match o
-        (ob, gs) -> Result.Ok(Script(obligation = ob, finite = gs.finite, lists = gs.lists, ints = gs.ints, defs = ds, consts = cs, laws = ls.laws, facts = ls.facts, proof = p))
+        (ob, gs) -> Result.Ok(Script(obligation = ob, finite = gs.finite, lists = gs.lists, ints = gs.ints, defs = ds, consts = cs, sums = ss, laws = ls.laws, facts = ls.facts, proof = p))
 
 verify scriptOf
-    scriptOf((Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit), Givens(names = [], finite = [], lists = [], ints = [])), [], [], Cited(laws = [], facts = []), Proof.PRefl(Term.TUnit)) => Result.Ok(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit), finite = [], lists = [], ints = [], defs = [], consts = [], laws = [], facts = [], proof = Proof.PRefl(Term.TUnit)))
+    scriptOf((Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit), Givens(names = [], finite = [], lists = [], ints = [])), [], [], [], Cited(laws = [], facts = []), Proof.PRefl(Term.TUnit)) => Result.Ok(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [], proof = Proof.PRefl(Term.TUnit)))

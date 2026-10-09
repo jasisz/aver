@@ -80,13 +80,36 @@ fn permutations(m: &[usize]) -> Vec<Vec<usize>> {
     out
 }
 
+/// Whether a hypothesis in `hyps` states that `v` is not the literal of
+/// pattern `p`: `(v == k) = false`, which the kernel reads as excluding
+/// the arm (an Int, text or Bool literal only).
+pub(super) fn ruled_out(p: &ResolvedPattern, v: &Term, hyps: &[(String, Eqn)]) -> bool {
+    use crate::ast::Literal;
+    let ResolvedPattern::Literal(l) = p else {
+        return false;
+    };
+    if !matches!(
+        l,
+        Literal::Int(_) | Literal::BigInt(_) | Literal::Str(_) | Literal::Bool(_)
+    ) {
+        return false;
+    }
+    let k = crate::ast::Spanned::bare(ResolvedExpr::Literal(l.clone()));
+    let want = crate::ir::proof_steps::unequal(&canon(v), &k);
+    let lhs = canon(&want.lhs);
+    hyps.iter()
+        .any(|(_, e)| canon(&e.lhs) == lhs && term::bool_value(&e.rhs) == Some(false))
+}
+
 /// The arm of a match whose pattern head the value `v` has, with the
 /// pattern's bindings, and whether `v` is a list literal the arm reads as a
-/// cell (so the premise ends with a [`Proof::Cell`] step). `None` when no
-/// arm can be selected syntactically.
+/// cell (so the premise ends with a [`Proof::Cell`] step). A literal arm
+/// that a hypothesis in `hyps` rules out (see [`ruled_out`]) is passed
+/// over. `None` when no arm can be selected syntactically.
 pub(super) fn select_arm(
     arms: &[crate::ir::hir::ResolvedMatchArm],
     v: &Term,
+    hyps: &[(String, Eqn)],
 ) -> Option<(u32, Vec<Term>, bool)> {
     use crate::ir::proof_steps::claim::{excludes, is_catch_all};
     for (i, arm) in arms.iter().enumerate() {
@@ -95,8 +118,13 @@ pub(super) fn select_arm(
             // Chosen for this value once every earlier arm excludes it.
             return arms[..i]
                 .iter()
-                .all(|earlier| excludes(&earlier.pattern, v))
+                .all(|earlier| {
+                    excludes(&earlier.pattern, v) || ruled_out(&earlier.pattern, v, hyps)
+                })
                 .then(|| (k, vec![canon(v)], false));
+        }
+        if ruled_out(&arm.pattern, v, hyps) {
+            continue;
         }
         match (&arm.pattern, &v.node) {
             (ResolvedPattern::Literal(l), ResolvedExpr::Literal(x)) => {
@@ -993,7 +1021,7 @@ impl Env<'_> {
                 }
                 let ev = self.whnf(&s)?;
                 let value = ev.chain.cur().clone();
-                match select_arm(arms, &value) {
+                match select_arm(arms, &value, &self.hyps) {
                     Some((k, binders, cell)) => {
                         let (_, premise) = with_cell(ev.chain, cell).finish();
                         let unfold = Proof::Unfold {
@@ -1073,7 +1101,7 @@ impl Env<'_> {
             ResolvedExpr::Match { subject, arms } => {
                 let ev = self.whnf(subject)?;
                 let value = ev.chain.cur().clone();
-                match select_arm(arms, &value) {
+                match select_arm(arms, &value, &[]) {
                     Some((k, binders, cell)) => {
                         let (_, premise) = with_cell(ev.chain, cell).finish();
                         let arm = Proof::Arm {
@@ -2821,6 +2849,7 @@ pub(crate) fn empty_script() -> crate::ir::proof_steps::Script {
         defs: Vec::new(),
         consts: Vec::new(),
         laws: Vec::new(),
+        sums: Vec::new(),
         proof: Proof::Refl(term::boolean(true)),
     }
 }
