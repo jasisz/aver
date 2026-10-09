@@ -1278,12 +1278,13 @@ verify refuseCase
     refuseCase("p", "no") => Result.Err("step p: no")
 
 fn freshAll(bs: List<String>, taken: List<String>, env: Env, before: List<String>) -> Bool
-    ? "No name is taken, a given, a module-level binding, or repeated."
+    ? "No name is taken, a given, a list variable (a tail an earlier split named, too), a module-level binding, or repeated."
     match bs
         [] -> true
-        [b, ..rest] -> Bool.and(Bool.not(Bool.or(Bool.or(List.contains(taken, b), List.contains(env.givens, b)), Bool.or(isConst(b, env.consts), List.contains(before, b)))), freshAll(rest, taken, env, List.prepend(b, before)))
+        [b, ..rest] -> Bool.and(Bool.not(Bool.or(Bool.or(List.contains(taken, b), Bool.or(List.contains(env.givens, b), List.contains(env.lists, b))), Bool.or(isConst(b, env.consts), List.contains(before, b)))), freshAll(rest, taken, env, List.prepend(b, before)))
 
 verify freshAll
+    freshAll(["t"], [], withList(emptyEnv(), "t"), []) => false
     freshAll(["y", "y"], [], emptyEnv(), []) => false
     freshAll(["y"], ["x"], emptyEnv(), []) => true
 
@@ -1537,6 +1538,7 @@ verify splitList
     splitList("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("t")), Proof.PRefl(Term.TList([])), "h", "t", Proof.PRefl(Term.TUnit), listsEnv(["xs"]), "p") => Result.Err("step p: the names are not fresh")
     splitList("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), "k", "t", Proof.PRefl(Term.TUnit), withHyp(listsEnv(["xs"]), "k", Term.TBool(true), true), "p") => Result.Err("step p: the names are not fresh")
     splitList("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), "xs", "t", Proof.PRefl(Term.TUnit), listsEnv(["xs"]), "p") => Result.Err("step p: the names are not fresh")
+    splitList("xs", Eqn(lhs = Term.TBool(true), rhs = Term.TBool(true)), Proof.PRefl(Term.TBool(true)), "t", "u", Proof.PRefl(Term.TBool(true)), withList(listsEnv(["xs"]), "t"), "p") => Result.Err("step p: the names are not fresh")
     splitList("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), "h", "t", Proof.PRefl(Term.TBi("List.prepend", [Term.TVar("h"), Term.TVar("t")])), listsEnv(["xs"]), "p") => Result.Ok(Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")))
 
 fn splitListCases(v: String, claim: Eqn, n: Proof, h: String, t: String, c: Proof, env: Env, path: String) -> Result<Eqn, String>

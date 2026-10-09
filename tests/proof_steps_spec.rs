@@ -698,6 +698,21 @@ fn both_kernels_split_a_list_given_into_its_two_cases_and_refuse_mutations() {
             format_output(&result)
         );
     }
+    // The tail `t` of the first split no longer occurs in the claim, but it
+    // stays a list variable: a later split may not name an element `t`,
+    // which a split on `t` would then take for a list.
+    let reused = "(steps 13\n (obligation k ((xs (tlist))) (none) (b true) (b true))\n (defs)\n (consts)\n (sums)\n (laws)\n (proof (listcases xs (b true) (b true) (refl (b true)) (h t) (listcases xs (b true) (b true) (refl (b true)) (t u) (refl (b true))))))\n";
+    let refused = aver::proof_kernel::verdict(reused);
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|e| e.contains("the names are not fresh")),
+        "a tail's name reused for a head: {refused:?}"
+    );
+    let mutant = out.join("reused.steps");
+    fs::write(&mutant, reused).unwrap();
+    let result = replay(std::slice::from_ref(&mutant));
+    assert!(!result.status.success(), "{}", format_output(&result));
     let _ = fs::remove_dir_all(out);
 }
 

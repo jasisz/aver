@@ -4308,7 +4308,7 @@ pub fn refuseCase(path @ _: AverStr, why @ _: AverStr) -> Result<(), AverStr> {
     }))
 }
 
-/// No name is taken, a given, a module-level binding, or repeated.
+/// No name is taken, a given, a list variable (a tail an earlier split named, too), a module-level binding, or repeated.
 #[inline(always)]
 pub fn freshAll(
     bs @ _: &aver_rt::AverList<AverStr>,
@@ -4317,7 +4317,7 @@ pub fn freshAll(
     before @ _: &aver_rt::AverList<AverStr>,
 ) -> bool {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(bs.clone(), [] => true, [b, rest] => ((!((taken.contains(&b) || env.givens.contains(&b)) || (crate::proof_kernel::aver_generated::kernel::check::isConst(b.clone(), &env.consts) || before.contains(&b)))) && crate::proof_kernel::aver_generated::kernel::check::freshAll(&rest, taken, env, &aver_rt::AverList::prepend(b, &before.clone()))))
+    aver_list_match!(bs.clone(), [] => true, [b, rest] => ((!((taken.contains(&b) || (env.givens.contains(&b) || env.lists.contains(&b))) || (crate::proof_kernel::aver_generated::kernel::check::isConst(b.clone(), &env.consts) || before.contains(&b)))) && crate::proof_kernel::aver_generated::kernel::check::freshAll(&rest, taken, env, &aver_rt::AverList::prepend(b, &before.clone()))))
 }
 
 /// Whether n names a module-level binding.
