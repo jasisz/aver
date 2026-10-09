@@ -491,16 +491,23 @@ fn lean_leaves_a_law_open_when_its_rule_does_not_close_it() {
     // Four of these laws are true, and Lean's tactics would close them;
     // a law that names its rule is closed by that rule or not at all.
     assert_eq!(found["universal_laws"], 0, "{found}");
+    // A law without a `when` that did not close is open the way any such
+    // law is: a sorry, not a declined attempt.
+    assert_eq!(
+        found["sorry_laws"],
+        serde_json::json!(["swapped.swapAgainUsingNothing"]),
+        "{found}"
+    );
     let declined = found["declined_claims"]
         .as_array()
         .unwrap_or_else(|| panic!("{found}"));
     // Each also with `using []`, which would otherwise take the reason
-    // ladder of a guided law.
+    // ladder of a guided law (the never-returning one without a `when`,
+    // checked above).
     for law in [
         "swapped.swapAgain",
         "swapped.swapIsTheSwap",
         "swapped.swapOnceIsTheTopPair",
-        "swapped.swapAgainUsingNothing",
         "swapped.swapIsTheSwapUsingNothing",
         "swapped.swapOnceUsingNothing",
     ] {
