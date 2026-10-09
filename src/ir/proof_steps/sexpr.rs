@@ -5,7 +5,7 @@
 //! to be the format's own documentation:
 //!
 //! ```text
-//! script  := [; proof by RULE sha256:HEX, N steps]   ; the rule that wrote it, for audit only
+//! script  := [; proof by PLAN sha256:HEX, N steps]   ; the plan that wrote it, for audit only
 //!            (steps VERSION (obligation KEY (OGIVEN…) PREMISE TERM TERM)
 //!                    (defs (def NAME (PARAM…) ((NAME TERM)…) TERM [bool])…)
 //!                    (consts (const NAME TERM)…)
@@ -652,12 +652,12 @@ pub fn script(s: &Script, names: &dyn Names) -> Result<String, String> {
             None => g.clone(),
         })
         .collect();
-    // Which rule wrote the proof: a comment, which no checker reads.
-    let provenance = match &s.rule {
-        Some(rule) => format!(
+    // Which plan wrote the proof: a comment, which no checker reads.
+    let provenance = match &s.plan {
+        Some(plan) => format!(
             "; proof by {} sha256:{}, {} steps\n",
-            rule.name,
-            rule.hash,
+            plan.name,
+            plan.hash,
             s.proof.size()
         ),
         None => String::new(),

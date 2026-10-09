@@ -102,27 +102,27 @@ fn waterfall_generalizes_only_the_generated_sample_domain() {
 }
 
 #[test]
-fn a_law_with_a_proof_rule_takes_no_tactic_and_no_waterfall() {
-    // No rule runs here (the test context has no project root), so each law
-    // is left with its rule's refusal: a bare `sorry`, also with `using`,
+fn a_law_with_a_proof_plan_takes_no_tactic_and_no_waterfall() {
+    // No plan runs here (the test context has no project root), so each law
+    // is left with its plan's refusal: a bare `sorry`, also with `using`,
     // and no waterfall region to replace it.
     let source = r#"
 module W
-    intent = "Laws that name a proof rule."
+    intent = "Laws that name a proof plan."
     effects []
 fn identity(n: Int) -> Int
     n
 verify identity law helper
     given n: Int = [0, 1]
     identity(n) => n
-verify identity law ruled
+verify identity law planned
     given n: Int = [0, 1]
-    by Rules.Same.same
+    by Plans.Same.same
     identity(n) => n
-verify identity law ruledUsing
+verify identity law plannedUsing
     given n: Int = [0, 1]
     using [identity.helper]
-    by Rules.Same.same
+    by Plans.Same.same
     identity(n) => n
 "#;
     let mut ctx = ctx_from_source(source, "W");
@@ -133,10 +133,10 @@ verify identity law ruledUsing
     ));
     let proposals = candidates(&lean);
     assert!(
-        proposals.iter().all(|c| !c.label.contains("ruled")),
+        proposals.iter().all(|c| !c.label.contains("planned")),
         "{proposals:?}"
     );
-    for theorem in ["identity_law_ruled", "identity_law_ruledUsing"] {
+    for theorem in ["identity_law_planned", "identity_law_plannedUsing"] {
         let start = lean
             .find(&format!("theorem {theorem} :"))
             .unwrap_or_else(|| panic!("no theorem {theorem}\n{lean}"));

@@ -498,10 +498,10 @@ pub struct LawTheorem {
     /// The given the law's `induction` line names, as written: induction
     /// along `fn_id` follows the calls that pass it where `fn_id` recurses.
     pub induction_given: Option<String>,
-    /// The proof rule the law's `by` line names, as written
-    /// (`Rules.Stack.openByLength`): the rule writes the whole proof and no
+    /// The proof plan the law's `by` line names, as written
+    /// (`Plans.Stack.openByLength`): the plan writes the whole proof and no
     /// automatic producer runs.
-    pub by_rule: Option<String>,
+    pub by_plan: Option<String>,
     /// The proof as data, when a step producer recognised the law
     /// (`crate::ir::proof_steps`). Backends try it before any search.
     pub steps: Option<crate::ir::proof_steps::Script>,

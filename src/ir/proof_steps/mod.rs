@@ -520,29 +520,29 @@ pub struct Script {
     /// kernel takes a split's cases from here, not from the split.
     pub sums: Vec<Vec<(crate::ir::hir::ResolvedCtor, usize)>>,
     pub proof: Proof,
-    /// The project proof rule that wrote `proof`, when a law named one with
+    /// The project proof plan that wrote `proof`, when a law named one with
     /// `by`: recorded in the script for audit, never read by a checker.
-    pub rule: Option<RuleUse>,
+    pub plan: Option<PlanUse>,
 }
 
-/// Which proof rule wrote a script's proof: the rule's full name and the
-/// sha256 of its rules module's source and the project modules it depends
+/// Which proof plan wrote a script's proof: the plan's full name and the
+/// sha256 of its plans module's source and the project modules it depends
 /// on (hex). Audit only; the kernel checks the proof the same way whoever
 /// wrote it.
 #[derive(Debug, Clone, PartialEq)]
-pub struct RuleUse {
+pub struct PlanUse {
     pub name: String,
     pub hash: String,
 }
 
-impl RuleUse {
+impl PlanUse {
     /// The first twelve hex digits of the hash, for reports.
     pub fn short_hash(&self) -> &str {
         &self.hash[..self.hash.len().min(12)]
     }
 
-    /// How a report names a proof this rule wrote:
-    /// `proof by Rules.Stack.openByLength (b55bd85f06be), 228 steps`.
+    /// How a report names a proof this plan wrote:
+    /// `proof by Plans.Stack.openByLength (b55bd85f06be), 228 steps`.
     pub fn describe(&self, steps: usize) -> String {
         format!(
             "proof by {} ({}), {steps} steps",
@@ -552,14 +552,14 @@ impl RuleUse {
     }
 
     /// [`Self::describe`] read back from the comment line a step script
-    /// starts with, when a rule wrote it.
+    /// starts with, when a plan wrote it.
     pub fn describe_comment(script_text: &str) -> Option<String> {
         let line = script_text.lines().next()?.strip_prefix("; proof by ")?;
         let (name, rest) = line.split_once(" sha256:")?;
         let (hash, steps) = rest.split_once(", ")?;
         let steps: usize = steps.strip_suffix(" steps")?.parse().ok()?;
         Some(
-            RuleUse {
+            PlanUse {
                 name: name.to_string(),
                 hash: hash.to_string(),
             }

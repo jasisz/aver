@@ -6,7 +6,7 @@ function esc(s) {
 }
 
 const KEYWORDS = new Set([
-    "type", "record", "module", "depends", "exposes", "opaque", "rules",
+    "type", "record", "module", "depends", "exposes", "opaque", "plans",
     "fn", "match", "verify", "decision", "law", "given", "when",
     "because", "using", "induction", "by", "holds", "effects", "trace",
     "intent", "reason", "date", "chosen", "rejected", "impacts", "author",

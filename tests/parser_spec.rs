@@ -108,7 +108,7 @@ fn a_law_names_the_given_its_induction_follows() {
 }
 
 #[test]
-fn a_law_names_its_proof_rule_with_by() {
+fn a_law_names_its_proof_plan_with_by() {
     let law_of = |src: &str| {
         let items = parse(src);
         let TopLevel::Verify(block) = &items[0] else {
@@ -120,14 +120,14 @@ fn a_law_names_its_proof_rule_with_by() {
         law.as_ref().clone()
     };
     let law = law_of(
-        "verify f law ruled\n    given x: Int = [0]\n    when x >= 0\n    using [f.other]\n    by Rules.Stack.open\n    f(x) => x\n",
+        "verify f law planned\n    given x: Int = [0]\n    when x >= 0\n    using [f.other]\n    by Plans.Stack.open\n    f(x) => x\n",
     );
-    assert_eq!(law.by_rule.as_deref(), Some("Rules.Stack.open"));
+    assert_eq!(law.by_plan.as_deref(), Some("Plans.Stack.open"));
     assert_eq!(law.using.as_deref(), Some(&["f.other".to_string()][..]));
     assert_eq!(aver::checker::expr_to_str(&law.lhs), "f(x)");
     // A claim that calls a function named `by` is still the claim.
     let law = law_of("verify f law call\n    given x: Int = [0]\n    by(x) => x\n");
-    assert_eq!(law.by_rule, None);
+    assert_eq!(law.by_plan, None);
     assert_eq!(aver::checker::expr_to_str(&law.lhs), "by(x)");
     let twice = parse_error(
         "verify f law twice\n    given x: Int = [0]\n    by R.a\n    by R.b\n    f(x) => x\n",
@@ -150,22 +150,22 @@ fn a_law_names_its_proof_rule_with_by() {
 }
 
 #[test]
-fn a_rules_module_lists_its_rules_in_its_header() {
+fn a_plans_module_lists_its_plans_in_its_header() {
     let items = parse(
-        "module Stack\n    intent = \"Rules.\"\n    depends [Kernel.Term, Kernel.Proof]\n    rules [openByLength, other]\n\nfn openByLength(goal: Goal) -> Result<Proof, String>\n    ? \"x\"\n    Result.Err(\"no\")\n",
+        "module Stack\n    intent = \"Plans.\"\n    depends [Kernel.Term, Kernel.Proof]\n    plans [openByLength, other]\n\nfn openByLength(goal: Goal) -> Result<Proof, String>\n    ? \"x\"\n    Result.Err(\"no\")\n",
     );
     let TopLevel::Module(module) = &items[0] else {
         panic!()
     };
     assert_eq!(
-        module.rules.as_deref(),
+        module.plans.as_deref(),
         Some(&["openByLength".to_string(), "other".to_string()][..])
     );
     let plain = parse("module Plain\n    intent = \"P.\"\n");
     let TopLevel::Module(module) = &plain[0] else {
         panic!()
     };
-    assert_eq!(module.rules, None);
+    assert_eq!(module.plans, None);
 }
 
 #[test]

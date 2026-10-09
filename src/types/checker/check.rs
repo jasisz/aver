@@ -206,7 +206,7 @@ impl TypeChecker {
             .map(|m| (m.dep_name.as_str(), m.items.as_slice()))
             .collect();
         self.module_type_exports = crate::visibility::collect_module_type_exports(&pairs);
-        super::rules_module::check_rules_dependencies(items, modules, &mut self.errors);
+        super::plans_module::check_plans_dependencies(items, modules, &mut self.errors);
         for module in modules {
             let Some(decl) = Self::module_decl(&module.items) else {
                 continue;

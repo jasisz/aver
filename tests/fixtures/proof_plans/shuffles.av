@@ -2,7 +2,7 @@ module Shuffles
     intent =
         "Stack shuffles that read a fixed window of the item list, and laws about them"
         "guarded by the list being at least that long. The automatic proof steps do not open"
-        "the list, so the laws name a project rule with `by`; the kernel checks what it writes."
+        "the list, so the laws name a project plan with `by`; the kernel checks what it writes."
     exposes [shuffled]
     effects []
 
@@ -48,17 +48,17 @@ verify shuffled
 verify shuffled law swapTwiceIsTheTopPair
     given items: List<List<Int>> = [[[1], [2]], [[1], [2], [3]], [[0], [7], [8], [9]]]
     when List.len(items) >= 2
-    by Rules.Stack.openByLength
+    by Plans.Stack.openByLength
     shuffled(124, shuffled(124, items)) => List.take(items, 2)
 
 verify shuffled law rotThreeTimesIsTheTopThree
     given items: List<List<Int>> = [[[1], [2], [3]], [[1], [2], [3], [4]]]
     when List.len(items) >= 3
-    by Rules.Stack.openByLength
+    by Plans.Stack.openByLength
     shuffled(123, shuffled(123, shuffled(123, items))) => List.take(items, 3)
 
 verify shuffled law twoSwapTwiceIsTheTopFour
     given items: List<List<Int>> = [[[1], [2], [3], [4]], [[1], [2], [3], [4], [5]]]
     when List.len(items) >= 4
-    by Rules.Stack.openByLength
+    by Plans.Stack.openByLength
     shuffled(114, shuffled(114, items)) => List.take(items, 4)

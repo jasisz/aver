@@ -1289,7 +1289,7 @@ fn split_inline_decision_fields(content: &str) -> Vec<String> {
     }
 }
 
-/// A law's `induction x` or `by Module.rule` line goes last among its
+/// A law's `induction x` or `by Module.plan` line goes last among its
 /// lines, directly before the claim: after every `given`, `when`,
 /// `because`, `using` and local. The claim is the last line of the law at
 /// the law's own indentation (a claim written over several lines continues
@@ -1571,11 +1571,11 @@ mod tests {
     fn puts_a_law_by_line_directly_before_the_claim() {
         let fun = "fn f(x: Int) -> Int\n    ? \"t\"\n    x\n\nverify f\n    f(1) => 1\n\n";
         let canonical = format!(
-            "{fun}verify f law named\n    given x: Int = [0]\n    when x >= 0\n    using []\n    by Rules.same\n    f(x) => x\n"
+            "{fun}verify f law named\n    given x: Int = [0]\n    when x >= 0\n    using []\n    by Plans.same\n    f(x) => x\n"
         );
         assert_eq!(format_source(&canonical), canonical);
         let moved = format!(
-            "{fun}verify f law named\n    given x: Int = [0]\n    by Rules.same\n    when x >= 0\n    using []\n    f(x) => x\n"
+            "{fun}verify f law named\n    given x: Int = [0]\n    by Plans.same\n    when x >= 0\n    using []\n    f(x) => x\n"
         );
         assert_eq!(format_source(&moved), canonical);
         let (_, violations) = try_format_source(&moved).expect("format");

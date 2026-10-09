@@ -3,7 +3,7 @@ module Proof
         "Proof steps, definitions (local bindings, then one expression), module-level bindings, cited"
         "laws and the script that ties them"
         "to one obligation."
-        "A goal is a script without its proof: what a project's proof rule is given to prove."
+        "A goal is a script without its proof: what a project's proof plan is given to prove."
         "Each step names its rule and writes out every instance; see src/ir/proof_steps/mod.rs."
     exposes [Proof, Case, SplitCase, More, IhAt, Def, Const, Variant, Law, Fact, Script, Goal, Hyp, Given, premiseOf]
     depends [Kernel.Term]

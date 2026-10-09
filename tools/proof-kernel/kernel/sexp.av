@@ -2,7 +2,7 @@ module Sexp
     intent =
         "The reader for proof-step data: S-expressions of atoms, quoted texts and lists."
         "The compiler writes the data (src/ir/proof_steps/sexpr.rs); this reads it back."
-        "A `;` starts a comment to the end of the line: the record of which proof rule wrote a script, for audit only."
+        "A `;` starts a comment to the end of the line: the record of which proof plan wrote a script, for audit only."
     exposes [Sexp, readAll]
     effects []
 

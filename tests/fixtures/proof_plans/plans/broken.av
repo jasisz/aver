@@ -1,8 +1,8 @@
 module Broken
     intent =
-        "Proof rules that are wrong on purpose, for the tests: what each returns is checked by the kernel like any proof."
+        "Proof plans that are wrong on purpose, for the tests: what each returns is checked by the kernel like any proof."
     depends [Kernel.Term, Kernel.Proof, Kernel.Lib]
-    rules [claimsTheWhen, spins]
+    plans [claimsTheWhen, spins]
 
 fn claimsTheWhen(goal: Goal) -> Result<Proof, String>
     ? "Offers the law's `when` as the proof of its claim, which proves something else."

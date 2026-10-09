@@ -1,7 +1,7 @@
-//! Project proof rules: a `rules [...]` module and a law's `by Module.rule`
-//! line. The rule writes the law's proof as steps; the kernel written in Aver
-//! checks them like any other, and Lean checks them again. A rule that
-//! refuses, a rule whose proof the kernel refuses and a rule that never
+//! Project proof plans: a `plans [...]` module and a law's `by Module.plan`
+//! line. The plan writes the law's proof as steps; the kernel written in Aver
+//! checks them like any other, and Lean checks them again. A plan that
+//! refuses, a plan whose proof the kernel refuses and a plan that never
 //! returns all leave the law open, with the reason.
 
 #[path = "support/aver_cmd.rs"]
@@ -15,9 +15,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-const FIXTURES: &str = "tests/fixtures/proof_rules";
+const FIXTURES: &str = "tests/fixtures/proof_plans";
 
-/// The laws of `shuffles.av`, each closed by `Rules.Stack.openByLength`.
+/// The laws of `shuffles.av`, each closed by `Plans.Stack.openByLength`.
 const SHUFFLE_LAWS: [&str; 3] = [
     "shuffled.rotThreeTimesIsTheTopThree",
     "shuffled.swapTwiceIsTheTopPair",
@@ -34,7 +34,7 @@ fn aver_in(dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
 }
 
 fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("aver-rules-{name}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("aver-plans-{name}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     dir
 }
@@ -55,10 +55,10 @@ fn summary(out: &Output) -> serde_json::Value {
 }
 
 #[test]
-fn a_rule_closes_laws_the_automatic_steps_leave_open() {
+fn a_plan_closes_laws_the_automatic_steps_leave_open() {
     let dir = fixtures();
     let out = scratch("closes");
-    let by_rule = aver_in(
+    let by_plan = aver_in(
         &dir,
         &[
             "proof",
@@ -70,20 +70,20 @@ fn a_rule_closes_laws_the_automatic_steps_leave_open() {
         ],
         &[],
     );
-    assert!(by_rule.status.success(), "{}", format_output(&by_rule));
-    let text = String::from_utf8_lossy(&by_rule.stdout);
+    assert!(by_plan.status.success(), "{}", format_output(&by_plan));
+    let text = String::from_utf8_lossy(&by_plan.stdout);
     for law in SHUFFLE_LAWS {
         let line = text
             .lines()
             .find(|l| l.contains(&format!("{law}:")))
             .unwrap_or_else(|| panic!("no line for {law}\n{text}"));
         assert!(
-            line.contains("closed by steps (proof by Rules.Stack.openByLength ("),
+            line.contains("closed by steps (proof by Plans.Stack.openByLength ("),
             "{line}"
         );
         assert!(line.ends_with(" steps)"), "{line}");
     }
-    // Every script records the rule and its source hash, and the kernel
+    // Every script records the plan and its source hash, and the kernel
     // run on the VM accepts the scripts as written to disk.
     let files: Vec<PathBuf> = SHUFFLE_LAWS
         .iter()
@@ -92,7 +92,7 @@ fn a_rule_closes_laws_the_automatic_steps_leave_open() {
     for f in &files {
         let script = fs::read_to_string(f).unwrap();
         assert!(
-            script.starts_with("; proof by Rules.Stack.openByLength sha256:"),
+            script.starts_with("; proof by Plans.Stack.openByLength sha256:"),
             "{}",
             &script[..script.len().min(200)]
         );
@@ -150,7 +150,7 @@ fn a_rule_closes_laws_the_automatic_steps_leave_open() {
 }
 
 #[test]
-fn a_rule_that_refuses_errs_or_never_returns_leaves_the_law_open() {
+fn a_plan_that_refuses_errs_or_never_returns_leaves_the_law_open() {
     let out = scratch("wrong");
     let result = aver_in(
         &fixtures(),
@@ -162,8 +162,8 @@ fn a_rule_that_refuses_errs_or_never_returns_leaves_the_law_open() {
             "-o",
             out.to_str().unwrap(),
         ],
-        // A low step limit, so the rule that never returns stops quickly.
-        &[("AVER_RULE_STEP_LIMIT", "2000000")],
+        // A low step limit, so the plan that never returns stops quickly.
+        &[("AVER_PLAN_STEP_LIMIT", "2000000")],
     );
     // An open law is not a kernel refusal of a producer's script: the run
     // itself succeeds.
@@ -175,24 +175,24 @@ fn a_rule_that_refuses_errs_or_never_returns_leaves_the_law_open() {
             .unwrap_or_else(|| panic!("no line for {law}\n{text}"))
             .to_string()
     };
-    // A false law: the rule refuses, in its own words.
+    // A false law: the plan refuses, in its own words.
     assert!(
         line("swapped.swapOnceIsTheTopPair").contains(
-            "not closed by this backend (steps: rule Rules.Stack.openByLength refused: the two sides evaluate to different terms)"
+            "not closed by this backend (steps: plan Plans.Stack.openByLength refused: the two sides evaluate to different terms)"
         ),
         "{text}"
     );
-    // A rule whose proof proves something else: the kernel refuses it.
+    // A plan whose proof proves something else: the kernel refuses it.
     let wrong = line("swapped.swapIsTheSwap");
     assert!(
-        wrong.contains("rule Rules.Broken.claimsTheWhen (")
+        wrong.contains("plan Plans.Broken.claimsTheWhen (")
             && wrong.contains("the kernel refused its proof"),
         "{wrong}"
     );
-    // A rule that never returns: not checked, never accepted.
+    // A plan that never returns: not checked, never accepted.
     assert!(
         line("swapped.swapAgain").contains(
-            "rule Rules.Broken.spins: not checked: the rule ran out of its 2000000 steps"
+            "plan Plans.Broken.spins: not checked: the plan ran out of its 2000000 steps"
         ),
         "{text}"
     );
@@ -218,21 +218,21 @@ fn check_project(name: &str, files: &[(&str, &str)], entry: &str) -> Output {
     out
 }
 
-const GOOD_RULE: &str = "module Same\n    intent = \"A rule.\"\n    depends [Kernel.Term, Kernel.Proof, Kernel.Lib]\n    rules [same]\n\nfn same(goal: Goal) -> Result<Proof, String>\n    ? \"Refuses.\"\n    Result.Err(\"no\")\n\nverify same\n    same(Goal(obligation = Law(key = \"k\", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [])) => Result.Err(\"no\")\n";
+const GOOD_PLAN: &str = "module Same\n    intent = \"A plan.\"\n    depends [Kernel.Term, Kernel.Proof, Kernel.Lib]\n    plans [same]\n\nfn same(goal: Goal) -> Result<Proof, String>\n    ? \"Refuses.\"\n    Result.Err(\"no\")\n\nverify same\n    same(Goal(obligation = Law(key = \"k\", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [])) => Result.Err(\"no\")\n";
 
 #[test]
-fn a_rules_module_has_the_rule_signature_and_no_effects() {
-    let ok = check_project("good", &[("same.av", GOOD_RULE)], "same.av");
+fn a_plans_module_has_the_plan_signature_and_no_effects() {
+    let ok = check_project("good", &[("same.av", GOOD_PLAN)], "same.av");
     assert!(ok.status.success(), "{}", format_output(&ok));
     // The qualified spelling of the kernel types is the same signature.
-    let qualified = GOOD_RULE.replace(
+    let qualified = GOOD_PLAN.replace(
         "fn same(goal: Goal) -> Result<Proof, String>",
         "fn same(goal: Kernel.Proof.Goal) -> Result<Kernel.Proof.Proof, String>",
     );
     let ok = check_project("qualified", &[("same.av", &qualified)], "same.av");
     assert!(ok.status.success(), "{}", format_output(&ok));
 
-    let wrong_signature = GOOD_RULE
+    let wrong_signature = GOOD_PLAN
         .replace(
             "fn same(goal: Goal) -> Result<Proof, String>",
             "fn same(goal: Goal, extra: Int) -> Result<Proof, String>",
@@ -241,31 +241,31 @@ fn a_rules_module_has_the_rule_signature_and_no_effects() {
     let out = check_project("signature", &[("same.av", &wrong_signature)], "same.av");
     assert!(!out.status.success(), "{}", format_output(&out));
     assert!(
-        String::from_utf8_lossy(&out.stdout).contains("rule 'same' must have the rule signature"),
+        String::from_utf8_lossy(&out.stdout).contains("plan 'same' must have the plan signature"),
         "{}",
         format_output(&out)
     );
 
-    let missing = GOOD_RULE.replace("rules [same]", "rules [same, other]");
+    let missing = GOOD_PLAN.replace("plans [same]", "plans [same, other]");
     let out = check_project("missing", &[("same.av", &missing)], "same.av");
     assert!(
-        String::from_utf8_lossy(&out.stdout).contains("lists rule 'other'"),
+        String::from_utf8_lossy(&out.stdout).contains("lists plan 'other'"),
         "{}",
         format_output(&out)
     );
 
-    let effect_line = GOOD_RULE.replace(
-        "    rules [same]\n",
-        "    rules [same]\n    effects [Console.print]\n",
+    let effect_line = GOOD_PLAN.replace(
+        "    plans [same]\n",
+        "    plans [same]\n    effects [Console.print]\n",
     );
     let out = check_project("effects-line", &[("same.av", &effect_line)], "same.av");
     assert!(
-        String::from_utf8_lossy(&out.stdout).contains("a proof rule is pure"),
+        String::from_utf8_lossy(&out.stdout).contains("a proof plan is pure"),
         "{}",
         format_output(&out)
     );
 
-    let effect_use = GOOD_RULE.replace(
+    let effect_use = GOOD_PLAN.replace(
         "    ? \"Refuses.\"\n    Result.Err(\"no\")\n",
         "    ? \"Refuses.\"\n    ! [Console.print]\n    Console.print(\"x\")\n    Result.Err(\"no\")\n",
     );
@@ -279,34 +279,34 @@ fn a_rules_module_has_the_rule_signature_and_no_effects() {
 }
 
 #[test]
-fn a_program_module_may_not_depend_on_a_rules_module() {
+fn a_program_module_may_not_depend_on_a_plans_module() {
     let program = "module App\n    intent = \"A program.\"\n    depends [Same]\n    effects []\n\nfn one() -> Int\n    ? \"One.\"\n    1\n\nverify one\n    one() => 1\n";
     let out = check_project(
         "depends",
-        &[("same.av", GOOD_RULE), ("app.av", program)],
+        &[("same.av", GOOD_PLAN), ("app.av", program)],
         "app.av",
     );
     assert!(!out.status.success(), "{}", format_output(&out));
     assert!(
         String::from_utf8_lossy(&out.stdout)
-            .contains("module 'App' depends on rules module 'Same'"),
+            .contains("module 'App' depends on plans module 'Same'"),
         "{}",
         format_output(&out)
     );
 }
 
-/// Run `aver check laws.av` in a project with the rules module
-/// `rules/same.av` (rule `same`), the law's extra lines being `lines`.
+/// Run `aver check laws.av` in a project with the plans module
+/// `plans/same.av` (plan `same`), the law's extra lines being `lines`.
 fn check_law(name: &str, lines: &str) -> Output {
     let law = format!(
         "module Laws\n    intent = \"Laws.\"\n    effects []\n\nfn f(x: Int) -> Int\n    ? \"Itself.\"\n    x\n\nverify f\n    f(1) => 1\n\nverify f law same\n    given x: Int = [1, 2]\n{lines}    f(x) => x\n"
     );
-    let plain = "module Plain\n    intent = \"Not rules.\"\n    effects []\n\nfn one() -> Int\n    ? \"One.\"\n    1\n\nverify one\n    one() => 1\n";
+    let plain = "module Plain\n    intent = \"Not plans.\"\n    effects []\n\nfn one() -> Int\n    ? \"One.\"\n    1\n\nverify one\n    one() => 1\n";
     check_project(
         name,
         &[
             ("laws.av", &law),
-            ("rules/same.av", GOOD_RULE),
+            ("plans/same.av", GOOD_PLAN),
             ("plain.av", plain),
         ],
         "laws.av",
@@ -322,49 +322,49 @@ fn output_text(out: &Output) -> String {
 }
 
 #[test]
-fn a_by_line_names_one_rule_of_the_project_and_stands_alone() {
-    let ok = check_law("one-by", "    by Rules.Same.same\n");
+fn a_by_line_names_one_plan_of_the_project_and_stands_alone() {
+    let ok = check_law("one-by", "    by Plans.Same.same\n");
     assert!(ok.status.success(), "{}", format_output(&ok));
     for (name, lines, message) in [
         (
             "two-by",
-            "    by Rules.Same.same\n    by Rules.Same.other\n",
+            "    by Plans.Same.same\n    by Plans.Same.other\n",
             "A law may have only one 'by' line",
         ),
         (
             "by-induction",
-            "    by Rules.Same.same\n    induction x\n",
+            "    by Plans.Same.same\n    induction x\n",
             "it cannot also name an 'induction'",
         ),
         (
             "induction-by",
-            "    induction x\n    by Rules.Same.same\n",
+            "    induction x\n    by Plans.Same.same\n",
             "it cannot also name an 'induction'",
         ),
         (
             "by-because",
-            "    because x >= 1\n    by Rules.Same.same\n",
+            "    because x >= 1\n    by Plans.Same.same\n",
             "it cannot also have 'because' lines",
         ),
         (
             "because-after-by",
-            "    by Rules.Same.same\n    because x >= 1\n",
+            "    by Plans.Same.same\n    because x >= 1\n",
             "it cannot also have 'because' lines",
         ),
         (
             "no-module",
-            "    by Rules.Missing.same\n",
-            "this project has no module Rules.Missing",
+            "    by Plans.Missing.same\n",
+            "this project has no module Plans.Missing",
         ),
         (
-            "no-rule",
-            "    by Rules.Same.other\n",
-            "rules module Rules.Same does not list `other`",
+            "no-plan",
+            "    by Plans.Same.other\n",
+            "plans module Plans.Same does not list `other`",
         ),
         (
-            "not-rules",
+            "not-plans",
             "    by Plain.one\n",
-            "module Plain is not a rules module",
+            "module Plain is not a plans module",
         ),
         (
             "kernel",
@@ -386,7 +386,7 @@ fn kernel_module_names_are_reserved_for_the_kernel() {
     let fake = "module Lib\n    intent = \"Not the kernel's.\"\n    effects []\n\nfn one() -> Int\n    ? \"One.\"\n    1\n\nverify one\n    one() => 1\n";
     let out = check_project(
         "reserved",
-        &[("same.av", GOOD_RULE), ("kernel/lib.av", fake)],
+        &[("same.av", GOOD_PLAN), ("kernel/lib.av", fake)],
         "same.av",
     );
     assert!(!out.status.success(), "{}", format_output(&out));
@@ -395,26 +395,26 @@ fn kernel_module_names_are_reserved_for_the_kernel() {
         "{}",
         format_output(&out)
     );
-    // Only a rules module depends on the kernel.
+    // Only a plans module depends on the kernel.
     let program = "module App\n    intent = \"A program.\"\n    depends [Kernel.Lib]\n    effects []\n\nfn one() -> Int\n    ? \"One.\"\n    1\n\nverify one\n    one() => 1\n";
     let out = check_project("program-kernel", &[("app.av", program)], "app.av");
     assert!(!out.status.success(), "{}", format_output(&out));
     assert!(
         output_text(&out).contains(
-            "module 'App' depends on 'Kernel.Lib': only a rules module may depend on the proof kernel's modules"
+            "module 'App' depends on 'Kernel.Lib': only a plans module may depend on the proof kernel's modules"
         ),
         "{}",
         format_output(&out)
     );
     // And only on its public modules.
-    let private = GOOD_RULE.replace(
+    let private = GOOD_PLAN.replace(
         "depends [Kernel.Term, Kernel.Proof, Kernel.Lib]",
         "depends [Kernel.Term, Kernel.Proof, Kernel.Lib, Kernel.Subst]",
     );
-    let out = check_project("rules-private", &[("same.av", &private)], "same.av");
+    let out = check_project("plans-private", &[("same.av", &private)], "same.av");
     assert!(!out.status.success(), "{}", format_output(&out));
     assert!(
-        output_text(&out).contains("rules module 'Same' depends on 'Kernel.Subst'"),
+        output_text(&out).contains("plans module 'Same' depends on 'Kernel.Subst'"),
         "{}",
         format_output(&out)
     );
@@ -432,12 +432,12 @@ fn the_helper_library_keeps_the_kernels_conventions() {
             format_output(&out)
         );
     }
-    let rules = aver_in(&fixtures(), &["verify", "rules/stack.av"], &[]);
-    assert!(rules.status.success(), "{}", format_output(&rules));
+    let plans = aver_in(&fixtures(), &["verify", "plans/stack.av"], &[]);
+    assert!(plans.status.success(), "{}", format_output(&plans));
 }
 
 #[test]
-fn lean_closes_the_rule_laws_by_steps() {
+fn lean_closes_the_plan_laws_by_steps() {
     if !lean_required::lake_available() {
         eprintln!("skipping the Lean half: `lake` is not available");
         return;
@@ -466,7 +466,7 @@ fn lean_closes_the_rule_laws_by_steps() {
 }
 
 #[test]
-fn lean_leaves_a_law_open_when_its_rule_does_not_close_it() {
+fn lean_leaves_a_law_open_when_its_plan_does_not_close_it() {
     if !lean_required::lake_available() {
         eprintln!("skipping the Lean half: `lake` is not available");
         return;
@@ -485,11 +485,11 @@ fn lean_leaves_a_law_open_when_its_rule_does_not_close_it() {
             "--declined-budget",
             "10",
         ],
-        &[("AVER_RULE_STEP_LIMIT", "2000000")],
+        &[("AVER_PLAN_STEP_LIMIT", "2000000")],
     );
     let found = summary(&result);
     // Four of these laws are true, and Lean's tactics would close them;
-    // a law that names its rule is closed by that rule or not at all.
+    // a law that names its plan is closed by that plan or not at all.
     assert_eq!(found["universal_laws"], 0, "{found}");
     // A law without a `when` that did not close is open the way any such
     // law is: a sorry, not a declined attempt.
@@ -518,7 +518,7 @@ fn lean_leaves_a_law_open_when_its_rule_does_not_close_it() {
         assert!(
             entry["reason"]
                 .as_str()
-                .is_some_and(|r| r.starts_with("rule ")),
+                .is_some_and(|r| r.starts_with("plan ")),
             "{law}: {entry}"
         );
     }

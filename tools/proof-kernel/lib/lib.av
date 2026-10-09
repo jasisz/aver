@@ -1,9 +1,9 @@
 module Lib
     intent =
-        "Helpers for writing proof rules (`rules [...]` modules), imported as Kernel.Lib."
-        "Nothing here is trusted: a rule returns proof steps, and the kernel checks every one of them."
-        "A helper that writes a wrong step only makes the rule's proof fail to check."
-        "The helpers follow the kernel's conventions so a rule does not have to learn them:"
+        "Helpers for writing proof plans (`plans [...]` modules), imported as Kernel.Lib."
+        "Nothing here is trusted: a plan returns proof steps, and the kernel checks every one of them."
+        "A helper that writes a wrong step only makes the plan's proof fail to check."
+        "The helpers follow the kernel's conventions so a plan does not have to learn them:"
         "the law's `when` is the hypothesis named `when` and states `premise = true`;"
         "match arms are counted from 1; a chain of n steps lists n + 1 terms;"
         "a computation step is written only between literals; a list split replaces the split variable"
@@ -506,14 +506,14 @@ verify freshFrom
     freshFrom("h", [], 1) => "h1"
 
 fn readGoal(text: String) -> Result<Goal, String>
-    ? "The goal step data states, its proof left out: how the compiler hands a rule its goal."
+    ? "The goal step data states, its proof left out: how the compiler hands a plan its goal."
     Kernel.Wire.goal(text)
 
 verify readGoal
     readGoal("(a") => Result.Err("unexpected end of data")
 
 fn writeAnswer(r: Result<Proof, String>) -> String
-    ? "A rule's answer as the compiler reads it back: `proof` and the proof in step data, or `refused` and the reason."
+    ? "A plan's answer as the compiler reads it back: `proof` and the proof in step data, or `refused` and the reason."
     Kernel.Wire.answer(r)
 
 verify writeAnswer
