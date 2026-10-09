@@ -1,4 +1,17 @@
 {
+ "examples/data/flatten.av": {
+  "bridges": [
+   "flatten",
+   "flattenThenCount"
+  ],
+  "certified": {
+   "flatten": "L1",
+   "flattenThenCount": "L1"
+  },
+  "laws": [
+   "flattenThenCount.countViaFlatten"
+  ]
+ },
  "examples/data/json.av": {
   "bridges": [
    "Bytes_allInRange",
@@ -63,6 +76,22 @@
    "skipWs.skipWsAdvances"
   ]
  },
+ "examples/data/map.av": {
+  "bridges": [
+   "containsWord",
+   "countWord"
+  ],
+  "certified": {
+   "containsWord": "L1",
+   "countWord": "L1"
+  },
+  "laws": [
+   "countWords.presenceMatchesContains",
+   "countWords.trackedWordCount",
+   "incCount.keyPresent",
+   "incCount.trackedCountStepsByOne"
+  ]
+ },
  "examples/data/rational.av": {
   "bridges": [
    "minus",
@@ -95,6 +124,32 @@
    "times.zeroAbsorbs"
   ]
  },
+ "examples/data/words.av": {
+  "bridges": [
+   "countAll",
+   "expandAll",
+   "render",
+   "renderRepeat"
+  ],
+  "certified": {
+   "countAll": "L1",
+   "expandAll": "L1",
+   "render": "L1",
+   "renderRepeat": "L1"
+  },
+  "laws": [
+   "countAll.viaExpand"
+  ]
+ },
+ "examples/formal/empty_map_facts.av": {
+  "bridges": [],
+  "certified": {},
+  "laws": [
+   "contains.emptyContainsNothing",
+   "lookup.emptyHasNoEntries",
+   "size.emptyHasZeroSize"
+  ]
+ },
  "examples/formal/equal_sides.av": {
   "bridges": [
    "aboveBound",
@@ -116,6 +171,880 @@
    "strictBoth.zero",
    "swappedEq.one",
    "swappedNe.zero"
+  ]
+ },
+ "examples/formal/int_comparison_laws.av": {
+  "bridges": [
+   "atLeast",
+   "comparable",
+   "notBelow",
+   "sameKey"
+  ],
+  "certified": {
+   "atLeast": "L1",
+   "comparable": "L1",
+   "notBelow": "L1",
+   "sameKey": "L1"
+  },
+  "laws": [
+   "comparable.totalOrder",
+   "notBelow.isAtLeast",
+   "sameKey.symmetric"
+  ]
+ },
+ "examples/formal/law_auto.av": {
+  "bridges": [
+   "add",
+   "addOne",
+   "id",
+   "mul",
+   "sub"
+  ],
+  "certified": {
+   "add": "L1",
+   "addOne": "L1",
+   "id": "L1",
+   "mul": "L1",
+   "sub": "L1"
+  },
+  "laws": [
+   "add.associative",
+   "add.commutative",
+   "add.commutativeSwapSides",
+   "add.identityZero",
+   "add.identityZeroLeft",
+   "addOne.identityViaAdd",
+   "id.reflexive",
+   "incCount.existingKeyIncrements",
+   "incCount.keyPresent",
+   "mul.associative",
+   "mul.commutative",
+   "mul.identityOne",
+   "mul.identityOneLeft",
+   "sub.antiCommutative",
+   "sub.rightIdentity"
+  ]
+ },
+ "examples/formal/length_homomorphism.av": {
+  "bridges": [
+   "pow2",
+   "pow3"
+  ],
+  "certified": {
+   "cat": "L1",
+   "len": "L1",
+   "lenCatHom": "L1",
+   "pow2": "L3",
+   "pow3": "L3"
+  },
+  "laws": [
+   "len.homomorphism",
+   "pow2.homomorphism",
+   "pow3.homomorphism"
+  ]
+ },
+ "examples/formal/recursive_monotone.av": {
+  "bridges": [
+   "fct",
+   "fctMonotone",
+   "tri",
+   "triMonotone"
+  ],
+  "certified": {
+   "fct": "L3",
+   "fctMonotone": "L1",
+   "tri": "L3",
+   "triMonotone": "L1"
+  },
+  "laws": [
+   "fctMonotone.mono",
+   "tri.nonneg",
+   "triMonotone.mono"
+  ]
+ },
+ "examples/formal/spec_laws.av": {
+  "bridges": [
+   "absVal",
+   "absValSpec",
+   "clampNonNegative",
+   "clampNonNegativeSpec"
+  ],
+  "certified": {
+   "absVal": "L1",
+   "absValSpec": "L1",
+   "clampNonNegative": "L1",
+   "clampNonNegativeSpec": "L1"
+  },
+  "laws": [
+   "absVal.absValSpec",
+   "clampNonNegative.clampNonNegativeSpec"
+  ]
+ },
+ "examples/formal/tcp_write_now.av": {
+  "bridges": [
+   "Bytes_allInRange",
+   "Bytes_byteToHex",
+   "Bytes_firstOutOfRange",
+   "Bytes_firstOutOfRangeIndex",
+   "Bytes_hexDigit",
+   "Bytes_hexParts",
+   "Bytes_highNibble",
+   "Bytes_lowNibble",
+   "stillToSend"
+  ],
+  "certified": {
+   "Bytes_allInRange": "L1",
+   "Bytes_byteToHex": "L1",
+   "Bytes_concat": "L1",
+   "Bytes_drop": "L1",
+   "Bytes_empty": "L1",
+   "Bytes_firstOutOfRange": "L1",
+   "Bytes_firstOutOfRangeIndex": "L1",
+   "Bytes_fromList": "L1",
+   "Bytes_hexDigit": "L1",
+   "Bytes_hexParts": "L1",
+   "Bytes_highNibble": "L1",
+   "Bytes_len": "L1",
+   "Bytes_lowNibble": "L1",
+   "Bytes_octets": "L1",
+   "Bytes_take": "L1",
+   "stillToSend": "L1"
+  },
+  "laws": [
+   "stillToSend.acceptedEverythingLeavesNothing",
+   "stillToSend.acceptedNothingKeepsEverything",
+   "stillToSend.acceptedPrefixNeverOvershoots"
+  ]
+ },
+ "examples/games/checkers/ai.av": {
+  "bridges": [
+   "Board_buildEmptyBoard",
+   "Board_buildEmptyBoardAcc",
+   "Board_buildStartRows",
+   "Board_buildStartRowsAcc",
+   "Board_emptyRow",
+   "Board_inBounds",
+   "Board_isBlack",
+   "Board_isColor",
+   "Board_isDarkSquare",
+   "Board_isEmpty",
+   "Board_isKing",
+   "Board_isOpponent",
+   "Board_isWhite",
+   "Board_makeRow",
+   "Board_makeRowAcc",
+   "Board_makeRowStep",
+   "Board_opponent",
+   "Board_promote",
+   "Board_pt",
+   "Board_shouldPromote",
+   "Board_startBoard",
+   "Board_startRow",
+   "Rules_canMoveDir",
+   "Rules_forwardDir",
+   "Rules_sameSign",
+   "abInit",
+   "centerBonus",
+   "isCenterSquare",
+   "pieceValue",
+   "prependScored",
+   "rootParallelWidth"
+  ],
+  "certified": {
+   "Board_buildEmptyBoard": "L1",
+   "Board_buildEmptyBoardAcc": "L1",
+   "Board_buildStartRows": "L1",
+   "Board_buildStartRowsAcc": "L1",
+   "Board_emptyRow": "L1",
+   "Board_inBounds": "L1",
+   "Board_isBlack": "L1",
+   "Board_isColor": "L1",
+   "Board_isDarkSquare": "L1",
+   "Board_isEmpty": "L1",
+   "Board_isKing": "L1",
+   "Board_isOpponent": "L1",
+   "Board_isWhite": "L1",
+   "Board_makeRow": "L1",
+   "Board_makeRowAcc": "L1",
+   "Board_makeRowStep": "L1",
+   "Board_opponent": "L1",
+   "Board_promote": "L1",
+   "Board_pt": "L1",
+   "Board_shouldPromote": "L1",
+   "Board_startBoard": "L1",
+   "Board_startRow": "L1",
+   "Rules_canMoveDir": "L1",
+   "Rules_forwardDir": "L1",
+   "Rules_sameSign": "L1",
+   "abInit": "L1",
+   "centerBonus": "L1",
+   "isCenterSquare": "L1",
+   "pieceValue": "L1",
+   "prependScored": "L1",
+   "rootParallelWidth": "L1"
+  },
+  "laws": [
+   "centerBonus.emptyNeutral",
+   "pieceValue.antisymmetry",
+   "pieceValue.kingWorthTripleMan"
+  ]
+ },
+ "examples/games/tetris/logic.av": {
+  "bridges": [
+   "Board_buildBoard",
+   "Board_buildBoardAcc",
+   "Board_clearLines",
+   "Board_countCleared",
+   "Board_countFullRows",
+   "Board_countFullRowsAcc",
+   "Board_emptyBoard",
+   "Board_emptyRow",
+   "Board_filterRows",
+   "Board_filterRowsAcc",
+   "Board_fullRow",
+   "Board_getCell",
+   "Board_getCellInRow",
+   "Board_isFullRow",
+   "Board_prependEmpty",
+   "Board_pt",
+   "Board_setCell",
+   "Board_setCellCols",
+   "Board_setCellColsAcc",
+   "Board_setCellRows",
+   "Board_setCellRowsAcc",
+   "Pieces_absolutePoints",
+   "Pieces_iOffsets",
+   "Pieces_intToKind",
+   "Pieces_jOffsets",
+   "Pieces_lOffsets",
+   "Pieces_oOffsets",
+   "Pieces_offsetToAbs",
+   "Pieces_offsetToAbsAcc",
+   "Pieces_pieceColor",
+   "Pieces_pieceOffsets",
+   "Pieces_sOffsets",
+   "Pieces_tOffsets",
+   "Pieces_zOffsets",
+   "checkCollision",
+   "checkPoints",
+   "computeScore",
+   "mkState",
+   "placePiece",
+   "placePoints"
+  ],
+  "certified": {
+   "Board_buildBoard": "L1",
+   "Board_buildBoardAcc": "L1",
+   "Board_clearLines": "L1",
+   "Board_countCleared": "L1",
+   "Board_countFullRows": "L1",
+   "Board_countFullRowsAcc": "L1",
+   "Board_emptyBoard": "L1",
+   "Board_emptyRow": "L1",
+   "Board_filterRows": "L1",
+   "Board_filterRowsAcc": "L1",
+   "Board_fullRow": "L1",
+   "Board_getCell": "L1",
+   "Board_getCellInRow": "L1",
+   "Board_isFullRow": "L1",
+   "Board_prependEmpty": "L1",
+   "Board_pt": "L1",
+   "Board_setCell": "L1",
+   "Board_setCellCols": "L1",
+   "Board_setCellColsAcc": "L1",
+   "Board_setCellRows": "L1",
+   "Board_setCellRowsAcc": "L1",
+   "Pieces_absolutePoints": "L1",
+   "Pieces_iOffsets": "L1",
+   "Pieces_intToKind": "L1",
+   "Pieces_jOffsets": "L1",
+   "Pieces_lOffsets": "L1",
+   "Pieces_oOffsets": "L1",
+   "Pieces_offsetToAbs": "L1",
+   "Pieces_offsetToAbsAcc": "L1",
+   "Pieces_pieceColor": "L1",
+   "Pieces_pieceOffsets": "L1",
+   "Pieces_sOffsets": "L1",
+   "Pieces_tOffsets": "L1",
+   "Pieces_zOffsets": "L1",
+   "checkCollision": "L1",
+   "checkPoints": "L1",
+   "computeScore": "L1",
+   "mkState": "L1",
+   "placePiece": "L1",
+   "placePoints": "L1"
+  },
+  "laws": [
+   "computeScore.levelScalesLineScore",
+   "computeScore.tetrisDoublesSingle",
+   "computeScore.zeroLinesZeroScore"
+  ]
+ },
+ "examples/knowledge/knowledge.av": {
+  "bridges": [
+   "Bytes_allInRange",
+   "Bytes_byteToHex",
+   "Bytes_firstOutOfRange",
+   "Bytes_firstOutOfRangeIndex",
+   "Bytes_hexDigit",
+   "Bytes_hexParts",
+   "Bytes_highNibble",
+   "Bytes_lowNibble"
+  ],
+  "certified": {
+   "Bytes_allInRange": "L1",
+   "Bytes_byteToHex": "L1",
+   "Bytes_concat": "L1",
+   "Bytes_drop": "L1",
+   "Bytes_empty": "L1",
+   "Bytes_firstOutOfRange": "L1",
+   "Bytes_firstOutOfRangeIndex": "L1",
+   "Bytes_fromList": "L1",
+   "Bytes_hexDigit": "L1",
+   "Bytes_hexParts": "L1",
+   "Bytes_highNibble": "L1",
+   "Bytes_len": "L1",
+   "Bytes_lowNibble": "L1",
+   "Bytes_octets": "L1",
+   "Bytes_take": "L1",
+   "Crypto_Digest32_hasLength32": "L1",
+   "flattenBatches": "L1"
+  },
+  "laws": [
+   "body.stable",
+   "body.stableRun",
+   "bodyOf.admitted",
+   "count.monotone",
+   "headerOf.admitted",
+   "merge.commutative",
+   "merge.idempotent",
+   "mergeAll.absorbCovered",
+   "mergeAll.absorbMember",
+   "mergeAll.appends",
+   "mergeAll.commuteCovered",
+   "mergeAll.duplicateAdjacent",
+   "mergeAll.moveOne",
+   "mergeAll.orderFree",
+   "mergeAll.sameContributions",
+   "mergeAll.swapAdjacent",
+   "runBatches.anySchedule",
+   "runBatches.flatten",
+   "verdict.stable",
+   "verdict.stableRun"
+  ]
+ },
+ "projects/durable_promise/domain/promise.av": {
+  "bridges": [
+   "isPending",
+   "isSettled",
+   "isTimedOut",
+   "observe",
+   "pending",
+   "reject",
+   "resolve"
+  ],
+  "certified": {
+   "isPending": "L1",
+   "isSettled": "L1",
+   "isTimedOut": "L1",
+   "observe": "L1",
+   "pending": "L1",
+   "reject": "L1",
+   "resolve": "L1"
+  },
+  "laws": [
+   "observe.idempotent",
+   "observe.settledIsIdentity",
+   "reject.settledIsIdentity",
+   "resolve.alwaysSettles",
+   "resolve.noDoubleSettle",
+   "resolve.noResurrection",
+   "resolve.settledIsIdentity"
+  ]
+ },
+ "projects/k5_fdiv/domain/estimate.av": {
+  "bridges": [
+   "mulLeMonoRight",
+   "mulLeTrans",
+   "mulNonneg",
+   "nrContraction",
+   "nrErrorSquares",
+   "nrNewErrNum",
+   "nrOldErrSq",
+   "sqMono",
+   "sqNonneg",
+   "tripleNonneg"
+  ],
+  "certified": {
+   "mulLeMonoRight": "L1",
+   "mulLeTrans": "L1",
+   "mulNonneg": "L1",
+   "nrContraction": "L1",
+   "nrErrorSquares": "L1",
+   "nrNewErrNum": "L1",
+   "nrOldErrSq": "L1",
+   "sqMono": "L1",
+   "sqNonneg": "L1",
+   "tripleNonneg": "L1"
+  },
+  "laws": [
+   "mulLeMonoRight.guarded",
+   "mulLeTrans.guarded",
+   "mulNonneg.guarded",
+   "nrContraction.guarded",
+   "nrNewErrNum.nrErrorSquares",
+   "sqMono.guarded",
+   "sqNonneg.universal",
+   "tripleNonneg.guarded"
+  ]
+ },
+ "projects/k5_fdiv/domain/exponent.av": {
+  "bridges": [
+   "Domain_Fprep_fpMul",
+   "Domain_Fprep_fpMulValue",
+   "Domain_Fprep_fpScale",
+   "Domain_Fprep_fpScaleKeepsSignificand",
+   "Domain_Fprep_fpScalePreservesValue",
+   "Domain_Fprep_fpScaleShiftsExponent",
+   "Domain_Fprep_fpValue",
+   "Domain_Fprep_fpValueEqualsGeneralWhenNonnegExp",
+   "Domain_Fprep_fpValueGeneral",
+   "Domain_Fprep_fracExpoFromMagnitude",
+   "Domain_Fprep_isFp",
+   "Domain_Fprep_pow2",
+   "Domain_Fprep_pow2Fraction",
+   "Domain_Fprep_pow2Signed",
+   "Domain_Fprep_pow2SignedAtLeastOne",
+   "Domain_Fprep_pow2SignedDenomPositive",
+   "Domain_Fprep_pow2SignedHomomorphism",
+   "Domain_Fprep_pow2SignedLtReflect",
+   "Domain_Fprep_pow2SignedMonotone",
+   "Domain_Fprep_pow2SignedPositive",
+   "Domain_Fprep_productExp",
+   "Domain_Fprep_productExpInRange",
+   "Domain_Rational_absFraction",
+   "Domain_Rational_absInt",
+   "Domain_Rational_isNonNeg",
+   "Domain_Rational_isNonPos",
+   "Domain_Rational_lessThan",
+   "Domain_Rational_minus",
+   "Domain_Rational_negate",
+   "Domain_Rational_oneFraction",
+   "Domain_Rational_plus",
+   "Domain_Rational_sameValue",
+   "Domain_Rational_times",
+   "Domain_Rational_zeroFraction",
+   "divideExponentNoOverflow",
+   "divideExponentNoUnderflow",
+   "exponentDh",
+   "exponentDivide",
+   "exponentP0",
+   "exponentP1",
+   "exponentP2",
+   "exponentP3",
+   "exponentPh0",
+   "exponentPh1",
+   "exponentPh2",
+   "exponentPh3",
+   "exponentPt1",
+   "exponentPt2",
+   "exponentPt3",
+   "exponentQ0",
+   "exponentQ1",
+   "exponentQ2",
+   "exponentQ3",
+   "exponentQdh0",
+   "exponentQdh1",
+   "exponentQdh2",
+   "exponentQdl0",
+   "exponentQdl1",
+   "exponentQdl2",
+   "exponentQq1",
+   "exponentQq2",
+   "maxInt",
+   "minInt",
+   "sumExponentLower_9_3_1",
+   "sumExponentUpper_9_3_2"
+  ],
+  "certified": {
+   "Domain_Fprep_fpMul": "L1",
+   "Domain_Fprep_fpMulValue": "L1",
+   "Domain_Fprep_fpScale": "L1",
+   "Domain_Fprep_fpScaleKeepsSignificand": "L1",
+   "Domain_Fprep_fpScalePreservesValue": "L1",
+   "Domain_Fprep_fpScaleShiftsExponent": "L1",
+   "Domain_Fprep_fpValue": "L1",
+   "Domain_Fprep_fpValueEqualsGeneralWhenNonnegExp": "L1",
+   "Domain_Fprep_fpValueGeneral": "L1",
+   "Domain_Fprep_fracExpoFromMagnitude": "L1",
+   "Domain_Fprep_isFp": "L1",
+   "Domain_Fprep_pow2": "L3",
+   "Domain_Fprep_pow2Fraction": "L1",
+   "Domain_Fprep_pow2Signed": "L1",
+   "Domain_Fprep_pow2SignedAtLeastOne": "L1",
+   "Domain_Fprep_pow2SignedDenomPositive": "L1",
+   "Domain_Fprep_pow2SignedHomomorphism": "L1",
+   "Domain_Fprep_pow2SignedLtReflect": "L1",
+   "Domain_Fprep_pow2SignedMonotone": "L1",
+   "Domain_Fprep_pow2SignedPositive": "L1",
+   "Domain_Fprep_productExp": "L1",
+   "Domain_Fprep_productExpInRange": "L1",
+   "Domain_Rational_absFraction": "L1",
+   "Domain_Rational_absInt": "L1",
+   "Domain_Rational_isNonNeg": "L1",
+   "Domain_Rational_isNonPos": "L1",
+   "Domain_Rational_lessThan": "L1",
+   "Domain_Rational_minus": "L1",
+   "Domain_Rational_negate": "L1",
+   "Domain_Rational_oneFraction": "L1",
+   "Domain_Rational_plus": "L1",
+   "Domain_Rational_sameValue": "L1",
+   "Domain_Rational_times": "L1",
+   "Domain_Rational_zeroFraction": "L1",
+   "divideExponentNoOverflow": "L1",
+   "divideExponentNoUnderflow": "L1",
+   "exponentDh": "L1",
+   "exponentDivide": "L1",
+   "exponentP0": "L1",
+   "exponentP1": "L1",
+   "exponentP2": "L1",
+   "exponentP3": "L1",
+   "exponentPh0": "L1",
+   "exponentPh1": "L1",
+   "exponentPh2": "L1",
+   "exponentPh3": "L1",
+   "exponentPt1": "L1",
+   "exponentPt2": "L1",
+   "exponentPt3": "L1",
+   "exponentQ0": "L1",
+   "exponentQ1": "L1",
+   "exponentQ2": "L1",
+   "exponentQ3": "L1",
+   "exponentQdh0": "L1",
+   "exponentQdh1": "L1",
+   "exponentQdh2": "L1",
+   "exponentQdl0": "L1",
+   "exponentQdl1": "L1",
+   "exponentQdl2": "L1",
+   "exponentQq1": "L1",
+   "exponentQq2": "L1",
+   "maxInt": "L1",
+   "minInt": "L1",
+   "sumExponentLower_9_3_1": "L1",
+   "sumExponentUpper_9_3_2": "L1"
+  },
+  "laws": [
+   "Domain.Fprep.fpScaleKeepsSignificand.significandInvariant",
+   "Domain.Fprep.fpScaleShiftsExponent.exponentShift",
+   "Domain.Fprep.fpValueEqualsGeneralWhenNonnegExp.agreesOnNonnegExp",
+   "Domain.Fprep.fracExpoFromMagnitude.fundamentalExponent",
+   "Domain.Fprep.pow2.homomorphism",
+   "Domain.Fprep.pow2.positive",
+   "Domain.Fprep.pow2Signed.agreesWithPow2Fraction",
+   "Domain.Fprep.pow2SignedAtLeastOne.geOne",
+   "Domain.Fprep.pow2SignedDenomPositive.positive",
+   "Domain.Fprep.pow2SignedHomomorphism.signedHomomorphism",
+   "Domain.Fprep.pow2SignedLtReflect.fromStrictOrder",
+   "Domain.Fprep.pow2SignedMonotone.allExponents",
+   "Domain.Fprep.pow2SignedPositive.positive",
+   "Domain.Fprep.productExpInRange.productExponentBounds",
+   "Domain.Rational.isNonNeg.nonNegOfPositive",
+   "Domain.Rational.minus.equalsPlusNegate",
+   "Domain.Rational.negate.involutive",
+   "Domain.Rational.plus.associative",
+   "Domain.Rational.plus.commutative",
+   "Domain.Rational.plus.zeroIsNeutral",
+   "Domain.Rational.times.associative",
+   "Domain.Rational.times.commutative",
+   "Domain.Rational.times.distributesOverPlus",
+   "Domain.Rational.times.oneIsNeutral",
+   "Domain.Rational.times.zeroAbsorbs",
+   "divideExponentNoOverflow.section_9_3_no_overflow",
+   "divideExponentNoUnderflow.section_9_3_no_underflow",
+   "exponentDh.table3_row7",
+   "exponentDivide.table3_row32",
+   "exponentP0.table3_row9",
+   "exponentP1.table3_row15",
+   "exponentP2.table3_row21",
+   "exponentP3.table3_row27",
+   "exponentPh0.table3_row10",
+   "exponentPh1.table3_row16",
+   "exponentPh2.table3_row22",
+   "exponentPh3.table3_row28",
+   "exponentPt1.table3_row14",
+   "exponentPt2.table3_row20",
+   "exponentPt3.table3_row26",
+   "exponentQ0.table3_row11",
+   "exponentQ1.table3_row17",
+   "exponentQ2.table3_row23",
+   "exponentQ3.table3_row29",
+   "exponentQdh0.table3_row12",
+   "exponentQdh1.table3_row18",
+   "exponentQdh2.table3_row24",
+   "exponentQdl0.table3_row13",
+   "exponentQdl1.table3_row19",
+   "exponentQdl2.table3_row25",
+   "exponentQq1.table3_row31",
+   "exponentQq2.table3_row30",
+   "sumExponentLower_9_3_1.section_9_3_1",
+   "sumExponentUpper_9_3_2.section_9_3_2"
+  ]
+ },
+ "projects/k5_fdiv/domain/fprep.av": {
+  "bridges": [
+   "Domain_Rational_absFraction",
+   "Domain_Rational_absInt",
+   "Domain_Rational_isNonNeg",
+   "Domain_Rational_isNonPos",
+   "Domain_Rational_lessThan",
+   "Domain_Rational_minus",
+   "Domain_Rational_negate",
+   "Domain_Rational_oneFraction",
+   "Domain_Rational_plus",
+   "Domain_Rational_sameValue",
+   "Domain_Rational_times",
+   "Domain_Rational_zeroFraction",
+   "fpMul",
+   "fpMulValue",
+   "fpScale",
+   "fpScaleKeepsSignificand",
+   "fpScalePreservesValue",
+   "fpScaleShiftsExponent",
+   "fpValue",
+   "fpValueEqualsGeneralWhenNonnegExp",
+   "fpValueGeneral",
+   "fracExpoFromMagnitude",
+   "isFp",
+   "pow2",
+   "pow2Fraction",
+   "pow2Signed",
+   "pow2SignedAtLeastOne",
+   "pow2SignedDenomPositive",
+   "pow2SignedHomomorphism",
+   "pow2SignedLtReflect",
+   "pow2SignedMonotone",
+   "pow2SignedPositive",
+   "productExp",
+   "productExpInRange"
+  ],
+  "certified": {
+   "Domain_Rational_absFraction": "L1",
+   "Domain_Rational_absInt": "L1",
+   "Domain_Rational_isNonNeg": "L1",
+   "Domain_Rational_isNonPos": "L1",
+   "Domain_Rational_lessThan": "L1",
+   "Domain_Rational_minus": "L1",
+   "Domain_Rational_negate": "L1",
+   "Domain_Rational_oneFraction": "L1",
+   "Domain_Rational_plus": "L1",
+   "Domain_Rational_sameValue": "L1",
+   "Domain_Rational_times": "L1",
+   "Domain_Rational_zeroFraction": "L1",
+   "fpMul": "L1",
+   "fpMulValue": "L1",
+   "fpScale": "L1",
+   "fpScaleKeepsSignificand": "L1",
+   "fpScalePreservesValue": "L1",
+   "fpScaleShiftsExponent": "L1",
+   "fpValue": "L1",
+   "fpValueEqualsGeneralWhenNonnegExp": "L1",
+   "fpValueGeneral": "L1",
+   "fracExpoFromMagnitude": "L1",
+   "isFp": "L1",
+   "pow2": "L3",
+   "pow2Fraction": "L1",
+   "pow2Signed": "L1",
+   "pow2SignedAtLeastOne": "L1",
+   "pow2SignedDenomPositive": "L1",
+   "pow2SignedHomomorphism": "L1",
+   "pow2SignedLtReflect": "L1",
+   "pow2SignedMonotone": "L1",
+   "pow2SignedPositive": "L1",
+   "productExp": "L1",
+   "productExpInRange": "L1"
+  },
+  "laws": [
+   "Domain.Rational.isNonNeg.nonNegOfPositive",
+   "Domain.Rational.minus.equalsPlusNegate",
+   "Domain.Rational.negate.involutive",
+   "Domain.Rational.plus.associative",
+   "Domain.Rational.plus.commutative",
+   "Domain.Rational.plus.zeroIsNeutral",
+   "Domain.Rational.times.associative",
+   "Domain.Rational.times.commutative",
+   "Domain.Rational.times.distributesOverPlus",
+   "Domain.Rational.times.oneIsNeutral",
+   "Domain.Rational.times.zeroAbsorbs",
+   "fpScaleKeepsSignificand.significandInvariant",
+   "fpScaleShiftsExponent.exponentShift",
+   "fpValueEqualsGeneralWhenNonnegExp.agreesOnNonnegExp",
+   "fracExpoFromMagnitude.fundamentalExponent",
+   "pow2.homomorphism",
+   "pow2.positive",
+   "pow2Signed.agreesWithPow2Fraction",
+   "pow2SignedAtLeastOne.geOne",
+   "pow2SignedDenomPositive.positive",
+   "pow2SignedHomomorphism.signedHomomorphism",
+   "pow2SignedLtReflect.fromStrictOrder",
+   "pow2SignedMonotone.allExponents",
+   "pow2SignedPositive.positive",
+   "productExpInRange.productExponentBounds"
+  ]
+ },
+ "projects/k5_fdiv/domain/fractionorder.av": {
+  "bridges": [
+   "Domain_IntegerOrder_multiplyLe",
+   "Domain_IntegerOrder_multiplyLeReason",
+   "Domain_IntegerOrder_multiplyLt",
+   "Domain_IntegerOrder_nonnegativeProduct",
+   "Domain_IntegerOrder_positiveProduct",
+   "Domain_Rational_absFraction",
+   "Domain_Rational_absInt",
+   "Domain_Rational_isNonNeg",
+   "Domain_Rational_isNonPos",
+   "Domain_Rational_lessThan",
+   "Domain_Rational_minus",
+   "Domain_Rational_negate",
+   "Domain_Rational_oneFraction",
+   "Domain_Rational_plus",
+   "Domain_Rational_sameValue",
+   "Domain_Rational_times",
+   "Domain_Rational_zeroFraction",
+   "le",
+   "lt"
+  ],
+  "certified": {
+   "Domain_IntegerOrder_multiplyLe": "L1",
+   "Domain_IntegerOrder_multiplyLeReason": "L1",
+   "Domain_IntegerOrder_multiplyLt": "L1",
+   "Domain_IntegerOrder_nonnegativeProduct": "L1",
+   "Domain_IntegerOrder_positiveProduct": "L1",
+   "Domain_Rational_absFraction": "L1",
+   "Domain_Rational_absInt": "L1",
+   "Domain_Rational_isNonNeg": "L1",
+   "Domain_Rational_isNonPos": "L1",
+   "Domain_Rational_lessThan": "L1",
+   "Domain_Rational_minus": "L1",
+   "Domain_Rational_negate": "L1",
+   "Domain_Rational_oneFraction": "L1",
+   "Domain_Rational_plus": "L1",
+   "Domain_Rational_sameValue": "L1",
+   "Domain_Rational_times": "L1",
+   "Domain_Rational_zeroFraction": "L1",
+   "le": "L1",
+   "lt": "L1"
+  },
+  "laws": [
+   "Domain.IntegerOrder.multiplyLe.nonnegativeFactor",
+   "Domain.IntegerOrder.multiplyLt.positiveFactor",
+   "Domain.IntegerOrder.nonnegativeProduct.nonnegativeFactors",
+   "Domain.IntegerOrder.positiveProduct.positiveFactors",
+   "Domain.Rational.isNonNeg.nonNegOfPositive",
+   "Domain.Rational.minus.equalsPlusNegate",
+   "Domain.Rational.negate.involutive",
+   "Domain.Rational.plus.associative",
+   "Domain.Rational.plus.commutative",
+   "Domain.Rational.plus.zeroIsNeutral",
+   "Domain.Rational.times.associative",
+   "Domain.Rational.times.commutative",
+   "Domain.Rational.times.distributesOverPlus",
+   "Domain.Rational.times.oneIsNeutral",
+   "Domain.Rational.times.zeroAbsorbs",
+   "le.fromPositiveCrossProduct",
+   "lt.fromPositiveCrossProduct",
+   "signedAbsolute.nonnegativeMagnitude"
+  ]
+ },
+ "projects/k5_fdiv/domain/integerorder.av": {
+  "bridges": [
+   "multiplyLe",
+   "multiplyLeReason",
+   "multiplyLt",
+   "nonnegativeProduct",
+   "positiveProduct"
+  ],
+  "certified": {
+   "multiplyLe": "L1",
+   "multiplyLeReason": "L1",
+   "multiplyLt": "L1",
+   "nonnegativeProduct": "L1",
+   "positiveProduct": "L1"
+  },
+  "laws": [
+   "multiplyLe.nonnegativeFactor",
+   "multiplyLt.positiveFactor",
+   "nonnegativeProduct.nonnegativeFactors",
+   "positiveProduct.positiveFactors"
+  ]
+ },
+ "projects/k5_fdiv/domain/rational.av": {
+  "bridges": [
+   "absFraction",
+   "absInt",
+   "isNonNeg",
+   "isNonPos",
+   "lessThan",
+   "minus",
+   "negate",
+   "oneFraction",
+   "plus",
+   "sameValue",
+   "times",
+   "zeroFraction"
+  ],
+  "certified": {
+   "absFraction": "L1",
+   "absInt": "L1",
+   "isNonNeg": "L1",
+   "isNonPos": "L1",
+   "lessThan": "L1",
+   "minus": "L1",
+   "negate": "L1",
+   "oneFraction": "L1",
+   "plus": "L1",
+   "sameValue": "L1",
+   "times": "L1",
+   "zeroFraction": "L1"
+  },
+  "laws": [
+   "isNonNeg.nonNegOfPositive",
+   "minus.equalsPlusNegate",
+   "negate.involutive",
+   "plus.associative",
+   "plus.commutative",
+   "plus.zeroIsNeutral",
+   "times.associative",
+   "times.commutative",
+   "times.distributesOverPlus",
+   "times.oneIsNeutral",
+   "times.zeroAbsorbs"
+  ]
+ },
+ "projects/k5_fdiv/domain/stickyint.av": {
+  "bridges": [
+   "floorDiv",
+   "pow2",
+   "sigDouble",
+   "stickySig",
+   "truncSig"
+  ],
+  "certified": {
+   "floorDiv": "L1",
+   "pow2": "L3",
+   "sigDouble": "L1",
+   "stickySig": "L1",
+   "truncSig": "L1"
+  },
+  "laws": [
+   "floorDiv.absorbRemainder",
+   "floorDiv.cancelCommonFactor",
+   "floorDiv.lowBitDrops",
+   "floorDiv.nestedFloorCollapse",
+   "pow2.homomorphism",
+   "pow2.positive",
+   "pow2.successor",
+   "sigDouble.doubleIsTwice",
+   "truncSig.truncStickyInt"
   ]
  },
  "projects/k5_fdiv/main.av": {
@@ -455,6 +1384,1125 @@
   },
   "laws": [
    "Infra.Codec.unescapeField.escapedRoundtrip"
+  ]
+ },
+ "projects/song/wave.av": {
+  "bridges": [
+   "clamp16",
+   "degreeHz",
+   "envelope",
+   "fits16",
+   "header",
+   "highOctet",
+   "le16",
+   "le32",
+   "lowOctet",
+   "mixAt",
+   "nonNegative",
+   "octaveUp",
+   "pcm16",
+   "pcmming",
+   "pitch",
+   "rate",
+   "readLe16",
+   "readLe32",
+   "samplesFor",
+   "signed16",
+   "summed",
+   "toneAt",
+   "triangle",
+   "wrap32"
+  ],
+  "certified": {
+   "clamp16": "L1",
+   "degreeHz": "L1",
+   "envelope": "L1",
+   "fits16": "L1",
+   "header": "L1",
+   "highOctet": "L1",
+   "le16": "L1",
+   "le32": "L1",
+   "lowOctet": "L1",
+   "mixAt": "L1",
+   "nonNegative": "L1",
+   "octaveUp": "L1",
+   "pcm16": "L1",
+   "pcmming": "L1",
+   "pitch": "L1",
+   "rate": "L1",
+   "readLe16": "L1",
+   "readLe32": "L1",
+   "render": "L1",
+   "rendering": "L1",
+   "samplesFor": "L1",
+   "signed16": "L1",
+   "summed": "L1",
+   "tone": "L1",
+   "toneAt": "L1",
+   "triangle": "L1",
+   "wrap32": "L1"
+  },
+  "laws": [
+   "clamp16.fitsSixteenBits",
+   "header.dataLengthIsLast",
+   "header.riffLengthCoversTheRest",
+   "header.sizeIsFortyFour",
+   "readLe16.roundTrip"
+  ]
+ },
+ "proof-corpus/decomposed/handwritten/all_zero_sum.av": {
+  "bridges": [],
+  "certified": {
+   "allZero": "L1",
+   "plus": "L1",
+   "sumList": "L1"
+  },
+  "laws": [
+   "sumList.sumCons"
+  ]
+ },
+ "proof-corpus/decomposed/handwritten/qrev_rev.av": {
+  "bridges": [
+   "fastRev",
+   "qrev",
+   "rev"
+  ],
+  "certified": {
+   "fastRev": "L1",
+   "qrev": "L1",
+   "rev": "L1"
+  },
+  "laws": [
+   "fastRev.equalsRev",
+   "qrev.accGeneralizes"
+  ]
+ },
+ "proof-corpus/decomposed/isaplanner/prop_03.av": {
+  "bridges": [],
+  "certified": {
+   "count": "L1",
+   "countMonotone": "L1",
+   "eqNat": "L1",
+   "lessEq": "L1"
+  },
+  "laws": [
+   "count.countConcatMonotone",
+   "countMonotone.countAppendMonotone"
+  ]
+ },
+ "proof-corpus/decomposed/isaplanner/prop_20.av": {
+  "bridges": [],
+  "certified": {
+   "insort": "L1",
+   "len": "L1",
+   "leq": "L1",
+   "sort": "L1"
+  },
+  "laws": [
+   "insort.insortPreservesLength",
+   "sort.sortPreservesLength"
+  ]
+ },
+ "proof-corpus/decomposed/isaplanner/prop_28.av": {
+  "bridges": [],
+  "certified": {
+   "elem": "L1",
+   "eqNat": "L1"
+  },
+  "laws": [
+   "elem.elemAppendSelf",
+   "eqNat.eqNatRefl"
+  ]
+ },
+ "proof-corpus/decomposed/isaplanner/prop_52.av": {
+  "bridges": [],
+  "certified": {
+   "count": "L1",
+   "eqNat": "L1",
+   "plus": "L1",
+   "rev": "L1"
+  },
+  "laws": [
+   "count.countHomo",
+   "count.countRev",
+   "plus.plusComm"
+  ]
+ },
+ "proof-corpus/decomposed/isaplanner/prop_60.av": {
+  "bridges": [],
+  "certified": {
+   "isCons": "L1",
+   "last": "L1"
+  },
+  "laws": [
+   "last.lastConsNonEmpty",
+   "last.lastSnoc"
+  ]
+ },
+ "proof-corpus/decomposed/isaplanner/prop_77.av": {
+  "bridges": [
+   "andB"
+  ],
+  "certified": {
+   "andB": "L1",
+   "insort": "L1",
+   "le": "L1",
+   "leHead": "L1",
+   "sorted": "L1"
+  },
+  "laws": [
+   "le.leTotal",
+   "sorted.sortTail",
+   "sorted.sortedConsLeHead"
+  ]
+ },
+ "proof-corpus/decomposed/isaplanner/prop_78.av": {
+  "bridges": [
+   "and2"
+  ],
+  "certified": {
+   "and2": "L1",
+   "insort": "L1",
+   "leHead": "L1",
+   "leq": "L1",
+   "sort": "L1",
+   "sorted": "L1"
+  },
+  "laws": [
+   "leq.leTotal",
+   "sort.sortProducesSorted",
+   "sorted.sortTail",
+   "sorted.sortedConsLeHead"
+  ]
+ },
+ "proof-corpus/decomposed/isaplanner/prop_85.av": {
+  "bridges": [
+   "appendInt",
+   "appendPair",
+   "rev",
+   "revPair"
+  ],
+  "certified": {
+   "appendInt": "L1",
+   "appendPair": "L1",
+   "len": "L1",
+   "natEq": "L1",
+   "rev": "L1",
+   "revPair": "L1"
+  },
+  "laws": [
+   "len.lenRevPreserved",
+   "len.lenSnocSucc"
+  ]
+ },
+ "proof-corpus/decomposed/prod/lemma_05.av": {
+  "bridges": [],
+  "certified": {
+   "drop": "L1"
+  },
+  "laws": [
+   "drop.dropDropCons",
+   "drop.dropOuterHeadNorm",
+   "drop.dropSuccCons"
+  ]
+ },
+ "proof-corpus/decomposed/prod/lemma_09.av": {
+  "bridges": [
+   "append",
+   "rev"
+  ],
+  "certified": {
+   "append": "L1",
+   "rev": "L1"
+  },
+  "laws": [
+   "append.appendAssoc",
+   "append.appendBridge",
+   "append.appendRightId",
+   "rev.revAppendCons",
+   "rev.revAppendDistributes",
+   "rev.revSingleton"
+  ]
+ },
+ "proof-corpus/decomposed/prod/lemma_12.av": {
+  "bridges": [
+   "and"
+  ],
+  "certified": {
+   "and": "L1",
+   "insert": "L1",
+   "leHead": "L1",
+   "lessEq": "L1",
+   "sorted": "L1"
+  },
+  "laws": [
+   "lessEq.leTotal",
+   "sorted.sortTail",
+   "sorted.sortedConsLeHead"
+  ]
+ },
+ "proof-corpus/decomposed/prod/lemma_16.av": {
+  "bridges": [],
+  "certified": {
+   "even": "L1",
+   "plus": "L1"
+  },
+  "laws": [
+   "even.evenPlusShift",
+   "even.evenSuccSucc",
+   "plus.plusSuccRight"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_02.av": {
+  "bridges": [],
+  "certified": {
+   "length": "L1",
+   "plus": "L1"
+  },
+  "laws": [
+   "length.lengthConcatComm",
+   "length.lengthConcatHomo",
+   "plus.plusComm"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_03.av": {
+  "bridges": [
+   "append"
+  ],
+  "certified": {
+   "append": "L1",
+   "length": "L1",
+   "plus": "L1"
+  },
+  "laws": [
+   "length.lengthAppend",
+   "plus.plusSuccRight",
+   "plus.plusZeroRight"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_04.av": {
+  "bridges": [
+   "append"
+  ],
+  "certified": {
+   "append": "L1",
+   "double": "L1",
+   "length": "L1",
+   "plus": "L1"
+  },
+  "laws": [
+   "double.doublePlus",
+   "length.lengthAppend",
+   "length.lengthAppendDouble",
+   "plus.plusSuccRight",
+   "plus.plusZeroRight"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_05.av": {
+  "bridges": [
+   "rev"
+  ],
+  "certified": {
+   "length": "L1",
+   "rev": "L1"
+  },
+  "laws": [
+   "length.lengthSnoc",
+   "length.revPreservesLength"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_06.av": {
+  "bridges": [
+   "append",
+   "rev"
+  ],
+  "certified": {
+   "append": "L1",
+   "length": "L1",
+   "plus": "L1",
+   "rev": "L1"
+  },
+  "laws": [
+   "length.lengthAppend",
+   "length.lengthRev",
+   "length.revAppendLength",
+   "plus.plusSuccRight"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_10.av": {
+  "bridges": [
+   "append",
+   "rev"
+  ],
+  "certified": {
+   "append": "L1",
+   "rev": "L1"
+  },
+  "laws": [
+   "append.appendAssoc",
+   "append.appendBridge",
+   "append.appendRightId",
+   "rev.revAppendDistributes",
+   "rev.revRev"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_11.av": {
+  "bridges": [
+   "app",
+   "rev"
+  ],
+  "certified": {
+   "app": "L1",
+   "rev": "L1"
+  },
+  "laws": [
+   "app.appAssoc",
+   "app.appBridge",
+   "app.appRightId",
+   "rev.revAppDistributes",
+   "rev.revAppRev",
+   "rev.revInvolutive"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_14.av": {
+  "bridges": [
+   "andBool"
+  ],
+  "certified": {
+   "andBool": "L1",
+   "insert": "L1",
+   "isort": "L1",
+   "leHead": "L1",
+   "lessEq": "L1",
+   "sorted": "L1"
+  },
+  "laws": [
+   "isort.sortedIsort",
+   "lessEq.lessEqTotal",
+   "sorted.sortedConsLeHead",
+   "sorted.sortedTail"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_16.av": {
+  "bridges": [],
+  "certified": {
+   "even": "L1",
+   "plus": "L1"
+  },
+  "laws": [
+   "even.evenDouble",
+   "even.evenPlusTwo",
+   "plus.plusSuccRight"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_17.av": {
+  "bridges": [
+   "rev"
+  ],
+  "certified": {
+   "rev": "L1"
+  },
+  "laws": [
+   "rev.revDist",
+   "rev.revInvolution",
+   "rev.revRevAppend"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_18.av": {
+  "bridges": [
+   "rev"
+  ],
+  "certified": {
+   "rev": "L1"
+  },
+  "laws": [
+   "rev.revAppendRev",
+   "rev.revDist",
+   "rev.revInvolution"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_19.av": {
+  "bridges": [
+   "append",
+   "rev"
+  ],
+  "certified": {
+   "append": "L1",
+   "rev": "L1"
+  },
+  "laws": [
+   "append.appendAssoc",
+   "append.appendNilR",
+   "rev.revDist",
+   "rev.revInvolution",
+   "rev.revRevAppend"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_22.av": {
+  "bridges": [
+   "append"
+  ],
+  "certified": {
+   "append": "L1",
+   "even": "L1",
+   "length": "L1",
+   "plus": "L1"
+  },
+  "laws": [
+   "even.evenLengthAppendComm",
+   "even.evenPlusComm",
+   "length.lengthAppendHomo",
+   "plus.plusComm"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_23.av": {
+  "bridges": [
+   "append"
+  ],
+  "certified": {
+   "append": "L1",
+   "half": "L1",
+   "length": "L1",
+   "plus": "L1"
+  },
+  "laws": [
+   "half.halfLengthAppendComm",
+   "length.lengthAppend",
+   "plus.plusComm",
+   "plus.plusSuccRight",
+   "plus.plusZeroRight"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_25.av": {
+  "bridges": [],
+  "certified": {
+   "even": "L1",
+   "length": "L1",
+   "plus": "L1"
+  },
+  "laws": [
+   "even.evenLengthConcat",
+   "length.lengthConcatHomo",
+   "plus.plusComm"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_27.av": {
+  "bridges": [
+   "qrev",
+   "rev"
+  ],
+  "certified": {
+   "qrev": "L1",
+   "rev": "L1"
+  },
+  "laws": [
+   "qrev.qrevSpec",
+   "rev.revQrev"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_28.av": {
+  "bridges": [
+   "append",
+   "qrevflat",
+   "rev",
+   "revflat"
+  ],
+  "certified": {
+   "append": "L1",
+   "qrevflat": "L1",
+   "rev": "L1",
+   "revflat": "L1"
+  },
+  "laws": [
+   "append.appendAssoc",
+   "append.appendConcatBridge",
+   "append.appendRightId",
+   "qrevflat.qrevflatSpec",
+   "revflat.revflatQrevflat"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_29.av": {
+  "bridges": [
+   "qrev",
+   "rev"
+  ],
+  "certified": {
+   "qrev": "L1",
+   "rev": "L1"
+  },
+  "laws": [
+   "qrev.qrevRevAppend",
+   "rev.revAppendHomo",
+   "rev.revInvolution",
+   "rev.revQrevNil"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_30.av": {
+  "bridges": [
+   "rev"
+  ],
+  "certified": {
+   "rev": "L1"
+  },
+  "laws": [
+   "rev.revInvolution",
+   "rev.revRevAppendNil",
+   "rev.revSnoc"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_31.av": {
+  "bridges": [
+   "qrev"
+  ],
+  "certified": {
+   "qrev": "L1"
+  },
+  "laws": [
+   "qrev.qrevMaster",
+   "qrev.qrevQrev"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_33.av": {
+  "bridges": [],
+  "certified": {
+   "fac": "L1",
+   "mult": "L1",
+   "plus": "L1",
+   "qfac": "L1"
+  },
+  "laws": [
+   "mult.multIdentRight",
+   "plus.plusIdentLeft"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_34.av": {
+  "bridges": [],
+  "certified": {
+   "mult": "L1",
+   "plus": "L1",
+   "times": "L1"
+  },
+  "laws": [
+   "mult.multAccumGen",
+   "plus.plusRightZero"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_39.av": {
+  "bridges": [
+   "barbar"
+  ],
+  "certified": {
+   "barbar": "L1",
+   "drop": "L1",
+   "elem": "L1",
+   "eqNat": "L1"
+  },
+  "laws": [
+   "barbar.barbarTrueRight",
+   "elem.elemConcatSingleton"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_42.av": {
+  "bridges": [
+   "barbar"
+  ],
+  "certified": {
+   "barbar": "L1",
+   "elem": "L1",
+   "eqNat": "L1",
+   "union": "L1"
+  },
+  "laws": [
+   "elem.barbarIdempotent",
+   "elem.elemInEmpty"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_43.av": {
+  "bridges": [
+   "barbar"
+  ],
+  "certified": {
+   "barbar": "L1",
+   "elem": "L1",
+   "eqNat": "L1",
+   "union": "L1"
+  },
+  "laws": [
+   "barbar.barbarTrueRight",
+   "elem.elemConcatSingleton"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_44.av": {
+  "bridges": [
+   "barbar"
+  ],
+  "certified": {
+   "barbar": "L1",
+   "elem": "L1",
+   "eqNat": "L1",
+   "intersect": "L1"
+  },
+  "laws": [
+   "barbar.barbarTrueLeft",
+   "elem.elemConcatSingleton",
+   "eqNat.eqNatRefl"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_48.av": {
+  "bridges": [],
+  "certified": {
+   "insert": "L1",
+   "isort": "L1",
+   "length": "L1",
+   "lessEq": "L1"
+  },
+  "laws": [
+   "insert.insertPreservesLength",
+   "length.isortPreservesLength"
+  ]
+ },
+ "proof-corpus/tip/isaplanner-mono/prop_14.av": {
+  "bridges": [],
+  "certified": {
+   "append": "L1",
+   "filterZ": "L1",
+   "isZ": "L1"
+  },
+  "laws": [
+   "filterZ.filterAppendDistribute"
+  ]
+ },
+ "proof-corpus/tip/isaplanner-mono/prop_35.av": {
+  "bridges": [],
+  "certified": {
+   "constFalse": "L1",
+   "dropWhileF": "L1"
+  },
+  "laws": [
+   "dropWhileF.dropWhileFalseId"
+  ]
+ },
+ "proof-corpus/tip/isaplanner-mono/prop_36.av": {
+  "bridges": [],
+  "certified": {
+   "constTrue": "L1",
+   "takeWhileT": "L1"
+  },
+  "laws": [
+   "takeWhileT.takeWhileTrueId"
+  ]
+ },
+ "proof-corpus/tip/isaplanner-mono/prop_43.av": {
+  "bridges": [],
+  "certified": {
+   "append": "L1",
+   "dropWhileZ": "L1",
+   "isZ": "L1",
+   "takeWhileZ": "L1"
+  },
+  "laws": [
+   "takeWhileZ.takeDropWhileAppend"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_02.av": {
+  "bridges": [],
+  "certified": {
+   "appendNat": "L1",
+   "count": "L1",
+   "eqNat": "L1",
+   "plus": "L1"
+  },
+  "laws": [
+   "count.countPlusConcat"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_05.av": {
+  "bridges": [],
+  "certified": {
+   "count": "L1",
+   "eqNat": "L1"
+  },
+  "laws": [
+   "count.countCons"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_06.av": {
+  "bridges": [],
+  "certified": {
+   "minus": "L1",
+   "plus": "L1"
+  },
+  "laws": [
+   "minus.minusPlusZero"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_10.av": {
+  "bridges": [],
+  "certified": {
+   "minus": "L1"
+  },
+  "laws": [
+   "minus.minusSelf"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_11.av": {
+  "bridges": [],
+  "certified": {
+   "drop": "L1"
+  },
+  "laws": [
+   "drop.dropZero"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_13.av": {
+  "bridges": [],
+  "certified": {
+   "drop": "L1"
+  },
+  "laws": [
+   "drop.dropSuccCons"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_15.av": {
+  "bridges": [],
+  "certified": {
+   "ins": "L1",
+   "len": "L1",
+   "lt": "L1"
+  },
+  "laws": [
+   "ins.lenInsSucc"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_16.av": {
+  "bridges": [],
+  "certified": {
+   "last": "L1"
+  },
+  "laws": [
+   "last.lastSingleton"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_17.av": {
+  "bridges": [],
+  "certified": {
+   "eq": "L1",
+   "le": "L1"
+  },
+  "laws": [
+   "le.leZeroEqZero"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_21.av": {
+  "bridges": [],
+  "certified": {
+   "add": "L1",
+   "le": "L1"
+  },
+  "laws": [
+   "le.leNAddNM"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_26.av": {
+  "bridges": [
+   "implies"
+  ],
+  "certified": {
+   "appendNat": "L1",
+   "elem": "L1",
+   "eqNat": "L1",
+   "implies": "L1"
+  },
+  "laws": [
+   "elem.elemConcat"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_39.av": {
+  "bridges": [],
+  "certified": {
+   "count": "L1",
+   "eq": "L1",
+   "plus": "L1"
+  },
+  "laws": [
+   "count.countConsSplit"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_40.av": {
+  "bridges": [],
+  "certified": {
+   "take": "L1"
+  },
+  "laws": [
+   "take.takeZeroNil"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_42.av": {
+  "bridges": [],
+  "certified": {
+   "take": "L1"
+  },
+  "laws": [
+   "take.takeConsShift"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_44.av": {
+  "bridges": [],
+  "certified": {},
+  "laws": [
+   "zip.zipConcatEq"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_45.av": {
+  "bridges": [],
+  "certified": {},
+  "laws": [
+   "zip.zipConsCons"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_46.av": {
+  "bridges": [],
+  "certified": {},
+  "laws": [
+   "zip.zipNilLeft"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_58.av": {
+  "bridges": [],
+  "certified": {
+   "dropInt": "L1",
+   "dropPair": "L1"
+  },
+  "laws": [
+   "dropInt.dropIntSelf",
+   "dropPair.dropZip",
+   "zip.zipSelf"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_62.av": {
+  "bridges": [],
+  "certified": {
+   "isCons": "L1",
+   "last": "L1"
+  },
+  "laws": [
+   "last.lastConsNonEmpty"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_71.av": {
+  "bridges": [],
+  "certified": {
+   "elem": "L1",
+   "eqNat": "L1",
+   "ins": "L1",
+   "lt": "L1"
+  },
+  "laws": [
+   "elem.insElem"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_76.av": {
+  "bridges": [],
+  "certified": {
+   "count": "L1",
+   "natEq": "L1"
+  },
+  "laws": [
+   "count.countAppendSingleton"
+  ]
+ },
+ "proof-corpus/tip/prod/lemma_01.av": {
+  "bridges": [],
+  "certified": {
+   "plus": "L1"
+  },
+  "laws": [
+   "plus.plusSuccRight"
+  ]
+ },
+ "proof-corpus/tip/prod/lemma_03.av": {
+  "bridges": [],
+  "certified": {
+   "length": "L1"
+  },
+  "laws": [
+   "length.lengthSnoc"
+  ]
+ },
+ "proof-corpus/tip/prod/lemma_05.av": {
+  "bridges": [],
+  "certified": {
+   "drop": "L1"
+  },
+  "laws": [
+   "drop.dropDropCons"
+  ]
+ },
+ "proof-corpus/tip/prod/lemma_08.av": {
+  "bridges": [
+   "append",
+   "rev"
+  ],
+  "certified": {
+   "append": "L1",
+   "rev": "L1"
+  },
+  "laws": [
+   "rev.revAppendSingleton"
+  ]
+ },
+ "proof-corpus/tip/prod/lemma_11.av": {
+  "bridges": [
+   "append"
+  ],
+  "certified": {
+   "append": "L1"
+  },
+  "laws": [
+   "append.appendSnocAssoc"
+  ]
+ },
+ "proof-corpus/tip/prod/lemma_13.av": {
+  "bridges": [
+   "append"
+  ],
+  "certified": {
+   "append": "L1"
+  },
+  "laws": [
+   "append.appendAssocSingleton"
+  ]
+ },
+ "proof-corpus/tip/prod/lemma_17.av": {
+  "bridges": [],
+  "certified": {
+   "plus": "L1"
+  },
+  "laws": [
+   "plus.plusShiftTwo"
+  ]
+ },
+ "proof-corpus/tip/prod/lemma_18.av": {
+  "bridges": [],
+  "certified": {
+   "insert": "L1",
+   "length": "L1",
+   "lessEq": "L1"
+  },
+  "laws": [
+   "length.insertLength"
+  ]
+ },
+ "proof-corpus/tip/prod/lemma_19.av": {
+  "bridges": [
+   "barbar"
+  ],
+  "certified": {
+   "barbar": "L1",
+   "elem": "L1",
+   "eqNat": "L1",
+   "insert": "L1",
+   "lessEq": "L1",
+   "neqNat": "L1"
+  },
+  "laws": [
+   "elem.insertElemImplies"
+  ]
+ },
+ "proof-corpus/tip/prod/lemma_21.av": {
+  "bridges": [],
+  "certified": {
+   "count": "L1",
+   "eqNat": "L1",
+   "insert": "L1",
+   "lessEq": "L1",
+   "notEqNat": "L1"
+  },
+  "laws": [
+   "count.countInsertNeq"
+  ]
+ },
+ "proof-corpus/tip/prod/lemma_22.av": {
+  "bridges": [
+   "append"
+  ],
+  "certified": {
+   "append": "L1"
+  },
+  "laws": [
+   "append.appendAssoc"
+  ]
+ },
+ "proof-corpus/tip/prod/lemma_24.av": {
+  "bridges": [],
+  "certified": {
+   "plus": "L1"
+  },
+  "laws": [
+   "plus.plusAssoc"
+  ]
+ },
+ "proof-corpus/tip/prod/prop_12.av": {
+  "bridges": [
+   "qrev",
+   "rev"
+  ],
+  "certified": {
+   "qrev": "L1",
+   "rev": "L1"
+  },
+  "laws": [
+   "qrev.qrevRevAppend"
+  ]
+ },
+ "proof-corpus/tip/prod/prop_40.av": {
+  "bridges": [
+   "andBool",
+   "barbar"
+  ],
+  "certified": {
+   "andBool": "L1",
+   "barbar": "L1",
+   "elem": "L1",
+   "eqNat": "L1",
+   "subset": "L1",
+   "union": "L1"
+  },
+  "laws": [
+   "union.subsetUnion"
+  ]
+ },
+ "proof-corpus/tip/prod/prop_41.av": {
+  "bridges": [
+   "andd",
+   "barbar"
+  ],
+  "certified": {
+   "andd": "L1",
+   "barbar": "L1",
+   "elem": "L1",
+   "eqNat": "L1",
+   "intersect": "L1",
+   "subset": "L1"
+  },
+  "laws": [
+   "intersect.subsetIntersect"
+  ]
+ },
+ "proof-corpus/tip/prod/prop_47.av": {
+  "bridges": [
+   "barbar"
+  ],
+  "certified": {
+   "barbar": "L1",
+   "elem": "L1",
+   "eqNat": "L1",
+   "insert": "L1",
+   "lessEq": "L1",
+   "notEq": "L1"
+  },
+  "laws": [
+   "elem.insertElem"
   ]
  },
  "tests/fixtures/cert_work_job/main.av": {
