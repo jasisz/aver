@@ -906,7 +906,7 @@ mod tests {
             because: Vec::new(),
             using: None,
             induction: None,
-            by_rule: None,
+            by_plan: None,
             sample_guards: vec![],
         }
     }

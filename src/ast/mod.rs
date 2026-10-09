@@ -763,12 +763,12 @@ pub struct Module {
     /// Empty for every other module.
     pub answers: Vec<String>,
     pub answers_line: Option<usize>,
-    /// `rules [openByLength]` in the header: this module is a rules module,
-    /// whose listed functions are proof rules a law names with `by`. `None`
-    /// for every other module. A rules module is pure, never part of a
-    /// program, and only another rules module may depend on it.
-    pub rules: Option<Vec<String>>,
-    pub rules_line: Option<usize>,
+    /// `plans [openByLength]` in the header: this module is a plans module,
+    /// whose listed functions are proof plans a law names with `by`. `None`
+    /// for every other module. A plans module is pure, never part of a
+    /// program, and only another plans module may depend on it.
+    pub plans: Option<Vec<String>>,
+    pub plans_line: Option<usize>,
     /// `process peer seated by Sockets.peers` declarations written in this
     /// module: a process taking one key, seated once per key the named pure
     /// function of an answer module's state lists.
@@ -878,9 +878,9 @@ pub struct VerifyLaw {
     /// The given an `induction x` line names: the one induction along the
     /// law's function follows when the claim passes it several.
     pub induction: Option<String>,
-    /// The proof rule a `by Module.rule` line names: the rule writes the
+    /// The proof plan a `by Module.plan` line names: the plan writes the
     /// law's whole proof and the kernel checks it.
-    pub by_rule: Option<String>,
+    pub by_plan: Option<String>,
     /// Template assertion from source before given-domain expansion.
     pub lhs: Spanned<Expr>,
     pub rhs: Spanned<Expr>,

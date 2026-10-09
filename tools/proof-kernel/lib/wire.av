@@ -1,7 +1,7 @@
 module Wire
     intent =
-        "How a proof rule meets the compiler, imported as Kernel.Wire: the goal arrives as step data"
-        "(the grammar at the top of src/ir/proof_steps/sexpr.rs, with a placeholder proof) and the rule's proof"
+        "How a proof plan meets the compiler, imported as Kernel.Wire: the goal arrives as step data"
+        "(the grammar at the top of src/ir/proof_steps/sexpr.rs, with a placeholder proof) and the plan's proof"
         "leaves in the same grammar. The compiler reads the proof back and hands the whole script to the kernel."
         "Not trusted: a goal read wrongly or a proof written wrongly only makes the script fail to check."
     exposes [goal, proofText, termText, answer]
@@ -18,7 +18,7 @@ verify goal
     goal("(a") => Result.Err("unexpected end of data")
 
 fn answer(r: Result<Proof, String>) -> String
-    ? "What the compiler reads back from a rule: `proof` and the proof, or `refused` and the rule's reason, each on the line after the word."
+    ? "What the compiler reads back from a plan: `proof` and the proof, or `refused` and the plan's reason, each on the line after the word."
     match r
         Result.Ok(p) -> "proof\n{proofText(p)}"
         Result.Err(why) -> "refused\n{why}"

@@ -70,7 +70,7 @@
       }
     },
     "keywords": {
-      "match": "\\b(induction|decision|rejected|because|depends|effects|exposes|impacts|author|chosen|intent|module|opaque|reason|record|verify|given|holds|match|rules|trace|using|date|type|when|law|by|fn)\\b",
+      "match": "\\b(induction|decision|rejected|because|depends|effects|exposes|impacts|author|chosen|intent|module|opaque|reason|record|verify|given|holds|match|plans|trace|using|date|type|when|law|by|fn)\\b",
       "name": "keyword.other.aver"
     },
     "effect-annotation": {

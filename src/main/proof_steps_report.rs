@@ -15,9 +15,9 @@ pub(super) struct StepsReport {
     /// The builtin facts that would rewrite where the producer stopped, by
     /// law (see `LawTheorem::steps_hints`).
     pub hints: BTreeMap<String, Vec<String>>,
-    /// The laws a project rule proved (`by Module.rule`), with how a report
+    /// The laws a project plan proved (`by Module.plan`), with how a report
     /// names that proof, read from the comment its script starts with.
-    pub by_rule: BTreeMap<String, String>,
+    pub by_plan: BTreeMap<String, String>,
 }
 
 impl StepsReport {
@@ -107,13 +107,13 @@ pub(super) fn collect(output_dir: &str, build_log: &str) -> StepsReport {
             hints.insert(law, found);
         }
     }
-    let by_rule: BTreeMap<String, String> = with("steps")
+    let by_plan: BTreeMap<String, String> = with("steps")
         .into_iter()
         .filter_map(|(law, p)| {
             let text = std::fs::read_to_string(p).ok()?;
             Some((
                 law,
-                aver::ir::proof_steps::RuleUse::describe_comment(&text)?,
+                aver::ir::proof_steps::PlanUse::describe_comment(&text)?,
             ))
         })
         .collect();
@@ -128,7 +128,7 @@ pub(super) fn collect(output_dir: &str, build_log: &str) -> StepsReport {
         rejected,
         refused,
         hints,
-        by_rule,
+        by_plan,
     }
 }
 

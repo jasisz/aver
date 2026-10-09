@@ -3043,7 +3043,7 @@ pub(crate) fn empty_script() -> crate::ir::proof_steps::Script {
         consts: Vec::new(),
         laws: Vec::new(),
         sums: Vec::new(),
-        rule: None,
+        plan: None,
         proof: Proof::Refl(term::boolean(true)),
     }
 }

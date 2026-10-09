@@ -92,13 +92,13 @@ pub(crate) fn find(name: &str) -> Option<EmbeddedModule> {
 
 /// Every module name [`find`] resolves, in one list so a reader can see the
 /// shipped set without reading the match arm by arm.
-/// The proof kernel's modules a project's proof rules build on
-/// (`rules [...]` modules, see `docs/language.md`), and the untrusted helper
+/// The proof kernel's modules a project's proof plans build on
+/// (`plans [...]` modules, see `docs/language.md`), and the untrusted helper
 /// library for them. They resolve only when the project has no file of that
 /// name, so the kernel's own tools, which read them from
 /// `tools/proof-kernel`, see their files. `Kernel.Term`, `Kernel.Proof` and
 /// `Kernel.Lib` are the public surface; the others are what those, and the
-/// compiler's rule runner (`Kernel.Wire`), need.
+/// compiler's plan runner (`Kernel.Wire`), need.
 pub(crate) fn find_kernel_api(name: &str) -> Option<EmbeddedModule> {
     match name {
         "Kernel.Term" => Some(EmbeddedModule {

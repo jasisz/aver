@@ -4245,7 +4245,7 @@ fn build_codegen_context(
             // playground) opt in via `PipelineConfig`.
             run_build_symbols: true,
             dep_modules: &modules,
-            rules_root: Some(&module_root),
+            plans_root: Some(&module_root),
             ..Default::default()
         },
     );
@@ -8752,9 +8752,9 @@ fn run_proof_check(
         .map(|(theorem, _)| theorem.as_str())
         .collect();
     let mut declined: Vec<aver::codegen::DeclinedClaim> = declined.to_vec();
-    // A law whose proof rule did not close it says why: the rule's own
+    // A law whose proof plan did not close it says why: the plan's own
     // refusal, the step limit, or the kernel's refusal of its proof.
-    let rule_refusal = |label: &str| -> Option<String> {
+    let plan_refusal = |label: &str| -> Option<String> {
         let text = std::fs::read_to_string(
             std::path::Path::new(output_dir)
                 .join("proof_steps")
@@ -8762,13 +8762,13 @@ fn run_proof_check(
         )
         .ok()?;
         let first = text.lines().next()?.trim().to_string();
-        first.starts_with("rule ").then_some(first)
+        first.starts_with("plan ").then_some(first)
     };
     declined.extend(lean_law_audit.refused_attempts.iter().map(|(_, label)| {
         aver::codegen::DeclinedClaim {
             kind: aver::codegen::DeclineKind::Law,
             claim: label.clone(),
-            reason: rule_refusal(label).unwrap_or_else(|| {
+            reason: plan_refusal(label).unwrap_or_else(|| {
                 "its universal proof did not close in Lean, so it is not proved for \
                  every input; `aver verify` checks its samples"
                     .to_string()
@@ -8785,7 +8785,7 @@ fn run_proof_check(
             .yellow()
         );
         for (_, label) in &lean_law_audit.refused_attempts {
-            match rule_refusal(label) {
+            match plan_refusal(label) {
                 Some(why) => println!("{}", format!("    law {label}: {why}").yellow()),
                 None => println!("{}", format!("    law {label}").yellow()),
             }
@@ -9427,19 +9427,19 @@ fn run_proof_check(
                         audit.obligations.len()
                     );
                 }
-                // A law that names its proof rule: what the rule did.
+                // A law that names its proof plan: what the plan did.
                 for law in &audit.laws {
                     let universal = law.tier == LawTier::Universal;
-                    if let Some(rule) = steps.by_rule.get(&law.law) {
+                    if let Some(plan) = steps.by_plan.get(&law.law) {
                         println!(
-                            "  {}: closed by {} ({rule})",
+                            "  {}: closed by {} ({plan})",
                             law.law,
                             steps.closed_by(&law.law, universal)
                         );
                     } else if let Some(why) = steps
                         .refused
                         .get(&law.law)
-                        .filter(|why| why.starts_with("rule "))
+                        .filter(|why| why.starts_with("plan "))
                     {
                         println!("  {}: not closed by steps ({why})", law.law);
                     }
@@ -9472,8 +9472,8 @@ fn run_proof_check(
                                 println!("    hint: {hint}");
                             }
                         }
-                        by => match steps.by_rule.get(&law.law).filter(|_| by == "steps") {
-                            Some(rule) => println!("  {}: closed by {by} ({rule})", law.law),
+                        by => match steps.by_plan.get(&law.law).filter(|_| by == "steps") {
+                            Some(plan) => println!("  {}: closed by {by} ({plan})", law.law),
                             None => println!("  {}: closed by {by}", law.law),
                         },
                     }
@@ -11220,7 +11220,7 @@ fn build_candidate_law(
         because: Vec::new(),
         using: None,
         induction: None,
-        by_rule: None,
+        by_plan: None,
         sample_guards: vec![],
     };
     let block = VerifyBlock {
@@ -13150,7 +13150,7 @@ mod tests {
             because: Vec::new(),
             using: None,
             induction: None,
-            by_rule: None,
+            by_plan: None,
             sample_guards: vec![],
         }));
         super::TopLevel::Verify(VerifyBlock::new_unspanned(

@@ -322,7 +322,7 @@ mod tests {
             symbol_table: &result.symbol_table,
             program_shape: None,
             scope: None,
-            rules_root: None,
+            plans_root: None,
         };
         packed_sequence_layout_table(&inputs)
     }

@@ -326,9 +326,9 @@ pub struct PipelineConfig<'a> {
     /// the pipeline. Empty slice when the source is single-file or
     /// when no dep needs proof-side analysis.
     pub dep_modules: &'a [crate::codegen::ModuleInfo],
-    /// The project's module root, where a law's `by Module.rule` finds its
-    /// rules module. `None` leaves every law with a `by` line open.
-    pub rules_root: Option<&'a str>,
+    /// The project's module root, where a law's `by Module.plan` finds its
+    /// plans module. `None` leaves every law with a `by` line open.
+    pub plans_root: Option<&'a str>,
     /// Allocation policy used by `analyze`. `None` skips the alloc-info
     /// computation; every other analysis fact is still produced.
     /// Backends pass `NeutralAllocPolicy`; diagnostic tools that don't have a backend
@@ -366,7 +366,7 @@ impl<'a> Default for PipelineConfig<'a> {
             run_law_lower: false,
             run_build_symbols: false,
             dep_modules: &[],
-            rules_root: None,
+            plans_root: None,
             alloc_policy: None,
             on_after_pass: None,
         }
@@ -1641,7 +1641,7 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
             symbol_table: symbols,
             program_shape: Some(&program_shape),
             scope: None,
-            rules_root: cfg.rules_root,
+            plans_root: cfg.plans_root,
         };
         let mut ir = result.proof_ir.take().unwrap_or_default();
         if cfg.run_refinement_lower {

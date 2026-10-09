@@ -1,9 +1,9 @@
 //! Reading step data back: the serialised grammar of [`super::sexpr`] into
 //! [`Proof`] and [`Term`].
 //!
-//! A project proof rule (a `rules [...]` module, run by
-//! `crate::codegen::proof_lower::steps::by_rule`) returns its proof as text
-//! in the step grammar. The compiler reads it back against the goal the rule
+//! A project proof plan (a `plans [...]` module, run by
+//! `crate::codegen::proof_lower::steps::by_plan`) returns its proof as text
+//! in the step grammar. The compiler reads it back against the goal the plan
 //! was given, so that every name in it means what it meant in the goal: a
 //! function, constructor or record type the goal does not mention is refused,
 //! and a term the goal already contains comes back as that very term, with

@@ -32,7 +32,7 @@ include = [
     "/.claude/commands/aver.md",
     "/.claude/commands/aver-tooling.md",
     "/tools/website/llms.txt",
-    # The proof kernel's modules a project's proof rules build on, and the
+    # The proof kernel's modules a project's proof plans build on, and the
     # helper library for them; `src/stdlib.rs` `include_str!`s each one.
     "/tools/proof-kernel/kernel/term.av",
     "/tools/proof-kernel/kernel/proof.av",

@@ -294,18 +294,18 @@ pub fn emit_verify_law_forall_auto_proof(
     cert_model: bool,
     speculative: bool,
 ) -> Option<AutoProof> {
-    // A law that names its proof rule is closed by that rule's steps or
+    // A law that names its proof plan is closed by that plan's steps or
     // not at all: no tactic stands behind them, so a law never says
-    // `by Module.rule` while something else closed it. The certificate
-    // model states no step proof for any law: there a law its rule closed
+    // `by Module.plan` while something else closed it. The certificate
+    // model states no step proof for any law: there a law its plan closed
     // (the kernel accepted the steps) is proved like every other law closed
-    // by steps, and one its rule did not close gets no proof, so it is left
+    // by steps, and one its plan did not close gets no proof, so it is left
     // out like any other law that did not close.
-    let rule_closed = law.by_rule.is_some() && law_steps_for(ctx, &vb.fn_name, &law.name).is_some();
-    if law.by_rule.is_some() && cert_model && !rule_closed {
+    let plan_closed = law.by_plan.is_some() && law_steps_for(ctx, &vb.fn_name, &law.name).is_some();
+    if law.by_plan.is_some() && cert_model && !plan_closed {
         return None;
     }
-    if law.by_rule.is_some() && !cert_model {
+    if law.by_plan.is_some() && !cert_model {
         let body = match law_steps_for(ctx, &vb.fn_name, &law.name).and_then(|script| {
             super::proof_steps::render(&script, ctx)
                 .ok()

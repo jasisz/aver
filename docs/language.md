@@ -348,36 +348,36 @@ Effects outside Oracle's classified set still belong in record/replay, in partic
 
 `aver check` expects every pure, non-trivial function other than `main` to have a `verify` block next to it. The exception is a function no case can call: one with a parameter whose every value carries a capability resource (`Tcp.Connection`, `Work.Job`), because a provider mints those and no source expression writes one. A `List`, `Option` or other type with an empty value can still be written, so a parameter of `List<Tcp.Connection>` does not exempt its function.
 
-### Proof rules: `rules` modules and `by`
+### Proof plans: `plans` modules and `by`
 
-When the automatic proof steps cannot close a law, a project can write its own proof rule in Aver. A rule is an ordinary pure function in a rules module, a module whose header lists its rules with `rules [...]`:
+When the automatic proof steps cannot close a law, a project can write its own proof plan in Aver. A plan is an ordinary pure function that writes proof steps; it adds no rule to the kernel, and the kernel checks every step it writes. Plans live in a plans module, a module whose header lists its plans with `plans [...]`:
 
 ```aver
 module Stack
-    intent = "Proof rules for laws about the top of a stack held as a list."
+    intent = "Proof plans for laws about the top of a stack held as a list."
     depends [Kernel.Term, Kernel.Proof, Kernel.Lib]
-    rules [openByLength]
+    plans [openByLength]
 
 fn openByLength(goal: Goal) -> Result<Proof, String>
     ? "Open the list the `when` bounds, then evaluate both sides."
     ...
 ```
 
-Every function the `rules` line lists has exactly this signature: it receives the law to close as a `Goal` and returns its proof as `Proof` steps, or `Result.Err` with the reason it does not apply. `Goal` and `Proof` come from `Kernel.Proof` (written `Goal` and `Proof`, or `Kernel.Proof.Goal` and `Kernel.Proof.Proof`); the terms in them come from `Kernel.Term`. A goal is the law's claim and `when`, every definition the claim reaches, the module-level bindings and sum types those use, and the laws the `using` list cites. `Kernel.Lib` is a helper library for writing rules: evaluating a term together with the proof of that evaluation, unfolding a definition at the arm its argument decides, chaining steps, the law's `when` as a hypothesis, replacing a variable the way a list split does, and fresh names. A rule can split a given of list type into `[]` and a first element in front of the rest with the kernel's `PListCases` step.
+Every function the `plans` line lists has exactly this signature: it receives the law to close as a `Goal` and returns its proof as `Proof` steps, or `Result.Err` with the reason it does not apply. `Goal` and `Proof` come from `Kernel.Proof` (written `Goal` and `Proof`, or `Kernel.Proof.Goal` and `Kernel.Proof.Proof`); the terms in them come from `Kernel.Term`. A goal is the law's claim and `when`, every definition the claim reaches, the module-level bindings and sum types those use, and the laws the `using` list cites. `Kernel.Lib` is a helper library for writing plans: evaluating a term together with the proof of that evaluation, unfolding a definition at the arm its argument decides, chaining steps, the law's `when` as a hypothesis, replacing a variable the way a list split does, and fresh names. A plan can split a given of list type into `[]` and a first element in front of the rest with the kernel's `PListCases` step.
 
-A law names its rule with a `by` line:
+A law names its plan with a `by` line:
 
 ```aver
 verify shuffled law swapTwiceIsTheTopPair
     given items: List<List<Int>> = [[[1], [2]], [[1], [2], [3]]]
     when List.len(items) >= 2
-    by Rules.Stack.openByLength
+    by Plans.Stack.openByLength
     shuffled(124, shuffled(124, items)) => List.take(items, 2)
 ```
 
-The rule writes the whole proof, so a law has at most one `by` line and cannot have `by` together with `induction` or with `because` lines. `aver check` refuses a `by` line that names no rule of the project: a module that does not exist, one that is not a rules module, or a rule its `rules` line does not list. `using` keeps its meaning: the laws it lists are the ones the rule may cite. `aver format` puts the `by` line last, directly before the claim. For a law with a `by` line, `aver proof` runs the rule (in the Aver VM, with a limit on how many steps it may take) and hands its proof to the proof kernel, which checks every step exactly as it checks the proofs the compiler writes itself; Lean then checks the same steps again. Nothing the rule does is trusted, so a wrong rule cannot make a false law pass: it only leaves the law open. When the rule refuses, the law stays open and `aver proof` shows the rule's reason. When the rule runs out of steps, the law is reported as not checked. When the kernel refuses the rule's proof, the law stays open with the kernel's reason. In none of these cases does anything else try instead: neither the automatic proof steps nor Lean's own tactics, so a law that says `by Module.rule` is closed by that rule or not at all. A closed law reports which rule proved it: `closed by steps (proof by Rules.Stack.openByLength (c7d2c4aa71c5), 183 steps)`, where the hex digits start the sha256 of the rules module's source and of the project modules it depends on. The proof script written to `proof_steps/` records the rule and the full hash on its first line, as a comment the kernel does not read.
+The plan writes the whole proof, so a law has at most one `by` line and cannot have `by` together with `induction` or with `because` lines. `aver check` refuses a `by` line that names no plan of the project: a module that does not exist, one that is not a plans module, or a plan its `plans` line does not list. `using` keeps its meaning: the laws it lists are the ones the plan may cite. `aver format` puts the `by` line last, directly before the claim. For a law with a `by` line, `aver proof` runs the plan (in the Aver VM, with a limit on how many steps it may take) and hands its proof to the proof kernel, which checks every step exactly as it checks the proofs the compiler writes itself; Lean then checks the same steps again. Nothing the plan does is trusted, so a wrong plan cannot make a false law pass: it only leaves the law open. When the plan refuses, the law stays open and `aver proof` shows the plan's reason. When the plan runs out of steps, the law is reported as not checked. When the kernel refuses the plan's proof, the law stays open with the kernel's reason. In none of these cases does anything else try instead: neither the automatic proof steps nor Lean's own tactics, so a law that says `by Module.plan` is closed by that plan or not at all. A closed law reports which plan proved it: `closed by steps (proof by Plans.Stack.openByLength (c7d2c4aa71c5), 183 steps)`, where the hex digits start the sha256 of the plans module's source and of the project modules it depends on. The proof script written to `proof_steps/` records the plan and the full hash on its first line, as a comment the kernel does not read.
 
-A rules module is not part of the program. It has no effects, no module of the program may depend on it (only another rules module may), and a law can use only the rules of its own project. The names `Kernel.*` belong to the proof kernel the compiler ships: a project file cannot take one, only a rules module may depend on a kernel module, and only on `Kernel.Term`, `Kernel.Proof` and `Kernel.Lib`. `aver check` and `aver verify` check a rules module like any other module, so a rule can have `verify` examples of its own.
+A plans module is not part of the program. It has no effects, no module of the program may depend on it (only another plans module may), and a law can use only the plans of its own project. The names `Kernel.*` belong to the proof kernel the compiler ships: a project file cannot take one, only a plans module may depend on a kernel module, and only on `Kernel.Term`, `Kernel.Proof` and `Kernel.Lib`. `aver check` and `aver verify` check a plans module like any other module, so a plan can have `verify` examples of its own.
 
 ## Decision blocks
 

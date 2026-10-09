@@ -1,6 +1,6 @@
-//! A law proved by a project rule: `by Module.rule`.
+//! A law proved by a project plan: `by Module.plan`.
 //!
-//! The rule is an Aver function of a `rules [...]` module in the same
+//! The plan is an Aver function of a `plans [...]` module in the same
 //! project. It receives the law as a `Kernel.Proof.Goal` (the step script
 //! without its proof: the obligation, every definition the claim reaches,
 //! the module-level bindings they read, the sum types they match on and the
@@ -8,7 +8,7 @@
 //! in the VM under a step limit; its proof is read back against the goal
 //! ([`crate::ir::proof_steps::read`]) and the kernel checks the whole script
 //! as it checks any other. No automatic producer runs for such a law: a
-//! refusal, a rule that runs out of steps and a proof the kernel refuses all
+//! refusal, a plan that runs out of steps and a proof the kernel refuses all
 //! leave it open, with the reason.
 
 use std::collections::HashMap;
@@ -17,51 +17,51 @@ use crate::codegen::proof_lower::ProofLowerInputs;
 use crate::ir::hir::{ResolvedCallee, ResolvedCtor, ResolvedExpr, ResolvedPattern};
 use crate::ir::identity::FnId;
 use crate::ir::proof_steps::term::{self, Term};
-use crate::ir::proof_steps::{Const, Def, LawRef, Obligation, Proof, RuleUse, Script};
+use crate::ir::proof_steps::{Const, Def, LawRef, Obligation, PlanUse, Proof, Script};
 use crate::ir::{LawTheorem, ProofIR};
 
 use super::env::Env;
 
-/// VM steps one use of a rule may take before it is stopped and the law is
+/// VM steps one use of a plan may take before it is stopped and the law is
 /// left not checked.
-pub(crate) const RULE_STEP_LIMIT: u64 = 50_000_000;
+pub(crate) const PLAN_STEP_LIMIT: u64 = 50_000_000;
 
-/// The step limit in force: [`RULE_STEP_LIMIT`], or `AVER_RULE_STEP_LIMIT`
+/// The step limit in force: [`PLAN_STEP_LIMIT`], or `AVER_PLAN_STEP_LIMIT`
 /// (a testing knob, so a test can show what running out of steps does
 /// without spending the full budget).
 fn step_limit() -> u64 {
-    std::env::var("AVER_RULE_STEP_LIMIT")
+    std::env::var("AVER_PLAN_STEP_LIMIT")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(RULE_STEP_LIMIT)
+        .unwrap_or(PLAN_STEP_LIMIT)
 }
 
-/// One rules module, compiled once per proof run.
+/// One plans module, compiled once per proof run.
 pub(crate) struct Runner {
     code: crate::vm::CodeStore,
     globals: Vec<crate::nan_value::NanValue>,
     arena: crate::nan_value::Arena,
-    /// Rule name to the generated function that runs it.
+    /// Plan name to the generated function that runs it.
     entries: HashMap<String, String>,
-    /// sha256 (hex) of the rules module's source and of every project
+    /// sha256 (hex) of the plans module's source and of every project
     /// module it depends on.
     hash: String,
 }
 
-/// The rules modules compiled so far in this run, by module name.
+/// The plans modules compiled so far in this run, by module name.
 #[derive(Default)]
-pub(crate) struct Rules {
+pub(crate) struct Plans {
     runners: HashMap<String, Result<Runner, String>>,
 }
 
 /// The module and function a `by` line names.
-fn split_rule(path: &str) -> Result<(&str, &str), String> {
+fn split_plan(path: &str) -> Result<(&str, &str), String> {
     path.rsplit_once('.')
         .filter(|(m, f)| !m.is_empty() && !f.is_empty())
-        .ok_or_else(|| format!("`by {path}` must name a rule as Module.rule"))
+        .ok_or_else(|| format!("`by {path}` must name a plan as Module.plan"))
 }
 
-impl Rules {
+impl Plans {
     fn runner(&mut self, root: &str, module: &str) -> &Result<Runner, String> {
         self.runners
             .entry(module.to_string())
@@ -69,44 +69,44 @@ impl Rules {
     }
 }
 
-/// Load, check and compile the rules module `module` of the project at
-/// `root`, with one generated function per rule that reads the goal, runs
-/// the rule and writes its answer.
+/// Load, check and compile the plans module `module` of the project at
+/// `root`, with one generated function per plan that reads the goal, runs
+/// the plan and writes its answer.
 fn compile(root: &str, module: &str) -> Result<Runner, String> {
     use crate::nan_value::Arena;
     let Some(path) = crate::source::find_module_file(module, root) else {
         return Err(format!(
-            "this project has no module {module}: a rule must come from a rules module of the same project"
+            "this project has no module {module}: a plan must come from a plans module of the same project"
         ));
     };
     let source = std::fs::read_to_string(&path)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     let items = crate::source::parse_source(&source)
-        .map_err(|e| format!("rules module {module} does not parse: {e}"))?;
-    let Some(rules) = items.iter().find_map(|i| match i {
-        crate::ast::TopLevel::Module(m) => m.rules.clone(),
+        .map_err(|e| format!("plans module {module} does not parse: {e}"))?;
+    let Some(plans) = items.iter().find_map(|i| match i {
+        crate::ast::TopLevel::Module(m) => m.plans.clone(),
         _ => None,
     }) else {
         return Err(format!(
-            "module {module} is not a rules module (it has no `rules [...]` line)"
+            "module {module} is not a plans module (it has no `plans [...]` line)"
         ));
     };
     let mut entries = HashMap::new();
     let mut entry = format!(
-        "module RuleRunner\n    intent = \"Runs the proof rules of {module} on a goal.\"\n    depends [Kernel.Lib, {module}]\n    rules []\n"
+        "module PlanRunner\n    intent = \"Runs the proof plans of {module} on a goal.\"\n    depends [Kernel.Lib, {module}]\n    plans []\n"
     );
-    for (i, rule) in rules.iter().enumerate() {
-        let name = format!("runRule{i}");
+    for (i, plan) in plans.iter().enumerate() {
+        let name = format!("runPlan{i}");
         entry.push_str(&format!(
-            "\nfn {name}(text: String) -> String\n    ? \"Rule {rule}.\"\n    match Kernel.Lib.readGoal(text)\n        Result.Err(why) -> \"goal\\n{{why}}\"\n        Result.Ok(g) -> Kernel.Lib.writeAnswer({module}.{rule}(g))\n"
+            "\nfn {name}(text: String) -> String\n    ? \"Plan {plan}.\"\n    match Kernel.Lib.readGoal(text)\n        Result.Err(why) -> \"goal\\n{{why}}\"\n        Result.Ok(g) -> Kernel.Lib.writeAnswer({module}.{plan}(g))\n"
         ));
-        entries.insert(rule.clone(), name);
+        entries.insert(plan.clone(), name);
     }
-    let entry_file = format!("{root}/<rules {module}>.av");
+    let entry_file = format!("{root}/<plans {module}>.av");
     let mut items = crate::source::parse_project_source(&entry, root, &entry_file)
-        .map_err(|e| format!("rule runner: {e}"))?;
+        .map_err(|e| format!("plan runner: {e}"))?;
     let prepared = crate::source::load_compile_deps(&items, root)
-        .map_err(|e| format!("rules module {module}: {e}"))?;
+        .map_err(|e| format!("plans module {module}: {e}"))?;
     let result = crate::ir::pipeline::run(
         &mut items,
         crate::ir::PipelineConfig {
@@ -126,7 +126,7 @@ fn compile(root: &str, module: &str) -> Result<Runner, String> {
             .map(|o| o.file.clone())
             .unwrap_or_else(|| module.to_string());
         return Err(format!(
-            "rules module {module} does not type-check: {file}:{}: {}",
+            "plans module {module} does not type-check: {file}:{}: {}",
             e.line, e.message
         ));
     }
@@ -140,7 +140,7 @@ fn compile(root: &str, module: &str) -> Result<Runner, String> {
         &entry_file,
         result.analysis.as_ref(),
     )
-    .map_err(|e| format!("rules module {module} does not compile: {e}"))?;
+    .map_err(|e| format!("plans module {module} does not compile: {e}"))?;
     Ok(Runner {
         code,
         globals,
@@ -150,7 +150,7 @@ fn compile(root: &str, module: &str) -> Result<Runner, String> {
     })
 }
 
-/// sha256 of the rules module and of each project module it depends on,
+/// sha256 of the plans module and of each project module it depends on,
 /// in name order; the modules the compiler ships (the kernel's among them)
 /// are left out.
 fn source_hash(module: &str, source: &str, loaded: &[crate::source::LoadedModule]) -> String {
@@ -211,7 +211,7 @@ fn ctors(t: &Term, out: &mut Vec<ResolvedCtor>) {
     });
 }
 
-/// The goal a rule gets for `ob`: every definition the claim reaches that
+/// The goal a plan gets for `ob`: every definition the claim reaches that
 /// steps may open, the module-level bindings they read, the sums they
 /// match on, and the cited laws.
 fn goal(inputs: &ProofLowerInputs, ob: &Obligation, laws: Vec<LawRef>) -> Script {
@@ -276,7 +276,7 @@ fn goal(inputs: &ProofLowerInputs, ob: &Obligation, laws: Vec<LawRef>) -> Script
         laws,
         sums,
         proof: Proof::Refl(ob.lhs.clone()),
-        rule: None,
+        plan: None,
     }
 }
 
@@ -453,64 +453,64 @@ fn needed_defs(goal: &Script, proof: &Proof) -> Vec<Def> {
         .collect()
 }
 
-/// Prove law `i` by the rule its `by` line names.
+/// Prove law `i` by the plan its `by` line names.
 pub(super) fn produce(
     inputs: &ProofLowerInputs,
     ir: &ProofIR,
     i: usize,
-    rules: &mut Rules,
+    plans: &mut Plans,
 ) -> Result<Script, String> {
     let t: &LawTheorem = &ir.law_theorems[i];
-    let path = t.by_rule.as_deref().expect("a law with a `by` line");
-    let (module, rule) = split_rule(path)?;
+    let path = t.by_plan.as_deref().expect("a law with a `by` line");
+    let (module, plan) = split_plan(path)?;
     if t.premises.len() > 1 {
-        return Err(format!("rule {path}: more than one premise"));
+        return Err(format!("plan {path}: more than one premise"));
     }
-    let Some(root) = inputs.rules_root else {
+    let Some(root) = inputs.plans_root else {
         return Err(format!(
-            "rule {path}: this command does not run proof rules"
+            "plan {path}: this command does not run proof plans"
         ));
     };
-    if let Some(why) = crate::types::checker::rules_module::by_line_refusal(path, root) {
-        return Err(format!("rule {path}: {why}"));
+    if let Some(why) = crate::types::checker::plans_module::by_line_refusal(path, root) {
+        return Err(format!("plan {path}: {why}"));
     }
     let laws = match &t.using {
         Some(names) if !names.is_empty() => match super::cited(inputs, ir, t, names) {
             Some(laws) => laws,
-            None => return Err(format!("rule {path}: a cited law has no theorem")),
+            None => return Err(format!("plan {path}: a cited law has no theorem")),
         },
         _ => Vec::new(),
     };
     let ob = super::obligation(inputs, t);
     let goal = goal(inputs, &ob, laws);
-    let runner = match rules.runner(root, module) {
+    let runner = match plans.runner(root, module) {
         Ok(r) => r,
-        Err(why) => return Err(format!("rule {path}: {why}")),
+        Err(why) => return Err(format!("plan {path}: {why}")),
     };
-    let Some(entry) = runner.entries.get(rule) else {
+    let Some(entry) = runner.entries.get(plan) else {
         return Err(format!(
-            "rule {path}: {module} does not list `{rule}` in its `rules [...]` line"
+            "plan {path}: {module} does not list `{plan}` in its `plans [...]` line"
         ));
     };
-    let use_ = RuleUse {
+    let use_ = PlanUse {
         name: path.to_string(),
         hash: runner.hash.clone(),
     };
     let text = crate::ir::proof_steps::sexpr::script(&goal, inputs.symbol_table)
-        .map_err(|why| format!("rule {path}: the goal cannot be written as step data: {why}"))?;
-    let answer = run(runner, entry, &text).map_err(|why| format!("rule {path}: {why}"))?;
+        .map_err(|why| format!("plan {path}: the goal cannot be written as step data: {why}"))?;
+    let answer = run(runner, entry, &text).map_err(|why| format!("plan {path}: {why}"))?;
     let (kind, body) = answer.split_once('\n').unwrap_or((answer.as_str(), ""));
     let proof_text = match kind {
         "proof" => body,
-        "refused" => return Err(format!("rule {path} refused: {body}")),
-        "goal" => return Err(format!("rule {path}: the goal could not be read: {body}")),
-        _ => return Err(format!("rule {path}: an answer the compiler cannot read")),
+        "refused" => return Err(format!("plan {path} refused: {body}")),
+        "goal" => return Err(format!("plan {path}: the goal could not be read: {body}")),
+        _ => return Err(format!("plan {path}: an answer the compiler cannot read")),
     };
     let reader = crate::ir::proof_steps::read::Reader::for_goal(&goal, inputs.symbol_table)
-        .map_err(|why| format!("rule {path}: {why}"))?;
+        .map_err(|why| format!("plan {path}: {why}"))?;
     let proof = reader.proof_text(proof_text).map_err(|why| {
         format!(
-            "rule {path} ({}): its proof cannot be read: {why}",
+            "plan {path} ({}): its proof cannot be read: {why}",
             use_.short_hash()
         )
     })?;
@@ -518,28 +518,28 @@ pub(super) fn produce(
     let script = Script {
         defs,
         proof,
-        rule: Some(use_.clone()),
+        plan: Some(use_.clone()),
         ..goal
     };
     if script.proof.size() > super::MAX_PROOF_NODES {
         return Err(format!(
-            "rule {path} ({}): {} steps is more than a backend should elaborate",
+            "plan {path} ({}): {} steps is more than a backend should elaborate",
             use_.short_hash(),
             script.proof.size()
         ));
     }
     let checked = crate::ir::proof_steps::sexpr::script(&script, inputs.symbol_table)
-        .map_err(|why| format!("rule {path} ({}): {why}", use_.short_hash()))?;
+        .map_err(|why| format!("plan {path} ({}): {why}", use_.short_hash()))?;
     crate::proof_kernel::verdict(&checked).map_err(|why| {
         format!(
-            "rule {path} ({}): the kernel refused its proof: {why}",
+            "plan {path} ({}): the kernel refused its proof: {why}",
             use_.short_hash()
         )
     })?;
     Ok(script)
 }
 
-/// Run one generated rule function on the goal text, under the step limit.
+/// Run one generated plan function on the goal text, under the step limit.
 fn run(runner: &Runner, entry: &str, goal: &str) -> Result<String, String> {
     use crate::nan_value::{NanValue, NanValueConvert};
     use crate::value::Value;
@@ -558,11 +558,11 @@ fn run(runner: &Runner, entry: &str, goal: &str) -> Result<String, String> {
     match out {
         Ok(v) => match v.to_value(&machine.arena) {
             Value::Str(s) => Ok(s),
-            _ => Err("the rule runner returned something other than text".into()),
+            _ => Err("the plan runner returned something other than text".into()),
         },
         Err(crate::vm::VmError::StepLimit { .. }) => Err(format!(
-            "not checked: the rule ran out of its {limit} steps"
+            "not checked: the plan ran out of its {limit} steps"
         )),
-        Err(e) => Err(format!("the rule failed: {e}")),
+        Err(e) => Err(format!("the plan failed: {e}")),
     }
 }

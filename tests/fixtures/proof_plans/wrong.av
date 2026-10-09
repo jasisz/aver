@@ -1,7 +1,7 @@
 module Wrong
     intent =
-        "Laws a rule must not close: a false law the rule refuses, a rule whose proof the kernel"
-        "refuses, and a rule that never returns."
+        "Laws a plan must not close: a false law the plan refuses, a plan whose proof the kernel"
+        "refuses, and a plan that never returns."
     exposes [swapped]
     effects []
 
@@ -35,37 +35,37 @@ verify swapped
 verify swapped law swapOnceIsTheTopPair
     given items: List<List<Int>> = [[[1], [1]], [[2], [2], [3]]]
     when List.len(items) >= 2
-    by Rules.Stack.openByLength
+    by Plans.Stack.openByLength
     swapped(items) => List.take(items, 2)
 
 verify swapped law swapIsTheSwap
     given items: List<List<Int>> = [[[1], [2]], [[2], [2], [3]]]
     when List.len(items) >= 2
-    by Rules.Broken.claimsTheWhen
+    by Plans.Broken.claimsTheWhen
     swapped(items) => swapped(items)
 
 verify swapped law swapAgain
     given items: List<List<Int>> = [[[1], [2]]]
     when List.len(items) >= 2
-    by Rules.Broken.spins
+    by Plans.Broken.spins
     swapped(items) => swapped(items)
 
 verify swapped law swapOnceUsingNothing
     given items: List<List<Int>> = [[[1], [1]], [[2], [2], [3]]]
     when List.len(items) >= 2
     using []
-    by Rules.Stack.openByLength
+    by Plans.Stack.openByLength
     swapped(items) => List.take(items, 2)
 
 verify swapped law swapIsTheSwapUsingNothing
     given items: List<List<Int>> = [[[1], [2]], [[2], [2], [3]]]
     when List.len(items) >= 2
     using []
-    by Rules.Broken.claimsTheWhen
+    by Plans.Broken.claimsTheWhen
     swapped(items) => swapped(items)
 
 verify swapped law swapAgainUsingNothing
     given items: List<List<Int>> = [[[1], [2]]]
     using []
-    by Rules.Broken.spins
+    by Plans.Broken.spins
     swapped(items) => swapped(items)

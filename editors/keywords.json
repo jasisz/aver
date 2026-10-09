@@ -7,7 +7,7 @@
     "depends",
     "exposes",
     "opaque",
-    "rules"
+    "plans"
   ],
   "control": [
     "fn",

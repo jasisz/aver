@@ -203,7 +203,7 @@ pub fn resolve_standard_module_source(name: &str) -> Option<ModuleSource> {
     })
 }
 
-/// The proof kernel's modules that proof rules build on (`Kernel.Term`,
+/// The proof kernel's modules that proof plans build on (`Kernel.Term`,
 /// `Kernel.Proof`, `Kernel.Lib`, …), embedded in the compiler. They resolve
 /// only where the project has no file of that name.
 pub fn resolve_kernel_api_source(name: &str) -> Option<ModuleSource> {
@@ -349,11 +349,11 @@ pub fn is_kernel_source_tree(module_root: &str) -> bool {
     canonicalize_path(Path::new(module_root)) == canonicalize_path(&own)
 }
 
-/// The modules of the proof kernel a rules module may depend on.
-pub const RULES_KERNEL_API: [&str; 3] = ["Kernel.Term", "Kernel.Proof", "Kernel.Lib"];
+/// The modules of the proof kernel a plans module may depend on.
+pub const PLANS_KERNEL_API: [&str; 3] = ["Kernel.Term", "Kernel.Proof", "Kernel.Lib"];
 
 /// Why `parent` may not depend on the kernel module `dep`, if it may not:
-/// only a rules module depends on the kernel, and only on its public
+/// only a plans module depends on the kernel, and only on its public
 /// modules. The kernel's own modules and its source tree are exempt.
 fn kernel_dependency_refusal(
     parent_path: &Path,
@@ -368,17 +368,17 @@ fn kernel_dependency_refusal(
         return None;
     }
     let decl = visibility::module_decl(parent_items)?;
-    if decl.rules.is_none() {
+    if decl.plans.is_none() {
         return Some(format!(
-            "module '{}' depends on '{dep}': only a rules module may depend on the proof kernel's modules",
+            "module '{}' depends on '{dep}': only a plans module may depend on the proof kernel's modules",
             decl.name
         ));
     }
-    (!RULES_KERNEL_API.contains(&dep)).then(|| {
+    (!PLANS_KERNEL_API.contains(&dep)).then(|| {
         format!(
-            "rules module '{}' depends on '{dep}': a rules module may depend on {} of the proof kernel, and on nothing else of it",
+            "plans module '{}' depends on '{dep}': a plans module may depend on {} of the proof kernel, and on nothing else of it",
             decl.name,
-            RULES_KERNEL_API.join(", ")
+            PLANS_KERNEL_API.join(", ")
         )
     })
 }

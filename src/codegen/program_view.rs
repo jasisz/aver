@@ -319,8 +319,8 @@ mod tests {
             processes: Vec::new(),
             answers: Vec::new(),
             answers_line: None,
-            rules: None,
-            rules_line: None,
+            plans: None,
+            plans_line: None,
             seatings: Vec::new(),
         })];
         let modules = vec![mk_module("A", &["walker"]), mk_module("B", &["walker"])];

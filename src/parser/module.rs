@@ -20,8 +20,8 @@ impl Parser {
         let mut semantics_line = None;
         let mut answers = Vec::new();
         let mut answers_line = None;
-        let mut rules = None;
-        let mut rules_line = None;
+        let mut plans = None;
+        let mut plans_line = None;
 
         if self.is_indent() {
             self.advance(); // consume INDENT
@@ -84,19 +84,19 @@ impl Parser {
                         self.advance(); // consume 'answers'
                         answers = self.parse_depends_list()?;
                     }
-                    // `rules [openByLength]` — this module holds proof rules
+                    // `plans [openByLength]` — this module holds proof plans
                     // a law names with `by`. Contextual like `answers`.
                     TokenKind::Ident(s)
-                        if s == "rules" && matches!(&self.peek(1).kind, TokenKind::LBracket) =>
+                        if s == "plans" && matches!(&self.peek(1).kind, TokenKind::LBracket) =>
                     {
-                        if rules.is_some() {
+                        if plans.is_some() {
                             return Err(
-                                self.error("A module may have only one 'rules' list".to_string())
+                                self.error("A module may have only one 'plans' list".to_string())
                             );
                         }
-                        rules_line = Some(self.current().line);
-                        self.advance(); // consume 'rules'
-                        rules = Some(self.parse_bracket_ident_list()?);
+                        plans_line = Some(self.current().line);
+                        self.advance(); // consume 'plans'
+                        plans = Some(self.parse_bracket_ident_list()?);
                     }
                     TokenKind::Ident(s) if s == "semantics" => {
                         semantics_line = Some(self.current().line);
@@ -129,7 +129,7 @@ impl Parser {
                         ) =>
                     {
                         return Err(self.error(format!(
-                            "Unknown module header field, found {}. Allowed: intent, kind, semantics, depends, exposes, effects, answers, rules. \
+                            "Unknown module header field, found {}. Allowed: intent, kind, semantics, depends, exposes, effects, answers, plans. \
                              If you meant a top-level binding, unindent it — bindings live at column 0, outside the header.",
                             self.current().kind
                         )));
@@ -167,8 +167,8 @@ impl Parser {
             processes: Vec::new(),
             answers,
             answers_line,
-            rules,
-            rules_line,
+            plans,
+            plans_line,
             seatings: Vec::new(),
         })
     }

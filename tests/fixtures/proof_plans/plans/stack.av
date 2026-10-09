@@ -1,13 +1,13 @@
 module Stack
     intent =
-        "Proof rules for laws about the top of a stack held as a list."
+        "Proof plans for laws about the top of a stack held as a list."
         "openByLength: a law under `when List.len(v) >= k` holds once v is opened into its first k cells"
         "and both sides are evaluated; a case with fewer cells contradicts the `when`."
     depends [Kernel.Term, Kernel.Proof, Kernel.Lib]
-    rules [openByLength]
+    plans [openByLength]
 
 fn openByLength(goal: Goal) -> Result<Proof, String>
-    ? "The proof that opens the list the `when` bounds, or why the rule does not apply."
+    ? "The proof that opens the list the `when` bounds, or why the plan does not apply."
     match Kernel.Lib.whenOf(goal)
         Option.None -> Result.Err("the law has no `when`")
         Option.Some(w) -> match lengthBound(w)
