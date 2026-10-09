@@ -877,9 +877,13 @@ pub struct FrontResult {
 ///
 /// The loader stores modules leaves-first, so lowering in order lets a
 /// process module that depends on another see the lowered one. A module
-/// without a process is left untouched, which is every module in almost
-/// every program: the extra type check is paid only where a dependency
-/// requests something some program could answer.
+/// without a process or nested patterns keeps its items as written.
+///
+/// Every module is checked through its own front door on the way, and that
+/// verdict is stored on the module (`check_errors`). An importer is checked
+/// against its dependencies' surfaces only, so a module that failed its own
+/// check must be refused before any importer is compiled with it, whatever
+/// it contains.
 ///
 /// Returns the errors of every dependency whose lowering FAILED, each
 /// carrying that dependency's file as its origin. The caller hands them to
@@ -934,10 +938,7 @@ pub fn lower_loaded_process_modules_except(
     let marked = marked.with_run_entry("<entry>");
     let mut errors = Vec::new();
     for index in 0..loaded.len() {
-        if settled(index)
-            || (!crate::yield_lowering::may_have_processes(&loaded[index].items)
-                && !crate::ir::nested_patterns::has_nested_patterns(&loaded[index].items))
-        {
+        if settled(index) || loaded[index].items.is_empty() {
             continue;
         }
         // The modules before this one are its dependencies as the importer
@@ -949,6 +950,7 @@ pub fn lower_loaded_process_modules_except(
         // items as written when it turns out to have none.
         let as_written = (!crate::ir::nested_patterns::has_nested_patterns(&module.items))
             .then(|| module.items.clone());
+        module.check_errors.clear();
         let mut items = std::mem::take(&mut module.items);
         let user_program_len = items.len();
         let front = front(
@@ -963,26 +965,30 @@ pub fn lower_loaded_process_modules_except(
             },
         );
         loaded[index].items = items;
+        let Some(tc) = front.typecheck else { continue };
+        let mut own_errors = tc.errors;
+        if !own_errors.is_empty() {
+            let origin = dependency_origin(&loaded[index].path, module_root);
+            for error in &mut own_errors {
+                if error.origin.is_none() {
+                    error.origin = Some(origin.clone());
+                }
+            }
+        }
+        loaded[index].check_errors = own_errors.clone();
         if front.yield_lowering.is_some() {
             continue;
         }
-        let Some(tc) = front.typecheck else { continue };
         if tc.processes.is_empty()
             && let Some(as_written) = as_written
         {
             loaded[index].items = as_written;
             continue;
         }
-        if !tc.errors.is_empty() {
+        if !own_errors.is_empty() {
             failed.insert(index);
         }
-        let origin = dependency_origin(&loaded[index].path, module_root);
-        errors.extend(tc.errors.into_iter().map(|mut error| {
-            if error.origin.is_none() {
-                error.origin = Some(origin.clone());
-            }
-            error
-        }));
+        errors.extend(own_errors);
     }
     (errors, failed)
 }

@@ -479,6 +479,7 @@ pub(crate) fn embedded_capability_modules() -> Vec<crate::source::LoadedModule> 
                     .expect("standard capability source must be embedded")
                     .to_vec(),
                 path: std::path::PathBuf::from(module.virtual_path),
+                check_errors: Vec::new(),
             }
         })
         .collect()
@@ -600,6 +601,7 @@ pub(crate) fn append_required_standard_capability_modules(
                 items: crate::source::parse_source(module.source)
                     .expect("embedded standard capability must parse"),
                 path: std::path::PathBuf::from(module.virtual_path),
+                check_errors: Vec::new(),
             });
         }
 

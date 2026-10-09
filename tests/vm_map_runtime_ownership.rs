@@ -144,8 +144,8 @@ fn changes(n: Int, acc: List<Change>) -> List<Change>
         true -> changes(n - 1, List.prepend(Change.Put(Entry(key = n, value = n + 1)), acc))
         false -> List.reverse(acc)
 
-fn applyChanges(changes: List<Change>, into: Map<Int, Int>) -> Map<Int, Int>
-    match changes
+fn applyChanges(pending: List<Change>, into: Map<Int, Int>) -> Map<Int, Int>
+    match pending
         [] -> into
         [head, ..tail] -> applyNext(head, tail, into)
 

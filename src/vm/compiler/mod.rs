@@ -280,6 +280,7 @@ fn compile_program_inner(
         }
         ModuleSource::Disk(None) => {}
         ModuleSource::Loaded(loaded) => {
+            refuse_failed_dependency(&loaded)?;
             for m in loaded {
                 let path = m.path.display().to_string();
                 compiler.integrate_module(&m.dep_name, &path, m.items, symbols, arena)?;
@@ -442,6 +443,44 @@ fn compile_program_inner(
 #[derive(Debug)]
 pub struct CompileError {
     pub msg: String,
+}
+
+/// Refuse a program one of whose dependencies failed its own check.
+///
+/// An importer is checked against the surfaces of its dependencies only.
+/// Each dependency's body is checked once, by its own front door, when the
+/// loader lowers the module list, and the verdict travels on the module
+/// (`check_errors`). A module that failed keeps whatever form its check left
+/// it in (a nested pattern as written, a name that shadows a function, a
+/// type error in a flat body) and must never be resolved or compiled into an
+/// importer, whatever it contains. This refuses the program with the first
+/// such module's own errors, leaves-first.
+fn refuse_failed_dependency(modules: &[crate::source::LoadedModule]) -> Result<(), CompileError> {
+    let Some(module) = modules
+        .iter()
+        .find(|module| !module.check_errors.is_empty())
+    else {
+        return Ok(());
+    };
+    let details = module
+        .check_errors
+        .iter()
+        .map(|error| {
+            let file = error
+                .origin
+                .as_ref()
+                .map(|origin| origin.file.clone())
+                .unwrap_or_else(|| module.path.display().to_string());
+            format!("  {}:{}:{}: {}", file, error.line, error.col, error.message)
+        })
+        .collect::<Vec<_>>();
+    Err(CompileError {
+        msg: format!(
+            "Type errors in dependency module '{}':\n{}",
+            module.dep_name,
+            details.join("\n")
+        ),
+    })
 }
 
 pub(super) fn operand_u8(value: usize, what: &str) -> Result<u8, CompileError> {
@@ -620,6 +659,7 @@ impl ProgramCompiler {
 
         let modules = crate::source::load_module_tree(&root_deps, module_root)
             .map_err(|e| CompileError { msg: e })?;
+        refuse_failed_dependency(&modules)?;
 
         for loaded in modules {
             let path = loaded.path.display().to_string();
@@ -1710,6 +1750,133 @@ mod tests {
         let (code, _globals) =
             compile_program(&resolved, &symbols, &mut arena, None).expect("vm compile should pass");
         code
+    }
+
+    fn embedded_dependency(source: &str) -> crate::source::LoadedModule {
+        crate::source::LoadedModule {
+            dep_name: "Kernel.Lib".to_string(),
+            items: parse_source(source).expect("source should parse"),
+            path: std::path::PathBuf::from("<aver-stdlib>/kernel/lib.av"),
+            check_errors: Vec::new(),
+        }
+    }
+
+    /// A dependency the program does not report as a unit of its own (an
+    /// embedded module) whose check fails keeps its nested patterns. The
+    /// compiler refuses it with the module's own errors before HIR resolve,
+    /// which has no form for them, ever sees it.
+    #[test]
+    fn dependency_that_failed_its_check_is_refused_with_its_errors() {
+        let source = r#"
+module Lib
+    intent = "t"
+    exposes [fresh]
+
+fn taken(xs: List<Int>) -> Int
+    ? "t"
+    match xs
+        [a, b, ..rest] -> a + b
+        _ -> 0
+
+fn fresh(taken: List<Int>) -> Int
+    ? "t"
+    match taken
+        [a, ..rest] -> a
+        _ -> 0
+"#;
+        let mut modules = vec![embedded_dependency(source)];
+        let (errors, failed) = crate::ir::pipeline::lower_loaded_process_modules(
+            &mut modules,
+            None,
+            &crate::config::MarkedCapabilities::default(),
+        );
+        assert!(!errors.is_empty() && failed.contains(&0), "{errors:?}");
+        let error = super::refuse_failed_dependency(&modules)
+            .expect_err("a dependency that failed its check must be refused");
+        assert!(error.msg.contains("'Kernel.Lib'"), "{}", error.msg);
+        assert!(
+            error
+                .msg
+                .contains("the parameter 'taken' shadows the function 'taken'"),
+            "{}",
+            error.msg
+        );
+    }
+
+    #[test]
+    fn dependency_whose_nested_patterns_were_compiled_is_accepted() {
+        let source = r#"
+module Lib
+    intent = "t"
+    exposes [first]
+
+fn first(xs: List<Int>) -> Int
+    ? "t"
+    match xs
+        [a, b, ..rest] -> a + b
+        _ -> 0
+"#;
+        let mut modules = vec![embedded_dependency(source)];
+        let (errors, _) = crate::ir::pipeline::lower_loaded_process_modules(
+            &mut modules,
+            None,
+            &crate::config::MarkedCapabilities::default(),
+        );
+        assert!(errors.is_empty(), "{errors:?}");
+        assert!(super::refuse_failed_dependency(&modules).is_ok());
+    }
+
+    /// The verdict, not the module's shape, decides: a dependency with no
+    /// nested pattern and no process fails its check just the same, and is
+    /// refused just the same, for a shadowing parameter and for a plain type
+    /// error.
+    #[test]
+    fn flat_dependency_that_failed_its_check_is_refused_with_its_errors() {
+        for (source, expected) in [
+            (
+                r#"
+module Lib
+    intent = "t"
+    exposes [fresh]
+
+fn taken(n: Int) -> Int
+    ? "t"
+    n + 1
+
+fn fresh(taken: Int) -> Int
+    ? "t"
+    taken + 2
+"#,
+                "the parameter 'taken' shadows the function 'taken'",
+            ),
+            (
+                r#"
+module Lib
+    intent = "t"
+    exposes [fresh]
+
+fn fresh(n: Int) -> Int
+    ? "t"
+    n + "one"
+"#,
+                "lib.av:",
+            ),
+        ] {
+            let mut modules = vec![embedded_dependency(source)];
+            let (errors, failed) = crate::ir::pipeline::lower_loaded_process_modules(
+                &mut modules,
+                None,
+                &crate::config::MarkedCapabilities::default(),
+            );
+            // Nothing to lower, so the lowering itself reports no failure;
+            // the module's own verdict still says it failed.
+            assert!(errors.is_empty() && failed.is_empty(), "{errors:?}");
+            assert!(!modules[0].check_errors.is_empty());
+            let error = super::refuse_failed_dependency(&modules)
+                .expect_err("a dependency that failed its check must be refused");
+            assert!(error.msg.contains("'Kernel.Lib'"), "{}", error.msg);
+            assert!(error.msg.contains(expected), "{}", error.msg);
+        }
     }
 
     #[test]

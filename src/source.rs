@@ -397,6 +397,13 @@ pub struct LoadedModule {
     pub dep_name: String,
     pub items: Vec<TopLevel>,
     pub path: PathBuf,
+    /// The errors of this module's own check, each naming its file, when
+    /// the loader that produced it ran that check
+    /// ([`crate::ir::pipeline::lower_loaded_process_modules_except`]). A
+    /// module that carries any never reaches the compile of a module that
+    /// imports it: the VM compiler refuses the program with these errors.
+    /// Empty for a module that passed, and for a list built by hand.
+    pub check_errors: Vec<crate::types::checker::TypeError>,
 }
 
 /// Why a module could not be loaded as written.
@@ -516,6 +523,7 @@ impl ProgramModule {
             dep_name: self.dep_name.clone(),
             items: self.items.clone(),
             path: self.path.clone(),
+            check_errors: Vec::new(),
         }
     }
 }
@@ -529,7 +537,8 @@ impl ProgramModule {
 #[derive(Clone, Debug, Default)]
 pub struct Program {
     pub modules: Vec<ProgramModule>,
-    /// Per-path memo of a process dependency's already-lowered form,
+    /// Per-path memo of each dependency as importers read it (lowered when
+    /// the lowering rewrites it) together with the verdict of its own check,
     /// computed the first time [`Self::loaded_dependencies_for`] needs it
     /// (see [`lowering_memo_for`]). A whole-program walk calls that method
     /// once per report unit, and units share most of their dependency cone,
@@ -537,9 +546,7 @@ pub struct Program {
     /// and re-lowered from scratch by every unit that reaches it instead of
     /// once for the whole run.
     ///
-    /// A module that cannot hold a process never enters this map, so a
-    /// program without one pays nothing extra to build or consult it, and a
-    /// command that loads a program without asking for a unit's
+    /// A command that loads a program without asking for a unit's
     /// dependencies never builds it at all. A `OnceLock` filled at most once
     /// keeps `Program` `Sync`.
     lowering_memo: std::sync::OnceLock<std::sync::Arc<LoweringMemo>>,
@@ -615,9 +622,8 @@ impl Program {
         // A process dependency is lowered once for the whole program, the
         // first time any unit asks: that form is handed out and marked settled,
         // so the pipeline call below neither re-checks nor re-lowers what the
-        // program already paid for. A module that never could hold a process
-        // is never in the memo, so it is a plain clone the pipeline call
-        // skips on its own.
+        // program already paid for. Only a module that failed to lower is
+        // missing from the memo; the pipeline call checks it again here.
         let mut settled = Vec::new();
         let memo = self
             .lowering_memo
@@ -711,6 +717,7 @@ fn detached(module: &LoadedModule) -> LoadedModule {
             })
             .collect(),
         path: module.path.clone(),
+        check_errors: module.check_errors.clone(),
     }
 }
 
@@ -763,23 +770,16 @@ fn lower_shared(
     run
 }
 
-/// Lowered form of every dependency that may contain a process, computed
-/// once for the whole program. `dependencies` must be leaves-first (the
-/// invariant [`Program::modules`] already keeps), so a module later in the
-/// slice can see an earlier one's lowered form as its own dependency.
-///
-/// A program none of whose dependencies could hold a process neither clones
-/// nor lowers anything here.
+/// Every dependency as an importer reads it, with the verdict of its own
+/// check in `check_errors`, computed once for the whole program: lowered
+/// when it may contain a process or nested patterns, as written otherwise.
+/// `dependencies` must be leaves-first (the invariant [`Program::modules`]
+/// already keeps), so a module later in the slice can see an earlier one's
+/// lowered form as its own dependency.
 fn lowering_memo_for(
     dependencies: &[ProgramModule],
     marked: &crate::config::MarkedCapabilities,
 ) -> std::sync::Arc<LoweringMemo> {
-    if !dependencies
-        .iter()
-        .any(|module| lowering_candidate(&module.items))
-    {
-        return std::sync::Arc::default();
-    }
     let run = lower_shared(dependencies, None, marked);
     std::sync::Arc::new(
         run.lowered
@@ -788,20 +788,12 @@ fn lowering_memo_for(
             .enumerate()
             // A module that failed to lower is left out so the next caller
             // retries it (and hits the same errors) instead of memoizing a
-            // broken half-state.
-            .filter(|(index, (_, written))| {
-                lowering_candidate(&written.items) && !run.failed.contains(index)
-            })
+            // broken half-state. A module the lowering never rewrites is kept
+            // as written, with its verdict.
+            .filter(|(index, _)| !run.failed.contains(index))
             .map(|(_, (lowered, _))| (lowered.path.clone(), detached(lowered)))
             .collect(),
     )
-}
-
-/// Whether the lowering ever rewrites a module with these items: one that
-/// may hold a process, or one with nested patterns to compile.
-fn lowering_candidate(items: &[TopLevel]) -> bool {
-    crate::yield_lowering::may_have_processes(items)
-        || crate::ir::nested_patterns::has_nested_patterns(items)
 }
 
 fn validate_program_module_name(module: &ProgramModule, dep_name: &str) -> Result<(), LoadError> {
@@ -1332,6 +1324,7 @@ fn load_recursive_from_map(
         dep_name: dep_name.to_string(),
         items,
         path: PathBuf::from(&key),
+        check_errors: Vec::new(),
     });
     Ok(())
 }
@@ -1368,22 +1361,9 @@ pub fn load_module_tree_with_lowering(
             .iter()
             .map(|module| (module.dep_name.as_str(), module.items.as_slice())),
     );
-    if !walk
-        .modules
-        .iter()
-        .any(|module| lowering_candidate(&module.items))
-    {
-        let modules = walk
-            .modules
-            .into_iter()
-            .map(|module| LoadedModule {
-                dep_name: module.dep_name,
-                items: module.items,
-                path: module.path,
-            })
-            .collect();
-        return Ok((modules, Vec::new()));
-    }
+    // Every module is checked, not only the ones the lowering rewrites: each
+    // carries its own verdict in `check_errors`, so the compiler of an
+    // importer can refuse one that failed.
     let run = lower_shared(&walk.modules, Some(module_root), &marked);
     Ok((run.lowered(), run.errors.clone()))
 }
@@ -1918,13 +1898,12 @@ mod tests {
     }
 
     #[test]
-    fn lowering_memo_holds_only_modules_with_yield_functions() {
+    fn lowering_memo_holds_every_dependency_and_rewrites_only_yield_modules() {
         // `yield_cross_module` is Pool (a capability, no `yield`), Looper (a
         // `yield` function), and the entry CrossModule that drives it. The
-        // memo the program builds must name only Looper: a program without
-        // `yield` anywhere never builds this map at all (see
-        // `super::lowering_memo_for`), so this fixture is what actually
-        // exercises the "yield modules only" half of that guarantee.
+        // memo holds every dependency with the verdict of its own check
+        // (`super::lowering_memo_for`), but only Looper is rewritten: every
+        // other module is kept exactly as written.
         let root = format!(
             "{}/tests/fixtures/yield_cross_module",
             env!("CARGO_MANIFEST_DIR")
@@ -1949,14 +1928,24 @@ mod tests {
             &mut cache,
         )
         .expect("load yield_cross_module fixture");
-        let memoized = program
+        let memo = program
             .lowering_memo
-            .get_or_init(|| super::lowering_memo_for(program.dependencies(), &program.marked))
-            .keys()
-            .filter_map(|path| path.file_name())
+            .get_or_init(|| super::lowering_memo_for(program.dependencies(), &program.marked));
+        assert_eq!(memo.len(), program.dependencies().len());
+        let rewritten = program
+            .dependencies()
+            .iter()
+            .filter(|written| {
+                let kept = memo
+                    .get(&written.path)
+                    .expect("every dependency is memoized");
+                assert!(kept.check_errors.is_empty(), "{:?}", kept.check_errors);
+                kept.items != written.items
+            })
+            .filter_map(|written| written.path.file_name())
             .filter_map(|name| name.to_str())
             .collect::<Vec<_>>();
-        assert_eq!(memoized, vec!["looper.av"]);
+        assert_eq!(rewritten, vec!["looper.av"]);
     }
 
     /// A dependency the program already lowered is handed out settled: it is
@@ -2051,12 +2040,9 @@ mod tests {
                 );
                 let fresh = fresh
                     .into_iter()
-                    .zip(&written)
                     .enumerate()
-                    .filter(|(index, (_, written))| {
-                        super::lowering_candidate(&written.items) && !failed.contains(index)
-                    })
-                    .map(|(_, (module, _))| module)
+                    .filter(|(index, _)| !failed.contains(index))
+                    .map(|(_, module)| module)
                     .collect::<Vec<_>>();
                 assert_eq!(shared.len(), fresh.len(), "{}", root.display());
                 for lowered in &fresh {

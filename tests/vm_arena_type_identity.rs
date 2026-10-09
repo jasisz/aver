@@ -136,6 +136,7 @@ fn compile_fixture_with_dep(entry_source: &str, dep_source: &str) -> CompiledFix
         dep_name: "Left".to_string(),
         items: parse_source(dep_source).expect("Left parse"),
         path: PathBuf::from("left.av"),
+        check_errors: Vec::new(),
     }];
     let modules: Vec<ModuleInfo> = loaded.iter().map(ModuleInfo::from_loaded).collect();
     let result = pipeline::run(

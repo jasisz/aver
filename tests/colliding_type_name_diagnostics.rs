@@ -40,6 +40,7 @@ fn check_errors(entry_source: &str) -> Vec<String> {
         dep_name: "Alpha".to_string(),
         items: parse_source(ALPHA_SRC).expect("Alpha parse"),
         path: PathBuf::from("alpha.av"),
+        check_errors: Vec::new(),
     }];
     run_type_check_with_loaded(&entry_items, &loaded)
         .errors

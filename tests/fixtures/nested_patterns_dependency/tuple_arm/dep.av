@@ -1,0 +1,20 @@
+module Dep
+    intent = "A tuple of list patterns with a nested match in its arm, in a module whose parameter shadows one of its functions."
+    exposes [common]
+
+fn rest(xs: List<Int>) -> List<Int>
+    ? "All items but the first."
+    match xs
+        [] -> []
+        [_, ..tail] -> tail
+
+fn common(xs: List<Int>, rest: List<Int>) -> Int
+    ? "How many leading pairs of xs match the items of rest."
+    match (xs, rest)
+        ([c, d, ..more], [h, ..others]) -> match c + d == h
+            true -> common(more, others) + 1
+            false -> 0
+        _ -> 0
+
+verify common
+    common([1, 2, 3, 4], [3, 7]) => 2

@@ -1,0 +1,15 @@
+module Main
+    intent = "Imports a module that fails its own check."
+    depends [Dep]
+
+fn go(n: Int) -> Int
+    ? "Dep.common over [n, n] and [n + n]."
+    Dep.common([n, n], [n + n])
+
+verify go
+    go(1) => 1
+
+fn main() -> Unit
+    ? "Prints go(1)."
+    ! [Console.print]
+    Console.print("{go(1)}")

@@ -1,0 +1,15 @@
+module Main
+    intent = "Imports a module that fails its own check."
+    depends [Dep]
+
+fn go(b: Bool) -> Int
+    ? "Dep.pick over Option.Some(b)."
+    Dep.pick(Option.Some(b))
+
+verify go
+    go(true) => 1
+
+fn main() -> Unit
+    ? "Prints go(true)."
+    ! [Console.print]
+    Console.print("{go(true)}")

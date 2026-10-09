@@ -1,0 +1,14 @@
+module Dep
+    intent = "A parameter shadows a function of the module; no function has a nested pattern."
+    exposes [use]
+
+fn base(n: Int) -> Int
+    ? "One more than n."
+    n + 1
+
+fn use(base: Int) -> Int
+    ? "Two more than base."
+    base + 2
+
+verify use
+    use(1) => 3
