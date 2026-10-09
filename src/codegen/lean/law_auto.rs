@@ -297,7 +297,7 @@ pub fn emit_verify_law_forall_auto_proof(
     // A law that names its proof rule is closed by that rule's steps or
     // not at all: no tactic stands behind them, so a law never says
     // `by Module.rule` while something else closed it.
-    if law.by_rule.is_some() && !cert_model {
+    if law.by_rule.is_some() {
         let body = match law_steps_for(ctx, &vb.fn_name, &law.name).and_then(|script| {
             super::proof_steps::render(&script, ctx)
                 .ok()

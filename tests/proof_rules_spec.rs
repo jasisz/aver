@@ -197,7 +197,7 @@ fn a_rule_that_refuses_errs_or_never_returns_leaves_the_law_open() {
         "{text}"
     );
     assert!(
-        text.contains("0 of 3 law(s) closed by steps"),
+        text.contains("0 of 6 law(s) closed by steps"),
         "{}",
         format_output(&result)
     );
@@ -488,16 +488,21 @@ fn lean_leaves_a_law_open_when_its_rule_does_not_close_it() {
         &[("AVER_RULE_STEP_LIMIT", "2000000")],
     );
     let found = summary(&result);
-    // Two of these laws are true, and Lean's tactics would close them;
+    // Four of these laws are true, and Lean's tactics would close them;
     // a law that names its rule is closed by that rule or not at all.
     assert_eq!(found["universal_laws"], 0, "{found}");
     let declined = found["declined_claims"]
         .as_array()
         .unwrap_or_else(|| panic!("{found}"));
+    // Each also with `using []`, which would otherwise take the reason
+    // ladder of a guided law.
     for law in [
         "swapped.swapAgain",
         "swapped.swapIsTheSwap",
         "swapped.swapOnceIsTheTopPair",
+        "swapped.swapAgainUsingNothing",
+        "swapped.swapIsTheSwapUsingNothing",
+        "swapped.swapOnceUsingNothing",
     ] {
         let entry = declined
             .iter()

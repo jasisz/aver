@@ -49,3 +49,23 @@ verify swapped law swapAgain
     when List.len(items) >= 2
     by Rules.Broken.spins
     swapped(items) => swapped(items)
+
+verify swapped law swapOnceUsingNothing
+    given items: List<List<Int>> = [[[1], [1]], [[2], [2], [3]]]
+    when List.len(items) >= 2
+    using []
+    by Rules.Stack.openByLength
+    swapped(items) => List.take(items, 2)
+
+verify swapped law swapIsTheSwapUsingNothing
+    given items: List<List<Int>> = [[[1], [2]], [[2], [2], [3]]]
+    when List.len(items) >= 2
+    using []
+    by Rules.Broken.claimsTheWhen
+    swapped(items) => swapped(items)
+
+verify swapped law swapAgainUsingNothing
+    given items: List<List<Int>> = [[[1], [2]]]
+    using []
+    by Rules.Broken.spins
+    swapped(items) => swapped(items)

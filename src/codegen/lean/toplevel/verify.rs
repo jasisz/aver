@@ -1094,8 +1094,16 @@ fn emit_verify_law_block(
         Some(crate::ir::ProofStrategy::FiniteDomainCases { .. })
             | Some(crate::ir::ProofStrategy::TailRecFixedBaseFold { .. })
     );
-    let guided = !law.because.is_empty() || law.using.is_some();
+    // A law that names its proof rule (`by Module.rule`) is closed by that
+    // rule's steps or by nothing: it takes none of the paths below that pick
+    // tactics (a guided law's reason ladder, waterfall discovery, the skip of
+    // a universal statement), only the rule's steps with `sorry` behind them
+    // in `emit_verify_law_forall_auto_proof`, and is an attempt, so a law the
+    // rule did not close is declined with the rule's reason.
+    let by_rule = law.by_rule.is_some();
+    let guided = !by_rule && (!law.because.is_empty() || law.using.is_some());
     let skip_universal = !guided
+        && !by_rule
         && (singleton_const_rhs
             || ((calls_fuel_bounded || calls_foreign_acc_fold) && !pinned_self_universal));
     // Oracle v1: the auto-proof matchers compare law.lhs / law.rhs ASTs. For
@@ -1134,10 +1142,11 @@ fn emit_verify_law_block(
     // premises in the quantifier types and is a claim as before.
     let all_lifted =
         !lifted_vars.is_empty() && law.givens.iter().all(|g| lifted_vars.contains_key(&g.name));
-    let attempt = law.when.is_some()
-        && !all_lifted
-        && !guided
-        && !super::law_auto::when_law_is_claim(vb, &law_for_auto_proof, ctx, cert_model);
+    let attempt = by_rule
+        || (law.when.is_some()
+            && !all_lifted
+            && !guided
+            && !super::law_auto::when_law_is_claim(vb, &law_for_auto_proof, ctx, cert_model));
     let mut universal_fell_to_sorry = false;
     // The universal statement of the theorem the law-class marker names, as
     // the emitter assembled it — the certificate producer's law-claim is built
@@ -1255,6 +1264,7 @@ fn emit_verify_law_block(
             universal_fell_to_sorry = true;
         }
         if !guided
+            && !by_rule
             && !cert_model
             && crate::codegen::lean::waterfall::enabled()
             && let Some(hints) = super::law_auto::waterfall_dependencies(vb, law, ctx)
@@ -1747,8 +1757,9 @@ pub(crate) fn law_as_lemma_statement(
     // Guided laws are emitted as universal statements even when the automatic
     // sample/fuel heuristics would skip one. Match that emission policy here:
     // their examples do not restrict citation. A failed proof still propagates
-    // sorryAx through the ordinary transitive credit audit.
-    let guided = !law.because.is_empty() || law.using.is_some();
+    // sorryAx through the ordinary transitive credit audit. A law with a `by`
+    // line is emitted as a universal statement too.
+    let guided = law.by_rule.is_some() || !law.because.is_empty() || law.using.is_some();
     if !guided
         && (singleton_const_rhs
             || crate::codegen::common::law_calls_unclassified_fn(law, &unclassified))

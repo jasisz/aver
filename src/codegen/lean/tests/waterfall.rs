@@ -100,3 +100,52 @@ fn waterfall_generalizes_only_the_generated_sample_domain() {
         "∀ (x : Fraction), lessF zeroF x = true -> nonNeg x = true"
     );
 }
+
+#[test]
+fn a_law_with_a_proof_rule_takes_no_tactic_and_no_waterfall() {
+    // No rule runs here (the test context has no project root), so each law
+    // is left with its rule's refusal: a bare `sorry`, also with `using`,
+    // and no waterfall region to replace it.
+    let source = r#"
+module W
+    intent = "Laws that name a proof rule."
+    effects []
+fn identity(n: Int) -> Int
+    n
+verify identity law helper
+    given n: Int = [0, 1]
+    identity(n) => n
+verify identity law ruled
+    given n: Int = [0, 1]
+    by Rules.Same.same
+    identity(n) => n
+verify identity law ruledUsing
+    given n: Int = [0, 1]
+    using [identity.helper]
+    by Rules.Same.same
+    identity(n) => n
+"#;
+    let mut ctx = ctx_from_source(source, "W");
+    let _guard = waterfall::enable();
+    let lean = generated_lean_file(&transpile_for_proof_mode(
+        &mut ctx,
+        VerifyEmitMode::NativeDecide,
+    ));
+    let proposals = candidates(&lean);
+    assert!(
+        proposals.iter().all(|c| !c.label.contains("ruled")),
+        "{proposals:?}"
+    );
+    for theorem in ["identity_law_ruled", "identity_law_ruledUsing"] {
+        let start = lean
+            .find(&format!("theorem {theorem} :"))
+            .unwrap_or_else(|| panic!("no theorem {theorem}\n{lean}"));
+        let body: Vec<&str> = lean[start..]
+            .lines()
+            .skip(1)
+            .take_while(|l| l.starts_with(' '))
+            .map(str::trim)
+            .collect();
+        assert_eq!(body, ["sorry"], "{theorem}:\n{}", &lean[start..]);
+    }
+}
