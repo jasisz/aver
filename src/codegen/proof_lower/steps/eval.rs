@@ -2968,10 +2968,13 @@ impl Env<'_> {
 }
 
 impl Env<'_> {
-    /// Each builtin fact the law does not cite whose left side matches a
-    /// part of `terms`, one match each: pattern matching on the term as it
-    /// stands, never a rewrite followed by another match.
-    fn note_fact_hints(&mut self, terms: &[&Term]) {
+    /// Each builtin fact, then each earlier law, the law does not cite
+    /// whose left side matches a part of `terms` or of a hypothesis in
+    /// scope (a subject split on, a `holds` comparison decided by cases),
+    /// one match each: pattern matching on the term as it stands, never a
+    /// rewrite followed by another match. A match where the law's `when`
+    /// computes to `false`, or a hypothesis states it false, is no hint.
+    pub(crate) fn note_fact_hints(&mut self, terms: &[&Term]) {
         use crate::ir::proof_steps::{facts, show};
         fn parts<'t>(t: &'t Term, out: &mut Vec<&'t Term>) {
             out.push(t);
@@ -2979,22 +2982,47 @@ impl Env<'_> {
                 parts(c, out);
             }
         }
+        let hyps: Vec<Term> = self.hyps.iter().map(|(_, e)| e.lhs.clone()).collect();
         let mut all = Vec::new();
-        for t in terms {
+        for t in terms.iter().copied().chain(&hyps) {
             parts(t, &mut all);
         }
-        for fact in facts::all() {
-            if self.rewrite_laws.iter().any(|l| l.key == fact.key) {
-                continue;
-            }
-            let ob = &fact.script.obligation;
-            if let Some(part) = all
-                .iter()
-                .find(|p| super::rewrite::matches(&ob.lhs, p, &ob.givens, &mut Vec::new()))
-            {
+        let candidates: Vec<crate::ir::proof_steps::LawRef> = facts::all()
+            .iter()
+            .map(facts::Fact::law_ref)
+            .chain(self.hint_laws.iter().cloned())
+            .filter(|l| !self.cited_all.iter().any(|c| c.key == l.key))
+            .collect();
+        for law in candidates {
+            let celled = as_cells(&law.lhs).map(|(_, cells)| cells);
+            let at = |p: &Term| -> Option<Vec<(String, Term)>> {
+                [Some(&law.lhs), celled.as_ref()]
+                    .into_iter()
+                    .flatten()
+                    .find_map(|pat| {
+                        let mut found = Vec::new();
+                        super::rewrite::matches(pat, p, &law.givens, &mut found).then_some(found)
+                    })
+            };
+            let found = all.iter().find(|p| {
+                at(p).is_some_and(|subst| {
+                    let Some(when) = &law.premise else {
+                        return true;
+                    };
+                    let Ok(when) = term::subst(when, &subst) else {
+                        return true;
+                    };
+                    let when = canon(&when);
+                    let said = term::eval_closed(&when)
+                        .and_then(|v| term::bool_value(&v))
+                        .or_else(|| self.hyp_for(&when).and_then(|(_, v)| term::bool_value(&v)));
+                    said != Some(false)
+                })
+            });
+            if let Some(part) = found {
                 let hint = format!(
                     "`{}` rewrites `{}`; add it to `using`",
-                    fact.key,
+                    law.key,
                     show::term(part, self.inputs.symbol_table)
                 );
                 if !self.hints.contains(&hint) {

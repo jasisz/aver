@@ -24,6 +24,9 @@ pub(crate) struct Env<'a> {
     /// Every law the author cited, also those that would loop as rewrite
     /// rules: one instance may still prove an equation outright.
     pub cited_all: Vec<LawRef>,
+    /// The laws before this one it does not cite, offered as hints where
+    /// evaluation stops (never applied).
+    pub hint_laws: Vec<LawRef>,
     pub hyps: Vec<(String, Eqn)>,
     pub fuel: usize,
     next_hyp: usize,
@@ -31,8 +34,9 @@ pub(crate) struct Env<'a> {
     pub next_ih: usize,
     /// Evaluations in progress, one inside another.
     pub nesting: usize,
-    /// Builtin facts that would rewrite a part of a term evaluation
-    /// stopped at (see [`super::eval`]), as hints for the report.
+    /// Builtin facts and earlier laws that would rewrite a part of a term
+    /// evaluation stopped at, or the line that names an induction, as
+    /// hints for the report (see [`super::eval`]).
     pub hints: Vec<String>,
     /// Where a cited law matched but a conjunct of its `when` found no
     /// proof, for the refusal.
@@ -72,6 +76,7 @@ impl<'a> Env<'a> {
             laws: Vec::new(),
             rewrite_laws: Vec::new(),
             cited_all: Vec::new(),
+            hint_laws: Vec::new(),
             hyps: Vec::new(),
             fuel: 4000,
             next_hyp: 0,

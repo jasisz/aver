@@ -995,6 +995,16 @@ fn an_induction_line_names_the_given_the_induction_follows() {
     ] {
         assert_eq!(closed[law], "open", "{law}: {summary}");
     }
+    // The report tries each given only to advise the line that closes;
+    // the earlier law stating the same claim is a hint too.
+    assert_eq!(
+        summary["steps_hints"]["append.assocUnnamed"],
+        serde_json::json!([
+            "`append.assoc` rewrites `append(append(x, y), z)`; add it to `using`",
+            "with `induction x` steps close every case; add that line"
+        ]),
+        "{summary}"
+    );
     let text = aver_in(
         &repo_root().join(FIXTURES),
         &[
@@ -2822,6 +2832,67 @@ fn a_stuck_law_is_hinted_the_facts_that_rewrite_where_it_stopped() {
         "{refused}"
     );
     let _ = fs::remove_dir_all(export);
+}
+
+/// A hint is found where the steps stopped, not only in the two sides: in
+/// a subject split on, in the comparison of a `holds` law decided by cases,
+/// in a case of an induction, as an earlier law the law does not cite, and
+/// as the `induction` line that closes every case. A fact whose `when` is
+/// false where its left side matches is no hint. The laws stay open.
+#[test]
+fn a_stuck_law_is_hinted_where_the_steps_stopped_and_never_a_false_when() {
+    let out = scratch("hints_where");
+    let (result, summary) = aver_backend_json("hints_where.av", &out, None);
+    let _ = fs::remove_dir_all(&out);
+    let hints = |law: &str| -> Vec<String> {
+        summary["steps_hints"][law]
+            .as_array()
+            .map(|a| a.iter().map(|h| h.as_str().unwrap().to_string()).collect())
+            .unwrap_or_default()
+    };
+    for law in [
+        "first.ofTwiceReversed",
+        "tail.neverLonger",
+        "firstTwo.twiceIsOnce",
+        "count.ofJoined",
+        "count.ofReversed",
+    ] {
+        assert_eq!(
+            summary["closed_by"][law],
+            "open",
+            "{law}: {}",
+            format_output(&result)
+        );
+    }
+    let has = |law: &str, hint: &str| {
+        assert!(
+            hints(law).iter().any(|h| h.starts_with(hint)),
+            "{law}: {hint}: {summary}"
+        )
+    };
+    has(
+        "first.ofTwiceReversed",
+        "`List.reverse.involutive` rewrites `List.reverse(List.reverse(xs))`; add it to `using`",
+    );
+    has(
+        "tail.neverLonger",
+        "`List.len.ofDropAtMost` rewrites `List.len(List.drop(xs, n)) <= List.len(xs)`; add it to `using`",
+    );
+    has(
+        "count.ofJoined",
+        "with `induction xs` steps close every case; add that line",
+    );
+    has(
+        "count.ofReversed",
+        "`count.ofJoined` rewrites `count(List.concat(List.reverse(",
+    );
+    // `List.take.nonPositive` needs `2 <= 0` at `List.take(xs, 2)`.
+    assert!(
+        !hints("firstTwo.twiceIsOnce")
+            .iter()
+            .any(|h| h.contains("List.take.nonPositive")),
+        "{summary}"
+    );
 }
 
 #[test]
