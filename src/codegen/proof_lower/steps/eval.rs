@@ -2917,7 +2917,7 @@ impl Env<'_> {
             && self.hyp_for(&g).is_none()
         {
             let hyp = self.fresh_hyp();
-            let mut branch = |env: &mut Self, v: bool| -> Result<Option<Proof>, String> {
+            let branch = |env: &mut Self, v: bool| -> Result<Option<Proof>, String> {
                 env.hyps
                     .push((hyp.clone(), Eqn::new(g.clone(), term::boolean(v))));
                 let out = env.open_calls(calls, i, any, lhs, rhs, depth);
