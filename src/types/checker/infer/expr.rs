@@ -85,6 +85,30 @@ pub(crate) fn type_is_fully_concrete(ty: &Type) -> bool {
     }
 }
 
+/// True iff `Type::Invalid` appears anywhere inside `ty`.
+pub(crate) fn type_contains_invalid(ty: &Type) -> bool {
+    match ty {
+        Type::Invalid => true,
+        Type::Var(_)
+        | Type::Int
+        | Type::Float
+        | Type::Str
+        | Type::Bool
+        | Type::Unit
+        | Type::Named { .. } => false,
+        Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
+            type_contains_invalid(inner)
+        }
+        Type::Result(a, b) | Type::Map(a, b) => {
+            type_contains_invalid(a) || type_contains_invalid(b)
+        }
+        Type::Tuple(items) => items.iter().any(type_contains_invalid),
+        Type::Fn(params, ret, _) => {
+            params.iter().any(type_contains_invalid) || type_contains_invalid(ret)
+        }
+    }
+}
+
 /// True iff a value of `ty` may be embedded directly in a string
 /// interpolation.
 ///
@@ -226,8 +250,18 @@ impl TypeChecker {
                 return pinned;
             }
         }
-        expr.set_ty(t.clone());
+        self.stamp(expr, t.clone());
         t
+    }
+
+    /// Record `ty` on `expr` and remember the first stamp that holds
+    /// `Type::Invalid`, for the debug-build invariant in
+    /// `finalize_check_result`: recovery must follow a reported error.
+    pub(in super::super) fn stamp(&mut self, expr: &Spanned<Expr>, ty: Type) {
+        if self.first_invalid_stamp.is_none() && type_contains_invalid(&ty) {
+            self.first_invalid_stamp = Some(expr.line);
+        }
+        expr.set_ty(ty);
     }
 
     /// Bidirectional companion to `infer_type`. When `expected` is `Some(T)`
@@ -244,7 +278,7 @@ impl TypeChecker {
         if let Some(exp) = expected
             && let Some(ty) = self.try_infer_with_expected(expr, exp)
         {
-            expr.set_ty(ty.clone());
+            self.stamp(expr, ty.clone());
             return ty;
         }
         self.infer_type(expr)
@@ -1297,7 +1331,13 @@ impl TypeChecker {
                 }
             }
 
-            Expr::Constructor(name, arg) => match name.as_str() {
+            Expr::Constructor(name, arg) => match match name.as_str() {
+                "Result.Ok" => "Ok",
+                "Result.Err" => "Err",
+                "Option.Some" => "Some",
+                "Option.None" => "None",
+                other => other,
+            } {
                 "Ok" => {
                     let inner = arg
                         .as_ref()
@@ -1320,7 +1360,15 @@ impl TypeChecker {
                     Type::Option(Box::new(inner))
                 }
                 "None" => Type::Option(Box::new(type_var("T"))),
-                _ => Type::Invalid,
+                // The parser spells every other constructor as a call or a
+                // member; only compiler-built nodes reach this arm.
+                _ => {
+                    if let Some(a) = arg {
+                        self.infer_type(a);
+                    }
+                    self.error_at_node(expr.line, format!("Unknown constructor '{}'", name));
+                    Type::Invalid
+                }
             },
 
             Expr::List(elems) => {
@@ -1486,6 +1534,7 @@ impl TypeChecker {
                     self.current_fn_line.unwrap_or(1)
                 };
                 let subject_ty = self.infer_type(subject);
+                let before_exhaustiveness = self.error_mark();
                 self.check_match_exhaustiveness(&subject_ty, arms, match_line);
                 self.check_match_redundancy(arms);
                 // Bidirectional: propagate the enclosing fn's declared
@@ -1527,6 +1576,11 @@ impl TypeChecker {
                     }
                     first_ty
                 } else {
+                    // A `match` with no arms has no value. The exhaustiveness
+                    // check usually says so already; one error is enough.
+                    if self.error_mark() == before_exhaustiveness {
+                        self.error_at_line(match_line, "`match` has no arms");
+                    }
                     Type::Invalid
                 }
             }
@@ -1594,7 +1648,7 @@ impl TypeChecker {
                             "Capability operation '{}' is not a value; call it directly at the provider boundary",
                             key
                         ));
-                        obj.set_ty(Type::Invalid);
+                        self.stamp(obj, Type::Invalid);
                         return Type::Invalid;
                     }
                     // The lookups below resolve the *whole* `Vector.set`
@@ -1616,11 +1670,20 @@ impl TypeChecker {
                         return ty.clone();
                     }
                     if let Some(sig) = self.find_fn_sig(&key) {
+                        // The namespace part is not a value and has no type of
+                        // its own; this is not error recovery, so it bypasses
+                        // the invariant bookkeeping in `stamp`.
                         obj.set_ty(Type::Invalid);
                         return Self::fn_type_from_sig(sig);
                     }
                     if self.has_namespace_prefix(&key) {
-                        // Intermediate namespace (e.g. Models.User in Models.User.findById)
+                        // An intermediate namespace (`Models.User` out of
+                        // `Models.User.findById`) reached as a value on its
+                        // own: it names a group of functions, not a value.
+                        self.error_at_node(
+                            expr.line,
+                            format!("'{}' is a namespace, not a value", key),
+                        );
                         obj.set_ty(Type::Invalid);
                         return Type::Invalid;
                     }
@@ -1651,7 +1714,7 @@ impl TypeChecker {
                                 obj_key, field
                             ));
                         }
-                        obj.set_ty(Type::Invalid);
+                        self.stamp(obj, Type::Invalid);
                         return Type::Invalid;
                     }
                 }
@@ -1765,6 +1828,15 @@ impl TypeChecker {
                             self.error(format!("Record '{}' has no field '{}'", name, field));
                             Type::Invalid
                         } else {
+                            // Not a record the checker knows the fields of: a
+                            // sum type, or a named type with no field list.
+                            self.error_at_node(
+                                expr.line,
+                                format!(
+                                    "Field access '.{}' on type '{}', which has no fields",
+                                    field, name
+                                ),
+                            );
                             Type::Invalid
                         }
                     }
@@ -1810,13 +1882,24 @@ impl TypeChecker {
                 if let Some(sig) = self.find_fn_sig(target).cloned() {
                     sig.ret
                 } else {
+                    self.error_at_node(
+                        expr.line,
+                        format!("Tail call to unknown function '{}'", target),
+                    );
                     Type::Invalid
                 }
             }
 
-            // Resolved nodes are produced after type-checking, so should not appear here.
-            // If they do (e.g. in a test), treat as Unknown.
-            Expr::Resolved { .. } => Type::Invalid,
+            // Resolved slots are produced after type checking. One reaching
+            // the checker is a compiler bug; report it rather than give the
+            // node a type nobody explained.
+            Expr::Resolved { .. } => {
+                self.error_at_node(
+                    expr.line,
+                    "internal compiler error: a resolved local slot reached the type checker",
+                );
+                Type::Invalid
+            }
         }
     }
 }

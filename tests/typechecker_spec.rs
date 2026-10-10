@@ -6067,3 +6067,184 @@ fn target(s: Setting) -> Int
 
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// ---------------------------------------------------------------------------
+// No silent `Invalid`: every input the checker cannot give a type is reported
+// ---------------------------------------------------------------------------
+
+mod no_silent_invalid {
+    use super::*;
+    use aver::ast::{AnnotBool, Expr, FnBody, Literal, Spanned, Stmt, TailCallData};
+
+    const SHAPE: &str = "type Shape\n    Circle(Int)\n    Rect(Int, Int)\n";
+
+    fn shape_src(body: &str) -> String {
+        format!("{SHAPE}{body}")
+    }
+
+    /// Check `sig_src` with the body of its one function replaced by `body`:
+    /// the nodes below are ones only the compiler builds, so the parser
+    /// cannot produce them from source.
+    fn errors_with_body(sig_src: &str, body: Spanned<Expr>) -> Vec<String> {
+        let mut items = parse(sig_src);
+        for item in &mut items {
+            if let TopLevel::FnDef(fd) = item {
+                fd.body = std::sync::Arc::new(FnBody::Block(vec![Stmt::Expr(body.clone())]));
+            }
+        }
+        run_type_check(&items)
+            .into_iter()
+            .map(|e| e.message)
+            .collect()
+    }
+
+    fn assert_contains(errs: &[String], snippet: &str) {
+        assert!(
+            errs.iter().any(|e| e.contains(snippet)),
+            "expected error containing {:?}, got:\n  {}",
+            snippet,
+            errs.join("\n  ")
+        );
+    }
+
+    fn int(n: i64) -> Spanned<Expr> {
+        Spanned::new(Expr::Literal(Literal::Int(n)), 2)
+    }
+
+    #[test]
+    fn field_access_on_a_sum_type_is_reported() {
+        assert_error_containing(
+            &shape_src("fn f(s: Shape) -> Int\n    s.radius\n"),
+            "Field access '.radius' on type 'Shape', which has no fields",
+        );
+    }
+
+    #[test]
+    fn constructor_pattern_with_too_many_binders_is_reported() {
+        assert_error_containing(
+            &shape_src(
+                "fn f(s: Shape) -> Int\n    match s\n        Shape.Circle(r, q) -> r\n        Shape.Rect(w, h) -> w\n",
+            ),
+            "Constructor pattern 'Shape.Circle' binds 2 fields, but 'Shape.Circle' has 1 field",
+        );
+    }
+
+    #[test]
+    fn result_pattern_with_too_many_binders_is_reported() {
+        assert_error_containing(
+            "fn f(r: Result<Int, String>) -> Int\n    match r\n        Result.Ok(a, b) -> a\n        Result.Err(e) -> 0\n",
+            "Constructor pattern 'Result.Ok' binds 2 fields, but 'Result.Ok' has 1 field",
+        );
+    }
+
+    #[test]
+    fn unknown_constructor_in_a_pattern_is_reported() {
+        assert_error_containing(
+            &shape_src(
+                "fn f(s: Shape) -> Int\n    match s\n        Shape.Triangle(z) -> z\n        _ -> 0\n",
+            ),
+            "Unknown constructor 'Shape.Triangle' in a pattern on a value of type Shape",
+        );
+    }
+
+    #[test]
+    fn list_pattern_on_a_non_list_is_reported() {
+        assert_error_containing(
+            "fn f(n: Int) -> Int\n    match n\n        [h, ..t] -> h\n        _ -> 0\n",
+            "List pattern [h, ..t] matches a List value, but the match subject is Int",
+        );
+    }
+
+    #[test]
+    fn tuple_pattern_of_the_wrong_length_is_reported() {
+        assert_error_containing(
+            "fn f(p: Tuple<Int, Int>) -> Int\n    match p\n        (a, b, c) -> c\n",
+            "Tuple pattern has 3 elements, but the match subject is a tuple of 2",
+        );
+    }
+
+    #[test]
+    fn tuple_pattern_on_a_non_tuple_is_reported() {
+        assert_error_containing(
+            "fn f(n: Int) -> Int\n    match n\n        (a, b) -> a\n        _ -> 0\n",
+            "Tuple pattern matches a tuple value, but the match subject is Int",
+        );
+    }
+
+    #[test]
+    fn namespace_used_as_a_value_is_reported() {
+        let root = temp_module_root("namespace_value");
+        std::fs::write(
+            root.join("Geo.av"),
+            "module Geo\n    intent = \"Shapes.\"\n    exposes [Shape]\n\ntype Shape\n    Circle(Int)\n    Rect(Int, Int)\n",
+        )
+        .expect("write Geo.av failed");
+        let src = "module App\n    intent = \"Uses a type name as a value.\"\n    depends [Geo]\n\nfn f(n: Int) -> Int\n    x = Geo.Shape\n    n + x\n";
+        let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_contains(&errs, "'Geo.Shape' is a namespace, not a value");
+    }
+
+    #[test]
+    fn unknown_compiler_built_constructor_is_reported() {
+        let body = Spanned::new(
+            Expr::Constructor("Shape.Circle".to_string(), Some(Box::new(int(1)))),
+            2,
+        );
+        let errs = errors_with_body(&shape_src("fn f() -> Shape\n    Shape.Circle(1)\n"), body);
+        assert_contains(&errs, "Unknown constructor 'Shape.Circle'");
+    }
+
+    #[test]
+    fn qualified_compiler_built_option_constructor_is_typed() {
+        let body = Spanned::new(
+            Expr::Constructor("Option.Some".to_string(), Some(Box::new(int(1)))),
+            2,
+        );
+        let errs = errors_with_body("fn f() -> Option<Int>\n    Option.Some(1)\n", body);
+        assert!(errs.is_empty(), "expected no errors, got: {errs:?}");
+    }
+
+    #[test]
+    fn match_without_arms_is_reported() {
+        let body = Spanned::new(
+            Expr::Match {
+                subject: Box::new(Spanned::new(Expr::Ident("p".to_string()), 2)),
+                arms: Vec::new(),
+            },
+            2,
+        );
+        let errs = errors_with_body("record P\n    x: Int\nfn f(p: P) -> Int\n    p.x\n", body);
+        assert_contains(&errs, "`match` has no arms");
+    }
+
+    #[test]
+    fn tail_call_to_an_unknown_function_is_reported() {
+        let body = Spanned::new(
+            Expr::TailCall(Box::new(TailCallData::new(
+                "nosuch".to_string(),
+                vec![int(1)],
+            ))),
+            2,
+        );
+        let errs = errors_with_body("fn f(n: Int) -> Int\n    n\n", body);
+        assert_contains(&errs, "Tail call to unknown function 'nosuch'");
+    }
+
+    #[test]
+    fn resolved_slot_reaching_the_checker_is_reported() {
+        let body = Spanned::new(
+            Expr::Resolved {
+                slot: 0,
+                name: "n".to_string(),
+                last_use: AnnotBool(false),
+            },
+            2,
+        );
+        let errs = errors_with_body("fn f(n: Int) -> Int\n    n\n", body);
+        assert_contains(
+            &errs,
+            "internal compiler error: a resolved local slot reached the type checker",
+        );
+    }
+}
