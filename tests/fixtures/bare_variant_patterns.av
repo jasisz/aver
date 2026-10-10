@@ -1,0 +1,79 @@
+module BareVariants
+    intent = "A constructor pattern without parentheses matches its variant whatever the fields hold, the same on every backend."
+    effects [Console.print]
+
+type Shape
+    Circle(Int)
+    Rect(Int, Int)
+    Dot
+
+fn kind(s: Shape) -> String
+    ? "Names the variant without reading its fields."
+    match s
+        Shape.Circle -> "circle"
+        Shape.Rect -> "rect"
+        Shape.Dot -> "dot"
+
+verify kind
+    kind(Shape.Circle(1)) => "circle"
+    kind(Shape.Rect(2, 3)) => "rect"
+    kind(Shape.Dot) => "dot"
+
+fn isOk(r: Result<Int, String>) -> Bool
+    ? "True for any Ok."
+    match r
+        Result.Ok -> true
+        Result.Err -> false
+
+verify isOk
+    isOk(Result.Ok(1)) => true
+    isOk(Result.Err("no")) => false
+
+fn isSome(o: Option<Int>) -> Bool
+    ? "True for any Some."
+    match o
+        Option.Some -> true
+        Option.None -> false
+
+verify isSome
+    isSome(Option.Some(1)) => true
+    isSome(Option.None) => false
+
+fn flatRect(s: Shape) -> Int
+    ? "A bare arm after an arm that reads a field of the same variant."
+    match s
+        Shape.Rect(0, h) -> h
+        Shape.Rect -> 99
+        Shape.Circle(r) -> r
+        Shape.Dot -> 0
+
+verify flatRect
+    flatRect(Shape.Rect(0, 7)) => 7
+    flatRect(Shape.Rect(1, 7)) => 99
+    flatRect(Shape.Circle(5)) => 5
+    flatRect(Shape.Dot) => 0
+
+fn both(s: Shape, o: Option<Int>) -> Int
+    ? "Bare constructors inside a tuple pattern."
+    match (s, o)
+        (Shape.Rect, Option.Some) -> 2
+        (Shape.Circle, Option.Some(n)) -> n
+        (_, Option.None) -> 0
+        (Shape.Dot, Option.Some) -> 1
+
+verify both
+    both(Shape.Rect(1, 2), Option.Some(3)) => 2
+    both(Shape.Circle(1), Option.Some(3)) => 3
+    both(Shape.Dot, Option.Some(3)) => 1
+    both(Shape.Rect(1, 2), Option.None) => 0
+
+fn main() -> Unit
+    ? "Prints every case."
+    ! [Console.print]
+    Console.print(kind(Shape.Circle(1)))
+    Console.print(kind(Shape.Rect(2, 3)))
+    Console.print(kind(Shape.Dot))
+    Console.print("{isOk(Result.Ok(1))} {isOk(Result.Err("no"))}")
+    Console.print("{isSome(Option.Some(1))} {isSome(Option.None)}")
+    Console.print("{flatRect(Shape.Rect(0, 7))} {flatRect(Shape.Rect(1, 7))} {flatRect(Shape.Circle(5))} {flatRect(Shape.Dot)}")
+    Console.print("{both(Shape.Rect(1, 2), Option.Some(3))} {both(Shape.Circle(1), Option.Some(3))} {both(Shape.Dot, Option.Some(3))} {both(Shape.Rect(1, 2), Option.None)}")

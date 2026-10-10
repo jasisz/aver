@@ -477,6 +477,7 @@ jobs:
             capability_wit_spec \
             compile_spec \
             nested_patterns_spec \
+            bare_variant_patterns_spec \
             yield_verify_spec
           do
             cargo test -p aver-lang --features wasm,wasip2 --test "$test"

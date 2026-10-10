@@ -52,6 +52,7 @@ const RUST_REGRESSION_CORPUS: &[&str] = &[
     "examples/core/lists.av",
     "examples/core/shapes.av",
     "examples/core/temperature.av",
+    "tests/fixtures/bare_variant_patterns.av",
 ];
 
 fn temp_output_dir(prefix: &str) -> PathBuf {

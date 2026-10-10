@@ -303,6 +303,12 @@ fn pattern_subsumes(earlier: &CoverPat, current: &CoverPat) -> bool {
         (CoverPat::Tuple(a), CoverPat::Tuple(b)) if a.len() == b.len() => {
             a.iter().zip(b).all(|(x, y)| pattern_subsumes(x, y))
         }
+        // A bare constructor (`Shape.Rect`) is every value of its variant.
+        (CoverPat::Constructor(n1, a1), CoverPat::Constructor(n2, a2))
+            if ctor_name_matches(n2, n1) && (a1.is_empty() || a2.is_empty()) =>
+        {
+            a1.iter().all(|x| matches!(x, CoverPat::Wild))
+        }
         (CoverPat::Constructor(n1, a1), CoverPat::Constructor(n2, a2))
             if ctor_name_matches(n2, n1) && a1.len() == a2.len() =>
         {
@@ -354,8 +360,29 @@ fn specialize_rows_for_ctor(rows: &[Vec<CoverPat>], ctor: &CtorSpec) -> Vec<Vec<
     out
 }
 
+/// True when the constructor spelled `name` in a pattern is the
+/// constructor `tag` stands for.
+fn bare_pattern_names(name: &str, tag: &CtorTag) -> bool {
+    match tag {
+        CtorTag::ResultOk => ctor_name_matches(name, "Result.Ok"),
+        CtorTag::ResultErr => ctor_name_matches(name, "Result.Err"),
+        CtorTag::OptionSome => ctor_name_matches(name, "Option.Some"),
+        CtorTag::OptionNone => ctor_name_matches(name, "Option.None"),
+        CtorTag::Named(expected) => ctor_name_matches(name, expected),
+        _ => false,
+    }
+}
+
 fn specialize_head_pattern(pat: &CoverPat, ctor: &CtorSpec) -> Option<Vec<CoverPat>> {
     if matches!(pat, CoverPat::Wild) {
+        return Some(vec![CoverPat::Wild; ctor.arg_types.len()]);
+    }
+    // A bare constructor pattern (`Shape.Rect`, `Result.Ok`) matches its
+    // variant whatever the fields hold.
+    if let CoverPat::Constructor(name, args) = pat
+        && args.is_empty()
+        && bare_pattern_names(name, &ctor.tag)
+    {
         return Some(vec![CoverPat::Wild; ctor.arg_types.len()]);
     }
 

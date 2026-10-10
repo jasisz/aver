@@ -460,7 +460,9 @@ pub enum Pattern {
     /// Constructor pattern with at least one field that is not a plain
     /// binder: `Option.Some(0)`, `Result.Ok("x")`, `Pair.Of(1, x)`,
     /// `Option.Some(Option.Some(y))`. A constructor whose fields are all
-    /// binders or `_` stays [`Pattern::Constructor`].
+    /// binders or `_` stays [`Pattern::Constructor`], except empty
+    /// parentheses (`Shape.Rect()`): those are this form with no fields,
+    /// so they stay apart from the bare `Shape.Rect`.
     ///
     /// Source-level only: the front door checks the match as written
     /// and then compiles it into nested flat matches

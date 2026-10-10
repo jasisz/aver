@@ -168,7 +168,8 @@ impl Parser {
                     )));
                 }
                 let mut fields = vec![];
-                if self.check_exact(&TokenKind::LParen) {
+                let parenthesized = self.check_exact(&TokenKind::LParen);
+                if parenthesized {
                     self.advance();
                     while !self.check_exact(&TokenKind::RParen) && !self.is_eof() {
                         fields.push(self.parse_pattern()?);
@@ -178,6 +179,13 @@ impl Parser {
                         self.advance();
                     }
                     self.expect_exact(&TokenKind::RParen)?;
+                }
+                // `Shape.Rect()` claims the variant has no fields, which the
+                // checker holds it to; it stays apart from the bare
+                // `Shape.Rect`, which matches the variant whatever its
+                // fields, as a nested pattern with no fields.
+                if parenthesized && fields.is_empty() {
+                    return Ok(Pattern::ConstructorNested(name, fields));
                 }
                 // Fields that are all binders (or `_`) keep the flat form
                 // every backend reads; any literal, constructor, tuple or

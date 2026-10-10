@@ -6125,7 +6125,7 @@ mod no_silent_invalid {
             &shape_src(
                 "fn f(s: Shape) -> Int\n    match s\n        Shape.Circle(r, q) -> r\n        Shape.Rect(w, h) -> w\n",
             ),
-            "Constructor pattern 'Shape.Circle' binds 2 fields, but 'Shape.Circle' has 1 field",
+            "Constructor pattern 'Shape.Circle' lists 2 fields, but 'Shape.Circle' has 1 field",
         );
     }
 
@@ -6133,7 +6133,7 @@ mod no_silent_invalid {
     fn result_pattern_with_too_many_binders_is_reported() {
         assert_error_containing(
             "fn f(r: Result<Int, String>) -> Int\n    match r\n        Result.Ok(a, b) -> a\n        Result.Err(e) -> 0\n",
-            "Constructor pattern 'Result.Ok' binds 2 fields, but 'Result.Ok' has 1 field",
+            "Constructor pattern 'Result.Ok' lists 2 fields, but 'Result.Ok' has 1 field",
         );
     }
 
@@ -6144,6 +6144,67 @@ mod no_silent_invalid {
                 "fn f(s: Shape) -> Int\n    match s\n        Shape.Triangle(z) -> z\n        _ -> 0\n",
             ),
             "Unknown constructor 'Shape.Triangle' in a pattern on a value of type Shape",
+        );
+    }
+
+    #[test]
+    fn constructor_pattern_with_too_few_wildcards_is_reported() {
+        assert_error_containing(
+            &shape_src(
+                "fn f(s: Shape) -> Int\n    match s\n        Shape.Circle(_) -> 0\n        Shape.Rect(_) -> 1\n",
+            ),
+            "Constructor pattern 'Shape.Rect' lists 1 field, but 'Shape.Rect' has 2 fields",
+        );
+    }
+
+    #[test]
+    fn empty_parentheses_on_a_variant_with_fields_are_reported() {
+        assert_error_containing(
+            &shape_src(
+                "fn f(s: Shape) -> Int\n    match s\n        Shape.Circle(_) -> 0\n        Shape.Rect() -> 1\n",
+            ),
+            "Constructor pattern 'Shape.Rect' lists 0 fields, but 'Shape.Rect' has 2 fields",
+        );
+        assert_error_containing(
+            "fn f(o: Option<Int>) -> Int\n    match o\n        Option.Some() -> 1\n        Option.None -> 0\n",
+            "Constructor pattern 'Option.Some' lists 0 fields, but 'Option.Some' has 1 field",
+        );
+        assert_error_containing(
+            "fn f(r: Result<Int, String>) -> Int\n    match r\n        Result.Ok(_, _) -> 1\n        Result.Err(_) -> 0\n",
+            "Constructor pattern 'Result.Ok' lists 2 fields, but 'Result.Ok' has 1 field",
+        );
+    }
+
+    #[test]
+    fn empty_parentheses_on_a_variant_without_fields_are_accepted() {
+        assert_no_errors(
+            "type Light\n    On(Int)\n    Off\n\nfn f(l: Light) -> Int\n    match l\n        Light.Off() -> 0\n        Light.On(n) -> n\n",
+        );
+    }
+
+    #[test]
+    fn bare_constructor_patterns_match_the_variant_whatever_its_fields() {
+        assert_no_errors(&shape_src(
+            "fn f(s: Shape) -> Int\n    match s\n        Shape.Circle -> 0\n        Shape.Rect -> 1\n",
+        ));
+        assert_no_errors(
+            "fn f(r: Result<Int, String>) -> Int\n    match r\n        Result.Ok -> 1\n        Result.Err -> 0\n",
+        );
+        assert_no_errors(
+            "fn f(o: Option<Int>) -> Int\n    match o\n        Option.Some -> 1\n        Option.None -> 0\n",
+        );
+        assert_no_errors(&shape_src(
+            "fn f(s: Shape) -> Int\n    match s\n        Shape.Rect(0, h) -> h\n        Shape.Rect -> 1\n        Shape.Circle -> 0\n",
+        ));
+    }
+
+    #[test]
+    fn an_arm_after_a_bare_constructor_of_its_variant_is_unreachable() {
+        assert_error_containing(
+            &shape_src(
+                "fn f(s: Shape) -> Int\n    match s\n        Shape.Rect -> 1\n        Shape.Rect(w, h) -> w\n        Shape.Circle(r) -> r\n",
+            ),
+            "Unreachable match arm",
         );
     }
 
