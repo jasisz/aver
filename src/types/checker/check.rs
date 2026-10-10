@@ -292,18 +292,29 @@ impl TypeChecker {
     /// public fields. This is representation closure, not import closure:
     /// constructors, functions, and bare type aliases remain gated by the
     /// consumer's explicit `depends` surface.
+    ///
+    /// A record its module leaves out of `exposes` is part of this closure
+    /// too: leaving a type out hides its name, not its fields. A public
+    /// `Setting.walk: Walk` hands the consumer a `Walk` value, and
+    /// `setting.walk.counted` reads it the way the VM does. Only
+    /// `exposes opaque` hides a representation. Without the private record's
+    /// fields here the projection was stamped `Type::Invalid` with no error,
+    /// and the wasm-gc emitter then had no layout for it.
     fn integrate_loaded_record_schemas(&mut self, modules: &[crate::source::LoadedModule]) {
         for module in modules {
             for item in &module.items {
                 let TopLevel::TypeDef(TypeDef::Product { name, fields, .. }) = item else {
                     continue;
                 };
-                let publicly_structural = self
+                let structural = match self
                     .module_type_exports
                     .get(&module.dep_name)
                     .and_then(|exports| exports.get(name))
-                    .is_some_and(|target| target.module == module.dep_name && !target.is_opaque);
-                if !publicly_structural {
+                {
+                    Some(target) => target.module == module.dep_name && !target.is_opaque,
+                    None => true,
+                };
+                if !structural {
                     continue;
                 }
                 let canonical_type = crate::visibility::qualified_name(&module.dep_name, name);
