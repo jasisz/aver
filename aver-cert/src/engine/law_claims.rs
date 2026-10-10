@@ -517,17 +517,17 @@ fn statement_binders<'a>(items: &[StatementItem<'a>]) -> Vec<&'a str> {
         if !opens {
             continue;
         }
-        let mut depth = 0usize;
+        // Whether each open bracket was opened inside a type: a bracket in a
+        // binder's type (`List (List T)`) is still type, and closing it goes
+        // back to the state it was opened in.
+        let mut opened_typed: Vec<bool> = Vec::new();
         let mut typed = false;
         while at < items.len() {
+            let depth = opened_typed.len();
             match &items[at] {
-                StatementItem::Other('(' | '{' | '[' | '⦃') => {
-                    depth += 1;
-                    typed = false;
-                }
+                StatementItem::Other('(' | '{' | '[' | '⦃') => opened_typed.push(typed),
                 StatementItem::Other(')' | '}' | ']' | '⦄') => {
-                    depth = depth.saturating_sub(1);
-                    typed = false;
+                    typed = opened_typed.pop().unwrap_or(false);
                 }
                 StatementItem::Other(':') => typed = true,
                 StatementItem::Other(',' | '↦') if depth == 0 => break,
@@ -695,5 +695,45 @@ mod root_qualify_tests {
             root_qualify_statement("(!escape s) = true", "Json", &names),
             "(!_root_.Json.escape s) = true"
         );
+    }
+
+    const KNOWLEDGE: &str = "namespace Knowledge\n\n\
+        inductive Delta where\n  | verdict (_ : String)\n\n\
+        inductive Err where\n  | bad\n\n\
+        def run (xs : List (List Delta)) (d : Delta) : Delta :=\n  d\n\nend Knowledge\n";
+
+    /// A model name inside a binder's type is qualified at any depth of type
+    /// application, and the binders after it are still binders.
+    #[test]
+    fn names_in_nested_binder_types_are_qualified() {
+        let names = ModelNames::from_files([("AverModel/Knowledge.lean", KNOWLEDGE)]);
+        let cases = [
+            (
+                "∀ (xs : List (List Delta)) (d : Delta), run xs d = d",
+                "∀ (xs : List (List _root_.Knowledge.Delta)) (d : _root_.Knowledge.Delta), \
+                 _root_.Knowledge.run xs d = d",
+            ),
+            (
+                "∀ (m : Std.HashMap String (List Delta)), m = m",
+                "∀ (m : Std.HashMap String (List _root_.Knowledge.Delta)), m = m",
+            ),
+            (
+                "∀ (o : Option (Except Err Delta)), o = o",
+                "∀ (o : Option (Except _root_.Knowledge.Err _root_.Knowledge.Delta)), o = o",
+            ),
+            (
+                "∀ (p : Delta × (List (Option Delta) × Err)) (e : Err), p.2.2 = e",
+                "∀ (p : _root_.Knowledge.Delta × (List (Option _root_.Knowledge.Delta) × \
+                 _root_.Knowledge.Err)) (e : _root_.Knowledge.Err), p.2.2 = e",
+            ),
+            (
+                "∀ xs : List (List Delta), run xs (Delta.verdict \"a\") = Delta.verdict \"a\"",
+                "∀ xs : List (List _root_.Knowledge.Delta), _root_.Knowledge.run xs \
+                 (_root_.Knowledge.Delta.verdict \"a\") = _root_.Knowledge.Delta.verdict \"a\"",
+            ),
+        ];
+        for (statement, expected) in cases {
+            assert_eq!(root_qualify_statement(statement, "Knowledge", &names), expected);
+        }
     }
 }
