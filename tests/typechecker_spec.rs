@@ -5980,3 +5980,90 @@ fn list_pattern_against_a_non_list_is_rejected() {
         errs
     );
 }
+
+/// Writes a module `Chain` that exposes `Setting`, whose field `walk` has
+/// the type `Walk`. `Walk` is never in the plain `exposes` list; with
+/// `walk_opaque` it is in `exposes opaque`.
+fn write_chain_with_walk(root: &std::path::Path, walk_opaque: bool) {
+    let opaque_line = if walk_opaque {
+        "\n    exposes opaque [Walk]"
+    } else {
+        ""
+    };
+    std::fs::write(
+        root.join("Chain.av"),
+        format!(
+            r#"module Chain
+    intent = "Setting is exposed; its field walk has the type Walk."
+    exposes [Setting]{opaque_line}
+
+record Walk
+    target: Int
+
+record Setting
+    walk: Walk
+"#
+        ),
+    )
+    .expect("write Chain.av failed");
+}
+
+/// Leaving a record out of `exposes` hides its name and constructors, not
+/// its fields: `s.walk.target` reads the `Walk` the importer was handed
+/// and has `Walk`'s field type. The importer used to know no fields of
+/// `Walk`, so the read was typed `Invalid` with no error, which also let
+/// a wrong return type through.
+#[test]
+fn field_of_unexposed_record_has_its_declared_type() {
+    let root = temp_module_root("unexposed_record_field");
+    write_chain_with_walk(&root, false);
+    let base = root.to_str().expect("utf-8 temp dir");
+
+    let reads_int = r#"module Main
+    depends [Chain]
+    intent = "Reads an Int field of a record Chain does not expose."
+
+fn target(s: Setting) -> Int
+    s.walk.target
+"#;
+    let errs = errors_with_base(reads_int, base);
+    assert!(errs.is_empty(), "expected no type errors, got: {errs:?}");
+
+    let reads_as_string = r#"module Main
+    depends [Chain]
+    intent = "Returns the Int field as a String."
+
+fn target(s: Setting) -> String
+    s.walk.target
+"#;
+    let errs = errors_with_base(reads_as_string, base);
+    assert!(
+        !errs.is_empty(),
+        "expected a type mismatch: `s.walk.target` is an Int, not a String"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// `exposes opaque` is what hides a record's fields: the same read
+/// through an opaque `Walk` is an error.
+#[test]
+fn field_of_opaque_record_through_public_field_is_an_error() {
+    let root = temp_module_root("opaque_record_field");
+    write_chain_with_walk(&root, true);
+    let src = r#"module Main
+    depends [Chain]
+    intent = "Reads a field of an opaque record."
+
+fn target(s: Setting) -> Int
+    s.walk.target
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("Cannot access field 'target' of opaque type")),
+        "expected an opaque field-access error; got: {errs:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}

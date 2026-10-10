@@ -738,6 +738,8 @@ Custom bindings have three host-bound routes. A Rust embedder can install one ty
 
 `exposes opaque` makes a type visible in signatures but blocks direct construction, field access and pattern matching from outside the module. The type can still be passed around, returned and stored.
 
+A type left out of `exposes` altogether hides its name and its constructors, not its fields. If `Chain` exposes `Setting` with a field `walk: Walk` but not `Walk`, another module cannot write `Walk(...)` or `x: Walk`, yet `setting.walk.target` reads the field of the `Walk` it was handed. Only `exposes opaque` hides a type's fields.
+
 ```aver
 module Pricing
     exposes [mkDiscount, percent]
