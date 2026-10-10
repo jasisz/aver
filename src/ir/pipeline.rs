@@ -1264,6 +1264,9 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
                 items, has_loop,
             ));
     }
+    if tc.errors.is_empty() {
+        crate::ir::nested_patterns::expand_bare_constructor_patterns(items, &tc.bare_ctor_fields);
+    }
     result
         .pass_diagnostics
         .push(diag_for_typecheck(&tc, items.len()));

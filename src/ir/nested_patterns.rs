@@ -141,6 +141,88 @@ pub fn lower_nested_patterns(
     errors
 }
 
+/// Spell every bare constructor pattern whose variant has fields with
+/// one `_` per field: `Shape.Rect ->` becomes `Shape.Rect(_, _) ->`. A
+/// bare constructor matches its variant whatever the fields hold; once it
+/// is spelled out, every backend and proof exporter reads the ordinary
+/// flat form. `fields` comes from the check of the program
+/// ([`crate::types::checker::TypeCheckResult::bare_ctor_fields`]).
+pub fn expand_bare_constructor_patterns(items: &mut [TopLevel], fields: &HashMap<String, usize>) {
+    if fields.is_empty() {
+        return;
+    }
+    for_each_root_expr_mut(items, &mut |expr| expand_in_expr(expr, fields));
+}
+
+fn expand_in_expr(expr: &mut Spanned<Expr>, fields: &HashMap<String, usize>) {
+    crate::codegen::expr_walk::for_each_child_mut(expr, &mut |child| expand_in_expr(child, fields));
+    if let Expr::Match { arms, .. } = &mut expr.node {
+        for arm in arms {
+            expand_in_pattern(&mut arm.pattern, fields);
+        }
+    }
+}
+
+fn expand_in_pattern(pattern: &mut Pattern, fields: &HashMap<String, usize>) {
+    match pattern {
+        Pattern::Constructor(name, bindings) if bindings.is_empty() => {
+            if let Some(&count) = fields.get(name.as_str()) {
+                *bindings = vec!["_".to_string(); count];
+            }
+        }
+        Pattern::Tuple(items) | Pattern::ConstructorNested(_, items) => {
+            items
+                .iter_mut()
+                .for_each(|item| expand_in_pattern(item, fields));
+        }
+        Pattern::List { items, .. } => {
+            items
+                .iter_mut()
+                .for_each(|item| expand_in_pattern(item, fields));
+        }
+        _ => {}
+    }
+}
+
+fn for_each_root_expr_mut(items: &mut [TopLevel], f: &mut impl FnMut(&mut Spanned<Expr>)) {
+    for item in items {
+        match item {
+            TopLevel::FnDef(fd) => {
+                let FnBody::Block(stmts) = std::sync::Arc::make_mut(&mut fd.body);
+                for stmt in stmts {
+                    match stmt {
+                        Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => f(expr),
+                    }
+                }
+            }
+            TopLevel::Stmt(Stmt::Binding(_, _, expr) | Stmt::Expr(expr)) => f(expr),
+            TopLevel::Verify(vb) => {
+                for (lhs, rhs) in &mut vb.cases {
+                    f(lhs);
+                    f(rhs);
+                }
+                for givens in &mut vb.case_givens {
+                    for (_, expr) in givens {
+                        f(expr);
+                    }
+                }
+                if let VerifyKind::Law(law) = &mut vb.kind {
+                    f(&mut law.lhs);
+                    f(&mut law.rhs);
+                    if let Some(when) = &mut law.when {
+                        f(when);
+                    }
+                    law.because
+                        .iter_mut()
+                        .chain(law.sample_guards.iter_mut())
+                        .for_each(&mut *f);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 fn for_each_root_expr(items: &[TopLevel], f: &mut impl FnMut(&Spanned<Expr>)) {
     for item in items {
         match item {
@@ -345,6 +427,13 @@ impl Case {
         match (self, pat) {
             (_, Pat::Wild | Pat::Bind(_)) => Some(vec![Pat::Wild; self.arity()]),
             (Case::Tuple(n), Pat::Tuple(items)) if items.len() == *n => Some(items.clone()),
+            // A bare constructor (`Shape.Rect`) matches its variant
+            // whatever the fields hold.
+            (Case::Ctor(name, n), Pat::Ctor(other, args))
+                if ctor_key(name) == ctor_key(other) && args.is_empty() =>
+            {
+                Some(vec![Pat::Wild; *n])
+            }
             (Case::Ctor(name, n), Pat::Ctor(other, args))
                 if ctor_key(name) == ctor_key(other) && args.len() == *n =>
             {
@@ -546,7 +635,23 @@ impl<'a> Lowering<'a> {
             if pat.is_irrefutable() || cases.iter().any(|case| case.same_as(pat)) {
                 continue;
             }
-            cases.push(Case::of(pat));
+            // A bare constructor takes the field count from an arm that
+            // spells the fields, so both share one case.
+            let case = match (Case::of(pat), pat) {
+                (Case::Ctor(name, 0), Pat::Ctor(_, _)) => {
+                    let fields = rows.iter().find_map(|other| match &other.pats[column] {
+                        Pat::Ctor(other, args)
+                            if ctor_key(other) == ctor_key(&name) && !args.is_empty() =>
+                        {
+                            Some(args.len())
+                        }
+                        _ => None,
+                    });
+                    Case::Ctor(name, fields.unwrap_or(0))
+                }
+                (case, _) => case,
+            };
+            cases.push(case);
         }
         let complete = match kind {
             Kind::Tuple => true,

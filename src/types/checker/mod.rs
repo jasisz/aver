@@ -110,6 +110,12 @@ pub struct TypeCheckResult {
     /// ([`crate::ir::nested_patterns`]) reads it to tell a switch that
     /// covers the whole type from one that needs a default arm.
     pub pattern_ctor_families: HashMap<String, Vec<String>>,
+    /// For every constructor written bare in a pattern (`Shape.Rect ->`,
+    /// `Result.Ok ->`) whose variant has fields, how many it has. The
+    /// front door spells such a pattern with one `_` per field
+    /// ([`crate::ir::nested_patterns::expand_bare_constructor_patterns`]),
+    /// so no backend or proof exporter sees a bare one.
+    pub bare_ctor_fields: HashMap<String, usize>,
 }
 
 pub fn run_type_check(items: &[TopLevel]) -> Vec<TypeError> {
@@ -431,6 +437,7 @@ fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCh
         dependency_processes: checker.dependency_processes,
         type_spellings,
         pattern_ctor_families: checker.pattern_ctor_families,
+        bare_ctor_fields: checker.bare_ctor_fields,
     }
 }
 
@@ -802,6 +809,8 @@ struct TypeChecker {
     type_variants: HashMap<String, Vec<String>>,
     /// See [`TypeCheckResult::pattern_ctor_families`].
     pattern_ctor_families: HashMap<String, Vec<String>>,
+    /// See [`TypeCheckResult::bare_ctor_fields`].
+    bare_ctor_fields: HashMap<String, usize>,
     /// Module prefix of the items currently being checked. `None`
     /// while checking entry-scope items. Per-module sub-checkers
     /// (`check_loaded_module_bodies`) set this to the dep module's
@@ -920,6 +929,7 @@ impl TypeChecker {
             record_field_types: HashMap::new(),
             type_variants,
             pattern_ctor_families: HashMap::new(),
+            bare_ctor_fields: HashMap::new(),
             current_module_prefix: None,
             available_laws: std::collections::BTreeSet::new(),
             imported_processes: HashMap::new(),

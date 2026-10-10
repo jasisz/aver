@@ -116,6 +116,10 @@ match value
 
 Constructor patterns are always qualified (`Result.Ok`, `Option.None`, `Shape.Circle`). Records cannot be destructured positionally in a pattern. Bind the whole record and use field access (`user.name`, `user.age`).
 
+A constructor pattern with parentheses lists every field of its variant, one sub-pattern per field, `_` included. With `type Shape` having `Rect(Int, Int)`, `Shape.Rect(w, h)` and `Shape.Rect(_, _)` are fine, while `Shape.Rect(_)` and `Shape.Rect()` are errors (`Constructor pattern 'Shape.Rect' lists 1 field, but 'Shape.Rect' has 2 fields`). Empty parentheses fit only a variant without fields.
+
+A constructor pattern without parentheses matches its variant whatever the fields hold. `Shape.Rect -> …` takes every `Rect`, `Result.Ok -> …` every `Ok` and `Option.Some -> …` every `Some`, so a match can ask which variant a value is without naming its fields. Such an arm counts for exhaustiveness like `Shape.Rect(_, _)`, and any arm for the same variant after it is unreachable, so an arm that tests a field (`Shape.Rect(0, h)`) goes before it.
+
 A match may nest inside a match arm. The arm body must follow `->` on the same line, so move a complex expression into a named function.
 
 ### Nested patterns

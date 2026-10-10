@@ -77,15 +77,27 @@ impl TypeChecker {
             // A user type's constructor is always written qualified
             // (`Shape.Circle`); the parser refuses a bare one.
             Type::Named { .. } if !ctor_name.contains('.') => return None,
+            // A variant with no fields is a value, not a signature
+            // (`Shape.Dot()`).
+            Type::Named { name, .. }
+                if arity == 0
+                    && self.find_fn_sig(ctor_name).is_none()
+                    && self
+                        .variants_for(name)
+                        .is_some_and(|variants| variants.iter().any(|v| v == ctor_base)) =>
+            {
+                return Some(Vec::new());
+            }
             _ => {}
         }
 
         from_sig(ctor_name)
     }
 
-    /// Say why a constructor pattern found no signature: the constructor
-    /// exists with another number of fields, or there is no such
-    /// constructor at all.
+    /// Say why a constructor pattern written with parentheses found no
+    /// signature: the constructor exists with another number of fields
+    /// (every field needs a sub-pattern, `_` included), or there is no
+    /// such constructor at all.
     fn report_unmatched_constructor_pattern(
         &mut self,
         name: &str,
@@ -101,7 +113,7 @@ impl TypeChecker {
         };
         if let Some(expected) = self.find_fn_sig(name).map(|sig| sig.params.len()) {
             self.error(format!(
-                "Constructor pattern '{}' binds {}, but '{}' has {}",
+                "Constructor pattern '{}' lists {}, but '{}' has {}",
                 name,
                 fields(arity),
                 name,
@@ -120,13 +132,15 @@ impl TypeChecker {
     /// every constructor pattern gets: no match on an opaque type or a
     /// capability resource, and no `Result` / `Option` constructor
     /// against a subject of another type. `None` when the pattern is
-    /// refused (its fields then bind `Invalid`).
+    /// refused (its fields then bind `Invalid`). `parenthesized` is false
+    /// only for a bare constructor (`Shape.Rect ->`), which matches its
+    /// variant whatever the fields hold, so its count is not checked.
     fn constructor_pattern_field_types(
         &mut self,
         name: &str,
         subject_ty: &Type,
         arity: usize,
-        binds_names: bool,
+        parenthesized: bool,
     ) -> Option<Vec<Type>> {
         // Check if this pattern matches on an opaque type's representation.
         // Iron — A3: resolve the bare type prefix through
@@ -175,11 +189,11 @@ impl TypeChecker {
         match self.pattern_constructor_binding_types(name, subject_ty, arity) {
             Some(types) => Some(types),
             None => {
-                // The binders would get the recovery type `Invalid`, which
-                // must follow a reported error. A pattern that binds nothing
-                // gives no name a type, so it is left to the exhaustiveness
-                // check as before.
-                if binds_names && !reported && !matches!(subject_ty, Type::Invalid) {
+                // A pattern with parentheses names every field, so a count
+                // no constructor has is an error (its binders would get the
+                // recovery type `Invalid`). A bare constructor that names no
+                // variant of the type is left to the exhaustiveness check.
+                if parenthesized && !reported && !matches!(subject_ty, Type::Invalid) {
                     self.report_unmatched_constructor_pattern(name, subject_ty, arity);
                 }
                 Some(vec![Type::Invalid; arity])
@@ -239,6 +253,20 @@ impl TypeChecker {
         }
     }
 
+    /// Remember how many fields the variant of a bare constructor pattern
+    /// has, when it has any, so the front door can spell the pattern out.
+    fn record_bare_constructor_fields(&mut self, name: &str, subject_ty: &Type) {
+        let ctor_base = name.rsplit('.').next().unwrap_or(name);
+        let fields = match subject_ty {
+            Type::Result(_, _) | Type::Option(_) if matches!(ctor_base, "Ok" | "Err" | "Some") => 1,
+            Type::Result(_, _) | Type::Option(_) => 0,
+            _ => self.find_fn_sig(name).map_or(0, |sig| sig.params.len()),
+        };
+        if fields > 0 {
+            self.bare_ctor_fields.insert(name.to_string(), fields);
+        }
+    }
+
     pub(in super::super) fn collect_pattern_bindings(
         &mut self,
         pattern: &Pattern,
@@ -269,12 +297,17 @@ impl TypeChecker {
                 }
             }
             Pattern::Constructor(name, bindings) => {
-                let binds_names = bindings.iter().any(|b| b != "_");
+                // `Shape.Rect()` parses as a nested pattern, so an empty
+                // flat one is always the bare `Shape.Rect`.
+                let parenthesized = !bindings.is_empty();
+                if !parenthesized {
+                    self.record_bare_constructor_fields(name, subject_ty);
+                }
                 let Some(binding_tys) = self.constructor_pattern_field_types(
                     name,
                     subject_ty,
                     bindings.len(),
-                    binds_names,
+                    parenthesized,
                 ) else {
                     for bind_name in bindings {
                         if bind_name != "_" {
@@ -290,9 +323,8 @@ impl TypeChecker {
                 }
             }
             Pattern::ConstructorNested(name, fields) => {
-                let binds_names = !crate::ir::vars::pattern_bindings(pattern).is_empty();
                 let field_tys = self
-                    .constructor_pattern_field_types(name, subject_ty, fields.len(), binds_names)
+                    .constructor_pattern_field_types(name, subject_ty, fields.len(), true)
                     .unwrap_or_else(|| vec![Type::Invalid; fields.len()]);
                 for (field, field_ty) in fields.iter().zip(field_tys.iter()) {
                     self.collect_pattern_bindings(field, field_ty, out);
