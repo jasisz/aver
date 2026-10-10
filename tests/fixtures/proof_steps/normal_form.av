@@ -1,0 +1,106 @@
+module NormalForm
+    intent =
+        "Laws that close only once both sides are rewritten to a normal form: with the builtin list"
+        "facts no law cites, with a literal a rewrite leaves behind computed again, with two cited"
+        "laws that rewrite one term, and an induction whose case needs the claim at another"
+        "accumulator, or a split on a Bool only the arms of a `match` read as one; and two cited"
+        "laws that rewrite each other back, which must stay open."
+    exposes [onto, inc, incFirst, incPadded, allOn, allOnSpec]
+    effects []
+
+fn onto(xs: List<Int>, acc: List<Int>) -> List<Int>
+    ? "The list pushed onto an accumulator built backwards, turned round at the end."
+    match xs
+        [] -> List.reverse(acc)
+        [head, ..tail] -> onto(tail, List.prepend(head, acc))
+
+verify onto
+    onto([1, 2], [9]) => [9, 1, 2]
+
+verify onto law reverseKeepsTheMark
+    given xs: List<Int> = [[], [1], [1, 2]]
+    List.reverse(List.concat(xs, [7])) => List.prepend(7, List.reverse(xs))
+
+verify onto law regroupsTheEnd
+    given xs: List<Int> = [[], [1]]
+    given ys: List<Int> = [[], [2]]
+    List.concat(List.concat(List.concat(xs, ys), []), [3]) => List.concat(xs, List.concat(ys, [3]))
+
+verify onto law accumulatorComesFirst
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given acc: List<Int> = [[], [9], [8, 9]]
+    onto(xs, acc) => List.concat(List.reverse(acc), onto(xs, []))
+
+fn inc(x: Int) -> Int
+    ? "One more."
+    x + 1
+
+verify inc
+    inc(1) => 2
+
+fn incFirst(x: Int) -> Int
+    ? "The same, the one written first."
+    1 + x
+
+verify incFirst
+    incFirst(1) => 2
+
+fn incPadded(x: Int) -> Int
+    ? "The same, with a zero added."
+    (x + 0) + 1
+
+verify incPadded
+    incPadded(1) => 2
+
+verify inc law isFirst
+    given x: Int = [0, 5]
+    inc(x) => incFirst(x)
+
+verify inc law isPadded
+    given x: Int = [0, 5]
+    inc(x) => incPadded(x)
+
+verify incFirst law isInc
+    given x: Int = [0, 5]
+    incFirst(x) => inc(x)
+
+verify inc law eitherWay
+    given x: Int = [0, 5]
+    using [inc.isFirst, inc.isPadded]
+    inc(x) * 2 => incFirst(x) * 2
+
+verify incPadded law goesRound
+    given x: Int = [0, 5]
+    using [inc.isFirst, incFirst.isInc]
+    inc(x) * 2 => incPadded(x) * 2
+
+fn allOn(conditions: List<Bool>) -> Bool
+    ? "Whether every condition holds, stopping at the first that does not."
+    match conditions
+        [] -> true
+        [head, ..tail] -> offOrOn(head, tail)
+
+verify allOn
+    allOn([true, false]) => false
+
+fn offOrOn(head: Bool, tail: List<Bool>) -> Bool
+    ? "False at a condition that does not hold, the rest otherwise."
+    match head
+        false -> false
+        true -> allOn(tail)
+
+verify offOrOn
+    offOrOn(true, []) => true
+
+fn allOnSpec(conditions: List<Bool>) -> Bool
+    ? "The same, said the plain way."
+    match conditions
+        [] -> true
+        [head, ..tail] -> Bool.and(head, allOnSpec(tail))
+
+verify allOnSpec
+    allOnSpec([true]) => true
+
+verify allOn law isSpec
+    given conditions: List<Bool> = [[], [true], [false], [true, false], [true, true]]
+    allOn(conditions) => allOnSpec(conditions)

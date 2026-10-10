@@ -1,0 +1,50 @@
+module HintScope
+    intent =
+        "Stuck laws whose hints may name only laws they could cite: never a law of a function"
+        "the imported module keeps to itself, never a law that already cites the stuck one."
+    depends [Lib]
+    effects []
+
+fn total(xs: List<Int>) -> Int
+    ? "The imported sum."
+    Lib.shown(xs)
+
+verify total
+    total([1, 2]) => 3
+
+verify total law ofJoined
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given ys: List<Int> = [[], [3]]
+    total(List.concat(xs, ys)) => total(xs) + total(ys)
+
+fn sum(xs: List<Int>) -> Int
+    ? "The sum of the items."
+    match xs
+        [] -> 0
+        [head, ..tail] -> head + sum(tail)
+
+verify sum
+    sum([1, 2]) => 3
+
+verify sum law ofJoined
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given ys: List<Int> = [[], [3]]
+    using [sumTwice.doubles]
+    sum(List.concat(xs, ys)) => sum(xs) + sum(ys)
+
+verify sum law ofJoinedAgain
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given ys: List<Int> = [[], [3]]
+    induction xs
+    sum(List.concat(xs, ys)) => sum(xs) + sum(ys)
+
+fn sumTwice(xs: List<Int>) -> Int
+    ? "The sum of the list joined to itself."
+    sum(List.concat(xs, xs))
+
+verify sumTwice
+    sumTwice([1, 2]) => 6
+
+verify sumTwice law doubles
+    given xs: List<Int> = [[], [1], [1, 2]]
+    sumTwice(xs) => 2 * sum(xs)

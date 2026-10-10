@@ -29,6 +29,10 @@ pub(crate) struct Env<'a> {
     /// Every law the author cited, also those that would loop as rewrite
     /// rules: one instance may still prove an equation outright.
     pub cited_all: Vec<LawRef>,
+    /// The builtin facts evaluation rewrites with where it stops and no
+    /// cited law applies, cited or not
+    /// ([`crate::ir::proof_steps::facts::NORMALIZING`]).
+    pub fact_rules: Vec<LawRef>,
     /// The laws before this one it does not cite, offered as hints where
     /// evaluation stops (never applied).
     pub hint_laws: Vec<LawRef>,
@@ -83,6 +87,7 @@ impl<'a> Env<'a> {
             laws: Vec::new(),
             rewrite_laws: Vec::new(),
             cited_all: Vec::new(),
+            fact_rules: Vec::new(),
             hint_laws: Vec::new(),
             hyps: Vec::new(),
             fuel: 4000,

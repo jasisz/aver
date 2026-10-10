@@ -128,6 +128,46 @@ pub fn named(key: &str) -> Option<Fact> {
     all().into_iter().find(|f| f.key == key)
 }
 
+/// The facts the step producer rewrites with where evaluation stops,
+/// whether or not a law cites them: the list facts, each read left to
+/// right. Every one turns its left side into a smaller term in the
+/// lexicographic path order whose precedence puts `List.len` above
+/// `List.reverse`, `List.take` and `List.drop`, those above `List.concat`,
+/// and that above `List.prepend`, `+` and the literals: a rewrite either
+/// drops part of the term (`List.concat(a, []) => a`), moves a higher
+/// builtin below a lower one (`List.reverse` below `List.concat`,
+/// `List.len` below `+`), or reassociates `List.concat` to the right. The
+/// list rules evaluation itself steps by decrease in the same order, so
+/// rewriting with these facts and those rules always reaches a normal form;
+/// the producer's fuel and its check that a rewrite never comes back to an
+/// earlier term bound it besides. A fact with a `when` applies only where
+/// its `when` is proved. The `Map.` and `Vector.` facts are left out:
+/// evaluation already steps by their rules, and `Vector.len.asList`
+/// would grow the term.
+pub const NORMALIZING: &[&str] = &[
+    "List.len.ofConcat",
+    "List.concat.assoc",
+    "List.concat.rightIdentity",
+    "List.len.nonneg",
+    "List.take.ofConcat",
+    "List.drop.ofConcat",
+    "List.take.nonPositive",
+    "List.drop.nonPositive",
+    "List.concat.takeDrop",
+    "List.len.ofDropAtMost",
+    "List.len.ofReverse",
+    "List.reverse.ofConcat",
+    "List.reverse.involutive",
+];
+
+/// The facts of [`NORMALIZING`], in the order [`all`] lists them.
+pub fn normalizing() -> Vec<Fact> {
+    all()
+        .into_iter()
+        .filter(|f| NORMALIZING.contains(&f.key))
+        .collect()
+}
+
 /// Every fact, each after the facts its proof cites.
 pub fn all() -> Vec<Fact> {
     vec![
