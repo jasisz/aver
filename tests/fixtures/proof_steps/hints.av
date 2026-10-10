@@ -1,5 +1,7 @@
 module Hints
-    intent = "Laws over concrete lists that do not cite the builtin facts that would close them."
+    intent =
+        "Laws over concrete lists that do not cite the builtin facts that close them: the list"
+        "facts rewrite where evaluation stops anyway, and the one law they leave open is hinted."
     exposes [Tx, joined, batch, reversed]
     effects []
 

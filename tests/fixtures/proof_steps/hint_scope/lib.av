@@ -1,0 +1,35 @@
+module Lib
+    intent =
+        "A module that keeps its recursive helper to itself: a law of the helper may not be"
+        "cited by an importer, a law of an exposed function may."
+    exposes [shown]
+    depends []
+    effects []
+
+fn hidden(xs: List<Int>) -> Int
+    ? "The sum of the items, kept inside the module."
+    match xs
+        [] -> 0
+        [head, ..tail] -> head + hidden(tail)
+
+verify hidden
+    hidden([1, 2]) => 3
+
+fn shown(xs: List<Int>) -> Int
+    ? "The sum, as the module hands it on."
+    hidden(xs)
+
+verify shown
+    shown([1, 2]) => 3
+
+verify hidden law ofJoined
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given ys: List<Int> = [[], [3]]
+    induction xs
+    hidden(List.concat(xs, ys)) => hidden(xs) + hidden(ys)
+
+verify shown law splits
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given ys: List<Int> = [[], [3]]
+    induction xs
+    hidden(List.concat(xs, ys)) => hidden(xs) + hidden(ys)

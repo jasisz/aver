@@ -116,6 +116,7 @@ fn the_producers_write_steps_for_the_shapes_they_know() {
             "decode.fourReadBack",
             "decodeFrom.lastDigit",
             "encode.peelsLowByte",
+            "encodeInto.prefixAccumulator",
         ]
     );
     let lets_out = scratch("shapes-lets");
@@ -464,8 +465,8 @@ fn the_aver_backend_closes_by_steps_without_lean_on_the_path() {
         ]
     );
     // A law whose steps cite a law the backend did not close is not closed.
-    let (_, bytes) = aver_backend_json("bytes.av", &out, Some(""));
-    assert_eq!(bytes["closed_by"]["decode.eightReadBack"], "open");
+    let (_, using) = aver_backend_json("using.av", &out, Some(""));
+    assert_eq!(using["closed_by"]["g.overlapping"], "open");
     let _ = fs::remove_dir_all(out);
 }
 
@@ -844,7 +845,7 @@ fn lean_unfolds_through_local_bindings_and_refuses_a_mutation() {
 }
 
 #[test]
-fn a_using_list_is_a_set_and_ambiguous_or_looping_rewrites_are_refused_by_name() {
+fn a_using_list_is_a_set_overlapping_rewrites_take_the_smallest_and_looping_ones_are_refused() {
     let out = scratch("using");
     let result = Command::new(aver_bin())
         .args([
@@ -874,11 +875,11 @@ fn a_using_list_is_a_set_and_ambiguous_or_looping_rewrites_are_refused_by_name()
         read("g.throughHOneWay").replace("throughHOneWay", "_"),
         read("g.throughHOtherWay").replace("throughHOtherWay", "_")
     );
-    assert!(
-        line("g.overlapping")
-            .contains("law f.isG and law f.isH both rewrite `f(x)`, to different terms"),
-        "{log}"
-    );
+    // Two cited laws rewrite `f(x)`, to `g(x)` and `h(x)`: the results are
+    // as large, so the law defined first wins, whatever order the list
+    // names them in.
+    assert!(line("g.overlapping").ends_with(" nodes"), "{log}");
+    assert!(read("g.overlapping").contains("(law f.isG "), "{log}");
     // Such a law is still one instance: it proves an equation it matches
     // whole, either way round.
     assert!(line("sameLen.againstOne").ends_with(" nodes"), "{log}");
@@ -915,7 +916,7 @@ fn the_aver_backend_says_where_the_steps_producer_stopped() {
     for expected in [
         "  f.isH: closed by steps",
         "  f.isG: not closed by this backend (steps: evaluation stops at `x + \"!\"` and `(\"\" + x) + \"!\"`",
-        "  g.overlapping: not closed by this backend (steps: law f.isG and law f.isH both rewrite",
+        "  g.overlapping: not closed by this backend (it cites f.isG, which is not)",
     ] {
         assert!(text.contains(expected), "missing `{expected}`\n{text}");
     }
@@ -2921,23 +2922,27 @@ fn lean_states_each_cited_fact_once_for_every_element_type() {
     let _ = fs::remove_dir_all(out);
 }
 
-/// A law that does not cite the fact that would close it stays open, and
-/// the report names the fact and the part of the stuck term it rewrites:
-/// in `--backend aver` text and JSON, and in the exported `.refused` file
-/// the Lean check reads.
+/// The list facts of `facts::NORMALIZING` rewrite where evaluation stops
+/// although no law cites them: the laws close, and each script carries the
+/// facts it used, with their proofs, so the kernel checks them. A law they
+/// do not close is still hinted the fact that would rewrite where it
+/// stopped, in `--backend aver` text and JSON.
 #[test]
-fn a_stuck_law_is_hinted_the_facts_that_rewrite_where_it_stopped() {
+fn laws_close_by_the_list_facts_they_do_not_cite_and_a_stuck_one_is_hinted() {
     let dir = repo_root().join(FIXTURES);
     let text = aver_in(&dir, &["proof", "hints.av", "--backend", "aver"]);
     let out = String::from_utf8_lossy(&text.stdout).to_string();
     assert!(
-        out.contains("0 of 11 law(s) closed by steps"),
+        out.contains("10 of 11 law(s) closed by steps"),
         "{}",
         format_output(&text)
     );
     assert!(
-        out.contains("  joined.lengthAdds: not closed by this backend (steps: evaluation stops at `List.len(List.concat(xs, ys))`")
-            && out.contains("    hint: `List.len.ofConcat` rewrites `List.len(List.concat(xs, ys))`; add it to `using`"),
+        out.contains("  joined.lengthAdds: closed by steps"),
+        "{out}"
+    );
+    assert!(
+        out.contains("    hint: `List.len.nonneg` rewrites `List.len(List.reverse(xs)) >= 0`; add it to `using`"),
         "{out}"
     );
     let json = aver_in(
@@ -2952,27 +2957,170 @@ fn a_stuck_law_is_hinted_the_facts_that_rewrite_where_it_stopped() {
             .unwrap(),
     )
     .unwrap();
+    assert_eq!(summary["closed_by"]["reversed.twiceIsTheSame"], "steps");
     assert_eq!(
-        summary["steps_hints"]["reversed.twiceIsTheSame"],
-        serde_json::json!([
-            "`List.reverse.involutive` rewrites `List.reverse(List.reverse(xs))`; add it to `using`"
-        ]),
+        summary["closed_by"]["reversed.lengthIsNeverNegative"],
+        "open"
+    );
+    let export = scratch("hints");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("hints.av", &export).into_iter().collect();
+    assert_eq!(files.len(), 10, "{files:?}");
+    let three = fs::read_to_string(&files["batch.threeBatches"]).unwrap();
+    assert!(three.contains("(fact List.concat.assoc "), "{three}");
+    for (law, path) in &files {
+        let text = fs::read_to_string(path).unwrap();
+        assert_eq!(
+            aver::proof_kernel::verdict(&text),
+            Ok(law.clone()),
+            "{text}"
+        );
+    }
+    let _ = fs::remove_dir_all(export);
+}
+
+const NORMAL_FORM_LAWS: [&str; 8] = [
+    "allOn.isSpec",
+    "inc.eitherWay",
+    "inc.isFirst",
+    "inc.isPadded",
+    "incFirst.isInc",
+    "onto.accumulatorComesFirst",
+    "onto.regroupsTheEnd",
+    "onto.reverseKeepsTheMark",
+];
+
+/// Where evaluation stops at two different terms, both are rewritten to a
+/// normal form with the cited laws and the list facts, a literal a rewrite
+/// leaves behind computed again (`List.reverse([7])`); two cited laws that
+/// rewrite one term give the smaller result; an induction case uses the
+/// claim at another accumulator and the facts; a `match` on a Bool the
+/// kernel knows only from the arms is split on `Bool.and(head, true)`.
+/// Each script is the kernel's to accept, a mutated one is refused, and
+/// two cited laws that rewrite each other back leave their law open.
+#[test]
+fn both_sides_are_rewritten_to_a_normal_form_and_a_rewrite_loop_stays_open() {
+    let out = scratch("normal-form");
+    let (result, summary) = aver_backend_json("normal_form.av", &out, None);
+    let _ = fs::remove_dir_all(&out);
+    for law in NORMAL_FORM_LAWS {
+        assert_eq!(
+            summary["closed_by"][law],
+            "steps",
+            "{law}: {}",
+            format_output(&result)
+        );
+    }
+    assert_eq!(summary["closed_by"]["incPadded.goesRound"], "open");
+    let export = scratch("normal-form-export");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("normal_form.av", &export)
+            .into_iter()
+            .collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), NORMAL_FORM_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let mark = read("onto.reverseKeepsTheMark");
+    assert!(mark.contains("(fact List.reverse.ofConcat "), "{mark}");
+    assert!(mark.contains("(compute "), "{mark}");
+    assert!(read("inc.eitherWay").contains("(law inc.isFirst "));
+    let spec = read("allOn.isSpec");
+    assert!(spec.contains("(rule bool.and.true_r "), "{spec}");
+    // The fact's instance at another list: the kernel refuses it.
+    let instance = "(law List.reverse.ofConcat ((a (v xs))";
+    assert!(mark.contains(instance), "{mark}");
+    let mutant = mutate_proof(&mark, instance, "(law List.reverse.ofConcat ((a (list))");
+    assert!(aver::proof_kernel::verdict(&mutant).is_err(), "{mutant}");
+    let _ = fs::remove_dir_all(export);
+}
+
+#[test]
+fn lean_closes_the_normal_form_laws_by_their_steps() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("normal-form-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "normal_form.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in NORMAL_FORM_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+/// A hint names only a law the stuck law could cite: not a law of a
+/// function its imported module does not expose, and not a law that
+/// already cites the stuck one, which would make a cycle.
+#[test]
+fn a_hint_never_names_an_unexposed_law_or_one_that_would_cite_back() {
+    let dir = repo_root().join(FIXTURES).join("hint_scope");
+    let out = scratch("hint-scope");
+    let result = aver_in(
+        &dir,
+        &[
+            "proof",
+            "main.av",
+            "--backend",
+            "aver",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "99",
+        ],
+    );
+    let _ = fs::remove_dir_all(&out);
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap_or_else(|| panic!("{}", format_output(&result))),
+    )
+    .unwrap();
+    let hints = |law: &str| summary["steps_hints"][law].to_string();
+    assert_eq!(summary["closed_by"]["total.ofJoined"], "open", "{summary}");
+    assert!(
+        !hints("total.ofJoined").contains("Lib.hidden.ofJoined"),
         "{summary}"
     );
-    assert_eq!(summary["closed_by"]["reversed.twiceIsTheSame"], "open");
-    let export = scratch("hints");
-    let files = export_steps("hints.av", &export);
-    assert!(files.is_empty(), "{files:?}");
-    let refused =
-        fs::read_to_string(export.join("proof_steps/batch.threeBatches.refused")).unwrap();
+    // The module's own law about its helper is hinted inside the module.
     assert!(
-        refused.lines().nth(1)
-            == Some(
-                "hint: `List.concat.assoc` rewrites `List.concat(List.concat(a, b), c)`; add it to `using`"
-            ),
-        "{refused}"
+        hints("Lib.shown.splits").contains("`Lib.hidden.ofJoined` rewrites"),
+        "{summary}"
     );
-    let _ = fs::remove_dir_all(export);
+    assert_eq!(
+        summary["closed_by"]["sumTwice.doubles"], "open",
+        "{summary}"
+    );
+    assert!(
+        hints("sumTwice.doubles").contains("`sum.ofJoinedAgain` rewrites"),
+        "{summary}"
+    );
+    assert!(
+        !hints("sumTwice.doubles").contains("`sum.ofJoined` rewrites"),
+        "{summary}"
+    );
 }
 
 /// A hint is found where the steps stopped, not only in the two sides: in
@@ -2991,8 +3139,9 @@ fn a_stuck_law_is_hinted_where_the_steps_stopped_and_never_a_false_when() {
             .map(|a| a.iter().map(|h| h.as_str().unwrap().to_string()).collect())
             .unwrap_or_default()
     };
+    // `List.reverse.involutive` rewrites without being cited.
+    assert_eq!(summary["closed_by"]["first.ofTwiceReversed"], "steps");
     for law in [
-        "first.ofTwiceReversed",
         "tail.neverLonger",
         "firstTwo.twiceIsOnce",
         "count.ofJoined",
@@ -3011,10 +3160,6 @@ fn a_stuck_law_is_hinted_where_the_steps_stopped_and_never_a_false_when() {
             "{law}: {hint}: {summary}"
         )
     };
-    has(
-        "first.ofTwiceReversed",
-        "`List.reverse.involutive` rewrites `List.reverse(List.reverse(xs))`; add it to `using`",
-    );
     has(
         "tail.neverLonger",
         "`List.len.ofDropAtMost` rewrites `List.len(List.drop(xs, n)) <= List.len(xs)`; add it to `using`",

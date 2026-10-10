@@ -125,6 +125,74 @@ fn cited(
     Some(out)
 }
 
+/// The keys of the laws `c`'s `using` list names (builtin facts left
+/// out), resolved against `c`'s module.
+fn cited_keys(inputs: &ProofLowerInputs, ir: &ProofIR, c: &LawTheorem) -> Vec<String> {
+    let scope = &inputs.symbol_table.fn_entry(c.fn_id).key.scope;
+    let mut out = Vec::new();
+    for name in c.using.iter().flatten() {
+        for d in &ir.law_theorems {
+            let key = &inputs.symbol_table.fn_entry(d.fn_id).key;
+            let local = format!("{}.{}", key.name, d.law_name);
+            if (key.scope == *scope && *name == local) || *name == law_key(inputs, d) {
+                out.push(law_key(inputs, d));
+            }
+        }
+    }
+    out
+}
+
+/// Whether law `t` may cite law `c` in its `using` list, so a hint may
+/// name it: `c` is of `t`'s own module, or of a module `t`'s module
+/// depends on that exposes `c`'s function; and `c` does not already cite
+/// `t`, directly or through other laws, which would make the citation a
+/// cycle.
+fn citable_from(inputs: &ProofLowerInputs, ir: &ProofIR, t: &LawTheorem, c: &LawTheorem) -> bool {
+    let own = &inputs.symbol_table.fn_entry(t.fn_id).key;
+    let theirs = &inputs.symbol_table.fn_entry(c.fn_id).key;
+    if theirs.scope != own.scope {
+        let Some(module) = theirs.scope.as_deref() else {
+            return false;
+        };
+        let depends: Option<&[String]> = match own.scope.as_deref() {
+            None => {
+                crate::visibility::module_decl(inputs.entry_items).map(|m| m.depends.as_slice())
+            }
+            Some(prefix) => inputs
+                .dep_modules
+                .iter()
+                .find(|m| m.prefix == prefix)
+                .map(|m| m.depends.as_slice()),
+        };
+        if !depends.is_some_and(|d| d.iter().any(|m| m == module)) {
+            return false;
+        }
+        let Some(info) = inputs.dep_modules.iter().find(|m| m.prefix == module) else {
+            return false;
+        };
+        let exposes = (!info.exposes.is_empty()).then_some(info.exposes.as_slice());
+        if !crate::visibility::is_exposed(&theirs.name, exposes) {
+            return false;
+        }
+    }
+    let target = law_key(inputs, t);
+    let mut pending = cited_keys(inputs, ir, c);
+    let mut seen: Vec<String> = Vec::new();
+    while let Some(next) = pending.pop() {
+        if next == target {
+            return false;
+        }
+        if seen.contains(&next) {
+            continue;
+        }
+        if let Some(d) = ir.law_theorems.iter().find(|d| law_key(inputs, d) == next) {
+            pending.extend(cited_keys(inputs, ir, d));
+        }
+        seen.push(next);
+    }
+    true
+}
+
 fn obligation(inputs: &ProofLowerInputs, t: &LawTheorem) -> Obligation {
     Obligation {
         key: law_key(inputs, t),
@@ -191,6 +259,12 @@ fn citations(env: &mut Env, laws: Vec<LawRef>, ob: &Obligation) -> Result<Proof,
         .map(|l| Equation::Law(Box::new(l)))
         .collect();
     eqs.push(Equation::Wall(WallRule::DivModRecompose));
+    eqs.extend(
+        env.fact_rules
+            .iter()
+            .cloned()
+            .map(|l| Equation::Law(Box::new(l))),
+    );
     env.laws = usable;
     let with_reasons = |why: String| {
         if reasons.is_empty() {
@@ -240,6 +314,11 @@ fn fresh_env<'a>(
         .cloned()
         .collect();
     env.cited_all = using.iter().flatten().cloned().collect();
+    env.fact_rules = crate::ir::proof_steps::facts::normalizing()
+        .iter()
+        .filter(|f| !env.cited_all.iter().any(|c| c.key == f.key))
+        .map(crate::ir::proof_steps::facts::Fact::law_ref)
+        .collect();
     env.hint_laws = earlier.to_vec();
     env
 }
@@ -629,6 +708,7 @@ fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize, hints: &mut Vec<St
     // only, where one would rewrite a stuck term.
     let earlier: Vec<LawRef> = ir.law_theorems[..i]
         .iter()
+        .filter(|c| citable_from(inputs, ir, t, c))
         .map(|c| law_ref(inputs, c))
         .filter(|l| rewrite::loops(l).is_none())
         .collect();

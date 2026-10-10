@@ -6,10 +6,11 @@
 use crate::ast::BinOp;
 use crate::ir::hir::{ResolvedCallee, ResolvedExpr, ResolvedPattern};
 use crate::ir::proof_steps::term::{self, Term, canon};
-use crate::ir::proof_steps::{Eqn, Proof, WallRule};
+use crate::ir::proof_steps::{Eqn, LawRef, Proof, WallRule};
 
 use super::chain::{Chain, meet};
 use super::env::Env;
+use super::rewrite::pick_rewrite;
 
 pub(crate) struct Eval {
     pub chain: Chain,
@@ -27,6 +28,10 @@ enum Step {
 /// costs several large frames of the compiler's own stack, and a test
 /// thread has 2 MiB.
 const MAX_NESTING: usize = 24;
+
+/// Rounds of [`Env::meet_by_rewriting`], one rewrite of each side per
+/// round.
+const MAX_REWRITE_ROUNDS: usize = 64;
 
 /// Whether `part` occurs in `t`.
 fn holds(t: &Term, part: &Term) -> bool {
@@ -364,6 +369,44 @@ fn open_literal_path(t: &Term) -> Option<Vec<usize>> {
         })
 }
 
+/// The position of the first list literal in `t` with an element, closed
+/// or not, outside any `match`.
+fn any_literal_path(t: &Term) -> Option<Vec<usize>> {
+    if matches!(t.node, ResolvedExpr::Match { .. }) {
+        return None;
+    }
+    if let ResolvedExpr::List(xs) = &t.node
+        && !xs.is_empty()
+    {
+        return Some(Vec::new());
+    }
+    term::children(t)
+        .into_iter()
+        .enumerate()
+        .find_map(|(i, c)| {
+            let mut path = any_literal_path(c)?;
+            path.insert(0, i);
+            Some(path)
+        })
+}
+
+/// `t = t'`, where `t'` writes every list literal of `t` with an element,
+/// a closed one too, as cells all the way down (`[1, 2]` as
+/// `List.prepend(1, List.prepend(2, []))`), one [`Proof::Cell`] step per
+/// element; `None` when there is none, or more than 64 elements.
+fn every_literal_as_cells(t: &Term) -> Option<Chain> {
+    let mut chain = Chain::new(&canon(t));
+    while let Some(path) = any_literal_path(chain.cur()) {
+        if chain.len() >= 64 {
+            return None;
+        }
+        let list = term::at(chain.cur(), &path).clone();
+        let cell = term::cell_of(&list)?;
+        chain.push_at(&path, Proof::Cell { list }, &cell);
+    }
+    (!chain.is_empty()).then_some(chain)
+}
+
 /// `t = t'`, where `t'` writes every list literal of `t` with an open
 /// element as cells, one [`Proof::Cell`] step each; `None` when there is
 /// none.
@@ -472,8 +515,16 @@ impl Env<'_> {
     /// predicate, an Int equality one cited law instance settles, then a
     /// cited law applied left to right.
     fn known(&mut self, cur: &Term) -> Result<Option<Step>, String> {
+        // A Bool literal is a value already: a hypothesis with it as a
+        // conjunct (`Bool.and(head, true)`) would rewrite it to itself.
+        if is_bool_value(cur) {
+            return Ok(None);
+        }
         if let Some((name, value)) = self.hyp_for(cur) {
             return Ok(Some(Step::Progress(Box::new((Proof::Hyp(name), value)))));
+        }
+        if let Some(step) = self.split_bool(cur) {
+            return Ok(Some(step));
         }
         if let Some(step) = self.hyp_as_cells(cur) {
             return Ok(Some(step));
@@ -851,6 +902,79 @@ impl Env<'_> {
         None
     }
 
+    /// What to split on where a `match` whose arms read Bool literals
+    /// stopped at `value`, given what evaluation found (`found`). A
+    /// subject the kernel knows is a Bool by its shape (a comparison, a
+    /// connective, a call of a definition that returns a Bool, a given of
+    /// type Bool) is split on as it stands; any other one, such as the
+    /// head of a `List<Bool>` an induction case named, is a Bool only
+    /// because the arms read it as one, so the split is on
+    /// `Bool.and(value, true)`, which the kernel knows is a Bool and which
+    /// is `value` by the rule `and_true_r` (see [`Self::split_bool`]).
+    fn bool_guard(
+        &self,
+        arms: &[crate::ir::hir::ResolvedMatchArm],
+        value: &Term,
+        found: Option<Term>,
+    ) -> Option<Term> {
+        use crate::ast::Literal;
+        let reads_bool = arms
+            .iter()
+            .any(|a| matches!(a.pattern, ResolvedPattern::Literal(Literal::Bool(_))));
+        if !reads_bool || term::bool_value(value).is_some() {
+            return found;
+        }
+        let kernel_bool = match &value.node {
+            ResolvedExpr::BinOp(..) => true,
+            ResolvedExpr::Call(ResolvedCallee::Builtin(b), _) => {
+                matches!(b.as_str(), "Bool.and" | "Bool.or" | "Bool.not")
+            }
+            ResolvedExpr::Call(ResolvedCallee::Fn(_), _) => {
+                matches!(value.ty(), Some(crate::ast::Type::Bool))
+            }
+            ResolvedExpr::Ident(n) => self.finite.contains(n),
+            _ => false,
+        };
+        match found {
+            Some(g) if canon(&g) != canon(value) || kernel_bool => Some(g),
+            _ if kernel_bool => Some(canon(value)),
+            _ => Some(canon(&term::bool_and(value.clone(), term::boolean(true)))),
+        }
+    }
+
+    /// `x` is `v` where a split stated `Bool.and(x, true) = v`: by
+    /// `and_true_r` read backwards, then that hypothesis.
+    fn split_bool(&self, cur: &Term) -> Option<Step> {
+        let t = canon(cur);
+        for (name, e) in self.hyps.iter().rev() {
+            let Some(v) = term::bool_value(&e.rhs) else {
+                continue;
+            };
+            if let ResolvedExpr::Call(ResolvedCallee::Builtin(b), args) = &e.lhs.node
+                && b == "Bool.and"
+                && args.len() == 2
+                && term::bool_value(&args[1]) == Some(true)
+                && canon(&args[0]) == t
+            {
+                let wrapped = canon(&e.lhs);
+                let value = term::boolean(v);
+                let proof = Proof::Trans {
+                    terms: vec![t.clone(), wrapped, value.clone()],
+                    steps: vec![
+                        Proof::Symm(Box::new(Proof::Rule {
+                            rule: WallRule::AndTrueR,
+                            subst: vec![("a".into(), t.clone())],
+                            premises: Vec::new(),
+                        })),
+                        Proof::Hyp(name.clone()),
+                    ],
+                };
+                return Some(Step::Progress(Box::new((proof, value))));
+            }
+        }
+        None
+    }
+
     fn settle(&mut self, cur: &Term, blocked: Option<Term>) -> Result<Step, String> {
         if let Some(step) = self.known(cur)? {
             return Ok(step);
@@ -1039,6 +1163,7 @@ impl Env<'_> {
                                 || matches!(value.node, ResolvedExpr::BinOp(..)))
                             .then_some(value.clone())
                         });
+                        let g = self.bool_guard(arms, &value, g);
                         self.settle(cur, g)
                     }
                 }
@@ -1118,6 +1243,7 @@ impl Env<'_> {
                                 || matches!(value.node, ResolvedExpr::BinOp(..)))
                             .then_some(value.clone())
                         });
+                        let g = self.bool_guard(arms, &value, g);
                         self.settle(cur, g)
                     }
                 }
@@ -1488,10 +1614,28 @@ impl Env<'_> {
         let Some(list) = args.first() else {
             return Ok(None);
         };
-        if matches!(
+        let list_builtin = matches!(
             name.as_str(),
             "List.concat" | "List.len" | "List.reverse" | "List.take" | "List.drop"
-        ) && let ResolvedExpr::List(xs) = &list.node
+        );
+        // A call of one of them on closed lists computes to the list it
+        // gives, so a rewrite that leaves `List.reverse([128])` behind is
+        // followed by its value.
+        if list_builtin
+            && let Some(v) = term::eval_closed(cur)
+            && matches!(v.node, ResolvedExpr::List(_))
+            && v != canon(cur)
+        {
+            return Ok(Some(Step::Progress(Box::new((
+                Proof::Compute {
+                    lhs: cur.clone(),
+                    rhs: v.clone(),
+                },
+                v,
+            )))));
+        }
+        if list_builtin
+            && let ResolvedExpr::List(xs) = &list.node
             && !xs.is_empty()
             && term::eval_closed(list).is_none()
         {
@@ -2110,9 +2254,12 @@ impl Env<'_> {
             .any(|c| self.opens_to(c, target))
     }
 
+    /// One rewrite of `cur` at its root by a cited law. Where several
+    /// apply, the one with the smallest result wins, the first in citation
+    /// order among those of one size (see [`pick_rewrite`]).
     fn rewrite_with_cited(&mut self, cur: &Term) -> Result<Option<(Proof, Term)>, String> {
         use super::rewrite::Equation;
-        let mut found: Vec<(String, Proof, Term)> = Vec::new();
+        let mut found: Vec<(LawRef, Proof, Term)> = Vec::new();
         for law in self.rewrite_laws.clone() {
             let eq = Equation::Law(Box::new(law.clone()));
             if let Some((p, to)) = self.try_equation(&eq, cur) {
@@ -2122,22 +2269,15 @@ impl Env<'_> {
                 // (`intoBytes(ops, [])` to `List.concat([], bytesOf(ops))`
                 // where `bytesOf(ops)` is `intoBytes(ops, [])`).
                 if !holds(&to, &canon(cur)) && !self.opens_to(&to, &canon(cur)) {
-                    found.push((law.key.clone(), p, to));
+                    found.push((law, p, to));
                 }
             }
         }
-        let Some((key, p, to)) = found.first().cloned() else {
+        let Some(k) = pick_rewrite(found.iter().map(|(_, _, to)| to)) else {
             return Ok(None);
         };
-        if let Some((other, _, _)) = found.iter().find(|(_, _, o)| canon(o) != canon(&to)) {
-            return Err(format!(
-                "law {key} and law {other} both rewrite `{}`, to different terms; cite only one of them",
-                crate::ir::proof_steps::show::term(cur, self.inputs.symbol_table)
-            ));
-        }
-        if let Some(law) = self.rewrite_laws.iter().find(|l| l.key == key).cloned()
-            && !self.laws.iter().any(|l| l.key == key)
-        {
+        let (law, p, to) = found.swap_remove(k);
+        if !self.laws.iter().any(|l| l.key == law.key) {
             self.laws.push(law);
         }
         Ok(Some((p, to)))
@@ -2302,7 +2442,122 @@ impl Env<'_> {
         {
             return Ok(Ok(proof));
         }
+        // Last, rewriting both sides to a normal form with the cited laws
+        // and the builtin list facts.
+        if let Some(proof) = self.meet_by_rewriting(&nl, &nr)? {
+            return Ok(Ok(proof));
+        }
         Err(self.stopped_at(nl.cur(), nr.cur()))
+    }
+
+    /// Where evaluation stopped at two different terms: rewrite each side
+    /// toward a normal form with the cited laws and the builtin facts of
+    /// [`crate::ir::proof_steps::facts::NORMALIZING`], one rewrite at a
+    /// time at the outermost-leftmost position (a cited law before a fact,
+    /// the smallest result among several, see [`pick_rewrite`]), each
+    /// followed by evaluation again, so a literal a rewrite leaves behind
+    /// computes and a hypothesis applies to what the rewrite exposed. The
+    /// sides meet or the attempt gives up: when neither side changes, when
+    /// a side would come back to a term it already had, or after
+    /// [`MAX_REWRITE_ROUNDS`] rounds; every rewrite also burns fuel. A
+    /// failed attempt leaves the fuel and the cited laws as it found them,
+    /// for what the caller tries next.
+    fn meet_by_rewriting(&mut self, nl: &Chain, nr: &Chain) -> Result<Option<Proof>, String> {
+        use super::rewrite::Equation;
+        let eqs: Vec<Equation> = self
+            .rewrite_laws
+            .iter()
+            .chain(self.fact_rules.iter())
+            .cloned()
+            .map(|l| Equation::Law(Box::new(l)))
+            .collect();
+        if eqs.is_empty() {
+            return Ok(None);
+        }
+        let (fuel, laws) = (self.fuel, self.laws.clone());
+        match self.rewrite_to_meet(&eqs, nl, nr) {
+            Ok(Some(proof)) => Ok(Some(proof)),
+            _ => {
+                self.fuel = fuel;
+                self.laws = laws;
+                Ok(None)
+            }
+        }
+    }
+
+    fn rewrite_to_meet(
+        &mut self,
+        eqs: &[super::rewrite::Equation],
+        nl: &Chain,
+        nr: &Chain,
+    ) -> Result<Option<Proof>, String> {
+        if let Some(proof) = self.same_up_to_cells(nl, nr) {
+            return Ok(Some(proof));
+        }
+        let mut sides = [nl.clone(), nr.clone()];
+        let mut seen = [vec![canon(nl.cur())], vec![canon(nr.cur())]];
+        for _ in 0..MAX_REWRITE_ROUNDS {
+            let mut changed = false;
+            for i in 0..2 {
+                self.burn()?;
+                let cur = sides[i].cur().clone();
+                let Some((path, proof, to)) = self.rewrite_somewhere(eqs, &cur, &mut Vec::new())?
+                else {
+                    continue;
+                };
+                let mut next = sides[i].clone();
+                next.push_at(&path, proof, &to);
+                let again = self.normalize(&next.cur().clone(), 8)?;
+                if !again.is_empty() {
+                    let (to, proof) = again.finish();
+                    next.push(proof, to);
+                }
+                let now = canon(next.cur());
+                if seen[i].contains(&now) {
+                    continue;
+                }
+                seen[i].push(now);
+                sides[i] = next;
+                changed = true;
+                if let Some(proof) = self.same_up_to_cells(&sides[0], &sides[1]) {
+                    return Ok(Some(proof));
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        Ok(None)
+    }
+
+    /// `l` and `r` meet as they stand, or once every list literal in both
+    /// is written as cells and evaluated again: a literal a computation
+    /// gave (`[128]`) against the cell (`List.prepend(128, rest)`) the
+    /// other side built.
+    fn same_up_to_cells(&mut self, l: &Chain, r: &Chain) -> Option<Proof> {
+        if canon(l.cur()) == canon(r.cur()) {
+            return Some(meet(l.clone(), r.clone()));
+        }
+        let mut sides = [l.clone(), r.clone()];
+        let mut celled = false;
+        for side in sides.iter_mut() {
+            let Some(cells) = every_literal_as_cells(side.cur()) else {
+                continue;
+            };
+            celled = true;
+            let (to, proof) = cells.finish();
+            side.push(proof, to);
+            let again = self.normalize(&side.cur().clone(), 8).ok()?;
+            if !again.is_empty() {
+                let (to, proof) = again.finish();
+                side.push(proof, to);
+            }
+        }
+        if !celled || canon(sides[0].cur()) != canon(sides[1].cur()) {
+            return None;
+        }
+        let [l, r] = sides;
+        Some(meet(l, r))
     }
 
     /// The first Int comparison, not decided by a hypothesis, among the

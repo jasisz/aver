@@ -427,50 +427,64 @@ impl Env<'_> {
         None
     }
 
-    /// The name of an equation, for a refusal.
-    pub(crate) fn equation_name(&self, eq: &Equation) -> String {
-        use crate::ir::proof_steps::sexpr::Names;
-        match eq {
-            Equation::Law(law) => format!("law {}", law.key),
-            Equation::Wall(rule) => format!("rule {}", rule.id()),
-            Equation::Unfold(id) => {
-                format!(
-                    "the definition of {}",
-                    self.inputs.symbol_table.fn_name(*id)
-                )
-            }
+    /// Record the law a rewrite step `p` cites (a cited law or a builtin
+    /// fact) among the laws the script carries.
+    fn note_law_used(&mut self, p: &Proof) {
+        let key = match p {
+            Proof::Law { law, .. } => law,
+            Proof::Trans { steps, .. } => match steps.last() {
+                Some(Proof::Law { law, .. }) => law,
+                _ => return,
+            },
+            _ => return,
+        };
+        if let Some(law) = self
+            .rewrite_laws
+            .iter()
+            .chain(self.fact_rules.iter())
+            .find(|f| &f.key == key)
+            .cloned()
+            && !self.laws.iter().any(|l| l.key == law.key)
+        {
+            self.laws.push(law);
         }
     }
 
-    /// The outermost-leftmost position some equation rewrites. Where two
-    /// equations rewrite the same position to different terms the outcome
-    /// would depend on which one is tried first, so that is a refusal.
-    fn rewrite_somewhere(
+    /// Whether `eq` is a builtin fact the law does not cite, which
+    /// rewrites only where no cited equation does.
+    fn is_fact_rule(&self, eq: &Equation) -> bool {
+        matches!(eq, Equation::Law(l) if self.fact_rules.iter().any(|f| f.key == l.key))
+    }
+
+    /// The outermost-leftmost position some equation rewrites. Where
+    /// several rewrite the same position, a cited equation goes before a
+    /// builtin fact the law does not cite, and among those the smallest
+    /// result wins ([`pick_rewrite`]), so the outcome never depends on the
+    /// order the laws are cited in.
+    pub(crate) fn rewrite_somewhere(
         &mut self,
         eqs: &[Equation],
         t: &Term,
         path: &mut Vec<usize>,
     ) -> Result<Option<(Vec<usize>, Proof, Term)>, String> {
-        let mut found: Vec<(usize, Proof, Term)> = Vec::new();
-        for (i, eq) in eqs.iter().enumerate() {
+        let mut found: Vec<(bool, Proof, Term)> = Vec::new();
+        for eq in eqs {
             if let Some((p, to)) = self.try_equation(eq, t) {
                 // A result that holds its own redex would be rewritten again
                 // forever; that equation does not apply here.
                 if !holds_term(&to, &canon(t)) {
-                    found.push((i, p, to));
+                    found.push((self.is_fact_rule(eq), p, to));
                 }
             }
         }
-        if let Some((first, p, to)) = found.first().cloned() {
-            if let Some((other, _, _)) = found.iter().find(|(_, _, o)| canon(o) != canon(&to)) {
-                return Err(format!(
-                    "{} and {} both rewrite `{}`, to different terms; cite only one of them",
-                    self.equation_name(&eqs[first]),
-                    self.equation_name(&eqs[*other]),
-                    crate::ir::proof_steps::show::term(t, self.inputs.symbol_table)
-                ));
+        for facts in [false, true] {
+            let class: Vec<&(bool, Proof, Term)> =
+                found.iter().filter(|(f, _, _)| *f == facts).collect();
+            if let Some(k) = pick_rewrite(class.iter().map(|(_, _, to)| to)) {
+                let (_, p, to) = class[k].clone();
+                self.note_law_used(&p);
+                return Ok(Some((path.clone(), p, to)));
             }
-            return Ok(Some((path.clone(), p, to)));
         }
         for (i, c) in term::children(t).into_iter().enumerate() {
             path.push(i);
@@ -562,6 +576,23 @@ pub(crate) fn loops(law: &LawRef) -> Option<String> {
             law.key
         )
     })
+}
+
+/// The number of nodes of `t`.
+fn size(t: &Term) -> usize {
+    1 + term::children(t).into_iter().map(size).sum::<usize>()
+}
+
+/// Which of several rewrites of one term to take: the one whose result is
+/// smallest, the first among those of one size. Any of them is a sound
+/// step, so the choice only decides which normal form rewriting reaches;
+/// the smallest result is the one that drops the most (`List.concat(a, [])`
+/// to `a` before reassociating it). `None` when there is none.
+pub(crate) fn pick_rewrite<'t>(results: impl Iterator<Item = &'t Term>) -> Option<usize> {
+    results
+        .enumerate()
+        .min_by_key(|(i, t)| (size(t), *i))
+        .map(|(i, _)| i)
 }
 
 /// Whether `part` occurs in `t`.
