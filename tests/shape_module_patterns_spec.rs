@@ -156,7 +156,7 @@ fn detection_payload_matches_refinement_info_for() {
         program_shape: None,
         scope: None,
         plans_root: None,
-        plan_step_limit_knob: false,
+        proof_command: false,
     };
     let legacy = aver::codegen::common::refinement_info_for(type_name, &inputs)
         .expect("legacy refinement_info_for must match the new pattern detector");

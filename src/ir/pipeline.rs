@@ -329,10 +329,13 @@ pub struct PipelineConfig<'a> {
     /// The project's module root, where a law's `by Module.plan` finds its
     /// plans module. `None` leaves every law with a `by` line open.
     pub plans_root: Option<&'a str>,
-    /// Whether `AVER_PLAN_STEP_LIMIT` may change the step limit a proof
-    /// plan runs under (a testing knob `aver proof` honours). Off, the fixed
-    /// limit holds, so the output does not depend on the environment.
-    pub plan_step_limit_knob: bool,
+    /// Whether this run is `aver proof`, which reports to a person: the
+    /// testing knob `AVER_PLAN_STEP_LIMIT` may change the step limit a proof
+    /// plan runs under, and a law left open is offered the plans other `by`
+    /// lines name, as hints. Off, the fixed limit holds, so the output does
+    /// not depend on the environment, and no plan runs for a law without
+    /// `by`.
+    pub proof_command: bool,
     /// Allocation policy used by `analyze`. `None` skips the alloc-info
     /// computation; every other analysis fact is still produced.
     /// Backends pass `NeutralAllocPolicy`; diagnostic tools that don't have a backend
@@ -371,7 +374,7 @@ impl<'a> Default for PipelineConfig<'a> {
             run_build_symbols: false,
             dep_modules: &[],
             plans_root: None,
-            plan_step_limit_knob: false,
+            proof_command: false,
             alloc_policy: None,
             on_after_pass: None,
         }
@@ -1653,7 +1656,7 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
             program_shape: Some(&program_shape),
             scope: None,
             plans_root: cfg.plans_root,
-            plan_step_limit_knob: cfg.plan_step_limit_knob,
+            proof_command: cfg.proof_command,
         };
         let mut ir = result.proof_ir.take().unwrap_or_default();
         if cfg.run_refinement_lower {

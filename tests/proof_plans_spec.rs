@@ -204,6 +204,121 @@ fn a_plan_that_refuses_errs_or_never_returns_leaves_the_law_open() {
     let _ = fs::remove_dir_all(out);
 }
 
+/// The hint `aver proof` gives for an open law a plan of the project closes.
+const STACK_HINT: &str =
+    "plan Plans.Stack.openByLength closes this law; add `by Plans.Stack.openByLength`";
+
+#[test]
+fn an_open_law_hints_the_plan_that_closes_it_and_stays_open() {
+    let out = scratch("hinted");
+    let hinted = aver_in(
+        &fixtures(),
+        &[
+            "proof",
+            "hinted.av",
+            "--backend",
+            "aver",
+            "-o",
+            out.join("text").to_str().unwrap(),
+        ],
+        &[],
+    );
+    assert!(hinted.status.success(), "{}", format_output(&hinted));
+    let text = String::from_utf8_lossy(&hinted.stdout);
+    let lines: Vec<&str> = text.lines().collect();
+    let at = |law: &str| {
+        lines
+            .iter()
+            .position(|l| l.contains(&format!("{law}:")))
+            .unwrap_or_else(|| panic!("no line for {law}\n{text}"))
+    };
+    // The law that names the plan is closed by it.
+    let named = at("shuffled.swapTwiceNamesItsPlan");
+    assert!(
+        lines[named].contains("closed by steps (proof by Plans.Stack.openByLength ("),
+        "{text}"
+    );
+    // The plan closes the law, but nothing is credited from a hint.
+    let closes = at("shuffled.swapTwiceIsTheTopPair");
+    assert!(
+        lines[closes].contains("not closed by this backend"),
+        "{text}"
+    );
+    assert_eq!(
+        lines[closes + 1],
+        format!("    hint: {STACK_HINT}"),
+        "{text}"
+    );
+    // No plan closes the other law: the Stack plan refuses its `when`, and
+    // Plans.Broken, which no `by` line names, is never tried.
+    let none = at("shuffled.swapTwiceIsTheTopPairPastOne");
+    assert!(lines[none].contains("not closed by this backend"), "{text}");
+    assert!(
+        !lines[none..].iter().any(|l| l.contains("hint: plan")),
+        "{text}"
+    );
+    assert!(text.contains("1 of 3 law(s) closed by steps"), "{text}");
+
+    let json = aver_in(
+        &fixtures(),
+        &[
+            "proof",
+            "hinted.av",
+            "--backend",
+            "aver",
+            "-o",
+            out.join("json").to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "2",
+        ],
+        &[],
+    );
+    let found = summary(&json);
+    assert_eq!(found["closed_by"]["shuffled.swapTwiceIsTheTopPair"], "open");
+    assert_eq!(
+        found["steps_hints"]["shuffled.swapTwiceIsTheTopPair"][0],
+        STACK_HINT
+    );
+    let other = &found["steps_hints"]["shuffled.swapTwiceIsTheTopPairPastOne"];
+    assert!(
+        !other.to_string().contains("plan "),
+        "{}",
+        format_output(&json)
+    );
+    let _ = fs::remove_dir_all(out);
+
+    // No `by` line, no plans module: no plan is tried and none is named.
+    let bare = scratch("hinted-bare");
+    fs::create_dir_all(&bare).unwrap();
+    let source = fs::read_to_string(fixtures().join("hinted.av")).unwrap();
+    let without: String = source
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("by "))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    fs::write(bare.join("hinted.av"), without).unwrap();
+    let alone = aver_in(
+        &bare,
+        &[
+            "proof",
+            "hinted.av",
+            "--backend",
+            "aver",
+            "-o",
+            bare.join("out").to_str().unwrap(),
+        ],
+        &[],
+    );
+    assert!(alone.status.success(), "{}", format_output(&alone));
+    assert!(
+        !String::from_utf8_lossy(&alone.stdout).contains("hint: plan"),
+        "{}",
+        format_output(&alone)
+    );
+    let _ = fs::remove_dir_all(bare);
+}
+
 /// Write `files` into a fresh project directory and run `aver check` on
 /// `entry` there.
 fn check_project(name: &str, files: &[(&str, &str)], entry: &str) -> Output {

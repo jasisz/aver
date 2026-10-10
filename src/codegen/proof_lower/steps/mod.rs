@@ -21,7 +21,10 @@
 //! proved at that instance.
 //!
 //! A law with a `by Module.plan` line is proved by that project plan
-//! instead ([`by_plan`]); none of the producers above runs for it.
+//! instead ([`by_plan`]); none of the producers above runs for it. Under
+//! `aver proof`, a law they leave open (with no `induction` or `because`
+//! lines) is tried with each plan of the plans modules other `by` lines
+//! name, only for a hint naming the `by` line that would close it.
 //!
 //! A law no producer handles keeps `steps: None` and its tactic portfolio.
 
@@ -875,6 +878,9 @@ fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize, hints: &mut Vec<St
 pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
     let debug = std::env::var_os("AVER_STEPS_DEBUG").is_some();
     let mut plans = by_plan::Plans::default();
+    // The plans of the modules `by` lines name, found when a law first
+    // stays open.
+    let mut named_plans = None;
     for i in 0..ir.law_theorems.len() {
         let mut hints = Vec::new();
         // A law that names its plan is proved by that plan alone.
@@ -902,6 +908,11 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                 ir.law_theorems[i].steps_hints = Vec::new();
             }
             Err(why) => {
+                // A plan that closes the law comes first:
+                // it is the one hint that closes the law outright.
+                let mut from_plans = by_plan::hints(inputs, ir, i, &mut plans, &mut named_plans);
+                from_plans.append(&mut hints);
+                let hints = from_plans;
                 ir.law_theorems[i].steps = None;
                 ir.law_theorems[i].steps_refusal = Some(why);
                 ir.law_theorems[i].steps_hints = hints;

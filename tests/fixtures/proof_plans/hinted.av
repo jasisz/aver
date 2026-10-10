@@ -1,0 +1,55 @@
+module Hinted
+    intent =
+        "The first law names its plan with `by`. The other two have no `by` line and the automatic proof"
+        "steps leave them open: the plans module the first names closes the second, so `aver proof`"
+        "hints the `by` line to add; no plan closes the third."
+    exposes [shuffled]
+    effects []
+
+fn itemAt(items: List<List<Int>>, n: Int) -> List<Int>
+    ? "The nth item from the top, or an empty item past the end."
+    match items
+        [] -> []
+        [head, ..tail] -> hereOrDeeper(head, tail, n)
+
+verify itemAt
+    itemAt([[1], [2], [3]], 0) => [1]
+    itemAt([[1]], 3) => []
+
+fn hereOrDeeper(head: List<Int>, tail: List<List<Int>>, n: Int) -> List<Int>
+    ? "Count down one position at a time."
+    match n <= 0
+        true -> head
+        false -> itemAt(tail, n - 1)
+
+verify hereOrDeeper
+    hereOrDeeper([1], [[2]], 0) => [1]
+    hereOrDeeper([1], [[2]], 1) => [2]
+
+fn shuffled(code: Int, items: List<List<Int>>) -> List<List<Int>>
+    ? "What the swap opcode makes of the two items it reaches, top first."
+    top = itemAt(items, 0)
+    second = itemAt(items, 1)
+    match code
+        124 -> [second, top]
+        _ -> items
+
+verify shuffled
+    shuffled(124, [[1], [2]]) => [[2], [1]]
+    shuffled(9, [[1]]) => [[1]]
+
+verify shuffled law swapTwiceNamesItsPlan
+    given items: List<List<Int>> = [[[1], [2]], [[1], [2], [3]]]
+    when List.len(items) >= 2
+    by Plans.Stack.openByLength
+    shuffled(124, shuffled(124, items)) => List.take(items, 2)
+
+verify shuffled law swapTwiceIsTheTopPair
+    given items: List<List<Int>> = [[[1], [2]], [[1], [2], [3]]]
+    when List.len(items) >= 2
+    shuffled(124, shuffled(124, items)) => List.take(items, 2)
+
+verify shuffled law swapTwiceIsTheTopPairPastOne
+    given items: List<List<Int>> = [[[1], [2]], [[1], [2], [3]]]
+    when List.len(items) > 1
+    shuffled(124, shuffled(124, items)) => List.take(items, 2)
