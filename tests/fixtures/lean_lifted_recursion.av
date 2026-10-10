@@ -1,0 +1,71 @@
+module LiftedRecursion
+    intent = "Effectful recursion is measured the way pure recursion is: a list walk, a three-member countdown cycle, and a store walk with nothing decreasing."
+    effects [Disk.readText]
+
+fn row(name: String) -> Result<String, String>
+    ? "A fixture is local; another name consults the oracle."
+    ! [Disk.readText]
+    match name == "fixture"
+        true -> Result.Ok("x")
+        false -> Disk.readText(name)
+
+fn rows(names: List<String>, acc: List<String>) -> Result<List<String>, String>
+    ? "Read every named row, one name off the list per step."
+    ! [Disk.readText]
+    match names
+        [] -> Result.Ok(acc)
+        [name, ..rest] -> match row(name)
+            Result.Ok(value) -> rows(rest, List.prepend(value, acc))
+            Result.Err(message) -> Result.Err(message)
+
+verify rows
+    rows([], []) => Result.Ok([])
+    rows(["fixture"], []) => Result.Ok(["x"])
+    rows(["fixture", "fixture", "fixture"], ["y"]) => Result.Ok(["x", "x", "x", "y"])
+
+fn spend(name: String, left: Int, acc: List<String>) -> Result<List<String>, String>
+    ? "Spend one unit of the budget while any is left, then hand over to the reader."
+    ! [Disk.readText]
+    match left > 0
+        true -> fetch(name, left - 1, acc)
+        false -> Result.Ok(acc)
+
+fn fetch(name: String, left: Int, acc: List<String>) -> Result<List<String>, String>
+    ? "Read one row with the budget already spent."
+    ! [Disk.readText]
+    value = row(name)?
+    keep(name, left, List.prepend(value, acc))
+
+fn keep(name: String, left: Int, acc: List<String>) -> Result<List<String>, String>
+    ? "Hand the rows read so far back to the spender."
+    ! [Disk.readText]
+    spend(name, left, acc)
+
+verify spend
+    spend("fixture", 0, []) => Result.Ok([])
+    spend("fixture", 3, []) => Result.Ok(["x", "x", "x"])
+    spend("fixture", -4, ["y"]) => Result.Ok(["y"])
+
+verify fetch
+    fetch("fixture", 1, []) => Result.Ok(["x", "x"])
+
+fn link(name: String) -> Result<String, String>
+    ? "The name stored after this one; the fixture chain ends at an empty name."
+    ! [Disk.readText]
+    match name == "fixture"
+        true -> Result.Ok("end")
+        false -> match name == "end"
+            true -> Result.Ok("")
+            false -> Disk.readText(name)
+
+fn follow(name: String, hops: List<String>) -> Result<List<String>, String>
+    ? "Follow the names the store chains together until one is empty. Only the stored data decides when this stops, so no measure exists."
+    ! [Disk.readText]
+    match link(name)
+        Result.Ok(next) -> match next == ""
+            true -> Result.Ok(hops)
+            false -> follow(next, List.prepend(next, hops))
+        Result.Err(message) -> Result.Err(message)
+
+verify follow
+    follow("fixture", []) => Result.Ok(["end"])

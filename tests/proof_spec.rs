@@ -84,6 +84,8 @@ mod law_reasons;
 mod lean_kernel;
 #[path = "proof_spec/lemmas.rs"]
 mod lemmas;
+#[path = "proof_spec/lifted_recursion.rs"]
+mod lifted_recursion;
 #[path = "proof_spec/list_prefix_guard.rs"]
 mod list_prefix_guard;
 #[path = "proof_spec/literalization.rs"]

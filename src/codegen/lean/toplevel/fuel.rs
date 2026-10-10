@@ -1253,11 +1253,32 @@ pub(super) fn emit_fuelized_mutual_int_countdown_group(
 /// typechecker) rather than the AST annotation string. Pointer-eq scope so a
 /// same-bare-name twin never provides them. SCC classification only accepts
 /// source declarations already present in the resolved program view.
+///
+/// The oracle lift of an effectful function puts its `(path, oracle...)`
+/// parameters in front of the source ones and keeps those in order, so the
+/// source parameters sit at an offset in the lifted signature. The added
+/// parameters are never candidates: an oracle is a function and the path is
+/// handed on, so neither can carry a decrease. A signature that does not end
+/// in exactly the source parameters offers nothing, and the group keeps its
+/// fallback.
 fn native_measure_candidates(fd: &FnDef, ctx: &CodegenContext) -> Vec<(Candidate, bool)> {
-    let rfd = crate::codegen::common::fn_id_for_decl(ctx, fd)
+    let rfd = crate::codegen::common::fn_id_for_emitted_decl(ctx, fd)
         .and_then(|id| ctx.resolved_program.fn_by_id(id))
         .expect("Lean native measure candidate must be a resolved source declaration");
-    let candidate = |index, kind| Candidate { index, kind };
+    let Some(offset) = fd.params.len().checked_sub(rfd.params.len()) else {
+        return Vec::new();
+    };
+    if fd.params[offset..]
+        .iter()
+        .zip(&rfd.params)
+        .any(|((lifted, _), (source, _))| lifted != source)
+    {
+        return Vec::new();
+    }
+    let candidate = |index: usize, kind| Candidate {
+        index: index + offset,
+        kind,
+    };
     rfd.params
         .iter()
         .enumerate()
@@ -1575,9 +1596,48 @@ pub(super) fn emit_native_mutual_sizeof_group(
     if native_measure_back_off(fns, &measures).is_some() {
         return None;
     }
+    Some(emit_measured_group(fns, &measures, ctx))
+}
 
-    let mut lines: Vec<String> = vec!["mutual".to_string()];
-    for (fd, measure) in fns.iter().zip(&measures) {
+/// Native termination emission for a component of oracle-lifted functions:
+/// a self-recursive effectful function, or a group of them that call each
+/// other. Such a function has no recursion contract — ProofIR classifies only
+/// pure functions — so the measure comes straight from the call edge analysis
+/// over the lifted bodies, which the pure groups above also use: structural
+/// descent on a list, map or recursive type, a guarded `Int` countdown, and a
+/// rank for calls that leave the measure equal, for a cycle of any length.
+/// The added `(path, oracle...)` parameters are never measured; every call
+/// hands them on, so a decrease on the source parameters is a decrease of the
+/// lifted function.
+///
+/// `None` when the analysis finds no measure, or this backend backs off from
+/// it ([`native_measure_back_off`]): the caller keeps its `partial` fallback.
+pub(in crate::codegen::lean) fn emit_native_lifted_component(
+    fns: &[&FnDef],
+    ctx: &CodegenContext,
+) -> Option<String> {
+    if fns.is_empty() || !fns.iter().all(|fd| is_pure_fn(fd)) {
+        return None;
+    }
+    let measures = native_cycle_measure(fns, ctx).ok()?;
+    if native_measure_back_off(fns, &measures).is_some() {
+        return None;
+    }
+    Some(emit_measured_group(fns, &measures, ctx))
+}
+
+/// One `def` per member with the measure the call edge analysis chose. A
+/// group is a `mutual … end` block terminated by the pair `(measure, rank)`;
+/// a single function has no peer to rank against and is terminated by its
+/// measure alone.
+fn emit_measured_group(fns: &[&FnDef], measures: &[NativeMeasure], ctx: &CodegenContext) -> String {
+    let mutual = fns.len() > 1;
+    let indent = if mutual { "  " } else { "" };
+    let mut lines: Vec<String> = Vec::new();
+    if mutual {
+        lines.push("mutual".to_string());
+    }
+    for (fd, measure) in fns.iter().zip(measures) {
         let (measure, rank) = (measure.sum(), measure.rank);
         let fn_name = aver_name_to_lean(&fd.name);
         let params = emit_fn_params(&fd.params);
@@ -1593,13 +1653,20 @@ pub(super) fn emit_native_mutual_sizeof_group(
         lines.extend(
             emit_doc_comment(&fd.desc)
                 .into_iter()
-                .map(|line| format!("  {line}")),
+                .map(|line| format!("{indent}{line}")),
         );
-        lines.push(format!("  def {} {} : {} :=", fn_name, params, ret_type));
+        lines.push(format!(
+            "{indent}def {} {} : {} :=",
+            fn_name, params, ret_type
+        ));
         for body_line in body.lines() {
-            lines.push(format!("  {body_line}"));
+            lines.push(format!("{indent}{body_line}"));
         }
-        lines.push(format!("  termination_by ({measure}, {rank})"));
+        if mutual {
+            lines.push(format!("  termination_by ({measure}, {rank})"));
+        } else {
+            lines.push(format!("termination_by {measure}"));
+        }
         // Robust tactic chain — `decreasing_tactic` alone bottoms out
         // on simple shapes (BigInt) but Lean elaborator on multi-arg
         // mutual SCCs sometimes needs `simp_wf` to unfold sizeOf
@@ -1609,14 +1676,17 @@ pub(super) fn emit_native_mutual_sizeof_group(
         // delegation's goal reduces `sizeOf (AverMap.entries m)` to `sizeOf m`
         // (then the lex rank closes the same-size step); `AverMap.*` is always
         // in scope via the imported prelude, and `try` no-ops where absent.
-        lines.push(
-            "  decreasing_by all_goals (first | decreasing_tactic | (simp_wf; (try simp only [AverMap.entries, AverMap.fromList]); (try simp_all); first | omega | (constructor <;> first | rfl | omega)))"
-                .to_string(),
-        );
+        lines.push(format!(
+            "{indent}decreasing_by all_goals (first | decreasing_tactic | (simp_wf; (try simp only [AverMap.entries, AverMap.fromList]); (try simp_all); first | omega | (constructor <;> first | rfl | omega)))"
+        ));
         lines.push(String::new());
     }
-    lines.push("end".to_string());
-    Some(lines.join("\n"))
+    if mutual {
+        lines.push("end".to_string());
+    } else {
+        lines.pop();
+    }
+    lines.join("\n")
 }
 
 pub(super) fn emit_fuelized_mutual_sizeof_group(fns: &[&FnDef], ctx: &CodegenContext) -> String {

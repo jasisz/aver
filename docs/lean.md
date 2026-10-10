@@ -283,7 +283,8 @@ That combination means:
 - supported `verify law` shapes get real universal proofs
 - unsupported `verify law` shapes emit the universal theorem with a `sorry` body and an inline comment, plus the per-sample and `_checked_domain` theorems as kernel-checked evidence
 - recursive pure code inside the supported proof subset is emitted as total Lean defs
-- unsupported recursive pure functions are called out explicitly and emitted with `partial` fallback
+- recursive functions with effects are measured the same way after their oracle lift (structural descent, guarded `Int` countdown, ranked cycles of any length), with the oracle parameters handed on unchanged; a function with effects that does not recurse is a plain `def`
+- unsupported recursive functions, pure or with effects, are called out explicitly and emitted with `partial` fallback
 
 If a law lands on the `sorry` fallback and you want to know why, [transpilation.md → Debugging a law that didn't auto-prove](transpilation.md#debugging-a-law-that-didnt-auto-prove) describes the `--emit-ir-after=law_lower` workflow.
 
@@ -295,7 +296,7 @@ The current proof export supports:
 - single-function structural recursion on any `List<_>` parameter
 - single-function `String + pos` recursion on `(String, Int)` signatures
 - mutual recursion SCC with first-parameter `Int` countdown
-- two-member `Int` walks at any parameter position: one member checks `n > 0` (countdown) or `n < target` (ascending), then delegates unchanged; the other takes exactly one step and returns, preserving the target. Their native measures are `(gap.toNat, 0)` and `((gap - 1).toNat, 1)`. The worker offset makes direct calls at or beyond the boundary total too. Original guards, every call edge and target preservation are checked; Lean proves each decrease. Oracle-lifted bodies use the same recognizer on their actual rewritten calls, so fixture cases can simplify through these definitions without evaluating a free oracle. Unguarded or nonprogressing cycles retain their previous opaque fallback.
+- two-member `Int` walks at any parameter position: one member checks `n > 0` (countdown) or `n < target` (ascending), then delegates unchanged; the other takes exactly one step and returns, preserving the target. Their native measures are `(gap.toNat, 0)` and `((gap - 1).toNat, 1)`. The worker offset makes direct calls at or beyond the boundary total too. Original guards, every call edge and target preservation are checked; Lean proves each decrease. Oracle-lifted bodies use the same recognizer on their actual rewritten calls. Every other recursive function with effects, alone or in a cycle, gets the call edge measure of the next items from its lifted calls. A `verify` case with a free oracle (no `given`) unfolds these definitions with `simp` and never evaluates the oracle, so it is proved through them; a case that reaches a `partial` fallback is declined. Unguarded or nonprogressing cycles, and recursion that only stored data stops, retain their previous opaque fallback.
 - mutual recursion SCC with ranked `String + pos` progress
 - mutual recursion SCC with ranked structural descent over recursive parameters (emitted as native `mutual ... termination_by ... end` block when every SCC member has a `List`/`Vector` sizeOf measure; fuel-encoded otherwise)
 
