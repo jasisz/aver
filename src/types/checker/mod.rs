@@ -390,6 +390,16 @@ fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCh
     check_forwarded_effect_marker(items, &mut checker.errors);
     check_module_effect_boundary(items, &mut checker.errors);
 
+    if cfg!(debug_assertions)
+        && checker.errors.is_empty()
+        && let Some(line) = checker.first_invalid_stamp
+    {
+        panic!(
+            "type checker invariant: the expression at line {line} was given the recovery type \
+             `Invalid` but no error was reported; every `Invalid` must follow a diagnostic"
+        );
+    }
+
     let type_spellings = checker.symbol_table.generated_type_spellings();
     let mut answers = checker.program_answers;
     let mut closure_answers: Vec<(String, String)> = answers
@@ -816,6 +826,12 @@ struct TypeChecker {
     /// Local bindings in the current function/scope.
     locals: HashMap<String, Type>,
     errors: Vec<TypeError>,
+    /// Source line of the first expression stamped with a type that holds
+    /// `Type::Invalid`. `Invalid` is recovery after a reported error, so a
+    /// check that ends with one of these and no error at all has accepted a
+    /// program it did not understand. Debug builds refuse that outcome in
+    /// [`finalize_check_result`]; release builds only carry the line.
+    first_invalid_stamp: Option<usize>,
     /// Return type of the function currently being checked; None at top level.
     current_fn_ret: Option<Type>,
     /// Line number of the function currently being checked; None at top level.
@@ -913,6 +929,7 @@ impl TypeChecker {
             globals: HashMap::new(),
             locals: HashMap::new(),
             errors: Vec::new(),
+            first_invalid_stamp: None,
             current_fn_ret: None,
             current_fn_line: None,
             current_fn_generated: false,
@@ -1958,6 +1975,16 @@ impl TypeChecker {
             origin: None,
             secondary: None,
         });
+    }
+
+    /// Report at the line of the node the problem is about, or at the
+    /// enclosing function's line for a synthetic node without one.
+    fn error_at_node(&mut self, line: usize, msg: impl Into<String>) {
+        if line == 0 {
+            self.error(msg);
+        } else {
+            self.error_at_line(line, msg);
+        }
     }
 
     /// Current length of the diagnostic list, for use with

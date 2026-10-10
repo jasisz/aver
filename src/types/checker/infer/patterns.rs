@@ -42,14 +42,16 @@ impl TypeChecker {
         out_ty
     }
 
+    /// The field types the constructor `ctor_name` gives `arity` binders
+    /// against `subject_ty`, or `None` when no constructor signature of that
+    /// name and arity is known.
     fn pattern_constructor_binding_types(
         &self,
         ctor_name: &str,
         subject_ty: &Type,
         arity: usize,
-    ) -> Vec<Type> {
+    ) -> Option<Vec<Type>> {
         let ctor_base = ctor_name.rsplit('.').next().unwrap_or(ctor_name);
-        let unknowns = || vec![Type::Invalid; arity];
 
         let from_sig = |name: &str| -> Option<Vec<Type>> {
             self.find_fn_sig(name).and_then(|sig| {
@@ -63,35 +65,55 @@ impl TypeChecker {
 
         match subject_ty {
             Type::Result(ok_ty, err_ty) => match ctor_base {
-                "Ok" if arity == 1 => return vec![*ok_ty.clone()],
-                "Err" if arity == 1 => return vec![*err_ty.clone()],
+                "Ok" if arity == 1 => return Some(vec![*ok_ty.clone()]),
+                "Err" if arity == 1 => return Some(vec![*err_ty.clone()]),
                 _ => {}
             },
             Type::Option(inner_ty) => match ctor_base {
-                "Some" if arity == 1 => return vec![*inner_ty.clone()],
-                "None" if arity == 0 => return Vec::new(),
+                "Some" if arity == 1 => return Some(vec![*inner_ty.clone()]),
+                "None" if arity == 0 => return Some(Vec::new()),
                 _ => {}
             },
-            Type::Named {
-                name: _type_name, ..
-            } => {
-                let qualified = if ctor_name.contains('.') {
-                    ctor_name.to_string()
-                } else {
-                    return unknowns();
-                };
-                if let Some(params) = from_sig(&qualified) {
-                    return params;
-                }
-            }
+            // A user type's constructor is always written qualified
+            // (`Shape.Circle`); the parser refuses a bare one.
+            Type::Named { .. } if !ctor_name.contains('.') => return None,
             _ => {}
         }
 
-        if let Some(params) = from_sig(ctor_name) {
-            return params;
-        }
+        from_sig(ctor_name)
+    }
 
-        unknowns()
+    /// Say why a constructor pattern found no signature: the constructor
+    /// exists with another number of fields, or there is no such
+    /// constructor at all.
+    fn report_unmatched_constructor_pattern(
+        &mut self,
+        name: &str,
+        subject_ty: &Type,
+        arity: usize,
+    ) {
+        let fields = |n: usize| {
+            if n == 1 {
+                "1 field".to_string()
+            } else {
+                format!("{} fields", n)
+            }
+        };
+        if let Some(expected) = self.find_fn_sig(name).map(|sig| sig.params.len()) {
+            self.error(format!(
+                "Constructor pattern '{}' binds {}, but '{}' has {}",
+                name,
+                fields(arity),
+                name,
+                fields(expected)
+            ));
+        } else {
+            self.error(format!(
+                "Unknown constructor '{}' in a pattern on a value of type {}",
+                name,
+                subject_ty.display()
+            ));
+        }
     }
 
     /// The field types a constructor pattern binds, after the checks
@@ -104,6 +126,7 @@ impl TypeChecker {
         name: &str,
         subject_ty: &Type,
         arity: usize,
+        binds_names: bool,
     ) -> Option<Vec<Type>> {
         // Check if this pattern matches on an opaque type's representation.
         // Iron — A3: resolve the bare type prefix through
@@ -133,6 +156,7 @@ impl TypeChecker {
         // ordinary edits — `match Bytes.fromList([1, 2])` used to
         // scrutinise a `Result` and now scrutinises a `Bytes` — so
         // the migration has to be loud instead of silent.
+        let mut reported = false;
         if matches!(type_prefix, "Result" | "Option")
             && !matches!(
                 subject_ty,
@@ -145,9 +169,22 @@ impl TypeChecker {
                 type_prefix,
                 subject_ty.display()
             ));
+            reported = true;
         }
         self.record_pattern_constructor_family(name, subject_ty);
-        Some(self.pattern_constructor_binding_types(name, subject_ty, arity))
+        match self.pattern_constructor_binding_types(name, subject_ty, arity) {
+            Some(types) => Some(types),
+            None => {
+                // The binders would get the recovery type `Invalid`, which
+                // must follow a reported error. A pattern that binds nothing
+                // gives no name a type, so it is left to the exhaustiveness
+                // check as before.
+                if binds_names && !reported && !matches!(subject_ty, Type::Invalid) {
+                    self.report_unmatched_constructor_pattern(name, subject_ty, arity);
+                }
+                Some(vec![Type::Invalid; arity])
+            }
+        }
     }
 
     /// A literal pattern can only ever match a value of its own
@@ -213,7 +250,16 @@ impl TypeChecker {
             Pattern::Cons(head, tail) => {
                 let elem_ty = match subject_ty {
                     Type::List(inner) => *inner.clone(),
-                    _ => Type::Invalid,
+                    Type::Invalid | Type::Var(_) => Type::Invalid,
+                    other => {
+                        self.error(format!(
+                            "List pattern [{}, ..{}] matches a List value, but the match subject is {}",
+                            head,
+                            tail,
+                            other.display()
+                        ));
+                        Type::Invalid
+                    }
                 };
                 if head != "_" {
                     out.push((head.clone(), elem_ty.clone()));
@@ -223,9 +269,13 @@ impl TypeChecker {
                 }
             }
             Pattern::Constructor(name, bindings) => {
-                let Some(binding_tys) =
-                    self.constructor_pattern_field_types(name, subject_ty, bindings.len())
-                else {
+                let binds_names = bindings.iter().any(|b| b != "_");
+                let Some(binding_tys) = self.constructor_pattern_field_types(
+                    name,
+                    subject_ty,
+                    bindings.len(),
+                    binds_names,
+                ) else {
                     for bind_name in bindings {
                         if bind_name != "_" {
                             out.push((bind_name.clone(), Type::Invalid));
@@ -240,8 +290,9 @@ impl TypeChecker {
                 }
             }
             Pattern::ConstructorNested(name, fields) => {
+                let binds_names = !crate::ir::vars::pattern_bindings(pattern).is_empty();
                 let field_tys = self
-                    .constructor_pattern_field_types(name, subject_ty, fields.len())
+                    .constructor_pattern_field_types(name, subject_ty, fields.len(), binds_names)
                     .unwrap_or_else(|| vec![Type::Invalid; fields.len()]);
                 for (field, field_ty) in fields.iter().zip(field_tys.iter()) {
                     self.collect_pattern_bindings(field, field_ty, out);
@@ -272,7 +323,22 @@ impl TypeChecker {
             Pattern::Tuple(items) => {
                 let elem_tys = match subject_ty {
                     Type::Tuple(elems) if elems.len() == items.len() => elems.clone(),
-                    _ => vec![Type::Invalid; items.len()],
+                    Type::Tuple(elems) => {
+                        self.error(format!(
+                            "Tuple pattern has {} elements, but the match subject is a tuple of {}",
+                            items.len(),
+                            elems.len()
+                        ));
+                        vec![Type::Invalid; items.len()]
+                    }
+                    Type::Invalid | Type::Var(_) => vec![Type::Invalid; items.len()],
+                    other => {
+                        self.error(format!(
+                            "Tuple pattern matches a tuple value, but the match subject is {}",
+                            other.display()
+                        ));
+                        vec![Type::Invalid; items.len()]
+                    }
                 };
                 for (item, elem_ty) in items.iter().zip(elem_tys.iter()) {
                     self.collect_pattern_bindings(item, elem_ty, out);

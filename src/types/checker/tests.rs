@@ -1164,3 +1164,28 @@ fn main() -> Int
         "binding a collection literal of fn values must be rejected, got: {errs:?}"
     );
 }
+
+/// A check that stamps the recovery type `Invalid` without reporting an
+/// error has accepted a program it did not understand. Debug builds refuse
+/// to finish such a check, so a new silent spot fails the first test that
+/// reaches it instead of shipping a program the backends cannot lower.
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "type checker invariant: the expression at line 7")]
+fn silent_invalid_stamp_fails_a_debug_check() {
+    let items: Vec<TopLevel> = Vec::new();
+    let mut checker = TypeChecker::new_with_symbols(super::build_symbols_for_items(&items, None));
+    checker.first_invalid_stamp = Some(7);
+    let _ = super::finalize_check_result(checker, &items);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn invalid_stamp_after_a_reported_error_is_recovery() {
+    let items: Vec<TopLevel> = Vec::new();
+    let mut checker = TypeChecker::new_with_symbols(super::build_symbols_for_items(&items, None));
+    checker.first_invalid_stamp = Some(7);
+    checker.error_at_line(7, "some earlier error");
+    let result = super::finalize_check_result(checker, &items);
+    assert_eq!(result.errors.len(), 1);
+}
