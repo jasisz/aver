@@ -1,0 +1,14 @@
+module Hash
+    intent = "A recursive fold that shares its name with the entry's effectful function."
+    exposes [absorbed]
+    depends []
+
+fn absorbed(state: Int, words: List<Int>) -> Int
+    ? "Fold every word into the state."
+    match words
+        [] -> state
+        [word, ..rest] -> absorbed(state + word, rest)
+
+verify absorbed
+    absorbed(0, []) => 0
+    absorbed(1, [2, 3]) => 6

@@ -29,9 +29,13 @@ use super::{
 /// Lifted functions that call each other are grouped by the same SCC
 /// analysis pure components use and emitted in one `mutual … end` block, so
 /// no member is a forward reference Lean rejects. An effectful function has
-/// no pure recursion contract. Checked two-phase integer walks are recognized
-/// on the lifted bodies and emitted with native termination measures; other
-/// groups keep `partial` members and remain kernel-opaque for case proofs.
+/// no pure recursion contract, so with `native_measures` (the proof emit) a
+/// recursive unit — a self-recursive function or a group — is measured from
+/// its lifted calls: checked two-phase integer walks keep their own measure,
+/// and every other unit gets the call edge analysis the pure groups use
+/// (structural descent, guarded `Int` countdown, ranks for equal calls). A
+/// unit neither measures keeps `partial` members and remains kernel-opaque
+/// for case proofs.
 #[allow(clippy::too_many_arguments)]
 fn emit_lifted_effectful_functions(
     ctx: &CodegenContext,
@@ -39,7 +43,7 @@ fn emit_lifted_effectful_functions(
     scope: Option<&str>,
     reachable: &HashSet<crate::ir::FnId>,
     foreign_helpers: &HashMap<String, Vec<String>>,
-    recursive_fns: &HashSet<String>,
+    native_measures: bool,
     capability_opacity: &super::capability_opaque::CapabilityOpacity,
     sampled_fns: &mut SampledFnClassification,
     sections: &mut Vec<String>,
@@ -138,22 +142,37 @@ fn emit_lifted_effectful_functions(
         for unit in order {
             let component: Vec<&crate::ast::FnDef> =
                 unit.iter().map(|&i| &lifted_fns[i].1).collect();
-            let code = if component.len() > 1 {
-                Some(
-                    toplevel::emit_native_int_phase_group(&component, ctx)
-                        .unwrap_or_else(|| toplevel::emit_mutual_group(&component, ctx)),
-                )
-            } else {
-                let fd = component[0];
-                // A self call (a tail-recursive loop) has no termination
-                // story the backend can state for a lifted fn: it is emitted
-                // `partial`, as an uncontracted recursive pure fn is.
-                let self_recursive = !recursive_fns.contains(&fd.name)
-                    && collect_called_idents_in_body(&fd.body).contains(&fd.name);
-                if self_recursive {
-                    toplevel::emit_fn_def(fd, &HashSet::from([fd.name.clone()]), ctx)
-                } else {
-                    toplevel::emit_fn_def(fd, recursive_fns, ctx)
+            // A pure function never calls an effectful one, so a lifted
+            // function is recursive exactly when its unit is a cycle of the
+            // lifted call graph or it calls itself. The bare-name set of
+            // recursive pure functions does not decide it: a pure recursive
+            // function of the same name in another module is not this one.
+            let recursive = component.len() > 1
+                || collect_called_idents_in_body(&component[0].body).contains(&component[0].name);
+            // A recursive unit gets the measure the pure groups get, from the
+            // call edge analysis over the lifted bodies; the checked two-phase
+            // Int walk keeps its own measure. Only a unit neither finds stays
+            // `partial`, as an uncontracted recursive pure fn is.
+            let measured = recursive
+                .then(|| {
+                    toplevel::emit_native_int_phase_group(&component, ctx).or_else(|| {
+                        native_measures
+                            .then(|| toplevel::emit_native_lifted_component(&component, ctx))
+                            .flatten()
+                    })
+                })
+                .flatten();
+            let code = match (&measured, component.len() > 1) {
+                (Some(code), _) => Some(code.clone()),
+                (None, true) => Some(toplevel::emit_mutual_group(&component, ctx)),
+                (None, false) => {
+                    let fd = component[0];
+                    let partial = if recursive {
+                        HashSet::from([fd.name.clone()])
+                    } else {
+                        HashSet::new()
+                    };
+                    toplevel::emit_fn_def(fd, &partial, ctx)
                 }
             };
             let Some(code) = code else { continue };
@@ -163,7 +182,16 @@ fn emit_lifted_effectful_functions(
             if capability_opacity.emitted_component_reaches_result_proven(&component, ctx) {
                 code = format!("noncomputable section\n\n{code}\nend");
             }
-            if component_is_kernel_opaque(&component, std::slice::from_ref(&code)) {
+            // A measured lifted unit is a total definition whose equations
+            // `simp` unfolds, so a case with a free oracle can reduce through
+            // it the way it does through the two-phase walk; only a `partial`
+            // fallback stays opaque.
+            let opaque = if measured.is_some() {
+                code_has_kernel_opaque_token(&code)
+            } else {
+                component_is_kernel_opaque(&component, std::slice::from_ref(&code))
+            };
+            if opaque {
                 sampled_fns.opaque.extend(
                     component
                         .iter()
@@ -1051,10 +1079,9 @@ pub(super) fn transpile_unified(
     // dependency's root set is what any consumer's cone reaches; its lifted
     // fns are keyed by qualified name so a consumer's call site threads the
     // callee's `(path, oracle...)`. Decisions + verifies remain entry-only.
-    let lifted_recursive_names = match emit_mode {
-        LeanEmitMode::Proof => &recursive_names,
-        LeanEmitMode::Standard => &recursive_fns,
-    };
+    // The standard emit spells every recursive function `partial`; only the
+    // proof emit states measures for lifted ones.
+    let lifted_native_measures = matches!(emit_mode, LeanEmitMode::Proof);
     let proof_reachable = crate::codegen::common::proof_reachable_fn_ids(ctx);
     let dependency_helpers = lifted_dependency_helpers(ctx, &proof_reachable);
     let mut entry_lifted_sections: Vec<String> = Vec::new();
@@ -1072,7 +1099,7 @@ pub(super) fn transpile_unified(
         None,
         &proof_reachable,
         &dependency_helpers,
-        lifted_recursive_names,
+        lifted_native_measures,
         &capability_opacity,
         &mut sampled_fns,
         &mut entry_lifted_sections,
@@ -1175,7 +1202,7 @@ pub(super) fn transpile_unified(
             scope,
             &proof_reachable,
             &dependency_helpers,
-            lifted_recursive_names,
+            lifted_native_measures,
             &capability_opacity,
             &mut sampled_fns,
             &mut body_sections,

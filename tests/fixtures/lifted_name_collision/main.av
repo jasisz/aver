@@ -1,0 +1,18 @@
+module Main
+    intent =
+        "An effectful function that is not recursive, named like a recursive"
+        "pure function of a dependency; it must be exported as a total definition."
+    depends [Hash]
+    effects [Disk.readText]
+
+fn absorbed(name: String) -> Result<Int, String>
+    ? "Fold a row into the hash. Not recursive, though the dependency's function of the same name is."
+    ! [Disk.readText]
+    match name == "fixture"
+        true -> Result.Ok(Hash.absorbed(0, [1, 2, 3]))
+        false -> match Disk.readText(name)
+            Result.Ok(text) -> Result.Ok(Hash.absorbed(0, [String.len(text)]))
+            Result.Err(message) -> Result.Err(message)
+
+verify absorbed
+    absorbed("fixture") => Result.Ok(6)
