@@ -213,6 +213,9 @@
   ]
  },
  "projects/k5_fdiv/domain/fractionorder.av": {
+  "obligations": [
+   "signedAbsolute.nonnegativeMagnitude.implication"
+  ],
   "steps": [
    "le.fromPositiveCrossProduct",
    "lt.fromPositiveCrossProduct"
@@ -294,6 +297,7 @@
    "scaledWindow.normalizedSignificand.because4",
    "scaledWindow.normalizedSignificand.because5",
    "scaledWindow.normalizedSignificand.implication",
+   "signedDouble.successor.implication",
    "uniqueWindow.uniqueExponent.because1",
    "uniqueWindow.uniqueExponent.implication"
   ],

@@ -441,6 +441,24 @@ fn is_bool_value(t: &Term) -> bool {
 /// The most head steps evaluating one hypothesis may take.
 const HYPOTHESIS_FUEL: usize = 100;
 
+/// The most steps evaluating one hypothesis to its normal form (its parts
+/// too) may take, see [`Env::normal_fact`].
+const NORMAL_FACT_FUEL: usize = 200;
+
+/// The most calls [`Env::open_call_only`] opens, one inside the other.
+const MAX_CALL_OPENINGS: usize = 4;
+
+/// A hypothesis in its normal form ([`Env::normal_fact`]): the form, the
+/// proof that the hypothesis as stated equals it, and what that proof
+/// needs in the script.
+pub(crate) struct NormalFact {
+    to: Term,
+    proof: Proof,
+    laws: Vec<LawRef>,
+    defs: Vec<crate::ir::identity::FnId>,
+    consts: Vec<String>,
+}
+
 impl Env<'_> {
     /// Whether a true `t == u` makes `t` and `u` the same value, by `t`'s
     /// type (see [`crate::ir::SymbolTable::beq_is_equality`]).
@@ -2877,26 +2895,7 @@ impl Env<'_> {
             };
             let mut lines = Vec::new();
             super::split_and(&body, from, &mut lines);
-            let saved = env.hyps.len();
-            let mut cuts = Vec::new();
-            for (line, proof) in lines {
-                let h = env.fresh_hyp();
-                env.hyps
-                    .push((h.clone(), Eqn::new(line.clone(), term::boolean(true))));
-                cuts.push((h, line, proof));
-            }
-            let body = env.prove_by_evaluation(lhs, rhs, depth - 1);
-            env.hyps.truncate(saved);
-            let mut proof = body?;
-            for (h, line, from) in cuts.into_iter().rev() {
-                proof = Proof::Have {
-                    name: h,
-                    fact: line,
-                    proof: Box::new(from),
-                    body: Box::new(proof),
-                };
-            }
-            Ok(proof)
+            env.prove_under_lines(lines, lhs, rhs, depth)
         };
         let decided = match self.hyp_for(&guard) {
             Some((h, v)) => term::bool_value(&v).map(|b| (Proof::Hyp(h), b)),
@@ -2956,23 +2955,39 @@ impl Env<'_> {
                 continue;
             }
             // A short evaluation only: a hypothesis that takes long to
-            // evaluate is a computation, not a shape to read. One that
-            // evaluates no further is not tried again in this attempt.
+            // evaluate is a computation, not a shape to read, so then only
+            // its call is opened, the body left as the arm states it (its
+            // lines get their normal form in `prove_under_lines`). A short
+            // evaluation that runs out, and the opening after it, draw on
+            // `normal_fuel`, not on the claim's fuel. One that evaluates no
+            // further is not tried again in this attempt.
             let held = self.hyps.remove(i);
             let fuel = self.fuel;
-            self.fuel = fuel.min(HYPOTHESIS_FUEL);
-            let ev = self.whnf(&fact);
-            self.fuel = fuel - (fuel.min(HYPOTHESIS_FUEL) - self.fuel);
+            let cap = fuel.min(HYPOTHESIS_FUEL);
+            self.fuel = cap;
+            let whole = self.whnf(&fact);
+            let spent = cap - self.fuel;
+            let ev = match whole {
+                Ok(ev) => {
+                    self.fuel = fuel - spent;
+                    Some(ev.chain)
+                }
+                Err(_) => {
+                    self.normal_fuel = self.normal_fuel.saturating_sub(spent);
+                    let cap = self.normal_fuel.min(HYPOTHESIS_FUEL);
+                    self.fuel = cap;
+                    let opened = self.open_call_only(&fact);
+                    self.normal_fuel -= cap - self.fuel;
+                    self.fuel = fuel;
+                    opened
+                }
+            };
             self.hyps.insert(i, held);
-            let Ok(ev) = ev else {
+            let Some(ev) = ev.filter(|c| !c.is_empty()) else {
                 self.barren.push(fact);
                 continue;
             };
-            if ev.chain.is_empty() {
-                self.barren.push(fact);
-                continue;
-            }
-            let (to, chain) = ev.chain.finish();
+            let (to, chain) = ev.finish();
             // `to = said`, from the evaluation and the hypothesis.
             let from = Proof::Trans {
                 terms: vec![to.clone(), fact.clone(), term::boolean(said)],
@@ -3000,29 +3015,177 @@ impl Env<'_> {
                 continue;
             }
             self.opened.push(fact.clone());
-            let saved = self.hyps.len();
-            let mut cuts = Vec::new();
-            for (line, proof) in lines {
-                let h = self.fresh_hyp();
-                self.hyps
-                    .push((h.clone(), Eqn::new(line.clone(), term::boolean(true))));
-                cuts.push((h, line, proof));
-            }
-            let body = self.prove_by_evaluation(lhs, rhs, depth - 1);
-            self.hyps.truncate(saved);
+            let body = self.prove_under_lines(lines, lhs, rhs, depth);
             self.opened.pop();
-            let mut proof = body?;
-            for (h, line, from) in cuts.into_iter().rev() {
-                proof = Proof::Have {
-                    name: h,
-                    fact: line,
-                    proof: Box::new(from),
-                    body: Box::new(proof),
-                };
-            }
-            return Ok(Some(proof));
+            return body.map(Some);
         }
         Ok(None)
+    }
+
+    /// `t` with its head opened while it is a call of a user function:
+    /// each step selects the arm the call's `match` takes and goes no
+    /// further into the body, at most [`MAX_CALL_OPENINGS`] times. `None`
+    /// when a step fails; an empty chain when the head does not open.
+    fn open_call_only(&mut self, t: &Term) -> Option<Chain> {
+        let mut chain = Chain::new(&canon(t));
+        for _ in 0..MAX_CALL_OPENINGS {
+            let cur = chain.cur().clone();
+            if !matches!(cur.node, ResolvedExpr::Call(ResolvedCallee::Fn(_), _)) {
+                break;
+            }
+            match self.head_step(&cur).ok()? {
+                Step::Progress(step) => {
+                    let (proof, to) = *step;
+                    chain.push(proof, to);
+                }
+                Step::Done | Step::Blocked(_) => break,
+            }
+        }
+        Some(chain)
+    }
+
+    /// `fact` evaluated to its normal form, its parts too, under the
+    /// hypotheses in scope but those stating `fact` itself (which would
+    /// only give their own value back), within [`NORMAL_FACT_FUEL`] steps
+    /// of `normal_fuel`, never of the claim's own fuel: that form, and the
+    /// proof that `fact` equals it. `None` when evaluation changes nothing
+    /// or runs out of its budget.
+    pub(crate) fn normal_fact(&mut self, fact: &Term) -> Option<NormalFact> {
+        let fact = canon(fact);
+        let saved = self.hyps.clone();
+        self.hyps.retain(|(_, h)| canon(&h.lhs) != fact);
+        // What evaluation records on the way (definitions opened, laws
+        // applied, hints) is taken back here and kept with the form, so a
+        // form the proof does not read leaves the script as it was.
+        let (laws, defs, consts) = (self.laws.len(), self.used.len(), self.used_consts.len());
+        let (hints, open_premises) = (self.hints.len(), self.open_premises.len());
+        let (opened, barren) = (self.opened.clone(), self.barren.clone());
+        let fuel = self.fuel;
+        let budget = self.normal_fuel.min(NORMAL_FACT_FUEL);
+        self.fuel = budget;
+        let out = self.normalize(&fact, 8);
+        self.normal_fuel -= budget - self.fuel;
+        self.fuel = fuel;
+        self.hyps = saved;
+        let (laws, defs, consts) = (
+            self.laws.split_off(laws),
+            self.used.split_off(defs),
+            self.used_consts.split_off(consts),
+        );
+        self.hints.truncate(hints);
+        self.open_premises.truncate(open_premises);
+        self.opened = opened;
+        self.barren = barren;
+        let (to, proof) = out.ok()?.finish();
+        let to = canon(&to);
+        (to != fact).then_some(NormalFact {
+            to,
+            proof,
+            laws,
+            defs,
+            consts,
+        })
+    }
+
+    /// Record what evaluating a hypothesis to its normal form needed, once
+    /// the proof reads that form.
+    fn keep_needs(&mut self, needs: &NormalFact) {
+        for law in &needs.laws {
+            if !self.laws.iter().any(|l| l.key == law.key) {
+                self.laws.push(law.clone());
+            }
+        }
+        for id in &needs.defs {
+            self.mark_used(*id);
+        }
+        for name in &needs.consts {
+            self.mark_const_used(name);
+        }
+    }
+
+    /// `lhs = rhs` by evaluation one level down, with `lines` (each with
+    /// its proof that it is true) cut in as hypotheses. Each line is also
+    /// stated in its normal form under the hypotheses in scope
+    /// ([`Self::normal_fact`]): a line is stated about the terms as they
+    /// stood before the case split and the evaluation that brought the
+    /// claim here, so as written it may no longer match what the claim
+    /// has become. A line whose normal form is `false` closes the case; one
+    /// whose normal form is `true` adds nothing. The normal forms are cut
+    /// in only where the proof reads them.
+    fn prove_under_lines(
+        &mut self,
+        lines: Vec<(Term, Proof)>,
+        lhs: &Term,
+        rhs: &Term,
+        depth: usize,
+    ) -> Result<Proof, String> {
+        let mut normal: Vec<(Term, Proof, usize)> = Vec::new();
+        let mut needs: Vec<NormalFact> = Vec::new();
+        for (line, proof) in &lines {
+            let Some(found) = self.normal_fact(line) else {
+                continue;
+            };
+            // `to = true`, from the evaluation and the line.
+            let from = Proof::Trans {
+                terms: vec![found.to.clone(), line.clone(), term::boolean(true)],
+                steps: vec![Proof::Symm(Box::new(found.proof.clone())), proof.clone()],
+            };
+            let mut parts = Vec::new();
+            super::split_and(&found.to, from, &mut parts);
+            for (part, from) in parts {
+                match term::bool_value(&part) {
+                    Some(false) => {
+                        self.keep_needs(&found);
+                        return Ok(Proof::Absurd {
+                            contradiction: Box::new(from),
+                            lhs: canon(lhs),
+                            rhs: canon(rhs),
+                        });
+                    }
+                    Some(true) => {}
+                    None => {
+                        let stated = lines.iter().any(|(l, _)| *l == part)
+                            || normal.iter().any(|(l, _, _)| *l == part);
+                        if !stated {
+                            normal.push((part, from, needs.len()));
+                        }
+                    }
+                }
+            }
+            needs.push(found);
+        }
+        let saved = self.hyps.len();
+        let mut cuts = Vec::new();
+        for (line, proof) in lines {
+            let h = self.fresh_hyp();
+            self.hyps
+                .push((h.clone(), Eqn::new(line.clone(), term::boolean(true))));
+            cuts.push((h, line, proof, None));
+        }
+        for (line, proof, need) in normal {
+            let h = self.fresh_hyp();
+            self.hyps
+                .push((h.clone(), Eqn::new(line.clone(), term::boolean(true))));
+            cuts.push((h, line, proof, Some(need)));
+        }
+        let body = self.prove_by_evaluation(lhs, rhs, depth - 1);
+        self.hyps.truncate(saved);
+        let mut proof = body?;
+        for (h, line, from, need) in cuts.into_iter().rev() {
+            if let Some(k) = need {
+                if !super::uses_hyp(&proof, &h) {
+                    continue;
+                }
+                self.keep_needs(&needs[k]);
+            }
+            proof = Proof::Have {
+                name: h,
+                fact: line,
+                proof: Box::new(from),
+                body: Box::new(proof),
+            };
+        }
+        Ok(proof)
     }
 
     /// The calls inside the Int comparisons the hypotheses decide, inner
