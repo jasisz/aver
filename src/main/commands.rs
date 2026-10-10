@@ -4157,7 +4157,7 @@ fn build_codegen_context(
     run_refinement_lower: bool,
     run_contract_lower: bool,
     run_law_lower: bool,
-    plan_step_limit_knob: bool,
+    proof_command: bool,
 ) -> (codegen::CodegenContext, String) {
     let module_root = resolve_module_root(module_root_override);
     let source = match read_file(file) {
@@ -4247,7 +4247,7 @@ fn build_codegen_context(
             run_build_symbols: true,
             dep_modules: &modules,
             plans_root: Some(&module_root),
-            plan_step_limit_knob,
+            proof_command,
             ..Default::default()
         },
     );
@@ -6857,7 +6857,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         false, // run_refinement_lower — runtime backend, doesn't need ProofIR
         false, // run_contract_lower — same
         false, // run_law_lower — same
-        false, // plan_step_limit_knob — no proof plans run
+        false, // proof_command — no proof plans run
     );
     reject_unsupported_capability_targets(
         &ctx.items,
@@ -7479,8 +7479,8 @@ fn certificate_source_model(
         true,  // run_contract_lower
         true,  // run_law_lower
         // The fixed plan step limit, never the environment's: the package
-        // must not depend on where it was produced.
-        false, // plan_step_limit_knob
+        // must not depend on where it was produced. No plan hints either.
+        false, // proof_command
     );
     // The model's laws cite each other exactly as `aver proof` emits them: a
     // law comes after every law it cites (see `citation_order`). In source
@@ -8119,7 +8119,7 @@ pub(super) fn cmd_proof(
         true,  // run_refinement_lower — proof backends need ProofIR
         true,  // run_contract_lower — same
         true,  // run_law_lower — same
-        true,  // plan_step_limit_knob — `aver proof` honours the test knob
+        true,  // proof_command — the test knob, and plan hints for open laws
     );
 
     ctx.export_verify_examples = examples;

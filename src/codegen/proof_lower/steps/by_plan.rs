@@ -462,8 +462,23 @@ pub(super) fn produce(
     i: usize,
     plans: &mut Plans,
 ) -> Result<Script, String> {
+    let path = ir.law_theorems[i]
+        .by_plan
+        .as_deref()
+        .expect("a law with a `by` line");
+    prove_with(inputs, ir, i, path, plans)
+}
+
+/// Prove law `i` by plan `path` (`Module.plan`), exactly as a `by` line
+/// naming it would.
+fn prove_with(
+    inputs: &ProofLowerInputs,
+    ir: &ProofIR,
+    i: usize,
+    path: &str,
+    plans: &mut Plans,
+) -> Result<Script, String> {
     let t: &LawTheorem = &ir.law_theorems[i];
-    let path = t.by_plan.as_deref().expect("a law with a `by` line");
     let (module, plan) = split_plan(path)?;
     if t.premises.len() > 1 {
         return Err(format!("plan {path}: more than one premise"));
@@ -500,7 +515,7 @@ pub(super) fn produce(
     };
     let text = crate::ir::proof_steps::sexpr::script(&goal, inputs.symbol_table)
         .map_err(|why| format!("plan {path}: the goal cannot be written as step data: {why}"))?;
-    let limit = step_limit(inputs.plan_step_limit_knob);
+    let limit = step_limit(inputs.proof_command);
     let answer = run(runner, entry, &text, limit).map_err(|why| format!("plan {path}: {why}"))?;
     let (kind, body) = answer.split_once('\n').unwrap_or((answer.as_str(), ""));
     let proof_text = match kind {
@@ -540,6 +555,84 @@ pub(super) fn produce(
         )
     })?;
     Ok(script)
+}
+
+/// Hints for law `i`, which the automatic steps left open: each plan that
+/// closes it, as the `by` line to add. The plans tried are those of the
+/// plans modules some `by` line of the program already names
+/// ([`named_plans`], found on the first call into `known`), so a program
+/// without `by` lines runs no plan. Only a law without `by`, `induction` and
+/// `because` lines is tried, and only by `aver proof`; a plan that refuses,
+/// runs out of steps or writes a proof the kernel refuses says nothing.
+/// Nothing is credited: the law stays open until its source names the plan.
+pub(super) fn hints(
+    inputs: &ProofLowerInputs,
+    ir: &ProofIR,
+    i: usize,
+    plans: &mut Plans,
+    known: &mut Option<Vec<String>>,
+) -> Vec<String> {
+    let t = &ir.law_theorems[i];
+    let Some(root) = inputs.plans_root else {
+        return Vec::new();
+    };
+    if !inputs.proof_command
+        || t.by_plan.is_some()
+        || t.induction_given.is_some()
+        || !t.reasons.is_empty()
+    {
+        return Vec::new();
+    }
+    known
+        .get_or_insert_with(|| named_plans(ir, root))
+        .iter()
+        .filter(|path| prove_with(inputs, ir, i, path, plans).is_ok())
+        .map(|path| format!("plan {path} closes this law; add `by {path}`"))
+        .collect()
+}
+
+/// Every plan of the plans modules the program's `by` lines name, as a `by`
+/// line names it (`Module.plan`): modules in name order, each with its plans
+/// in the order its `plans [...]` line lists them. A plan a `by` line could
+/// not name (see [`by_line_refusal`]) is left out.
+///
+/// [`by_line_refusal`]: crate::types::checker::plans_module::by_line_refusal
+fn named_plans(ir: &ProofIR, root: &str) -> Vec<String> {
+    let mut modules: Vec<&str> = ir
+        .law_theorems
+        .iter()
+        .filter_map(|t| split_plan(t.by_plan.as_deref()?).ok())
+        .map(|(module, _)| module)
+        .collect();
+    modules.sort();
+    modules.dedup();
+    let mut out = Vec::new();
+    for module in modules {
+        let Some(file) = crate::source::find_module_file(module, root) else {
+            continue;
+        };
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        let Ok(items) = crate::source::parse_source(&text) else {
+            continue;
+        };
+        let Some(listed) = items.iter().find_map(|i| match i {
+            crate::ast::TopLevel::Module(m) => m.plans.clone(),
+            _ => None,
+        }) else {
+            continue;
+        };
+        out.extend(
+            listed
+                .iter()
+                .map(|p| format!("{module}.{p}"))
+                .filter(|path| {
+                    crate::types::checker::plans_module::by_line_refusal(path, root).is_none()
+                }),
+        );
+    }
+    out
 }
 
 /// Run one generated plan function on the goal text, under the step limit.

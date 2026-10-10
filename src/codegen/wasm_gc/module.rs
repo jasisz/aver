@@ -285,7 +285,7 @@ pub(super) fn emit_module_with(
             program_shape: None,
             scope: None,
             plans_root: None,
-            plan_step_limit_knob: false,
+            proof_command: false,
         };
         crate::codegen::proof_lower::carrier_interval_table(&inputs)
     };
@@ -355,7 +355,7 @@ pub(super) fn emit_module_with(
                     program_shape: None,
                     scope: None,
                     plans_root: None,
-                    plan_step_limit_knob: false,
+                    proof_command: false,
                 };
                 // RESOLVED-IR Map-key types: the typed-MIR instantiation
                 // registry carries every `Map<K, V>` the program uses, keyed
@@ -436,7 +436,7 @@ pub(super) fn emit_module_with(
                 program_shape: None,
                 scope: None,
                 plans_root: None,
-                plan_step_limit_knob: false,
+                proof_command: false,
             };
             // The inference-complete instantiation registry (every `Map`,
             // `List`, `Vector`, `Tuple`, `Option`, `Result` the program uses)
@@ -495,7 +495,7 @@ pub(super) fn emit_module_with(
             program_shape: None,
             scope: None,
             plans_root: None,
-            plan_step_limit_knob: false,
+            proof_command: false,
         };
         let layouts = crate::codegen::proof_lower::packed_sequence_layout_table(&inputs);
         let candidates: std::collections::HashSet<String> = layouts.keys().cloned().collect();
