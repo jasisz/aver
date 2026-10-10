@@ -342,8 +342,9 @@ jobs:
         # (the `tactic` level needs Lean and is checked nightly in proof.yml).
         # A gain is recorded in the same commit with `python3
         # tools/steps_ratchet.py --update`. The binary is the one the step
-        # above built.
-        timeout-minutes: 10
+        # above built. It already took close to ten minutes on main with the
+        # debug binary, so the limit leaves room for the producer to grow.
+        timeout-minutes: 20
         run: python3 tools/steps_ratchet.py --aver target/debug/aver
 
       - name: Install Node for the JavaScript Work host

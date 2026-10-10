@@ -38,6 +38,11 @@ pub(crate) struct Env<'a> {
     pub hint_laws: Vec<LawRef>,
     pub hyps: Vec<(String, Eqn)>,
     pub fuel: usize,
+    /// Fuel for evaluating hypotheses to their normal form
+    /// ([`Env::normal_fact`]), apart from `fuel`, so stating hypotheses
+    /// the way the case has evaluated them neither starves the claim's own
+    /// evaluation nor runs without bound.
+    pub normal_fuel: usize,
     next_hyp: usize,
     /// Induction hypotheses named so far, so names stay distinct.
     pub next_ih: usize,
@@ -91,6 +96,7 @@ impl<'a> Env<'a> {
             hint_laws: Vec::new(),
             hyps: Vec::new(),
             fuel: 4000,
+            normal_fuel: 2000,
             next_hyp: 0,
             next_ih: 0,
             nesting: 0,

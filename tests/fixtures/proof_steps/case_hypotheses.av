@@ -1,0 +1,77 @@
+module CaseHypotheses
+    intent =
+        "Laws whose `because` function argues one element at a time: the induction hypothesis is"
+        "stated about the list before the case split, while the claim has evaluated further, so"
+        "the hypothesis must be read in the form the case gave it; and a law that is false, which"
+        "no reading of a hypothesis may close."
+    exposes [keep, keepTwiceReason, keepNothingReason, inRange, dropReason]
+    effects []
+
+fn keep(xs: List<Int>, t: Int) -> List<Int>
+    ? "The items of xs other than t, in order."
+    match xs
+        [] -> []
+        [h, ..rest] -> match h == t
+            true -> keep(rest, t)
+            false -> List.prepend(h, keep(rest, t))
+
+verify keep
+    keep([1, 2, 1], 1) => [2]
+
+fn keepTwiceReason(xs: List<Int>, t: Int) -> Bool
+    ? "Filtering twice leaves what filtering once left, one item at a time."
+    match xs
+        [] -> keep(keep(xs, t), t) == keep(xs, t)
+        [h, ..rest] -> Bool.and(keepTwiceReason(rest, t), keep(keep(xs, t), t) == keep(xs, t))
+
+verify keepTwiceReason
+    keepTwiceReason([1, 2], 1) => true
+
+verify keep law idempotent
+    given xs: List<Int> = [[], [1, 2], [2, 1, 2]]
+    given t: Int = [1, 2]
+    because keepTwiceReason(xs, t)
+    keep(keep(xs, t), t) => keep(xs, t)
+
+fn keepNothingReason(xs: List<Int>, t: Int) -> Bool
+    ? "The same argument for a claim that does not hold: filtering never changes a list."
+    match xs
+        [] -> keep(xs, t) == xs
+        [h, ..rest] -> Bool.and(keepNothingReason(rest, t), keep(xs, t) == xs)
+
+verify keepNothingReason
+    keepNothingReason([2], 1) => true
+
+verify keep law keepsEverything
+    given xs: List<Int> = [[], [2]]
+    given t: Int = [1]
+    because keepNothingReason(xs, t)
+    keep(xs, t) => xs
+
+fn inRange(xs: List<Int>) -> Bool
+    ? "Every item is a byte."
+    match xs
+        [] -> true
+        [head, ..tail] -> Bool.and(Bool.and(head >= 0, head <= 255), inRange(tail))
+
+verify inRange
+    inRange([0, 255]) => true
+    inRange([256]) => false
+
+fn dropReason(xs: List<Int>, count: Int) -> Bool
+    ? "Dropping a prefix keeps the rest in range, one dropped item at a time."
+    match xs
+        [] -> inRange(List.drop(xs, count))
+        [head, ..tail] -> match count <= 0
+            true -> inRange(List.drop(xs, count))
+            false -> Bool.and(dropReason(tail, count - 1), inRange(List.drop(xs, count)))
+
+verify dropReason
+    dropReason([0, 255], 1) => true
+
+verify inRange law dropStaysInRange
+    given xs: List<Int> = [[], [0, 255], [-1, 256]]
+    given count: Int = [-1, 0, 1, 2]
+    when inRange(xs)
+    because dropReason(xs, count)
+    inRange(List.drop(xs, count)) holds

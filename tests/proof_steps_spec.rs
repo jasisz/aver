@@ -4089,3 +4089,103 @@ fn lean_checks_each_obligation_of_a_because_chain_by_its_steps() {
     );
     let _ = fs::remove_dir_all(out);
 }
+
+/// The laws of `case_hypotheses.av` that close by steps only once a
+/// hypothesis is read in the form the case split and evaluation gave it.
+const CASE_HYPOTHESIS_LAWS: [&str; 2] = ["inRange.dropStaysInRange", "keep.idempotent"];
+
+/// An induction hypothesis (or a line of one) is stated about the terms as
+/// they stood before the case split; the claim has evaluated further. The
+/// producer states each such line again in its normal form under the case's
+/// hypotheses, and the kernel checks that evaluation. The normal form of
+/// the case where the head is kept, stated where the head is dropped, is
+/// refused; and a law that does not hold stays open.
+#[test]
+fn both_kernels_read_a_hypothesis_as_the_case_evaluated_it_and_refuse_the_wrong_case() {
+    let out = scratch("case-hypotheses");
+    let (result, summary) = aver_backend_json("case_hypotheses.av", &out, None);
+    let _ = fs::remove_dir_all(&out);
+    for law in CASE_HYPOTHESIS_LAWS {
+        assert_eq!(
+            summary["closed_by"][law],
+            "steps",
+            "{law}: {}",
+            format_output(&result)
+        );
+    }
+    assert_eq!(summary["closed_by"]["keep.keepsEverything"], "open");
+    let export = scratch("case-hypotheses-export");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("case_hypotheses.av", &export)
+            .into_iter()
+            .collect();
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in CASE_HYPOTHESIS_LAWS {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.to_string()));
+    }
+    // The hypothesis where the head `h_c0` is kept, in its normal form,
+    // and the form it has where the head is dropped.
+    let law = read("keep.idempotent.because1");
+    let kept = "(op == (bi List.prepend (v h_c0) (call keep (call keep (v rest_c0) (v t)) (v t))) \
+                (bi List.prepend (v h_c0) (call keep (v rest_c0) (v t))))";
+    let dropped =
+        "(op == (call keep (call keep (v rest_c0) (v t)) (v t)) (call keep (v rest_c0) (v t)))";
+    let at = law
+        .find(&format!(" {kept} "))
+        .expect("the kept case's hypothesis");
+    assert!(
+        law[..at]
+            .trim_end()
+            .rsplit(' ')
+            .next()
+            .unwrap()
+            .starts_with("h_steps")
+    );
+    let mutant = format!("{} {dropped} {}", &law[..at], &law[at + kept.len() + 2..]);
+    let refused = aver::proof_kernel::verdict(&mutant);
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|why| why.starts_with("step proof")),
+        "{refused:?}"
+    );
+    let path = export.join("mutant.steps");
+    fs::write(&path, &mutant).unwrap();
+    let replayed = replay(std::slice::from_ref(&path));
+    assert!(!replayed.status.success(), "{}", format_output(&replayed));
+    let _ = fs::remove_dir_all(export);
+}
+
+#[test]
+fn lean_closes_the_case_hypothesis_laws_by_their_steps() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("case-hypotheses-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "case_hypotheses.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "99",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in CASE_HYPOTHESIS_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
