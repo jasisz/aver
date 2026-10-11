@@ -2933,7 +2933,7 @@ fn laws_close_by_the_list_facts_they_do_not_cite_and_a_stuck_one_is_hinted() {
     let text = aver_in(&dir, &["proof", "hints.av", "--backend", "aver"]);
     let out = String::from_utf8_lossy(&text.stdout).to_string();
     assert!(
-        out.contains("10 of 11 law(s) closed by steps"),
+        out.contains("11 of 12 law(s) closed by steps"),
         "{}",
         format_output(&text)
     );
@@ -2942,7 +2942,7 @@ fn laws_close_by_the_list_facts_they_do_not_cite_and_a_stuck_one_is_hinted() {
         "{out}"
     );
     assert!(
-        out.contains("    hint: `List.len.nonneg` rewrites `List.len(List.reverse(xs)) >= 0`; add it to `using`"),
+        out.contains("    hint: `Vector.len.asList` rewrites `Vector.len(v)`; add it to `using`"),
         "{out}"
     );
     let json = aver_in(
@@ -2958,14 +2958,19 @@ fn laws_close_by_the_list_facts_they_do_not_cite_and_a_stuck_one_is_hinted() {
     )
     .unwrap();
     assert_eq!(summary["closed_by"]["reversed.twiceIsTheSame"], "steps");
+    // Closed by a case split whose false case `List.len.nonneg` rules out.
     assert_eq!(
         summary["closed_by"]["reversed.lengthIsNeverNegative"],
+        "steps"
+    );
+    assert_eq!(
+        summary["closed_by"]["reversed.vectorLengthIsNeverNegative"],
         "open"
     );
     let export = scratch("hints");
     let files: std::collections::BTreeMap<String, PathBuf> =
         export_steps("hints.av", &export).into_iter().collect();
-    assert_eq!(files.len(), 10, "{files:?}");
+    assert_eq!(files.len(), 11, "{files:?}");
     let three = fs::read_to_string(&files["batch.threeBatches"]).unwrap();
     assert!(three.contains("(fact List.concat.assoc "), "{three}");
     for (law, path) in &files {
