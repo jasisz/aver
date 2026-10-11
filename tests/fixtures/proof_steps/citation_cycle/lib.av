@@ -1,0 +1,34 @@
+module Lib
+    intent = "Laws whose `using` lists name a law by a name an importer's law also has."
+    exposes [f, g, k]
+    effects []
+
+fn f(x: String) -> String
+    ? "An exclamation after the text."
+    x + "!"
+
+fn g(x: String) -> String
+    ? "The same, written with an empty text in front."
+    ("" + x) + "!"
+
+fn k(x: String) -> String
+    ? "The text as it is."
+    x
+
+verify f
+    f("a") => "a!"
+
+verify g
+    g("a") => "a!"
+
+verify k
+    k("a") => "a"
+
+verify k law isF
+    given x: String = ["", "a"]
+    k(x) => x
+
+verify f law isG
+    given x: String = ["", "a"]
+    using [k.isF]
+    f(x) => g(x)

@@ -4,7 +4,7 @@
 //! A law no producer handles, or whose script the kernel refuses, is reported
 //! as not closed by this backend, like a `sorry` under Lean.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use aver::ir::LawTheorem;
 
@@ -18,6 +18,9 @@ enum Verdict {
     Open(Option<String>),
     /// The script checks, but cites a law this backend did not close.
     CitesOpen(String),
+    /// The script checks, but cites a law whose citations go round in a
+    /// circle, so no law of the circle is proved.
+    CitesCircle(String),
 }
 
 fn law_key(symbols: &aver::ir::SymbolTable, t: &LawTheorem) -> String {
@@ -165,6 +168,7 @@ pub(super) fn run(
             verdicts.insert(k, Verdict::CitesOpen(c));
         }
     }
+    credit_bottom_up(&mut verdicts, &cites);
     // An obligation is closed only when the laws it cites are.
     for (k, cited) in &obligation_cites {
         if !matches!(obligation_verdicts.get(k), Some(Verdict::Steps)) {
@@ -272,6 +276,9 @@ pub(super) fn run(
                 Verdict::CitesOpen(law) => {
                     format!("not closed by this backend (it cites {law}, which is not)")
                 }
+                Verdict::CitesCircle(law) => format!(
+                    "not closed by this backend (it cites {law}, whose citations go round in a circle)"
+                ),
             };
             println!("  {key}: {line}");
             let prefix = format!("{key}.");
@@ -285,6 +292,9 @@ pub(super) fn run(
                     Verdict::Open(Some(why)) => format!("open (steps: {why})"),
                     Verdict::Refused(why) => format!("open (kernel: {why})"),
                     Verdict::CitesOpen(law) => format!("open (it cites {law}, which is not)"),
+                    Verdict::CitesCircle(law) => {
+                        format!("open (it cites {law}, whose citations go round in a circle)")
+                    }
                 };
                 println!("    obligation {ob}: {line}");
             }
@@ -313,5 +323,86 @@ pub(super) fn run(
     }
     if checking && !passed {
         std::process::exit(1);
+    }
+}
+
+/// Every law left as [`Verdict::Steps`] cites only laws whose scripts check,
+/// but a script takes the laws it cites as given, so credit is earned
+/// bottom-up: a law is closed once every law it cites was closed before it.
+/// Laws that cite each other in a circle are never reached, and neither is a
+/// law that cites one of them; they become [`Verdict::CitesCircle`].
+fn credit_bottom_up(
+    verdicts: &mut BTreeMap<String, Verdict>,
+    cites: &BTreeMap<String, Vec<String>>,
+) {
+    let mut credited: BTreeSet<String> = BTreeSet::new();
+    loop {
+        let next: Vec<String> = verdicts
+            .iter()
+            .filter(|(k, v)| matches!(v, Verdict::Steps) && !credited.contains(*k))
+            .filter(|(k, _)| {
+                cites
+                    .get(*k)
+                    .is_none_or(|cs| cs.iter().all(|c| credited.contains(c)))
+            })
+            .map(|(k, _)| k.clone())
+            .collect();
+        if next.is_empty() {
+            break;
+        }
+        credited.extend(next);
+    }
+    for (k, v) in verdicts.iter_mut() {
+        if matches!(v, Verdict::Steps) && !credited.contains(k) {
+            let c = cites
+                .get(k)
+                .and_then(|cs| cs.iter().find(|c| !credited.contains(*c)))
+                .cloned()
+                .unwrap_or_default();
+            *v = Verdict::CitesCircle(c);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn laws_that_cite_each_other_in_a_circle_are_not_closed() {
+        let mut verdicts: BTreeMap<String, Verdict> = BTreeMap::new();
+        let mut cites: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (law, cited) in [
+            ("base", vec![]),
+            ("onBase", vec!["base"]),
+            ("a", vec!["b"]),
+            ("b", vec!["a"]),
+            ("p", vec!["q"]),
+            ("q", vec!["r"]),
+            ("r", vec!["p", "base"]),
+            ("self", vec!["self"]),
+            ("onCircle", vec!["base", "q"]),
+        ] {
+            verdicts.insert(law.into(), Verdict::Steps);
+            cites.insert(law.into(), cited.into_iter().map(String::from).collect());
+        }
+        credit_bottom_up(&mut verdicts, &cites);
+        for law in ["base", "onBase"] {
+            assert!(matches!(verdicts[law], Verdict::Steps), "{law}");
+        }
+        for (law, cited) in [
+            ("a", "b"),
+            ("b", "a"),
+            ("p", "q"),
+            ("q", "r"),
+            ("r", "p"),
+            ("self", "self"),
+            ("onCircle", "q"),
+        ] {
+            assert!(
+                matches!(&verdicts[law], Verdict::CitesCircle(c) if c == cited),
+                "{law}"
+            );
+        }
     }
 }

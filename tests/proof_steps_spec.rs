@@ -4968,3 +4968,34 @@ fn remembered_evaluations_give_the_same_proofs() {
         );
     }
 }
+
+/// A module's `using [k.isF]` names its own law `k.isF`, never the entry's
+/// law of the same name: the entry's law cites the module's back, and each
+/// script would check with the other law taken as given, so the pair would
+/// count as closed with nothing proved.
+#[test]
+fn a_module_law_never_cites_an_entry_law_of_the_same_name() {
+    let dir = repo_root().join(FIXTURES).join("citation_cycle");
+    let out = scratch("citation-cycle");
+    let result = aver_in(
+        &dir,
+        &[
+            "proof",
+            "main.av",
+            "--backend",
+            "aver",
+            "-o",
+            out.to_str().unwrap(),
+        ],
+    );
+    let _ = fs::remove_dir_all(&out);
+    assert!(result.status.success(), "{}", format_output(&result));
+    let text = String::from_utf8_lossy(&result.stdout);
+    for expected in [
+        "  Lib.k.isF: closed by steps",
+        "  Lib.f.isG: not closed by this backend (steps: ",
+        "  k.isF: not closed by this backend (it cites Lib.f.isG, which is not)",
+    ] {
+        assert!(text.contains(expected), "missing `{expected}`\n{text}");
+    }
+}

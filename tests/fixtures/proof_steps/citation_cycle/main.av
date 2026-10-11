@@ -1,0 +1,18 @@
+module CitationCycle
+    intent =
+        "A law that cites an imported law, which names it back by its bare name: each script"
+        "checks with the other law taken as given, so neither is proved."
+    depends [Lib]
+    effects []
+
+fn k(x: String) -> String
+    ? "The text as it is."
+    x
+
+verify k
+    k("a") => "a"
+
+verify k law isF
+    given x: String = ["", "a"]
+    using [Lib.f.isG]
+    Lib.g(x) => Lib.f(x)
