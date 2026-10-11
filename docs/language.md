@@ -367,13 +367,41 @@ fn openByLength(goal: Goal) -> Result<Proof, String>
     ...
 ```
 
-Every function the `plans` line lists has exactly this signature: it receives the law to close as a `Goal` and returns its proof as `Proof` steps, or `Result.Err` with the reason it does not apply. `Goal` and `Proof` come from `Kernel.Proof` (written `Goal` and `Proof`, or `Kernel.Proof.Goal` and `Kernel.Proof.Proof`); the terms in them come from `Kernel.Term`. A goal is the law's claim and `when`, every definition the claim reaches, the module-level bindings and sum types those use, the laws the `using` list cites, the hypotheses in scope where the goal is posed (`hyps`, each a `Hyp` with a name and an equation; a goal the compiler poses has none, its `when` stays the claim's premise, and a step such as a Bool split adds one for each of its cases), and what each list given holds (`listElems`, each a `ListElem` naming the list and its element type `Ty`: `TyFin(Fin)` for a type with finitely many values such as `Bool`, `TyInt`, `TyList(Ty)` or `TyOther`). A plan's `verify` examples build a goal with `Kernel.Lib.goalFor(law)`, a goal holding only the law, and `Goal.update(...)` for the fields they need, so the examples keep working when `Goal` gains a field. `Kernel.Lib` is a helper library for writing plans: evaluating a term together with the proof of that evaluation, unfolding a definition at the arm its argument decides, chaining steps, the law's `when` as a hypothesis, replacing a variable the way a list split does, and fresh names (`Kernel.Lib.taken(goal)` lists the names a goal already uses, for `Kernel.Lib.fresh` to avoid). A plan can split a given of list type into `[]` and a first element in front of the rest with the kernel's `PListCases` step.
+Every function the `plans` line lists has exactly this signature: it receives the law to close as a `Goal` and returns its proof as `Proof` steps, or `Result.Err` with the reason it does not apply. It may instead return a script for `Kernel.Std` to run, as described below. `Goal` and `Proof` come from `Kernel.Proof` (written `Goal` and `Proof`, or `Kernel.Proof.Goal` and `Kernel.Proof.Proof`); the terms in them come from `Kernel.Term`. A goal is the law's claim and `when`, every definition the claim reaches, the module-level bindings and sum types those use, the laws the `using` list cites, the hypotheses in scope where the goal is posed (`hyps`, each a `Hyp` with a name and an equation; a goal the compiler poses has none, its `when` stays the claim's premise, and a step such as a Bool split adds one for each of its cases), and what each list given holds (`listElems`, each a `ListElem` naming the list and its element type `Ty`: `TyFin(Fin)` for a type with finitely many values such as `Bool`, `TyInt`, `TyList(Ty)` or `TyOther`). A plan's `verify` examples build a goal with `Kernel.Lib.goalFor(law)`, a goal holding only the law, and `Goal.update(...)` for the fields they need, so the examples keep working when `Goal` gains a field. `Kernel.Lib` is a helper library for writing plans: evaluating a term together with the proof of that evaluation, unfolding a definition at the arm its argument decides, chaining steps, the law's `when` as a hypothesis, replacing a variable the way a list split does, and fresh names (`Kernel.Lib.taken(goal)` lists the names a goal already uses, for `Kernel.Lib.fresh` to avoid). A plan can split a given of list type into `[]` and a first element in front of the rest with the kernel's `PListCases` step.
 
 `Kernel.Std` is the library of standard plans the compiler ships. A law names one like a plan of its own project, `by Kernel.Std.cases`, and a plans module may depend on `Kernel.Std` to call its functions from its own plans. Its plans so far:
 
 - `cases` splits every given of finite type (`Bool`, a sum type whose variants carry nothing, records and tuples of those) into all its values, at most 64 cases, and closes each case by its `when` reading `false` there or by `close`.
 
 Its functions for writing plans take a `Goal` and keep its hypotheses: `Kernel.Std.assume(goal, name, lhs, rhs)` adds the hypothesis `name: lhs = rhs`; `Kernel.Std.close(goal)` evaluates both sides, rewriting by the goal's hypotheses where evaluation stops, and proves them equal when they meet; `Kernel.Std.splitBool(goal, on, next)` splits on the Bool term `on` and proves each case with `next`, a function of your plans module that gets the goal with the case as a hypothesis (`splitBool(goal, x < 0, close)`). A standard plan named in a `by` line runs compiled into the `aver` binary, so it costs no compilation and no VM; called from a project's own plan, `Kernel.Std` runs in the VM together with that plan. Either way the kernel checks its proof like any other: nothing in `Kernel.Std` is trusted.
+
+A plan may also return a script instead of proof steps: `fn openByLength(goal: Goal) -> Result<Tactic, String>`, with `Tactic` from `Kernel.Std`. The script only says how to split the goal; the automatic proof steps close the rest. The compiler runs the script with `Kernel.Std` compiled into the binary, and the kernel checks the proof it makes like any other. The nodes of a script:
+
+- `Tactic.Auto` closes the goal with the automatic proof steps, using the hypotheses the script has brought into scope. A case the `when` rules out, such as an empty list under a length bound, is closed first.
+- `Tactic.Cases(next)` splits every given of finite type into all its values, as `cases` does, and runs `next` in each case.
+- `Tactic.Induction(list, head, tail, nil, cons)` is induction on the given `list`: `nil` runs where it is `[]`, and `cons` runs where it is `head` in front of `tail`, with the claim at `tail` as a hypothesis. The script names the head and the tail, and it is refused when a name is already taken, or when the `when` or a hypothesis mentions `list`.
+- `Tactic.Split(list, head, tail, nil, cons)` splits the list variable the same way, without the hypothesis. The tail is a list variable that a later `Split` can open.
+- `Tactic.SplitBool(cond, yes, no)` splits on the Bool term `cond`: `yes` runs where it is true and `no` where it is false, each with the case as a hypothesis.
+- `Tactic.First([...])` runs the first script of the list that closes the goal.
+- `Tactic.Plan(name)` runs the plan `name` of the same plans module on the goal at that point. That plan may return proof steps or another script. Its `Goal` has the script's hypotheses, and the head and tail of each split as givens.
+
+The fields are positional, because Aver constructors have no named fields. The plan for the stack laws below is a script:
+
+```aver
+fn openByLength(goal: Goal) -> Result<Tactic, String>
+    ? "Open the list the `when` bounds, a cell per unit of the bound."
+    match Kernel.Lib.whenOf(goal)
+        Option.Some(Term.TOp(">=", Term.TBi("List.len", [Term.TVar(v)]), Term.TInt(k))) -> Result.Ok(cells(v, k))
+        _ -> Result.Err("the `when` is not `List.len(v) >= k` with a literal k")
+
+fn cells(v: String, n: Int) -> Tactic
+    ? "Open n cells of v; then close the case, or split the rest once more."
+    match n <= 0
+        true -> Tactic.First([Tactic.Auto, Tactic.Split(v, "x", "rest", Tactic.Auto, Tactic.Auto)])
+        false -> Tactic.Split(v, "x{n}", "r{n}", Tactic.Auto, cells("r{n}", n - 1))
+```
+
+When a script cannot close the goal, the refusal says where, with each node and branch on the path to it and the terms as Aver writes them: ``plan Plans.Tactics.bytesByInduction refused: Induction(bytes)/cons/Auto: evaluation stops at `validBytes(List.concat(List.reverse(t), List.prepend(h, [])))` and `validBytes(t)` ``. Under `First`, each alternative's reason is listed in order: `First: none closes: 1. … | 2. …`.
 
 A law names its plan with a `by` line:
 

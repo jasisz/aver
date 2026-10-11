@@ -1,6 +1,7 @@
 //! Plans modules: `plans [f, …]` in a module header marks a module of proof
 //! plans, functions a law names with `by Module.f`. A plan receives the law
-//! to close as a `Kernel.Proof.Goal` and returns proof steps or a refusal;
+//! to close as a `Kernel.Proof.Goal` and returns proof steps, a script for
+//! the standard library to run (`Kernel.Std.Tactic`) or a refusal;
 //! the kernel checks every step it returns, so nothing a plan does is
 //! trusted. What the checker enforces here is the shape of the boundary:
 //! a plan has exactly the plan signature, a plans module has no effects,
@@ -93,8 +94,14 @@ pub(super) fn check_plans_module(
         }
     }
     let goal = kernel_type("Goal");
-    let proof = kernel_type("Proof");
-    let wanted = Type::Result(Box::new(proof), Box::new(Type::Str));
+    let proof = Type::Result(Box::new(kernel_type("Proof")), Box::new(Type::Str));
+    let script = Type::Result(
+        Box::new(Type::Named {
+            id: Some(TypeId::for_key(&TypeKey::in_module(STD_PLANS, "Tactic"))),
+            name: format!("{STD_PLANS}.Tactic"),
+        }),
+        Box::new(Type::Str),
+    );
     for plan in plans {
         let Some(fd) = items.iter().find_map(|i| match i {
             TopLevel::FnDef(fd) if fd.name == *plan => Some(fd),
@@ -110,12 +117,14 @@ pub(super) fn check_plans_module(
             continue;
         };
         let signature_ok = fn_sigs.get(plan).is_some_and(|(params, ret, _)| {
-            params.len() == 1 && same_type(&params[0], &goal) && same_type(ret, &wanted)
+            params.len() == 1
+                && same_type(&params[0], &goal)
+                && (same_type(ret, &proof) || same_type(ret, &script))
         });
         if !signature_ok {
             errors.push(error(
                 format!(
-                    "plan '{plan}' must have the plan signature `fn {plan}(goal: Goal) -> Result<Proof, String>`, with Goal and Proof from Kernel.Proof"
+                    "plan '{plan}' must have the plan signature `fn {plan}(goal: Goal) -> Result<Proof, String>`, with Goal and Proof from Kernel.Proof, or return a script, `Result<Tactic, String>` with Tactic from Kernel.Std"
                 ),
                 fd.line,
             ));

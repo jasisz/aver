@@ -4,7 +4,7 @@ module ProofStdEmbed
         "tools/regenerate_proof_kernel.py, so a law with `by Kernel.Std.<plan>` runs its plan in process."
         "Not trusted: the kernel checks every proof a plan writes. A plans module with no plans of its own,"
         "since only a plans module may depend on one."
-    exposes [run]
+    exposes [run, script]
     depends [Kernel.Term, Kernel.Proof, Kernel.Std, Kernel.Lib]
     effects []
     plans []
@@ -27,3 +27,10 @@ fn byName(plan: String, g: Goal) -> Result<Proof, String>
 
 verify byName
     byName("nope", Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)))) => Result.Err("Kernel.Std has no plan nope")
+
+fn script(goal: String, tactic: String, answers: String) -> String
+    ? "One run of a plan's script (tactic) on the goal, with the compiler's answers so far: `proof`, `refused`, `ask` and the question to answer next, or `goal`."
+    Kernel.Std.script(goal, tactic, answers)
+
+verify script
+    script("(steps 13 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (laws) (proof (refl (i 1))))", "(first)", "(answers)") => "refused\nFirst: none closes: "

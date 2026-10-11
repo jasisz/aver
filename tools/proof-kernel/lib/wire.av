@@ -4,7 +4,7 @@ module Wire
         "(the grammar at the top of src/ir/proof_steps/sexpr.rs, with a placeholder proof) and the plan's proof"
         "leaves in the same grammar. The compiler reads the proof back and hands the whole script to the kernel."
         "Not trusted: a goal read wrongly or a proof written wrongly only makes the script fail to check."
-    exposes [goal, proofText, termText, answer]
+    exposes [goal, proofText, termText, answer, spaced, listElems]
     depends [Kernel.Term, Kernel.Proof, Kernel.Sexp, Kernel.Decode]
     effects []
 

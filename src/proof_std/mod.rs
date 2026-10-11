@@ -43,3 +43,22 @@ pub fn run(plan: &str, goal: &str) -> Result<String, String> {
     })
     .map_err(|_| format!("the standard plan {plan} stopped with an internal error"))
 }
+
+/// Run a plan's script (`Kernel.Std.Tactic` in step data, as
+/// `Kernel.Std.scriptAnswer` writes it) once on a goal written as for
+/// [`run`], with the compiler's answers so far
+/// (`(answers (a "KEY" REPLY)…)`). The answer is `proof` and the proof,
+/// `refused` and the reason, `ask` and the question the script needs
+/// answered next (an Auto or Plan node), or `goal` and why the input could
+/// not be read.
+pub fn run_script(goal: &str, script: &str, answers: &str) -> Result<String, String> {
+    std::panic::catch_unwind(|| {
+        aver_generated::entry::script(
+            AverStr::from(goal),
+            AverStr::from(script),
+            AverStr::from(answers),
+        )
+        .to_string()
+    })
+    .map_err(|_| "the standard script runner stopped with an internal error".to_string())
+}
