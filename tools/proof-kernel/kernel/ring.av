@@ -3,8 +3,11 @@ module Ring
         "Int terms read as polynomials over their atoms, for the ring step: + - * negation and"
         "integer literals are the ring operations, any other subterm is an atom compared by its"
         "exact term. Two terms are equal when their monomials and coefficients are."
+        "The linear step reads Int comparisons as p >= 0 and adds them up; since every atom is an"
+        "integer, a sum may also be divided by a common divisor of its coefficients, the constant"
+        "rounded down, as omega does."
     exposes [samePolynomial, linearContradiction]
-    depends [Kernel.Term]
+    depends [Kernel.Term, Kernel.Proof]
     effects []
 
 record Mono
@@ -14,6 +17,7 @@ record Mono
 record Read
     poly: List<Mono>
     atoms: List<Term>
+
 
 fn samePolynomial(a: Term, b: Term) -> Bool
     ? "Whether two Int terms are the same polynomial."
@@ -176,37 +180,91 @@ fn mergeSorted(a: List<Int>, b: List<Int>) -> List<Int>
 verify mergeSorted
     mergeSorted([0, 2], [1]) => [0, 1, 2]
 
-fn linearContradiction(facts: List<Eqn>, weights: List<Int>) -> Bool
-    ? "Whether Int comparisons with the truth values given, weighted by nonnegative numbers and added as p >= 0, sum to a negative constant."
-    match List.len(facts) == List.len(weights)
-        false -> false
-        true -> negativeConstant(weightedSum(facts, weights, [], []))
+fn linearContradiction(facts: List<Eqn>, cuts: List<Cut>, weights: List<Int>) -> Bool
+    ? "Whether Int comparisons with the truth values given, read as p >= 0, then rows rounded from them (cuts), weighted by nonnegative numbers, sum to a negative constant."
+    match readRows(facts, [], [])
+        Option.None -> false
+        Option.Some(rows) -> match withCuts(rows, cuts)
+            Option.None -> false
+            Option.Some(all) -> negativeConstant(sumRows(all, weights, []))
 
 verify linearContradiction
-    linearContradiction([Eqn(lhs = Term.TOp(">", Term.TVar("x"), Term.TInt(0)), rhs = Term.TBool(true)), Eqn(lhs = Term.TOp(">", Term.TOp("+", Term.TVar("x"), Term.TInt(1)), Term.TInt(1)), rhs = Term.TBool(false))], [1, 1]) => true
-    linearContradiction([Eqn(lhs = Term.TOp(">", Term.TVar("x"), Term.TInt(0)), rhs = Term.TBool(true))], [1]) => false
-    linearContradiction([Eqn(lhs = Term.TOp(">", Term.TVar("x"), Term.TInt(0)), rhs = Term.TBool(true)), Eqn(lhs = Term.TOp(">", Term.TVar("x"), Term.TInt(0)), rhs = Term.TBool(false))], [1, 0 - 1]) => false
-    linearContradiction([Eqn(lhs = Term.TOp(">.", Term.TVar("x"), Term.TInt(0)), rhs = Term.TBool(true)), Eqn(lhs = Term.TOp(">.", Term.TVar("x"), Term.TInt(0)), rhs = Term.TBool(false))], [1, 1]) => false
+    linearContradiction([Eqn(lhs = Term.TOp(">", Term.TVar("x"), Term.TInt(0)), rhs = Term.TBool(true)), Eqn(lhs = Term.TOp(">", Term.TOp("+", Term.TVar("x"), Term.TInt(1)), Term.TInt(1)), rhs = Term.TBool(false))], [], [1, 1]) => true
+    linearContradiction([Eqn(lhs = Term.TOp(">", Term.TVar("x"), Term.TInt(0)), rhs = Term.TBool(true))], [], [1]) => false
+    linearContradiction([Eqn(lhs = Term.TOp(">", Term.TVar("x"), Term.TInt(0)), rhs = Term.TBool(true)), Eqn(lhs = Term.TOp(">", Term.TVar("x"), Term.TInt(0)), rhs = Term.TBool(false))], [], [1, 0 - 1]) => false
+    linearContradiction([Eqn(lhs = Term.TOp(">.", Term.TVar("x"), Term.TInt(0)), rhs = Term.TBool(true)), Eqn(lhs = Term.TOp(">.", Term.TVar("x"), Term.TInt(0)), rhs = Term.TBool(false))], [], [1, 1]) => false
+    linearContradiction([Eqn(lhs = Term.TOp(">=", Term.TOp("*", Term.TInt(2), Term.TVar("x")), Term.TInt(1)), rhs = Term.TBool(true)), Eqn(lhs = Term.TOp("<=", Term.TOp("*", Term.TInt(2), Term.TVar("x")), Term.TInt(1)), rhs = Term.TBool(true))], [Cut(divisor = 2, weights = [1, 0]), Cut(divisor = 2, weights = [0, 1, 0])], [0, 0, 1, 1]) => true
+    linearContradiction([Eqn(lhs = Term.TOp(">=", Term.TOp("*", Term.TInt(2), Term.TVar("x")), Term.TInt(1)), rhs = Term.TBool(true)), Eqn(lhs = Term.TOp("<=", Term.TOp("*", Term.TInt(2), Term.TVar("x")), Term.TInt(1)), rhs = Term.TBool(true))], [], [1, 1]) => false
+    linearContradiction([Eqn(lhs = Term.TOp(">=", Term.TOp("*", Term.TInt(2), Term.TVar("x")), Term.TInt(1)), rhs = Term.TBool(true)), Eqn(lhs = Term.TOp("<=", Term.TOp("*", Term.TInt(2), Term.TVar("x")), Term.TInt(1)), rhs = Term.TBool(true))], [Cut(divisor = 2, weights = [1, 0]), Cut(divisor = 2, weights = [0, 1])], [0, 0, 1, 1]) => false
 
-fn weightedSum(facts: List<Eqn>, weights: List<Int>, acc: List<Mono>, atoms: List<Term>) -> Option<List<Mono>>
-    ? "The weighted sum of the facts read as p >= 0; None when a fact is not an Int comparison or a weight is negative."
-    match (facts, weights)
-        ([f, ..fs], [w, ..ws]) -> match Bool.and(w >= 0, isTruth(f.rhs))
+fn readRows(facts: List<Eqn>, rows: List<List<Mono>>, atoms: List<Term>) -> Option<List<List<Mono>>>
+    ? "Each fact read as p >= 0, over one list of atoms; None when one is not an Int comparison with a Bool value."
+    match facts
+        [] -> Option.Some(rows)
+        [f, ..fs] -> match isTruth(f.rhs)
             false -> Option.None
-            true -> weightedNext(asNonneg(f.lhs, f.rhs == Term.TBool(true), atoms), w, fs, ws, acc)
-        _ -> Option.Some(acc)
+            true -> match asNonneg(f.lhs, f.rhs == Term.TBool(true), atoms)
+                Option.None -> Option.None
+                Option.Some(read) -> readRows(fs, List.concat(rows, [read.poly]), read.atoms)
 
-verify weightedSum
-    weightedSum([], [], [], []) => Option.Some([])
+verify readRows
+    readRows([], [], []) => Option.Some([])
+    readRows([Eqn(lhs = Term.TVar("b"), rhs = Term.TBool(true))], [], []) => Option.None
 
-fn weightedNext(r: Option<Read>, w: Int, fs: List<Eqn>, ws: List<Int>, acc: List<Mono>) -> Option<List<Mono>>
-    ? "Add one weighted fact, then the rest."
-    match r
-        Option.None -> Option.None
-        Option.Some(read) -> weightedSum(fs, ws, addPoly(acc, scalePoly(read.poly, w)), read.atoms)
+fn sumRows(rows: List<List<Mono>>, weights: List<Int>, acc: List<Mono>) -> Option<List<Mono>>
+    ? "The rows weighted and added, one nonnegative weight per row; None otherwise."
+    match (rows, weights)
+        ([], []) -> Option.Some(acc)
+        ([p, ..ps], [w, ..ws]) -> match w >= 0
+            true -> sumRows(ps, ws, addPoly(acc, scalePoly(p, w)))
+            false -> Option.None
+        _ -> Option.None
 
-verify weightedNext
-    weightedNext(Option.None, 1, [], [], []) => Option.None
+verify sumRows
+    sumRows([[Mono(atoms = [0], coef = 1)]], [2], []) => Option.Some([Mono(atoms = [0], coef = 2)])
+    sumRows([[Mono(atoms = [0], coef = 1)]], [], []) => Option.None
+    sumRows([[Mono(atoms = [0], coef = 1)]], [0 - 1], []) => Option.None
+
+fn withCuts(rows: List<List<Mono>>, cuts: List<Cut>) -> Option<List<List<Mono>>>
+    ? "The rows, then each cut's row: the weighted sum of the rows before it, rounded."
+    match cuts
+        [] -> Option.Some(rows)
+        [c, ..rest] -> match sumRows(rows, c.weights, [])
+            Option.None -> Option.None
+            Option.Some(sum) -> match rounded(sum, c.divisor)
+                Option.None -> Option.None
+                Option.Some(row) -> withCuts(List.concat(rows, [row]), rest)
+
+verify withCuts
+    withCuts([[Mono(atoms = [], coef = 0 - 1), Mono(atoms = [0], coef = 2)]], [Cut(divisor = 2, weights = [1])]) => Option.Some([[Mono(atoms = [], coef = 0 - 1), Mono(atoms = [0], coef = 2)], [Mono(atoms = [], coef = 0 - 1), Mono(atoms = [0], coef = 1)]])
+    withCuts([[Mono(atoms = [0], coef = 2)]], [Cut(divisor = 2, weights = [1, 1])]) => Option.None
+
+fn rounded(p: List<Mono>, d: Int) -> Option<List<Mono>>
+    ? "p >= 0 divided by d > 0, sound over the integers: every coefficient but the constant a multiple of d, the constant rounded down."
+    match d > 0
+        false -> Option.None
+        true -> roundedBy(p, d, [])
+
+verify rounded
+    rounded([Mono(atoms = [], coef = 0 - 3), Mono(atoms = [0], coef = 4)], 4) => Option.Some([Mono(atoms = [], coef = 0 - 1), Mono(atoms = [0], coef = 1)])
+    rounded([Mono(atoms = [], coef = 3), Mono(atoms = [0], coef = 4)], 4) => Option.Some([Mono(atoms = [0], coef = 1)])
+    rounded([Mono(atoms = [0], coef = 3)], 2) => Option.None
+    rounded([Mono(atoms = [0], coef = 2)], 0) => Option.None
+    rounded([Mono(atoms = [0], coef = 2)], 0 - 2) => Option.None
+
+fn roundedBy(p: List<Mono>, d: Int, acc: List<Mono>) -> Option<List<Mono>>
+    ? "Each monomial of p divided by d, in order."
+    match p
+        [] -> Option.Some(acc)
+        [m, ..rest] -> match (Int.div(m.coef, d), Int.mod(m.coef, d))
+            (Result.Ok(q), Result.Ok(r)) -> match Bool.or(m.atoms == [], r == 0)
+                true -> roundedBy(rest, d, List.concat(acc, nonzero(Mono(atoms = m.atoms, coef = q))))
+                false -> Option.None
+            _ -> Option.None
+
+verify roundedBy
+    roundedBy([Mono(atoms = [], coef = 0 - 1)], 2, []) => Option.Some([Mono(atoms = [], coef = 0 - 1)])
+    roundedBy([Mono(atoms = [0], coef = 1)], 2, []) => Option.None
 
 fn isTruth(t: Term) -> Bool
     ? "A Bool literal."

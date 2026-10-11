@@ -234,6 +234,101 @@ theorem vector_get_new {α : Type} (n : Int) (x : α) (i : Int)
   simp [h0, h1]
 end AverSteps"#;
 
+/// The wall rules about the bit-level view of `Int`, stated over the
+/// `AverBits` model; a separate section, since only a program that uses
+/// `Bits` has that model in its prelude.
+pub(crate) const LEAN_PRELUDE_AVER_STEPS_BITS: &str = r#"namespace AverSteps
+theorem bits_testBit_low (k i : Nat) : (2 ^ k - 1).testBit i = decide (i < k) := by
+  induction k generalizing i with
+  | zero => simp
+  | succ k ih =>
+    have e : 2 ^ (k + 1) - 1 = 2 * (2 ^ k - 1) + 1 := by
+      have := Nat.one_le_two_pow (n := k)
+      rw [Nat.pow_succ]; omega
+    rw [e]
+    cases i with
+    | zero =>
+      rw [Nat.testBit_zero]
+      have : (2 * (2 ^ k - 1) + 1) % 2 = 1 := by omega
+      simp [this]
+    | succ i =>
+      rw [Nat.testBit_succ]
+      have : (2 * (2 ^ k - 1) + 1) / 2 = 2 ^ k - 1 := by omega
+      rw [this, ih]
+      simp
+theorem bits_land_low (x k : Nat) : x &&& (2 ^ k - 1) = x % 2 ^ k := by
+  apply Nat.eq_of_testBit_eq
+  intro i
+  rw [Nat.testBit_and, bits_testBit_low, Nat.testBit_mod_two_pow]
+  cases Nat.testBit x i <;> cases decide (i < k) <;> rfl
+theorem bits_neg_divmod (K q r : Nat) (hr : r < K) :
+    (-((K * q + r : Nat) : Int) - 1) / (K : Int) = -(q : Int) - 1 ∧
+    (-((K * q + r : Nat) : Int) - 1) % (K : Int) = ((K - 1 - r : Nat) : Int) := by
+  rw [Int.ediv_emod_unique (by omega)]
+  push_cast
+  rw [Int.mul_sub, Int.mul_neg, Int.mul_one]
+  generalize (K : Int) * (q : Int) = p
+  refine ⟨?_, ?_, ?_⟩ <;> omega
+theorem bits_not (a : Int) : AverBits.not a = 0 - a - 1 := by
+  simp only [AverBits.not]; omega
+theorem bits_shl (a n k : Int) (h : (decide (0 <= n) && (k == AverBits.shiftLeft 1 n)) = true) :
+    AverBits.shiftLeft a n = a * k := by
+  simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, AverBits.shiftLeft_eq, Int.one_mul] at h ⊢
+  rw [h.2]
+theorem bits_and_low (a m k n : Int)
+    (h : ((decide (0 <= n) && (m + 1 == k)) && (k == AverBits.shiftLeft 1 n)) = true) :
+    AverBits.and a m = a % k := by
+  simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, AverBits.shiftLeft_eq, Int.one_mul] at h
+  obtain ⟨⟨_, hmk⟩, hk⟩ := h
+  subst hk
+  have hP : ((2 ^ n.toNat : Nat) : Int) = (2 : Int) ^ n.toNat := by simp
+  have h1 : 1 ≤ 2 ^ n.toNat := Nat.one_le_two_pow
+  have hM : m = ((2 ^ n.toNat - 1 : Nat) : Int) := by omega
+  rcases Int.lt_or_le a 0 with hn | hp
+  · rw [AverBits.and_of_neg a m _ hM hn, bits_land_low, ← hP]
+    generalize 2 ^ n.toNat = K at *
+    obtain ⟨b, rfl⟩ : ∃ b : Nat, a = -((b : Int)) - 1 := ⟨(-a - 1).toNat, by omega⟩
+    have hbn : (-(-(b : Int) - 1) - 1).toNat = b := by omega
+    rw [hbn]
+    have hr := Nat.mod_lt b (show 0 < K by omega)
+    have hdm := Nat.div_add_mod b K
+    generalize b / K = q at *
+    generalize b % K = r at *
+    subst hdm
+    rw [(bits_neg_divmod K q r hr).2]
+  · rw [AverBits.and_of_nonneg a m _ hM hp, bits_land_low, ← hP, Int.natCast_emod,
+      Int.toNat_of_nonneg hp]
+theorem bits_and_bit (a k n : Int)
+    (h : (decide (0 <= n) && (k == AverBits.shiftLeft 1 n)) = true) :
+    AverBits.and a k = k * (a / k % 2) := by
+  simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, AverBits.shiftLeft_eq, Int.one_mul] at h
+  obtain ⟨_, hk⟩ := h
+  subst hk
+  have hP : ((2 ^ n.toNat : Nat) : Int) = (2 : Int) ^ n.toNat := by simp
+  have h1 : 1 ≤ 2 ^ n.toNat := Nat.one_le_two_pow
+  rcases Int.lt_or_le a 0 with hn | hp
+  · rw [AverBits.and_of_neg a _ (2 ^ n.toNat) hP.symm hn, AverBits.nat_land_bit _ _ n.toNat rfl, ← hP]
+    generalize 2 ^ n.toNat = K at *
+    obtain ⟨b, rfl⟩ : ∃ b : Nat, a = -((b : Int)) - 1 := ⟨(-a - 1).toNat, by omega⟩
+    have hbn : (-(-(b : Int) - 1) - 1).toNat = b := by omega
+    rw [hbn]
+    have hr := Nat.mod_lt b (show 0 < K by omega)
+    have hdm := Nat.div_add_mod b K
+    generalize b / K = q at *
+    generalize b % K = r at *
+    subst hdm
+    rw [(bits_neg_divmod K q r hr).1]
+    rcases Nat.mod_two_eq_zero_or_one q with h0 | h0
+    · have : (-(q : Int) - 1) % 2 = 1 := by omega
+      rw [this, h0]; simp
+    · have : (-(q : Int) - 1) % 2 = 0 := by omega
+      rw [this, h0]; simp
+  · rw [AverBits.and_of_nonneg a _ (2 ^ n.toNat) hP.symm hp, AverBits.nat_land_bit _ _ n.toNat rfl,
+      ← hP]
+    push_cast
+    rw [Int.toNat_of_nonneg hp]
+end AverSteps"#;
+
 /// The only rule-specific Lean table.
 fn lemma(rule: WallRule) -> &'static str {
     match rule {
@@ -279,6 +374,10 @@ fn lemma(rule: WallRule) -> &'static str {
         WallRule::DivModRecompose => "AverSteps.div_mod_recompose",
         WallRule::DivRange => "AverSteps.div_range",
         WallRule::ModRange => "AverSteps.mod_range",
+        WallRule::BitsNot => "AverSteps.bits_not",
+        WallRule::BitsShl => "AverSteps.bits_shl",
+        WallRule::BitsAndLow => "AverSteps.bits_and_low",
+        WallRule::BitsAndBit => "AverSteps.bits_and_bit",
         WallRule::ConcatNil => "AverSteps.list_concat_nil",
         WallRule::ConcatCons => "AverSteps.list_concat_cons",
         WallRule::LenNil => "AverSteps.list_len_nil",

@@ -760,24 +760,44 @@ impl Reader {
                 lhs: self.term(l)?,
                 rhs: self.term(r)?,
             },
-            ("linear", [g, Sx::Atom(v), hs, ws]) => Proof::Linear {
-                goal: self.term(g)?,
-                value: match v.as_str() {
-                    "true" => true,
-                    "false" => false,
-                    _ => return Err(bad()),
-                },
-                hyps: self.names(hs)?,
-                weights: self
-                    .items(ws)?
+            ("linear", [g, Sx::Atom(v), hs, ws, cuts @ ..]) => {
+                let ints = |ws: &Sx| -> Result<Vec<BigInt>, String> {
+                    self.items(ws)?
+                        .iter()
+                        .map(|w| {
+                            self.atom(w)?
+                                .parse::<BigInt>()
+                                .map_err(|_| "malformed weight".to_string())
+                        })
+                        .collect()
+                };
+                let cuts = cuts
                     .iter()
-                    .map(|w| {
-                        self.atom(w)?
-                            .parse::<BigInt>()
-                            .map_err(|_| "malformed weight".to_string())
+                    .map(|c| match self.items(c)? {
+                        [Sx::Atom(tag), d, ws] if tag == "cut" => {
+                            Ok(crate::ir::proof_steps::linear::Cut {
+                                divisor: self
+                                    .atom(d)?
+                                    .parse::<BigInt>()
+                                    .map_err(|_| "malformed divisor".to_string())?,
+                                weights: ints(ws)?,
+                            })
+                        }
+                        _ => Err("malformed cut".to_string()),
                     })
-                    .collect::<Result<_, _>>()?,
-            },
+                    .collect::<Result<Vec<_>, String>>()?;
+                Proof::Linear {
+                    goal: self.term(g)?,
+                    value: match v.as_str() {
+                        "true" => true,
+                        "false" => false,
+                        _ => return Err(bad()),
+                    },
+                    hyps: self.names(hs)?,
+                    weights: ints(ws)?,
+                    cuts,
+                }
+            }
             _ => return Err(format!("unknown or malformed step {tag}")),
         })
     }

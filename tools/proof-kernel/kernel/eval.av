@@ -165,6 +165,7 @@ fn evalBuiltin(name: String, args: List<Term>) -> Option<Val>
         ("Bool.not", [a]) -> negate(evalClosed(a))
         ("__int_div_euclid", [a, k]) -> division(evalClosed(a), evalClosed(k), true)
         ("__int_mod_euclid", [a, k]) -> division(evalClosed(a), evalClosed(k), false)
+        ("__bits_shl", [a, n]) -> shifted(evalClosed(a), evalClosed(n))
         _ -> listBuiltin(name, args)
 
 verify evalBuiltin
@@ -202,6 +203,21 @@ fn division(a: Option<Val>, k: Option<Val>, quotient: Bool) -> Option<Val>
 verify division
     division(Option.Some(Val.VInt(7)), Option.Some(Val.VInt(0)), true) => Option.None
     division(Option.Some(Val.VInt(7)), Option.Some(Val.VInt(2)), false) => Option.Some(Val.VInt(1))
+
+fn shifted(a: Option<Val>, n: Option<Val>) -> Option<Val>
+    ? "a times 2^n for a count n from 0 to 4096; any other count is not closed."
+    match (a, n)
+        (Option.Some(Val.VInt(x)), Option.Some(Val.VInt(k))) -> match Bool.and(k >= 0, k <= 4096)
+            true -> match Bits.shiftLeft(x, k)
+                Result.Ok(r) -> Option.Some(Val.VInt(r))
+                Result.Err(e) -> Option.None
+            false -> Option.None
+        _ -> Option.None
+
+verify shifted
+    shifted(Option.Some(Val.VInt(1)), Option.Some(Val.VInt(5))) => Option.Some(Val.VInt(32))
+    shifted(Option.Some(Val.VInt(0 - 3)), Option.Some(Val.VInt(1))) => Option.Some(Val.VInt(0 - 6))
+    shifted(Option.Some(Val.VInt(1)), Option.Some(Val.VInt(0 - 1))) => Option.None
 
 fn divided(x: Int, y: Int, quotient: Bool) -> Option<Val>
     ? "The Euclidean result of dividing x by y."

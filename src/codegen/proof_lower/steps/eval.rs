@@ -263,6 +263,7 @@ fn division_facts(ts: &[&Term]) -> (Vec<(Term, Proof)>, Vec<Term>) {
                         value: true,
                         hyps: Vec::new(),
                         weights: vec![1.into()],
+                        cuts: Vec::new(),
                     },
                 ],
             };
@@ -299,6 +300,159 @@ fn division_facts(ts: &[&Term]) -> (Vec<(Term, Proof)>, Vec<Term>) {
     }
     divs.sort_by_key(size);
     (out, divs)
+}
+
+/// The facts (the opposite of the goal first) a certificate over the
+/// rationals uses, by index from 1, with its weights: the opposite's,
+/// then theirs.
+type Settled = (
+    Vec<usize>,
+    Vec<num_bigint::BigInt>,
+    Vec<crate::ir::proof_steps::linear::Cut>,
+);
+
+fn settle_rationally(facts: &[crate::ir::proof_steps::ring::Poly]) -> Option<Settled> {
+    let weights = crate::ir::proof_steps::linear::certificate(facts)?;
+    let used: Vec<usize> = (1..facts.len())
+        .filter(|&i| weights[i] != 0.into())
+        .collect();
+    let mut kept = vec![weights[0].clone()];
+    kept.extend(used.iter().map(|&i| weights[i].clone()));
+    Some((used, kept, Vec::new()))
+}
+
+/// The same over ℤ: a certificate whose rows may be rounded (see
+/// [`crate::ir::proof_steps::linear::Cut`]), as `omega` reads a remainder
+/// by a literal.
+fn settle_over_integers(facts: &[crate::ir::proof_steps::ring::Poly]) -> Option<Settled> {
+    use crate::ir::proof_steps::linear;
+    let cert = linear::integer_certificate(facts)?;
+    let used: Vec<usize> = (1..facts.len())
+        .filter(|&i| linear::uses(&cert, i))
+        .collect();
+    let mut keep = vec![0];
+    keep.extend(used.iter().copied());
+    let cert = linear::restricted(&cert, facts.len(), &keep)?;
+    Some((used, cert.weights, cert.cuts))
+}
+
+/// A `Bits` builtin read as Int arithmetic by its rule: `Bits.not(a)` as
+/// `0 - a - 1`, a shift left by a literal count `n` as `a * 2^n`, and a
+/// mask by a literal `2^n - 1` as the remainder by `2^n`, by a literal
+/// `2^n` as that bit of the quotient. The premise, that the literals are
+/// such, computes.
+fn bits_step(cur: &Term) -> Option<Step> {
+    use crate::ir::hir::BuiltinIntrinsic;
+    use num_bigint::BigInt;
+    let int = |n: &BigInt| term::int(n);
+    // `n` with `2^n = k`, for `k > 0` a power of two.
+    let log2 = |k: &BigInt| -> Option<BigInt> {
+        if *k <= BigInt::from(0) || (k & (k - BigInt::from(1))) != BigInt::from(0) {
+            return None;
+        }
+        Some(BigInt::from(k.bits() - 1))
+    };
+    let shl_one = |n: &BigInt| {
+        term::intrinsic(
+            BuiltinIntrinsic::BitsShiftLeft,
+            vec![int(&1.into()), int(n)],
+        )
+    };
+    let power = |k: &BigInt, n: &BigInt| {
+        term::bool_and(
+            term::binop(BinOp::Lte, int(&0.into()), int(n)),
+            term::binop(BinOp::Eq, int(k), shl_one(n)),
+        )
+    };
+    let (rule, subst, premise): (WallRule, Vec<(String, Term)>, Option<Term>) = match &cur.node {
+        ResolvedExpr::Call(ResolvedCallee::Builtin(b), args)
+            if b == "Bits.not" && args.len() == 1 =>
+        {
+            (WallRule::BitsNot, vec![("a".into(), canon(&args[0]))], None)
+        }
+        ResolvedExpr::Call(ResolvedCallee::Intrinsic(BuiltinIntrinsic::BitsShiftLeft), args)
+            if args.len() == 2 =>
+        {
+            let n = term::int_value(&args[1])?;
+            if n < BigInt::from(0) || n > BigInt::from(4096) {
+                return None;
+            }
+            let k = BigInt::from(1) << num_traits::ToPrimitive::to_u32(&n)?;
+            (
+                WallRule::BitsShl,
+                vec![
+                    ("a".into(), canon(&args[0])),
+                    ("n".into(), int(&n)),
+                    ("k".into(), int(&k)),
+                ],
+                Some(power(&k, &n)),
+            )
+        }
+        ResolvedExpr::Call(ResolvedCallee::Builtin(b), args)
+            if b == "Bits.and" && args.len() == 2 =>
+        {
+            let m = term::int_value(&args[1])?;
+            let a = canon(&args[0]);
+            let k = &m + 1;
+            if let Some(n) = log2(&k).filter(|n| *n <= BigInt::from(4096)) {
+                let premise = term::bool_and(
+                    term::bool_and(
+                        term::binop(BinOp::Lte, int(&0.into()), int(&n)),
+                        term::binop(
+                            BinOp::Eq,
+                            term::binop(BinOp::Add, int(&m), int(&1.into())),
+                            int(&k),
+                        ),
+                    ),
+                    term::binop(BinOp::Eq, int(&k), shl_one(&n)),
+                );
+                (
+                    WallRule::BitsAndLow,
+                    vec![
+                        ("a".into(), a),
+                        ("m".into(), int(&m)),
+                        ("k".into(), int(&k)),
+                        ("n".into(), int(&n)),
+                    ],
+                    Some(premise),
+                )
+            } else {
+                let n = log2(&m).filter(|n| *n <= BigInt::from(4096))?;
+                (
+                    WallRule::BitsAndBit,
+                    vec![
+                        ("a".into(), a),
+                        ("k".into(), int(&m)),
+                        ("n".into(), int(&n)),
+                    ],
+                    Some(power(&m, &n)),
+                )
+            }
+        }
+        _ => return None,
+    };
+    let (premises, concl) = rule.instantiate(&subst)?;
+    let proofs = match premise {
+        Some(p) => {
+            let p = canon(&p);
+            if premises.first().map(|e| canon(&e.lhs)) != Some(p.clone()) {
+                return None;
+            }
+            vec![Proof::Compute {
+                lhs: p,
+                rhs: term::boolean(true),
+            }]
+        }
+        None => Vec::new(),
+    };
+    Some(Step::Progress(Box::new((
+        Proof::Rule {
+            rule,
+            subst,
+            premises: proofs,
+        },
+        canon(&concl.rhs),
+    ))))
 }
 
 /// `a < c` as the least `c` with its comparison `t` against a literal, when
@@ -715,20 +869,33 @@ impl Env<'_> {
     /// For each hypothesis `(a == b) = true` between Ints: `a <= b` and
     /// `a >= b`, each by rewriting `a` to `b` (`int.eq.of_beq`) and the
     /// order of `b` with itself.
-    fn equalities_as_orders(&self) -> Vec<(Term, Proof)> {
+    /// With `equations`, instead each Int equation `a = b` in scope (`x %
+    /// 32 = 3` where a `match` chose the arm of literal 3), which is its
+    /// own proof.
+    fn equalities_as_orders(&self, equations: bool) -> Vec<(Term, Proof)> {
         let mut out = Vec::new();
         for (name, e) in &self.hyps {
-            let ResolvedExpr::BinOp(BinOp::Eq, a, b) = &e.lhs.node else {
-                continue;
-            };
-            if term::bool_value(&e.rhs) != Some(true) || !(is_int(a) || is_int(b)) {
-                continue;
-            }
-            let (a, b) = (canon(a), canon(b));
-            let equal = Proof::Rule {
-                rule: WallRule::EqOfBeq,
-                subst: vec![("a".into(), a.clone()), ("b".into(), b.clone())],
-                premises: vec![Proof::Hyp(name.clone())],
+            let (a, b, equal) = match &e.lhs.node {
+                _ if term::bool_value(&e.rhs).is_none() => {
+                    if !(equations && is_int(&e.lhs) && is_int(&e.rhs)) {
+                        continue;
+                    }
+                    (canon(&e.lhs), canon(&e.rhs), Proof::Hyp(name.clone()))
+                }
+                ResolvedExpr::BinOp(BinOp::Eq, a, b)
+                    if !equations
+                        && term::bool_value(&e.rhs) == Some(true)
+                        && (is_int(a) || is_int(b)) =>
+                {
+                    let (a, b) = (canon(a), canon(b));
+                    let equal = Proof::Rule {
+                        rule: WallRule::EqOfBeq,
+                        subst: vec![("a".into(), a.clone()), ("b".into(), b.clone())],
+                        premises: vec![Proof::Hyp(name.clone())],
+                    };
+                    (a, b, equal)
+                }
+                _ => continue,
             };
             for op in [BinOp::Lte, BinOp::Gte] {
                 let fact = canon(&term::binop(op, a.clone(), b.clone()));
@@ -745,6 +912,7 @@ impl Env<'_> {
                             value: true,
                             hyps: Vec::new(),
                             weights: vec![1.into()],
+                            cuts: Vec::new(),
                         },
                     ],
                 };
@@ -1447,6 +1615,9 @@ impl Env<'_> {
         if let Some(step) = self.vector_step(cur)? {
             return Ok(step);
         }
+        if let Some(step) = bits_step(cur) {
+            return Ok(step);
+        }
         self.settle(cur, blocked)
     }
 
@@ -2010,20 +2181,15 @@ impl Env<'_> {
                 names.push(n.clone());
             }
         }
-        let weights = linear::certificate(&facts)?;
-        let mut hyps = Vec::new();
-        let mut kept = vec![weights[0].clone()];
-        for (n, w) in names.into_iter().zip(&weights[1..]) {
-            if *w != num_bigint::BigInt::from(0) {
-                hyps.push(n);
-                kept.push(w.clone());
-            }
-        }
+        let (used, weights, cuts) =
+            settle_rationally(&facts).or_else(|| settle_over_integers(&facts))?;
+        let hyps = used.into_iter().map(|i| names[i - 1].clone()).collect();
         Some(Proof::Linear {
             goal: canon(goal),
             value,
             hyps,
-            weights: kept,
+            weights,
+            cuts,
         })
     }
 
@@ -2173,7 +2339,7 @@ impl Env<'_> {
         about.extend(known.iter().map(|(_, e)| &e.lhs));
         let (mut remainders, quotients) = division_facts(&about);
         remainders.extend(self.quotient_ranges(&quotients));
-        remainders.extend(self.equalities_as_orders());
+        remainders.extend(self.equalities_as_orders(false));
         for (i, (f, _)) in remainders.iter().enumerate() {
             known.push((
                 format!("h_mod{i}"),
@@ -2193,14 +2359,13 @@ impl Env<'_> {
         // Only where those do not settle it: the comparisons inside a true
         // conjunction in scope, and that each length the facts name is not
         // negative (`List.len.nonneg`).
+        // Over ℤ, with rounded rows, only where reading the facts over
+        // the rationals settles nothing.
         let mut extra = Vec::new();
-        let weights = match linear::certificate(&facts) {
-            Some(weights) => weights,
+        let settled = match settle_rationally(&facts) {
+            Some(settled) => Some(settled),
             None if self.wide_linear => {
                 extra = self.more_linear_facts(goal, &known);
-                if extra.is_empty() {
-                    return None;
-                }
                 for (i, (f, _, _)) in extra.iter().enumerate() {
                     facts.push(linear::as_nonneg(f, true, &mut atoms)?);
                     known.push((
@@ -2208,18 +2373,48 @@ impl Env<'_> {
                         Eqn::new(f.clone(), term::boolean(true)),
                     ));
                 }
-                linear::certificate(&facts)?
+                if extra.is_empty() {
+                    None
+                } else {
+                    settle_rationally(&facts)
+                }
             }
-            None => return None,
+            None => None,
         };
+        let settled = match settled {
+            Some(settled) => Some(settled),
+            None => {
+                // Over ℤ the Int equations in scope count too, read as
+                // two orders each, with what division by a literal in them
+                // gives.
+                let before = extra.len();
+                let orders = self.equalities_as_orders(true);
+                let terms: Vec<&Term> = orders.iter().map(|(f, _)| f).collect();
+                let (mut more, quotients) = division_facts(&terms);
+                more.extend(self.quotient_ranges(&quotients));
+                for (f, p) in orders.into_iter().chain(more) {
+                    if !known.iter().any(|(_, e)| e.lhs == f)
+                        && !extra[before..].iter().any(|(g, _, _)| *g == f)
+                    {
+                        extra.push((f, p, None));
+                    }
+                }
+                for (i, (f, _, _)) in extra.iter().enumerate().skip(before) {
+                    facts.push(linear::as_nonneg(f, true, &mut atoms)?);
+                    known.push((
+                        format!("h_more{i}"),
+                        Eqn::new(f.clone(), term::boolean(true)),
+                    ));
+                }
+                settle_over_integers(&facts)
+            }
+        };
+        let (used, weights, rounded) = settled?;
         // Only the hypotheses the certificate uses are named.
         let mut hyps = Vec::new();
-        let mut kept = vec![weights[0].clone()];
         let mut cuts = Vec::new();
-        for (k, ((n, _), w)) in known.iter().zip(&weights[1..]).enumerate() {
-            if *w == num_bigint::BigInt::from(0) {
-                continue;
-            }
+        for k in used.into_iter().map(|i| i - 1) {
+            let n = &known[k].0;
             if k < plain {
                 hyps.push(n.clone());
             } else if k < viewed {
@@ -2248,13 +2443,13 @@ impl Env<'_> {
                 hyps.push(name.clone());
                 cuts.push((name, fact, proof));
             }
-            kept.push(w.clone());
         }
         let mut proof = Proof::Linear {
             goal: canon(goal),
             value,
             hyps,
-            weights: kept,
+            weights,
+            cuts: rounded,
         };
         for (name, fact, from) in cuts.into_iter().rev() {
             proof = Proof::Have {
@@ -2938,6 +3133,28 @@ impl Env<'_> {
             return Some(Proof::Trans {
                 terms: vec![term::boolean(!said), canon(&e.lhs), term::boolean(said)],
                 steps: vec![Proof::Symm(Box::new(other)), Proof::Hyp(name)],
+            });
+        }
+        // Int equations in scope that no Int has together (`x % 32 = 2`
+        // and `(x + 128) % 32 = 3`): no comparison is stated, so the
+        // linear step shows `0 > 0`, which computes to false.
+        if self
+            .hyps
+            .iter()
+            .any(|(_, e)| term::bool_value(&e.rhs).is_none() && is_int(&e.lhs))
+        {
+            let zero = || term::int(&0.into());
+            let never = canon(&term::binop(BinOp::Gt, zero(), zero()));
+            let shown = self.linear_proof(&never, true)?;
+            return Some(Proof::Trans {
+                terms: vec![term::boolean(true), never.clone(), term::boolean(false)],
+                steps: vec![
+                    Proof::Symm(Box::new(shown)),
+                    Proof::Compute {
+                        lhs: never,
+                        rhs: term::boolean(false),
+                    },
+                ],
             });
         }
         None

@@ -528,16 +528,25 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
             value,
             hyps,
             weights,
-        } => format!(
-            "(linear {} {value} ({}) ({}))",
-            term(goal, names)?,
-            hyps.join(" "),
-            weights
+            cuts,
+        } => {
+            let ints = |ws: &[num_bigint::BigInt]| {
+                ws.iter()
+                    .map(|w| w.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
+            let cuts: String = cuts
                 .iter()
-                .map(|w| w.to_string())
-                .collect::<Vec<_>>()
-                .join(" ")
-        ),
+                .map(|c| format!(" (cut {} ({}))", c.divisor, ints(&c.weights)))
+                .collect();
+            format!(
+                "(linear {} {value} ({}) ({}){cuts})",
+                term(goal, names)?,
+                hyps.join(" "),
+                ints(weights)
+            )
+        }
         Proof::Absurd {
             contradiction,
             lhs,

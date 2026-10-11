@@ -74,103 +74,6 @@ impl aver_rt::AverDisplay for Read {
     }
 }
 
-#[allow(non_camel_case_types)]
-enum __MutualTco1 {
-    WeightedSum(
-        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
-        aver_rt::AverIntList,
-        aver_rt::AverList<Mono>,
-        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
-    ),
-    WeightedNext(
-        Option<Read>,
-        aver_rt::AverInt,
-        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
-        aver_rt::AverIntList,
-        aver_rt::AverList<Mono>,
-    ),
-}
-
-fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> Option<aver_rt::AverList<Mono>> {
-    loop {
-        __state = match __state {
-            __MutualTco1::WeightedSum(
-                mut facts @ _,
-                mut weights @ _,
-                mut acc @ _,
-                mut atoms @ _,
-            ) => {
-                crate::proof_kernel::cancel_checkpoint();
-                {
-                    let __int_match_subject = (facts, weights);
-                    let (__lit0, __lit1) = &__int_match_subject;
-                    if !(*__lit0).is_empty() && !(*__lit1).is_empty() {
-                        let Some((f, fs)) = aver_rt::list_uncons_cloned(&(*__lit0)) else {
-                            unreachable!("Aver Rust codegen: tuple element list mismatch")
-                        };
-                        let Some((w, ws)) = aver_rt::list_uncons_cloned(&(*__lit1)) else {
-                            unreachable!("Aver Rust codegen: tuple element list mismatch")
-                        };
-                        if ((w >= aver_rt::AverInt::from_i64(0))
-                            && crate::proof_kernel::aver_generated::kernel::ring::isTruth(&f.rhs))
-                        {
-                            __MutualTco1::WeightedNext(crate::proof_kernel::aver_generated::kernel::ring::asNonneg(&f.lhs, (f.rhs == crate::proof_kernel::aver_generated::kernel::term::Term::TBool(true)), &atoms), w, fs, ws, acc)
-                        } else {
-                            return None;
-                        }
-                    } else {
-                        return Some(acc);
-                    }
-                }
-            }
-            __MutualTco1::WeightedNext(
-                mut r @ _,
-                mut w @ _,
-                mut fs @ _,
-                mut ws @ _,
-                mut acc @ _,
-            ) => {
-                crate::proof_kernel::cancel_checkpoint();
-                match r {
-                    None => return None,
-                    Some(read @ _) => __MutualTco1::WeightedSum(
-                        fs,
-                        ws,
-                        crate::proof_kernel::aver_generated::kernel::ring::addPoly(
-                            acc,
-                            crate::proof_kernel::aver_generated::kernel::ring::scalePoly(
-                                &read.poly, w,
-                            ),
-                        ),
-                        read.atoms,
-                    ),
-                }
-            }
-        };
-    }
-}
-
-/// The weighted sum of the facts read as p >= 0; None when a fact is not an Int comparison or a weight is negative.
-pub fn weightedSum(
-    facts @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
-    weights @ _: aver_rt::AverIntList,
-    acc @ _: aver_rt::AverList<Mono>,
-    atoms @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
-) -> Option<aver_rt::AverList<Mono>> {
-    __mutual_tco_trampoline_1(__MutualTco1::WeightedSum(facts, weights, acc, atoms))
-}
-
-/// Add one weighted fact, then the rest.
-pub fn weightedNext(
-    r @ _: Option<Read>,
-    w @ _: aver_rt::AverInt,
-    fs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
-    ws @ _: aver_rt::AverIntList,
-    acc @ _: aver_rt::AverList<Mono>,
-) -> Option<aver_rt::AverList<Mono>> {
-    __mutual_tco_trampoline_1(__MutualTco1::WeightedNext(r, w, fs, ws, acc))
-}
-
 /// Whether two Int terms are the same polynomial.
 pub fn samePolynomial(
     a @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
@@ -511,26 +414,160 @@ pub fn mergeSorted(
     }
 }
 
-/// Whether Int comparisons with the truth values given, weighted by nonnegative numbers and added as p >= 0, sum to a negative constant.
+/// Whether Int comparisons with the truth values given, read as p >= 0, then rows rounded from them (cuts), weighted by nonnegative numbers, sum to a negative constant.
 #[inline(always)]
 pub fn linearContradiction(
     facts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
+    cuts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Cut>,
     weights @ _: &aver_rt::AverIntList,
 ) -> bool {
     crate::proof_kernel::cancel_checkpoint();
-    if (aver_rt::AverInt::from_i64(facts.len() as i64)
-        == aver_rt::AverInt::from_i64(weights.len() as i64))
-    {
-        crate::proof_kernel::aver_generated::kernel::ring::negativeConstant(
-            &crate::proof_kernel::aver_generated::kernel::ring::weightedSum(
-                facts.clone(),
-                weights.clone(),
-                aver_rt::AverList::empty(),
-                aver_rt::AverList::empty(),
-            ),
+    match crate::proof_kernel::aver_generated::kernel::ring::readRows(
+        facts.clone(),
+        aver_rt::AverList::empty(),
+        aver_rt::AverList::empty(),
+    ) {
+        None => false,
+        Some(rows @ _) => {
+            match crate::proof_kernel::aver_generated::kernel::ring::withCuts(rows, cuts.clone()) {
+                None => false,
+                Some(all @ _) => {
+                    crate::proof_kernel::aver_generated::kernel::ring::negativeConstant(
+                        &crate::proof_kernel::aver_generated::kernel::ring::sumRows(
+                            all,
+                            weights.clone(),
+                            aver_rt::AverList::empty(),
+                        ),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/// Each fact read as p >= 0, over one list of atoms; None when one is not an Int comparison with a Bool value.
+#[inline(always)]
+pub fn readRows(
+    mut facts @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
+    mut rows @ _: aver_rt::AverList<aver_rt::AverList<Mono>>,
+    mut atoms @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+) -> Option<aver_rt::AverList<aver_rt::AverList<Mono>>> {
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        aver_list_match!(facts, [] => { return Some(rows); }, [f, fs] => { if crate::proof_kernel::aver_generated::kernel::ring::isTruth(&f.rhs) { match crate::proof_kernel::aver_generated::kernel::ring::asNonneg(&f.lhs, (f.rhs == crate::proof_kernel::aver_generated::kernel::term::Term::TBool(true)), &atoms) { None => { return None; }, Some(read @ _) => { {
+            let __tco0 = fs;
+            let __tco1 = aver_rt::AverList::concat(&rows, &aver_rt::AverList::from_vec(vec![read.poly]));
+            let __tco2 = read.atoms;
+            facts = __tco0;
+            rows = __tco1;
+            atoms = __tco2;
+            continue;
+        } } } } else { return None; } })
+    }
+}
+
+/// The rows weighted and added, one nonnegative weight per row; None otherwise.
+pub fn sumRows(
+    mut rows @ _: aver_rt::AverList<aver_rt::AverList<Mono>>,
+    mut weights @ _: aver_rt::AverIntList,
+    mut acc @ _: aver_rt::AverList<Mono>,
+) -> Option<aver_rt::AverList<Mono>> {
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __int_match_subject = (rows, weights);
+            let (__lit0, __lit1) = &__int_match_subject;
+            if (*__lit0).is_empty() && (*__lit1).is_empty() {
+                return Some(acc);
+            } else if !(*__lit0).is_empty() && !(*__lit1).is_empty() {
+                let Some((p, ps)) = aver_rt::list_uncons_cloned(&(*__lit0)) else {
+                    unreachable!("Aver Rust codegen: tuple element list mismatch")
+                };
+                let Some((w, ws)) = aver_rt::list_uncons_cloned(&(*__lit1)) else {
+                    unreachable!("Aver Rust codegen: tuple element list mismatch")
+                };
+                if (w < aver_rt::AverInt::from_i64(0)) {
+                    return None;
+                } else {
+                    {
+                        let __tco0 = ps;
+                        let __tco1 = ws;
+                        let __tco2 = crate::proof_kernel::aver_generated::kernel::ring::addPoly(
+                            acc,
+                            crate::proof_kernel::aver_generated::kernel::ring::scalePoly(&p, w),
+                        );
+                        rows = __tco0;
+                        weights = __tco1;
+                        acc = __tco2;
+                        continue;
+                    }
+                }
+            } else {
+                return None;
+            }
+        }
+    }
+}
+
+/// The rows, then each cut's row: the weighted sum of the rows before it, rounded.
+#[inline(always)]
+pub fn withCuts(
+    mut rows @ _: aver_rt::AverList<aver_rt::AverList<Mono>>,
+    mut cuts @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Cut>,
+) -> Option<aver_rt::AverList<aver_rt::AverList<Mono>>> {
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        aver_list_match!(cuts, [] => { return Some(rows); }, [c, rest] => { match crate::proof_kernel::aver_generated::kernel::ring::sumRows(rows.clone(), c.weights, aver_rt::AverList::empty()) { None => { return None; }, Some(sum @ _) => { match crate::proof_kernel::aver_generated::kernel::ring::rounded(&sum, c.divisor) { None => { return None; }, Some(row @ _) => { {
+            let __tco0 = aver_rt::AverList::concat(&rows, &aver_rt::AverList::from_vec(vec![row]));
+            let __tco1 = rest;
+            rows = __tco0;
+            cuts = __tco1;
+            continue;
+        } } } } } })
+    }
+}
+
+/// p >= 0 divided by d > 0, sound over the integers: every coefficient but the constant a multiple of d, the constant rounded down.
+#[inline(always)]
+pub fn rounded(
+    p @ _: &aver_rt::AverList<Mono>,
+    d @ _: aver_rt::AverInt,
+) -> Option<aver_rt::AverList<Mono>> {
+    crate::proof_kernel::cancel_checkpoint();
+    if (d > aver_rt::AverInt::from_i64(0)) {
+        crate::proof_kernel::aver_generated::kernel::ring::roundedBy(
+            p.clone(),
+            d,
+            aver_rt::AverList::empty(),
         )
     } else {
-        false
+        None
+    }
+}
+
+/// Each monomial of p divided by d, in order.
+#[inline(always)]
+pub fn roundedBy(
+    mut p @ _: aver_rt::AverList<Mono>,
+    mut d @ _: aver_rt::AverInt,
+    mut acc @ _: aver_rt::AverList<Mono>,
+) -> Option<aver_rt::AverList<Mono>> {
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        aver_list_match!(p, [] => { return Some(acc); }, [m, rest] => { match ((match (m.coef).div_euclid(&(d)) { Some(__q) => Ok(__q), None => Err("division by zero".to_string()) }).into_aver(), (match (m.coef).rem_euclid(&(d)) { Some(__r) => Ok(__r), None => Err("division by zero".to_string()) }).into_aver()) {
+        (Ok(q), Ok(r)) => {
+            if ((m.atoms == aver_rt::AverIntList::empty()) || (r == aver_rt::AverInt::from_i64(0))) { {
+            let __tco0 = rest;
+            let __tco2 = aver_rt::AverList::concat(&acc, &crate::proof_kernel::aver_generated::kernel::ring::nonzero(&crate::proof_kernel::aver_generated::kernel::ring::Mono { atoms: m.atoms, coef: q }));
+            p = __tco0;
+            acc = __tco2;
+            continue;
+        } } else { return None; }
+        },
+        _ => {
+            return None;
+        }
+    } })
     }
 }
 

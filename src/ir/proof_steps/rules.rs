@@ -67,6 +67,14 @@ pub enum WallRule {
     DivModRecompose,
     DivRange,
     ModRange,
+    // The bit-level view of Int (infinite two's complement): complement is
+    // `-a - 1`, a shift left by `n >= 0` multiplies by `2^n`, a mask
+    // `2^n - 1` keeps the remainder by `2^n` and a mask `2^n` keeps that
+    // bit of the quotient, for every sign of `a`.
+    BitsNot,
+    BitsShl,
+    BitsAndLow,
+    BitsAndBit,
     // Constructor equations of the list builtins: each builtin on `[]` and
     // on `List.prepend(x, a)`, with Aver's truncation of a count (a count
     // at or below zero takes nothing and drops nothing).
@@ -112,7 +120,7 @@ pub enum WallRule {
 }
 
 impl WallRule {
-    pub const ALL: [WallRule; 74] = [
+    pub const ALL: [WallRule; 78] = [
         WallRule::AndTrueL,
         WallRule::AndFalseL,
         WallRule::AndTrueR,
@@ -155,6 +163,10 @@ impl WallRule {
         WallRule::DivModRecompose,
         WallRule::DivRange,
         WallRule::ModRange,
+        WallRule::BitsNot,
+        WallRule::BitsShl,
+        WallRule::BitsAndLow,
+        WallRule::BitsAndBit,
         WallRule::ConcatNil,
         WallRule::ConcatCons,
         WallRule::LenNil,
@@ -234,6 +246,10 @@ impl WallRule {
             WallRule::DivModRecompose => "int.div_mod_recompose",
             WallRule::DivRange => "int.div_range",
             WallRule::ModRange => "int.mod_range",
+            WallRule::BitsNot => "bits.not",
+            WallRule::BitsShl => "bits.shl",
+            WallRule::BitsAndLow => "bits.and_low",
+            WallRule::BitsAndBit => "bits.and_bit",
             WallRule::ConcatNil => "list.concat.nil",
             WallRule::ConcatCons => "list.concat.cons",
             WallRule::LenNil => "list.len.nil",
@@ -292,6 +308,10 @@ impl WallRule {
             WallRule::DivModRecompose | WallRule::ModRange => &["a", "k"],
             WallRule::BeqRefl => &["a"],
             WallRule::DivRange => &["a", "k", "m", "n"],
+            WallRule::BitsNot => &["a"],
+            WallRule::BitsShl => &["a", "n", "k"],
+            WallRule::BitsAndLow => &["a", "m", "k", "n"],
+            WallRule::BitsAndBit => &["a", "k", "n"],
             WallRule::ConcatNil => &["b"],
             WallRule::ConcatCons => &["x", "a", "b"],
             WallRule::LenNil | WallRule::ReverseNil => &[],
@@ -340,6 +360,9 @@ impl WallRule {
         };
         let div = |x: Term, k: Term| term::intrinsic(BuiltinIntrinsic::IntDivEuclid, vec![x, k]);
         let modu = |x: Term, k: Term| term::intrinsic(BuiltinIntrinsic::IntModEuclid, vec![x, k]);
+        let shl = |x: Term, n: Term| term::intrinsic(BuiltinIntrinsic::BitsShiftLeft, vec![x, n]);
+        let bits_and =
+            |x: Term, y: Term| term::builtin("Bits.and", vec![x, y], Some(crate::ast::Type::Int));
         let x = || var("x");
         let n = || var("n");
         let nil = term::nil;
@@ -501,6 +524,49 @@ impl WallRule {
                         cmp(BinOp::Lt, modu(a(), var("k")), var("k")),
                     ),
                     true,
+                ),
+            ),
+            WallRule::BitsNot => (
+                vec![],
+                Eqn::new(
+                    term::builtin("Bits.not", vec![a()], Some(crate::ast::Type::Int)),
+                    binop(BinOp::Sub, binop(BinOp::Sub, i(0), a()), i(1)),
+                ),
+            ),
+            WallRule::BitsShl => (
+                vec![is(
+                    bool_and(
+                        cmp(BinOp::Lte, i(0), n()),
+                        cmp(BinOp::Eq, k(), shl(i(1), n())),
+                    ),
+                    true,
+                )],
+                Eqn::new(shl(a(), n()), binop(BinOp::Mul, a(), k())),
+            ),
+            WallRule::BitsAndLow => (
+                vec![is(
+                    bool_and(
+                        bool_and(
+                            cmp(BinOp::Lte, i(0), n()),
+                            cmp(BinOp::Eq, binop(BinOp::Add, m(), i(1)), k()),
+                        ),
+                        cmp(BinOp::Eq, k(), shl(i(1), n())),
+                    ),
+                    true,
+                )],
+                Eqn::new(bits_and(a(), m()), modu(a(), k())),
+            ),
+            WallRule::BitsAndBit => (
+                vec![is(
+                    bool_and(
+                        cmp(BinOp::Lte, i(0), n()),
+                        cmp(BinOp::Eq, k(), shl(i(1), n())),
+                    ),
+                    true,
+                )],
+                Eqn::new(
+                    bits_and(a(), k()),
+                    binop(BinOp::Mul, k(), modu(div(a(), k()), i(2))),
                 ),
             ),
             WallRule::ConcatNil => (vec![], Eqn::new(list("List.concat", vec![nil(), b()]), b())),

@@ -498,13 +498,26 @@ verify enumProof
     enumProof([Sexp.Atom("b"), Sexp.Node([Sexp.Atom("v"), Sexp.Atom("b")]), Sexp.Node([Sexp.Atom("v"), Sexp.Atom("b")])]) => Result.Ok(Proof.PEnum("b", Term.TVar("b"), Term.TVar("b"), []))
 
 fn linearProof(args: List<Sexp>) -> Result<Proof, String>
-    ? "(linear TERM BOOL (NAME…) (INT…))"
+    ? "(linear TERM BOOL (NAME…) (INT…) (cut INT (INT…))…)"
     match args
-        [g, Sexp.Atom(v), hs, ws] -> Result.Ok(Proof.PLinear(term(g)?, v == "true", atoms(items(hs)?)?, ints(items(ws)?)?))
+        [g, Sexp.Atom(v), hs, ws, ..cs] -> Result.Ok(Proof.PLinear(term(g)?, v == "true", atoms(items(hs)?)?, ints(items(ws)?)?, cuts(cs)?))
         _ -> Result.Err("malformed linear")
 
 verify linearProof
     linearProof([]) => Result.Err("malformed linear")
+    linearProof([Sexp.Node([Sexp.Atom("v"), Sexp.Atom("g")]), Sexp.Atom("true"), Sexp.Node([]), Sexp.Node([Sexp.Atom("1")]), Sexp.Node([Sexp.Atom("cut"), Sexp.Atom("2"), Sexp.Node([Sexp.Atom("1")])])]) => Result.Ok(Proof.PLinear(Term.TVar("g"), true, [], [1], [Cut(divisor = 2, weights = [1])]))
+    linearProof([Sexp.Node([Sexp.Atom("v"), Sexp.Atom("g")]), Sexp.Atom("true"), Sexp.Node([]), Sexp.Node([Sexp.Atom("1")]), Sexp.Node([Sexp.Atom("cut"), Sexp.Atom("2")])]) => Result.Err("malformed cut")
+
+fn cuts(cs: List<Sexp>) -> Result<List<Cut>, String>
+    ? "Each (cut INT (INT…)): a divisor and weights."
+    match cs
+        [] -> Result.Ok([])
+        [Sexp.Node([Sexp.Atom("cut"), Sexp.Atom(d), ws]), ..rest] -> Result.Ok(List.prepend(Cut(divisor = Int.fromString(d)?, weights = ints(items(ws)?)?), cuts(rest)?))
+        _ -> Result.Err("malformed cut")
+
+verify cuts
+    cuts([]) => Result.Ok([])
+    cuts([Sexp.Atom("cut")]) => Result.Err("malformed cut")
 
 fn ints(ss: List<Sexp>) -> Result<List<Int>, String>
     ? "Integers written as atoms."

@@ -426,6 +426,7 @@ fn the_kernel_refuses_wrong_ring_and_linear_steps() {
                 value: true,
                 hyps: hyps.into_iter().map(String::from).collect(),
                 weights: weights.into_iter().map(Into::into).collect(),
+                cuts: Vec::new(),
             },
         );
         s.obligation.premise = Some(premise);
@@ -464,6 +465,173 @@ fn the_kernel_refuses_wrong_ring_and_linear_steps() {
                 vec!["when"],
                 vec![1, 1],
             ),
+        ),
+    ] {
+        assert!(kernel(&s).is_err(), "{kind}: the kernel accepted");
+    }
+}
+
+/// A linear step over the integers: `2 * a >= 1` gives `a >= 1` once the
+/// sum is divided by 2 and its constant rounded down (a cut), so `2 * a >= 2`
+/// follows, which no weights over the rationals give (`a = 1/2`); every way
+/// of getting the rounding wrong is refused by the kernel written in Aver.
+#[test]
+fn the_kernel_checks_the_rounded_rows_of_a_linear_step() {
+    use super::linear::{Certificate, Cut};
+    let i = |n: i64| term::int(&n.into());
+    let a = || var("a");
+    let twice = |k: i64| term::binop(BinOp::Gte, term::binop(BinOp::Mul, i(2), a()), i(k));
+    let step = |k: i64, weights: Vec<i64>, cuts: Vec<(i64, Vec<i64>)>| {
+        let goal = twice(k);
+        let mut s = script(
+            goal.clone(),
+            term::boolean(true),
+            Proof::Linear {
+                goal,
+                value: true,
+                hyps: vec!["when".into()],
+                weights: weights.into_iter().map(Into::into).collect(),
+                cuts: cuts
+                    .into_iter()
+                    .map(|(d, w)| Cut {
+                        divisor: d.into(),
+                        weights: w.into_iter().map(Into::into).collect(),
+                    })
+                    .collect(),
+            },
+        );
+        s.obligation.premise = Some(twice(1));
+        s
+    };
+    assert_eq!(
+        kernel(&step(2, vec![1, 0, 2], vec![(2, vec![0, 1])])),
+        Ok(())
+    );
+    for (kind, s) in [
+        ("no cut, over the rationals", step(2, vec![1, 1], vec![])),
+        (
+            "a divisor that leaves a fraction",
+            step(2, vec![1, 0, 2], vec![(3, vec![0, 1])]),
+        ),
+        (
+            "a zero divisor",
+            step(2, vec![1, 0, 2], vec![(0, vec![0, 1])]),
+        ),
+        (
+            "a negative divisor",
+            step(2, vec![1, 0, 2], vec![(-2, vec![0, 1])]),
+        ),
+        (
+            "a cut with fewer weights than rows",
+            step(2, vec![1, 0, 2], vec![(2, vec![1])]),
+        ),
+        (
+            "a cut with a negative weight",
+            step(2, vec![1, 0, 2], vec![(2, vec![-1, 1])]),
+        ),
+        (
+            "fewer final weights than rows",
+            step(2, vec![1, 0], vec![(2, vec![0, 1])]),
+        ),
+        (
+            "a claim past what the rounding gives",
+            step(3, vec![1, 0, 2], vec![(2, vec![0, 1])]),
+        ),
+    ] {
+        assert!(kernel(&s).is_err(), "{kind}: the kernel accepted");
+    }
+    // The producer finds the cut, and checks what it finds the same way.
+    let mut atoms = Vec::new();
+    let facts = [
+        super::linear::as_nonneg(&twice(2), false, &mut atoms).unwrap(),
+        super::linear::as_nonneg(&twice(1), true, &mut atoms).unwrap(),
+    ];
+    assert!(super::linear::certificate(&facts).is_none());
+    let found = super::linear::integer_certificate(&facts).expect("a certificate over ℤ");
+    assert!(super::linear::checks(&facts, &found));
+    let wrong = Certificate {
+        weights: found.weights.clone(),
+        cuts: found
+            .cuts
+            .iter()
+            .map(|c| Cut {
+                divisor: c.divisor.clone() + 1,
+                weights: c.weights.clone(),
+            })
+            .collect(),
+    };
+    assert!(!super::linear::checks(&facts, &wrong));
+}
+
+/// The bits rules: each instance proves its conclusion when its premise,
+/// that the literals are a power of two and one less, computes; any other
+/// literal is refused.
+#[test]
+fn the_kernel_reads_masks_and_shifts_only_at_powers_of_two() {
+    let i = |n: i64| term::int(&n.into());
+    let a = || var("a");
+    let rule = |rule: WallRule, values: Vec<super::Term>| {
+        let subst: Vec<(String, super::Term)> = rule
+            .binders()
+            .iter()
+            .map(|b| b.to_string())
+            .zip(values)
+            .collect();
+        let (premises, concl) = rule.instantiate(&subst).unwrap();
+        let proofs = premises
+            .iter()
+            .map(|e| Proof::Compute {
+                lhs: e.lhs.clone(),
+                rhs: term::boolean(true),
+            })
+            .collect();
+        script(
+            concl.lhs,
+            concl.rhs,
+            Proof::Rule {
+                rule,
+                subst,
+                premises: proofs,
+            },
+        )
+    };
+    for s in [
+        rule(WallRule::BitsNot, vec![a()]),
+        rule(WallRule::BitsShl, vec![a(), i(3), i(8)]),
+        rule(WallRule::BitsAndLow, vec![a(), i(31), i(32), i(5)]),
+        rule(WallRule::BitsAndBit, vec![a(), i(128), i(7)]),
+    ] {
+        assert_eq!(
+            kernel(&s),
+            Ok(()),
+            "{}",
+            serialise(&s, &BuiltinsOnly).unwrap()
+        );
+    }
+    for (kind, s) in [
+        (
+            "a shift by the wrong power",
+            rule(WallRule::BitsShl, vec![a(), i(3), i(9)]),
+        ),
+        (
+            "a shift by a negative count",
+            rule(WallRule::BitsShl, vec![a(), i(-1), i(1)]),
+        ),
+        (
+            "a low mask that is not one less than a power of two",
+            rule(WallRule::BitsAndLow, vec![a(), i(30), i(31), i(5)]),
+        ),
+        (
+            "a low mask read by the wrong power",
+            rule(WallRule::BitsAndLow, vec![a(), i(31), i(32), i(6)]),
+        ),
+        (
+            "a one-bit mask that is not a power of two",
+            rule(WallRule::BitsAndBit, vec![a(), i(96), i(7)]),
+        ),
+        (
+            "a mask the kernel cannot compute",
+            rule(WallRule::BitsAndBit, vec![a(), var("k"), var("n")]),
         ),
     ] {
         assert!(kernel(&s).is_err(), "{kind}: the kernel accepted");
@@ -1284,6 +1452,7 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
                     value: true,
                     hyps: vec!["when".into()],
                     weights: vec![1.into(), 1.into()],
+                    cuts: Vec::new(),
                 },
             ),
             term::binop(BinOp::Gte, a(), i(bound)),

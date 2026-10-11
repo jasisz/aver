@@ -1,0 +1,79 @@
+module Remainders
+    intent =
+        "Steps on Euclidean division by a literal read as omega reads it, and on masks of bits:"
+        "a remainder is pinned by the quotient beside it, over the integers, so `(p * 256 + d) % 256`"
+        "is `d` for a digit `d`, two remainders that no integer has together rule a case out, and a"
+        "value taken apart into two octets reads back. A mask `2^n - 1` is the remainder by `2^n`, a"
+        "mask `2^n` is that bit of the quotient, complement is `-x - 1` and a shift left multiplies,"
+        "for every sign."
+    exposes [Base, base, digit, bitSeven, lowOctet, highOctet, signed16, readBack]
+    effects []
+
+type Base
+    SignAll
+    SignNone
+    SignSingle
+
+fn base(hashType: Int) -> Base
+    ? "Which of three the low five bits name."
+    match Int.mod(hashType, 32)
+        2 -> Base.SignNone
+        3 -> Base.SignSingle
+        _ -> Base.SignAll
+
+verify base law ignoresBitSeven
+    given hashType: Int = [-129, 0, 2, 3, 130]
+    base(hashType + 128) => base(hashType)
+
+verify base law lowFiveBitsDecide
+    given hashType: Int = [-1, 0, 2, 35, 131]
+    base(hashType) => base(Bits.and(hashType, 31))
+
+fn digit(prefix: Int, d: Int) -> Int
+    ? "The last base-256 digit of prefix followed by d."
+    Int.mod(prefix * 256 + d, 256)
+
+verify digit law readsTheDigit
+    given prefix: Int = [-1, 0, 5]
+    given d: Int = [0, 1, 255]
+    when Bool.and(d >= 0, d < 256)
+    digit(prefix, d) => d
+
+fn bitSeven(hashType: Int) -> Bool
+    ? "Whether the 0x80 bit is set."
+    Int.mod(Int.div(hashType, 128), 2) == 1
+
+verify bitSeven law isTheMask
+    given hashType: Int = [-1, 0, 127, 128, 129, 255, 256, 384]
+    bitSeven(hashType) => Bits.and(hashType, 128) == 128
+
+verify bitSeven law complementIsArithmetic
+    given x: Int = [-42, -1, 0, 7]
+    Bits.not(x) => 0 - x - 1
+
+verify bitSeven law shiftMultiplies
+    given x: Int = [-7, 0, 7]
+    Bits.shiftLeft(x, 3) => x * 8
+
+fn lowOctet(sample: Int) -> Int
+    ? "The low octet of a 16-bit sample, two's complement."
+    Int.mod(Int.mod(sample + 65536, 65536), 256)
+
+fn highOctet(sample: Int) -> Int
+    ? "The high octet of a 16-bit sample, two's complement."
+    Int.div(Int.mod(sample + 65536, 65536), 256)
+
+fn signed16(unsigned: Int) -> Int
+    ? "Two's complement of a 16-bit value."
+    match unsigned >= 32768
+        true -> unsigned - 65536
+        false -> unsigned
+
+fn readBack(sample: Int) -> Int
+    ? "The two octets of a sample read back."
+    signed16(lowOctet(sample) + 256 * highOctet(sample))
+
+verify readBack law roundTrip
+    given sample: Int = [-32768, -1, 0, 1, 32767]
+    when Bool.and(sample >= -32768, sample <= 32767)
+    readBack(sample) => sample
