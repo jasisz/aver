@@ -216,6 +216,7 @@
  "projects/k5_fdiv/domain/fprep.av": {
   "steps": [
    "fpScaleKeepsSignificand.significandInvariant",
+   "fpScalePreservesValue.scalesByPowerOfTwo",
    "fpScaleShiftsExponent.exponentShift",
    "fpValueEqualsGeneralWhenNonnegExp.agreesOnNonnegExp",
    "pow2.homomorphism",
@@ -591,7 +592,8 @@
    "append.appendAssoc",
    "append.appendConcatBridge",
    "append.appendRightId",
-   "qrevflat.qrevflatSpec"
+   "qrevflat.qrevflatSpec",
+   "revflat.revflatQrevflat"
   ]
  },
  "proof-corpus/decomposed/prod/prop_29.av": {

@@ -66,8 +66,18 @@ pub(super) fn run(
     let mut hints: BTreeMap<String, Vec<String>> = BTreeMap::new();
     // The laws a project plan proved, and how a report names that proof.
     let mut by_plan: BTreeMap<String, String> = BTreeMap::new();
+    // The earlier laws the automatic pass applied, by law, and the laws
+    // whose `using` line names what they cite.
+    let mut automatic: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut pinned: Vec<String> = Vec::new();
     for theorem in &ctx.proof_ir.law_theorems {
         let key = law_key(&ctx.symbol_table, theorem);
+        if theorem.steps.is_some() && !theorem.steps_auto_using.is_empty() {
+            automatic.insert(key.clone(), theorem.steps_auto_using.clone());
+        }
+        if theorem.using.as_ref().is_some_and(|u| !u.is_empty()) {
+            pinned.push(key.clone());
+        }
         if let Some(script) = &theorem.steps
             && let Some(plan) = &script.plan
         {
@@ -187,6 +197,12 @@ pub(super) fn run(
         .filter(|v| matches!(v, Verdict::Steps))
         .count();
     let open = verdicts.len() - closed;
+    let closed_with = |laws: &mut dyn Iterator<Item = &String>| {
+        laws.filter(|k| matches!(verdicts.get(*k), Some(Verdict::Steps)))
+            .count()
+    };
+    let closed_pinned = closed_with(&mut pinned.iter());
+    let closed_automatic = closed_with(&mut automatic.keys());
     let refused: Vec<(&String, &String)> = verdicts
         .iter()
         .chain(&obligation_verdicts)
@@ -254,6 +270,29 @@ pub(super) fn run(
                 ),
             );
         }
+        if !automatic.is_empty() {
+            obj.insert(
+                "automatic_using".into(),
+                serde_json::Value::Object(
+                    automatic
+                        .iter()
+                        .map(|(k, laws)| {
+                            (
+                                k.clone(),
+                                serde_json::Value::Array(
+                                    laws.iter().map(|l| l.clone().into()).collect(),
+                                ),
+                            )
+                        })
+                        .collect(),
+                ),
+            );
+        }
+        obj.insert("closed_with_pinned_using".into(), closed_pinned.into());
+        obj.insert(
+            "closed_with_automatic_using".into(),
+            closed_automatic.into(),
+        );
         obj.insert("universal_laws".into(), closed.into());
         obj.insert("open_laws".into(), open.into());
         obj.insert("budget".into(), sorry_budget.unwrap_or(0).into());
@@ -309,6 +348,11 @@ pub(super) fn run(
             verdicts.len(),
             elapsed.as_secs_f64() * 1000.0
         );
+        if closed_automatic > 0 {
+            println!(
+                "aver proof (backend aver): {closed_automatic} of them with earlier laws the steps chose, {closed_pinned} with a `using` line"
+            );
+        }
     }
     if !refused.is_empty() {
         eprintln!(

@@ -36,6 +36,11 @@ pub(crate) struct Env<'a> {
     /// The laws before this one it does not cite, offered as hints where
     /// evaluation stops (never applied).
     pub hint_laws: Vec<LawRef>,
+    /// For a law without a `using` line, on the second pass only: the
+    /// earlier laws the steps closed, which evaluation may apply left to
+    /// right where it stops when neither a cited law nor a builtin fact
+    /// does (see `super::auto_pool`).
+    pub auto_laws: Vec<LawRef>,
     pub hyps: Vec<(String, Eqn)>,
     pub fuel: usize,
     /// Fuel for evaluating hypotheses to their normal form
@@ -127,6 +132,7 @@ impl<'a> Env<'a> {
             cited_all: Vec::new(),
             fact_rules: Vec::new(),
             hint_laws: Vec::new(),
+            auto_laws: Vec::new(),
             hyps: Vec::new(),
             fuel: 4000,
             normal_fuel: 2000,

@@ -735,6 +735,7 @@
   },
   "laws": [
    "Domain.Fprep.fpScaleKeepsSignificand.significandInvariant",
+   "Domain.Fprep.fpScalePreservesValue.scalesByPowerOfTwo",
    "Domain.Fprep.fpScaleShiftsExponent.exponentShift",
    "Domain.Fprep.fpValueEqualsGeneralWhenNonnegExp.agreesOnNonnegExp",
    "Domain.Fprep.fracExpoFromMagnitude.fundamentalExponent",
@@ -876,6 +877,7 @@
    "Domain.Rational.times.oneIsNeutral",
    "Domain.Rational.times.zeroAbsorbs",
    "fpScaleKeepsSignificand.significandInvariant",
+   "fpScalePreservesValue.scalesByPowerOfTwo",
    "fpScaleShiftsExponent.exponentShift",
    "fpValueEqualsGeneralWhenNonnegExp.agreesOnNonnegExp",
    "fracExpoFromMagnitude.fundamentalExponent",

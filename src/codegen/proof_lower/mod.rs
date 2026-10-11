@@ -2580,6 +2580,7 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             steps: None,
             steps_refusal: None,
             steps_hints: Vec::new(),
+            steps_auto_using: Vec::new(),
             obligation_steps: Vec::new(),
         });
     }
