@@ -1,0 +1,55 @@
+module Dropping
+    intent =
+        "Steps on a recursion that passes List.drop of a list's tail: never longer than the tail,"
+        "so shorter than the list matched, but no part of it. The definitions open, directly and"
+        "through a helper whose local binding drops, and a law about one is proved by induction"
+        "on the list's length."
+    exposes [pairsLeft, walk, skip]
+
+fn pairsLeft(xs: List<Int>) -> Int
+    ? "How many times a pair can be taken off the front, the last one maybe short."
+    match xs
+        [] -> 0
+        [h, ..t] -> 1 + pairsLeft(List.drop(t, 1))
+
+verify pairsLeft
+    pairsLeft([]) => 0
+    pairsLeft([1, 2, 3]) => 2
+
+verify pairsLeft law nonNegative
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    pairsLeft(xs) >= 0 holds
+
+verify pairsLeft law cellStep
+    given h: Int = [1, 2]
+    given t: List<Int> = [[], [3, 4]]
+    pairsLeft(List.prepend(h, t)) => 1 + pairsLeft(List.drop(t, 1))
+
+fn walk(xs: List<Int>, acc: Int) -> Int
+    ? "Read a length byte, skip that many bytes, count the reads."
+    match xs
+        [] -> acc
+        [h, ..t] -> skip(h, t, acc)
+
+verify walk
+    walk([], 0) => 0
+    walk([1, 9, 0], 0) => 2
+
+fn skip(n: Int, rest: List<Int>, acc: Int) -> Int
+    ? "Skip n bytes of rest and walk on."
+    left = List.drop(rest, n)
+    walk(left, acc + 1)
+
+verify skip
+    skip(1, [9], 0) => 1
+
+verify walk law readsStep
+    given h: Int = [0, 1]
+    given t: List<Int> = [[], [9, 9]]
+    given acc: Int = [0, 3]
+    walk(List.prepend(h, t), acc) => walk(List.drop(t, h), acc + 1)
+
+verify walk law neverBelowAcc
+    given xs: List<Int> = [[], [0], [1, 9, 0]]
+    given acc: Int = [0, 3]
+    walk(xs, acc) >= acc holds

@@ -102,6 +102,24 @@ theorem int_measure_induct {P : Int → Prop} (g : Int → Bool)
       · exact on_false x h below
       · exact on_true x h below
   exact key n.toNat n (Nat.le_refl _)
+theorem list_length_induct {α : Type} {motive : List α → Prop} (nil : motive [])
+    (cons : ∀ (h : α) (t : List α),
+      (∀ m : List α, m.length < (h :: t).length → motive m) → motive (h :: t))
+    (l : List α) : motive l := by
+  have key : ∀ (n : Nat) (x : List α), x.length ≤ n → motive x := by
+    intro n
+    induction n with
+    | zero =>
+      intro x hx
+      cases x with
+      | nil => exact nil
+      | cons h t => simp at hx
+    | succ n ih =>
+      intro x hx
+      cases x with
+      | nil => exact nil
+      | cons h t => exact cons h t (fun m hm => ih m (by simp at hm hx; omega))
+  exact key l.length l (Nat.le_refl _)
 theorem pos_of_le_false {n : Int} (h : decide (n <= 0) = false) : 0 < n := by
   have := of_decide_eq_false h
   omega
@@ -875,6 +893,179 @@ impl Renderer<'_> {
         ))
     }
 
+    /// Induction along a function whose recursive calls pass, at the
+    /// matched list's place, `List.drop` of a part: a list never longer
+    /// than the part, so shorter than the cell matched, but no part of it.
+    /// `AverSteps.list_length_induct`, strong induction on the list's
+    /// length with the claim for every value of the varied givens and under
+    /// the carried hypotheses as its motive: the empty-list case, then the
+    /// cell case with the claim at every shorter list. Each hypothesis of a
+    /// recursive call is that claim at the call's list, shorter by
+    /// `List.length_drop`.
+    #[allow(clippy::too_many_arguments)]
+    fn induct_by_length(
+        &mut self,
+        def: &crate::ir::proof_steps::Def,
+        rec: &crate::ir::proof_steps::induct::Recursion,
+        args: &[Term],
+        v: &str,
+        general: &[(usize, String)],
+        arms: &[crate::ir::hir::ResolvedMatchArm],
+        carried: &[String],
+        cases: &[crate::ir::proof_steps::InductCase],
+        eq: &Eqn,
+        hyps: &Hyps,
+    ) -> Result<String, String> {
+        use crate::ir::proof_steps::induct;
+        let lean = super::syntax::aver_name_to_lean;
+        let varying: Vec<String> = std::iter::once(v.to_string())
+            .chain(general.iter().map(|(_, g)| g.clone()))
+            .collect();
+        let mentions = |e: &Eqn| {
+            let mut fv = Vec::new();
+            term::free_vars(&e.lhs, &mut fv);
+            term::free_vars(&e.rhs, &mut fv);
+            fv.iter().any(|n| varying.contains(n))
+        };
+        let mut stated: Vec<(String, Eqn)> = Vec::new();
+        for name in carried {
+            if self.prop_hyps.contains(name) {
+                return Err(format!("induct: {name} is a comparison, not carried"));
+            }
+            let (_, e) = hyps
+                .iter()
+                .rev()
+                .find(|(h, _)| h == name)
+                .ok_or_else(|| format!("induct: {name} is not in scope"))?;
+            stated.push((name.clone(), e.clone()));
+        }
+        let kept: Hyps = hyps.iter().filter(|(_, e)| !mentions(e)).cloned().collect();
+        let gs: Vec<String> = general.iter().map(|(_, g)| lean(g)).collect();
+        let hs: Vec<String> = carried.iter().map(|n| self.hyp_name(n)).collect();
+        let mut motive = String::new();
+        if !gs.is_empty() {
+            motive.push_str(&format!("∀ {}, ", gs.join(" ")));
+        }
+        for (_, e) in &stated {
+            motive.push_str(&format!("{} → ", self.eqn(e)));
+        }
+        motive.push_str(&self.eqn(eq));
+        let outer: Vec<String> = carried
+            .iter()
+            .map(|n| self.proof(&Proof::Hyp(n.clone()), hyps))
+            .collect::<Result<_, _>>()?;
+        let all = format!("steps_below_{}", lean(v));
+        let mut minors: [Option<String>; 2] = [None, None];
+        for (arm, case) in arms.iter().zip(cases) {
+            let slot = match &arm.pattern {
+                ResolvedPattern::EmptyList => 0,
+                ResolvedPattern::Cons(..) => 1,
+                _ => return Err("induct: an arm is not [] or [h, ..t]".into()),
+            };
+            let stated_case = induct::case(
+                def,
+                &self.script.defs,
+                rec,
+                args,
+                v,
+                general,
+                arm,
+                &case.binders,
+                &case.ihs,
+                &eq.lhs,
+                &eq.rhs,
+            )?;
+            let here = [(v.to_string(), stated_case.value.clone())];
+            let mut scope = kept.clone();
+            for (name, e) in &stated {
+                scope.push((
+                    name.clone(),
+                    Eqn::new(term::subst(&e.lhs, &here)?, term::subst(&e.rhs, &here)?),
+                ));
+            }
+            // The claim at the list recursive call `k` passes and at
+            // `values` of the varied givens, under the name `name`.
+            let mut haves = String::new();
+            let mut taken: Hyps = Vec::new();
+            let mut instance = |this: &mut Self,
+                                k: usize,
+                                name: &str,
+                                values: &[Term],
+                                carry: &[Proof]|
+             -> Result<(), String> {
+                let shorter = &stated_case
+                    .at
+                    .get(k)
+                    .and_then(|at| at.first())
+                    .ok_or("induct: no such recursive call")?
+                    .1;
+                let mut at = vec![(v.to_string(), shorter.clone())];
+                at.extend(
+                    general
+                        .iter()
+                        .map(|(_, g)| g.clone())
+                        .zip(values.iter().cloned()),
+                );
+                let e = Eqn::new(term::subst(&eq.lhs, &at)?, term::subst(&eq.rhs, &at)?);
+                let mut app = format!(
+                    "{all} ({}) (by simp only [List.length_drop, List.length_cons]; omega)",
+                    this.expr(shorter)
+                );
+                for t in values {
+                    app.push_str(&format!(" ({})", this.expr(t)));
+                }
+                for q in carry {
+                    app.push_str(&format!(" {}", this.proof(q, &scope)?));
+                }
+                haves.push_str(&format!(
+                    "have {} : {} := ({app}); ",
+                    this.hyp_name(name),
+                    this.eqn(&e)
+                ));
+                taken.push((name.to_string(), e));
+                Ok(())
+            };
+            for (k, (ih, _)) in stated_case.ihs.iter().enumerate() {
+                if ih == "_" {
+                    continue;
+                }
+                let values: Vec<Term> = stated_case.at[k][1..]
+                    .iter()
+                    .map(|(_, t)| t.clone())
+                    .collect();
+                let carry = case.carry.get(k).cloned().unwrap_or_default();
+                instance(self, k, ih, &values, &carry)?;
+            }
+            for (k, more) in &case.more {
+                instance(self, *k, &more.name, &more.at, &more.carry)?;
+            }
+            let mut with_ihs = scope.clone();
+            with_ihs.extend(taken);
+            let body = self.proof(&case.proof, &with_ihs)?;
+            let mut names: Vec<String> = case.binders.iter().map(|b| lean(b)).collect();
+            if slot == 1 {
+                names.push(all.clone());
+            }
+            names.extend(gs.iter().cloned());
+            names.extend(hs.iter().cloned());
+            minors[slot] = Some(if names.is_empty() {
+                format!("({haves}{body})")
+            } else {
+                format!("(fun {} => ({haves}{body}))", names.join(" "))
+            });
+        }
+        let [Some(nil), Some(cons)] = minors else {
+            return Err("induct: the arms are not [] and [h, ..t]".into());
+        };
+        let mut applied: Vec<String> = gs.clone();
+        applied.extend(outer);
+        Ok(format!(
+            "(AverSteps.list_length_induct (motive := fun {v} => {motive}) {nil} {cons} {v} {})",
+            applied.join(" "),
+            v = lean(v),
+        ))
+    }
+
     fn hyp_name(&self, name: &str) -> String {
         if name == "when" {
             "h_when".to_string()
@@ -1178,6 +1369,10 @@ impl Renderer<'_> {
                 };
                 if rec.guard.is_some() {
                     self.induct_toward_zero(
+                        def, &rec, args, &v, &general, arms, carried, cases, &eq, hyps,
+                    )?
+                } else if crate::ir::proof_steps::induct::drops(def, &self.script.defs) {
+                    self.induct_by_length(
                         def, &rec, args, &v, &general, arms, carried, cases, &eq, hyps,
                     )?
                 } else if crate::ir::proof_steps::induct::nested_split(def, &self.script.defs)
