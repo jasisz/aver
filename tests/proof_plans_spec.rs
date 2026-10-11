@@ -667,7 +667,7 @@ const SCRIPTED_LAWS: [&str; 5] = [
 /// open, and a script that stops says where.
 #[test]
 fn a_plan_may_return_a_script_whose_auto_nodes_the_automatic_steps_close() {
-    let out = scratch("scripted");
+    let out = scratch("scripted-run");
     let run = aver_in(
         &fixtures(),
         &[

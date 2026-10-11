@@ -1,0 +1,146 @@
+module CaseContradictions
+    intent =
+        "Laws with a case their hypotheses rule out, once the hypotheses are read again after the"
+        "case split: a list equation read through the lengths of its sides, a `when` that"
+        "evaluates to `false` under the case, two hypotheses whose normal forms are one term"
+        "stated with different values, and two different constructors that hold a variable."
+        "Each has a false law of the same shape, which no such reading may close."
+    exposes [hasTop, place, rolls, Ctx, bare, levelOf, isOn, weight, checked, refusal]
+
+fn hasTop(xs: List<Int>) -> Bool
+    ? "Whether the reversed list has a first item."
+    match List.reverse(xs)
+        [] -> false
+        [top, ..rest] -> true
+
+verify hasTop
+    hasTop([]) => false
+    hasTop([1, 2]) => true
+
+verify hasTop law nonEmpty
+    given xs: List<Int> = [[1], [1, 2]]
+    when List.len(xs) > 0
+    hasTop(xs) holds
+
+verify hasTop law anyList
+    given xs: List<Int> = [[1], [1, 2]]
+    when List.len(xs) >= 0
+    hasTop(xs) holds
+
+fn rolls(used: Int, size: Int) -> Bool
+    ? "Whether a record of this size starts a new segment."
+    Bool.and(used > 0, used + size > 10)
+
+verify rolls
+    rolls(4, 7) => true
+    rolls(0, 20) => false
+
+fn place(used: Int, size: Int) -> Int
+    ? "Where the segment ends once the record is placed."
+    match used > 0
+        true -> match used + size > 10
+            true -> 0
+            false -> used + size
+        false -> size
+
+verify place
+    place(4, 7) => 0
+    place(4, 3) => 7
+
+verify place law growsWhenItStays
+    given used: Int = [0, 4]
+    given size: Int = [0, 3]
+    when Bool.not(rolls(used, size))
+    place(used, size) >= size holds
+
+verify place law growsAlways
+    given used: Int = [0, 4]
+    given size: Int = [0, 3]
+    when size >= 0
+    place(used, size) >= size holds
+
+record Ctx
+    level: Int
+
+fn bare(level: Int) -> Ctx
+    ? "A context at this level."
+    Ctx(level = level)
+
+verify bare
+    bare(3).level => 3
+
+fn levelOf(ctx: Ctx) -> Int
+    ? "The level a context carries."
+    ctx.level
+
+verify levelOf
+    levelOf(bare(3)) => 3
+
+fn isOn(level: Int, code: Int) -> Bool
+    ? "Whether the opcode is switched on at this level."
+    match code
+        1 -> level > 3
+        _ -> false
+
+verify isOn
+    isOn(5, 1) => true
+    isOn(5, 2) => false
+
+fn weight(level: Int) -> Int
+    ? "A weight that grows in steps with the level."
+    match level > 10
+        true -> match level > 20
+            true -> match level > 30
+                true -> match level > 40
+                    true -> match level > 50
+                        true -> level
+                        false -> level + 1
+                    false -> level + 2
+                false -> level + 3
+            false -> level + 4
+        false -> level + 5
+
+verify weight
+    weight(5) => 10
+    weight(60) => 60
+
+fn checked(code: Int, ctx: Ctx) -> Int
+    ? "Zero when the opcode is on, else the weight of the level."
+    match isOn(levelOf(ctx), code)
+        true -> 0
+        false -> weight(levelOf(ctx))
+
+verify checked
+    checked(1, bare(5)) => 0
+    checked(2, bare(5)) => 10
+
+verify checked law zeroWhenOn
+    given code: Int = [1, 2]
+    given level: Int = [0, 5]
+    when isOn(level, code)
+    checked(code, bare(level)) => 0
+
+verify checked law levelWhenOn
+    given code: Int = [1, 2]
+    given level: Int = [0, 5]
+    when isOn(level, code)
+    checked(code, bare(level)) => level - 5
+
+fn refusal(held: List<Int>) -> Option<String>
+    ? "Why a batch that repeats an item is refused, if it is."
+    match held
+        [] -> Option.None
+        [head, ..tail] -> Option.Some("{List.len(tail) + 1} item(s) repeat")
+
+verify refusal
+    refusal([]) => Option.None
+    refusal([1]) => Option.Some("1 item(s) repeat")
+
+verify refusal law heldIsRefused
+    given held: List<Int> = [[1], [1, 2]]
+    when held != []
+    refusal(held) == Option.None => false
+
+verify refusal law anythingIsRefused
+    given held: List<Int> = [[1], [1, 2]]
+    refusal(held) == Option.None => false

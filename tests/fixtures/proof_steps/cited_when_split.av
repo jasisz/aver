@@ -1,0 +1,56 @@
+module CitedWhenSplit
+    intent =
+        "Laws closed by a split on a line of a cited law's `when` that stays open where the law"
+        "matches: one law speaks for small numbers, another for large ones, and neither `when`"
+        "is decided until the case says which. A false law of the same shape stays open."
+    exposes [digits, smallSize]
+
+fn digits(n: Int) -> List<Int>
+    ? "The decimal digits of a positive number, least significant first."
+    match n > 0
+        true -> List.prepend(Int.mod(n, 10), digits(Int.div(n, 10)))
+        false -> []
+
+verify digits
+    digits(0) => []
+    digits(305) => [5, 0, 3]
+
+fn smallSize(n: Int) -> Int
+    ? "How many digits a number below ten has."
+    match n > 0
+        true -> 1
+        false -> 0
+
+verify smallSize
+    smallSize(0) => 0
+    smallSize(7) => 1
+
+verify digits law smallCount
+    given n: Int = [0, 1, 9]
+    when Bool.and(n >= 0, n < 10)
+    using []
+    List.len(digits(n)) => smallSize(n)
+
+verify digits law countStep
+    given n: Int = [10, 99, 305]
+    when n >= 10
+    using []
+    List.len(digits(n)) => 1 + List.len(digits(Int.div(n, 10)))
+
+verify digits law positiveHasDigits
+    given n: Int = [1, 9, 10, 305]
+    when n > 0
+    using [digits.smallCount, digits.countStep]
+    List.len(digits(n)) > 0 holds
+
+verify smallSize law oneDigitRange
+    given n: Int = [0, 1, 9, 10, 305]
+    when n >= 0
+    using [digits.smallCount, digits.countStep, digits.positiveHasDigits]
+    List.len(digits(n)) <= 1 => n < 10
+
+verify smallSize law oneDigitWrongRange
+    given n: Int = [0, 1, 9, 100, 305]
+    when n >= 0
+    using [digits.smallCount, digits.countStep, digits.positiveHasDigits]
+    List.len(digits(n)) <= 1 => n < 100

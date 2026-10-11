@@ -452,9 +452,10 @@ const MAX_CALL_OPENINGS: usize = 4;
 /// A hypothesis in its normal form ([`Env::normal_fact`]): the form, the
 /// proof that the hypothesis as stated equals it, and what that proof
 /// needs in the script.
+#[derive(Clone)]
 pub(crate) struct NormalFact {
-    to: Term,
-    proof: Proof,
+    pub to: Term,
+    pub proof: Proof,
     laws: Vec<LawRef>,
     defs: Vec<crate::ir::identity::FnId>,
     consts: Vec<String>,
@@ -497,7 +498,14 @@ impl Env<'_> {
         memo: &std::rc::Rc<std::cell::RefCell<super::memo::Memo>>,
     ) -> Result<Eval, String> {
         use super::memo::{Effect, Entry, Mode, Trace, key};
-        let key = key(t, &self.hyps, self.open_halving, self.proving_cited_when);
+        let key = key(
+            t,
+            &self.hyps,
+            self.open_halving,
+            self.proving_cited_when,
+            self.discharging,
+            self.wide_linear,
+        );
         let kept = memo
             .borrow()
             .get(&key)
@@ -516,6 +524,7 @@ impl Env<'_> {
                     Effect::Def(id) => {
                         self.def(*id);
                     }
+                    Effect::OpenWhen(when) => self.note_open_when(when),
                 }
             }
             self.proving_cited_when = entry.proving_cited_when;
@@ -2171,6 +2180,7 @@ impl Env<'_> {
                 Eqn::new(f.clone(), term::boolean(true)),
             ));
         }
+        let modded = known.len();
         let mut atoms = Vec::new();
         let mut facts = vec![linear::as_nonneg(goal, !value, &mut atoms)?];
         for (_, e) in &known {
@@ -2180,7 +2190,28 @@ impl Env<'_> {
                 &mut atoms,
             )?);
         }
-        let weights = linear::certificate(&facts)?;
+        // Only where those do not settle it: the comparisons inside a true
+        // conjunction in scope, and that each length the facts name is not
+        // negative (`List.len.nonneg`).
+        let mut extra = Vec::new();
+        let weights = match linear::certificate(&facts) {
+            Some(weights) => weights,
+            None if self.wide_linear => {
+                extra = self.more_linear_facts(goal, &known);
+                if extra.is_empty() {
+                    return None;
+                }
+                for (i, (f, _, _)) in extra.iter().enumerate() {
+                    facts.push(linear::as_nonneg(f, true, &mut atoms)?);
+                    known.push((
+                        format!("h_more{i}"),
+                        Eqn::new(f.clone(), term::boolean(true)),
+                    ));
+                }
+                linear::certificate(&facts)?
+            }
+            None => return None,
+        };
         // Only the hypotheses the certificate uses are named.
         let mut hyps = Vec::new();
         let mut kept = vec![weights[0].clone()];
@@ -2195,6 +2226,14 @@ impl Env<'_> {
                 let (fact, proof, id) = views[k - plain].clone();
                 let name = self.fresh_hyp();
                 self.mark_used(id);
+                hyps.push(name.clone());
+                cuts.push((name, fact, proof));
+            } else if k >= modded {
+                let (fact, proof, law) = extra[k - modded].clone();
+                let name = self.fresh_hyp();
+                if let Some(law) = law {
+                    self.use_law(law);
+                }
                 hyps.push(name.clone());
                 cuts.push((name, fact, proof));
             } else if k >= cited {
@@ -2226,6 +2265,93 @@ impl Env<'_> {
             };
         }
         Some(proof)
+    }
+
+    /// What [`Self::linear_proof`] reads where the facts it starts from do
+    /// not settle `goal`, each with its proof and the builtin fact it cites:
+    /// each Int comparison among the conjuncts of a true `Bool.and` in scope
+    /// (by the `Bool.and` eliminations), then `List.len(l) >= 0` for each
+    /// length `goal`, `known` and those conjuncts name (`List.len.nonneg`).
+    fn more_linear_facts(
+        &self,
+        goal: &Term,
+        known: &[(String, Eqn)],
+    ) -> Vec<(Term, Proof, Option<LawRef>)> {
+        use crate::ir::proof_steps::linear;
+        fn lengths(t: &Term, out: &mut Vec<Term>) {
+            if matches!(t.node, ResolvedExpr::Match { .. }) {
+                return;
+            }
+            if let ResolvedExpr::Call(ResolvedCallee::Builtin(b), args) = &t.node
+                && b == "List.len"
+                && args.len() == 1
+                && !out.contains(&canon(&args[0]))
+            {
+                out.push(canon(&args[0]));
+            }
+            for c in term::children(t) {
+                lengths(c, out);
+            }
+        }
+        let stated = |t: &Term| known.iter().any(|(_, e)| canon(&e.lhs) == *t);
+        // The atoms the goal and the facts already read: a conjunct about
+        // none of them cannot take part in a certificate.
+        let mut about = Vec::new();
+        linear::as_nonneg(goal, true, &mut about);
+        for (_, e) in known {
+            linear::as_nonneg(&e.lhs, true, &mut about);
+        }
+        let mut out: Vec<(Term, Proof, Option<LawRef>)> = Vec::new();
+        for (name, e) in &self.hyps {
+            if term::bool_value(&e.rhs) != Some(true) {
+                continue;
+            }
+            if !matches!(&e.lhs.node, ResolvedExpr::Call(ResolvedCallee::Builtin(b), _) if b == "Bool.and")
+            {
+                continue;
+            }
+            let mut lines = Vec::new();
+            super::split_and(&e.lhs, Proof::Hyp(name.clone()), &mut lines);
+            for (line, proof) in lines {
+                let mut atoms = Vec::new();
+                if linear::as_nonneg(&line, true, &mut atoms).is_some()
+                    && atoms.iter().any(|a| about.contains(a))
+                    && !stated(&line)
+                    && !out.iter().any(|(f, _, _)| *f == line)
+                {
+                    out.push((line, proof, None));
+                }
+            }
+        }
+        let mut lists = Vec::new();
+        lengths(goal, &mut lists);
+        for (_, e) in known {
+            lengths(&e.lhs, &mut lists);
+        }
+        for (f, _, _) in &out {
+            lengths(f, &mut lists);
+        }
+        let Some(fact) = crate::ir::proof_steps::facts::named("List.len.nonneg") else {
+            return out;
+        };
+        let law = fact.law_ref();
+        for l in lists {
+            let subst = vec![(law.givens[0].clone(), l)];
+            let Ok(nonneg) = term::subst(&law.lhs, &subst) else {
+                continue;
+            };
+            let nonneg = canon(&nonneg);
+            if stated(&nonneg) || out.iter().any(|(f, _, _)| *f == nonneg) {
+                continue;
+            }
+            let proof = Proof::Law {
+                law: law.key.clone(),
+                subst,
+                premise: None,
+            };
+            out.push((nonneg, proof, Some(law.clone())));
+        }
+        out
     }
 
     /// The instances of the cited laws that state an Int comparison at the
@@ -2517,6 +2643,11 @@ impl Env<'_> {
                 rhs: canon(rhs),
             }));
         }
+        // Hypotheses that contradict each other once read again: list
+        // lengths, and normal forms (see [`super::hypotheses`]).
+        if let Some(proof) = self.refute_case(lhs, rhs) {
+            return Ok(Ok(proof));
+        }
         // A disjunction in scope: split on its left side, and where
         // that is false, its right side holds.
         if depth > 0
@@ -2768,7 +2899,7 @@ impl Env<'_> {
     /// `true = false` (or the other way round), when the comparisons in
     /// scope contradict each other: one of them, by a linear step over
     /// the rest, has the other value.
-    fn refute_linearly(&mut self) -> Option<Proof> {
+    pub(crate) fn refute_linearly(&mut self) -> Option<Proof> {
         for (name, e) in self.hyps.clone() {
             let Some(said) = term::bool_value(&e.rhs) else {
                 continue;
@@ -3207,7 +3338,7 @@ impl Env<'_> {
 
     /// Record what evaluating a hypothesis to its normal form needed, once
     /// the proof reads that form.
-    fn keep_needs(&mut self, needs: &NormalFact) {
+    pub(crate) fn keep_needs(&mut self, needs: &NormalFact) {
         for law in &needs.laws {
             self.use_law(law.clone());
         }

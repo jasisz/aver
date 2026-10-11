@@ -1,7 +1,8 @@
 module Hints
     intent =
         "Laws over concrete lists that do not cite the builtin facts that close them: the list"
-        "facts rewrite where evaluation stops anyway, and the one law they leave open is hinted."
+        "facts rewrite where evaluation stops anyway, and the one law they leave open, about a"
+        "vector, is hinted the vector fact that would rewrite it."
     exposes [Tx, joined, batch, reversed]
     effects []
 
@@ -82,3 +83,7 @@ verify reversed law twiceIsTheSame
 verify reversed law lengthIsNeverNegative
     given xs: List<Int> = [[], [1]]
     List.len(reversed(xs)) >= 0 => true
+
+verify reversed law vectorLengthIsNeverNegative
+    given v: Vector<Int> = [Vector.fromList([]), Vector.fromList([1, 2])]
+    Vector.len(v) >= 0 => true

@@ -6,9 +6,13 @@
 //! - **algebra**: a pinned `Commutative` / `Associative` / `IdentityElement`
 //!   law: open the wrapper on both sides, close with one ring rule;
 //! - **citations**: a law with an explicit `using` list: rewrite with the
-//!   cited laws and the Euclidean recomposition rule to a normal form;
+//!   cited laws and the Euclidean recomposition rule to a normal form; where
+//!   a cited law matched with one line of its `when` open, and no other
+//!   producer closes the law, split on that line once
+//!   ([`split_on_cited_when`]);
 //! - **evaluation**: evaluate both sides, splitting on each undecided Bool
-//!   guard, until both sides are the same term;
+//!   guard, until both sides are the same term, or until the hypotheses of
+//!   a case rule it out ([`hypotheses`]);
 //! - **finite domains**: when evaluation alone does not close the law,
 //!   split every given of finite type into all of its values and evaluate
 //!   each case;
@@ -33,6 +37,7 @@ mod chain;
 mod env;
 mod eval;
 mod finite;
+mod hypotheses;
 mod induction;
 mod memo;
 mod rewrite;
@@ -288,6 +293,85 @@ fn citations(env: &mut Env, laws: Vec<LawRef>, ob: &Obligation) -> Result<Proof,
     }
 }
 
+/// Most open `when` lines of cited laws one attempt splits on, each tried
+/// alone, in the order they were met.
+const MAX_WHEN_SPLITS: usize = 2;
+
+/// `ob` by cases on `on`, the one line of a cited law's `when` that stayed
+/// open where the law matched: in each case the sides are rewritten with
+/// the cited laws again (with `on` true the law now applies; with `on`
+/// false another may), a side that is an Int comparison is decided by
+/// linear arithmetic where it can be (the cited comparisons count, at the
+/// calls as the rewriting left them), and what is left is evaluated as
+/// [`Env::prove_by_evaluation`] does. One level only: the cases do not
+/// split on a cited `when` again, so an attempt makes at most
+/// [`MAX_WHEN_SPLITS`] such splits, each into two cases, and the split is
+/// on a line of the law's own `when`, never on a term searched for.
+fn split_on_cited_when(
+    env: &mut Env,
+    laws: Vec<LawRef>,
+    ob: &Obligation,
+    on: &Term,
+) -> Result<Proof, String> {
+    let usable: Vec<LawRef> = laws
+        .into_iter()
+        .filter(|l| rewrite::loops(l).is_none())
+        .collect();
+    let mut eqs: Vec<Equation> = usable
+        .into_iter()
+        .map(|l| Equation::Law(Box::new(l)))
+        .collect();
+    eqs.push(Equation::Wall(WallRule::DivModRecompose));
+    eqs.extend(
+        env.fact_rules
+            .iter()
+            .cloned()
+            .map(|l| Equation::Law(Box::new(l))),
+    );
+    let hyp = env.fresh_hyp();
+    env.wide_linear = true;
+    let case = |env: &mut Env, value: bool| -> Result<Proof, String> {
+        env.hyps.push((
+            hyp.clone(),
+            crate::ir::proof_steps::Eqn::new(
+                canon(on),
+                crate::ir::proof_steps::term::boolean(value),
+            ),
+        ));
+        let out = (|| {
+            let mut left = env.rewrite(&ob.lhs, &eqs)?;
+            let mut right = env.rewrite(&ob.rhs, &eqs)?;
+            for side in [&mut left, &mut right] {
+                if matches!(side.cur().node, crate::ir::hir::ResolvedExpr::BinOp(..))
+                    && let Some((proof, value)) = env.decide_linearly(&side.cur().clone())
+                {
+                    side.push(proof, value);
+                }
+            }
+            if left.cur() != right.cur() {
+                let (l, r) = (left.cur().clone(), right.cur().clone());
+                let proof = env.prove_by_evaluation(&l, &r, SPLIT_DEPTH - 1)?;
+                left.push(proof, r);
+            }
+            Ok(chain::meet(left, right))
+        })();
+        env.hyps.pop();
+        out.map_err(|why: String| format!("where `{}` is {value}: {why}", show_term(env, on)))
+    };
+    let if_true = case(env, true)?;
+    let if_false = case(env, false)?;
+    Ok(Proof::Cases {
+        on: canon(on),
+        hyp,
+        if_true: Box::new(if_true),
+        if_false: Box::new(if_false),
+    })
+}
+
+fn show_term(env: &Env, t: &Term) -> String {
+    crate::ir::proof_steps::show::term(t, env.inputs.symbol_table)
+}
+
 /// An environment for one attempt: the law's `when` in scope, each of its
 /// lines and each reason proved so far as a hypothesis of its own, and
 /// its cited laws, minus any that would loop, as rewrite rules; the
@@ -514,6 +598,8 @@ fn prove_part(
         let mut met_halving = false;
         // The first pass's refusals, kept once the second pass runs.
         let mut opened: Option<Vec<String>> = None;
+        // Open lines of cited `when`s the citations attempt met.
+        let mut pending_whens: Vec<Term> = Vec::new();
         for attempt in 0..8 {
             if attempt == 4 {
                 if !met_halving {
@@ -528,7 +614,21 @@ fn prove_part(
                     // One instance of a cited law, either way round, first.
                     Some(laws) => match env.direct_equal(&ob.lhs, &ob.rhs) {
                         Some(proof) => Ok(proof),
-                        None => citations(&mut env, laws.clone(), ob),
+                        None => {
+                            let out = citations(&mut env, laws.clone(), ob);
+                            // A cited law matched where a line of its
+                            // `when` stayed open: split on that line once
+                            // every other attempt has failed.
+                            if out.is_err() && pending_whens.is_empty() {
+                                pending_whens = env
+                                    .open_whens
+                                    .iter()
+                                    .take(MAX_WHEN_SPLITS)
+                                    .cloned()
+                                    .collect();
+                            }
+                            out
+                        }
                     },
                     None => continue,
                 },
@@ -557,13 +657,43 @@ fn prove_part(
                 }
             }
         }
+        // Last, a split on an open line of a cited law's `when`; the splits
+        // share half of one attempt's fuel.
+        let mut tried = Vec::new();
+        if found.is_none()
+            && let Some(laws) = using
+        {
+            let mut budget = fresh().fuel / 2;
+            for on in std::mem::take(&mut pending_whens) {
+                if budget == 0 {
+                    break;
+                }
+                let mut split_env = fresh();
+                split_env.fuel = budget;
+                let split = split_on_cited_when(&mut split_env, laws.clone(), ob, &on);
+                budget = split_env.fuel;
+                match split {
+                    Ok(proof) => {
+                        env = split_env;
+                        found = Some(proof);
+                        break;
+                    }
+                    Err(e) => tried.push(e),
+                }
+            }
+        }
+        let tried = if tried.is_empty() {
+            String::new()
+        } else {
+            format!("; split on a cited `when`: {}", tried.join("; "))
+        };
         found.ok_or_else(|| match &opened {
             Some(first) => format!(
-                "{}; with the call that divides down to zero kept whole: {}",
+                "{}; with the call that divides down to zero kept whole: {}{tried}",
                 first.join("; "),
                 refusals.join("; ")
             ),
-            None => refusals.join("; "),
+            None => format!("{}{tried}", refusals.join("; ")),
         })?
     };
     // The kernel splits on a call only when its definition says the call
