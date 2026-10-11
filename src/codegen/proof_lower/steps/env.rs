@@ -77,6 +77,15 @@ pub(crate) struct Env<'a> {
     /// The names a constructor split has bound so far: a term that
     /// mentions one is not split on again (see [`super::split`]).
     pub split_binders: Vec<String>,
+    /// Evaluations remembered for this obligation, shared by its
+    /// attempts ([`super::memo`]); `None` with the memo off.
+    pub memo: Option<std::rc::Rc<std::cell::RefCell<super::memo::Memo>>>,
+    pub memo_mode: super::memo::Mode,
+    /// What the evaluation being remembered has written so far.
+    pub trace: Option<super::memo::Trace>,
+    /// Whether the fuel ran out, so that what was found depends on how
+    /// much there was.
+    pub ran_dry: bool,
 }
 
 impl<'a> Env<'a> {
@@ -110,7 +119,33 @@ impl<'a> Env<'a> {
             givens: Vec::new(),
             finite: Vec::new(),
             split_binders: Vec::new(),
+            memo: None,
+            memo_mode: super::memo::Mode::Off,
+            trace: None,
+            ran_dry: false,
         }
+    }
+
+    /// Note a write for the evaluation being remembered, if any.
+    fn traced(&mut self, e: super::memo::Effect) {
+        if let Some(trace) = &mut self.trace {
+            trace.push(e);
+        }
+    }
+
+    /// Carry law `law` in the script, once.
+    pub(crate) fn use_law(&mut self, law: LawRef) {
+        if self.trace.is_some() {
+            self.traced(super::memo::Effect::Law(law.clone()));
+        }
+        if !self.laws.iter().any(|l| l.key == law.key) {
+            self.laws.push(law);
+        }
+    }
+
+    /// How many hypothesis names [`Self::fresh_hyp`] has given out.
+    pub(crate) fn next_hyp_count(&self) -> usize {
+        self.next_hyp
     }
 
     pub(crate) fn fresh_hyp(&mut self) -> String {
@@ -120,6 +155,7 @@ impl<'a> Env<'a> {
 
     pub(crate) fn burn(&mut self) -> Result<(), String> {
         if self.fuel == 0 {
+            self.ran_dry = true;
             return Err("the producer ran out of fuel".into());
         }
         self.fuel -= 1;
@@ -130,6 +166,7 @@ impl<'a> Env<'a> {
     /// expression, and, if it calls itself, through the termination gate of
     /// [`crate::ir::proof_steps::induct::recursion`].
     pub(crate) fn def(&mut self, id: FnId) -> Option<Def> {
+        self.traced(super::memo::Effect::Def(id));
         if let Some(found) = self.defs.get(&id) {
             return found.clone();
         }
@@ -139,14 +176,21 @@ impl<'a> Env<'a> {
     }
 
     pub(crate) fn mark_used(&mut self, id: FnId) {
+        self.traced(super::memo::Effect::Used(id));
         if !self.used.contains(&id) {
             self.used.push(id);
         }
     }
 
+    /// The definitions opened so far. Each was looked up when it was
+    /// opened, so reading them back is no lookup an evaluation makes
+    /// (see [`super::memo`]): it depends on what was opened before.
     pub(crate) fn used_defs(&mut self) -> Vec<Def> {
+        let trace = self.trace.take();
         let ids = self.used.clone();
-        ids.into_iter().filter_map(|id| self.def(id)).collect()
+        let defs = ids.into_iter().filter_map(|id| self.def(id)).collect();
+        self.trace = trace;
+        defs
     }
 
     /// A module-level binding steps may open, by the name terms read it
@@ -161,6 +205,9 @@ impl<'a> Env<'a> {
     }
 
     pub(crate) fn mark_const_used(&mut self, name: &str) {
+        if self.trace.is_some() {
+            self.traced(super::memo::Effect::Const(name.to_string()));
+        }
         if !self.used_consts.iter().any(|n| n == name) {
             self.used_consts.push(name.to_string());
         }
@@ -329,9 +376,7 @@ impl<'a> Env<'a> {
         let note = format!(
             "missing argument: law {key} at ({at}) applies but its `when` needs {needs}, which no hypothesis, linear step or computation gives; state it in a `because` line or cite a law that does"
         );
-        if !self.open_premises.contains(&note) {
-            self.open_premises.push(note);
-        }
+        self.note(note);
     }
 
     /// Record that evaluation met a call of `f` it may not open.
@@ -340,6 +385,14 @@ impl<'a> Env<'a> {
         let note = format!(
             "checker limit: steps do not open `{name}`, whose recursion is not a descent they follow"
         );
+        self.note(note);
+    }
+
+    /// Keep `note` for the refusal, once.
+    pub(crate) fn note(&mut self, note: String) {
+        if self.trace.is_some() {
+            self.traced(super::memo::Effect::Note(note.clone()));
+        }
         if !self.open_premises.contains(&note) {
             self.open_premises.push(note);
         }

@@ -444,9 +444,8 @@ impl Env<'_> {
             .chain(self.fact_rules.iter())
             .find(|f| &f.key == key)
             .cloned()
-            && !self.laws.iter().any(|l| l.key == law.key)
         {
-            self.laws.push(law);
+            self.use_law(law);
         }
     }
 
@@ -761,9 +760,7 @@ impl Env<'_> {
                     if flip {
                         step = Proof::Symm(Box::new(step));
                     }
-                    if !self.laws.iter().any(|l| l.key == law.key) {
-                        self.laws.push(law.clone());
-                    }
+                    self.use_law(law.clone());
                     let mut chain = super::chain::Chain::new(&x);
                     for (p, to) in before {
                         chain.push(p, to);

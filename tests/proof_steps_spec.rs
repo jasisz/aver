@@ -4279,3 +4279,76 @@ fn lean_closes_the_swapped_equality_laws_by_their_steps() {
     }
     let _ = fs::remove_dir_all(out);
 }
+
+/// The step files `aver proof --backend aver` writes for `fixture` with
+/// `AVER_STEPS_MEMO` set to `memo`, by name, and the laws it closes by
+/// steps.
+fn steps_with_memo(fixture: &str, memo: &str) -> (Vec<(String, String)>, Vec<String>) {
+    let out = scratch(&format!("memo-{memo}-{}", fixture.trim_end_matches(".av")));
+    let result = Command::new(aver_bin())
+        .args([
+            "proof",
+            fixture,
+            "--backend",
+            "aver",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "99",
+        ])
+        .env("AVER_STEPS_MEMO", memo)
+        .current_dir(repo_root().join(FIXTURES))
+        .output()
+        .expect("aver runs");
+    let line = String::from_utf8_lossy(&result.stdout)
+        .lines()
+        .rev()
+        .find(|l| l.starts_with('{'))
+        .map(str::to_string)
+        .unwrap_or_else(|| panic!("AVER_STEPS_MEMO={memo}: {}", format_output(&result)));
+    let summary: serde_json::Value = serde_json::from_str(&line).unwrap();
+    let mut files: Vec<(String, String)> = fs::read_dir(out.join("proof_steps"))
+        .map(|dir| {
+            dir.map(|e| e.unwrap().path())
+                .map(|p| {
+                    let name = p.file_name().unwrap().to_string_lossy().to_string();
+                    (name, fs::read_to_string(&p).unwrap())
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    files.sort();
+    let _ = fs::remove_dir_all(out);
+    (files, closed_by_steps(&summary))
+}
+
+/// Evaluations the producer remembers are replayed exactly: with the
+/// memo on, off, or checked against evaluating again (which stops on any
+/// difference), every law closes the same way with the same step file.
+#[test]
+fn remembered_evaluations_give_the_same_proofs() {
+    for fixture in [
+        "btc_shapes.av",
+        "case_hypotheses.av",
+        "countdown.av",
+        "finite.av",
+        "halving.av",
+        "lock.av",
+        "normal_form.av",
+        "split.av",
+    ] {
+        let (on, closed) = steps_with_memo(fixture, "on");
+        assert!(!on.is_empty(), "{fixture}: no step files");
+        assert_eq!(
+            steps_with_memo(fixture, "off"),
+            (on.clone(), closed.clone()),
+            "{fixture}: memo off"
+        );
+        assert_eq!(
+            steps_with_memo(fixture, "check"),
+            (on, closed),
+            "{fixture}: memo checked"
+        );
+    }
+}
