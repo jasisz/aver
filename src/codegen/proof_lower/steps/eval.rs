@@ -589,6 +589,69 @@ pub(crate) fn as_cells(t: &Term) -> Option<(Proof, Term)> {
     }
 }
 
+/// Steps writing each call in `a` as a call in `b` that it equals by ring
+/// steps at its Int arguments, under congruence; each call once, outermost
+/// first.
+fn align_calls(a: &Term, b: &Term) -> Vec<(Proof, Term)> {
+    fn calls(t: &Term, out: &mut Vec<Term>) {
+        if matches!(t.node, ResolvedExpr::Call(..)) && !out.contains(&canon(t)) {
+            out.push(canon(t));
+        }
+        for c in term::children(t) {
+            calls(c, out);
+        }
+    }
+    fn paths(t: &Term, part: &Term, at: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
+        if canon(t) == *part {
+            out.push(at.clone());
+            return;
+        }
+        for (i, c) in term::children(t).into_iter().enumerate() {
+            at.push(i);
+            paths(c, part, at, out);
+            at.pop();
+        }
+    }
+    let (mut ours, mut theirs) = (Vec::new(), Vec::new());
+    calls(a, &mut ours);
+    calls(b, &mut theirs);
+    let mut steps = Vec::new();
+    let mut cur = canon(a);
+    for x in ours {
+        if theirs.contains(&x) {
+            continue;
+        }
+        let Some((y, bridge)) = theirs.iter().find_map(|y| {
+            super::rewrite::ring_bridge(&x, y)
+                .filter(|s| !s.is_empty())
+                .map(|s| (y.clone(), s))
+        }) else {
+            continue;
+        };
+        let mut chain = Chain::new(&x);
+        for (p, to) in bridge {
+            chain.push(p, to);
+        }
+        let (_, proof) = chain.finish();
+        let mut at = Vec::new();
+        let mut found = Vec::new();
+        paths(&cur, &x, &mut at, &mut found);
+        for path in found {
+            let ctx = term::context_at(&cur, &path);
+            let next = canon(&term::plug(&ctx, &y));
+            steps.push((
+                Proof::Congr {
+                    ctx,
+                    inner: Box::new(proof.clone()),
+                },
+                next.clone(),
+            ));
+            cur = next;
+        }
+    }
+    steps
+}
+
 fn is_bool_value(t: &Term) -> bool {
     term::bool_value(t).is_some()
 }
@@ -793,6 +856,9 @@ impl Env<'_> {
         if let Some(step) = self.hyp_as_cells(cur) {
             return Ok(Some(step));
         }
+        if let Some(step) = self.hyp_up_to_ring(cur) {
+            return Ok(Some(step));
+        }
         if let Some(step) = self.same_sides(cur) {
             return Ok(Some(step));
         }
@@ -843,6 +909,38 @@ impl Env<'_> {
             let proof = Proof::Trans {
                 terms: vec![t.clone(), lhs, canon(&e.rhs)],
                 steps: vec![Proof::Symm(Box::new(bridge)), Proof::Hyp(name)],
+            };
+            return Some(Step::Progress(Box::new((proof, canon(&e.rhs)))));
+        }
+        None
+    }
+
+    /// A hypothesis whose left side is a call that `cur` is once its Int
+    /// arguments are read as polynomials (`f(m + n - 1)` for
+    /// `f((m - 1) + n)`): an induction hypothesis states the claim at the
+    /// call's arguments, while the case has evaluated them in another
+    /// order. A ring step at each such part, then the hypothesis.
+    fn hyp_up_to_ring(&mut self, cur: &Term) -> Option<Step> {
+        if !matches!(cur.node, ResolvedExpr::Call(..)) {
+            return None;
+        }
+        let t = canon(cur);
+        for (name, e) in self.hyps.iter().rev() {
+            let lhs = canon(&e.lhs);
+            if !matches!(lhs.node, ResolvedExpr::Call(..)) || lhs == t {
+                continue;
+            }
+            let Some(steps) = super::rewrite::ring_bridge(&t, &lhs) else {
+                continue;
+            };
+            let mut chain = Chain::new(&t);
+            for (p, to) in steps {
+                chain.push(p, to);
+            }
+            let (_, bridge) = chain.finish();
+            let proof = Proof::Trans {
+                terms: vec![t.clone(), lhs, canon(&e.rhs)],
+                steps: vec![bridge, Proof::Hyp(name.clone())],
             };
             return Some(Step::Progress(Box::new((proof, canon(&e.rhs)))));
         }
@@ -1437,11 +1535,15 @@ impl Env<'_> {
                 // arithmetic decides its guard (`digit / 256 > 0` is false
                 // for `digit < 256`).
                 let (countdown, halving) = self.counts_down(&def);
+                // In a case of an induction along the countdown itself, it
+                // also opens where linear arithmetic decides its guard: the
+                // call it leaves is one the induction hypothesis talks about.
                 if countdown
                     && term::eval_closed(&canon(&s)).is_none()
                     && self.hyp_for(&s).is_none()
                     && self.complement(&canon(&s)).is_none()
-                    && (!halving || self.decide_linearly(&canon(&s)).is_none())
+                    && (!(halving || self.inducting.contains(id))
+                        || self.decide_linearly(&canon(&s)).is_none())
                 {
                     return self.settle(cur, None);
                 }
@@ -2791,6 +2893,15 @@ impl Env<'_> {
         let nr = self.normalize_below(r.chain.clone(), 8)?;
         if canon(nl.cur()) == canon(nr.cur()) {
             return Ok(Ok(meet(nl, nr)));
+        }
+        // A call on one side that a call on the other is once their Int
+        // arguments are read as polynomials (`f(0 + n)` and `f(n)`): the
+        // left one is written as the right one, by a ring step at each
+        // such argument.
+        if is_int(nl.cur()) {
+            for (p, to) in align_calls(nl.cur(), nr.cur()) {
+                nl.push(p, to);
+            }
         }
         // Two Int terms that are one polynomial: the ring step.
         if is_int(nl.cur()) && crate::ir::proof_steps::ring::same_polynomial(nl.cur(), nr.cur()) {

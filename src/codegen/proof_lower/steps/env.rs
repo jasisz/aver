@@ -52,6 +52,11 @@ pub(crate) struct Env<'a> {
     /// evaluation stopped at, or the line that names an induction, as
     /// hints for the report (see [`super::eval`]).
     pub hints: Vec<String>,
+    /// Advice for a law the steps closed: the `induction` line that would
+    /// have spared trying the others.
+    pub advice: Vec<String>,
+    /// The functions an induction in progress follows, innermost last.
+    pub inducting: Vec<crate::ir::identity::FnId>,
     /// Where a cited law matched but a conjunct of its `when` found no
     /// proof, for the refusal.
     pub open_premises: Vec<String>,
@@ -129,6 +134,8 @@ impl<'a> Env<'a> {
             next_ih: 0,
             nesting: 0,
             hints: Vec::new(),
+            advice: Vec::new(),
+            inducting: Vec::new(),
             open_premises: Vec::new(),
             opened: Vec::new(),
             barren: Vec::new(),

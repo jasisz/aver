@@ -137,17 +137,20 @@ impl Env<'_> {
                 others.push(o);
             }
         }
+        // Several givens to follow (a law that names one has only it):
+        // each is tried in turn, and the first line under which steps
+        // close every case is kept; the kernel checks the proof all the
+        // same.
         if let Some(other) = others.first() {
-            let choices: Vec<String> = std::iter::once(&v)
-                .chain(others.iter())
-                .map(|n| format!("`induction {n}`"))
-                .collect();
-            if named.is_none() {
-                self.hint_induction_lines(f, ob, depth, &v, &others);
+            let lines: Vec<String> = std::iter::once(v.clone()).chain(others.clone()).collect();
+            if let Some((n, proof)) = self.induction_along_each(f, ob, depth, &lines) {
+                self.advice.push(format!(
+                    "steps closed it by trying each given in turn; add `induction {n}` to go straight to it"
+                ));
+                return Ok(proof);
             }
             return Err(format!(
-                "induction: {f_name} recurses on {v} in one call and on {other} in another; which to follow is a choice the law has to make: name one with {}",
-                choices.join(" or ")
+                "induction: {f_name} recurses on {v} in one call and on {other} in another, and steps close every case along neither"
             ));
         }
         // Along a count toward zero the given is an Int; each case holds the
@@ -203,6 +206,7 @@ impl Env<'_> {
             self.mark_used(g);
         }
         let saved = std::mem::take(&mut self.hyps);
+        self.inducting.push(f);
         let result = (|| -> Result<Vec<InductCase>, String> {
             let mut cases = Vec::new();
             for (i, arm) in arms.iter().enumerate() {
@@ -351,6 +355,7 @@ impl Env<'_> {
             Ok(cases)
         })();
         self.hyps = saved;
+        self.inducting.pop();
         let cases = result?;
         Ok(Proof::Induct {
             fn_id: f,
@@ -364,54 +369,31 @@ impl Env<'_> {
 }
 
 impl Env<'_> {
-    /// Hints for a law whose induction has a choice it must make: each
-    /// line under which steps close every case, or else every line, with
-    /// the facts that would rewrite where those cases stop. The attempts
-    /// only advise: the law stays open until it names the line.
-    fn hint_induction_lines(
+    /// Induction along each of `lines` in turn, the givens `f` recurses
+    /// on: the first under which steps close every case, with its proof.
+    /// Where none does, the facts that would rewrite where its cases
+    /// stopped stay as hints.
+    fn induction_along_each(
         &mut self,
         f: FnId,
         ob: &Obligation,
         depth: usize,
-        first: &str,
-        others: &[String],
-    ) {
+        lines: &[String],
+    ) -> Option<(String, Proof)> {
         let (hyps, open_premises, fuel) =
             (self.hyps.clone(), self.open_premises.clone(), self.fuel);
-        let mut closing = Vec::new();
         let before = self.hints.len();
-        for n in std::iter::once(first).chain(others.iter().map(String::as_str)) {
-            if self.prove_by_induction(f, Some(n), ob, depth).is_ok() {
-                closing.push(n);
+        for n in lines {
+            if let Ok(proof) = self.prove_by_induction(f, Some(n), ob, depth) {
+                self.hints.truncate(before);
+                self.open_premises = open_premises;
+                return Some((n.clone(), proof));
             }
             self.hyps = hyps.clone();
             self.fuel = fuel;
         }
         self.open_premises = open_premises;
-        // Where a line closes, the cases the others stopped at are no help.
-        if !closing.is_empty() {
-            self.hints.truncate(before);
-        }
-        let hints: Vec<String> = if closing.is_empty() {
-            let lines: Vec<String> = std::iter::once(first)
-                .chain(others.iter().map(String::as_str))
-                .map(|n| format!("`induction {n}`"))
-                .collect();
-            vec![format!(
-                "name the given the induction follows with {}",
-                lines.join(" or ")
-            )]
-        } else {
-            closing
-                .iter()
-                .map(|n| format!("with `induction {n}` steps close every case; add that line"))
-                .collect()
-        };
-        for hint in hints {
-            if !self.hints.contains(&hint) {
-                self.hints.push(hint);
-            }
-        }
+        None
     }
 }
 

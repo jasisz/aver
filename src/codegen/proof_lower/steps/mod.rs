@@ -553,6 +553,8 @@ fn uses_hyp(p: &Proof, name: &str) -> bool {
 /// What one obligation's proof needs from its environment.
 struct Part {
     proof: Proof,
+    /// Advice for the law once closed (see `Env::advice`).
+    advice: Vec<String>,
     defs: Vec<crate::ir::proof_steps::Def>,
     consts: Vec<crate::ir::proof_steps::Const>,
     laws: Vec<LawRef>,
@@ -719,6 +721,7 @@ fn prove_part(
     }
     Ok(Part {
         proof,
+        advice: std::mem::take(&mut env.advice),
         defs: env.used_defs(),
         consts: env.used_consts(),
         laws: env.laws.clone(),
@@ -739,6 +742,8 @@ struct Cut {
 /// or why not, and, for a law with `because` lines, each obligation's.
 struct Produced {
     law: Result<Script, String>,
+    /// Advice for the law when it closed, shown with it.
+    advice: Vec<String>,
     obligations: Vec<crate::ir::ObligationSteps>,
 }
 
@@ -832,6 +837,7 @@ fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize, hints: &mut Vec<St
     let t = &ir.law_theorems[i];
     let refuse = |why: String| Produced {
         law: Err(why),
+        advice: Vec::new(),
         obligations: Vec::new(),
     };
     if t.premises.len() > 1 {
@@ -1046,6 +1052,7 @@ fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize, hints: &mut Vec<St
     if let Some(why) = results.iter().find_map(|(p, _)| p.as_ref().err()) {
         return Produced {
             law: Err(why.clone()),
+            advice: Vec::new(),
             obligations,
         };
     }
@@ -1054,6 +1061,7 @@ fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize, hints: &mut Vec<St
         .map(|(p, _)| p.as_ref().expect("all closed"))
         .collect();
     let proof = under_cuts(&cuts, parts[n].proof.clone(), true);
+    let advice = parts[n].advice.clone();
     let mut script = Script {
         obligation: ob,
         defs: Vec::new(),
@@ -1069,6 +1077,7 @@ fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize, hints: &mut Vec<St
     with_constants(&mut script);
     Produced {
         law: check(script),
+        advice,
         obligations,
     }
 }
@@ -1159,12 +1168,14 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
         let produced = if ir.law_theorems[i].by_plan.is_some() {
             Produced {
                 law: by_plan::produce(inputs, ir, i, &mut plans),
+                advice: Vec::new(),
                 obligations: Vec::new(),
             }
         } else {
             produce(inputs, ir, i, &mut hints)
         };
         ir.law_theorems[i].obligation_steps = produced.obligations;
+        let produced_advice = produced.advice;
         let result = produced.law;
         if debug {
             let key = law_key(inputs, &ir.law_theorems[i]);
@@ -1177,7 +1188,7 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             Ok(script) => {
                 ir.law_theorems[i].steps = Some(script);
                 ir.law_theorems[i].steps_refusal = None;
-                ir.law_theorems[i].steps_hints = Vec::new();
+                ir.law_theorems[i].steps_hints = produced_advice;
             }
             Err(why) => {
                 // A plan that closes the law comes first:

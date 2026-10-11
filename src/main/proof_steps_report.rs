@@ -107,6 +107,20 @@ pub(super) fn collect(output_dir: &str, build_log: &str) -> StepsReport {
             hints.insert(law, found);
         }
     }
+    // Advice for a law steps closed, as hints of their own.
+    for (law, p) in with("advice") {
+        let Ok(text) = std::fs::read_to_string(p) else {
+            continue;
+        };
+        let found: Vec<String> = text
+            .lines()
+            .filter_map(|l| l.strip_prefix("hint: "))
+            .map(str::to_string)
+            .collect();
+        if !found.is_empty() {
+            hints.entry(law).or_default().extend(found);
+        }
+    }
     let by_plan: BTreeMap<String, String> = with("steps")
         .into_iter()
         .filter_map(|(law, p)| {

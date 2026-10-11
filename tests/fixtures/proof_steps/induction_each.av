@@ -1,0 +1,27 @@
+module InductionEach
+    intent = "Claims that pass the law's function two givens where it recurses, with no `induction` line: the steps try each given in turn."
+    exposes [append]
+    effects []
+
+fn append(xs: List<Int>, ys: List<Int>) -> List<Int>
+    ? "Append, recursing on the first list."
+    match xs
+        [] -> ys
+        [h, ..t] -> List.prepend(h, append(t, ys))
+
+verify append
+    append([1], [2]) => [1, 2]
+
+// Steps close it along x, the first given they try.
+verify append law assoc
+    given x: List<Int> = [[], [1], [1, 2]]
+    given y: List<Int> = [[], [3]]
+    given z: List<Int> = [[], [4]]
+    append(append(x, y), z) => append(x, append(y, z))
+
+// The same shape, false: no given closes it.
+verify append law swapsFirstTwo
+    given x: List<Int> = [[], [1]]
+    given y: List<Int> = [[], [3]]
+    given z: List<Int> = [[], [4]]
+    append(append(x, y), z) => append(y, append(x, z))
