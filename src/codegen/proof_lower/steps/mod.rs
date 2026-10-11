@@ -100,12 +100,6 @@ fn cited(
     t: &LawTheorem,
     names: &[String],
 ) -> Option<Vec<LawRef>> {
-    let own_scope = inputs.symbol_table.fn_entry(t.fn_id).key.scope.clone();
-    let names_law = |c: &LawTheorem, name: &String| {
-        let key = &inputs.symbol_table.fn_entry(c.fn_id).key;
-        let local = format!("{}.{}", key.name, c.law_name);
-        (key.scope == own_scope && *name == local) || *name == law_key(inputs, c)
-    };
     use crate::ir::proof_steps::facts;
     // Builtin facts first, in the order the facts are listed.
     let mut out: Vec<LawRef> = facts::all()
@@ -117,7 +111,7 @@ fn cited(
         if facts::is_fact_name(n) {
             facts::named(n).is_none()
         } else {
-            !ir.law_theorems.iter().any(|c| names_law(c, n))
+            !ir.law_theorems.iter().any(|c| names_law(inputs, t, c, n))
         }
     }) {
         return None;
@@ -125,7 +119,7 @@ fn cited(
     out.extend(
         ir.law_theorems
             .iter()
-            .filter(|c| names.iter().any(|n| names_law(c, n)))
+            .filter(|c| names.iter().any(|n| names_law(inputs, t, c, n)))
             .map(|c| law_ref(inputs, c)),
     );
     Some(out)
@@ -134,18 +128,31 @@ fn cited(
 /// The keys of the laws `c`'s `using` list names (builtin facts left
 /// out), resolved against `c`'s module.
 fn cited_keys(inputs: &ProofLowerInputs, ir: &ProofIR, c: &LawTheorem) -> Vec<String> {
-    let scope = &inputs.symbol_table.fn_entry(c.fn_id).key.scope;
     let mut out = Vec::new();
     for name in c.using.iter().flatten() {
         for d in &ir.law_theorems {
-            let key = &inputs.symbol_table.fn_entry(d.fn_id).key;
-            let local = format!("{}.{}", key.name, d.law_name);
-            if (key.scope == *scope && *name == local) || *name == law_key(inputs, d) {
+            if names_law(inputs, c, d, name) {
                 out.push(law_key(inputs, d));
             }
         }
     }
     out
+}
+
+/// Whether `name`, in the `using` list of law `t`, names law `c`: a law of
+/// `t`'s own module by `fn.law` (or its full key), a law of another module
+/// by `Module.fn.law`. A law of the entry is never named from a module: no
+/// module depends on the entry, and its `fn.law` key is spelled like a
+/// module's own law, so matching it would let a module's law cite an entry
+/// law that cites it back.
+fn names_law(inputs: &ProofLowerInputs, t: &LawTheorem, c: &LawTheorem, name: &str) -> bool {
+    let own = &inputs.symbol_table.fn_entry(t.fn_id).key.scope;
+    let key = &inputs.symbol_table.fn_entry(c.fn_id).key;
+    if key.scope == *own {
+        name == format!("{}.{}", key.name, c.law_name) || name == law_key(inputs, c)
+    } else {
+        key.scope.is_some() && name == law_key(inputs, c)
+    }
 }
 
 /// Whether law `t` may cite law `c` in its `using` list, so a hint may
