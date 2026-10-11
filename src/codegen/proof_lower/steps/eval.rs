@@ -12,6 +12,7 @@ use super::chain::{Chain, meet};
 use super::env::Env;
 use super::rewrite::pick_rewrite;
 
+#[derive(Clone, Debug)]
 pub(crate) struct Eval {
     pub chain: Chain,
     /// The undecided Bool evaluation stopped at, if a split would help.
@@ -476,9 +477,88 @@ impl Env<'_> {
                 crate::ir::proof_steps::show::term(t, self.inputs.symbol_table)
             ));
         }
+        if self.nesting == 0
+            && let Some(memo) = self.memo.clone()
+        {
+            return self.whnf_remembered(t, &memo);
+        }
         self.nesting += 1;
         let out = self.whnf_nested(t);
         self.nesting -= 1;
+        out
+    }
+
+    /// [`Self::whnf`] through the memo of [`super::memo`]: a replay where
+    /// the same evaluation is kept and the fuel it took is left, else the
+    /// evaluation, kept for next time.
+    fn whnf_remembered(
+        &mut self,
+        t: &Term,
+        memo: &std::rc::Rc<std::cell::RefCell<super::memo::Memo>>,
+    ) -> Result<Eval, String> {
+        use super::memo::{Effect, Entry, Mode, Trace, key};
+        let key = key(t, &self.hyps, self.open_halving, self.proving_cited_when);
+        let kept = memo
+            .borrow()
+            .get(&key)
+            .filter(|e| e.cost <= self.fuel)
+            .cloned();
+        if let Some(entry) = &kept
+            && self.memo_mode == Mode::On
+        {
+            self.fuel -= entry.cost;
+            for e in &entry.effects {
+                match e {
+                    Effect::Used(id) => self.mark_used(*id),
+                    Effect::Const(name) => self.mark_const_used(name),
+                    Effect::Law(law) => self.use_law((**law).clone()),
+                    Effect::Note(note) => self.note(note.clone()),
+                    Effect::Def(id) => {
+                        self.def(*id);
+                    }
+                }
+            }
+            self.proving_cited_when = entry.proving_cited_when;
+            return Ok(entry.eval.clone());
+        }
+        let (fuel, named, dry) = (self.fuel, self.next_hyp_count(), self.ran_dry);
+        self.ran_dry = false;
+        self.trace = Some(Trace::default());
+        self.nesting += 1;
+        let out = self.whnf_nested(t);
+        self.nesting -= 1;
+        let trace = self.trace.take().unwrap_or_default();
+        // Kept only when it named no hypothesis and never ran out of fuel
+        // (an evaluation that gave up on a part for want of fuel may find
+        // more with more).
+        let starved = self.ran_dry;
+        self.ran_dry = dry || starved;
+        let entry = match &out {
+            Ok(eval) if self.next_hyp_count() == named && !starved => Some(Entry {
+                eval: eval.clone(),
+                cost: fuel - self.fuel,
+                effects: trace.effects,
+                proving_cited_when: self.proving_cited_when,
+            }),
+            _ => None,
+        };
+        if let Some(old) = &kept
+            && !entry.as_ref().is_some_and(|e| old.same(e))
+        {
+            panic!(
+                "AVER_STEPS_MEMO=check: evaluating `{}` again differs from the kept evaluation:\nkept: {}\nnow:  {}",
+                crate::ir::proof_steps::show::term(t, self.inputs.symbol_table),
+                old.describe(),
+                match (&entry, &out) {
+                    (Some(e), _) => e.describe(),
+                    (None, Err(why)) => format!("failed: {why}"),
+                    (None, Ok(_)) => "not kept".to_string(),
+                }
+            );
+        }
+        if let Some(entry) = entry {
+            memo.borrow_mut().insert(key, entry);
+        }
         out
     }
 
@@ -2125,9 +2205,7 @@ impl Env<'_> {
             } else {
                 let (fact, proof, law) = instances[k - viewed].clone();
                 let name = self.fresh_hyp();
-                if !self.laws.iter().any(|l| l.key == law.key) {
-                    self.laws.push(law);
-                }
+                self.use_law(law);
                 hyps.push(name.clone());
                 cuts.push((name, fact, proof));
             }
@@ -2329,16 +2407,21 @@ impl Env<'_> {
             return Ok(None);
         };
         let (law, p, to) = found.swap_remove(k);
-        if !self.laws.iter().any(|l| l.key == law.key) {
-            self.laws.push(law);
-        }
+        self.use_law(law);
         Ok(Some((p, to)))
     }
 
     /// Evaluate `t` and then, below its head, each part in turn, so a
     /// hypothesis or cited law applies inside a constructor too.
     pub(crate) fn normalize(&mut self, t: &Term, depth: usize) -> Result<Chain, String> {
-        let mut chain = self.whnf(t)?.chain;
+        let chain = self.whnf(t)?.chain;
+        self.normalize_below(chain, depth)
+    }
+
+    /// [`Self::normalize`] going on from `chain`, an evaluation of a term
+    /// to its head under the hypotheses in scope, so it is not evaluated
+    /// again.
+    fn normalize_below(&mut self, mut chain: Chain, depth: usize) -> Result<Chain, String> {
         if depth == 0 {
             return Ok(chain);
         }
@@ -2381,9 +2464,10 @@ impl Env<'_> {
         depth: usize,
     ) -> Result<Result<Proof, Term>, String> {
         // Nothing to split on: look below the heads, at the parts of a
-        // constructor and the arguments of a call evaluation stopped at.
-        let mut nl = self.normalize(lhs, 8)?;
-        let nr = self.normalize(rhs, 8)?;
+        // constructor and the arguments of a call evaluation stopped at,
+        // going on from where evaluating the sides stopped.
+        let mut nl = self.normalize_below(l.chain.clone(), 8)?;
+        let nr = self.normalize_below(r.chain.clone(), 8)?;
         if canon(nl.cur()) == canon(nr.cur()) {
             return Ok(Ok(meet(nl, nr)));
         }
@@ -3125,9 +3209,7 @@ impl Env<'_> {
     /// the proof reads that form.
     fn keep_needs(&mut self, needs: &NormalFact) {
         for law in &needs.laws {
-            if !self.laws.iter().any(|l| l.key == law.key) {
-                self.laws.push(law.clone());
-            }
+            self.use_law(law.clone());
         }
         for id in &needs.defs {
             self.mark_used(*id);

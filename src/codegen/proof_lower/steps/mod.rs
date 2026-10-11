@@ -34,6 +34,7 @@ mod env;
 mod eval;
 mod finite;
 mod induction;
+mod memo;
 mod rewrite;
 mod split;
 
@@ -491,8 +492,17 @@ fn prove_part(
     hints: &mut Vec<String>,
 ) -> Result<Part, String> {
     // Each attempt starts from a fresh environment: a failed one may have
-    // opened definitions and bound hypothesis names.
-    let mut env = fresh_env(inputs, ob, known, using, earlier);
+    // opened definitions and bound hypothesis names. The attempts share
+    // what evaluation found ([`memo`]), which replays it exactly.
+    let mode = memo::mode();
+    let shared = (mode != memo::Mode::Off).then(std::rc::Rc::default);
+    let fresh = || {
+        let mut env = fresh_env(inputs, ob, known, using, earlier);
+        env.memo = shared.clone();
+        env.memo_mode = mode;
+        env
+    };
+    let mut env = fresh();
     let proof = if algebraic {
         algebra(&mut env, t, ob)?
     } else {
@@ -542,7 +552,7 @@ fn prove_part(
                         }
                     }
                     met_halving |= env.met_halving.get();
-                    env = fresh_env(inputs, ob, known, using, earlier);
+                    env = fresh();
                 }
             }
         }
