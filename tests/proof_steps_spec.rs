@@ -4189,3 +4189,93 @@ fn lean_closes_the_case_hypothesis_laws_by_their_steps() {
     }
     let _ = fs::remove_dir_all(out);
 }
+
+/// The laws of `swapped_equality.av` that close by steps only once an
+/// equality is read with its sides swapped (`bool.beq.symm`).
+const SWAPPED_EQUALITY_LAWS: [&str; 2] = ["order.symmetric", "orderTag.symmetric"];
+
+/// A case split states `b == a`, the claim evaluates `a == b`: the steps
+/// swap the sides with `bool.beq.symm` and read the hypothesis, for either
+/// value it states. Not for a record that holds a Float, whose `==` Lean
+/// does not read as equality. Both kernels refuse the rule at the swapped
+/// substitution, and the step that would read a `false` hypothesis as
+/// `true`.
+#[test]
+fn both_kernels_swap_the_sides_of_an_equality_and_refuse_a_wrong_orientation() {
+    let out = scratch("swapped-equality");
+    let (result, summary) = aver_backend_json("swapped_equality.av", &out, None);
+    let _ = fs::remove_dir_all(&out);
+    for law in SWAPPED_EQUALITY_LAWS {
+        assert_eq!(
+            summary["closed_by"][law],
+            "steps",
+            "{law}: {}",
+            format_output(&result)
+        );
+    }
+    assert_eq!(summary["closed_by"]["orderReading.symmetric"], "open");
+    let export = scratch("swapped-equality-export");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("swapped_equality.av", &export)
+            .into_iter()
+            .collect();
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in SWAPPED_EQUALITY_LAWS {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.to_string()));
+    }
+    let law = read("order.symmetric");
+    let rule = "(rule bool.beq.symm ((a (v a)) (b (v b))))";
+    assert!(law.contains(rule), "{law}");
+    let swapped = law.replacen(rule, "(rule bool.beq.symm ((a (v b)) (b (v a))))", 1);
+    let false_case = "(op == (v b) (v a)) (b false))";
+    assert!(law.contains(false_case), "{law}");
+    let as_true = law.replacen(false_case, "(op == (v b) (v a)) (b true))", 1);
+    for (i, mutant) in [swapped, as_true].into_iter().enumerate() {
+        let refused = aver::proof_kernel::verdict(&mutant);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "{refused:?}"
+        );
+        let path = export.join(format!("mutant{i}.steps"));
+        fs::write(&path, &mutant).unwrap();
+        let replayed = replay(std::slice::from_ref(&path));
+        assert!(!replayed.status.success(), "{}", format_output(&replayed));
+    }
+    let _ = fs::remove_dir_all(export);
+}
+
+#[test]
+fn lean_closes_the_swapped_equality_laws_by_their_steps() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("swapped-equality-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "swapped_equality.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "99",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in SWAPPED_EQUALITY_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}

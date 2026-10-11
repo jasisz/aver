@@ -77,6 +77,8 @@ theorem eq_false_of_gt (a b : Int) (h : decide (a > b) = true) : (a == b) = fals
 theorem eq_of_beq {α : Type} [BEq α] [LawfulBEq α] (a b : α) (h : (a == b) = true) : a = b :=
   beq_iff_eq.mp h
 theorem beq_refl {α : Type} [BEq α] [ReflBEq α] (a : α) : (a == a) = true := beq_self_eq_true a
+theorem beq_symm {α : Type} [BEq α] [LawfulBEq α] (a b : α) : (a == b) = (b == a) :=
+  Bool.eq_iff_iff.mpr (by rw [beq_iff_eq, beq_iff_eq]; exact eq_comm)
 theorem mod_range (a k : Int) (h : decide (k > 0) = true) :
     (decide (0 <= a % k) && decide (a % k < k)) = true := by
   simp only [Bool.and_eq_true, decide_eq_true_eq] at h ⊢
@@ -246,6 +248,7 @@ fn lemma(rule: WallRule) -> &'static str {
         WallRule::EqFalseOfGt => "AverSteps.eq_false_of_gt",
         WallRule::EqOfBeq => "AverSteps.eq_of_beq",
         WallRule::BeqRefl => "AverSteps.beq_refl",
+        WallRule::BeqSymm => "AverSteps.beq_symm",
         WallRule::AddComm => "AverSteps.add_comm",
         WallRule::MulComm => "AverSteps.mul_comm",
         WallRule::AddAssoc => "AverSteps.add_assoc",

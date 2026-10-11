@@ -345,7 +345,13 @@ pub fn comparisonSchema(id @ _: AverStr) -> Option<Schema> {
                                                                         {
                                                                             crate::proof_kernel::aver_generated::kernel::rules::plain(&aver_rt::AverList::from_vec(vec![AverStr::from("a")]), &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("=="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")))), &crate::proof_kernel::aver_generated::kernel::term::Term::TBool(true))
                                                                         } else {
-                                                                            crate::proof_kernel::aver_generated::kernel::rules::ringSchema(id)
+                                                                            if &*__dispatch_subject
+                                                                                == "bool.beq.symm"
+                                                                            {
+                                                                                crate::proof_kernel::aver_generated::kernel::rules::plain(&aver_rt::AverList::from_vec(vec![AverStr::from("a"), AverStr::from("b")]), &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("=="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b")))), &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("=="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")))))
+                                                                            } else {
+                                                                                crate::proof_kernel::aver_generated::kernel::rules::ringSchema(id)
+                                                                            }
                                                                         }
                                                                     }
                                                                 }
