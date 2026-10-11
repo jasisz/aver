@@ -37,6 +37,8 @@ pub mod playground;
 #[cfg(feature = "runtime")]
 pub mod proof_kernel;
 #[cfg(feature = "runtime")]
+pub mod proof_std;
+#[cfg(feature = "runtime")]
 pub mod provider;
 #[cfg(all(feature = "runtime", feature = "terminal", feature = "tty-render"))]
 mod provider_vm_host;

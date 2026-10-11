@@ -17,7 +17,7 @@ fn openByLength(goal: Goal) -> Result<Proof, String>
             Option.Some((v, k)) -> openCells(Kernel.Lib.scope(goal), goal.obligation.lhs, goal.obligation.rhs, w, v, k, Kernel.Lib.taken(goal))
 
 verify openByLength
-    openByLength(Goal(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [])) => Result.Err("the law has no `when`")
+    openByLength(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)))) => Result.Err("the law has no `when`")
 
 fn lengthBound(w: Term) -> Option<Tuple<String, Int>>
     ? "v and k of `List.len(v) >= k`."

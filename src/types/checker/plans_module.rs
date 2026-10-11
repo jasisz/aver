@@ -176,9 +176,31 @@ pub(super) fn check_plans_dependencies(
     }
 }
 
-/// Why a law's `by Module.plan` names no plan of the project at
-/// `module_root`, if it names none: the module must be a project file (not
-/// one the compiler ships), a plans module, and list the plan.
+/// The standard plans the compiler ships, which a `by` line may name besides
+/// the project's own plans modules.
+const STD_PLANS: &str = "Kernel.Std";
+
+/// Why `by Kernel.Std.<plan>` names no standard plan, if it names none: the
+/// plan must be one `Kernel.Std`'s `plans [...]` line lists.
+fn std_plan_refusal(path: &str, plan: &str) -> Option<String> {
+    let source = crate::stdlib::find_kernel_api(STD_PLANS)?.source;
+    let items = crate::source::parse_source(source).ok()?;
+    let listed = items.iter().find_map(|i| match i {
+        TopLevel::Module(m) => m.plans.clone(),
+        _ => None,
+    })?;
+    (!listed.iter().any(|p| p == plan)).then(|| {
+        format!(
+            "`by {path}`: {STD_PLANS} has no plan `{plan}`; its plans are {}",
+            listed.join(", ")
+        )
+    })
+}
+
+/// Why a law's `by Module.plan` names no plan it may use, if it names none:
+/// a standard plan of `Kernel.Std`, or a plan of the project at
+/// `module_root`, whose module must be a project file (not one the compiler
+/// ships), a plans module, and list the plan.
 pub fn by_line_refusal(path: &str, module_root: &str) -> Option<String> {
     let Some((module, plan)) = path
         .rsplit_once('.')
@@ -186,6 +208,9 @@ pub fn by_line_refusal(path: &str, module_root: &str) -> Option<String> {
     else {
         return Some(format!("`by {path}` must name a plan as Module.plan"));
     };
+    if module == STD_PLANS {
+        return std_plan_refusal(path, plan);
+    }
     if crate::source::is_kernel_module(module) {
         return Some(format!(
             "`by {path}`: {module} is a module of the proof kernel, not a plans module of this project"

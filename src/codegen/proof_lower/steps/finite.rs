@@ -134,6 +134,42 @@ pub(crate) fn int_givens(t: &LawTheorem) -> Vec<String> {
         .collect()
 }
 
+/// What a list given holds, as a proof plan's goal tells it
+/// (`Kernel.Proof.Ty`): a finite type, Int, a list of something, or other.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum ElemType {
+    Fin(Finite),
+    Int,
+    List(Box<ElemType>),
+    Other,
+}
+
+fn elem_type(inputs: &ProofLowerInputs, ty: &Type, scope: Option<&str>) -> ElemType {
+    match ty {
+        Type::Int => ElemType::Int,
+        Type::List(inner) => ElemType::List(Box::new(elem_type(inputs, inner, scope))),
+        _ => finite_of(inputs, ty, scope, 4).map_or(ElemType::Other, ElemType::Fin),
+    }
+}
+
+/// The list givens of law `t`, each with the type of its elements.
+pub(crate) fn list_elem_types(
+    inputs: &ProofLowerInputs,
+    t: &LawTheorem,
+) -> Vec<(String, ElemType)> {
+    let scope = inputs.symbol_table.fn_entry(t.fn_id).key.scope_str();
+    t.quantifiers
+        .iter()
+        .filter_map(|q| {
+            let QuantifierType::Plain(ty) = &q.binder_type;
+            match crate::types::parse_type_str(ty) {
+                Type::List(inner) => Some((q.name.clone(), elem_type(inputs, &inner, scope))),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
 pub(crate) fn list_givens(t: &LawTheorem) -> Vec<String> {
     t.quantifiers
         .iter()
