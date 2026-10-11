@@ -321,7 +321,7 @@ Lean export modes:
 - `sorry`
 - `theorem-skeleton`
 
-`aver proof` exports the laws (`verify ... law`) with their samples, `because` and `using`, and what the laws reach. `--examples` also exports the `verify` examples and what only they reach, such as an effectful function no law calls. The flag means the same on `aver compile --certify`, where it bridges every certified export instead of only the law cone. Without `--examples`, an example is not exported, so it is neither a sorry nor a declined claim.
+`aver proof` exports the laws (`verify ... law`) with their `because` and `using`, and what the laws reach. `--examples` also exports every example: the `verify` examples, with what only they reach (such as an effectful function no law calls), and the law samples (`_checked_domain`, `_sample_N`). The flag means the same on `aver compile --certify`, where it bridges every certified export instead of only the law cone. Without `--examples`, an example is not exported, so it is neither a sorry nor a declined claim. A law sample proves nothing about its law, so a law's tier is the same with or without the flag.
 
 `--backend` picks the judge. With `lean` (the default) the Lean kernel checks the exported model: a law's proof written as steps by the compiler goes first and its tactics stay behind it. With `aver` the proof kernel written in Aver (`tools/proof-kernel`, built into `aver`) checks those step proofs in process against its closed list of rules, without Lean; a law the compiler writes no steps for is reported as not closed by this backend. What a step may do, and how the compiler refuses when it cannot write one, is in [proof steps](lean.md#proof-steps). `aver cert` always uses Lean.
 

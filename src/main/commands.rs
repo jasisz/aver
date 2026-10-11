@@ -8398,7 +8398,9 @@ pub(super) fn cmd_proof(
 /// RHS for every miss, as before.
 ///
 /// Without `examples` only `law` blocks run: the export states no
-/// cases-form block then, so their results would never be read.
+/// cases-form block then, so their results would never be read. The law
+/// blocks still run although their samples are not exported either: a
+/// sample the VM declines charges its law in both modes.
 fn collect_verify_ground_truth(file: &str, module_root: &str, examples: bool) -> VerifyGroundTruth {
     use aver::checker::VerifyCaseOutcome;
 

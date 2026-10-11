@@ -701,11 +701,12 @@ pub struct CodegenContext {
     /// per-law `mathlib` credit. Axiom whitelist is UNCHANGED — Mathlib lemmas
     /// are kernel-clean `{propext, Classical.choice, Quot.sound}`.
     pub allow_mathlib: bool,
-    /// Whether the Lean proof export states the `verify` examples (the
-    /// cases-form blocks) and lifts what only they reach. `aver proof` sets it
-    /// from `--examples` and leaves it off by default; laws, their samples and
-    /// their `because`/`using` are exported either way. Every other caller
-    /// keeps the examples (`true`).
+    /// Whether the Lean proof export states the examples: the `verify`
+    /// examples (the cases-form blocks), with what only they reach lifted, and
+    /// the law samples (`_checked_domain`, `_sample_N`). `aver proof` sets it
+    /// from `--examples` and leaves it off by default; laws with their
+    /// `because`/`using` and their proofs are exported either way. Every
+    /// other caller keeps the examples (`true`).
     pub export_verify_examples: bool,
 }
 
