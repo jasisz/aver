@@ -511,7 +511,7 @@ impl Env<'_> {
                 match e {
                     Effect::Used(id) => self.mark_used(*id),
                     Effect::Const(name) => self.mark_const_used(name),
-                    Effect::Law(law) => self.use_law(law.clone()),
+                    Effect::Law(law) => self.use_law((**law).clone()),
                     Effect::Note(note) => self.note(note.clone()),
                     Effect::Def(id) => {
                         self.def(*id);
@@ -542,19 +542,19 @@ impl Env<'_> {
             }),
             _ => None,
         };
-        if let Some(old) = &kept {
-            if !entry.as_ref().is_some_and(|e| old.same(e)) {
-                panic!(
-                    "AVER_STEPS_MEMO=check: evaluating `{}` again differs from the kept evaluation:\nkept: {}\nnow:  {}",
-                    crate::ir::proof_steps::show::term(t, self.inputs.symbol_table),
-                    old.describe(),
-                    match (&entry, &out) {
-                        (Some(e), _) => e.describe(),
-                        (None, Err(why)) => format!("failed: {why}"),
-                        (None, Ok(_)) => "not kept".to_string(),
-                    }
-                );
-            }
+        if let Some(old) = &kept
+            && !entry.as_ref().is_some_and(|e| old.same(e))
+        {
+            panic!(
+                "AVER_STEPS_MEMO=check: evaluating `{}` again differs from the kept evaluation:\nkept: {}\nnow:  {}",
+                crate::ir::proof_steps::show::term(t, self.inputs.symbol_table),
+                old.describe(),
+                match (&entry, &out) {
+                    (Some(e), _) => e.describe(),
+                    (None, Err(why)) => format!("failed: {why}"),
+                    (None, Ok(_)) => "not kept".to_string(),
+                }
+            );
         }
         if let Some(entry) = entry {
             memo.borrow_mut().insert(key, entry);

@@ -136,7 +136,7 @@ impl<'a> Env<'a> {
     /// Carry law `law` in the script, once.
     pub(crate) fn use_law(&mut self, law: LawRef) {
         if self.trace.is_some() {
-            self.traced(super::memo::Effect::Law(law.clone()));
+            self.traced(super::memo::Effect::Law(Box::new(law.clone())));
         }
         if !self.laws.iter().any(|l| l.key == law.key) {
             self.laws.push(law);

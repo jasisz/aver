@@ -61,7 +61,7 @@ pub(crate) enum Effect {
     /// A module-level binding opened.
     Const(String),
     /// A cited law used ([`super::env::Env::use_law`]).
-    Law(LawRef),
+    Law(Box<LawRef>),
     /// A note for the refusal.
     Note(String),
     /// A definition looked up ([`super::env::Env::def`]).
