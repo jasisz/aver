@@ -1,0 +1,97 @@
+module Scripted
+    intent =
+        "Laws closed by plans written as scripts (Plans.Tactics): stack shuffles under a length `when`,"
+        "opened a cell at a time, and a byte check over a concatenation, by induction with a split on each head."
+        "Two laws stay open on purpose: one where the script stops, one whose plan writes a wrong proof."
+    exposes [shuffled, validBytes]
+    effects []
+
+fn itemAt(items: List<List<Int>>, n: Int) -> List<Int>
+    ? "The nth item from the top, or an empty item past the end."
+    match items
+        [] -> []
+        [head, ..tail] -> hereOrDeeper(head, tail, n)
+
+verify itemAt
+    itemAt([[1], [2], [3]], 0) => [1]
+    itemAt([[1]], 3) => []
+
+fn hereOrDeeper(head: List<Int>, tail: List<List<Int>>, n: Int) -> List<Int>
+    ? "Count down one position at a time."
+    match n <= 0
+        true -> head
+        false -> itemAt(tail, n - 1)
+
+verify hereOrDeeper
+    hereOrDeeper([1], [[2]], 0) => [1]
+    hereOrDeeper([1], [[2]], 1) => [2]
+
+fn shuffled(code: Int, items: List<List<Int>>) -> List<List<Int>>
+    ? "What three shuffling opcodes make of the items they reach, top first."
+    top = itemAt(items, 0)
+    second = itemAt(items, 1)
+    third = itemAt(items, 2)
+    fourth = itemAt(items, 3)
+    match code
+        114 -> [third, fourth, top, second]
+        123 -> [third, top, second]
+        124 -> [second, top]
+        _ -> items
+
+verify shuffled
+    shuffled(124, [[1], [2]]) => [[2], [1]]
+    shuffled(123, [[1], [2], [3]]) => [[3], [1], [2]]
+    shuffled(114, [[1], [2], [3], [4]]) => [[3], [4], [1], [2]]
+
+verify shuffled law swapTwiceIsTheTopPair
+    given items: List<List<Int>> = [[[1], [2]], [[1], [2], [3]], [[0], [7], [8], [9]]]
+    when List.len(items) >= 2
+    by Plans.Tactics.openByLength
+    shuffled(124, shuffled(124, items)) => List.take(items, 2)
+
+verify shuffled law rotThreeTimesIsTheTopThree
+    given items: List<List<Int>> = [[[1], [2], [3]], [[1], [2], [3], [4]]]
+    when List.len(items) >= 3
+    by Plans.Tactics.openByLength
+    shuffled(123, shuffled(123, shuffled(123, items))) => List.take(items, 3)
+
+verify shuffled law twoSwapTwiceIsTheTopFour
+    given items: List<List<Int>> = [[[1], [2], [3], [4]], [[1], [2], [3], [4], [5]]]
+    when List.len(items) >= 4
+    by Plans.Tactics.openByLength
+    shuffled(114, shuffled(114, items)) => List.take(items, 4)
+
+fn validBytes(bytes: List<Int>) -> Bool
+    ? "Every element is an octet."
+    match bytes
+        [] -> true
+        [head, ..tail] -> Bool.and(Bool.and(head >= 0, head < 256), validBytes(tail))
+
+verify validBytes
+    validBytes([]) => true
+    validBytes([0, 128, 255]) => true
+    validBytes([-1]) => false
+    validBytes([256]) => false
+
+verify validBytes law concatenation
+    given left: List<Int> = [[], [1, 2], [-1]]
+    given right: List<Int> = [[], [255], [256]]
+    by Plans.Tactics.octets
+    validBytes(List.concat(left, right)) => Bool.and(validBytes(left), validBytes(right))
+
+verify validBytes law concatenationByPlan
+    given left: List<Int> = [[], [1, 2], [-1]]
+    given right: List<Int> = [[], [255], [256]]
+    by Plans.Tactics.octetsByPlan
+    validBytes(List.concat(left, right)) => Bool.and(validBytes(left), validBytes(right))
+
+verify validBytes law reversal
+    given bytes: List<Int> = [[], [1, 2], [-1, 256], [255, 0, 128]]
+    by Plans.Tactics.bytesByInduction
+    validBytes(List.reverse(bytes)) => validBytes(bytes)
+
+verify validBytes law concatenationClaimed
+    given left: List<Int> = [[], [1, 2], [-1]]
+    given right: List<Int> = [[], [255], [256]]
+    by Plans.Tactics.splitThenClaim
+    validBytes(List.concat(left, right)) => Bool.and(validBytes(left), validBytes(right))

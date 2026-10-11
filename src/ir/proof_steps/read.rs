@@ -282,6 +282,20 @@ impl Reader {
         self.proof(&parse(text)?)
     }
 
+    /// The type the goal gives variable `name`, if it gives one.
+    pub fn var_type(&self, name: &str) -> Option<Type> {
+        self.var_types.borrow().get(name).cloned()
+    }
+
+    /// Give a variable the goal does not mention (one a split names) its
+    /// type, so the terms read later carry it.
+    pub fn declare_var(&self, name: &str, ty: Type) {
+        self.var_types
+            .borrow_mut()
+            .entry(name.to_string())
+            .or_insert(ty);
+    }
+
     fn atom<'s>(&self, s: &'s Sx) -> Result<&'s str, String> {
         match s {
             Sx::Atom(a) => Ok(a),

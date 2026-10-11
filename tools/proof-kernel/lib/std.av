@@ -6,8 +6,8 @@ module Std
         "Each function here takes a Goal, with the hypotheses in scope at that point of the proof, and"
         "returns proof steps or why it does not apply; a callback such as splitBool's gets a Goal too."
         "Nothing here is trusted: the kernel checks every step a plan writes, like any other proof."
-    exposes [cases, assume, close, splitBool]
-    depends [Kernel.Term, Kernel.Proof, Kernel.Lib, Kernel.Finite, Kernel.Subst, Kernel.Wire]
+    exposes [cases, assume, close, splitBool, Tactic, script, scriptAnswer, goalAt]
+    depends [Kernel.Term, Kernel.Proof, Kernel.Lib, Kernel.Finite, Kernel.Subst, Kernel.Wire, Kernel.Sexp, Kernel.Decode]
     effects []
     plans [cases]
 
@@ -265,3 +265,678 @@ fn splitBool(goal: Goal, on: Term, next: Fn(Goal) -> Result<Proof, String>) -> R
 
 verify splitBool
     splitBool(Kernel.Lib.goalFor(Law(key = "k", givens = ["x"], premise = [], lhs = Term.TOp("<", Term.TVar("x"), Term.TInt(0)), rhs = Term.TOp("<", Term.TVar("x"), Term.TInt(0)))), Term.TOp("<", Term.TVar("x"), Term.TInt(0)), close) => Result.Ok(Proof.PCases(Term.TOp("<", Term.TVar("x"), Term.TInt(0)), "c", Proof.PTrans([Term.TOp("<", Term.TVar("x"), Term.TInt(0)), Term.TBool(true), Term.TOp("<", Term.TVar("x"), Term.TInt(0))], [Proof.PHyp("c"), Proof.PSymm(Proof.PHyp("c"))]), Proof.PTrans([Term.TOp("<", Term.TVar("x"), Term.TInt(0)), Term.TBool(false), Term.TOp("<", Term.TVar("x"), Term.TInt(0))], [Proof.PHyp("c"), Proof.PSymm(Proof.PHyp("c"))])))
+
+type Tactic
+    Auto
+    Cases(Tactic)
+    Induction(String, String, String, Tactic, Tactic)
+    Split(String, String, String, Tactic, Tactic)
+    SplitBool(Term, Tactic, Tactic)
+    First(List<Tactic>)
+    Plan(String)
+
+record Origin
+    name: String
+    part: String
+    list: String
+
+record Node
+    goal: Goal
+    path: String
+    from: List<Origin>
+    depth: Int
+
+type Reply
+    Closed(Int)
+    Declined(String)
+    Script(Tactic)
+
+record Answer
+    key: String
+    reply: Reply
+
+type Stop
+    Refused(String)
+    Ask(String)
+
+fn maxPlanDepth() -> Int
+    ? "How many Plan nodes may run inside one another before a script is refused: a plan that hands its goal back to itself must not run forever."
+    64
+
+verify maxPlanDepth
+    maxPlanDepth() => 64
+
+fn runScript(goal: Goal, t: Tactic, answers: List<Answer>) -> Result<Proof, Stop>
+    ? "The proof the script t writes for the goal, why it stops, or the question it needs answered first."
+      "A script does not search: it splits the goal as its nodes say, and leaves every Auto and Plan node to the compiler."
+      "The compiler answers such a node by its key (the automatic steps, or the project's plan, on the goal there) and runs the script again with the answers so far."
+      "An Auto or Plan node the compiler closed is the hypothesis #N in the proof, which the compiler replaces by its own proof N before the kernel checks the whole."
+    within(Node(goal = goal, path = "", from = [], depth = 0), t, answers)
+
+verify runScript
+    runScript(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), Tactic.Auto, []) => Result.Err(Stop.Ask("auto\n(sub () (elems) (from) (hyps) (none) (i 1) (i 1))"))
+    runScript(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), Tactic.Auto, [Answer(key = "auto\n(sub () (elems) (from) (hyps) (none) (i 1) (i 1))", reply = Reply.Closed(0))]) => Result.Ok(Proof.PHyp("#0"))
+    runScript(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), Tactic.Plan("p"), [Answer(key = "plan p\n(sub () (elems) (from) (hyps) (none) (i 1) (i 1))", reply = Reply.Declined("no"))]) => Result.Err(Stop.Refused("Plan(p): no"))
+
+fn within(n: Node, t: Tactic, answers: List<Answer>) -> Result<Proof, Stop>
+    ? "Run the script t at one node of the proof."
+    match t
+        Tactic.Auto -> match refutedByWhen(n.goal)
+            Result.Ok(p) -> Result.Ok(p)
+            Result.Err(_) -> asked(n, "Auto", "auto\n{subText(n)}", answers)
+        Tactic.Plan(name) -> asked(n, "Plan({name})", "plan {name}\n{subText(n)}", answers)
+        Tactic.Cases(next) -> casesAt(down(n, "Cases"), next, answers)
+        Tactic.Induction(v, h, tl, nil, cons) -> listStep(down(n, "Induction({v})"), v, h, tl, nil, cons, true, answers)
+        Tactic.Split(v, h, tl, nil, cons) -> listStep(down(n, "Split({v})"), v, h, tl, nil, cons, false, answers)
+        Tactic.SplitBool(c, yes, no) -> boolStep(down(n, "SplitBool"), c, yes, no, answers)
+        Tactic.First(ts) -> first(n, ts, 1, [], answers)
+
+verify within
+    within(Node(goal = Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), path = "", from = [], depth = 0), Tactic.First([]), []) => Result.Err(Stop.Refused("First: none closes: "))
+
+fn refutedByWhen(goal: Goal) -> Result<Proof, String>
+    ? "The claim in a case its `when` rules out, such as an empty list under a length bound: Auto tries this itself before it asks for the automatic steps."
+    match Kernel.Lib.whenOf(goal)
+        Option.None -> Result.Err("no `when`")
+        Option.Some(p) -> Kernel.Lib.whenRefutes(Kernel.Lib.scope(goal), p, goal.obligation.lhs, goal.obligation.rhs)
+
+verify refutedByWhen
+    refutedByWhen(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [Term.TBool(false)], lhs = Term.TInt(1), rhs = Term.TInt(2)))) => Result.Ok(Proof.PAbsurd(Proof.PTrans([Term.TBool(true), Term.TBool(false), Term.TBool(false)], [Proof.PSymm(Proof.PHyp("when")), Proof.PRefl(Term.TBool(false))]), Term.TInt(1), Term.TInt(2)))
+    refutedByWhen(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2)))) => Result.Err("no `when`")
+
+fn down(n: Node, label: String) -> Node
+    ? "The same node, one step deeper in the script's path."
+    Node.update(n, path = joinPath(n.path, label))
+
+verify down
+    down(Node(goal = Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), path = "Cases", from = [], depth = 0), "Auto").path => "Cases/Auto"
+
+fn joinPath(path: String, label: String) -> String
+    ? "A path in the script one node deeper."
+    match path == ""
+        true -> label
+        false -> "{path}/{label}"
+
+verify joinPath
+    joinPath("", "Auto") => "Auto"
+    joinPath("Split(xs)/cons", "Auto") => "Split(xs)/cons/Auto"
+
+fn refuse(path: String, why: String) -> Result<Proof, Stop>
+    ? "A refusal that says where in the script it happened."
+    Result.Err(Stop.Refused("{path}: {why}"))
+
+verify refuse
+    refuse("Auto", "no") => Result.Err(Stop.Refused("Auto: no"))
+
+fn asked(n: Node, label: String, key: String, answers: List<Answer>) -> Result<Proof, Stop>
+    ? "A node the compiler answers: its proof #N once closed, its refusal, the script a plan gave for it, or the question when it has no answer yet."
+    here = down(n, label)
+    match lookup(answers, key)
+        Option.None -> Result.Err(Stop.Ask(key))
+        Option.Some(Reply.Closed(k)) -> Result.Ok(Proof.PHyp("#{k}"))
+        Option.Some(Reply.Declined(why)) -> refuse(here.path, why)
+        Option.Some(Reply.Script(next)) -> match n.depth >= maxPlanDepth()
+            true -> refuse(here.path, "more than {maxPlanDepth()} plans run inside one another")
+            false -> within(Node.update(here, depth = n.depth + 1), next, answers)
+
+verify asked
+    asked(Node(goal = Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), path = "", from = [], depth = 64), "Plan(p)", "q", [Answer(key = "q", reply = Reply.Script(Tactic.Plan("p")))]) => Result.Err(Stop.Refused("Plan(p): more than 64 plans run inside one another"))
+
+fn lookup(answers: List<Answer>, key: String) -> Option<Reply>
+    ? "The compiler's answer to the question key, if it gave one."
+    match answers
+        [] -> Option.None
+        [a, ..rest] -> match a.key == key
+            true -> Option.Some(a.reply)
+            false -> lookup(rest, key)
+
+verify lookup
+    lookup([Answer(key = "a", reply = Reply.Closed(1))], "a") => Option.Some(Reply.Closed(1))
+    lookup([], "a") => Option.None
+
+fn first(n: Node, ts: List<Tactic>, i: Int, whys: List<String>, answers: List<Answer>) -> Result<Proof, Stop>
+    ? "The first script of ts that closes the node; each runs from the node with its own path, and a question stops the search until it is answered."
+    match ts
+        [] -> Result.Err(Stop.Refused("{joinPath(n.path, "First")}: none closes: {String.join(List.reverse(whys), " | ")}"))
+        [t, ..rest] -> match within(Node.update(n, path = ""), t, answers)
+            Result.Ok(p) -> Result.Ok(p)
+            Result.Err(Stop.Ask(key)) -> Result.Err(Stop.Ask(key))
+            Result.Err(Stop.Refused(why)) -> first(n, rest, i + 1, List.prepend("{i}. {why}", whys), answers)
+
+verify first
+    first(Node(goal = Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), path = "Cases", from = [], depth = 0), [Tactic.Cases(Tactic.Auto)], 1, [], []) => Result.Err(Stop.Refused("Cases/First: none closes: 1. Cases: no given of finite type"))
+
+fn casesAt(n: Node, next: Tactic, answers: List<Answer>) -> Result<Proof, Stop>
+    ? "Split every given of finite type into its values, as the standard plan cases does, and run next in each case."
+    count = caseCount(n.goal.finite)
+    match n.goal.finite
+        [] -> refuse(n.path, "no given of finite type")
+        gs -> match count > maxCases()
+            true -> refuse(n.path, "{count} cases is more than a split may write")
+            false -> eachGiven(n, gs, next, answers)
+
+verify casesAt
+    casesAt(Node(goal = Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), path = "Cases", from = [], depth = 0), Tactic.Auto, []) => Result.Err(Stop.Refused("Cases: no given of finite type"))
+
+fn eachGiven(n: Node, gs: List<Given>, next: Tactic, answers: List<Answer>) -> Result<Proof, Stop>
+    ? "Split the first given, the rest inside each of its cases; with none left, run next."
+    ob = n.goal.obligation
+    match gs
+        [] -> within(n, next, answers)
+        [g, ..rest] -> Result.Ok(Proof.PEnum(g.name, ob.lhs, ob.rhs, eachCase(n, g.name, Kernel.Finite.values(g.fin), rest, next, answers)?))
+
+verify eachGiven
+    eachGiven(Node(goal = Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), path = "", from = [], depth = 0), [], Tactic.First([]), []) => Result.Err(Stop.Refused("First: none closes: "))
+
+fn eachCase(n: Node, v: String, vals: List<Term>, rest: List<Given>, next: Tactic, answers: List<Answer>) -> Result<List<Proof>, Stop>
+    ? "One case per value, in the kernel's order, its path naming the value."
+    match vals
+        [] -> Result.Ok([])
+        [x, ..xs] -> Result.Ok(List.prepend(eachGiven(caseNode(n, v, x)?, rest, next, answers)?, eachCase(n, v, xs, rest, next, answers)?))
+
+verify eachCase
+    eachCase(Node(goal = Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), path = "", from = [], depth = 0), "b", [], [], Tactic.Auto, []) => Result.Ok([])
+
+fn caseNode(n: Node, v: String, x: Term) -> Result<Node, Stop>
+    ? "The node where v is the value x."
+    match at(n.goal, v, x)
+        Result.Ok(g) -> Result.Ok(Node.update(down(n, "{v} = {valueText(x)}"), goal = g))
+        Result.Err(why) -> Result.Err(Stop.Refused("{n.path}: {why}"))
+
+verify caseNode
+    caseNode(Node(goal = Kernel.Lib.goalFor(Law(key = "k", givens = ["b"], premise = [], lhs = Term.TVar("b"), rhs = Term.TVar("b"))), path = "Cases", from = [], depth = 0), "b", Term.TBool(true)) => Result.Ok(Node(goal = Kernel.Lib.goalFor(Law(key = "k", givens = ["b"], premise = [], lhs = Term.TBool(true), rhs = Term.TBool(true))), path = "Cases/b = true", from = [], depth = 0))
+
+fn valueText(x: Term) -> String
+    ? "A value of a finite type as Aver writes it, for a path; a record or tuple value is only described."
+    match x
+        Term.TBool(b) -> "{b}"
+        Term.TCtor(c, []) -> c
+        _ -> "a value"
+
+verify valueText
+    valueText(Term.TBool(false)) => "false"
+    valueText(Term.TCtor("Light.Red", [])) => "Light.Red"
+    valueText(Term.TTuple([])) => "a value"
+
+fn listStep(n: Node, v: String, h: String, tl: String, nil: Tactic, cons: Tactic, induct: Bool, answers: List<Answer>) -> Result<Proof, Stop>
+    ? "Split the list variable v into [] and the cell h :: tl, v replaced in the claim, the `when` and every hypothesis; nil runs in the first case and cons in the second."
+      "As an induction, the cell case also has the claim at tl as a hypothesis (named ih, or the first free ih1, ih2, …); the kernel allows that only when no hypothesis and no `when` mentions v."
+    used = Kernel.Lib.taken(n.goal)
+    match listStepRefusal(n.goal, v, h, tl, induct, used)
+        Option.Some(why) -> refuse(n.path, why)
+        Option.None -> listCases(n, v, h, tl, nil, cons, induct, used, answers)
+
+verify listStep
+    listStep(Node(goal = Kernel.Lib.goalFor(Law(key = "k", givens = ["xs"], premise = [], lhs = Term.TVar("xs"), rhs = Term.TVar("xs"))), path = "Split(xs)", from = [], depth = 0), "xs", "h", "t", Tactic.Auto, Tactic.Auto, false, []) => Result.Err(Stop.Refused("Split(xs): xs is not a list variable here"))
+
+fn listStepRefusal(goal: Goal, v: String, h: String, tl: String, induct: Bool, used: List<String>) -> Option<String>
+    ? "Why the list split or induction cannot be written, if it cannot."
+    match (List.contains(goal.lists, v), h == tl, List.contains(used, h), List.contains(used, tl))
+        (false, _, _, _) -> Option.Some("{v} is not a list variable here")
+        (_, true, _, _) -> Option.Some("the head and the tail need two names, not {h} twice")
+        (_, _, true, _) -> Option.Some("the name {h} is already taken")
+        (_, _, _, true) -> Option.Some("the name {tl} is already taken")
+        _ -> match Bool.and(induct, mentionedBelow(goal, v))
+            true -> Option.Some("a hypothesis or the `when` mentions {v}, so the claim at the tail is not a hypothesis the kernel allows; use Split")
+            false -> Option.None
+
+verify listStepRefusal
+    listStepRefusal(Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = ["xs"], premise = [], lhs = Term.TVar("xs"), rhs = Term.TVar("xs"))), lists = ["xs"]), "xs", "xs", "t", false, ["xs"]) => Option.Some("the name xs is already taken")
+    listStepRefusal(Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = ["xs"], premise = [Term.TVar("xs")], lhs = Term.TVar("xs"), rhs = Term.TVar("xs"))), lists = ["xs"]), "xs", "h", "t", true, ["xs"]) => Option.Some("a hypothesis or the `when` mentions xs, so the claim at the tail is not a hypothesis the kernel allows; use Split")
+    listStepRefusal(Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = ["xs"], premise = [], lhs = Term.TVar("xs"), rhs = Term.TVar("xs"))), lists = ["xs"]), "xs", "h", "h", false, ["xs"]) => Option.Some("the head and the tail need two names, not h twice")
+
+fn mentionedBelow(goal: Goal, v: String) -> Bool
+    ? "Whether the `when` or a hypothesis mentions v."
+    List.contains(Kernel.Subst.freeVarsAll(List.concat(goal.obligation.premise, hypTerms(goal.hyps))), v)
+
+verify mentionedBelow
+    mentionedBelow(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TVar("xs"), rhs = Term.TVar("xs"))), "xs") => false
+
+fn hypTerms(hs: List<Hyp>) -> List<Term>
+    ? "Both sides of every hypothesis."
+    match hs
+        [] -> []
+        [h, ..rest] -> List.prepend(h.eqn.lhs, List.prepend(h.eqn.rhs, hypTerms(rest)))
+
+verify hypTerms
+    hypTerms([Hyp(name = "c", eqn = Eqn(lhs = Term.TVar("x"), rhs = Term.TBool(true)))]) => [Term.TVar("x"), Term.TBool(true)]
+
+fn listCases(n: Node, v: String, h: String, tl: String, nil: Tactic, cons: Tactic, induct: Bool, used: List<String>, answers: List<Answer>) -> Result<Proof, Stop>
+    ? "The two cases of the split, and the step that ties them."
+    ob = n.goal.obligation
+    nilGoal = withoutList(substituted(n, at(n.goal, v, Term.TList([])))?, v)
+    cellGoal = opened(substituted(n, at(n.goal, v, Kernel.Lib.cons(Term.TVar(h), Term.TVar(tl))))?, v, h, tl)
+    ih = Kernel.Lib.fresh("ih", List.concat([h, tl], used))
+    consGoal = withIh(cellGoal, induct, ih, ob, v, Term.TVar(tl))?
+    cells = List.prepend(Origin(name = tl, part = "tail", list = v), List.prepend(Origin(name = h, part = "head", list = v), n.from))
+    nilProof = within(Node.update(down(n, "nil"), goal = nilGoal), nil, answers)?
+    consProof = within(Node.update(down(n, "cons"), goal = consGoal, from = cells), cons, answers)?
+    match induct
+        true -> Result.Ok(Proof.PListInduct(v, ob.lhs, ob.rhs, nilProof, h, tl, [], [IhAt(name = ih, at = [], carry = [])], consProof))
+        false -> Result.Ok(Proof.PListCases(v, ob.lhs, ob.rhs, nilProof, h, tl, consProof))
+
+verify listCases
+    listCases(Node(goal = Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = ["xs"], premise = [], lhs = Term.TVar("xs"), rhs = Term.TVar("xs"))), lists = ["xs"]), path = "", from = [], depth = 0), "xs", "h", "t", Tactic.Auto, Tactic.Auto, false, ["xs"], []) => Result.Err(Stop.Ask("auto\n(sub () (elems) (from) (hyps) (none) (list) (list))"))
+
+fn substituted(n: Node, r: Result<Goal, String>) -> Result<Goal, Stop>
+    ? "A goal with a variable replaced, or the refusal at this node."
+    match r
+        Result.Ok(g) -> Result.Ok(g)
+        Result.Err(why) -> Result.Err(Stop.Refused("{n.path}: {why}"))
+
+verify substituted
+    substituted(Node(goal = Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), path = "Split(xs)", from = [], depth = 0), Result.Err("no")) => Result.Err(Stop.Refused("Split(xs): no"))
+
+fn withIh(goal: Goal, induct: Bool, ih: String, ob: Law, v: String, tl: Term) -> Result<Goal, Stop>
+    ? "The cell case's goal, with the claim at the tail as hypothesis ih when this is an induction."
+    match induct
+        false -> Result.Ok(goal)
+        true -> withIhOf(goal, ih, Kernel.Lib.substitute(ob.lhs, v, tl), Kernel.Lib.substitute(ob.rhs, v, tl))
+
+verify withIh
+    withIh(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), false, "ih", Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), "xs", Term.TVar("t")) => Result.Ok(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))))
+
+fn withIhOf(goal: Goal, ih: String, l: Result<Term, String>, r: Result<Term, String>) -> Result<Goal, Stop>
+    ? "The goal with ih: l = r in front of its hypotheses."
+    match (l, r)
+        (Result.Ok(a), Result.Ok(b)) -> Result.Ok(assume(goal, ih, a, b))
+        (Result.Err(why), _) -> Result.Err(Stop.Refused(why))
+        (_, Result.Err(why)) -> Result.Err(Stop.Refused(why))
+
+verify withIhOf
+    withIhOf(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), "ih", Result.Ok(Term.TVar("a")), Result.Ok(Term.TVar("b"))) => Result.Ok(Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), hyps = [Hyp(name = "ih", eqn = Eqn(lhs = Term.TVar("a"), rhs = Term.TVar("b")))]))
+
+fn withoutList(goal: Goal, v: String) -> Goal
+    ? "The goal once v is gone: no longer a given, a list variable or a list with an element type."
+    Goal.update(goal, obligation = Law.update(goal.obligation, givens = without(goal.obligation.givens, v)), lists = without(goal.lists, v), listElems = elemsWithout(goal.listElems, v))
+
+verify withoutList
+    withoutList(Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = ["xs"], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), lists = ["xs"]), "xs").lists => []
+
+fn opened(goal: Goal, v: String, h: String, tl: String) -> Goal
+    ? "The goal of the cell case: v gone, h and tl givens in its place; tl a list variable holding what v held, and h a list, an Int or a given of finite type when v's elements are one."
+    elem = elemOf(goal.listElems, v)
+    g = withoutList(goal, v)
+    base = Goal.update(g, obligation = Law.update(g.obligation, givens = List.concat(g.obligation.givens, [h, tl])), lists = List.prepend(tl, g.lists), listElems = withElem(g.listElems, tl, elem))
+    match elem
+        Option.Some(Ty.TyList(e)) -> Goal.update(base, lists = List.prepend(h, base.lists), listElems = List.prepend(ListElem(list = h, elem = e), base.listElems))
+        Option.Some(Ty.TyInt) -> Goal.update(base, ints = List.prepend(h, base.ints))
+        Option.Some(Ty.TyFin(f)) -> Goal.update(base, finite = List.prepend(Given(name = h, fin = f), base.finite))
+        _ -> base
+
+verify opened
+    opened(Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = ["xs"], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), lists = ["xs"], listElems = [ListElem(list = "xs", elem = Ty.TyInt)]), "xs", "h", "t") => Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = ["h", "t"], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), lists = ["t"], ints = ["h"], listElems = [ListElem(list = "t", elem = Ty.TyInt)])
+
+fn elemOf(es: List<ListElem>, v: String) -> Option<Ty>
+    ? "What the list v holds, when the goal says."
+    match es
+        [] -> Option.None
+        [e, ..rest] -> match e.list == v
+            true -> Option.Some(e.elem)
+            false -> elemOf(rest, v)
+
+verify elemOf
+    elemOf([ListElem(list = "xs", elem = Ty.TyInt)], "xs") => Option.Some(Ty.TyInt)
+    elemOf([], "xs") => Option.None
+
+fn withElem(es: List<ListElem>, v: String, elem: Option<Ty>) -> List<ListElem>
+    ? "es with v holding elem, when it is known."
+    match elem
+        Option.Some(e) -> List.prepend(ListElem(list = v, elem = e), es)
+        Option.None -> es
+
+verify withElem
+    withElem([], "t", Option.None) => []
+
+fn elemsWithout(es: List<ListElem>, v: String) -> List<ListElem>
+    ? "The element types of the lists other than v."
+    match es
+        [] -> []
+        [e, ..rest] -> match e.list == v
+            true -> elemsWithout(rest, v)
+            false -> List.prepend(e, elemsWithout(rest, v))
+
+verify elemsWithout
+    elemsWithout([ListElem(list = "xs", elem = Ty.TyInt)], "xs") => []
+
+fn without(ns: List<String>, v: String) -> List<String>
+    ? "The names other than v."
+    match ns
+        [] -> []
+        [n, ..rest] -> match n == v
+            true -> without(rest, v)
+            false -> List.prepend(n, without(rest, v))
+
+verify without
+    without(["a", "b"], "a") => ["b"]
+
+fn boolStep(n: Node, c: Term, yes: Tactic, no: Tactic, answers: List<Answer>) -> Result<Proof, Stop>
+    ? "Split on the Bool term c: yes runs where it is true and no where it is false, each case with it as a hypothesis (c, or the first free c1, c2, …)."
+    h = Kernel.Lib.fresh("c", Kernel.Lib.taken(n.goal))
+    t = within(Node.update(down(n, "true"), goal = assume(n.goal, h, c, Term.TBool(true))), yes, answers)?
+    f = within(Node.update(down(n, "false"), goal = assume(n.goal, h, c, Term.TBool(false))), no, answers)?
+    Result.Ok(Proof.PCases(c, h, t, f))
+
+verify boolStep
+    boolStep(Node(goal = Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), path = "SplitBool", from = [], depth = 0), Term.TVar("b"), Tactic.First([]), Tactic.Auto, []) => Result.Err(Stop.Refused("SplitBool/true/First: none closes: "))
+
+fn subText(n: Node) -> String
+    ? "The goal at a node, as the compiler reads a question about it: (sub (GIVEN…) (elems (LIST TYPE)…) (from (NAME head|tail LIST)…) (hyps (NAME TERM TERM)…) PREMISE TERM TERM)."
+      "The givens are typed as in an obligation; from says which list each split variable came from, oldest first; the definitions, constants and laws are the goal's own and are not repeated."
+    g = n.goal
+    ob = g.obligation
+    givens = Kernel.Wire.spaced(givenTexts(g, ob.givens))
+    elems = Kernel.Wire.spaced(elemTexts(g.listElems))
+    from = Kernel.Wire.spaced(originTexts(List.reverse(n.from)))
+    hyps = Kernel.Wire.spaced(hypTexts(List.reverse(g.hyps)))
+    "(sub ({givens}) {headedText("elems", elems)} {headedText("from", from)} {headedText("hyps", hyps)} {premiseText(ob.premise)} {Kernel.Wire.termText(ob.lhs)} {Kernel.Wire.termText(ob.rhs)})"
+
+verify subText
+    subText(Node(goal = Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = ["xs", "b", "n", "z"], premise = [Term.TVar("b")], lhs = Term.TVar("xs"), rhs = Term.TVar("xs"))), lists = ["xs"], ints = ["n"], finite = [Given(name = "b", fin = Fin.FBool)], listElems = [ListElem(list = "xs", elem = Ty.TyInt)], hyps = [Hyp(name = "c", eqn = Eqn(lhs = Term.TVar("b"), rhs = Term.TBool(true)))]), path = "", from = [Origin(name = "xs", part = "tail", list = "ys")], depth = 0)) => "(sub ((xs (tlist)) (b (tbool)) (n (tint)) z) (elems (xs (tint))) (from (xs tail ys)) (hyps (c (v b) (b true))) (v b) (v xs) (v xs))"
+
+fn headedText(head: String, body: String) -> String
+    ? "(HEAD BODY), or (HEAD) when the body is empty."
+    match body == ""
+        true -> "({head})"
+        false -> "({head} {body})"
+
+verify headedText
+    headedText("hyps", "") => "(hyps)"
+    headedText("hyps", "x") => "(hyps x)"
+
+fn premiseText(p: List<Term>) -> String
+    ? "(none), or the `when`."
+    match p
+        [] -> "(none)"
+        [w, .._] -> Kernel.Wire.termText(w)
+
+verify premiseText
+    premiseText([]) => "(none)"
+
+fn givenTexts(g: Goal, names: List<String>) -> List<String>
+    ? "Each given as an obligation writes it: (NAME (tlist)), (NAME (tint)), (NAME TYPE) for a finite type, or the bare name."
+    match names
+        [] -> []
+        [n, ..rest] -> List.prepend(givenText(g, n), givenTexts(g, rest))
+
+verify givenTexts
+    givenTexts(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), ["x"]) => ["x"]
+
+fn givenText(g: Goal, n: String) -> String
+    ? "One given, typed as far as the goal says."
+    match (List.contains(g.lists, n), List.contains(g.ints, n), finOf(g.finite, n))
+        (true, _, _) -> "({n} (tlist))"
+        (_, true, _) -> "({n} (tint))"
+        (_, _, Option.Some(f)) -> "({n} {finText(f)})"
+        _ -> n
+
+verify givenText
+    givenText(Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), ints = ["n"]), "n") => "(n (tint))"
+
+fn finOf(gs: List<Given>, n: String) -> Option<Fin>
+    ? "The finite type of the given n, if it has one."
+    match gs
+        [] -> Option.None
+        [g, ..rest] -> match g.name == n
+            true -> Option.Some(g.fin)
+            false -> finOf(rest, n)
+
+verify finOf
+    finOf([Given(name = "b", fin = Fin.FBool)], "b") => Option.Some(Fin.FBool)
+    finOf([], "b") => Option.None
+
+fn finText(f: Fin) -> String
+    ? "A finite type in the step grammar: (tbool), (tsum CTOR…), (trec TYPE (FIELD TYPE)…) or (ttuple TYPE…)."
+    match f
+        Fin.FBool -> "(tbool)"
+        Fin.FSum(cs) -> headedText("tsum", Kernel.Wire.spaced(cs))
+        Fin.FRec(n, fs) -> headedText("trec {n}", Kernel.Wire.spaced(finFieldTexts(fs)))
+        Fin.FTuple(ts) -> headedText("ttuple", Kernel.Wire.spaced(finTexts(ts)))
+
+verify finText
+    finText(Fin.FSum(["C.A", "C.B"])) => "(tsum C.A C.B)"
+    finText(Fin.FRec("R", [FinField(name = "a", fin = Fin.FBool)])) => "(trec R (a (tbool)))"
+    finText(Fin.FTuple([Fin.FBool, Fin.FBool])) => "(ttuple (tbool) (tbool))"
+
+fn finTexts(fs: List<Fin>) -> List<String>
+    ? "Each finite type in the step grammar."
+    match fs
+        [] -> []
+        [f, ..rest] -> List.prepend(finText(f), finTexts(rest))
+
+verify finTexts
+    finTexts([]) => []
+
+fn finFieldTexts(fs: List<FinField>) -> List<String>
+    ? "(FIELD TYPE) for each field."
+    match fs
+        [] -> []
+        [f, ..rest] -> List.prepend("({f.name} {finText(f.fin)})", finFieldTexts(rest))
+
+verify finFieldTexts
+    finFieldTexts([]) => []
+
+fn elemTexts(es: List<ListElem>) -> List<String>
+    ? "(LIST TYPE) for each list whose elements the goal knows."
+    match es
+        [] -> []
+        [e, ..rest] -> List.prepend("({e.list} {tyText(e.elem)})", elemTexts(rest))
+
+verify elemTexts
+    elemTexts([ListElem(list = "xs", elem = Ty.TyList(Ty.TyOther))]) => ["(xs (tlist (tother)))"]
+
+fn tyText(t: Ty) -> String
+    ? "An element type: (tint), (tlist TYPE), (tother), or a finite type."
+    match t
+        Ty.TyInt -> "(tint)"
+        Ty.TyOther -> "(tother)"
+        Ty.TyList(e) -> "(tlist {tyText(e)})"
+        Ty.TyFin(f) -> finText(f)
+
+verify tyText
+    tyText(Ty.TyFin(Fin.FBool)) => "(tbool)"
+
+fn originTexts(os: List<Origin>) -> List<String>
+    ? "(NAME head|tail LIST) for each split variable."
+    match os
+        [] -> []
+        [o, ..rest] -> List.prepend("({o.name} {o.part} {o.list})", originTexts(rest))
+
+verify originTexts
+    originTexts([Origin(name = "h", part = "head", list = "xs")]) => ["(h head xs)"]
+
+fn hypTexts(hs: List<Hyp>) -> List<String>
+    ? "(NAME TERM TERM) for each hypothesis."
+    match hs
+        [] -> []
+        [h, ..rest] -> List.prepend("({h.name} {Kernel.Wire.termText(h.eqn.lhs)} {Kernel.Wire.termText(h.eqn.rhs)})", hypTexts(rest))
+
+verify hypTexts
+    hypTexts([]) => []
+
+fn readSub(base: Goal, text: String) -> Result<Goal, String>
+    ? "The goal a question is about: base, the goal the compiler posed, with the claim, the `when`, the givens and the hypotheses that subText wrote; an empty text is base itself."
+    match text == ""
+        true -> Result.Ok(base)
+        false -> subOf(base, Kernel.Sexp.readAll(text)?)
+
+verify readSub
+    readSub(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), "") => Result.Ok(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))))
+    readSub(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), "(sub ((xs (tlist)) (b (tbool)) (n (tint)) z) (elems (xs (tint))) (from (xs tail ys)) (hyps (c (v b) (b true))) (v b) (v xs) (v xs))") => Result.Ok(Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = ["xs", "b", "n", "z"], premise = [Term.TVar("b")], lhs = Term.TVar("xs"), rhs = Term.TVar("xs"))), lists = ["xs"], ints = ["n"], finite = [Given(name = "b", fin = Fin.FBool)], listElems = [ListElem(list = "xs", elem = Ty.TyInt)], hyps = [Hyp(name = "c", eqn = Eqn(lhs = Term.TVar("b"), rhs = Term.TBool(true)))]))
+    readSub(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), "(sub)") => Result.Err("malformed question")
+
+fn subOf(base: Goal, s: Sexp) -> Result<Goal, String>
+    ? "The goal of a read (sub …)."
+    match s
+        Sexp.Node([Sexp.Atom("sub"), Sexp.Node(gs), Sexp.Node([Sexp.Atom("elems"), ..es]), Sexp.Node([Sexp.Atom("from"), .._]), Sexp.Node([Sexp.Atom("hyps"), ..hs]), p, l, r]) -> subGoal(readGivens(gs, Goal.update(base, finite = [], lists = [], ints = []), [])?, readPremise(p)?, Kernel.Decode.term(l)?, Kernel.Decode.term(r)?, Kernel.Wire.listElems(es)?, readHyps(hs)?)
+        _ -> Result.Err("malformed question")
+
+verify subOf
+    subOf(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), Sexp.Atom("x")) => Result.Err("malformed question")
+
+fn readGivens(ss: List<Sexp>, g: Goal, names: List<String>) -> Result<Goal, String>
+    ? "g with the typed givens ss read into its finite, list and Int givens, and their names, in order, as the claim's givens."
+    match ss
+        [] -> Result.Ok(Goal.update(g, obligation = Law.update(g.obligation, givens = List.reverse(names))))
+        [Sexp.Atom(n), ..rest] -> readGivens(rest, g, List.prepend(n, names))
+        [Sexp.Node([Sexp.Atom(n), Sexp.Node([Sexp.Atom("tlist")])]), ..rest] -> readGivens(rest, Goal.update(g, lists = List.concat(g.lists, [n])), List.prepend(n, names))
+        [Sexp.Node([Sexp.Atom(n), Sexp.Node([Sexp.Atom("tint")])]), ..rest] -> readGivens(rest, Goal.update(g, ints = List.concat(g.ints, [n])), List.prepend(n, names))
+        [Sexp.Node([Sexp.Atom(n), t]), ..rest] -> readGivens(rest, Goal.update(g, finite = List.concat(g.finite, [Given(name = n, fin = Kernel.Decode.fin(t)?)])), List.prepend(n, names))
+        _ -> Result.Err("malformed given")
+
+verify readGivens
+    readGivens([Sexp.Node([])], Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), []) => Result.Err("malformed given")
+
+fn readPremise(s: Sexp) -> Result<List<Term>, String>
+    ? "(none), or the `when`."
+    match s
+        Sexp.Node([Sexp.Atom("none")]) -> Result.Ok([])
+        _ -> Result.Ok([Kernel.Decode.term(s)?])
+
+verify readPremise
+    readPremise(Sexp.Node([Sexp.Atom("none")])) => Result.Ok([])
+
+fn subGoal(g: Goal, premise: List<Term>, l: Term, r: Term, elems: List<ListElem>, hyps: List<Hyp>) -> Result<Goal, String>
+    ? "g, its givens read, with the read claim, element types and hypotheses."
+    Result.Ok(Goal.update(g, obligation = Law.update(g.obligation, premise = premise, lhs = l, rhs = r), listElems = elems, hyps = hyps))
+
+verify subGoal
+    subGoal(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), [], Term.TInt(2), Term.TInt(2), [], []) => Result.Ok(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(2), rhs = Term.TInt(2))))
+
+fn readHyps(ss: List<Sexp>) -> Result<List<Hyp>, String>
+    ? "(NAME TERM TERM)…, the first the newest, as a goal lists its hypotheses."
+    match ss
+        [] -> Result.Ok([])
+        [Sexp.Node([Sexp.Atom(n), l, r]), ..rest] -> Result.Ok(List.concat(readHyps(rest)?, [Hyp(name = n, eqn = Eqn(lhs = Kernel.Decode.term(l)?, rhs = Kernel.Decode.term(r)?))]))
+        _ -> Result.Err("malformed hypothesis")
+
+verify readHyps
+    readHyps([Sexp.Atom("x")]) => Result.Err("malformed hypothesis")
+
+fn tacticText(t: Tactic) -> String
+    ? "A script in the step grammar: (auto), (cases T), (induction LIST HEAD TAIL T T), (split LIST HEAD TAIL T T), (splitbool TERM T T), (first T…) or (plan NAME)."
+    match t
+        Tactic.Auto -> "(auto)"
+        Tactic.Cases(next) -> "(cases {tacticText(next)})"
+        Tactic.Induction(v, h, tl, nil, cons) -> "(induction {v} {h} {tl} {tacticText(nil)} {tacticText(cons)})"
+        Tactic.Split(v, h, tl, nil, cons) -> "(split {v} {h} {tl} {tacticText(nil)} {tacticText(cons)})"
+        Tactic.SplitBool(c, yes, no) -> "(splitbool {Kernel.Wire.termText(c)} {tacticText(yes)} {tacticText(no)})"
+        Tactic.First(ts) -> headedText("first", Kernel.Wire.spaced(tacticTexts(ts)))
+        Tactic.Plan(name) -> "(plan {name})"
+
+verify tacticText
+    tacticText(Tactic.Induction("xs", "h", "t", Tactic.Auto, Tactic.SplitBool(Term.TVar("b"), Tactic.Auto, Tactic.Plan("p")))) => "(induction xs h t (auto) (splitbool (v b) (auto) (plan p)))"
+    tacticText(Tactic.First([Tactic.Cases(Tactic.Auto), Tactic.Split("xs", "h", "t", Tactic.Auto, Tactic.Auto)])) => "(first (cases (auto)) (split xs h t (auto) (auto)))"
+    tacticText(Tactic.First([])) => "(first)"
+
+fn tacticTexts(ts: List<Tactic>) -> List<String>
+    ? "Each script in the step grammar."
+    match ts
+        [] -> []
+        [t, ..rest] -> List.prepend(tacticText(t), tacticTexts(rest))
+
+verify tacticTexts
+    tacticTexts([Tactic.Auto]) => ["(auto)"]
+
+fn readTactic(s: Sexp) -> Result<Tactic, String>
+    ? "A script tacticText wrote."
+    match s
+        Sexp.Node([Sexp.Atom("auto")]) -> Result.Ok(Tactic.Auto)
+        Sexp.Node([Sexp.Atom("cases"), next]) -> Result.Ok(Tactic.Cases(readTactic(next)?))
+        Sexp.Node([Sexp.Atom("induction"), Sexp.Atom(v), Sexp.Atom(h), Sexp.Atom(tl), nil, cons]) -> Result.Ok(Tactic.Induction(v, h, tl, readTactic(nil)?, readTactic(cons)?))
+        Sexp.Node([Sexp.Atom("split"), Sexp.Atom(v), Sexp.Atom(h), Sexp.Atom(tl), nil, cons]) -> Result.Ok(Tactic.Split(v, h, tl, readTactic(nil)?, readTactic(cons)?))
+        Sexp.Node([Sexp.Atom("splitbool"), c, yes, no]) -> Result.Ok(Tactic.SplitBool(Kernel.Decode.term(c)?, readTactic(yes)?, readTactic(no)?))
+        Sexp.Node([Sexp.Atom("first"), ..ts]) -> Result.Ok(Tactic.First(readTactics(ts)?))
+        Sexp.Node([Sexp.Atom("plan"), Sexp.Atom(name)]) -> Result.Ok(Tactic.Plan(name))
+        _ -> Result.Err("malformed script")
+
+verify readTactic
+    readTactic(Kernel.Sexp.readAll("(induction xs h t (auto) (splitbool (v b) (auto) (plan p)))")?) => Result.Ok(Tactic.Induction("xs", "h", "t", Tactic.Auto, Tactic.SplitBool(Term.TVar("b"), Tactic.Auto, Tactic.Plan("p"))))
+    readTactic(Kernel.Sexp.readAll("(first (cases (auto)) (split xs h t (auto) (auto)))")?) => Result.Ok(Tactic.First([Tactic.Cases(Tactic.Auto), Tactic.Split("xs", "h", "t", Tactic.Auto, Tactic.Auto)]))
+    readTactic(Sexp.Atom("auto")) => Result.Err("malformed script")
+
+fn readTactics(ss: List<Sexp>) -> Result<List<Tactic>, String>
+    ? "Each script of a list."
+    match ss
+        [] -> Result.Ok([])
+        [s, ..rest] -> Result.Ok(List.prepend(readTactic(s)?, readTactics(rest)?))
+
+verify readTactics
+    readTactics([]) => Result.Ok([])
+
+fn readAnswers(text: String) -> Result<List<Answer>, String>
+    ? "The compiler's answers so far: (answers (a \"KEY\" REPLY)…), REPLY (closed N), (declined \"WHY\") or (script T)."
+    match Kernel.Sexp.readAll(text)?
+        Sexp.Node([Sexp.Atom("answers"), ..as]) -> answersOf(as)
+        _ -> Result.Err("malformed answers")
+
+verify readAnswers
+    readAnswers("(answers (a \"auto\\n(sub)\" (closed 3)) (a \"k\" (declined \"no\")) (a \"j\" (script (auto))))") => Result.Ok([Answer(key = "auto\n(sub)", reply = Reply.Closed(3)), Answer(key = "k", reply = Reply.Declined("no")), Answer(key = "j", reply = Reply.Script(Tactic.Auto))])
+    readAnswers("(x)") => Result.Err("malformed answers")
+
+fn answersOf(ss: List<Sexp>) -> Result<List<Answer>, String>
+    ? "Each read answer."
+    match ss
+        [] -> Result.Ok([])
+        [Sexp.Node([Sexp.Atom("a"), Sexp.Text(k), r]), ..rest] -> Result.Ok(List.prepend(Answer(key = k, reply = replyOf(r)?), answersOf(rest)?))
+        _ -> Result.Err("malformed answer")
+
+verify answersOf
+    answersOf([Sexp.Atom("a")]) => Result.Err("malformed answer")
+
+fn replyOf(s: Sexp) -> Result<Reply, String>
+    ? "One reply: (closed N), (declined \"WHY\") or (script T)."
+    match s
+        Sexp.Node([Sexp.Atom("closed"), Sexp.Atom(n)]) -> Result.Ok(Reply.Closed(Int.fromString(n)?))
+        Sexp.Node([Sexp.Atom("declined"), Sexp.Text(why)]) -> Result.Ok(Reply.Declined(why))
+        Sexp.Node([Sexp.Atom("script"), t]) -> Result.Ok(Reply.Script(readTactic(t)?))
+        _ -> Result.Err("malformed reply")
+
+verify replyOf
+    replyOf(Sexp.Atom("x")) => Result.Err("malformed reply")
+
+fn script(goalText: String, scriptText: String, answersText: String) -> String
+    ? "One run of a script on the goal the compiler posed, with its answers so far: `proof` and the proof, `refused` and why, `ask` and the question to answer next, or `goal` and why the input could not be read."
+    match readScriptInput(goalText, scriptText, answersText)
+        Result.Err(why) -> "goal\n{why}"
+        Result.Ok((g, t, as)) -> outcome(runScript(g, t, as))
+
+verify script
+    script("(steps 13 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (laws) (proof (refl (i 1))))", "(auto)", "(answers)") => "ask\nauto\n(sub () (elems) (from) (hyps) (none) (i 1) (i 1))"
+    script("(steps 13 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (laws) (proof (refl (i 1))))", "(auto)", "(answers (a \"auto\\n(sub () (elems) (from) (hyps) (none) (i 1) (i 1))\" (closed 0)))") => "proof\n(hyp #0)"
+    script("(steps 13 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (laws) (proof (refl (i 1))))", "(cases (auto))", "(answers)") => "refused\nCases: no given of finite type"
+    script("(a", "(auto)", "(answers)") => "goal\nunexpected end of data"
+
+fn readScriptInput(goalText: String, scriptText: String, answersText: String) -> Result<Tuple<Goal, Tactic, List<Answer>>, String>
+    ? "The goal, the script and the answers, read."
+    Result.Ok((Kernel.Wire.goal(goalText)?, readTactic(Kernel.Sexp.readAll(scriptText)?)?, readAnswers(answersText)?))
+
+verify readScriptInput
+    readScriptInput("(a", "(auto)", "(answers)") => Result.Err("unexpected end of data")
+
+fn outcome(r: Result<Proof, Stop>) -> String
+    ? "What the compiler reads back from one run of a script."
+    match r
+        Result.Ok(p) -> "proof\n{Kernel.Wire.proofText(p)}"
+        Result.Err(Stop.Refused(why)) -> "refused\n{why}"
+        Result.Err(Stop.Ask(key)) -> "ask\n{key}"
+
+verify outcome
+    outcome(Result.Err(Stop.Ask("k"))) => "ask\nk"
+
+fn scriptAnswer(r: Result<Tactic, String>) -> String
+    ? "What the compiler reads back from a plan that returns a script: `script` and the script, or `refused` and the plan's reason."
+    match r
+        Result.Ok(t) -> "script\n{tacticText(t)}"
+        Result.Err(why) -> "refused\n{why}"
+
+verify scriptAnswer
+    scriptAnswer(Result.Ok(Tactic.Auto)) => "script\n(auto)"
+    scriptAnswer(Result.Err("no")) => "refused\nno"
+
+fn goalAt(text: String, sub: String) -> Result<Goal, String>
+    ? "The goal a plan runs on: the one the compiler posed, or, for a Plan node of a script, that goal as the node's question (sub) states it."
+    readSub(Kernel.Wire.goal(text)?, sub)
+
+verify goalAt
+    goalAt("(a", "") => Result.Err("unexpected end of data")

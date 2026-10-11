@@ -346,6 +346,15 @@ fn a_plans_module_has_the_plan_signature_and_no_effects() {
     );
     let ok = check_project("qualified", &[("same.av", &qualified)], "same.av");
     assert!(ok.status.success(), "{}", format_output(&ok));
+    // A plan may return a script for the standard library to run instead.
+    let scripted = GOOD_PLAN
+        .replace("Kernel.Lib]", "Kernel.Lib, Kernel.Std]")
+        .replace(
+            "fn same(goal: Goal) -> Result<Proof, String>",
+            "fn same(goal: Goal) -> Result<Tactic, String>",
+        );
+    let ok = check_project("scripted", &[("same.av", &scripted)], "same.av");
+    assert!(ok.status.success(), "{}", format_output(&ok));
 
     let wrong_signature = GOOD_PLAN
         .replace(
@@ -560,7 +569,7 @@ fn the_helper_library_keeps_the_kernels_conventions() {
             format_output(&out)
         );
     }
-    for file in ["plans/stack.av", "plans/viastd.av"] {
+    for file in ["plans/stack.av", "plans/viastd.av", "plans/tactics.av"] {
         let plans = aver_in(&fixtures(), &["verify", file], &[]);
         assert!(plans.status.success(), "{file}: {}", format_output(&plans));
     }
@@ -640,6 +649,101 @@ fn the_kernel_refuses_a_wrong_proof_from_a_standard_plan() {
     assert_eq!(none, "refused\nKernel.Std has no plan nope");
 }
 
+/// The laws of `scripted.av` that plans written as scripts close: the
+/// stack laws `shuffles.av` closes with a hand-written plan, and a byte check
+/// over a concatenation, by induction with a split on each head.
+const SCRIPTED_LAWS: [&str; 5] = [
+    "shuffled.rotThreeTimesIsTheTopThree",
+    "shuffled.swapTwiceIsTheTopPair",
+    "shuffled.twoSwapTwiceIsTheTopFour",
+    "validBytes.concatenation",
+    "validBytes.concatenationByPlan",
+];
+
+/// `scripted.av`: plans that return a script (`Kernel.Std.Tactic`). The
+/// standard library runs it, the automatic steps close its Auto nodes, a
+/// Plan node runs another plan of the module, and the kernel checks the
+/// whole proof: a script whose Plan node writes a wrong proof leaves its law
+/// open, and a script that stops says where.
+#[test]
+fn a_plan_may_return_a_script_whose_auto_nodes_the_automatic_steps_close() {
+    let out = scratch("scripted");
+    let run = aver_in(
+        &fixtures(),
+        &[
+            "proof",
+            "scripted.av",
+            "--backend",
+            "aver",
+            "-o",
+            out.to_str().unwrap(),
+        ],
+        &[],
+    );
+    assert!(run.status.success(), "{}", format_output(&run));
+    let text = String::from_utf8_lossy(&run.stdout).to_string();
+    let line = |law: &str| {
+        text.lines()
+            .find(|l| l.contains(&format!("{law}:")))
+            .unwrap_or_else(|| panic!("no line for {law}\n{}", format_output(&run)))
+            .to_string()
+    };
+    for law in SCRIPTED_LAWS {
+        assert!(
+            line(law).contains("closed by steps (proof by Plans.Tactics."),
+            "{text}"
+        );
+    }
+    // The script stops at an Auto node: the refusal gives its place in the
+    // script, and the terms as Aver writes them.
+    assert!(
+        line("validBytes.reversal").contains(
+            "plan Plans.Tactics.bytesByInduction refused: Induction(bytes)/cons/Auto: evaluation stops at `validBytes(List.concat(List.reverse(t), List.prepend(h, [])))`"
+        ),
+        "{text}"
+    );
+    // A Plan node whose plan proves something else: the kernel refuses.
+    let claimed = line("validBytes.concatenationClaimed");
+    assert!(
+        claimed.contains("plan Plans.Tactics.splitThenClaim (")
+            && claimed.contains("the kernel refused its proof"),
+        "{claimed}"
+    );
+    assert!(text.contains("5 of 7 law(s) closed by steps"), "{text}");
+    let script =
+        fs::read_to_string(out.join("proof_steps/shuffled.swapTwiceIsTheTopPair.steps")).unwrap();
+    assert!(
+        script.starts_with("; proof by Plans.Tactics.openByLength sha256:"),
+        "{}",
+        &script[..script.len().min(200)]
+    );
+    let _ = fs::remove_dir_all(out);
+}
+
+/// One run of a script by the compiled standard library: it asks for each
+/// Auto node it has no answer for, takes a closed node as the hypothesis
+/// `#N` the compiler fills in, and says where it stops.
+#[test]
+fn the_standard_library_runs_a_script_by_asking_for_its_auto_nodes() {
+    let goal = "(goal (elems (xs (tint))) (steps 13 (obligation k ((xs (tlist))) (none) (v xs) (v xs)) (defs) (consts) (sums) (laws) (proof (refl (v xs)))))";
+    let script = "(split xs h t (auto) (auto))";
+    let first = aver::proof_std::run_script(goal, script, "(answers)").unwrap();
+    assert_eq!(
+        first,
+        "ask\nauto\n(sub () (elems) (from) (hyps) (none) (list) (list))"
+    );
+    let answers =
+        "(answers (a \"auto\\n(sub () (elems) (from) (hyps) (none) (list) (list))\" (closed 0)))";
+    let second = aver::proof_std::run_script(goal, script, answers).unwrap();
+    assert_eq!(
+        second,
+        "ask\nauto\n(sub ((h (tint)) (t (tlist))) (elems (t (tint))) (from (h head xs) (t tail xs)) (hyps) (none) (bi List.prepend (v h) (v t)) (bi List.prepend (v h) (v t)))"
+    );
+    let refused =
+        aver::proof_std::run_script(goal, "(split xs xs t (auto) (auto))", "(answers)").unwrap();
+    assert_eq!(refused, "refused\nSplit(xs): the name xs is already taken");
+}
+
 #[test]
 fn lean_closes_the_plan_laws_by_steps() {
     if !lean_required::lake_available() {
@@ -685,6 +789,27 @@ fn lean_closes_the_plan_laws_by_steps() {
     let found = summary(&result);
     assert_eq!(found["steps_rejected"], serde_json::json!([]));
     for law in ["next.comesBackAfterThree", "flip.twiceIsItself"] {
+        assert_eq!(found["closed_by"][law], "steps", "{law}");
+    }
+    let _ = fs::remove_dir_all(&out);
+    // The laws closed by scripts, their Auto nodes by the automatic steps.
+    let result = aver_in(
+        &fixtures(),
+        &[
+            "proof",
+            "scripted.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "2",
+        ],
+        &[],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let found = summary(&result);
+    assert_eq!(found["steps_rejected"], serde_json::json!([]));
+    for law in SCRIPTED_LAWS {
         assert_eq!(found["closed_by"][law], "steps", "{law}");
     }
     let _ = fs::remove_dir_all(out);

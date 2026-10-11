@@ -41,7 +41,7 @@ mod split;
 use crate::codegen::proof_lower::ProofLowerInputs;
 use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
 use crate::ir::proof_steps::term::{Term, canon};
-use crate::ir::proof_steps::{LawRef, Obligation, Proof, Script, WallRule};
+use crate::ir::proof_steps::{Eqn, LawRef, Obligation, Proof, Script, WallRule};
 use crate::ir::{LawTheorem, ProofIR, ProofStrategy};
 
 use env::Env;
@@ -295,7 +295,7 @@ fn citations(env: &mut Env, laws: Vec<LawRef>, ob: &Obligation) -> Result<Proof,
 fn fresh_env<'a>(
     inputs: &'a ProofLowerInputs<'a>,
     ob: &Obligation,
-    known: &[(String, Term)],
+    known: &[(String, Eqn)],
     using: &Option<Vec<LawRef>>,
     earlier: &[LawRef],
 ) -> Env<'a> {
@@ -305,8 +305,8 @@ fn fresh_env<'a>(
     if let Some(p) = &ob.premise {
         env.hyps.push(("when".into(), chain::eqn_true(p)));
     }
-    for (name, fact) in known {
-        env.hyps.push((name.clone(), chain::eqn_true(fact)));
+    for (name, eqn) in known {
+        env.hyps.push((name.clone(), eqn.clone()));
     }
     env.rewrite_laws = using
         .iter()
@@ -475,7 +475,8 @@ struct Part {
     sums: Vec<Vec<(crate::ir::hir::ResolvedCtor, usize)>>,
 }
 
-/// Prove one obligation of the law: `ob` under `known` besides the `when`.
+/// Prove one obligation of the law: `ob` under the hypotheses `known`
+/// besides the `when`.
 /// `induct_on` is the function induction may follow, with the given the
 /// law's `induction` line names for it, if any; `algebra` is set for
 /// the claim of a law with an algebraic strategy.
@@ -484,7 +485,7 @@ fn prove_part(
     inputs: &ProofLowerInputs,
     t: &LawTheorem,
     ob: &Obligation,
-    known: &[(String, Term)],
+    known: &[(String, Eqn)],
     using: &Option<Vec<LawRef>>,
     earlier: &[LawRef],
     induct_on: Option<(crate::ir::identity::FnId, Option<&str>)>,
@@ -714,36 +715,14 @@ fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize, hints: &mut Vec<St
         },
         _ => None,
     };
-    // The laws before this one, as a `using` list may name them: hints
-    // only, where one would rewrite a stuck term.
-    let earlier: Vec<LawRef> = ir.law_theorems[..i]
-        .iter()
-        .filter(|c| citable_from(inputs, ir, t, c))
-        .map(|c| law_ref(inputs, c))
-        .filter(|l| rewrite::loops(l).is_none())
-        .collect();
+    let earlier = earlier_laws(inputs, ir, i);
     let algebraic = matches!(
         t.strategy,
         ProofStrategy::Commutative { .. }
             | ProofStrategy::Associative { .. }
             | ProofStrategy::IdentityElement { .. }
     );
-    // Each line of a `when` written over several lines is a hypothesis of
-    // its own, cut from `when` by the `Bool.and` eliminations.
-    let mut cuts: Vec<Cut> = ob
-        .premise
-        .as_ref()
-        .map(when_lines)
-        .unwrap_or_default()
-        .into_iter()
-        .enumerate()
-        .map(|(i, (fact, proof))| Cut {
-            name: format!("when{}", i + 1),
-            fact,
-            proof: Some(proof),
-            reason: None,
-        })
-        .collect();
+    let mut cuts = when_cuts(&ob);
     // A `when` line that names a constant (`capBytes()`) is also stated
     // with its value, so the comparisons read it as arithmetic.
     let mut constant_defs = Vec::new();
@@ -777,9 +756,9 @@ fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize, hints: &mut Vec<St
             }
         }
     };
-    let known_of = |cuts: &[Cut]| -> Vec<(String, Term)> {
+    let known_of = |cuts: &[Cut]| -> Vec<(String, Eqn)> {
         cuts.iter()
-            .map(|c| (c.name.clone(), c.fact.clone()))
+            .map(|c| (c.name.clone(), chain::eqn_true(&c.fact)))
             .collect()
     };
     let reasons: Vec<Term> = t.reasons.iter().map(|r| law_term(inputs, t, r)).collect();
@@ -962,6 +941,79 @@ fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize, hints: &mut Vec<St
         law: check(script),
         obligations,
     }
+}
+
+/// The laws before law `i`, as a `using` list may name them: hints only,
+/// where one would rewrite a stuck term.
+fn earlier_laws(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize) -> Vec<LawRef> {
+    let t = &ir.law_theorems[i];
+    ir.law_theorems[..i]
+        .iter()
+        .filter(|c| citable_from(inputs, ir, t, c))
+        .map(|c| law_ref(inputs, c))
+        .filter(|l| rewrite::loops(l).is_none())
+        .collect()
+}
+
+/// Each line of `ob`'s `when`, when written over several lines, as a
+/// hypothesis of its own, cut from `when` by the `Bool.and` eliminations.
+fn when_cuts(ob: &Obligation) -> Vec<Cut> {
+    ob.premise
+        .as_ref()
+        .map(when_lines)
+        .unwrap_or_default()
+        .into_iter()
+        .enumerate()
+        .map(|(i, (fact, proof))| Cut {
+            name: format!("when{}", i + 1),
+            fact,
+            proof: Some(proof),
+            reason: None,
+        })
+        .collect()
+}
+
+/// The automatic steps on one goal of a proof plan's script (an `Auto`
+/// node of `Kernel.Std.Tactic`): law `i`'s claim as the script has split it
+/// (`ob`), under the hypotheses the script brought into scope (`hyps`).
+/// The attempts are those for the law's own claim, with its cited laws and
+/// the earlier laws as hints; each line of a `when` written over several
+/// lines is a hypothesis of its own, as it is for the law.
+fn auto_at(
+    inputs: &ProofLowerInputs,
+    ir: &ProofIR,
+    i: usize,
+    ob: &Obligation,
+    hyps: &[(String, Eqn)],
+) -> Result<Part, String> {
+    let t = &ir.law_theorems[i];
+    let using = match &t.using {
+        Some(names) if !names.is_empty() => {
+            Some(cited(inputs, ir, t, names).ok_or("a cited law has no theorem")?)
+        }
+        _ => None,
+    };
+    let earlier = earlier_laws(inputs, ir, i);
+    let cuts = when_cuts(ob);
+    let mut known = hyps.to_vec();
+    known.extend(
+        cuts.iter()
+            .map(|c| (c.name.clone(), chain::eqn_true(&c.fact))),
+    );
+    let mut hints = Vec::new();
+    let mut part = prove_part(
+        inputs,
+        t,
+        ob,
+        &known,
+        &using,
+        &earlier,
+        Some((t.fn_id, None)),
+        false,
+        &mut hints,
+    )?;
+    part.proof = under_cuts(&cuts, part.proof, true);
+    Ok(part)
 }
 
 /// Fill `LawTheorem::steps` for every law a producer can prove.

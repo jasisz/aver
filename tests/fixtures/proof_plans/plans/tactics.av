@@ -1,0 +1,77 @@
+module Tactics
+    intent =
+        "Proof plans written as scripts (Kernel.Std.Tactic): the plan says how to split the goal,"
+        "the standard library runs the script, and the automatic steps close each Auto node."
+        "Two of them are wrong on purpose, for the tests: what they make is checked by the kernel like any proof."
+    depends [Kernel.Term, Kernel.Proof, Kernel.Lib, Kernel.Std]
+    plans [openByLength, octets, octetsByPlan, octet, bytesByInduction, claimsTheWhen, splitThenClaim]
+
+fn openByLength(goal: Goal) -> Result<Tactic, String>
+    ? "For a law under `when List.len(v) >= k` with a literal k: open v a cell at a time, k times; each empty case contradicts the `when`."
+    match Kernel.Lib.whenOf(goal)
+        Option.Some(Term.TOp(">=", Term.TBi("List.len", [Term.TVar(v)]), Term.TInt(k))) -> Result.Ok(cells(v, k))
+        _ -> Result.Err("the `when` is not `List.len(v) >= k` with a literal k")
+
+verify openByLength
+    openByLength(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)))) => Result.Err("the `when` is not `List.len(v) >= k` with a literal k")
+
+fn cells(v: String, n: Int) -> Tactic
+    ? "Open n cells of v, each tail named after how many cells are left; then close the case, or split the rest once more and close both."
+    match n <= 0
+        true -> Tactic.First([Tactic.Auto, Tactic.Split(v, "x", "rest", Tactic.Auto, Tactic.Auto)])
+        false -> Tactic.Split(v, "x{n}", "r{n}", Tactic.Auto, cells("r{n}", n - 1))
+
+verify cells
+    cells("items", 1) => Tactic.Split("items", "x1", "r1", Tactic.Auto, Tactic.First([Tactic.Auto, Tactic.Split("r1", "x", "rest", Tactic.Auto, Tactic.Auto)]))
+
+fn octets(goal: Goal) -> Result<Tactic, String>
+    ? "Induction on left; at a cell h :: t, split on whether h is an octet."
+    Result.Ok(Tactic.Induction("left", "h", "t", Tactic.Auto, Tactic.SplitBool(isOctet("h"), Tactic.Auto, Tactic.Auto)))
+
+verify octets
+    octets(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)))) => Result.Ok(Tactic.Induction("left", "h", "t", Tactic.Auto, Tactic.SplitBool(isOctet("h"), Tactic.Auto, Tactic.Auto)))
+
+fn isOctet(h: String) -> Term
+    ? "The check validBytes makes of one element."
+    Term.TBi("Bool.and", [Term.TOp(">=", Term.TVar(h), Term.TInt(0)), Term.TOp("<", Term.TVar(h), Term.TInt(256))])
+
+verify isOctet
+    isOctet("h") => Term.TBi("Bool.and", [Term.TOp(">=", Term.TVar("h"), Term.TInt(0)), Term.TOp("<", Term.TVar("h"), Term.TInt(256))])
+
+fn octetsByPlan(goal: Goal) -> Result<Tactic, String>
+    ? "The same induction, the cell case left to the plan octet."
+    Result.Ok(Tactic.Induction("left", "c", "rest", Tactic.Auto, Tactic.Plan("octet")))
+
+verify octetsByPlan
+    octetsByPlan(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)))) => Result.Ok(Tactic.Induction("left", "c", "rest", Tactic.Auto, Tactic.Plan("octet")))
+
+fn octet(goal: Goal) -> Result<Tactic, String>
+    ? "At a cell, split on whether its head, the goal's Int given, is an octet."
+    match goal.ints
+        [h, .._] -> Result.Ok(Tactic.SplitBool(isOctet(h), Tactic.Auto, Tactic.Auto))
+        [] -> Result.Err("no Int given to split on")
+
+verify octet
+    octet(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)))) => Result.Err("no Int given to split on")
+    octet(Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = ["c"], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), ints = ["c"])) => Result.Ok(Tactic.SplitBool(isOctet("c"), Tactic.Auto, Tactic.Auto))
+
+fn bytesByInduction(goal: Goal) -> Result<Tactic, String>
+    ? "Induction on bytes and nothing else: shows where a script stops."
+    Result.Ok(Tactic.Induction("bytes", "h", "t", Tactic.Auto, Tactic.Auto))
+
+verify bytesByInduction
+    bytesByInduction(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)))) => Result.Ok(Tactic.Induction("bytes", "h", "t", Tactic.Auto, Tactic.Auto))
+
+fn claimsTheWhen(goal: Goal) -> Result<Proof, String>
+    ? "Wrong on purpose: offers the `when` as the proof of the claim."
+    Result.Ok(Kernel.Lib.whenHolds())
+
+verify claimsTheWhen
+    claimsTheWhen(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)))) => Result.Ok(Proof.PHyp("when"))
+
+fn splitThenClaim(goal: Goal) -> Result<Tactic, String>
+    ? "Wrong on purpose: splits left, then hands the cell case to claimsTheWhen, whose proof the kernel refuses."
+    Result.Ok(Tactic.Split("left", "h", "t", Tactic.Auto, Tactic.Plan("claimsTheWhen")))
+
+verify splitThenClaim
+    splitThenClaim(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)))) => Result.Ok(Tactic.Split("left", "h", "t", Tactic.Auto, Tactic.Plan("claimsTheWhen")))

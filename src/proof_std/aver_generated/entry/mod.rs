@@ -43,3 +43,10 @@ pub fn byName(
         })),
     }
 }
+
+/// One run of a plan's script (tactic) on the goal, with the compiler's answers so far: `proof`, `refused`, `ask` and the question to answer next, or `goal`.
+#[inline(always)]
+pub fn script(goal @ _: AverStr, tactic @ _: AverStr, answers @ _: AverStr) -> AverStr {
+    crate::proof_std::cancel_checkpoint();
+    crate::proof_std::aver_generated::kernel::std::script(goal, tactic, answers)
+}

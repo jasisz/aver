@@ -101,12 +101,23 @@ fn compile(root: &str, module: &str) -> Result<Runner, String> {
     };
     let mut entries = HashMap::new();
     let mut entry = format!(
-        "module PlanRunner\n    intent = \"Runs the proof plans of {module} on a goal.\"\n    depends [Kernel.Lib, {module}]\n    plans []\n"
+        "module PlanRunner\n    intent = \"Runs the proof plans of {module} on a goal.\"\n    depends [Kernel.Lib, Kernel.Std, {module}]\n    plans []\n"
     );
     for (i, plan) in plans.iter().enumerate() {
         let name = format!("runPlan{i}");
+        // A plan returns proof steps or a script; the checker allows only
+        // those two return types.
+        let scripted = items.iter().any(|item| {
+            matches!(item, crate::ast::TopLevel::FnDef(fd)
+                if fd.name == *plan && fd.return_type.contains("Tactic"))
+        });
+        let write = if scripted {
+            "Kernel.Std.scriptAnswer"
+        } else {
+            "Kernel.Lib.writeAnswer"
+        };
         entry.push_str(&format!(
-            "\nfn {name}(text: String) -> String\n    ? \"Plan {plan}.\"\n    match Kernel.Lib.readGoal(text)\n        Result.Err(why) -> \"goal\\n{{why}}\"\n        Result.Ok(g) -> Kernel.Lib.writeAnswer({module}.{plan}(g))\n"
+            "\nfn {name}(text: String, sub: String) -> String\n    ? \"Plan {plan}.\"\n    match Kernel.Std.goalAt(text, sub)\n        Result.Err(why) -> \"goal\\n{{why}}\"\n        Result.Ok(g) -> {write}({module}.{plan}(g))\n"
         ));
         entries.insert(plan.clone(), name);
     }
@@ -558,48 +569,72 @@ fn prove_with(
         &super::finite::list_elem_types(inputs, t),
         inputs.symbol_table,
     );
-    let (answer, use_) = if module == STD_MODULE {
-        let use_ = PlanUse {
-            name: path.to_string(),
-            hash: std_hash(),
-        };
-        let answer =
-            crate::proof_std::run(plan, &text).map_err(|why| format!("plan {path}: {why}"))?;
-        (answer, use_)
+    let limit = step_limit(inputs.proof_command);
+    let runner = if module == STD_MODULE {
+        None
     } else {
-        let runner = match plans.runner(root, module) {
-            Ok(r) => r,
+        match plans.runner(root, module) {
+            Ok(r) => Some(r),
             Err(why) => return Err(format!("plan {path}: {why}")),
-        };
-        let Some(entry) = runner.entries.get(plan) else {
-            return Err(format!(
-                "plan {path}: {module} does not list `{plan}` in its `plans [...]` line"
-            ));
-        };
-        let use_ = PlanUse {
-            name: path.to_string(),
-            hash: runner.hash.clone(),
-        };
-        let limit = step_limit(inputs.proof_command);
-        let answer =
-            run(runner, entry, &text, limit).map_err(|why| format!("plan {path}: {why}"))?;
-        (answer, use_)
+        }
+    };
+    let (answer, use_) = match runner {
+        None => {
+            let use_ = PlanUse {
+                name: path.to_string(),
+                hash: std_hash(),
+            };
+            let answer =
+                crate::proof_std::run(plan, &text).map_err(|why| format!("plan {path}: {why}"))?;
+            (answer, use_)
+        }
+        Some(runner) => {
+            let Some(entry) = runner.entries.get(plan) else {
+                return Err(format!(
+                    "plan {path}: {module} does not list `{plan}` in its `plans [...]` line"
+                ));
+            };
+            let use_ = PlanUse {
+                name: path.to_string(),
+                hash: runner.hash.clone(),
+            };
+            let answer = run(runner, entry, &text, "", limit)
+                .map_err(|why| format!("plan {path}: {why}"))?;
+            (answer, use_)
+        }
     };
     let (kind, body) = answer.split_once('\n').unwrap_or((answer.as_str(), ""));
+    let reader = crate::ir::proof_steps::read::Reader::for_goal(&goal, inputs.symbol_table)
+        .map_err(|why| format!("plan {path}: {why}"))?;
+    let mut extra = Extra::default();
     let proof_text = match kind {
-        "proof" => body,
+        "proof" => body.to_string(),
+        "script" => {
+            let question = Question {
+                inputs,
+                ir,
+                law: i,
+                goal: &goal,
+                reader: &reader,
+                text: &text,
+                runner,
+                limit,
+            };
+            question
+                .run(body, &mut extra)
+                .map_err(|why| format!("plan {path}{why}"))?
+        }
         "refused" => return Err(format!("plan {path} refused: {body}")),
         "goal" => return Err(format!("plan {path}: the goal could not be read: {body}")),
         _ => return Err(format!("plan {path}: an answer the compiler cannot read")),
     };
-    let reader = crate::ir::proof_steps::read::Reader::for_goal(&goal, inputs.symbol_table)
-        .map_err(|why| format!("plan {path}: {why}"))?;
-    let proof = reader.proof_text(proof_text).map_err(|why| {
+    let proof = reader.proof_text(&proof_text).map_err(|why| {
         format!(
             "plan {path} ({}): its proof cannot be read: {why}",
             use_.short_hash()
         )
     })?;
+    let goal = extra.into_goal(goal);
     let defs = needed_defs(&goal, &proof);
     let script = Script {
         defs,
@@ -703,8 +738,10 @@ fn named_plans(ir: &ProofIR, root: &str) -> Vec<String> {
     out
 }
 
-/// Run one generated plan function on the goal text, under the step limit.
-fn run(runner: &Runner, entry: &str, goal: &str, limit: u64) -> Result<String, String> {
+/// Run one generated plan function on the goal text, under the step limit:
+/// on the goal itself (`sub` empty), or on the goal of a script's Plan node
+/// as the script's question states it.
+fn run(runner: &Runner, entry: &str, goal: &str, sub: &str, limit: u64) -> Result<String, String> {
     use crate::nan_value::{NanValue, NanValueConvert};
     use crate::value::Value;
     let mut machine = crate::vm::VM::new(
@@ -714,10 +751,11 @@ fn run(runner: &Runner, entry: &str, goal: &str, limit: u64) -> Result<String, S
     );
     machine.set_silent_console(true);
     machine.set_step_limit(Some(limit));
-    let arg = NanValue::from_value(&Value::Str(goal.to_string()), &mut machine.arena);
+    let goal = NanValue::from_value(&Value::Str(goal.to_string()), &mut machine.arena);
+    let sub = NanValue::from_value(&Value::Str(sub.to_string()), &mut machine.arena);
     let out = machine
         .run_top_level()
-        .and_then(|_| machine.run_named_function(entry, &[arg]));
+        .and_then(|_| machine.run_named_function(entry, &[goal, sub]));
     match out {
         Ok(v) => match v.to_value(&machine.arena) {
             Value::Str(s) => Ok(s),
@@ -728,4 +766,294 @@ fn run(runner: &Runner, entry: &str, goal: &str, limit: u64) -> Result<String, S
         )),
         Err(e) => Err(format!("the plan failed: {e}")),
     }
+}
+
+/// Questions one use of a script plan may ask before it is stopped.
+const MAX_QUESTIONS: usize = 256;
+
+/// What the automatic steps used for a script's `Auto` nodes beyond what
+/// the goal lists: the kernel and Lean need it in the law's script.
+#[derive(Default)]
+struct Extra {
+    defs: Vec<Def>,
+    consts: Vec<Const>,
+    laws: Vec<LawRef>,
+    sums: Vec<Vec<(ResolvedCtor, usize)>>,
+}
+
+impl Extra {
+    fn add(&mut self, part: &super::Part) {
+        for d in &part.defs {
+            if !self.defs.iter().any(|x| x.fn_id == d.fn_id) {
+                self.defs.push(d.clone());
+            }
+        }
+        for c in &part.consts {
+            if !self.consts.iter().any(|x| x.name == c.name) {
+                self.consts.push(c.clone());
+            }
+        }
+        for l in &part.laws {
+            if !self.laws.iter().any(|x| x.key == l.key) {
+                self.laws.push(l.clone());
+            }
+        }
+        for sum in &part.sums {
+            if !self.sums.contains(sum) {
+                self.sums.push(sum.clone());
+            }
+        }
+    }
+
+    /// The goal with what the automatic steps used added.
+    fn into_goal(self, mut goal: Script) -> Script {
+        for d in self.defs {
+            if !goal.defs.iter().any(|x| x.fn_id == d.fn_id) {
+                goal.defs.push(d);
+            }
+        }
+        for c in self.consts {
+            if !goal.consts.iter().any(|x| x.name == c.name) {
+                goal.consts.push(c);
+            }
+        }
+        for l in self.laws {
+            if !goal.laws.iter().any(|x| x.key == l.key) {
+                goal.laws.push(l);
+            }
+        }
+        for sum in self.sums {
+            if !goal.sums.contains(&sum) {
+                goal.sums.push(sum);
+            }
+        }
+        goal
+    }
+}
+
+/// A plan that returned a script (`Kernel.Std.Tactic`): the compiled
+/// standard library runs it on the goal and stops at each `Auto` and `Plan`
+/// node it has no answer for. The compiler answers that question (the
+/// automatic steps, or the named plan of the same module in the VM, on the
+/// goal the question states) and runs the script again with every answer
+/// so far, until it writes a proof or refuses. A node the compiler closed
+/// is `(hyp #N)` in the script's proof, replaced here by the proof N
+/// before the proof is read back and the kernel checks the whole script.
+struct Question<'a, 'b> {
+    inputs: &'a ProofLowerInputs<'b>,
+    ir: &'a ProofIR,
+    law: usize,
+    goal: &'a Script,
+    reader: &'a crate::ir::proof_steps::read::Reader,
+    text: &'a str,
+    runner: Option<&'a Runner>,
+    limit: u64,
+}
+
+impl Question<'_, '_> {
+    /// The script's proof in step data, or why not: ` refused: …` (the
+    /// script's refusal, its path in the script first) or `: …`.
+    fn run(&self, script: &str, extra: &mut Extra) -> Result<String, String> {
+        let mut answers: Vec<(String, String)> = Vec::new();
+        let mut closed: Vec<String> = Vec::new();
+        for _ in 0..=MAX_QUESTIONS {
+            let out = crate::proof_std::run_script(self.text, script, &answers_text(&answers))
+                .map_err(|why| format!(": {why}"))?;
+            let (kind, body) = out.split_once('\n').unwrap_or((out.as_str(), ""));
+            match kind {
+                "proof" => return Ok(filled(body, &closed)),
+                "refused" => return Err(format!(" refused: {body}")),
+                "goal" => return Err(format!(": the script could not be read: {body}")),
+                "ask" => {}
+                _ => return Err(": an answer the compiler cannot read".into()),
+            }
+            let (head, sub) = body.split_once('\n').unwrap_or((body, ""));
+            let reply = if head == "auto" {
+                match self.auto(sub) {
+                    Ok(part) => {
+                        let text = crate::ir::proof_steps::sexpr::proof(
+                            &part.proof,
+                            self.inputs.symbol_table,
+                        )
+                        .map_err(|why| format!(": {why}"))?;
+                        extra.add(&part);
+                        closed.push(text);
+                        format!("(closed {})", closed.len() - 1)
+                    }
+                    Err(why) => declined(&why),
+                }
+            } else if let Some(name) = head.strip_prefix("plan ") {
+                self.plan(name, sub, &mut closed)?
+            } else {
+                return Err(format!(": a question the compiler cannot read: {head}"));
+            };
+            answers.push((body.to_string(), reply));
+        }
+        Err(format!(
+            ": the script asked more than {MAX_QUESTIONS} questions"
+        ))
+    }
+
+    /// The automatic steps on the goal a question states.
+    fn auto(&self, sub: &str) -> Result<super::Part, String> {
+        use crate::ir::proof_steps::read::{Sx, parse};
+        let sx = parse(sub)?;
+        let malformed = || "the question is malformed".to_string();
+        let Sx::List(items) = &sx else {
+            return Err(malformed());
+        };
+        let [
+            Sx::Atom(tag),
+            Sx::List(givens),
+            Sx::List(_elems),
+            Sx::List(from),
+            Sx::List(hyps),
+            premise,
+            lhs,
+            rhs,
+        ] = items.as_slice()
+        else {
+            return Err(malformed());
+        };
+        if tag != "sub" {
+            return Err(malformed());
+        }
+        // A variable a split named has the type of the list it came from,
+        // or of that list's elements.
+        for f in from.iter().skip(1) {
+            if let Sx::List(xs) = f
+                && let [Sx::Atom(name), Sx::Atom(part), Sx::Atom(list)] = xs.as_slice()
+                && let Some(ty) = self.reader.var_type(list)
+            {
+                match (part.as_str(), ty) {
+                    ("tail", ty) => self.reader.declare_var(name, ty),
+                    ("head", crate::ast::Type::List(inner)) => {
+                        self.reader.declare_var(name, *inner)
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let base = &self.goal.obligation;
+        let mut ob = Obligation {
+            key: base.key.clone(),
+            givens: Vec::new(),
+            finite: Vec::new(),
+            lists: Vec::new(),
+            ints: Vec::new(),
+            premise: match premise {
+                Sx::List(xs) if matches!(xs.as_slice(), [Sx::Atom(n)] if n == "none") => None,
+                p => Some(self.reader.term(p)?),
+            },
+            lhs: self.reader.term(lhs)?,
+            rhs: self.reader.term(rhs)?,
+        };
+        for g in givens {
+            match g {
+                Sx::Atom(name) => ob.givens.push(name.clone()),
+                Sx::List(xs) => {
+                    let [Sx::Atom(name), Sx::List(ty)] = xs.as_slice() else {
+                        return Err(malformed());
+                    };
+                    ob.givens.push(name.clone());
+                    match ty.as_slice() {
+                        [Sx::Atom(t)] if t == "tlist" => ob.lists.push(name.clone()),
+                        [Sx::Atom(t)] if t == "tint" => ob.ints.push(name.clone()),
+                        _ => {
+                            if let Some(f) = base.finite.iter().find(|(n, _)| n == name) {
+                                ob.finite.push(f.clone());
+                            }
+                        }
+                    }
+                }
+                Sx::Text(_) => return Err(malformed()),
+            }
+        }
+        let mut known = Vec::new();
+        for h in hyps.iter().skip(1) {
+            let Sx::List(xs) = h else {
+                return Err(malformed());
+            };
+            let [Sx::Atom(name), l, r] = xs.as_slice() else {
+                return Err(malformed());
+            };
+            let (l, r) = (self.reader.term(l)?, self.reader.term(r)?);
+            known.push((
+                name.clone(),
+                crate::ir::proof_steps::Eqn::new(term::canon(&l), term::canon(&r)),
+            ));
+        }
+        super::auto_at(self.inputs, self.ir, self.law, &ob, &known)
+    }
+
+    /// The plan `name` of the script's own plans module on the goal a
+    /// question states: its proof, its script, or its refusal.
+    fn plan(&self, name: &str, sub: &str, closed: &mut Vec<String>) -> Result<String, String> {
+        let Some(runner) = self.runner else {
+            return Ok(declined("a standard plan's script has no plans to name"));
+        };
+        let Some(entry) = runner.entries.get(name) else {
+            return Ok(declined(&format!(
+                "the plans module does not list `{name}` in its `plans [...]` line"
+            )));
+        };
+        let answer = match run(runner, entry, self.text, sub, self.limit) {
+            Ok(answer) => answer,
+            Err(why) => return Ok(declined(&why)),
+        };
+        let (kind, body) = answer.split_once('\n').unwrap_or((answer.as_str(), ""));
+        Ok(match kind {
+            "proof" => {
+                closed.push(body.to_string());
+                format!("(closed {})", closed.len() - 1)
+            }
+            "script" => format!("(script {body})"),
+            "refused" => declined(body),
+            "goal" => {
+                return Err(format!(": plan {name} could not read its goal: {body}"));
+            }
+            _ => return Err(format!(": plan {name}: an answer the compiler cannot read")),
+        })
+    }
+}
+
+/// `text` in quotes, as `Kernel.Sexp` reads a text: a quote, a backslash
+/// and a line break escaped.
+fn quoted(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn declined(why: &str) -> String {
+    format!("(declined {})", quoted(why))
+}
+
+/// The answers so far as a script run reads them.
+fn answers_text(answers: &[(String, String)]) -> String {
+    let mut out = String::from("(answers");
+    for (key, reply) in answers {
+        out.push_str(&format!(" (a {} {reply})", quoted(key)));
+    }
+    out.push(')');
+    out
+}
+
+/// A script's proof with each node the compiler closed, `(hyp #N)`, replaced
+/// by proof N.
+fn filled(proof: &str, closed: &[String]) -> String {
+    let mut out = proof.to_string();
+    for (n, p) in closed.iter().enumerate() {
+        out = out.replace(&format!("(hyp #{n})"), p);
+    }
+    out
 }
