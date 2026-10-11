@@ -51,6 +51,8 @@ pub enum WallRule {
     EqOfBeq,
     // Equality (not on a value that may hold a Float) is reflexive.
     BeqRefl,
+    // Equality reads the same with its sides swapped.
+    BeqSymm,
     // Ring laws of Int.
     AddComm,
     MulComm,
@@ -110,7 +112,7 @@ pub enum WallRule {
 }
 
 impl WallRule {
-    pub const ALL: [WallRule; 73] = [
+    pub const ALL: [WallRule; 74] = [
         WallRule::AndTrueL,
         WallRule::AndFalseL,
         WallRule::AndTrueR,
@@ -140,6 +142,7 @@ impl WallRule {
         WallRule::EqFalseOfGt,
         WallRule::EqOfBeq,
         WallRule::BeqRefl,
+        WallRule::BeqSymm,
         WallRule::AddComm,
         WallRule::MulComm,
         WallRule::AddAssoc,
@@ -218,6 +221,7 @@ impl WallRule {
             WallRule::EqFalseOfGt => "int.eq.false_of_gt",
             WallRule::EqOfBeq => "int.eq.of_beq",
             WallRule::BeqRefl => "bool.beq.refl",
+            WallRule::BeqSymm => "bool.beq.symm",
             WallRule::AddComm => "int.add_comm",
             WallRule::MulComm => "int.mul_comm",
             WallRule::AddAssoc => "int.add_assoc",
@@ -425,6 +429,10 @@ impl WallRule {
             WallRule::EqFalseOfGt => compl(BinOp::Gt, true, BinOp::Eq, false),
             WallRule::EqOfBeq => (vec![is(cmp(BinOp::Eq, a(), b()), true)], Eqn::new(a(), b())),
             WallRule::BeqRefl => (vec![], is(cmp(BinOp::Eq, a(), a()), true)),
+            WallRule::BeqSymm => (
+                vec![],
+                Eqn::new(cmp(BinOp::Eq, a(), b()), cmp(BinOp::Eq, b(), a())),
+            ),
             WallRule::AddComm => (
                 vec![],
                 Eqn::new(binop(BinOp::Add, a(), b()), binop(BinOp::Add, b(), a())),

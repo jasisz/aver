@@ -541,6 +541,9 @@ impl Env<'_> {
         if let Some((name, value)) = self.hyp_for(cur) {
             return Ok(Some(Step::Progress(Box::new((Proof::Hyp(name), value)))));
         }
+        if let Some(step) = self.swapped_hyp(cur) {
+            return Ok(Some(step));
+        }
         if let Some(step) = self.split_bool(cur) {
             return Ok(Some(step));
         }
@@ -660,6 +663,37 @@ impl Env<'_> {
             }
         }
         out
+    }
+
+    /// `(a == b) = v` where a hypothesis states `(b == a) = v`, by
+    /// `bool.beq.symm` and that hypothesis, for a type whose `==` is
+    /// equality in Lean too. One lookup, no search: only the sides of `cur`
+    /// itself are swapped.
+    fn swapped_hyp(&self, cur: &Term) -> Option<Step> {
+        let ResolvedExpr::BinOp(BinOp::Eq, a, b) = &cur.node else {
+            return None;
+        };
+        if !(self.beq_is_equality(a) || self.beq_is_equality(b)) {
+            return None;
+        }
+        let (a, b) = (canon(a), canon(b));
+        if a == b {
+            return None;
+        }
+        let swapped = canon(&term::binop(BinOp::Eq, b.clone(), a.clone()));
+        let (name, value) = self.hyp_for(&swapped)?;
+        let proof = Proof::Trans {
+            terms: vec![canon(cur), swapped, value.clone()],
+            steps: vec![
+                Proof::Rule {
+                    rule: WallRule::BeqSymm,
+                    subst: vec![("a".into(), a), ("b".into(), b)],
+                    premises: Vec::new(),
+                },
+                Proof::Hyp(name),
+            ],
+        };
+        Some(Step::Progress(Box::new((proof, value))))
     }
 
     /// `(a == a) = true`, by `bool.beq.refl`, for a type whose values hold

@@ -1,0 +1,59 @@
+module SwappedEquality
+    intent =
+        "Laws that read an equality with its sides swapped: the case split states `b == a`,"
+        "the claim evaluates `a == b`. The step that swaps the sides is the `bool.beq.symm` rule."
+        "A record holding a Float keeps its law open: Lean does not read its `==` as equality."
+    exposes [order, Tag, orderTag, Reading, orderReading]
+    effects []
+
+fn order(a: String, b: String) -> Int
+    ? "0 when the two texts are equal, 1 otherwise; compares b with a."
+    match b == a
+        true -> 0
+        false -> 1
+
+verify order
+    order("x", "x") => 0
+    order("x", "y") => 1
+
+verify order law symmetric
+    given a: String = ["x", "y"]
+    given b: String = ["x", "z"]
+    order(a, b) => order(b, a)
+
+record Tag
+    name: String
+    codes: List<Int>
+
+fn orderTag(a: Option<Tag>, b: Option<Tag>) -> Int
+    ? "0 when the two tags are equal, 1 otherwise; compares b with a."
+    match b == a
+        true -> 0
+        false -> 1
+
+verify orderTag
+    orderTag(Option.None, Option.None) => 0
+    orderTag(Option.Some(Tag(name = "x", codes = [1])), Option.None) => 1
+
+verify orderTag law symmetric
+    given a: Option<Tag> = [Option.None, Option.Some(Tag(name = "x", codes = [1]))]
+    given b: Option<Tag> = [Option.None, Option.Some(Tag(name = "x", codes = []))]
+    orderTag(a, b) => orderTag(b, a)
+
+record Reading
+    label: String
+    value: Float
+
+fn orderReading(a: Reading, b: Reading) -> Int
+    ? "0 when the two readings are equal, 1 otherwise; compares b with a."
+    match b == a
+        true -> 0
+        false -> 1
+
+verify orderReading
+    orderReading(Reading(label = "x", value = 1.0), Reading(label = "x", value = 1.0)) => 0
+
+verify orderReading law symmetric
+    given a: Reading = [Reading(label = "x", value = 1.0)]
+    given b: Reading = [Reading(label = "x", value = 1.0), Reading(label = "y", value = 2.0)]
+    orderReading(a, b) => orderReading(b, a)
