@@ -6,7 +6,9 @@ module Proof
         "A goal is a script without its proof: what a project's proof plan is given to prove,"
         "with the hypotheses in scope where it is posed and what the list givens hold."
         "Each step names its rule and writes out every instance; see src/ir/proof_steps/mod.rs."
-    exposes [Proof, Case, SplitCase, More, IhAt, Def, Const, Variant, Law, Fact, Script, Goal, Hyp, Given, ListElem, Ty, premiseOf]
+        "A linear step's cuts each divide a weighted sum of the rows before it by a divisor, its"
+        "constant rounded down, which holds because every atom is an integer."
+    exposes [Proof, Cut, Case, SplitCase, More, IhAt, Def, Const, Variant, Law, Fact, Script, Goal, Hyp, Given, ListElem, Ty, premiseOf]
     depends [Kernel.Term]
     effects []
 
@@ -33,7 +35,11 @@ type Proof
     PListInduct(String, Term, Term, Proof, String, String, List<String>, List<IhAt>, Proof)
     PListCases(String, Term, Term, Proof, String, String, Proof)
     PRing(Term, Term)
-    PLinear(Term, Bool, List<String>, List<Int>)
+    PLinear(Term, Bool, List<String>, List<Int>, List<Cut>)
+
+record Cut
+    divisor: Int
+    weights: List<Int>
 
 record Case
     binders: List<String>

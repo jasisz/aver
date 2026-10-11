@@ -478,6 +478,7 @@ fn positive_from_len(goal: Term, l: Term, h: &str) -> Proof {
             value: true,
             hyps: vec![h.to_string()],
             weights,
+            cuts: Vec::new(),
         }),
         if_false: Box::new(Proof::Absurd {
             contradiction: Box::new(trans(
@@ -601,6 +602,7 @@ fn len_nonneg() -> Fact {
                     value: true,
                     hyps: vec!["ih".into()],
                     weights,
+                    cuts: Vec::new(),
                 },
             ],
         ),
@@ -746,6 +748,7 @@ fn linear_from(goal: Term, hyps: &[(&str, Term, bool)]) -> Proof {
         value: true,
         hyps: hyps.iter().map(|(n, _, _)| n.to_string()).collect(),
         weights: linear::certificate(&facts).expect("the goal follows linearly"),
+        cuts: Vec::new(),
     }
 }
 

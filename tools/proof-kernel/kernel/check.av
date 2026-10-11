@@ -57,7 +57,7 @@ fn conclude(p: Proof, env: Env, path: String) -> Result<Eqn, String>
         Proof.PListInduct(v, l, r, n, h, t, general, ihs, c) -> listInduct(v, Eqn(lhs = l, rhs = r), n, h, t, general, ihs, c, env, path)
         Proof.PListCases(v, l, r, n, h, t, c) -> splitList(v, Eqn(lhs = l, rhs = r), n, h, t, c, env, path)
         Proof.PRing(l, r) -> ring(l, r, path)
-        Proof.PLinear(g, v, hs, ws) -> linear(g, v, hs, ws, env, path)
+        Proof.PLinear(g, v, hs, ws, cs) -> linear(g, v, hs, ws, cs, env, path)
 
 verify conclude
     conclude(Proof.PRefl(Term.TInt(1)), emptyEnv(), "proof") => Result.Ok(Eqn(lhs = Term.TInt(1), rhs = Term.TInt(1)))
@@ -540,17 +540,20 @@ fn withHyp(env: Env, h: String, on: Term, value: Bool) -> Env
 verify withHyp
     List.len(withHyp(emptyEnv(), "h", Term.TVar("c"), true).hyps) => 1
 
-fn linear(g: Term, v: Bool, hs: List<String>, ws: List<Int>, env: Env, path: String) -> Result<Eqn, String>
-    ? "A comparison decided by linear arithmetic: its opposite and the named hypotheses, weighted, add up to a negative constant."
+fn linear(g: Term, v: Bool, hs: List<String>, ws: List<Int>, cs: List<Cut>, env: Env, path: String) -> Result<Eqn, String>
+    ? "A comparison decided by linear arithmetic over the integers: its opposite and the named hypotheses, then the rows the cuts round from them, weighted, add up to a negative constant."
     match hypEqns(hs, env.hyps, path)
         Result.Err(why) -> Result.Err(why)
-        Result.Ok(facts) -> match Kernel.Ring.linearContradiction(List.prepend(Eqn(lhs = g, rhs = Term.TBool(Bool.not(v))), facts), ws)
+        Result.Ok(facts) -> match Kernel.Ring.linearContradiction(List.prepend(Eqn(lhs = g, rhs = Term.TBool(Bool.not(v))), facts), cs, ws)
             true -> Result.Ok(Eqn(lhs = g, rhs = Term.TBool(v)))
             false -> refuse(path, "the weights do not add up to a contradiction")
 
 verify linear
-    linear(Term.TOp(">", Term.TOp("+", Term.TVar("x"), Term.TInt(1)), Term.TInt(1)), true, ["h"], [1, 1], withHyp(emptyEnv(), "h", Term.TOp(">", Term.TVar("x"), Term.TInt(0)), true), "p") => Result.Ok(Eqn(lhs = Term.TOp(">", Term.TOp("+", Term.TVar("x"), Term.TInt(1)), Term.TInt(1)), rhs = Term.TBool(true)))
-    linear(Term.TOp(">", Term.TVar("x"), Term.TInt(1)), true, ["h"], [1, 1], withHyp(emptyEnv(), "h", Term.TOp(">", Term.TVar("x"), Term.TInt(0)), true), "p") => Result.Err("step p: the weights do not add up to a contradiction")
+    linear(Term.TOp(">", Term.TOp("+", Term.TVar("x"), Term.TInt(1)), Term.TInt(1)), true, ["h"], [1, 1], [], withHyp(emptyEnv(), "h", Term.TOp(">", Term.TVar("x"), Term.TInt(0)), true), "p") => Result.Ok(Eqn(lhs = Term.TOp(">", Term.TOp("+", Term.TVar("x"), Term.TInt(1)), Term.TInt(1)), rhs = Term.TBool(true)))
+    linear(Term.TOp(">", Term.TVar("x"), Term.TInt(1)), true, ["h"], [1, 1], [], withHyp(emptyEnv(), "h", Term.TOp(">", Term.TVar("x"), Term.TInt(0)), true), "p") => Result.Err("step p: the weights do not add up to a contradiction")
+    linear(Term.TOp(">=", Term.TOp("*", Term.TInt(2), Term.TVar("x")), Term.TInt(2)), true, ["h"], [1, 0, 2], [Cut(divisor = 2, weights = [0, 1])], withHyp(emptyEnv(), "h", Term.TOp(">=", Term.TOp("*", Term.TInt(2), Term.TVar("x")), Term.TInt(1)), true), "p") => Result.Ok(Eqn(lhs = Term.TOp(">=", Term.TOp("*", Term.TInt(2), Term.TVar("x")), Term.TInt(2)), rhs = Term.TBool(true)))
+    linear(Term.TOp(">=", Term.TOp("*", Term.TInt(2), Term.TVar("x")), Term.TInt(2)), true, ["h"], [1, 1], [], withHyp(emptyEnv(), "h", Term.TOp(">=", Term.TOp("*", Term.TInt(2), Term.TVar("x")), Term.TInt(1)), true), "p") => Result.Err("step p: the weights do not add up to a contradiction")
+    linear(Term.TOp(">=", Term.TOp("*", Term.TInt(2), Term.TVar("x")), Term.TInt(2)), true, ["h"], [1, 0, 2], [Cut(divisor = 3, weights = [0, 1])], withHyp(emptyEnv(), "h", Term.TOp(">=", Term.TOp("*", Term.TInt(2), Term.TVar("x")), Term.TInt(1)), true), "p") => Result.Err("step p: the weights do not add up to a contradiction")
 
 fn hypEqns(hs: List<String>, scope: List<Hyp>, path: String) -> Result<List<Eqn>, String>
     ? "The equations of the named hypotheses."

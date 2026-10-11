@@ -1798,6 +1798,135 @@ fn lean_closes_a_division_down_to_zero_by_its_steps() {
     let _ = fs::remove_dir_all(out);
 }
 
+const REMAINDER_LAWS: [&str; 7] = [
+    "base.ignoresBitSeven",
+    "base.lowFiveBitsDecide",
+    "bitSeven.complementIsArithmetic",
+    "bitSeven.isTheMask",
+    "bitSeven.shiftMultiplies",
+    "digit.readsTheDigit",
+    "readBack.roundTrip",
+];
+
+/// Division by a literal read over the integers, and masks of bits read as
+/// arithmetic: both kernels accept the steps and refuse a cut that divides
+/// by a number that is not a divisor, a step without its cuts, a remainder
+/// by 0 or by a name, and a mask or shift read with the wrong power of two.
+/// Laws that hold on their samples only (a remainder by 32 below 31, a
+/// quotient of a negative number rounded toward zero, a divisor that is a
+/// name) do not close.
+#[test]
+fn both_kernels_read_remainders_over_the_integers_and_refuse_mutations() {
+    let out = scratch("remainders");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("remainders.av", &out).into_iter().collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), REMAINDER_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let digit = read("digit.readsTheDigit");
+    let low = read("base.lowFiveBitsDecide");
+    let bit = read("bitSeven.isTheMask");
+    assert!(digit.contains("(cut 256 "), "{digit}");
+    assert!(low.contains("(rule bits.and_low "), "{low}");
+    assert!(bit.contains("(rule bits.and_bit "), "{bit}");
+    let range = "(rule int.mod_range ((a (op + (op * (v prefix) (i 256)) (v d))) (k (i 256))) (compute (op > (i 256) (i 0)) (b true)))";
+    assert!(digit.contains(range), "{digit}");
+    let without_cuts = {
+        let mut text = digit.clone();
+        while let Some(at) = text.find(" (cut ") {
+            let close = text[at..].find("))").unwrap() + at + 2;
+            text.replace_range(at..close, "");
+        }
+        text
+    };
+    let mutants = [
+        // A cut by a number that does not divide the coefficients.
+        (&digit, digit.replacen("(cut 256 ", "(cut 255 ", 1)),
+        // The rounded rows dropped: over the rationals nothing follows.
+        (&digit, without_cuts),
+        // A remainder by 0, and by a name, has no range.
+        (
+            &digit,
+            digit.replacen(
+                range,
+                "(rule int.mod_range ((a (op + (op * (v prefix) (i 256)) (v d))) (k (i 0))) (compute (op > (i 0) (i 0)) (b true)))",
+                1,
+            ),
+        ),
+        (
+            &digit,
+            digit.replacen(
+                range,
+                "(rule int.mod_range ((a (op + (op * (v prefix) (i 256)) (v d))) (k (v d))) (compute (op > (v d) (i 0)) (b true)))",
+                1,
+            ),
+        ),
+        // A mask read by the wrong power of two, or one that is not one less
+        // than a power of two.
+        (&bit, bit.replacen("(k (i 128)) (n (i 7))", "(k (i 128)) (n (i 6))", 1)),
+        (
+            &low,
+            low.replacen("(m (i 31)) (k (i 32))", "(m (i 30)) (k (i 32))", 1),
+        ),
+    ];
+    for (i, (source, mutant)) in mutants.iter().enumerate() {
+        assert_ne!(mutant, *source, "mutant {i} changed nothing");
+        let verdict = aver::proof_kernel::verdict(mutant);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "mutant {i}: {verdict:?}\n{mutant}"
+        );
+        let path = out.join(format!("mutant{i}.steps"));
+        fs::write(&path, mutant).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(!result.status.success(), "{}", format_output(&result));
+    }
+    let refused = scratch("remainders-refused");
+    assert!(export_steps("remainders_refused.av", &refused).is_empty());
+    let _ = fs::remove_dir_all(out);
+    let _ = fs::remove_dir_all(refused);
+}
+
+#[test]
+fn lean_closes_remainders_and_masks_by_their_steps() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("remainders-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "remainders.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in REMAINDER_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let lean = fs::read_to_string(out.join("Remainders.lean")).unwrap();
+    for lemma in ["bits_and_low", "bits_and_bit", "bits_not", "bits_shl"] {
+        assert!(lean.contains(&format!("AverSteps.{lemma}")), "{lemma}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
 const DROPPING_LAWS: [&str; 4] = [
     "pairsLeft.cellStep",
     "pairsLeft.nonNegative",

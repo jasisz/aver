@@ -5,6 +5,7 @@ module Rules
         "The list rules are the constructor equations of the list builtins, with Aver's truncation of a count."
         "The map rules read Map.get, Map.has and Map.len on the empty map and on Map.set(m, k, v)."
         "The vector rules read a vector as the list it holds, and Vector.get and Vector.len after a write or a literal-size Vector.new."
+        "The bits rules read complement, a shift left and a mask of low bits or of one bit as Int arithmetic."
     exposes [Schema, schema]
     depends [Kernel.Term]
     effects []
@@ -148,10 +149,37 @@ fn divisionSchema(id: String) -> Option<Schema>
         "int.div_mod_recompose" -> Option.Some(Schema(binders = ["a", "k"], premises = [is(Term.TOp(">", v("k"), Term.TInt(0)), true)], concl = eq(Term.TOp("+", Term.TOp("*", divE(v("a"), v("k")), v("k")), modE(v("a"), v("k"))), v("a"))))
         "int.mod_range" -> Option.Some(Schema(binders = ["a", "k"], premises = [is(Term.TOp(">", v("k"), Term.TInt(0)), true)], concl = is(range(modE(v("a"), v("k")), v("k")), true)))
         "int.div_range" -> Option.Some(Schema(binders = ["a", "k", "m", "n"], premises = [is(range(v("a"), v("m")), true), is(conn("Bool.and", Term.TOp(">", v("k"), Term.TInt(0)), Term.TOp("==", v("m"), Term.TOp("*", v("n"), v("k")))), true)], concl = is(range(divE(v("a"), v("k")), v("n")), true)))
-        _ -> listSchema(id)
+        _ -> bitsSchema(id)
 
 verify divisionSchema
     divisionSchema("int.div_range") == Option.None => false
+
+fn shl(a: Term, n: Term) -> Term
+    ? "A shift left by a count, as the compiler writes Bits.shiftLeft with a literal count."
+    Term.TBi("__bits_shl", [a, n])
+
+verify shl
+    shl(v("a"), Term.TInt(3)) => Term.TBi("__bits_shl", [v("a"), Term.TInt(3)])
+
+fn powerOfTwo(k: Term) -> Term
+    ? "0 <= n and k == 2^n, written as a shift of 1."
+    conn("Bool.and", Term.TOp("<=", Term.TInt(0), v("n")), Term.TOp("==", k, shl(Term.TInt(1), v("n"))))
+
+verify powerOfTwo
+    powerOfTwo(v("k")) => conn("Bool.and", Term.TOp("<=", Term.TInt(0), v("n")), Term.TOp("==", v("k"), shl(Term.TInt(1), v("n"))))
+
+fn bitsSchema(id: String) -> Option<Schema>
+    ? "The bit-level view of Int, infinite two's complement: complement, a shift left, a low mask 2^n - 1 and a one-bit mask 2^n."
+    match id
+        "bits.not" -> plain(["a"], Term.TBi("Bits.not", [v("a")]), Term.TOp("-", Term.TOp("-", Term.TInt(0), v("a")), Term.TInt(1)))
+        "bits.shl" -> Option.Some(Schema(binders = ["a", "n", "k"], premises = [is(powerOfTwo(v("k")), true)], concl = eq(shl(v("a"), v("n")), Term.TOp("*", v("a"), v("k")))))
+        "bits.and_low" -> Option.Some(Schema(binders = ["a", "m", "k", "n"], premises = [is(conn("Bool.and", conn("Bool.and", Term.TOp("<=", Term.TInt(0), v("n")), Term.TOp("==", Term.TOp("+", v("m"), Term.TInt(1)), v("k"))), Term.TOp("==", v("k"), shl(Term.TInt(1), v("n")))), true)], concl = eq(Term.TBi("Bits.and", [v("a"), v("m")]), modE(v("a"), v("k")))))
+        "bits.and_bit" -> Option.Some(Schema(binders = ["a", "k", "n"], premises = [is(powerOfTwo(v("k")), true)], concl = eq(Term.TBi("Bits.and", [v("a"), v("k")]), Term.TOp("*", v("k"), modE(divE(v("a"), v("k")), Term.TInt(2))))))
+        _ -> listSchema(id)
+
+verify bitsSchema
+    bitsSchema("bits.not") => plain(["a"], Term.TBi("Bits.not", [v("a")]), Term.TOp("-", Term.TOp("-", Term.TInt(0), v("a")), Term.TInt(1)))
+    bitsSchema("bits.and_bit") == Option.None => false
 
 fn cons(x: Term, xs: Term) -> Term
     ? "An element in front of a list."

@@ -325,9 +325,10 @@ fn __mutual_tco_trampoline_1(
                         v,
                         hs,
                         ws,
+                        cs,
                     ) => {
                         return crate::proof_kernel::aver_generated::kernel::check::linear(
-                            &g, v, &hs, &ws, &env, path,
+                            &g, v, &hs, &ws, &cs, &env, path,
                         );
                     }
                 }
@@ -2343,13 +2344,14 @@ pub fn withHyp(
     }
 }
 
-/// A comparison decided by linear arithmetic: its opposite and the named hypotheses, weighted, add up to a negative constant.
+/// A comparison decided by linear arithmetic over the integers: its opposite and the named hypotheses, then the rows the cuts round from them, weighted, add up to a negative constant.
 #[inline(always)]
 pub fn linear(
     g @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
     v @ _: bool,
     hs @ _: &aver_rt::AverList<AverStr>,
     ws @ _: &aver_rt::AverIntList,
+    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Cut>,
     env @ _: &Env,
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
@@ -2365,6 +2367,7 @@ pub fn linear(
                     },
                     &facts,
                 ),
+                cs,
                 ws,
             ) {
                 Ok(crate::proof_kernel::aver_generated::kernel::term::Eqn {

@@ -228,7 +228,7 @@ fn proofText(p: Proof) -> String
         Proof.PListInduct(v, l, r, n, h, t, general, ihs, c) -> "(listinduct {v} {termText(l)} {termText(r)} {proofText(n)} ({h} {t}) ({spaced(general)}) ({spaced(ihAtTexts(ihs))}) {proofText(c)})"
         Proof.PListCases(v, l, r, n, h, t, c) -> "(listcases {v} {termText(l)} {termText(r)} {proofText(n)} ({h} {t}) {proofText(c)})"
         Proof.PRing(l, r) ->"(ring {termText(l)} {termText(r)})"
-        Proof.PLinear(g, v, hs, ws) -> "(linear {termText(g)} {v} ({spaced(hs)}) ({spaced(intTexts(ws))}))"
+        Proof.PLinear(g, v, hs, ws, cs) -> "(linear {termText(g)} {v} ({spaced(hs)}) ({spaced(intTexts(ws))}){cutTexts(cs)})"
 
 verify proofText
     proofText(Proof.PTrans([Term.TInt(1), Term.TInt(1)], [Proof.PRefl(Term.TInt(1))])) => "(trans ((i 1) (i 1)) (refl (i 1)))"
@@ -236,7 +236,17 @@ verify proofText
     proofText(Proof.PRule("list.len.nil", [], [])) => "(rule list.len.nil ())"
     proofText(Proof.PSplit("f", [Term.TVar("x")], Term.TVar("x"), "h", [SplitCase(ctor = "nil", binders = [], proof = Proof.PHyp("h"))])) => "(split f ((v x)) (v x) h (case nil () (hyp h)))"
     proofText(Proof.PListCases("xs", Term.TVar("xs"), Term.TVar("xs"), Proof.PHyp("a"), "h", "t", Proof.PHyp("b"))) => "(listcases xs (v xs) (v xs) (hyp a) (h t) (hyp b))"
-    proofText(Proof.PLinear(Term.TVar("g"), true, ["h"], [1, 2])) => "(linear (v g) true (h) (1 2))"
+    proofText(Proof.PLinear(Term.TVar("g"), true, ["h"], [1, 2], [])) => "(linear (v g) true (h) (1 2))"
+    proofText(Proof.PLinear(Term.TVar("g"), true, ["h"], [1, 2, 1], [Cut(divisor = 3, weights = [1, 0])])) => "(linear (v g) true (h) (1 2 1) (cut 3 (1 0)))"
+
+fn cutTexts(cs: List<Cut>) -> String
+    ? "Each cut of a linear step, a space before each."
+    match cs
+        [] -> ""
+        [c, ..rest] -> " (cut {c.divisor} ({spaced(intTexts(c.weights))})){cutTexts(rest)}"
+
+verify cutTexts
+    cutTexts([]) => ""
 
 fn proofTexts(ps: List<Proof>) -> List<String>
     ? "Each proof."

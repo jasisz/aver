@@ -28,6 +28,13 @@
    "countAll.viaExpand"
   ]
  },
+ "examples/formal/bits_laws.av": {
+  "steps": [
+   "complement.arithmetic",
+   "complement.involution",
+   "doubled.multiplication"
+  ]
+ },
  "examples/formal/empty_map_facts.av": {
   "steps": [
    "contains.emptyContainsNothing",
@@ -378,7 +385,8 @@
  "projects/song/wave.av": {
   "steps": [
    "clamp16.fitsSixteenBits",
-   "header.sizeIsFortyFour"
+   "header.sizeIsFortyFour",
+   "readLe16.roundTrip"
   ]
  },
  "proof-corpus/decomposed/handwritten/all_zero_sum.av": {

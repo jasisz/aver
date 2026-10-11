@@ -112,6 +112,7 @@ pub enum Proof {
         bool,
         aver_rt::AverList<AverStr>,
         aver_rt::AverIntList,
+        aver_rt::AverList<Cut>,
     ),
 }
 
@@ -216,12 +217,13 @@ impl Ord for Proof {
                 .then_with(|| a0.cmp(b0))
                 .then_with(|| a1.cmp(b1))
                 .then_with(|| a2.cmp(b2)),
-            (Proof::PLinear(a0, a1, a2, a3), Proof::PLinear(b0, b1, b2, b3)) => {
+            (Proof::PLinear(a0, a1, a2, a3, a4), Proof::PLinear(b0, b1, b2, b3, b4)) => {
                 std::cmp::Ordering::Equal
                     .then_with(|| a0.cmp(b0))
                     .then_with(|| a1.cmp(b1))
                     .then_with(|| a2.cmp(b2))
                     .then_with(|| a3.cmp(b3))
+                    .then_with(|| a4.cmp(b4))
             }
             (
                 Proof::PListCases(a0, a1, a2, a3, a4, a5, a6),
@@ -441,17 +443,54 @@ impl aver_rt::AverDisplay for Proof {
                 "PRing({})",
                 vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
             ),
-            Proof::PLinear(f0, f1, f2, f3) => format!(
+            Proof::PLinear(f0, f1, f2, f3, f4) => format!(
                 "PLinear({})",
                 vec![
                     f0.aver_display_inner(),
                     f1.aver_display_inner(),
                     f2.aver_display_inner(),
-                    f3.aver_display_inner()
+                    f3.aver_display_inner(),
+                    f4.aver_display_inner()
                 ]
                 .join(", ")
             ),
         }
+    }
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Cut {
+    pub divisor: aver_rt::AverInt,
+    pub weights: aver_rt::AverIntList,
+}
+
+impl PartialOrd for Cut {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Cut {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        std::cmp::Ordering::Equal
+            .then_with(|| self.divisor.cmp(&other.divisor))
+            .then_with(|| self.weights.cmp(&other.weights))
+    }
+}
+
+impl aver_rt::AverDisplay for Cut {
+    fn aver_display(&self) -> String {
+        format!(
+            "Cut({})",
+            vec![
+                format!("divisor: {}", self.divisor.aver_display_inner()),
+                format!("weights: {}", self.weights.aver_display_inner())
+            ]
+            .join(", ")
+        )
     }
     fn aver_display_inner(&self) -> String {
         self.aver_display()

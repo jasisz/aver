@@ -722,7 +722,147 @@ pub fn divisionSchema(id @ _: AverStr) -> Option<Schema> {
                 if &*__dispatch_subject == "int.div_range" {
                     Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: aver_rt::AverList::from_vec(vec![AverStr::from("a"), AverStr::from("k"), AverStr::from("m"), AverStr::from("n")]), premises: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::rules::range(&crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("m"))), true), crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::rules::conn(AverStr::from("Bool.and"), &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from(">"), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("k"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::term::Term::TInt(aver_rt::AverInt::from_i64(0)))), &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("=="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("m"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("*"), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("n"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("k"))))))), true)]), concl: crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::rules::range(&crate::proof_kernel::aver_generated::kernel::rules::divE(&crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("k"))), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("n"))), true) })
                 } else {
-                    crate::proof_kernel::aver_generated::kernel::rules::listSchema(id)
+                    crate::proof_kernel::aver_generated::kernel::rules::bitsSchema(id)
+                }
+            }
+        }
+    }
+}
+
+/// A shift left by a count, as the compiler writes Bits.shiftLeft with a literal count.
+pub fn shl(
+    a @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    n @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+) -> crate::proof_kernel::aver_generated::kernel::term::Term {
+    crate::proof_kernel::cancel_checkpoint();
+    crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
+        AverStr::from("__bits_shl"),
+        aver_rt::AverList::from_vec(vec![a.clone(), n.clone()]),
+    )
+}
+
+/// 0 <= n and k == 2^n, written as a shift of 1.
+#[inline(always)]
+pub fn powerOfTwo(
+    k @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+) -> crate::proof_kernel::aver_generated::kernel::term::Term {
+    crate::proof_kernel::cancel_checkpoint();
+    crate::proof_kernel::aver_generated::kernel::rules::conn(
+        AverStr::from("Bool.and"),
+        &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
+            AverStr::from("<="),
+            std::sync::Arc::new(
+                crate::proof_kernel::aver_generated::kernel::term::Term::TInt(
+                    aver_rt::AverInt::from_i64(0),
+                ),
+            ),
+            std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(
+                AverStr::from("n"),
+            )),
+        ),
+        &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
+            AverStr::from("=="),
+            std::sync::Arc::new(k.clone()),
+            std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::shl(
+                &crate::proof_kernel::aver_generated::kernel::term::Term::TInt(
+                    aver_rt::AverInt::from_i64(1),
+                ),
+                &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("n")),
+            )),
+        ),
+    )
+}
+
+/// The bit-level view of Int, infinite two's complement: complement, a shift left, a low mask 2^n - 1 and a one-bit mask 2^n.
+#[inline(always)]
+pub fn bitsSchema(id @ _: AverStr) -> Option<Schema> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __dispatch_subject = id.clone();
+        if &*__dispatch_subject == "bits.not" {
+            crate::proof_kernel::aver_generated::kernel::rules::plain(
+                &aver_rt::AverList::from_vec(vec![AverStr::from("a")]),
+                &crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
+                    AverStr::from("Bits.not"),
+                    aver_rt::AverList::from_vec(vec![
+                        crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")),
+                    ]),
+                ),
+                &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
+                    AverStr::from("-"),
+                    std::sync::Arc::new(
+                        crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
+                            AverStr::from("-"),
+                            std::sync::Arc::new(
+                                crate::proof_kernel::aver_generated::kernel::term::Term::TInt(
+                                    aver_rt::AverInt::from_i64(0),
+                                ),
+                            ),
+                            std::sync::Arc::new(
+                                crate::proof_kernel::aver_generated::kernel::rules::v(
+                                    AverStr::from("a"),
+                                ),
+                            ),
+                        ),
+                    ),
+                    std::sync::Arc::new(
+                        crate::proof_kernel::aver_generated::kernel::term::Term::TInt(
+                            aver_rt::AverInt::from_i64(1),
+                        ),
+                    ),
+                ),
+            )
+        } else {
+            if &*__dispatch_subject == "bits.shl" {
+                Some(crate::proof_kernel::aver_generated::kernel::rules::Schema {
+                    binders: aver_rt::AverList::from_vec(vec![
+                        AverStr::from("a"),
+                        AverStr::from("n"),
+                        AverStr::from("k"),
+                    ]),
+                    premises: aver_rt::AverList::from_vec(vec![
+                        crate::proof_kernel::aver_generated::kernel::rules::is(
+                            &crate::proof_kernel::aver_generated::kernel::rules::powerOfTwo(
+                                &crate::proof_kernel::aver_generated::kernel::rules::v(
+                                    AverStr::from("k"),
+                                ),
+                            ),
+                            true,
+                        ),
+                    ]),
+                    concl: crate::proof_kernel::aver_generated::kernel::rules::eq(
+                        &crate::proof_kernel::aver_generated::kernel::rules::shl(
+                            &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from(
+                                "a",
+                            )),
+                            &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from(
+                                "n",
+                            )),
+                        ),
+                        &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
+                            AverStr::from("*"),
+                            std::sync::Arc::new(
+                                crate::proof_kernel::aver_generated::kernel::rules::v(
+                                    AverStr::from("a"),
+                                ),
+                            ),
+                            std::sync::Arc::new(
+                                crate::proof_kernel::aver_generated::kernel::rules::v(
+                                    AverStr::from("k"),
+                                ),
+                            ),
+                        ),
+                    ),
+                })
+            } else {
+                if &*__dispatch_subject == "bits.and_low" {
+                    Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: aver_rt::AverList::from_vec(vec![AverStr::from("a"), AverStr::from("m"), AverStr::from("k"), AverStr::from("n")]), premises: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::rules::conn(AverStr::from("Bool.and"), &crate::proof_kernel::aver_generated::kernel::rules::conn(AverStr::from("Bool.and"), &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("<="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::term::Term::TInt(aver_rt::AverInt::from_i64(0))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("n")))), &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("=="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("+"), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("m"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::term::Term::TInt(aver_rt::AverInt::from_i64(1))))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("k"))))), &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("=="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("k"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::shl(&crate::proof_kernel::aver_generated::kernel::term::Term::TInt(aver_rt::AverInt::from_i64(1)), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("n")))))), true)]), concl: crate::proof_kernel::aver_generated::kernel::rules::eq(&crate::proof_kernel::aver_generated::kernel::term::Term::TBi(AverStr::from("Bits.and"), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")), crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("m"))])), &crate::proof_kernel::aver_generated::kernel::rules::modE(&crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("k")))) })
+                } else {
+                    if &*__dispatch_subject == "bits.and_bit" {
+                        Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: aver_rt::AverList::from_vec(vec![AverStr::from("a"), AverStr::from("k"), AverStr::from("n")]), premises: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::rules::powerOfTwo(&crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("k"))), true)]), concl: crate::proof_kernel::aver_generated::kernel::rules::eq(&crate::proof_kernel::aver_generated::kernel::term::Term::TBi(AverStr::from("Bits.and"), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")), crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("k"))])), &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("*"), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("k"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::modE(&crate::proof_kernel::aver_generated::kernel::rules::divE(&crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("k"))), &crate::proof_kernel::aver_generated::kernel::term::Term::TInt(aver_rt::AverInt::from_i64(2)))))) })
+                    } else {
+                        crate::proof_kernel::aver_generated::kernel::rules::listSchema(id)
+                    }
                 }
             }
         }

@@ -284,14 +284,16 @@ pub enum Proof {
         cons: Box<Proof>,
     },
     /// `goal = value` for an Int comparison `goal`: its opposite and the
-    /// hypotheses `hyps`, each read as `p >= 0` and weighted by `weights`
-    /// (the opposite first), add up to a negative constant (see
-    /// [`linear`]).
+    /// hypotheses `hyps`, each read as `p >= 0`, then the rows `cuts`
+    /// rounds from them (each over the comparisons and the cuts before
+    /// it), weighted by `weights` (the opposite first, the cuts last), add
+    /// up to a negative constant (see [`linear`]).
     Linear {
         goal: Term,
         value: bool,
         hyps: Vec<String>,
         weights: Vec<num_bigint::BigInt>,
+        cuts: Vec<linear::Cut>,
     },
     /// `lhs = rhs` for two Int terms that are the same polynomial over
     /// their atoms (see [`ring`]).

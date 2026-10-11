@@ -1,0 +1,36 @@
+module RemaindersRefused
+    intent =
+        "Laws about Euclidean division that hold on their samples but not for every Int: none may"
+        "close by steps. A remainder by 32 can be 31, a quotient of a negative number rounds down,"
+        "not toward zero, and a divisor that is not a literal gives linear arithmetic nothing."
+    exposes [rest, half, restBy]
+    effects []
+
+fn rest(x: Int) -> Int
+    ? "x modulo 32."
+    Int.mod(x, 32)
+
+verify rest law belowThirtyOne
+    given x: Int = [0, 1, 30]
+    rest(x) < 31 => true
+
+fn half(x: Int) -> Int
+    ? "x divided by 2, rounded down."
+    Int.div(x, 2)
+
+verify half law roundsTowardZero
+    given x: Int = [-4, -2]
+    when x < 0
+    half(x) * 2 >= x => true
+
+fn restBy(x: Int, k: Int) -> Int
+    ? "x modulo k, or 0 for a divisor of 0."
+    match Int.mod(x, k)
+        Result.Ok(r) -> r
+        Result.Err(_) -> 0
+
+verify restBy law belowTheDivisor
+    given x: Int = [0, 5, 9]
+    given k: Int = [3, 4]
+    when k > 0
+    restBy(x, k) < k => true

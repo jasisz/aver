@@ -1632,7 +1632,7 @@ pub fn enumProof(
     }
 }
 
-/// (linear TERM BOOL (NAME…) (INT…))
+/// (linear TERM BOOL (NAME…) (INT…) (cut INT (INT…))…)
 pub fn linearProof(
     args @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::sexp::Sexp>,
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Proof, AverStr> {
@@ -1650,17 +1650,10 @@ pub fn linearProof(
                             {
                                 {
                                     let __list_subject = __pat3;
-                                    if let Some((ws, __pat4)) =
+                                    if let Some((ws, cs)) =
                                         aver_rt::list_uncons_cloned(&__list_subject)
                                     {
-                                        {
-                                            let __list_subject = __pat4;
-                                            if __list_subject.is_empty() {
-                                                Ok(crate::proof_std::aver_generated::kernel::proof::Proof::PLinear(crate::proof_std::aver_generated::kernel::decode::term(&g)?, (&*v == "true"), crate::proof_std::aver_generated::kernel::decode::atoms(&crate::proof_std::aver_generated::kernel::decode::items(&hs)?)?, crate::proof_std::aver_generated::kernel::decode::ints(&crate::proof_std::aver_generated::kernel::decode::items(&ws)?)?))
-                                            } else {
-                                                Err(AverStr::from("malformed linear"))
-                                            }
-                                        }
+                                        Ok(crate::proof_std::aver_generated::kernel::proof::Proof::PLinear(crate::proof_std::aver_generated::kernel::decode::term(&g)?, (&*v == "true"), crate::proof_std::aver_generated::kernel::decode::atoms(&crate::proof_std::aver_generated::kernel::decode::items(&hs)?)?, crate::proof_std::aver_generated::kernel::decode::ints(&crate::proof_std::aver_generated::kernel::decode::items(&ws)?)?, crate::proof_std::aver_generated::kernel::decode::cuts(&cs)?))
                                     } else {
                                         Err(AverStr::from("malformed linear"))
                                     }
@@ -1679,6 +1672,43 @@ pub fn linearProof(
             Err(AverStr::from("malformed linear"))
         }
     }
+}
+
+/// Each (cut INT (INT…)): a divisor and weights.
+#[inline(always)]
+pub fn cuts(
+    cs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::sexp::Sexp>,
+) -> Result<aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Cut>, AverStr> {
+    crate::proof_std::cancel_checkpoint();
+    aver_list_match!(cs.clone(), [] => Ok(aver_rt::AverList::empty()), [__pat0, rest] => { match __pat0 {
+        crate::proof_std::aver_generated::kernel::sexp::Sexp::Node(__pat1) => {
+            { let __list_subject = __pat1; if let Some((__pat2, __pat3)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat2 {
+        crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat4) => {
+            match &*__pat4 {
+        "cut" => {
+            { let __list_subject = __pat3; if let Some((__pat5, __pat6)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat5 {
+        crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(d) => {
+            { let __list_subject = __pat6; if let Some((ws, __pat7)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat7; if __list_subject.is_empty() { Ok(aver_rt::AverList::prepend(crate::proof_std::aver_generated::kernel::proof::Cut { divisor: ({ let __s = &(d); __s.parse::<aver_rt::AverInt>().map_err(|_| format!("Cannot parse '{}' as Int", __s)) }).into_aver()?, weights: crate::proof_std::aver_generated::kernel::decode::ints(&crate::proof_std::aver_generated::kernel::decode::items(&ws)?)? }, &crate::proof_std::aver_generated::kernel::decode::cuts(&rest)?)) } else { Err(AverStr::from("malformed cut")) } } } else { Err(AverStr::from("malformed cut")) } }
+        },
+        _ => {
+            Err(AverStr::from("malformed cut"))
+        }
+    } } else { Err(AverStr::from("malformed cut")) } }
+        },
+        _ => {
+            Err(AverStr::from("malformed cut"))
+        }
+    }
+        },
+        _ => {
+            Err(AverStr::from("malformed cut"))
+        }
+    } } else { Err(AverStr::from("malformed cut")) } }
+        },
+        _ => {
+            Err(AverStr::from("malformed cut"))
+        }
+    } })
 }
 
 /// Integers written as atoms.

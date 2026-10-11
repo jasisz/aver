@@ -514,9 +514,38 @@ pub fn evalBuiltin(
                                     }
                                 }
                             } else {
-                                crate::proof_std::aver_generated::kernel::eval::listBuiltin(
-                                    name, args,
-                                )
+                                if &*__dispatch_subject == "__bits_shl" {
+                                    {
+                                        let __list_subject = __pat1;
+                                        if let Some((a, __pat11)) =
+                                            aver_rt::list_uncons_cloned(&__list_subject)
+                                        {
+                                            {
+                                                let __list_subject = __pat11;
+                                                if let Some((n, __pat12)) =
+                                                    aver_rt::list_uncons_cloned(&__list_subject)
+                                                {
+                                                    {
+                                                        let __list_subject = __pat12;
+                                                        if __list_subject.is_empty() {
+                                                            crate::proof_std::aver_generated::kernel::eval::shifted(&crate::proof_std::aver_generated::kernel::eval::evalClosed(&a), &crate::proof_std::aver_generated::kernel::eval::evalClosed(&n))
+                                                        } else {
+                                                            crate::proof_std::aver_generated::kernel::eval::listBuiltin(name, args)
+                                                        }
+                                                    }
+                                                } else {
+                                                    crate::proof_std::aver_generated::kernel::eval::listBuiltin(name, args)
+                                                }
+                                            }
+                                        } else {
+                                            crate::proof_std::aver_generated::kernel::eval::listBuiltin(name, args)
+                                        }
+                                    }
+                                } else {
+                                    crate::proof_std::aver_generated::kernel::eval::listBuiltin(
+                                        name, args,
+                                    )
+                                }
                             }
                         }
                     }
@@ -589,6 +618,37 @@ pub fn division(a @ _: &Option<Val>, k @ _: &Option<Val>, quotient @ _: bool) ->
                 },
                 _ => None,
             },
+            _ => None,
+        }
+    }
+}
+
+/// a times 2^n for a count n from 0 to 4096; any other count is not closed.
+pub fn shifted(a @ _: &Option<Val>, n @ _: &Option<Val>) -> Option<Val> {
+    crate::proof_std::cancel_checkpoint();
+    {
+        let (__pat0, __pat1) = (a.clone(), n.clone());
+        match __pat0 {
+            Some(__pat2) => {
+                match __pat2 {
+                    crate::proof_std::aver_generated::kernel::eval::Val::VInt(x) => match __pat1 {
+                        Some(__pat3) => match __pat3 {
+                            crate::proof_std::aver_generated::kernel::eval::Val::VInt(k) => {
+                                if ((k >= aver_rt::AverInt::from_i64(0))
+                                    && (k <= aver_rt::AverInt::from_i64(4096)))
+                                {
+                                    match (match (x).shift_left(&(k)) { Ok(__v) => Ok(__v), Err(aver_rt::ShiftCountError::Negative) => Err("negative shift count".into()), Err(aver_rt::ShiftCountError::TooLarge) => Err(aver_rt::shift_count_too_large_message()) }).into_aver() { Ok(r @ _) => { Some(crate::proof_std::aver_generated::kernel::eval::Val::VInt(r)) }, Err(e @ _) => { None } }
+                                } else {
+                                    None
+                                }
+                            }
+                            _ => None,
+                        },
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            }
             _ => None,
         }
     }

@@ -1536,6 +1536,9 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
     if include_all_helpers || body.contains("AverSteps.") {
         parts.push(super::proof_steps::LEAN_PRELUDE_AVER_STEPS.to_string());
     }
+    if include_all_helpers || body.contains("AverSteps.bits_") {
+        parts.push(super::proof_steps::LEAN_PRELUDE_AVER_STEPS_BITS.to_string());
+    }
 
     parts.join("\n\n")
 }
@@ -1867,6 +1870,9 @@ pub(super) fn build_common_lean(union_body: &str, cert_model: bool) -> String {
     // order kit. Plain theorems, so the certificate model carries them too.
     if union_body.contains("AverSteps.") {
         parts.push(super::proof_steps::LEAN_PRELUDE_AVER_STEPS.to_string());
+    }
+    if union_body.contains("AverSteps.bits_") {
+        parts.push(super::proof_steps::LEAN_PRELUDE_AVER_STEPS_BITS.to_string());
     }
     if needs_case_ground {
         parts.push(include_str!("prelude/verify_ground.lean").to_string());
