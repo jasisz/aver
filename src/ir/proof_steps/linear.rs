@@ -387,8 +387,8 @@ pub fn integer_certificate(ps: &[Poly]) -> Option<Certificate> {
             continue;
         }
         let mut w: Vec<BigInt> = cut.weights[..n].to_vec();
-        for k in 0..j {
-            if index[k].is_some() {
+        for (k, slot) in index.iter().enumerate() {
+            if slot.is_some() {
                 w.push(cut.weights.get(n + k).cloned().unwrap_or_default());
             }
         }
