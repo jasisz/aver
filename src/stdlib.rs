@@ -96,9 +96,10 @@ pub(crate) fn find(name: &str) -> Option<EmbeddedModule> {
 /// (`plans [...]` modules, see `docs/language.md`), and the untrusted helper
 /// library for them. They resolve only when the project has no file of that
 /// name, so the kernel's own tools, which read them from
-/// `tools/proof-kernel`, see their files. `Kernel.Term`, `Kernel.Proof` and
-/// `Kernel.Lib` are the public surface; the others are what those, and the
-/// compiler's plan runner (`Kernel.Wire`), need.
+/// `tools/proof-kernel`, see their files. `Kernel.Term`, `Kernel.Proof`,
+/// `Kernel.Lib` and `Kernel.Std` (the standard plans) are the public surface;
+/// the others are what those, and the compiler's plan runner
+/// (`Kernel.Wire`), need.
 pub(crate) fn find_kernel_api(name: &str) -> Option<EmbeddedModule> {
     match name {
         "Kernel.Term" => Some(EmbeddedModule {
@@ -128,6 +129,18 @@ pub(crate) fn find_kernel_api(name: &str) -> Option<EmbeddedModule> {
         "Kernel.Wire" => Some(EmbeddedModule {
             virtual_path: "<aver-stdlib>/kernel/wire.av",
             source: include_str!("../tools/proof-kernel/lib/wire.av"),
+        }),
+        "Kernel.Std" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/kernel/std.av",
+            source: include_str!("../tools/proof-kernel/lib/std.av"),
+        }),
+        "Kernel.Finite" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/kernel/finite.av",
+            source: include_str!("../tools/proof-kernel/kernel/finite.av"),
+        }),
+        "Kernel.Eval" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/kernel/eval.av",
+            source: include_str!("../tools/proof-kernel/kernel/eval.av"),
         }),
         _ => None,
     }

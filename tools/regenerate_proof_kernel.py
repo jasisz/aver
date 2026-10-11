@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
-"""Regenerate or verify the proof kernel the aver binary embeds.
+"""Regenerate or verify the Aver code the aver binary embeds for proofs.
 
-`tools/proof-kernel/embed.av` (the kernel written in Aver) is compiled with
-`aver compile --target rust`, and its generated modules are installed as
-`src/proof_kernel/aver_generated/` plus `runtime_support.rs`, with every
-`crate::` path re-rooted under `crate::proof_kernel::`. The hand-written
-`src/proof_kernel/mod.rs` is the only interface: `verdict(text)` checks one
-step script in process, which `aver proof --backend aver` calls.
+Two entries under `tools/proof-kernel/` are compiled with
+`aver compile --target rust`:
+
+- `embed.av`, the proof kernel, installed as `src/proof_kernel/`;
+- `embed_std.av`, the standard proof plans (`Kernel.Std`), installed as
+  `src/proof_std/`. They are not trusted: the kernel checks every proof a
+  plan writes. They live in their own tree so the kernel's stays exactly
+  the kernel.
+
+Each one's generated modules land in `aver_generated/` plus
+`runtime_support.rs`, with every `crate::` path re-rooted under the tree's
+own module. The hand-written `mod.rs` of each tree is its only interface:
+`proof_kernel::verdict(text)` checks one step script, and
+`proof_std::run(plan, goal)` runs one standard plan on a goal.
 
     python3 tools/regenerate_proof_kernel.py          # regenerate in place
     python3 tools/regenerate_proof_kernel.py --check  # fail if stale
@@ -24,8 +32,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 KERNEL_DIR = REPO_ROOT / "tools" / "proof-kernel"
-INSTALLED = REPO_ROOT / "src" / "proof_kernel"
 GENERATED_PARTS = ["aver_generated", "runtime_support.rs"]
+# (entry under tools/proof-kernel, the crate module it is installed as)
+TREES = [("embed.av", "proof_kernel"), ("embed_std.av", "proof_std")]
 
 
 def run(command: list[str], cwd: Path = REPO_ROOT) -> None:
@@ -47,27 +56,27 @@ def resolve_aver_bin(explicit: str | None) -> Path:
     return path
 
 
-def reroot(text: str) -> str:
+def reroot(text: str, module: str) -> str:
     # The kernel's macros come from aver_rt; a glob import does not carry
     # them into a nested module, so each file names the one it uses.
-    text = text.replace("use crate::*;", "use crate::proof_kernel::*;\nuse ::aver_rt::aver_list_match;")
-    text = text.replace("crate::aver_generated", "crate::proof_kernel::aver_generated")
-    text = text.replace("crate::cancel_checkpoint", "crate::proof_kernel::cancel_checkpoint")
-    leftover = [line for line in text.splitlines() if "crate::" in line and "crate::proof_kernel" not in line]
+    text = text.replace("use crate::*;", f"use crate::{module}::*;\nuse ::aver_rt::aver_list_match;")
+    text = text.replace("crate::aver_generated", f"crate::{module}::aver_generated")
+    text = text.replace("crate::cancel_checkpoint", f"crate::{module}::cancel_checkpoint")
+    leftover = [line for line in text.splitlines() if "crate::" in line and f"crate::{module}" not in line]
     if leftover:
-        raise SystemExit(f"generated kernel has a crate path this script does not re-root: {leftover[0]}")
+        raise SystemExit(f"generated {module} has a crate path this script does not re-root: {leftover[0]}")
     return text
 
 
-def generate(aver_bin: Path, destination: Path) -> None:
-    """Write the generated parts of src/proof_kernel into `destination`."""
+def generate(aver_bin: Path, entry: str, module: str, destination: Path) -> None:
+    """Write the generated parts of src/<module> into `destination`."""
     with tempfile.TemporaryDirectory(prefix="aver-proof-kernel-") as temp:
         project = Path(temp) / "out"
         run(
             [
                 str(aver_bin),
                 "compile",
-                "embed.av",
+                entry,
                 "--target",
                 "rust",
                 "--module-root",
@@ -88,7 +97,7 @@ def generate(aver_bin: Path, destination: Path) -> None:
                 shutil.copy2(src, dst)
     files = [destination / p for p in rs_files(destination)]
     for path in files:
-        path.write_text(reroot(path.read_text()))
+        path.write_text(reroot(path.read_text(), module))
     files = [str(p) for p in files]
     run(["rustfmt", "--edition", "2024", *files])
 
@@ -105,26 +114,29 @@ def rs_files(root: Path) -> set[Path]:
 
 
 def check(aver_bin: Path) -> None:
-    with tempfile.TemporaryDirectory(prefix="aver-proof-kernel-check-") as temp:
-        fresh = Path(temp) / "kernel"
-        generate(aver_bin, fresh)
-        mine, theirs = rs_files(fresh), rs_files(INSTALLED)
-        differences = [f"only generated: {p}" for p in sorted(mine - theirs)]
-        differences += [f"only checked in: {p}" for p in sorted(theirs - mine)]
-        differences += [
-            f"content differs: {p}"
-            for p in sorted(mine & theirs)
-            if not filecmp.cmp(fresh / p, INSTALLED / p, shallow=False)
-        ]
+    differences = []
+    for entry, module in TREES:
+        installed = REPO_ROOT / "src" / module
+        with tempfile.TemporaryDirectory(prefix="aver-proof-kernel-check-") as temp:
+            fresh = Path(temp) / module
+            generate(aver_bin, entry, module, fresh)
+            mine, theirs = rs_files(fresh), rs_files(installed)
+            differences += [f"only generated: src/{module}/{p}" for p in sorted(mine - theirs)]
+            differences += [f"only checked in: src/{module}/{p}" for p in sorted(theirs - mine)]
+            differences += [
+                f"content differs: src/{module}/{p}"
+                for p in sorted(mine & theirs)
+                if not filecmp.cmp(fresh / p, installed / p, shallow=False)
+            ]
     if differences:
         preview = "\n".join(f"  - {d}" for d in differences[:10])
         raise SystemExit(
-            "checked-in proof kernel is stale:\n"
+            "checked-in proof kernel or standard plans are stale:\n"
             f"{preview}\n"
-            "Regenerate it with:\n"
+            "Regenerate them with:\n"
             "  python3 tools/regenerate_proof_kernel.py"
         )
-    print("Checked-in proof kernel is fresh.")
+    print("Checked-in proof kernel and standard plans are fresh.")
 
 
 def main() -> None:
@@ -136,14 +148,16 @@ def main() -> None:
     if args.check:
         check(aver_bin)
         return
-    for part in GENERATED_PARTS:
-        target = INSTALLED / part
-        if target.is_dir():
-            shutil.rmtree(target)
-        elif target.exists():
-            target.unlink()
-    generate(aver_bin, INSTALLED)
-    print(f"Installed the generated proof kernel in {INSTALLED.relative_to(REPO_ROOT)}")
+    for entry, module in TREES:
+        installed = REPO_ROOT / "src" / module
+        for part in GENERATED_PARTS:
+            target = installed / part
+            if target.is_dir():
+                shutil.rmtree(target)
+            elif target.exists():
+                target.unlink()
+        generate(aver_bin, entry, module, installed)
+        print(f"Installed the generated {module} in {installed.relative_to(REPO_ROOT)}")
 
 
 if __name__ == "__main__":

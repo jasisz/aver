@@ -1,0 +1,267 @@
+module Std
+    intent =
+        "The standard proof plans the compiler ships, imported as Kernel.Std. A law names one with"
+        "`by Kernel.Std.cases`; the compiler runs it compiled into the aver binary, so it costs no"
+        "compilation and no VM. A project's own plans may also call it (they run it in the VM)."
+        "Each function here takes a Goal, with the hypotheses in scope at that point of the proof, and"
+        "returns proof steps or why it does not apply; a callback such as splitBool's gets a Goal too."
+        "Nothing here is trusted: the kernel checks every step a plan writes, like any other proof."
+    exposes [cases, assume, close, splitBool]
+    depends [Kernel.Term, Kernel.Proof, Kernel.Lib, Kernel.Finite, Kernel.Subst, Kernel.Wire]
+    effects []
+    plans [cases]
+
+fn maxCases() -> Int
+    ? "Largest number of cases a split may write, over all its givens; the automatic producer's bound."
+    64
+
+verify maxCases
+    maxCases() => 64
+
+fn cases(goal: Goal) -> Result<Proof, String>
+    ? "Split every given of finite type (Bool, a sum whose variants carry nothing, records and tuples of those) into all its values, in the order the kernel's enum step lists them."
+      "Each case is closed by the `when` reading false there, or else by close."
+    n = caseCount(goal.finite)
+    match goal.finite
+        [] -> Result.Err("no given of finite type")
+        _ -> match n > maxCases()
+            true -> Result.Err("{n} cases is more than a split may write")
+            false -> splitAll(goal, goal.finite)
+
+verify cases
+    cases(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)))) => Result.Err("no given of finite type")
+    cases(Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = ["b"], premise = [], lhs = Term.TVar("b"), rhs = Term.TVar("b"))), finite = [Given(name = "b", fin = Fin.FBool)])) => Result.Ok(Proof.PEnum("b", Term.TVar("b"), Term.TVar("b"), [Proof.PTrans([Term.TBool(false), Term.TBool(false), Term.TBool(false)], [Proof.PRefl(Term.TBool(false)), Proof.PSymm(Proof.PRefl(Term.TBool(false)))]), Proof.PTrans([Term.TBool(true), Term.TBool(true), Term.TBool(true)], [Proof.PRefl(Term.TBool(true)), Proof.PSymm(Proof.PRefl(Term.TBool(true)))])]))
+
+fn caseCount(gs: List<Given>) -> Int
+    ? "How many cases splitting every given writes."
+    match gs
+        [] -> 1
+        [g, ..rest] -> List.len(Kernel.Finite.values(g.fin)) * caseCount(rest)
+
+verify caseCount
+    caseCount([Given(name = "a", fin = Fin.FBool), Given(name = "b", fin = Fin.FBool)]) => 4
+
+fn splitAll(goal: Goal, gs: List<Given>) -> Result<Proof, String>
+    ? "Split the first given into its values and the rest inside each case; with none left, close the case."
+    match gs
+        [] -> leaf(goal)
+        [g, ..rest] -> Result.Ok(Proof.PEnum(g.name, goal.obligation.lhs, goal.obligation.rhs, eachValue(goal, g.name, Kernel.Finite.values(g.fin), rest)?))
+
+verify splitAll
+    splitAll(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2))), []) => Result.Err("the sides stop at (i 1) and (i 2)")
+
+fn eachValue(goal: Goal, v: String, vals: List<Term>, rest: List<Given>) -> Result<List<Proof>, String>
+    ? "One case per value, in the kernel's order: the goal with v replaced by the value."
+    match vals
+        [] -> Result.Ok([])
+        [x, ..xs] -> Result.Ok(List.prepend(splitAll(at(goal, v, x)?, rest)?, eachValue(goal, v, xs, rest)?))
+
+verify eachValue
+    eachValue(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TVar("b"), rhs = Term.TVar("b"))), "b", [], []) => Result.Ok([])
+
+fn leaf(goal: Goal) -> Result<Proof, String>
+    ? "One case: impossible when the `when` reads false in it, otherwise close."
+    match Kernel.Lib.whenOf(goal)
+        Option.None -> close(goal)
+        Option.Some(p) -> match Kernel.Lib.whenRefutes(Kernel.Lib.scope(goal), p, goal.obligation.lhs, goal.obligation.rhs)
+            Result.Ok(proof) -> Result.Ok(proof)
+            Result.Err(_) -> close(goal)
+
+verify leaf
+    leaf(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [Term.TBool(false)], lhs = Term.TInt(1), rhs = Term.TInt(2)))) => Result.Ok(Proof.PAbsurd(Proof.PTrans([Term.TBool(true), Term.TBool(false), Term.TBool(false)], [Proof.PSymm(Proof.PHyp("when")), Proof.PRefl(Term.TBool(false))]), Term.TInt(1), Term.TInt(2)))
+
+fn at(goal: Goal, v: String, x: Term) -> Result<Goal, String>
+    ? "The goal with v replaced by x in the claim, the `when` and every hypothesis, the way a split's case reads; v is no longer a given to split."
+    ob = goal.obligation
+    claim = Law.update(ob, lhs = Kernel.Lib.substitute(ob.lhs, v, x)?, rhs = Kernel.Lib.substitute(ob.rhs, v, x)?, premise = substAll(ob.premise, v, x)?)
+    Result.Ok(Goal.update(goal, obligation = claim, finite = withoutGiven(goal.finite, v), hyps = substHyps(goal.hyps, v, x)?))
+
+verify at
+    at(Kernel.Lib.goalFor(Law(key = "k", givens = ["b"], premise = [], lhs = Term.TVar("b"), rhs = Term.TInt(1))), "b", Term.TBool(true)) => Result.Ok(Kernel.Lib.goalFor(Law(key = "k", givens = ["b"], premise = [], lhs = Term.TBool(true), rhs = Term.TInt(1))))
+
+fn withoutGiven(gs: List<Given>, v: String) -> List<Given>
+    ? "The finite givens other than v."
+    match gs
+        [] -> []
+        [g, ..rest] -> match g.name == v
+            true -> withoutGiven(rest, v)
+            false -> List.prepend(g, withoutGiven(rest, v))
+
+verify withoutGiven
+    withoutGiven([Given(name = "b", fin = Fin.FBool)], "b") => []
+
+fn substAll(ts: List<Term>, v: String, x: Term) -> Result<List<Term>, String>
+    ? "Each term with v replaced by x."
+    match ts
+        [] -> Result.Ok([])
+        [t, ..rest] -> Result.Ok(List.prepend(Kernel.Lib.substitute(t, v, x)?, substAll(rest, v, x)?))
+
+verify substAll
+    substAll([Term.TVar("b")], "b", Term.TBool(true)) => Result.Ok([Term.TBool(true)])
+
+fn substHyps(hs: List<Hyp>, v: String, x: Term) -> Result<List<Hyp>, String>
+    ? "Each hypothesis with v replaced by x."
+    match hs
+        [] -> Result.Ok([])
+        [h, ..rest] -> Result.Ok(List.prepend(Hyp(name = h.name, eqn = Eqn(lhs = Kernel.Lib.substitute(h.eqn.lhs, v, x)?, rhs = Kernel.Lib.substitute(h.eqn.rhs, v, x)?)), substHyps(rest, v, x)?))
+
+verify substHyps
+    substHyps([], "b", Term.TBool(true)) => Result.Ok([])
+
+fn assume(goal: Goal, name: String, lhs: Term, rhs: Term) -> Goal
+    ? "The goal with one more hypothesis, name: lhs = rhs, in front. Only a step around the proof can bring a hypothesis into scope (a Bool split, an induction); the kernel refuses a proof that cites one it does not have."
+    Goal.update(goal, hyps = List.prepend(Hyp(name = name, eqn = Eqn(lhs = lhs, rhs = rhs)), goal.hyps))
+
+verify assume
+    assume(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), "c", Term.TVar("x"), Term.TBool(true)).hyps => [Hyp(name = "c", eqn = Eqn(lhs = Term.TVar("x"), rhs = Term.TBool(true)))]
+
+fn close(goal: Goal) -> Result<Proof, String>
+    ? "lhs = n = rhs when both sides evaluate to the same n, rewriting by the goal's hypotheses (left side to right side) where evaluation stops."
+    s = Kernel.Lib.scope(goal)
+    lhs = goal.obligation.lhs
+    rhs = goal.obligation.rhs
+    l = rounds(s, goal.hyps, lhs, 16)?
+    r = rounds(s, goal.hyps, rhs, 16)?
+    match l.to == r.to
+        true -> Kernel.Lib.trans([lhs, l.to, rhs], [l.proof, Proof.PSymm(r.proof)])
+        false -> Result.Err("the sides stop at {Kernel.Wire.termText(l.to)} and {Kernel.Wire.termText(r.to)}")
+
+verify close
+    close(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2)))) => Result.Err("the sides stop at (i 1) and (i 2)")
+    close(assume(Kernel.Lib.goalFor(Law(key = "k", givens = ["x"], premise = [], lhs = Term.TVar("x"), rhs = Term.TInt(1))), "h", Term.TVar("x"), Term.TInt(1))) => Result.Ok(Proof.PTrans([Term.TVar("x"), Term.TInt(1), Term.TInt(1)], [Proof.PHyp("h"), Proof.PSymm(Proof.PRefl(Term.TInt(1)))]))
+
+fn rounds(s: Scope, hyps: List<Hyp>, t: Term, n: Int) -> Result<Rw, String>
+    ? "Evaluate, rewrite once by a hypothesis, and repeat while n lasts."
+    r = Kernel.Lib.evaluate(s, t)?
+    match n <= 0
+        true -> Result.Ok(r)
+        false -> match rewriteOnce(hyps, r.to)?
+            Option.None -> Result.Ok(r)
+            Option.Some(step) -> Result.Ok(Kernel.Lib.chain(t, r, Kernel.Lib.chain(r.to, step, rounds(s, hyps, step.to, n - 1)?)))
+
+verify rounds
+    rounds(Scope(defs = [], known = []), [], Term.TInt(1), 16) => Result.Ok(Rw(to = Term.TInt(1), proof = Proof.PRefl(Term.TInt(1))))
+
+fn rewriteOnce(hyps: List<Hyp>, t: Term) -> Result<Option<Rw>, String>
+    ? "t with its first occurrence of a hypothesis's left side replaced by its right side, by congruence."
+    match hyps
+        [] -> Result.Ok(Option.None)
+        [h, ..rest] -> match h.eqn.lhs == h.eqn.rhs
+            true -> rewriteOnce(rest, t)
+            false -> match holeAt(t, h.eqn.lhs)
+                Option.None -> rewriteOnce(rest, t)
+                Option.Some(c) -> Result.Ok(Option.Some(Rw(to = Kernel.Subst.subst(c, [Kernel.Term.bind("□", h.eqn.rhs)])?, proof = congrHyp(c, h.name))))
+
+verify rewriteOnce
+    rewriteOnce([Hyp(name = "ih", eqn = Eqn(lhs = Term.TVar("a"), rhs = Term.TInt(1)))], Term.TOp("+", Term.TVar("a"), Term.TInt(2))) => Result.Ok(Option.Some(Rw(to = Term.TOp("+", Term.TInt(1), Term.TInt(2)), proof = Proof.PCongr(Term.TOp("+", Term.THole, Term.TInt(2)), Proof.PHyp("ih")))))
+    rewriteOnce([], Term.TVar("a")) => Result.Ok(Option.None)
+
+fn congrHyp(c: Term, name: String) -> Proof
+    ? "The hypothesis itself at the top, or under the context c."
+    match c
+        Term.THole -> Proof.PHyp(name)
+        _ -> Proof.PCongr(c, Proof.PHyp(name))
+
+verify congrHyp
+    congrHyp(Term.THole, "h") => Proof.PHyp("h")
+
+fn holeAt(t: Term, target: Term) -> Option<Term>
+    ? "t with its first occurrence of target, outside match arms, replaced by the hole."
+    match t == target
+        true -> Option.Some(Term.THole)
+        false -> holeBelow(t, target)
+
+verify holeAt
+    holeAt(Term.TCall("f", [Term.TVar("x")]), Term.TVar("x")) => Option.Some(Term.TCall("f", [Term.THole]))
+    holeAt(Term.TVar("y"), Term.TVar("x")) => Option.None
+
+fn holeBelow(t: Term, target: Term) -> Option<Term>
+    ? "holeAt in the parts of t."
+    match t
+        Term.TCall(f, xs) -> mapSome(holeInList(xs, target), Term.TCall(f, []))
+        Term.TBi(f, xs) -> mapSome(holeInList(xs, target), Term.TBi(f, []))
+        Term.TCtor(c, xs) -> mapSome(holeInList(xs, target), Term.TCtor(c, []))
+        Term.TList(xs) -> mapSome(holeInList(xs, target), Term.TList([]))
+        Term.TTuple(xs) -> mapSome(holeInList(xs, target), Term.TTuple([]))
+        Term.TOp(o, a, b) -> opWith(o, a, b, holeAt(a, target), target)
+        Term.TNeg(a) -> negWith(holeAt(a, target))
+        Term.TGet(a, f) -> getWith(holeAt(a, target), f)
+        _ -> Option.None
+
+verify holeBelow
+    holeBelow(Term.TList([Term.TVar("x")]), Term.TVar("x")) => Option.Some(Term.TList([Term.THole]))
+    holeBelow(Term.TNeg(Term.TVar("x")), Term.TVar("x")) => Option.Some(Term.TNeg(Term.THole))
+
+fn mapSome(xs: Option<List<Term>>, shape: Term) -> Option<Term>
+    ? "shape (a call, builtin, constructor, list or tuple) around parts holding the hole."
+    match xs
+        Option.None -> Option.None
+        Option.Some(ys) -> match shape
+            Term.TCall(f, _) -> Option.Some(Term.TCall(f, ys))
+            Term.TBi(f, _) -> Option.Some(Term.TBi(f, ys))
+            Term.TCtor(c, _) -> Option.Some(Term.TCtor(c, ys))
+            Term.TTuple(_) -> Option.Some(Term.TTuple(ys))
+            _ -> Option.Some(Term.TList(ys))
+
+verify mapSome
+    mapSome(Option.None, Term.TList([])) => Option.None
+    mapSome(Option.Some([Term.THole]), Term.TCall("f", [])) => Option.Some(Term.TCall("f", [Term.THole]))
+
+fn negWith(a: Option<Term>) -> Option<Term>
+    ? "A negation around a part holding the hole."
+    match a
+        Option.Some(c) -> Option.Some(Term.TNeg(c))
+        Option.None -> Option.None
+
+verify negWith
+    negWith(Option.None) => Option.None
+
+fn getWith(a: Option<Term>, f: String) -> Option<Term>
+    ? "A field read around a part holding the hole."
+    match a
+        Option.Some(c) -> Option.Some(Term.TGet(c, f))
+        Option.None -> Option.None
+
+verify getWith
+    getWith(Option.Some(Term.THole), "a") => Option.Some(Term.TGet(Term.THole, "a"))
+
+fn opWith(o: String, a: Term, b: Term, left: Option<Term>, target: Term) -> Option<Term>
+    ? "An operator with the hole on the left, else on the right."
+    match left
+        Option.Some(c) -> Option.Some(Term.TOp(o, c, b))
+        Option.None -> match holeAt(b, target)
+            Option.Some(c) -> Option.Some(Term.TOp(o, a, c))
+            Option.None -> Option.None
+
+verify opWith
+    opWith("+", Term.TInt(1), Term.TVar("x"), Option.None, Term.TVar("x")) => Option.Some(Term.TOp("+", Term.TInt(1), Term.THole))
+
+fn holeInList(xs: List<Term>, target: Term) -> Option<List<Term>>
+    ? "xs with the hole in the first element that holds target."
+    match xs
+        [] -> Option.None
+        [x, ..rest] -> match holeAt(x, target)
+            Option.Some(c) -> Option.Some(List.prepend(c, rest))
+            Option.None -> prependTo(x, holeInList(rest, target))
+
+verify holeInList
+    holeInList([], Term.TVar("x")) => Option.None
+
+fn prependTo(x: Term, xs: Option<List<Term>>) -> Option<List<Term>>
+    ? "x in front of a list holding the hole."
+    match xs
+        Option.Some(ys) -> Option.Some(List.prepend(x, ys))
+        Option.None -> Option.None
+
+verify prependTo
+    prependTo(Term.TUnit, Option.None) => Option.None
+
+fn splitBool(goal: Goal, on: Term, next: Fn(Goal) -> Result<Proof, String>) -> Result<Proof, String>
+    ? "Split on the Bool term on: next proves the goal where on is true and where it is false, each time with the case as a hypothesis (fresh name: on = true or on = false) that close rewrites by."
+    h = Kernel.Lib.fresh("c", Kernel.Lib.taken(goal))
+    yes = next(assume(goal, h, on, Term.TBool(true)))?
+    no = next(assume(goal, h, on, Term.TBool(false)))?
+    Result.Ok(Proof.PCases(on, h, yes, no))
+
+verify splitBool
+    splitBool(Kernel.Lib.goalFor(Law(key = "k", givens = ["x"], premise = [], lhs = Term.TOp("<", Term.TVar("x"), Term.TInt(0)), rhs = Term.TOp("<", Term.TVar("x"), Term.TInt(0)))), Term.TOp("<", Term.TVar("x"), Term.TInt(0)), close) => Result.Ok(Proof.PCases(Term.TOp("<", Term.TVar("x"), Term.TInt(0)), "c", Proof.PTrans([Term.TOp("<", Term.TVar("x"), Term.TInt(0)), Term.TBool(true), Term.TOp("<", Term.TVar("x"), Term.TInt(0))], [Proof.PHyp("c"), Proof.PSymm(Proof.PHyp("c"))]), Proof.PTrans([Term.TOp("<", Term.TVar("x"), Term.TInt(0)), Term.TBool(false), Term.TOp("<", Term.TVar("x"), Term.TInt(0))], [Proof.PHyp("c"), Proof.PSymm(Proof.PHyp("c"))])))

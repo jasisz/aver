@@ -1,0 +1,55 @@
+module Lights
+    intent =
+        "A traffic light and laws about it closed by the standard plan Kernel.Std.cases, which the"
+        "compiler runs compiled into the binary, and by a project plan that calls it in the VM."
+    exposes [next, flip]
+    effects []
+
+type Light
+    Red
+    Amber
+    Green
+
+fn next(l: Light) -> Light
+    ? "The light that follows."
+    match l
+        Light.Red -> Light.Green
+        Light.Green -> Light.Amber
+        Light.Amber -> Light.Red
+
+verify next
+    next(Light.Red) => Light.Green
+    next(Light.Green) => Light.Amber
+    next(Light.Amber) => Light.Red
+
+verify next law comesBackAfterThree
+    given l: Light = [Light.Red, Light.Amber, Light.Green]
+    by Kernel.Std.cases
+    next(next(next(l))) => l
+
+fn flip(b: Bool) -> Bool
+    ? "The other Bool."
+    match b
+        true -> false
+        false -> true
+
+verify flip
+    flip(true) => false
+    flip(false) => true
+
+verify flip law twiceIsItself
+    given b: Bool = [true, false]
+    by Plans.ViaStd.cases
+    flip(flip(b)) => b
+
+fn steps(n: Int) -> Int
+    ? "n itself; a law about it has no given of finite type to split."
+    n
+
+verify steps
+    steps(2) => 2
+
+verify steps law nothingToSplit
+    given n: Int = [1, 2]
+    by Kernel.Std.cases
+    steps(n) => n

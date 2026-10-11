@@ -350,7 +350,7 @@ pub fn is_kernel_source_tree(module_root: &str) -> bool {
 }
 
 /// The modules of the proof kernel a plans module may depend on.
-pub const PLANS_KERNEL_API: [&str; 3] = ["Kernel.Term", "Kernel.Proof", "Kernel.Lib"];
+pub const PLANS_KERNEL_API: [&str; 4] = ["Kernel.Term", "Kernel.Proof", "Kernel.Lib", "Kernel.Std"];
 
 /// Why `parent` may not depend on the kernel module `dep`, if it may not:
 /// only a plans module depends on the kernel, and only on its public

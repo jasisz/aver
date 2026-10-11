@@ -10,6 +10,12 @@
 //! as it checks any other. No automatic producer runs for such a law: a
 //! refusal, a plan that runs out of steps and a proof the kernel refuses all
 //! leave it open, with the reason.
+//!
+//! `by Kernel.Std.<plan>` names a standard plan the compiler ships
+//! (`tools/proof-kernel/lib/std.av`). It runs compiled into the binary
+//! ([`crate::proof_std`]): no compilation of its source, no VM and no step
+//! limit (each standard plan bounds its own work). Its proof goes through the
+//! same read-back and the same kernel check as a project plan's.
 
 use std::collections::HashMap;
 
@@ -178,6 +184,51 @@ fn source_hash(module: &str, source: &str, loaded: &[crate::source::LoadedModule
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()
+}
+
+/// The module of the standard plans, which a `by` line may name besides the
+/// project's own plans modules.
+pub(crate) const STD_MODULE: &str = "Kernel.Std";
+
+/// sha256 (hex) of the plan code a standard plan runs: `Kernel.Std` and the
+/// helper modules it reads goals and writes proofs with.
+fn std_hash() -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    for name in [STD_MODULE, "Kernel.Lib", "Kernel.Wire"] {
+        let source = crate::stdlib::find_kernel_api(name).map_or("", |m| m.source);
+        hasher.update(format!("module {name} {}\n", source.len()).as_bytes());
+        hasher.update(source.as_bytes());
+    }
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// The text a plan reads its goal from: the step script wrapped with what
+/// each list given holds, `(goal (elems (LIST TYPE)…) SCRIPT)`, which
+/// `Kernel.Wire.goal` reads into `Goal.listElems`.
+fn goal_text(
+    script: &str,
+    elems: &[(String, super::finite::ElemType)],
+    names: &dyn crate::ir::proof_steps::sexpr::Names,
+) -> String {
+    use super::finite::ElemType;
+    fn ty(e: &ElemType, names: &dyn crate::ir::proof_steps::sexpr::Names) -> String {
+        match e {
+            ElemType::Fin(f) => crate::ir::proof_steps::sexpr::finite(f, names),
+            ElemType::Int => "(tint)".to_string(),
+            ElemType::List(inner) => format!("(tlist {})", ty(inner, names)),
+            ElemType::Other => "(tother)".to_string(),
+        }
+    }
+    let listed: Vec<String> = elems
+        .iter()
+        .map(|(n, e)| format!(" ({n} {})", ty(e, names)))
+        .collect();
+    format!("(goal (elems{})\n{script})", listed.concat())
 }
 
 /// The functions `t` calls.
@@ -500,23 +551,40 @@ fn prove_with(
     };
     let ob = super::obligation(inputs, t);
     let goal = goal(inputs, &ob, laws);
-    let runner = match plans.runner(root, module) {
-        Ok(r) => r,
-        Err(why) => return Err(format!("plan {path}: {why}")),
-    };
-    let Some(entry) = runner.entries.get(plan) else {
-        return Err(format!(
-            "plan {path}: {module} does not list `{plan}` in its `plans [...]` line"
-        ));
-    };
-    let use_ = PlanUse {
-        name: path.to_string(),
-        hash: runner.hash.clone(),
-    };
-    let text = crate::ir::proof_steps::sexpr::script(&goal, inputs.symbol_table)
+    let script_text = crate::ir::proof_steps::sexpr::script(&goal, inputs.symbol_table)
         .map_err(|why| format!("plan {path}: the goal cannot be written as step data: {why}"))?;
-    let limit = step_limit(inputs.proof_command);
-    let answer = run(runner, entry, &text, limit).map_err(|why| format!("plan {path}: {why}"))?;
+    let text = goal_text(
+        &script_text,
+        &super::finite::list_elem_types(inputs, t),
+        inputs.symbol_table,
+    );
+    let (answer, use_) = if module == STD_MODULE {
+        let use_ = PlanUse {
+            name: path.to_string(),
+            hash: std_hash(),
+        };
+        let answer =
+            crate::proof_std::run(plan, &text).map_err(|why| format!("plan {path}: {why}"))?;
+        (answer, use_)
+    } else {
+        let runner = match plans.runner(root, module) {
+            Ok(r) => r,
+            Err(why) => return Err(format!("plan {path}: {why}")),
+        };
+        let Some(entry) = runner.entries.get(plan) else {
+            return Err(format!(
+                "plan {path}: {module} does not list `{plan}` in its `plans [...]` line"
+            ));
+        };
+        let use_ = PlanUse {
+            name: path.to_string(),
+            hash: runner.hash.clone(),
+        };
+        let limit = step_limit(inputs.proof_command);
+        let answer =
+            run(runner, entry, &text, limit).map_err(|why| format!("plan {path}: {why}"))?;
+        (answer, use_)
+    };
     let (kind, body) = answer.split_once('\n').unwrap_or((answer.as_str(), ""));
     let proof_text = match kind {
         "proof" => body,

@@ -3,9 +3,10 @@ module Proof
         "Proof steps, definitions (local bindings, then one expression), module-level bindings, cited"
         "laws and the script that ties them"
         "to one obligation."
-        "A goal is a script without its proof: what a project's proof plan is given to prove."
+        "A goal is a script without its proof: what a project's proof plan is given to prove,"
+        "with the hypotheses in scope where it is posed and what the list givens hold."
         "Each step names its rule and writes out every instance; see src/ir/proof_steps/mod.rs."
-    exposes [Proof, Case, SplitCase, More, IhAt, Def, Const, Variant, Law, Fact, Script, Goal, Hyp, Given, premiseOf]
+    exposes [Proof, Case, SplitCase, More, IhAt, Def, Const, Variant, Law, Fact, Script, Goal, Hyp, Given, ListElem, Ty, premiseOf]
     depends [Kernel.Term]
     effects []
 
@@ -108,6 +109,18 @@ record Goal
     sums: List<List<Variant>>
     laws: List<Law>
     facts: List<Fact>
+    hyps: List<Hyp>
+    listElems: List<ListElem>
+
+record ListElem
+    list: String
+    elem: Ty
+
+type Ty
+    TyFin(Fin)
+    TyInt
+    TyList(Ty)
+    TyOther
 
 record Hyp
     name: String

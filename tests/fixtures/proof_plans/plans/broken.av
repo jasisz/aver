@@ -9,14 +9,14 @@ fn claimsTheWhen(goal: Goal) -> Result<Proof, String>
     Result.Ok(Kernel.Lib.whenHolds())
 
 verify claimsTheWhen
-    claimsTheWhen(Goal(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [])) => Result.Ok(Proof.PHyp("when"))
+    claimsTheWhen(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)))) => Result.Ok(Proof.PHyp("when"))
 
 fn spins(goal: Goal) -> Result<Proof, String>
     ? "Counts up from 0 to minus the number of givens: refuses at once for a law without givens, never returns for a law with some."
     countUpTo(0, 0 - List.len(goal.obligation.givens))
 
 verify spins
-    spins(Goal(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [])) => Result.Err("stopped")
+    spins(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)))) => Result.Err("stopped")
 
 fn countUpTo(n: Int, stop: Int) -> Result<Proof, String>
     ? "Counts up from n and refuses on reaching stop, which never happens when stop is below n."

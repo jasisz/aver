@@ -3856,7 +3856,7 @@ fn lean_states_each_cited_vector_fact_once_for_every_element_type() {
 }
 
 #[test]
-fn the_embedded_kernel_is_generated_from_the_aver_source() {
+fn the_embedded_kernel_and_standard_plans_are_generated_from_the_aver_source() {
     let out = Command::new("python3")
         .args([
             "tools/regenerate_proof_kernel.py",

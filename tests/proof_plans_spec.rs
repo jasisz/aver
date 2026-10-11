@@ -333,7 +333,7 @@ fn check_project(name: &str, files: &[(&str, &str)], entry: &str) -> Output {
     out
 }
 
-const GOOD_PLAN: &str = "module Same\n    intent = \"A plan.\"\n    depends [Kernel.Term, Kernel.Proof, Kernel.Lib]\n    plans [same]\n\nfn same(goal: Goal) -> Result<Proof, String>\n    ? \"Refuses.\"\n    Result.Err(\"no\")\n\nverify same\n    same(Goal(obligation = Law(key = \"k\", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [])) => Result.Err(\"no\")\n";
+const GOOD_PLAN: &str = "module Same\n    intent = \"A plan.\"\n    depends [Kernel.Term, Kernel.Proof, Kernel.Lib]\n    plans [same]\n\nfn same(goal: Goal) -> Result<Proof, String>\n    ? \"Refuses.\"\n    Result.Err(\"no\")\n\nverify same\n    same(Kernel.Lib.goalFor(Law(key = \"k\", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)))) => Result.Err(\"no\")\n";
 
 #[test]
 fn a_plans_module_has_the_plan_signature_and_no_effects() {
@@ -440,6 +440,8 @@ fn output_text(out: &Output) -> String {
 fn a_by_line_names_one_plan_of_the_project_and_stands_alone() {
     let ok = check_law("one-by", "    by Plans.Same.same\n");
     assert!(ok.status.success(), "{}", format_output(&ok));
+    let std = check_law("std-by", "    by Kernel.Std.cases\n");
+    assert!(std.status.success(), "{}", format_output(&std));
     for (name, lines, message) in [
         (
             "two-by",
@@ -485,6 +487,11 @@ fn a_by_line_names_one_plan_of_the_project_and_stands_alone() {
             "kernel",
             "    by Kernel.Lib.evaluate\n",
             "Kernel.Lib is a module of the proof kernel",
+        ),
+        (
+            "std-no-plan",
+            "    by Kernel.Std.nope\n",
+            "Kernel.Std has no plan `nope`; its plans are cases",
         ),
     ] {
         let out = check_law(name, lines);
@@ -538,7 +545,13 @@ fn kernel_module_names_are_reserved_for_the_kernel() {
 #[test]
 fn the_helper_library_keeps_the_kernels_conventions() {
     let kernel = repo_root().join("tools/proof-kernel");
-    for file in ["lib/lib.av", "lib/wire.av", "lib/conventions.av"] {
+    for file in [
+        "lib/lib.av",
+        "lib/wire.av",
+        "lib/conventions.av",
+        "lib/std.av",
+        "embed_std.av",
+    ] {
         let out = aver_in(&kernel, &["verify", file, "--module-root", "."], &[]);
         assert!(out.status.success(), "{file}: {}", format_output(&out));
         assert!(
@@ -547,8 +560,84 @@ fn the_helper_library_keeps_the_kernels_conventions() {
             format_output(&out)
         );
     }
-    let plans = aver_in(&fixtures(), &["verify", "plans/stack.av"], &[]);
-    assert!(plans.status.success(), "{}", format_output(&plans));
+    for file in ["plans/stack.av", "plans/viastd.av"] {
+        let plans = aver_in(&fixtures(), &["verify", file], &[]);
+        assert!(plans.status.success(), "{file}: {}", format_output(&plans));
+    }
+}
+
+/// `lights.av`: a law closed by the standard plan `Kernel.Std.cases`, one by
+/// a project plan that calls it, and one it refuses.
+#[test]
+fn a_standard_plan_closes_a_law_like_a_project_plan() {
+    let out = scratch("std");
+    let run = aver_in(
+        &fixtures(),
+        &[
+            "proof",
+            "lights.av",
+            "--backend",
+            "aver",
+            "-o",
+            out.to_str().unwrap(),
+        ],
+        &[],
+    );
+    let text = String::from_utf8_lossy(&run.stdout).to_string();
+    let line = |law: &str| {
+        text.lines()
+            .find(|l| l.contains(&format!("{law}:")))
+            .unwrap_or_else(|| panic!("no line for {law}\n{}", format_output(&run)))
+            .to_string()
+    };
+    assert!(
+        line("next.comesBackAfterThree").contains("closed by steps (proof by Kernel.Std.cases ("),
+        "{text}"
+    );
+    assert!(
+        line("flip.twiceIsItself").contains("closed by steps (proof by Plans.ViaStd.cases ("),
+        "{text}"
+    );
+    assert!(
+        line("steps.nothingToSplit")
+            .contains("plan Kernel.Std.cases refused: no given of finite type"),
+        "{text}"
+    );
+    let script =
+        fs::read_to_string(out.join("proof_steps/next.comesBackAfterThree.steps")).unwrap();
+    assert!(
+        script.starts_with("; proof by Kernel.Std.cases sha256:"),
+        "{script}"
+    );
+    let _ = fs::remove_dir_all(out);
+}
+
+/// Nothing a standard plan writes is trusted: the plan compiled into the
+/// binary answers a goal, and once one step of its proof is wrong the
+/// kernel refuses the script, while it accepts the proof as written.
+#[test]
+fn the_kernel_refuses_a_wrong_proof_from_a_standard_plan() {
+    let goal = "(steps 13\n (obligation next.comesBackAfterThree ((l (tsum Light.Red Light.Amber Light.Green))) (none) (call next (call next (call next (v l)))) (v l))\n (defs\n  (def next (l) () (match (v l) (arm (pc Light.Red) (ctor Light.Green)) (arm (pc Light.Green) (ctor Light.Amber)) (arm (pc Light.Amber) (ctor Light.Red)))))\n (consts)\n (sums\n  (sum (Light.Red 0) (Light.Amber 0) (Light.Green 0)))\n (laws)\n (proof (refl (v l))))";
+    let answer = aver::proof_std::run("cases", &format!("(goal (elems) {goal})")).unwrap();
+    let proof = answer
+        .strip_prefix("proof\n")
+        .unwrap_or_else(|| panic!("the plan did not write a proof: {answer}"));
+    let script = goal.replace("(proof (refl (v l)))", &format!("(proof {proof})"));
+    assert!(
+        aver::proof_kernel::verdict(&script).is_ok(),
+        "{:?}",
+        aver::proof_kernel::verdict(&script)
+    );
+    // The first case opens `next` at the arm for Light.Red; claim the
+    // second arm instead.
+    let right = "(unfold next 1 ((ctor Light.Red))";
+    assert!(script.contains(right), "{script}");
+    let wrong = script.replacen(right, "(unfold next 2 ((ctor Light.Red))", 1);
+    let refused = aver::proof_kernel::verdict(&wrong).expect_err("a wrong step must be refused");
+    assert!(refused.starts_with("step proof/enum.0"), "{refused}");
+    // A plan the library does not have refuses, it does not guess.
+    let none = aver::proof_std::run("nope", &format!("(goal (elems) {goal})")).unwrap();
+    assert_eq!(none, "refused\nKernel.Std has no plan nope");
 }
 
 #[test]
@@ -575,6 +664,27 @@ fn lean_closes_the_plan_laws_by_steps() {
     let found = summary(&result);
     assert_eq!(found["steps_rejected"], serde_json::json!([]));
     for law in SHUFFLE_LAWS {
+        assert_eq!(found["closed_by"][law], "steps", "{law}");
+    }
+    let _ = fs::remove_dir_all(&out);
+    // The standard plan's proof, and the project plan's that calls it.
+    let result = aver_in(
+        &fixtures(),
+        &[
+            "proof",
+            "lights.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "1",
+        ],
+        &[],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let found = summary(&result);
+    assert_eq!(found["steps_rejected"], serde_json::json!([]));
+    for law in ["next.comesBackAfterThree", "flip.twiceIsItself"] {
         assert_eq!(found["closed_by"][law], "steps", "{law}");
     }
     let _ = fs::remove_dir_all(out);

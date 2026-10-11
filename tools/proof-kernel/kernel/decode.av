@@ -2,7 +2,7 @@ module Decode
     intent =
         "From S-expressions to terms, patterns and proofs."
         "The grammar is the one written at the top of src/ir/proof_steps/sexpr.rs; anything else is refused by name."
-    exposes [term, terms, proof, script]
+    exposes [term, terms, proof, script, fin]
     depends [Kernel.Sexp, Kernel.Term, Kernel.Proof]
     effects []
 

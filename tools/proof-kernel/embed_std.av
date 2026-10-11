@@ -1,0 +1,29 @@
+module ProofStdEmbed
+    intent =
+        "The standard proof plans the aver binary embeds: compiled to Rust into src/proof_std by"
+        "tools/regenerate_proof_kernel.py, so a law with `by Kernel.Std.<plan>` runs its plan in process."
+        "Not trusted: the kernel checks every proof a plan writes. A plans module with no plans of its own,"
+        "since only a plans module may depend on one."
+    exposes [run]
+    depends [Kernel.Term, Kernel.Proof, Kernel.Std, Kernel.Lib]
+    effects []
+    plans []
+
+fn run(plan: String, text: String) -> String
+    ? "Read the goal, run the standard plan named plan on it, and write the answer the compiler reads back."
+    match Kernel.Lib.readGoal(text)
+        Result.Err(why) -> "goal\n{why}"
+        Result.Ok(g) -> Kernel.Lib.writeAnswer(byName(plan, g))
+
+verify run
+    run("cases", "(a") => "goal\nunexpected end of data"
+    run("cases", "(steps 13 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (laws) (proof (refl (i 1))))") => "refused\nno given of finite type"
+
+fn byName(plan: String, g: Goal) -> Result<Proof, String>
+    ? "The standard plan a `by Kernel.Std.<plan>` line names; every plan Kernel.Std's `plans [...]` line lists has an arm."
+    match plan
+        "cases" -> Kernel.Std.cases(g)
+        _ -> Result.Err("Kernel.Std has no plan {plan}")
+
+verify byName
+    byName("nope", Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)))) => Result.Err("Kernel.Std has no plan nope")

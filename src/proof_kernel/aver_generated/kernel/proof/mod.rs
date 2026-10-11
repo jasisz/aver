@@ -925,6 +925,8 @@ pub struct Goal {
     pub sums: aver_rt::AverList<aver_rt::AverList<Variant>>,
     pub laws: aver_rt::AverList<Law>,
     pub facts: aver_rt::AverList<Fact>,
+    pub hyps: aver_rt::AverList<Hyp>,
+    pub listElems: aver_rt::AverList<ListElem>,
 }
 
 impl PartialOrd for Goal {
@@ -940,8 +942,10 @@ impl Ord for Goal {
             .then_with(|| self.defs.cmp(&other.defs))
             .then_with(|| self.facts.cmp(&other.facts))
             .then_with(|| self.finite.cmp(&other.finite))
+            .then_with(|| self.hyps.cmp(&other.hyps))
             .then_with(|| self.ints.cmp(&other.ints))
             .then_with(|| self.laws.cmp(&other.laws))
+            .then_with(|| self.listElems.cmp(&other.listElems))
             .then_with(|| self.lists.cmp(&other.lists))
             .then_with(|| self.obligation.cmp(&other.obligation))
             .then_with(|| self.sums.cmp(&other.sums))
@@ -961,10 +965,101 @@ impl aver_rt::AverDisplay for Goal {
                 format!("consts: {}", self.consts.aver_display_inner()),
                 format!("sums: {}", self.sums.aver_display_inner()),
                 format!("laws: {}", self.laws.aver_display_inner()),
-                format!("facts: {}", self.facts.aver_display_inner())
+                format!("facts: {}", self.facts.aver_display_inner()),
+                format!("hyps: {}", self.hyps.aver_display_inner()),
+                format!("listElems: {}", self.listElems.aver_display_inner())
             ]
             .join(", ")
         )
+    }
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ListElem {
+    pub list: AverStr,
+    pub elem: Ty,
+}
+
+impl PartialOrd for ListElem {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ListElem {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        std::cmp::Ordering::Equal
+            .then_with(|| self.elem.cmp(&other.elem))
+            .then_with(|| self.list.cmp(&other.list))
+    }
+}
+
+impl aver_rt::AverDisplay for ListElem {
+    fn aver_display(&self) -> String {
+        format!(
+            "ListElem({})",
+            vec![
+                format!("list: {}", self.list.aver_display_inner()),
+                format!("elem: {}", self.elem.aver_display_inner())
+            ]
+            .join(", ")
+        )
+    }
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Ty {
+    TyFin(crate::proof_kernel::aver_generated::kernel::term::Fin),
+    TyInt,
+    TyList(std::sync::Arc<Ty>),
+    TyOther,
+}
+
+impl Ty {
+    fn aver_key_rank(&self) -> usize {
+        match self {
+            Ty::TyFin(..) => 0,
+            Ty::TyInt => 1,
+            Ty::TyList(..) => 2,
+            Ty::TyOther => 3,
+        }
+    }
+}
+
+impl PartialOrd for Ty {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Ty {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let rank = self.aver_key_rank().cmp(&other.aver_key_rank());
+        if rank != std::cmp::Ordering::Equal {
+            return rank;
+        }
+        match (self, other) {
+            (Ty::TyFin(a0), Ty::TyFin(b0)) => std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0)),
+            (Ty::TyList(a0), Ty::TyList(b0)) => std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0)),
+            _ => std::cmp::Ordering::Equal,
+        }
+    }
+}
+
+impl aver_rt::AverDisplay for Ty {
+    fn aver_display(&self) -> String {
+        match self {
+            Ty::TyFin(f0) => format!("TyFin({})", f0.aver_display_inner()),
+            Ty::TyInt => "TyInt".to_string(),
+            Ty::TyList(f0) => format!("TyList({})", f0.aver_display_inner()),
+            Ty::TyOther => "TyOther".to_string(),
+        }
     }
     fn aver_display_inner(&self) -> String {
         self.aver_display()

@@ -8,8 +8,8 @@ module Lib
         "match arms are counted from 1; a chain of n steps lists n + 1 terms;"
         "a computation step is written only between literals; a list split replaces the split variable"
         "in the claim and in every hypothesis, the `when` among them."
-    exposes [Rw, Known, Scope, scope, assume, refl, isRefl, chain, trans, evaluate, bothSides, whenName, whenOf, whenHolds, absurdByWhen, whenRefutes, substitute, unfold, selectArm, letBindings, compute, fresh, taken, cons, readGoal, writeAnswer]
-    depends [Kernel.Term, Kernel.Proof, Kernel.Subst, Kernel.Wire]
+    exposes [Rw, Known, Scope, scope, assume, refl, isRefl, chain, trans, evaluate, bothSides, whenName, whenOf, whenHolds, absurdByWhen, whenRefutes, substitute, unfold, selectArm, letBindings, compute, fresh, taken, cons, readGoal, writeAnswer, goalFor]
+    depends [Kernel.Term, Kernel.Proof, Kernel.Subst, Kernel.Wire, Kernel.Eval]
     effects []
 
 record Rw
@@ -37,7 +37,7 @@ fn scope(goal: Goal) -> Scope
     Scope(defs = goal.defs, known = [])
 
 verify scope
-    scope(Goal(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [])) => Scope(defs = [], known = [])
+    scope(goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)))) => Scope(defs = [], known = [])
 
 fn assume(s: Scope, hyp: String, name: String, value: Term) -> Scope
     ? "One more case hypothesis, named hyp, stating that the variable name equals value; evaluate reads name as value."
@@ -99,7 +99,7 @@ fn whenOf(goal: Goal) -> Option<Term>
     Kernel.Proof.premiseOf(goal.obligation)
 
 verify whenOf
-    whenOf(Goal(obligation = Law(key = "k", givens = [], premise = [Term.TBool(true)], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [])) => Option.Some(Term.TBool(true))
+    whenOf(goalFor(Law(key = "k", givens = [], premise = [Term.TBool(true)], lhs = Term.TInt(1), rhs = Term.TInt(1)))) => Option.Some(Term.TBool(true))
 
 fn whenHolds() -> Proof
     ? "The proof of `premise = true` for the law's `when`."
@@ -115,7 +115,7 @@ fn absurdByWhen(s: Scope, goal: Goal) -> Result<Proof, String>
         Option.Some(p) -> whenRefutes(s, p, goal.obligation.lhs, goal.obligation.rhs)
 
 verify absurdByWhen
-    absurdByWhen(Scope(defs = [], known = []), Goal(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [])) => Result.Err("the law has no `when`")
+    absurdByWhen(Scope(defs = [], known = []), goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2)))) => Result.Err("the law has no `when`")
 
 fn whenRefutes(s: Scope, premise: Term, lhs: Term, rhs: Term) -> Result<Proof, String>
     ? "lhs = rhs in a case where the `when`, as it reads in that case, evaluates to false: true = premise = … = false, so the case cannot happen. Inside a list split the `when` reads with the split variable replaced, so pass it that way."
@@ -172,10 +172,62 @@ fn evalNode(s: Scope, t: Term, depth: Int) -> Result<Rw, String>
         Term.TBi(name, args) -> afterArgs(s, t, evalArgs(s, "bi", name, [], args, depth)?, depth)
         Term.TCall(f, args) -> afterArgs(s, t, evalArgs(s, "call", f, [], args, depth)?, depth)
         Term.TOp(o, a, b) -> evalOp(s, o, a, b, depth)
+        Term.TMatch(subject, arms) -> evalMatch(s, t, subject, arms, depth)
+        Term.TGet(r, f) -> evalGet(s, t, r, f, depth)
         _ -> Result.Ok(refl(t))
 
 verify evalNode
     evalNode(Scope(defs = [], known = []), Term.TInt(1), 5) => Result.Ok(refl(Term.TInt(1)))
+
+fn evalGet(s: Scope, t: Term, r: Term, f: String, depth: Int) -> Result<Rw, String>
+    ? "A field read: the record evaluated in place, then the field of a record literal by projection."
+    rr = evalWithin(s, r, depth)?
+    inner = match isRefl(rr.proof)
+        true -> refl(t)
+        false -> Rw(to = Term.TGet(rr.to, f), proof = Proof.PCongr(Term.TGet(Term.THole, f), rr.proof))
+    match rr.to
+        Term.TRec(ty, fs) -> projected(s, t, inner, fieldOf(fs, f), depth)
+        _ -> Result.Ok(inner)
+
+verify evalGet
+    evalGet(Scope(defs = [], known = []), Term.TGet(Term.TRec("R", [Field(name = "a", value = Term.TInt(3))]), "a"), Term.TRec("R", [Field(name = "a", value = Term.TInt(3))]), "a", 5) => Result.Ok(Rw(to = Term.TInt(3), proof = Proof.PProj(Term.TGet(Term.TRec("R", [Field(name = "a", value = Term.TInt(3))]), "a"))))
+
+fn projected(s: Scope, t: Term, inner: Rw, v: Option<Term>, depth: Int) -> Result<Rw, String>
+    ? "t = the read of the literal = its field, evaluated further."
+    match v
+        Option.None -> Result.Ok(inner)
+        Option.Some(x) -> Result.Ok(chain(t, inner, chain(inner.to, Rw(to = x, proof = Proof.PProj(inner.to)), evalWithin(s, x, depth)?)))
+
+verify projected
+    projected(Scope(defs = [], known = []), Term.TUnit, refl(Term.TUnit), Option.None, 5) => Result.Ok(refl(Term.TUnit))
+
+fn fieldOf(fs: List<Field>, f: String) -> Option<Term>
+    ? "A record literal's field by name."
+    match fs
+        [] -> Option.None
+        [x, ..rest] -> match x.name == f
+            true -> Option.Some(x.value)
+            false -> fieldOf(rest, f)
+
+verify fieldOf
+    fieldOf([], "a") => Option.None
+
+fn evalMatch(s: Scope, t: Term, subject: Term, arms: List<Arm>, depth: Int) -> Result<Rw, String>
+    ? "A match term: its subject evaluated, then the arm that value decides, evaluated further."
+    r = evalWithin(s, subject, depth)?
+    match selectArm(arms, r.to)
+        Option.None -> Result.Ok(refl(t))
+        Option.Some((k, arm, parts)) -> evalArm(s, t, Kernel.Subst.subst(arm.body, patternBinds(arm.pattern, parts))?, Proof.PArm(k, parts, t, r.proof), depth)
+
+verify evalMatch
+    evalMatch(Scope(defs = [], known = []), Term.TMatch(Term.TBool(true), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TInt(1))]), Term.TBool(true), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TInt(1))], 5) => Result.Ok(Rw(to = Term.TInt(1), proof = Proof.PArm(1, [], Term.TMatch(Term.TBool(true), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TInt(1))]), Proof.PRefl(Term.TBool(true)))))
+
+fn evalArm(s: Scope, t: Term, body: Term, step: Proof, depth: Int) -> Result<Rw, String>
+    ? "t = body by the arm step, then body evaluated."
+    Result.Ok(chain(t, Rw(to = body, proof = step), evalWithin(s, body, depth)?))
+
+verify evalArm
+    evalArm(Scope(defs = [], known = []), Term.TUnit, Term.TInt(1), Proof.PHyp("h"), 5) => Result.Ok(Rw(to = Term.TInt(1), proof = Proof.PHyp("h")))
 
 fn evalVar(s: Scope, t: Term, known: Option<Known>, depth: Int) -> Result<Rw, String>
     ? "A variable with a case hypothesis is its value, evaluated further."
@@ -273,14 +325,26 @@ verify compute
     compute(Term.TOp("-", Term.TVar("n"), Term.TInt(1))) => refl(Term.TOp("-", Term.TVar("n"), Term.TInt(1)))
 
 fn literalValue(t: Term) -> Option<Term>
-    ? "The value of an operator between two Int literals."
+    ? "The value of a closed Int or Bool term, by the kernel's own evaluator for the compute rule (not a copy of it)."
     match t
         Term.TOp(o, Term.TInt(x), Term.TInt(y)) -> intOp(o, x, y)
+        Term.TOp(o, x, y) -> scalarOf(Kernel.Eval.evalClosed(t))
+        Term.TBi(n, xs) -> scalarOf(Kernel.Eval.evalClosed(t))
         _ -> Option.None
 
 verify literalValue
     literalValue(Term.TOp("<", Term.TInt(1), Term.TInt(2))) => Option.Some(Term.TBool(true))
     literalValue(Term.TInt(1)) => Option.None
+
+fn scalarOf(v: Option<Kernel.Eval.Val>) -> Option<Term>
+    ? "An Int or Bool value as a literal; a list value is left alone, since evaluate writes lists as cells."
+    match v
+        Option.Some(Kernel.Eval.Val.VInt(n)) -> Option.Some(Term.TInt(n))
+        Option.Some(Kernel.Eval.Val.VBool(b)) -> Option.Some(Term.TBool(b))
+        _ -> Option.None
+
+verify scalarOf
+    scalarOf(Option.None) => Option.None
 
 fn intOp(o: String, x: Int, y: Int) -> Option<Term>
     ? "The Int operators compute writes."
@@ -303,20 +367,54 @@ verify intOp
 fn headStep(s: Scope, t: Term, depth: Int) -> Result<Option<Rw>, String>
     ? "One step at the head: a list equation, or unfolding a definition at the arm its subject decides."
     match t
-        Term.TBi(name, args) -> Result.Ok(listEquation(name, args))
+        Term.TBi(name, args) -> Result.Ok(builtinStep(t, name, args))
         Term.TCall(f, xs) -> unfoldWithin(s, f, xs, depth)
         _ -> Result.Ok(Option.None)
 
 verify headStep
     headStep(Scope(defs = [], known = []), Term.TInt(1), 5) => Result.Ok(Option.None)
 
+fn builtinStep(t: Term, name: String, args: List<Term>) -> Option<Rw>
+    ? "A list equation, or, for a builtin other than List.prepend applied to closed values, its value by computation."
+    match listEquation(name, args)
+        Option.Some(r) -> Option.Some(r)
+        Option.None -> match name == "List.prepend"
+            true -> Option.None
+            false -> match literalValue(t)
+                Option.Some(v) -> Option.Some(Rw(to = v, proof = Proof.PCompute(t, v)))
+                Option.None -> boolEquation(name, args)
+
+verify builtinStep
+    builtinStep(Term.TBi("Bool.and", [Term.TBool(true), Term.TBool(false)]), "Bool.and", [Term.TBool(true), Term.TBool(false)]) => Option.Some(Rw(to = Term.TBool(false), proof = Proof.PCompute(Term.TBi("Bool.and", [Term.TBool(true), Term.TBool(false)]), Term.TBool(false))))
+
+fn boolEquation(name: String, args: List<Term>) -> Option<Rw>
+    ? "Bool.and and Bool.or with one literal side, by the kernel's rules (both sides literal is computed instead)."
+    match (name, args)
+        ("Bool.and", [Term.TBool(true), b]) -> Option.Some(Rw(to = b, proof = Proof.PRule("bool.and.true_l", [Kernel.Term.bind("b", b)], [])))
+        ("Bool.and", [Term.TBool(false), b]) -> Option.Some(Rw(to = Term.TBool(false), proof = Proof.PRule("bool.and.false_l", [Kernel.Term.bind("b", b)], [])))
+        ("Bool.and", [a, Term.TBool(true)]) -> Option.Some(Rw(to = a, proof = Proof.PRule("bool.and.true_r", [Kernel.Term.bind("a", a)], [])))
+        ("Bool.and", [a, Term.TBool(false)]) -> Option.Some(Rw(to = Term.TBool(false), proof = Proof.PRule("bool.and.false_r", [Kernel.Term.bind("a", a)], [])))
+        ("Bool.or", [Term.TBool(true), b]) -> Option.Some(Rw(to = Term.TBool(true), proof = Proof.PRule("bool.or.true_l", [Kernel.Term.bind("b", b)], [])))
+        ("Bool.or", [Term.TBool(false), b]) -> Option.Some(Rw(to = b, proof = Proof.PRule("bool.or.false_l", [Kernel.Term.bind("b", b)], [])))
+        ("Bool.or", [a, Term.TBool(true)]) -> Option.Some(Rw(to = Term.TBool(true), proof = Proof.PRule("bool.or.true_r", [Kernel.Term.bind("a", a)], [])))
+        ("Bool.or", [a, Term.TBool(false)]) -> Option.Some(Rw(to = a, proof = Proof.PRule("bool.or.false_r", [Kernel.Term.bind("a", a)], [])))
+        _ -> Option.None
+
+verify boolEquation
+    boolEquation("Bool.and", [Term.TBool(true), Term.TVar("b")]) => Option.Some(Rw(to = Term.TVar("b"), proof = Proof.PRule("bool.and.true_l", [Kernel.Term.bind("b", Term.TVar("b"))], [])))
+    boolEquation("Bool.and", [Term.TVar("a"), Term.TVar("b")]) => Option.None
+
 fn listEquation(name: String, args: List<Term>) -> Option<Rw>
-    ? "The equations of List.len and List.take on [] and on a cell, as the kernel's rules state them."
+    ? "The equations of List.len, List.take, List.concat and List.reverse on [] and on a cell, as the kernel's rules state them."
     match (name, args)
         ("List.len", [Term.TList([])]) -> Option.Some(Rw(to = Term.TInt(0), proof = Proof.PRule("list.len.nil", [], [])))
         ("List.len", [Term.TBi("List.prepend", [x, a])]) -> Option.Some(Rw(to = Term.TOp("+", Term.TBi("List.len", [a]), Term.TInt(1)), proof = Proof.PRule("list.len.cons", [Kernel.Term.bind("x", x), Kernel.Term.bind("a", a)], [])))
         ("List.take", [Term.TList([]), n]) -> Option.Some(Rw(to = Term.TList([]), proof = Proof.PRule("list.take.nil", [Kernel.Term.bind("n", n)], [])))
         ("List.take", [Term.TBi("List.prepend", [x, a]), Term.TInt(n)]) -> Option.Some(takeCell(x, a, n))
+        ("List.concat", [Term.TList([]), b]) -> Option.Some(Rw(to = b, proof = Proof.PRule("list.concat.nil", [Kernel.Term.bind("b", b)], [])))
+        ("List.concat", [Term.TBi("List.prepend", [x, a]), b]) -> Option.Some(Rw(to = cons(x, Term.TBi("List.concat", [a, b])), proof = Proof.PRule("list.concat.cons", [Kernel.Term.bind("x", x), Kernel.Term.bind("a", a), Kernel.Term.bind("b", b)], [])))
+        ("List.reverse", [Term.TList([])]) -> Option.Some(Rw(to = Term.TList([]), proof = Proof.PRule("list.reverse.nil", [], [])))
+        ("List.reverse", [Term.TBi("List.prepend", [x, a])]) -> Option.Some(Rw(to = Term.TBi("List.concat", [Term.TBi("List.reverse", [a]), cons(x, Term.TList([]))]), proof = Proof.PRule("list.reverse.cons", [Kernel.Term.bind("x", x), Kernel.Term.bind("a", a)], [])))
         _ -> Option.None
 
 verify listEquation
@@ -385,10 +483,60 @@ fn unfoldWithin(s: Scope, f: String, args: List<Term>, depth: Int) -> Result<Opt
         Option.None -> Result.Ok(Option.None)
         Option.Some(d) -> match d.body
             Term.TMatch(subject, arms) -> unfoldAt(s, d, args, subject, arms, letBindings(d, args)?, depth)
-            _ -> Result.Ok(Option.None)
+            _ -> match callsName(d.body, d.name)
+                true -> Result.Ok(Option.None)
+                false -> Result.Ok(Option.Some(Rw(to = Kernel.Subst.subst(d.body, letBindings(d, args)?)?, proof = Proof.PUnfold(d.name, 0, args, [], []))))
 
 verify unfoldWithin
     unfoldWithin(Scope(defs = [], known = []), "f", [], 5) => Result.Ok(Option.None)
+
+fn callsName(t: Term, f: String) -> Bool
+    ? "Whether t calls the definition f anywhere: a body that calls itself is not opened whole."
+    match t
+        Term.TCall(g, xs) -> Bool.or(g == f, callsAny(xs, f))
+        Term.TBi(g, xs) -> callsAny(xs, f)
+        Term.TOp(o, a, b) -> Bool.or(callsName(a, f), callsName(b, f))
+        Term.TNeg(a) -> callsName(a, f)
+        Term.TGet(a, n) -> callsName(a, f)
+        Term.TCtor(c, xs) -> callsAny(xs, f)
+        Term.TList(xs) -> callsAny(xs, f)
+        Term.TTuple(xs) -> callsAny(xs, f)
+        Term.TParts(xs) -> callsAny(xs, f)
+        Term.TRec(n, fs) -> callsFields(fs, f)
+        Term.TUpd(n, a, fs) -> Bool.or(callsName(a, f), callsFields(fs, f))
+        Term.TMatch(a, arms) -> Bool.or(callsName(a, f), callsArms(arms, f))
+        _ -> false
+
+verify callsName
+    callsName(Term.TOp("+", Term.TCall("f", []), Term.TInt(1)), "f") => true
+    callsName(Term.TInt(1), "f") => false
+
+fn callsAny(xs: List<Term>, f: String) -> Bool
+    ? "Whether any of xs calls f."
+    match xs
+        [] -> false
+        [x, ..rest] -> Bool.or(callsName(x, f), callsAny(rest, f))
+
+verify callsAny
+    callsAny([], "f") => false
+
+fn callsFields(fs: List<Field>, f: String) -> Bool
+    ? "Whether any field value calls f."
+    match fs
+        [] -> false
+        [x, ..rest] -> Bool.or(callsName(x.value, f), callsFields(rest, f))
+
+verify callsFields
+    callsFields([], "f") => false
+
+fn callsArms(arms: List<Arm>, f: String) -> Bool
+    ? "Whether any arm body calls f."
+    match arms
+        [] -> false
+        [a, ..rest] -> Bool.or(callsName(a.body, f), callsArms(rest, f))
+
+verify callsArms
+    callsArms([], "f") => false
 
 fn unfoldAt(s: Scope, d: Def, args: List<Term>, subject: Term, arms: List<Arm>, outer: List<Binding>, depth: Int) -> Result<Option<Rw>, String>
     ? "Evaluate the subject, choose the arm, and write the unfold with the subject's evaluation as its premise."
@@ -458,6 +606,11 @@ fn selectOne(a: Arm, rest: List<Arm>, v: Term, k: Int, shape: String) -> Option<
             "cons" -> Option.Some((k, a, cellParts(v)))
             "nil" -> selectFrom(rest, v, k + 1)
             _ -> Option.None
+        Pat.PCtor(c, ns) -> match v
+            Term.TCtor(d, ys) -> match c == d
+                true -> Option.Some((k, a, ys))
+                false -> selectFrom(rest, v, k + 1)
+            _ -> Option.None
         _ -> Option.None
 
 verify selectOne
@@ -480,10 +633,22 @@ fn patternBinds(p: Pat, parts: List<Term>) -> List<Binding>
     match (p, parts)
         (Pat.PCons(h, t), [x, y]) -> [Kernel.Term.bind(h, x), Kernel.Term.bind(t, y)]
         (Pat.PVar(n), [x]) -> [Kernel.Term.bind(n, x)]
+        (Pat.PCtor(c, ns), ys) -> fieldBinds(ns, ys)
         _ -> []
 
 verify patternBinds
     patternBinds(Pat.PCons("h", "t"), [Term.TInt(1), Term.TList([])]) => [Kernel.Term.bind("h", Term.TInt(1)), Kernel.Term.bind("t", Term.TList([]))]
+
+fn fieldBinds(ns: List<String>, ys: List<Term>) -> List<Binding>
+    ? "Each named field of a constructor pattern to its part; a wildcard field binds nothing."
+    match (ns, ys)
+        ([n, ..ns2], [y, ..ys2]) -> match n == "_"
+            true -> fieldBinds(ns2, ys2)
+            false -> List.prepend(Kernel.Term.bind(n, y), fieldBinds(ns2, ys2))
+        _ -> []
+
+verify fieldBinds
+    fieldBinds(["_", "x"], [Term.TInt(1), Term.TInt(2)]) => [Kernel.Term.bind("x", Term.TInt(2))]
 
 fn fresh(base: String, used: List<String>) -> String
     ? "base, or base followed by the first number that makes a name not in used (often taken(goal)): a hypothesis or binder name must not clash with one in scope."
@@ -506,15 +671,25 @@ verify freshFrom
     freshFrom("h", [], 1) => "h1"
 
 fn taken(goal: Goal) -> List<String>
-    ? "Every name a goal already uses, for fresh to avoid: the givens, the variables of the claim and of the `when`, the hypothesis `when` itself, the module-level bindings and the list variables."
+    ? "Every name a goal already uses, for fresh to avoid: the givens, the variables of the claim and of the `when`, the hypothesis `when` itself, the module-level bindings, the list variables, and each hypothesis's name and variables."
     ob = goal.obligation
     vars = Kernel.Subst.freeVarsAll(List.concat([ob.lhs, ob.rhs], ob.premise))
-    List.concat(List.concat(ob.givens, vars), List.concat(List.concat(whenLabel(goal), constNames(goal.consts)), goal.lists))
+    List.concat(List.concat(List.concat(ob.givens, vars), List.concat(List.concat(whenLabel(goal), constNames(goal.consts)), goal.lists)), hypNames(goal.hyps))
 
 verify taken
-    taken(Goal(obligation = Law(key = "k", givens = ["xs"], premise = [Term.TOp(">=", Term.TBi("List.len", [Term.TVar("xs")]), Term.TVar("n"))], lhs = Term.TVar("xs"), rhs = Term.TVar("top")), finite = [], lists = ["xs"], ints = [], defs = [], consts = [Const(name = "top", value = Term.TInt(1))], sums = [], laws = [], facts = [])) => ["xs", "xs", "top", "xs", "n", "when", "top", "xs"]
-    taken(Goal(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [])) => []
-    fresh("when", taken(Goal(obligation = Law(key = "k", givens = [], premise = [Term.TBool(true)], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = []))) => "when1"
+    taken(Goal(obligation = Law(key = "k", givens = ["xs"], premise = [Term.TOp(">=", Term.TBi("List.len", [Term.TVar("xs")]), Term.TVar("n"))], lhs = Term.TVar("xs"), rhs = Term.TVar("top")), finite = [], lists = ["xs"], ints = [], defs = [], consts = [Const(name = "top", value = Term.TInt(1))], sums = [], laws = [], facts = [], hyps = [], listElems = [])) => ["xs", "xs", "top", "xs", "n", "when", "top", "xs"]
+    taken(goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)))) => []
+    fresh("when", taken(goalFor(Law(key = "k", givens = [], premise = [Term.TBool(true)], lhs = Term.TInt(1), rhs = Term.TInt(1))))) => "when1"
+
+fn hypNames(hs: List<Hyp>) -> List<String>
+    ? "The names of the hypotheses and every variable they mention."
+    match hs
+        [] -> []
+        [h, ..rest] -> List.concat(List.prepend(h.name, Kernel.Subst.freeVarsAll([h.eqn.lhs, h.eqn.rhs])), hypNames(rest))
+
+verify hypNames
+    hypNames([]) => []
+    hypNames([Hyp(name = "ih", eqn = Eqn(lhs = Term.TVar("t"), rhs = Term.TInt(1)))]) => ["ih", "t"]
 
 fn whenLabel(goal: Goal) -> List<String>
     ? "The name of the `when` hypothesis, when the law has one."
@@ -523,7 +698,7 @@ fn whenLabel(goal: Goal) -> List<String>
         Option.Some(_) -> [whenName()]
 
 verify whenLabel
-    whenLabel(Goal(obligation = Law(key = "k", givens = [], premise = [Term.TBool(true)], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [])) => ["when"]
+    whenLabel(goalFor(Law(key = "k", givens = [], premise = [Term.TBool(true)], lhs = Term.TInt(1), rhs = Term.TInt(1)))) => ["when"]
 
 fn constNames(cs: List<Const>) -> List<String>
     ? "The names of module-level bindings."
@@ -533,6 +708,13 @@ fn constNames(cs: List<Const>) -> List<String>
 
 verify constNames
     constNames([Const(name = "top", value = Term.TInt(1))]) => ["top"]
+
+fn goalFor(law: Law) -> Goal
+    ? "A goal for law with nothing else in it: no definitions, laws, hypotheses or givens of special type. For a plan's examples, so they keep reading the same when Goal gains a field."
+    Goal(obligation = law, finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [], hyps = [], listElems = [])
+
+verify goalFor
+    goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))).hyps => []
 
 fn readGoal(text: String) -> Result<Goal, String>
     ? "The goal step data states, its proof left out: how the compiler hands a plan its goal."

@@ -1,0 +1,12 @@
+module ViaStd
+    intent = "A project plan that hands its goal to the standard library: it runs in the VM, Kernel.Std compiled from source with it."
+    depends [Kernel.Term, Kernel.Proof, Kernel.Lib, Kernel.Std]
+    plans [cases]
+
+fn cases(goal: Goal) -> Result<Proof, String>
+    ? "The standard finite split, called from a project plan."
+    Kernel.Std.cases(goal)
+
+verify cases
+    cases(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)))) => Result.Err("no given of finite type")
+    cases(Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = ["b"], premise = [], lhs = Term.TVar("b"), rhs = Term.TVar("b"))), finite = [Given(name = "b", fin = Fin.FBool)])) => Result.Ok(Proof.PEnum("b", Term.TVar("b"), Term.TVar("b"), [Proof.PTrans([Term.TBool(false), Term.TBool(false), Term.TBool(false)], [Proof.PRefl(Term.TBool(false)), Proof.PSymm(Proof.PRefl(Term.TBool(false)))]), Proof.PTrans([Term.TBool(true), Term.TBool(true), Term.TBool(true)], [Proof.PRefl(Term.TBool(true)), Proof.PSymm(Proof.PRefl(Term.TBool(true)))])]))
