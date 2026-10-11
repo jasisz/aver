@@ -1048,7 +1048,17 @@ impl Renderer<'_> {
                     None => s,
                 }
             }
-            Proof::Compute { .. } => "by decide".to_string(),
+            // `decide` reads only a closed statement; two different
+            // constructors that hold a variable differ by reduction alone.
+            Proof::Compute { lhs, .. } => {
+                let mut free = Vec::new();
+                term::free_vars(lhs, &mut free);
+                if free.is_empty() {
+                    "by decide".to_string()
+                } else {
+                    "rfl".to_string()
+                }
+            }
             Proof::Cases {
                 on,
                 hyp,

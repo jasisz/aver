@@ -92,6 +92,11 @@
    "stillToSend.acceptedPrefixNeverOvershoots"
   ]
  },
+ "examples/formal/validated_wrapper_law.av": {
+  "steps": [
+   "checkedDiv.returnsCore"
+  ]
+ },
  "examples/games/checkers/ai.av": {
   "steps": [
    "centerBonus.emptyNeutral",
@@ -252,6 +257,7 @@
    "modelSign.normalizedSign.because3",
    "modelSign.normalizedSign.because4",
    "modelSign.normalizedSign.because5",
+   "modelSign.normalizedSign.because6",
    "modelSign.normalizedSign.because7",
    "modelStickyExact.normalizedModel.because2",
    "modelStickyExact.normalizedModel.because3",
@@ -296,6 +302,7 @@
    "scaledWindow.normalizedSignificand.because3",
    "scaledWindow.normalizedSignificand.because4",
    "scaledWindow.normalizedSignificand.because5",
+   "scaledWindow.normalizedSignificand.because6",
    "scaledWindow.normalizedSignificand.implication",
    "signedDouble.successor.implication",
    "uniqueWindow.uniqueExponent.because1",
@@ -362,9 +369,10 @@
   "obligations": [
    "scaledQuotient.exactScale.because1",
    "scaledQuotient.exactScale.because2",
-   "scaledQuotient.exactScale.implication",
-   "signOfProduct.positiveMagnitudes.because1",
-   "signOfProduct.positiveMagnitudes.implication"
+   "scaledQuotient.exactScale.implication"
+  ],
+  "steps": [
+   "signOfProduct.positiveMagnitudes"
   ]
  },
  "projects/song/wave.av": {

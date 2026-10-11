@@ -4280,6 +4280,248 @@ fn lean_closes_the_swapped_equality_laws_by_their_steps() {
     let _ = fs::remove_dir_all(out);
 }
 
+/// The laws of `case_contradictions.av` that close only because a case
+/// their hypotheses rule out is closed as impossible, each by one reading:
+/// the lengths of a list equation, a `when` that evaluates to `false`, two
+/// hypotheses with one normal form and different values, and two different
+/// constructors that hold a variable.
+const CASE_CONTRADICTION_LAWS: [&str; 4] = [
+    "hasTop.nonEmpty",
+    "place.growsWhenItStays",
+    "checked.zeroWhenOn",
+    "refusal.heldIsRefused",
+];
+
+/// A false law of the same shape as each of [`CASE_CONTRADICTION_LAWS`].
+const CASE_CONTRADICTION_FALSE_LAWS: [&str; 4] = [
+    "hasTop.anyList",
+    "place.growsAlways",
+    "checked.levelWhenOn",
+    "refusal.anythingIsRefused",
+];
+
+/// `text` with the first `(cases ON HYP TRUE FALSE)` step's two cases
+/// swapped.
+fn swap_first_cases(text: &str) -> String {
+    let start = text.find("(proof ").expect("a script has a proof");
+    let open = start + text[start..].find("(cases ").expect("a cases step");
+    let forms = sub_forms(text, open);
+    // (cases ON HYP TRUE FALSE): ON and the two cases are forms.
+    let (t, f) = (forms[1], forms[2]);
+    format!(
+        "{}{}{}{}{}",
+        &text[..t.0],
+        &text[f.0..f.1],
+        &text[t.1..f.0],
+        &text[t.0..t.1],
+        &text[f.1..]
+    )
+}
+
+/// After a case split the hypotheses are read again together: each reading
+/// is a step both kernels check, a wrong one is refused, and a false law of
+/// the same shape stays open.
+#[test]
+fn both_kernels_close_a_case_its_hypotheses_rule_out_and_refuse_a_wrong_reading() {
+    let out = scratch("case-contradictions");
+    let (result, summary) = aver_backend_json("case_contradictions.av", &out, None);
+    let _ = fs::remove_dir_all(&out);
+    for law in CASE_CONTRADICTION_LAWS {
+        assert_eq!(
+            summary["closed_by"][law],
+            "steps",
+            "{law}: {}",
+            format_output(&result)
+        );
+    }
+    for law in CASE_CONTRADICTION_FALSE_LAWS {
+        assert_eq!(summary["closed_by"][law], "open", "{law}: {summary}");
+    }
+    let export = scratch("case-contradictions-export");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("case_contradictions.av", &export)
+            .into_iter()
+            .collect();
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in CASE_CONTRADICTION_LAWS {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.to_string()));
+    }
+    // A wrong length, a connective read the wrong way, the wrong
+    // hypothesis, and two different constructors read as equal.
+    let refusal = read("refusal.heldIsRefused");
+    let clash = refusal
+        .find("(compute (op == (ctor Option.Some")
+        .expect("the constructors decided by compute");
+    let end = closing(&refusal, clash);
+    let ctor_equal = format!(
+        "{}{}{}",
+        &refusal[..clash],
+        refusal[clash..=end].replace("(b false))", "(b true))"),
+        &refusal[end + 1..]
+    );
+    let mutants = [
+        mutate_proof(
+            &read("hasTop.nonEmpty"),
+            "(op == (bi List.len (v xs)) (i 0))",
+            "(op == (bi List.len (v xs)) (i 1))",
+        ),
+        mutate_proof(
+            &read("place.growsWhenItStays"),
+            "(rule bool.not.true ())",
+            "(rule bool.not.false ())",
+        ),
+        mutate_proof(
+            &read("checked.zeroWhenOn"),
+            "(proj (get (rec Ctx (level (v level))) level)))) (hyp when)",
+            "(proj (get (rec Ctx (level (v level))) level)))) (hyp h_steps1)",
+        ),
+        ctor_equal,
+    ];
+    for (i, mutant) in mutants.into_iter().enumerate() {
+        let refused = aver::proof_kernel::verdict(&mutant);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "mutant {i}: {refused:?}"
+        );
+        let path = export.join(format!("mutant{i}.steps"));
+        fs::write(&path, &mutant).unwrap();
+        let replayed = replay(std::slice::from_ref(&path));
+        assert!(!replayed.status.success(), "{}", format_output(&replayed));
+    }
+    let _ = fs::remove_dir_all(export);
+}
+
+#[test]
+fn lean_closes_the_case_contradiction_laws_by_their_steps() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("case-contradictions-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "case_contradictions.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "99",
+            "--declined-budget",
+            "99",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in CASE_CONTRADICTION_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+/// The law of `cited_when_split.av` that closes only by a split on a line
+/// of a cited law's `when` that stays open where the law matches.
+const CITED_WHEN_SPLIT_LAW: &str = "smallSize.oneDigitRange";
+
+/// Two cited laws match `List.len(digits(n))`, one for `n < 10` and one for
+/// `n >= 10`: the steps split on the open line, each case rewrites with the
+/// law that now applies, and both kernels check it. The cases swapped are
+/// refused, and a false law with the same citations stays open.
+#[test]
+fn both_kernels_split_on_a_cited_when_and_refuse_the_cases_swapped() {
+    let out = scratch("cited-when-split");
+    let (result, summary) = aver_backend_json("cited_when_split.av", &out, None);
+    let _ = fs::remove_dir_all(&out);
+    for law in [
+        "digits.smallCount",
+        "digits.countStep",
+        "digits.positiveHasDigits",
+        CITED_WHEN_SPLIT_LAW,
+    ] {
+        assert_eq!(
+            summary["closed_by"][law],
+            "steps",
+            "{law}: {}",
+            format_output(&result)
+        );
+    }
+    assert_eq!(
+        summary["closed_by"]["smallSize.oneDigitWrongRange"], "open",
+        "{summary}"
+    );
+    let export = scratch("cited-when-split-export");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("cited_when_split.av", &export)
+            .into_iter()
+            .collect();
+    let law = fs::read_to_string(&files[CITED_WHEN_SPLIT_LAW]).unwrap();
+    assert_eq!(
+        aver::proof_kernel::verdict(&law),
+        Ok(CITED_WHEN_SPLIT_LAW.to_string())
+    );
+    assert!(law.contains("(proof (cases (op < (v n) (i 10))"), "{law}");
+    let mutant = swap_first_cases(&law);
+    let refused = aver::proof_kernel::verdict(&mutant);
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|why| why.starts_with("step proof")),
+        "{refused:?}"
+    );
+    let path = export.join("mutant.steps");
+    fs::write(&path, &mutant).unwrap();
+    let replayed = replay(std::slice::from_ref(&path));
+    assert!(!replayed.status.success(), "{}", format_output(&replayed));
+    let _ = fs::remove_dir_all(export);
+}
+
+#[test]
+fn lean_closes_the_cited_when_split_law_by_its_steps() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("cited-when-split-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "cited_when_split.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "99",
+            "--declined-budget",
+            "99",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        summary["closed_by"][CITED_WHEN_SPLIT_LAW], "steps",
+        "{summary}"
+    );
+    let _ = fs::remove_dir_all(out);
+}
+
 /// The step files `aver proof --backend aver` writes for `fixture` with
 /// `AVER_STEPS_MEMO` set to `memo`, by name, and the laws it closes by
 /// steps.
@@ -4330,7 +4572,9 @@ fn steps_with_memo(fixture: &str, memo: &str) -> (Vec<(String, String)>, Vec<Str
 fn remembered_evaluations_give_the_same_proofs() {
     for fixture in [
         "btc_shapes.av",
+        "case_contradictions.av",
         "case_hypotheses.av",
+        "cited_when_split.av",
         "countdown.av",
         "finite.av",
         "halving.av",

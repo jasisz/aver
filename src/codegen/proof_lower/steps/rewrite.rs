@@ -11,6 +11,10 @@ use crate::ir::proof_steps::{Eqn, LawRef, Proof, WallRule};
 use super::chain::Chain;
 use super::env::Env;
 
+/// The most evaluation steps proving one premise by evaluation may take
+/// ([`Env::discharge`]).
+const DISCHARGE_FUEL: usize = 100;
+
 /// Same node apart from children.
 fn head_eq(a: &Term, b: &Term) -> bool {
     use ResolvedExpr as E;
@@ -158,7 +162,47 @@ impl Env<'_> {
             return self.discharge_conjuncts(&t).ok();
         }
         // A comparison the decided comparisons in scope settle linearly.
-        self.linear_proof(&t, true)
+        if let Some(proof) = self.linear_proof(&t, true) {
+            return Some(proof);
+        }
+        // Last, a comparison evaluated, within a short budget:
+        // `List.len(List.prepend(x, l)) > 0` is `List.len(l) + 1 > 0`,
+        // which linear arithmetic settles.
+        self.discharge_by_evaluation(&t)
+    }
+
+    /// `t = true` for an Int comparison `t` that evaluation, within
+    /// [`DISCHARGE_FUEL`] steps of the fuel left, brings to `true`.
+    fn discharge_by_evaluation(&mut self, t: &Term) -> Option<Proof> {
+        if !matches!(
+            t.node,
+            ResolvedExpr::BinOp(
+                BinOp::Lt | BinOp::Lte | BinOp::Gt | BinOp::Gte | BinOp::Eq | BinOp::Neq,
+                ..
+            )
+        ) {
+            return None;
+        }
+        // Not again inside that evaluation: one premise's evaluation does
+        // not spend its budget on the premises of the laws it meets.
+        if self.discharging {
+            return None;
+        }
+        let fuel = self.fuel;
+        let cap = fuel.min(DISCHARGE_FUEL);
+        self.fuel = cap;
+        let wide = self.wide_linear;
+        self.discharging = true;
+        self.wide_linear = true;
+        let ev = self.whnf(t);
+        self.discharging = false;
+        self.wide_linear = wide;
+        self.fuel = fuel - (cap - self.fuel);
+        let ev = ev.ok()?;
+        if term::bool_value(ev.chain.cur()) != Some(true) || ev.chain.is_empty() {
+            return None;
+        }
+        Some(ev.chain.finish().1)
     }
 
     /// Prove `t = true` for a conjunction (`Bool.and`, nested) one conjunct
@@ -332,6 +376,11 @@ impl Env<'_> {
                             None => {
                                 let open = self.open_conjuncts(&when);
                                 self.note_open_premise(&law.key, &subst, &open);
+                                if law.fact.is_none()
+                                    && let [line] = open.as_slice()
+                                {
+                                    self.note_open_when(line);
+                                }
                                 return None;
                             }
                         }
@@ -747,6 +796,11 @@ impl Env<'_> {
                                 None => {
                                     let open = self.open_conjuncts(&when);
                                     self.note_open_premise(&law.key, &subst, &open);
+                                    if law.fact.is_none()
+                                        && let [line] = open.as_slice()
+                                    {
+                                        self.note_open_when(line);
+                                    }
                                     continue;
                                 }
                             }

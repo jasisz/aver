@@ -7,14 +7,17 @@
 //! - **What evaluation reads** is the term (with the types and source lines
 //!   of all its parts), the hypotheses in scope (names and equations),
 //!   whether a definition that divides an Int down to zero may be opened,
-//!   and whether the `when` of a cited law is being proved: that is the
+//!   whether the `when` of a cited law is being proved, whether a premise
+//!   is being proved by evaluation, and whether linear arithmetic reads the
+//!   wider facts ([`super::env::Env::wide_linear`]): that is the
 //!   key, written out in full ([`key`]). The rest it reads is fixed for
 //!   one obligation (the program, the cited laws, the builtin facts, the
 //!   givens of finite type), and a memo lives for one obligation only.
 //! - **What evaluation writes** besides its result is replayed in the
 //!   order it was written: the definitions and module bindings it opened
 //!   (so the script carries the same ones in the same order), the cited
-//!   laws it used, the notes for a refusal, the definitions it looked up
+//!   laws it used, the notes for a refusal, the `when` lines of cited laws
+//!   that stayed open (which a split may take up), the definitions it looked up
 //!   (which says whether one that divides down to zero was met), and the
 //!   flag for a cited `when`.
 //! - **Fuel**: a replay charges the fuel the evaluation took, and replays
@@ -66,6 +69,9 @@ pub(crate) enum Effect {
     Note(String),
     /// A definition looked up ([`super::env::Env::def`]).
     Def(FnId),
+    /// A cited law's `when` that stayed open where the law matched
+    /// ([`super::env::Env::note_open_when`]).
+    OpenWhen(Box<Term>),
 }
 
 /// What one evaluation wrote, recorded while it runs.
@@ -135,6 +141,10 @@ pub(crate) fn key(
     hyps: &[(String, crate::ir::proof_steps::Eqn)],
     open_halving: bool,
     proving_cited_when: bool,
+    discharging: bool,
+    wide_linear: bool,
 ) -> String {
-    format!("{t:?}\u{1}{hyps:?}\u{1}{open_halving}\u{1}{proving_cited_when}")
+    format!(
+        "{t:?}\u{1}{hyps:?}\u{1}{open_halving}\u{1}{proving_cited_when}\u{1}{discharging}\u{1}{wide_linear}"
+    )
 }

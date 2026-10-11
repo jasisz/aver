@@ -311,7 +311,7 @@ pub fn emit_verify_law_forall_auto_proof(
             first_arm_is_guaranteed_closer: false,
         });
     }
-    let inner = emit_verify_law_forall_auto_proof_inner(
+    let Some(inner) = emit_verify_law_forall_auto_proof_inner(
         vb,
         law,
         ctx,
@@ -321,7 +321,22 @@ pub fn emit_verify_law_forall_auto_proof(
         theorem_prop,
         cert_model,
         speculative,
-    )?;
+    ) else {
+        // No tactic portfolio for this shape (a function that builds a
+        // text, say): a step proof still leads, with nothing behind it.
+        let (key, rendered) = rendered_steps(vb, law, ctx)?;
+        return Some(AutoProof {
+            support_lines: Vec::new(),
+            body: super::proof_steps::lead_portfolio(
+                &rendered,
+                &steps_intro(law),
+                &key,
+                super::tactic_ir::Tactic::Sorry,
+            ),
+            replaces_theorem: false,
+            first_arm_is_guaranteed_closer: false,
+        });
+    };
     // ADDITIVE, SHAPE-GATED `grind` outright-closer rung — prepended at
     // the TOP of the ladder, but ONLY for laws whose goal is
     // grind-amenable (algebraic / ring / order / comparison identity, NOT

@@ -86,6 +86,25 @@ pub(crate) struct Env<'a> {
     /// Whether the fuel ran out, so that what was found depends on how
     /// much there was.
     pub ran_dry: bool,
+    /// Steps left for reading the hypotheses of a case again
+    /// ([`super::hypotheses`]).
+    pub refute_fuel: usize,
+    /// The hypotheses (hashed) of the cases read again so far.
+    pub refuted: Vec<u64>,
+    /// The one open line of a cited law's `when` where the law matched and
+    /// every other line was proved, in the order met: what a split on a
+    /// cited `when` may take up ([`super::split_on_cited_when`]).
+    pub open_whens: Vec<Term>,
+    /// Whether a premise is being proved by evaluation
+    /// ([`Env::discharge`]), so the laws met inside are not proved so again.
+    pub discharging: bool,
+    /// Whether linear arithmetic also reads the comparisons inside a true
+    /// conjunction and that lengths are not negative where the facts in
+    /// scope do not settle a comparison: only while a case is read for a
+    /// contradiction, a premise is proved by evaluation, or a cited `when`
+    /// is split on ([`Env::linear_proof`]), so the evaluation everywhere
+    /// else pays nothing for it.
+    pub wide_linear: bool,
 }
 
 impl<'a> Env<'a> {
@@ -123,6 +142,11 @@ impl<'a> Env<'a> {
             memo_mode: super::memo::Mode::Off,
             trace: None,
             ran_dry: false,
+            refute_fuel: super::hypotheses::REFUTE_FUEL,
+            refuted: Vec::new(),
+            open_whens: Vec::new(),
+            discharging: false,
+            wide_linear: false,
         }
     }
 
@@ -377,6 +401,17 @@ impl<'a> Env<'a> {
             "missing argument: law {key} at ({at}) applies but its `when` needs {needs}, which no hypothesis, linear step or computation gives; state it in a `because` line or cite a law that does"
         );
         self.note(note);
+    }
+
+    /// Record `when`, the one open line of a cited law's `when` where the
+    /// law matched, once.
+    pub(crate) fn note_open_when(&mut self, when: &Term) {
+        if self.trace.is_some() {
+            self.traced(super::memo::Effect::OpenWhen(Box::new(when.clone())));
+        }
+        if !self.open_whens.contains(when) {
+            self.open_whens.push(when.clone());
+        }
     }
 
     /// Record that evaluation met a call of `f` it may not open.
