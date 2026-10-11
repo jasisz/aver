@@ -1,0 +1,65 @@
+module AutoUsing
+    intent =
+        "Laws without a `using` line that close only through an earlier law the steps closed;"
+        "the same law with `using []`, which stays open; and an earlier law with a `when`,"
+        "which applies only where its `when` is proved."
+    exposes [count, size]
+    effects []
+
+fn count(xs: List<Int>) -> Int
+    ? "How many items the list holds."
+    match xs
+        [] -> 0
+        [h, ..t] -> 1 + count(t)
+
+verify count
+    count([7, 8]) => 2
+
+verify count law ofJoined
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given ys: List<Int> = [[], [3]]
+    induction xs
+    count(List.concat(xs, ys)) => count(xs) + count(ys)
+
+verify count law ofThree
+    given xs: List<Int> = [[], [1]]
+    given ys: List<Int> = [[], [2, 3]]
+    given zs: List<Int> = [[], [4]]
+    count(List.concat(List.concat(xs, ys), zs)) => count(xs) + count(ys) + count(zs)
+
+verify count law ofThreeWithNothing
+    given xs: List<Int> = [[], [1]]
+    given ys: List<Int> = [[], [2, 3]]
+    given zs: List<Int> = [[], [4]]
+    using []
+    count(List.concat(List.concat(xs, ys), zs)) => count(xs) + count(ys) + count(zs)
+
+fn size(xs: List<Int>) -> Int
+    ? "How many items the list holds, counted apart from count."
+    match xs
+        [] -> 0
+        [h, ..t] -> 1 + size(t)
+
+verify size
+    size([7, 8]) => 2
+
+verify size law ofJoinedLong
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given ys: List<Int> = [[], [1, 2, 3]]
+    when size(ys) > 2
+    induction xs
+    size(List.concat(xs, ys)) => size(xs) + size(ys)
+
+verify size law ofThreeAnyLength
+    given xs: List<Int> = [[], [1]]
+    given ys: List<Int> = [[], [2, 3]]
+    given zs: List<Int> = [[], [4]]
+    size(List.concat(List.concat(xs, ys), zs)) => size(xs) + size(ys) + size(zs)
+
+verify size law ofThreeLong
+    given xs: List<Int> = [[], [1]]
+    given ys: List<Int> = [[1, 2, 3]]
+    given zs: List<Int> = [[4, 5, 6]]
+    when size(ys) > 2
+    when size(zs) > 2
+    size(List.concat(List.concat(xs, ys), zs)) => size(xs) + size(ys) + size(zs)

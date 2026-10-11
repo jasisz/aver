@@ -3486,7 +3486,8 @@ fn lean_closes_the_normal_form_laws_by_their_steps() {
 
 /// A hint names only a law the stuck law could cite: not a law of a
 /// function its imported module does not expose, and not a law that
-/// already cites the stuck one, which would make a cycle.
+/// already cites the stuck one, which would make a cycle. The automatic
+/// pass takes its laws from the same set.
 #[test]
 fn a_hint_never_names_an_unexposed_law_or_one_that_would_cite_back() {
     let dir = repo_root().join(FIXTURES).join("hint_scope");
@@ -3520,21 +3521,22 @@ fn a_hint_never_names_an_unexposed_law_or_one_that_would_cite_back() {
         !hints("total.ofJoined").contains("Lib.hidden.ofJoined"),
         "{summary}"
     );
-    // The module's own law about its helper is hinted inside the module.
-    assert!(
-        hints("Lib.shown.splits").contains("`Lib.hidden.ofJoined` rewrites"),
+    // The module's own law about its helper is used inside the module.
+    assert_eq!(
+        summary["automatic_using"]["Lib.shown.splits"],
+        serde_json::json!(["Lib.hidden.ofJoined"]),
+        "{summary}"
+    );
+    // Without a `using` line, the law closes on the automatic pass with
+    // the earlier law it could cite, never with `sum.ofJoined`, which
+    // cites it back.
+    assert_eq!(
+        summary["closed_by"]["sumTwice.doubles"], "steps",
         "{summary}"
     );
     assert_eq!(
-        summary["closed_by"]["sumTwice.doubles"], "open",
-        "{summary}"
-    );
-    assert!(
-        hints("sumTwice.doubles").contains("`sum.ofJoinedAgain` rewrites"),
-        "{summary}"
-    );
-    assert!(
-        !hints("sumTwice.doubles").contains("`sum.ofJoined` rewrites"),
+        summary["automatic_using"]["sumTwice.doubles"],
+        serde_json::json!(["sum.ofJoinedAgain"]),
         "{summary}"
     );
 }
@@ -5044,4 +5046,71 @@ fn a_module_law_never_cites_an_entry_law_of_the_same_name() {
     ] {
         assert!(text.contains(expected), "missing `{expected}`\n{text}");
     }
+}
+
+/// A law without a `using` line that the steps leave open is tried again
+/// with the earlier laws they closed: it closes, the report names exactly
+/// the laws it used, and the script carries them for the kernel. The same
+/// law with `using []` stays open. An earlier law with a `when` applies
+/// only where its `when` is proved, so a law without that guard stays
+/// open and one with it closes. Two laws that undo each other are both
+/// left out, so a law that would need them neither loops nor closes.
+#[test]
+fn a_law_without_using_closes_with_the_earlier_laws_the_steps_closed() {
+    let out = scratch("auto-using");
+    let (result, summary) = aver_backend_json("auto_using.av", &out, None);
+    assert_eq!(
+        summary["steps_rejected"],
+        serde_json::json!([]),
+        "{summary}"
+    );
+    let closed = &summary["closed_by"];
+    for (law, by) in [
+        ("count.ofJoined", "steps"),
+        ("count.ofThree", "steps"),
+        ("count.ofThreeWithNothing", "open"),
+        ("size.ofJoinedLong", "steps"),
+        ("size.ofThreeAnyLength", "open"),
+        ("size.ofThreeLong", "steps"),
+    ] {
+        assert_eq!(closed[law], by, "{law}: {}", format_output(&result));
+    }
+    assert_eq!(
+        summary["automatic_using"],
+        serde_json::json!({
+            "count.ofThree": ["count.ofJoined"],
+            "size.ofThreeLong": ["size.ofJoinedLong"],
+        }),
+        "{summary}"
+    );
+    assert_eq!(summary["closed_with_automatic_using"], 2, "{summary}");
+    assert_eq!(summary["closed_with_pinned_using"], 0, "{summary}");
+    let script = fs::read_to_string(out.join("proof_steps").join("count.ofThree.steps")).unwrap();
+    assert!(script.contains("count.ofJoined"), "{script}");
+    let text = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "auto_using.av",
+            "--backend",
+            "aver",
+            "-o",
+            out.to_str().unwrap(),
+        ],
+    );
+    let text = String::from_utf8_lossy(&text.stdout);
+    assert!(
+        text.contains(
+            "  count.ofThree: closed by steps\n    hint: steps closed it with earlier laws they chose; add `using [count.ofJoined]` to go straight to it\n"
+        ),
+        "{text}"
+    );
+
+    let (result, summary) = aver_backend_json("auto_using_inverse.av", &out, None);
+    assert!(result.status.success(), "{}", format_output(&result));
+    assert_eq!(summary["closed_by"]["count.ofJoined"], "steps", "{summary}");
+    assert_eq!(summary["closed_by"]["count.ofParts"], "steps", "{summary}");
+    assert_eq!(summary["closed_by"]["count.ofThree"], "open", "{summary}");
+    assert!(summary.get("automatic_using").is_none(), "{summary}");
+    let _ = fs::remove_dir_all(out);
 }

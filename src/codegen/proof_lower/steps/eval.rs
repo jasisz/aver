@@ -34,6 +34,10 @@ const MAX_NESTING: usize = 24;
 /// round.
 const MAX_REWRITE_ROUNDS: usize = 64;
 
+/// Most earlier laws of the automatic pass that one stopped term is
+/// rewritten with candidates of, in file order.
+pub(crate) const MAX_AUTO_CANDIDATES: usize = 4;
+
 /// Whether `part` occurs in `t`.
 fn holds(t: &Term, part: &Term) -> bool {
     canon(t) == *part || term::children(t).into_iter().any(|c| holds(c, part))
@@ -2826,6 +2830,22 @@ impl Env<'_> {
                 }
             }
         }
+        // Where no cited law applies, the earlier laws of the automatic
+        // pass, the first few that match in file order.
+        if found.is_empty() {
+            for law in self.auto_laws.clone() {
+                if found.len() == MAX_AUTO_CANDIDATES {
+                    break;
+                }
+                let eq = Equation::Law(Box::new(law.clone()));
+                if let Some((p, to)) = self.try_equation(&eq, cur)
+                    && !holds(&to, &canon(cur))
+                    && !self.opens_to(&to, &canon(cur))
+                {
+                    found.push((law, p, to));
+                }
+            }
+        }
         let Some(k) = pick_rewrite(found.iter().map(|(_, _, to)| to)) else {
             return Ok(None);
         };
@@ -3041,6 +3061,7 @@ impl Env<'_> {
             .rewrite_laws
             .iter()
             .chain(self.fact_rules.iter())
+            .chain(self.auto_laws.iter())
             .cloned()
             .map(|l| Equation::Law(Box::new(l)))
             .collect();

@@ -491,6 +491,7 @@ impl Env<'_> {
             .rewrite_laws
             .iter()
             .chain(self.fact_rules.iter())
+            .chain(self.auto_laws.iter())
             .find(|f| &f.key == key)
             .cloned()
         {
@@ -498,36 +499,61 @@ impl Env<'_> {
         }
     }
 
-    /// Whether `eq` is a builtin fact the law does not cite, which
-    /// rewrites only where no cited equation does.
-    fn is_fact_rule(&self, eq: &Equation) -> bool {
-        matches!(eq, Equation::Law(l) if self.fact_rules.iter().any(|f| f.key == l.key))
+    /// Which class `eq` rewrites in: 0 for a cited equation, 1 for a
+    /// builtin fact the law does not cite, which rewrites only where no
+    /// cited equation does, 2 for an earlier law of the automatic pass,
+    /// which rewrites only where neither does.
+    fn rewrite_class(&self, eq: &Equation) -> u8 {
+        let Equation::Law(l) = eq else {
+            return 0;
+        };
+        if self.rewrite_laws.iter().any(|c| c.key == l.key) {
+            0
+        } else if self.fact_rules.iter().any(|f| f.key == l.key) {
+            1
+        } else if self.auto_laws.iter().any(|a| a.key == l.key) {
+            2
+        } else {
+            0
+        }
     }
 
     /// The outermost-leftmost position some equation rewrites. Where
     /// several rewrite the same position, a cited equation goes before a
-    /// builtin fact the law does not cite, and among those the smallest
-    /// result wins ([`pick_rewrite`]), so the outcome never depends on the
-    /// order the laws are cited in.
+    /// builtin fact the law does not cite, that before an earlier law of
+    /// the automatic pass, and within a class the smallest result wins
+    /// ([`pick_rewrite`]), so the outcome never depends on the order the
+    /// laws are cited in.
     pub(crate) fn rewrite_somewhere(
         &mut self,
         eqs: &[Equation],
         t: &Term,
         path: &mut Vec<usize>,
     ) -> Result<Option<(Vec<usize>, Proof, Term)>, String> {
-        let mut found: Vec<(bool, Proof, Term)> = Vec::new();
+        let mut found: Vec<(u8, Proof, Term)> = Vec::new();
+        let mut automatic = 0;
         for eq in eqs {
+            let rank = self.rewrite_class(eq);
+            if rank == 2
+                && (found.iter().any(|(r, _, _)| *r < 2)
+                    || automatic == super::eval::MAX_AUTO_CANDIDATES)
+            {
+                continue;
+            }
             if let Some((p, to)) = self.try_equation(eq, t) {
                 // A result that holds its own redex would be rewritten again
                 // forever; that equation does not apply here.
                 if !holds_term(&to, &canon(t)) {
-                    found.push((self.is_fact_rule(eq), p, to));
+                    if rank == 2 {
+                        automatic += 1;
+                    }
+                    found.push((rank, p, to));
                 }
             }
         }
-        for facts in [false, true] {
-            let class: Vec<&(bool, Proof, Term)> =
-                found.iter().filter(|(f, _, _)| *f == facts).collect();
+        for rank in [0, 1, 2] {
+            let class: Vec<&(u8, Proof, Term)> =
+                found.iter().filter(|(r, _, _)| *r == rank).collect();
             if let Some(k) = pick_rewrite(class.iter().map(|(_, _, to)| to)) {
                 let (_, p, to) = class[k].clone();
                 self.note_law_used(&p);

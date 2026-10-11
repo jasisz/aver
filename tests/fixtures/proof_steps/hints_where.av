@@ -2,7 +2,8 @@ module HintsWhere
     intent =
         "Stuck laws whose hint is found in a subject split on, in a `holds` comparison, in a case"
         "of an induction, in an earlier law, or in the line that names an induction; and a fact"
-        "whose `when` is false where its left side matches, which is no hint."
+        "whose `when` is false where its left side matches, which is no hint. The law hinted an"
+        "earlier law says `using []`, so the steps do not apply that law on their own."
     exposes [first, tail, firstTwo, count]
     effects []
 
@@ -58,4 +59,5 @@ verify count law ofJoined
 
 verify count law ofReversed
     given xs: List<Int> = [[], [1, 2]]
+    using []
     count(List.reverse(xs)) => count(xs)

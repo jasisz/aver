@@ -1,0 +1,33 @@
+module AutoUsingInverse
+    intent =
+        "Two earlier laws where each rewrites what the other produces: the automatic pass leaves"
+        "both out, so a later law without a `using` line neither loops nor closes through them."
+    exposes [count]
+    effects []
+
+fn count(xs: List<Int>) -> Int
+    ? "How many items the list holds."
+    match xs
+        [] -> 0
+        [h, ..t] -> 1 + count(t)
+
+verify count
+    count([7, 8]) => 2
+
+verify count law ofJoined
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given ys: List<Int> = [[], [3]]
+    induction xs
+    count(List.concat(xs, ys)) => count(xs) + count(ys)
+
+verify count law ofParts
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given ys: List<Int> = [[], [3]]
+    using [count.ofJoined]
+    count(xs) + count(ys) => count(List.concat(xs, ys))
+
+verify count law ofThree
+    given xs: List<Int> = [[], [1]]
+    given ys: List<Int> = [[], [2, 3]]
+    given zs: List<Int> = [[], [4]]
+    count(List.concat(List.concat(xs, ys), zs)) => count(xs) + count(ys) + count(zs)

@@ -389,6 +389,7 @@ fn fresh_env<'a>(
     known: &[(String, Eqn)],
     using: &Option<Vec<LawRef>>,
     earlier: &[LawRef],
+    auto: &[LawRef],
 ) -> Env<'a> {
     let mut env = Env::new(inputs);
     env.givens = ob.givens.clone();
@@ -412,6 +413,7 @@ fn fresh_env<'a>(
         .map(crate::ir::proof_steps::facts::Fact::law_ref)
         .collect();
     env.hint_laws = earlier.to_vec();
+    env.auto_laws = auto.to_vec();
     env
 }
 
@@ -581,6 +583,7 @@ fn prove_part(
     known: &[(String, Eqn)],
     using: &Option<Vec<LawRef>>,
     earlier: &[LawRef],
+    auto: &[LawRef],
     induct_on: Option<(crate::ir::identity::FnId, Option<&str>)>,
     algebraic: bool,
     hints: &mut Vec<String>,
@@ -591,7 +594,7 @@ fn prove_part(
     let mode = memo::mode();
     let shared = (mode != memo::Mode::Off).then(std::rc::Rc::default);
     let fresh = || {
-        let mut env = fresh_env(inputs, ob, known, using, earlier);
+        let mut env = fresh_env(inputs, ob, known, using, earlier, auto);
         env.memo = shared.clone();
         env.memo_mode = mode;
         env
@@ -840,7 +843,13 @@ fn under_cuts(cuts: &[Cut], body: Proof, with_proofs: bool) -> Proof {
 /// an earlier one did not close. When all close, the law's own script
 /// proves it by one cut ([`Proof::Have`]) per reason, so the kernel
 /// checks the composition too.
-fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize, hints: &mut Vec<String>) -> Produced {
+fn produce(
+    inputs: &ProofLowerInputs,
+    ir: &ProofIR,
+    i: usize,
+    auto: &[LawRef],
+    hints: &mut Vec<String>,
+) -> Produced {
     let t = &ir.law_theorems[i];
     let refuse = |why: String| Produced {
         law: Err(why),
@@ -927,7 +936,7 @@ fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize, hints: &mut Vec<St
         };
         let known = known_of(&cuts);
         let part = prove_part(
-            inputs, t, &part_ob, &known, &using, &earlier, induct_on, false, hints,
+            inputs, t, &part_ob, &known, &using, &earlier, auto, induct_on, false, hints,
         )
         .map_err(|why| format!("reason {} of {n}: {why}", i + 1));
         let proof = part.as_ref().ok().map(|p| p.proof.clone());
@@ -955,6 +964,7 @@ fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize, hints: &mut Vec<St
         &known,
         &using,
         &earlier,
+        auto,
         Some((t.fn_id, t.induction_given.as_deref())),
         algebraic && n == 0,
         hints,
@@ -1101,6 +1111,35 @@ fn earlier_laws(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize) -> Vec<LawRef
         .collect()
 }
 
+/// Most earlier laws one proof of the automatic pass may apply.
+const MAX_AUTO_LAWS: usize = 8;
+
+/// The earlier laws a law without a `using` line may be proved with on
+/// the automatic pass, in the order the laws are proved (the citation
+/// order of the export, not the order of the text): those a `using` line of law `i`
+/// could name ([`citable_from`]) that the steps closed in this run (so a
+/// law closed only by Lean's tactics is not one), minus any that would
+/// loop as a rewrite rule, and minus both laws of a pair where each
+/// rewrites what the other produces, which together would undo each
+/// other's work.
+fn auto_pool(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize) -> Vec<LawRef> {
+    let t = &ir.law_theorems[i];
+    let pool: Vec<LawRef> = ir.law_theorems[..i]
+        .iter()
+        .filter(|c| c.steps.is_some() && citable_from(inputs, ir, t, c))
+        .map(|c| law_ref(inputs, c))
+        .filter(|l| rewrite::loops(l).is_none())
+        .collect();
+    let undoes = |a: &LawRef, b: &LawRef| {
+        rewrite::matches(&a.lhs, &b.rhs, &a.givens, &mut Vec::new())
+            && rewrite::matches(&b.lhs, &a.rhs, &b.givens, &mut Vec::new())
+    };
+    pool.iter()
+        .filter(|a| !pool.iter().any(|b| b.key != a.key && undoes(a, b)))
+        .cloned()
+        .collect()
+}
+
 /// Each line of `ob`'s `when`, when written over several lines, as a
 /// hypothesis of its own, cut from `when` by the `Bool.and` eliminations.
 fn when_cuts(ob: &Obligation) -> Vec<Cut> {
@@ -1154,6 +1193,7 @@ fn auto_at(
         &known,
         &using,
         &earlier,
+        &[],
         Some((t.fn_id, None)),
         false,
         &mut hints,
@@ -1172,17 +1212,53 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
     for i in 0..ir.law_theorems.len() {
         let mut hints = Vec::new();
         // A law that names its plan is proved by that plan alone.
-        let produced = if ir.law_theorems[i].by_plan.is_some() {
+        let mut produced = if ir.law_theorems[i].by_plan.is_some() {
             Produced {
                 law: by_plan::produce(inputs, ir, i, &mut plans),
                 advice: Vec::new(),
                 obligations: Vec::new(),
             }
         } else {
-            produce(inputs, ir, i, &mut hints)
+            produce(inputs, ir, i, &[], &mut hints)
         };
+        // A law without a `using` line that stays open is tried once more
+        // with the earlier laws the steps closed, where evaluation stops
+        // (`using []` turns this off). What closes without them keeps its
+        // proof as it was.
+        let mut automatic = Vec::new();
+        if produced.law.is_err()
+            && ir.law_theorems[i].using.is_none()
+            && ir.law_theorems[i].by_plan.is_none()
+        {
+            let pool = auto_pool(inputs, ir, i);
+            if !pool.is_empty() {
+                let again = produce(inputs, ir, i, &pool, &mut Vec::new());
+                if let Ok(script) = &again.law {
+                    let used: Vec<String> = pool
+                        .iter()
+                        .filter(|l| script.laws.iter().any(|s| s.key == l.key))
+                        .map(|l| l.key.clone())
+                        .collect();
+                    if debug {
+                        let key = law_key(inputs, &ir.law_theorems[i]);
+                        eprintln!("steps: {key}: automatic pass uses {used:?}");
+                    }
+                    if used.len() <= MAX_AUTO_LAWS {
+                        automatic = used;
+                        produced = again;
+                    }
+                }
+            }
+        }
         ir.law_theorems[i].obligation_steps = produced.obligations;
-        let produced_advice = produced.advice;
+        let mut produced_advice = produced.advice;
+        if !automatic.is_empty() {
+            produced_advice.push(format!(
+                "steps closed it with earlier laws they chose; add `using [{}]` to go straight to it",
+                automatic.join(", ")
+            ));
+        }
+        ir.law_theorems[i].steps_auto_using = automatic;
         let result = produced.law;
         if debug {
             let key = law_key(inputs, &ir.law_theorems[i]);

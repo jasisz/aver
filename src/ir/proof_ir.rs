@@ -514,6 +514,10 @@ pub struct LawTheorem {
     /// the law: advice that would make them faster, such as the
     /// `induction` line they found by trying each given.
     pub steps_hints: Vec<String>,
+    /// When the steps closed a law without a `using` line only on the
+    /// automatic pass: the earlier laws they applied, in file order, which
+    /// a `using` line naming them would pin.
+    pub steps_auto_using: Vec<String>,
     /// For a law with `because` lines: each obligation of its chain
     /// (`<law>.because<k>`, then `<law>.implication`), with its own script
     /// or why none. A script states what it assumes in its premise.

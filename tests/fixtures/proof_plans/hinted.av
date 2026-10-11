@@ -1,8 +1,9 @@
 module Hinted
     intent =
-        "The first law names its plan with `by`. The other two have no `by` line and the automatic proof"
-        "steps leave them open: the plans module the first names closes the second, so `aver proof`"
-        "hints the `by` line to add; no plan closes the third."
+        "The first law names its plan with `by`. The other two have no `by` line and, with `using []`,"
+        "not the first law either, so the automatic proof steps leave them open: the plans module the"
+        "first names closes the second, so `aver proof` hints the `by` line to add; no plan closes the"
+        "third."
     exposes [shuffled]
     effects []
 
@@ -47,9 +48,11 @@ verify shuffled law swapTwiceNamesItsPlan
 verify shuffled law swapTwiceIsTheTopPair
     given items: List<List<Int>> = [[[1], [2]], [[1], [2], [3]]]
     when List.len(items) >= 2
+    using []
     shuffled(124, shuffled(124, items)) => List.take(items, 2)
 
 verify shuffled law swapTwiceIsTheTopPairPastOne
     given items: List<List<Int>> = [[[1], [2]], [[1], [2], [3]]]
     when List.len(items) > 1
+    using []
     shuffled(124, shuffled(124, items)) => List.take(items, 2)
