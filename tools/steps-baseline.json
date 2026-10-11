@@ -78,7 +78,9 @@
  },
  "examples/formal/length_homomorphism.av": {
   "steps": [
-   "len.homomorphism"
+   "len.homomorphism",
+   "pow2.homomorphism",
+   "pow3.homomorphism"
   ]
  },
  "examples/formal/recursive_monotone.av": {
@@ -216,6 +218,7 @@
    "fpScaleKeepsSignificand.significandInvariant",
    "fpScaleShiftsExponent.exponentShift",
    "fpValueEqualsGeneralWhenNonnegExp.agreesOnNonnegExp",
+   "pow2.homomorphism",
    "pow2.positive",
    "pow2Signed.agreesWithPow2Fraction",
    "pow2SignedAtLeastOne.geOne",
@@ -364,12 +367,20 @@
  },
  "projects/k5_fdiv/domain/stickyint.av": {
   "obligations": [
-   "truncSig.truncStickyInt.because1"
+   "truncSig.truncStickyInt.because1",
+   "truncSig.truncStickyInt.because2"
   ],
   "steps": [
+   "pow2.homomorphism",
    "pow2.positive",
    "pow2.successor",
    "sigDouble.doubleIsTwice"
+  ]
+ },
+ "projects/k5_fdiv/domain/stickyscale.av": {
+  "obligations": [
+   "coarsen.dropsStickyBit.because1",
+   "coarsen.dropsStickyBit.because3"
   ]
  },
  "projects/k5_fdiv/domain/truncscale.av": {

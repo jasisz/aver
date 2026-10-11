@@ -929,7 +929,8 @@ fn nth_form(text: &str, head: &str, index: usize) -> (usize, usize) {
     sub_forms(text, open)[index]
 }
 
-const INDUCTION_LAWS: [&str; 5] = [
+const INDUCTION_LAWS: [&str; 6] = [
+    "app.assoc",
     "app.lengthAdds",
     "plus.succRight",
     "plus.zeroRight",
@@ -1043,8 +1044,8 @@ fn induction_follows_only_the_function_the_law_is_about() {
         "{}",
         format_output(&result)
     );
-    // A claim that recurses on two givens of the same function is a
-    // choice the law has to make, not one the producer guesses.
+    // A claim that recurses on two givens of the same function, with no
+    // `induction` line: steps try each and hint the one that closed.
     let both = aver_in(
         &repo_root().join(FIXTURES),
         &[
@@ -1058,7 +1059,7 @@ fn induction_follows_only_the_function_the_law_is_about() {
     );
     let text = String::from_utf8_lossy(&both.stdout);
     assert!(
-        text.contains("app recurses on a in one call and on b in another"),
+        text.contains("app.assoc: closed by steps\n    hint: steps closed it by trying each given in turn; add `induction a` to go straight to it"),
         "{}",
         format_output(&both)
     );
@@ -1128,22 +1129,19 @@ fn an_induction_line_names_the_given_the_induction_follows() {
     assert_eq!(summary["steps_rejected"], serde_json::json!([]));
     let closed = &summary["closed_by"];
     // `append` recurses on `x` in one call and on `y` in another: the law
-    // that names `x` closes, and the others are refused.
+    // that names `x` closes, and so does the one that names neither, by
+    // trying each; the laws that name `y` or `z` follow only it.
     assert_eq!(closed["append.assoc"], "steps", "{summary}");
-    for law in [
-        "append.assocUnnamed",
-        "append.assocAlongY",
-        "append.assocAlongZ",
-    ] {
+    assert_eq!(closed["append.assocUnnamed"], "steps", "{summary}");
+    for law in ["append.assocAlongY", "append.assocAlongZ"] {
         assert_eq!(closed[law], "open", "{law}: {summary}");
     }
-    // The report tries each given only to advise the line that closes;
-    // the earlier law stating the same claim is a hint too.
+    // The law closed by trying each given is told the line that goes
+    // straight to the one that closed.
     assert_eq!(
         summary["steps_hints"]["append.assocUnnamed"],
         serde_json::json!([
-            "`append.assoc` rewrites `append(append(x, y), z)`; add it to `using`",
-            "with `induction x` steps close every case; add that line"
+            "steps closed it by trying each given in turn; add `induction x` to go straight to it"
         ]),
         "{summary}"
     );
@@ -1166,9 +1164,7 @@ fn an_induction_line_names_the_given_the_induction_follows() {
             .to_string()
     };
     assert!(
-        line("append.assocUnnamed").contains(
-            "append recurses on x in one call and on y in another; which to follow is a choice the law has to make: name one with `induction x` or `induction y`"
-        ),
+        line("append.assocUnnamed").contains("closed by steps"),
         "{}",
         format_output(&result)
     );
@@ -1185,12 +1181,60 @@ fn an_induction_line_names_the_given_the_induction_follows() {
         export_steps("induction_named.av", &out)
             .into_iter()
             .collect();
-    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), ["append.assoc"]);
+    assert_eq!(
+        files.keys().cloned().collect::<Vec<_>>(),
+        ["append.assoc", "append.assocUnnamed"]
+    );
     let law = fs::read_to_string(&files["append.assoc"]).unwrap();
     assert_eq!(
         aver::proof_kernel::verdict(&law),
         Ok("append.assoc".to_string())
     );
+    let _ = fs::remove_dir_all(out);
+}
+
+/// Without an `induction` line, steps try each given the law's function
+/// recurses on: the true law closes and is told the line that closed it,
+/// and a false law of the same shape stays open under every given.
+#[test]
+fn without_an_induction_line_steps_try_each_given_and_a_false_law_stays_open() {
+    let out = scratch("induct-each");
+    let (result, summary) = aver_backend_json("induction_each.av", &out, None);
+    assert_eq!(summary["steps_rejected"], serde_json::json!([]));
+    let closed = &summary["closed_by"];
+    assert_eq!(
+        closed["append.assoc"],
+        "steps",
+        "{}",
+        format_output(&result)
+    );
+    assert_eq!(
+        summary["steps_hints"]["append.assoc"],
+        serde_json::json!([
+            "steps closed it by trying each given in turn; add `induction x` to go straight to it"
+        ]),
+        "{summary}"
+    );
+    assert_eq!(closed["append.swapsFirstTwo"], "open", "{summary}");
+    let text = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "induction_each.av",
+            "--backend",
+            "aver",
+            "-o",
+            out.to_str().unwrap(),
+        ],
+    );
+    let text = String::from_utf8_lossy(&text.stdout);
+    assert!(
+        text.contains(
+            "append recurses on x in one call and on y in another, and steps close every case along neither"
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("induction y` to go straight"), "{text}");
     let _ = fs::remove_dir_all(out);
 }
 
@@ -3497,9 +3541,10 @@ fn a_hint_never_names_an_unexposed_law_or_one_that_would_cite_back() {
 
 /// A hint is found where the steps stopped, not only in the two sides: in
 /// a subject split on, in the comparison of a `holds` law decided by cases,
-/// in a case of an induction, as an earlier law the law does not cite, and
-/// as the `induction` line that closes every case. A fact whose `when` is
-/// false where its left side matches is no hint. The laws stay open.
+/// in a case of an induction, and as an earlier law the law does not cite.
+/// A fact whose `when` is false where its left side matches is no hint.
+/// Those laws stay open; a law steps close by trying each given to induct
+/// on is told the `induction` line that goes straight there.
 #[test]
 fn a_stuck_law_is_hinted_where_the_steps_stopped_and_never_a_false_when() {
     let out = scratch("hints_where");
@@ -3516,7 +3561,6 @@ fn a_stuck_law_is_hinted_where_the_steps_stopped_and_never_a_false_when() {
     for law in [
         "tail.neverLonger",
         "firstTwo.twiceIsOnce",
-        "count.ofJoined",
         "count.ofReversed",
     ] {
         assert_eq!(
@@ -3536,9 +3580,11 @@ fn a_stuck_law_is_hinted_where_the_steps_stopped_and_never_a_false_when() {
         "tail.neverLonger",
         "`List.len.ofDropAtMost` rewrites `List.len(List.drop(xs, n)) <= List.len(xs)`; add it to `using`",
     );
+    // Two givens to follow: steps try each, close it and say so.
+    assert_eq!(summary["closed_by"]["count.ofJoined"], "steps");
     has(
         "count.ofJoined",
-        "with `induction xs` steps close every case; add that line",
+        "steps closed it by trying each given in turn; add `induction xs` to go straight to it",
     );
     has(
         "count.ofReversed",

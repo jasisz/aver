@@ -510,7 +510,9 @@ pub struct LawTheorem {
     pub steps_refusal: Option<String>,
     /// When no producer wrote steps: each builtin fact whose left side
     /// matches a part of where evaluation stopped, with that part, as a
-    /// hint to cite it. Never applied without `using`.
+    /// hint to cite it. Never applied without `using`. When steps closed
+    /// the law: advice that would make them faster, such as the
+    /// `induction` line they found by trying each given.
     pub steps_hints: Vec<String>,
     /// For a law with `because` lines: each obligation of its chain
     /// (`<law>.because<k>`, then `<law>.implication`), with its own script

@@ -298,10 +298,10 @@ pub(super) fn run(
                 };
                 println!("    obligation {ob}: {line}");
             }
-            if !matches!(verdict, Verdict::Steps) {
-                for hint in hints.get(key).into_iter().flatten() {
-                    println!("    hint: {hint}");
-                }
+            // An open law's hints say what would close it; a closed law's,
+            // what would make its steps faster.
+            for hint in hints.get(key).into_iter().flatten() {
+                println!("    hint: {hint}");
             }
         }
         println!(

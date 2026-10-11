@@ -9479,10 +9479,15 @@ fn run_proof_check(
                                 println!("    hint: {hint}");
                             }
                         }
-                        by => match steps.by_plan.get(&law.law).filter(|_| by == "steps") {
-                            Some(plan) => println!("  {}: closed by {by} ({plan})", law.law),
-                            None => println!("  {}: closed by {by}", law.law),
-                        },
+                        by => {
+                            match steps.by_plan.get(&law.law).filter(|_| by == "steps") {
+                                Some(plan) => println!("  {}: closed by {by} ({plan})", law.law),
+                                None => println!("  {}: closed by {by}", law.law),
+                            }
+                            for hint in steps.hints.get(&law.law).into_iter().flatten() {
+                                println!("    hint: {hint}");
+                            }
+                        }
                     }
                 }
                 for obligation in &audit.obligations {
