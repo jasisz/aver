@@ -3,9 +3,10 @@
 //!
 //! A definition may call itself only when its body is a `match` on one
 //! parameter and every recursive call passes, at that parameter's place, a
-//! name the enclosing arm's pattern binds: a strict part of the value
-//! matched, so the recursion stops. Or it counts an Int parameter `p`
-//! toward zero: a `match` on `p <= 0` or `p > 0`, the arm where `p` is at
+//! name the enclosing arm's pattern binds, or `List.drop` of one: a value
+//! smaller than the one matched, so the recursion stops. Or it counts an
+//! Int parameter `p` toward zero: a `match` on `p <= 0` or `p > 0`, the
+//! arm where `p` is at
 //! most 0 without a recursive call, and every call in the other passing
 //! `p - 1` or `p / k` (a literal `k` of at least 2) in `p`'s place, which
 //! for `p > 0` is at least 0 and below `p`; it stops for every Int, a
@@ -13,9 +14,9 @@
 //! ([`recursion`]), and both opening a definition ([`super::Proof::Unfold`])
 //! and inducting along it ([`super::Proof::Induct`]) read that.
 //! A call of another definition that calls back into the one checked
-//! counts as the recursive calls its body makes, read at the call's
-//! arguments ([`self_calls`]): a recursion through a helper is checked as
-//! if the helper's body stood in its place. A helper that reaches itself
+//! counts as the recursive calls its body makes, its local bindings
+//! substituted, read at the call's arguments ([`self_calls`]): a recursion
+//! through a helper is checked as if the helper's body stood in its place. A helper that reaches itself
 //! without passing the definition checked is refused, and so is any
 //! other cycle, unless it passes a definition whose recursion read this
 //! way passes the gate ([`rooted`]).
@@ -126,17 +127,29 @@ fn helper_calls(
             h.name
         ));
     }
-    if !h.lets.is_empty() {
-        return Err(format!(
-            "{f_name} recurses through {}, which has local bindings",
-            h.name
-        ));
-    }
     if h.params.len() != args.len() {
         return Err(format!("{} takes {} arguments", h.name, h.params.len()));
     }
+    // A call of `f` in a local binding would run whatever the body does
+    // with it; without one, the bindings are substituted into the body.
+    let mut in_lets = Vec::new();
+    for (_, v) in &h.lets {
+        walk(v, f, ds, fuel - 1, &mut Vec::new(), &mut in_lets)?;
+    }
+    if !in_lets.is_empty() {
+        return Err(format!(
+            "{f_name} recurses from a local binding of {}",
+            h.name
+        ));
+    }
+    let mut lets: Vec<(String, Term)> = Vec::new();
+    for (name, value) in &h.lets {
+        let v = term::subst(value, &lets)?;
+        lets.insert(0, (name.clone(), v));
+    }
+    let body = term::subst(&h.body, &lets)?;
     let mut inside = Vec::new();
-    walk(&h.body, f, ds, fuel - 1, &mut Vec::new(), &mut inside)?;
+    walk(&body, f, ds, fuel - 1, &mut Vec::new(), &mut inside)?;
     for (call, inner) in inside {
         let mut used = Vec::new();
         for a in &call {
@@ -374,16 +387,29 @@ pub fn recursion(def: &Def, ds: &[Def]) -> Result<Option<Recursion>, String> {
     for arm in arms {
         let parts = term::pattern_binders(&arm.pattern);
         for (args, inner) in self_calls(&arm.body, f, ds)? {
-            let smaller = match args.get(j).map(|a| &a.node) {
-                Some(ResolvedExpr::Ident(b)) => parts.contains(b) && !inner.contains(b),
-                _ => false,
-            };
+            let smaller = args.get(j).is_some_and(|a| smaller(a, &parts, &inner));
             if args.len() != def.params.len() || !smaller {
                 return refuse("on something that is not a part of the value it matches");
             }
         }
     }
     Ok(Some(Recursion { at: j, guard: None }))
+}
+
+/// Whether `t`, a recursive call's argument at the matched place, is
+/// smaller than the value matched: a name the arm's pattern binds that no
+/// inner arm rebinds, or `List.drop` of something smaller, which is never
+/// longer than the list it drops from, whatever the count.
+fn smaller(t: &Term, parts: &[String], inner: &[String]) -> bool {
+    match &t.node {
+        ResolvedExpr::Ident(b) => parts.contains(b) && !inner.contains(b),
+        ResolvedExpr::Call(ResolvedCallee::Builtin(name), xs)
+            if name == "List.drop" && xs.len() == 2 =>
+        {
+            smaller(&xs[0], parts, inner)
+        }
+        _ => false,
+    }
 }
 
 /// How `t`, a recursive call's argument at the place of the Int `p`,
@@ -598,6 +624,19 @@ pub fn ih_sources(
             Ok((part, at))
         })
         .collect()
+}
+
+/// Whether some recursive call of `def`, a match on the value, passes at
+/// the matched place `List.drop` of a part rather than a part: an
+/// induction along it then goes by the list's length, not by its cells.
+pub fn drops(def: &Def, ds: &[Def]) -> bool {
+    let Ok(Some(Recursion { at, guard: None })) = recursion(def, ds) else {
+        return false;
+    };
+    self_calls(&def.body, def.fn_id, ds)
+        .unwrap_or_default()
+        .iter()
+        .any(|(args, _)| !matches!(args.get(at).map(|a| &a.node), Some(ResolvedExpr::Ident(_))))
 }
 
 /// Whether an arm of `def` holds a recursive call inside a further case

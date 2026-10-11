@@ -1798,6 +1798,119 @@ fn lean_closes_a_division_down_to_zero_by_its_steps() {
     let _ = fs::remove_dir_all(out);
 }
 
+const DROPPING_LAWS: [&str; 4] = [
+    "pairsLeft.cellStep",
+    "pairsLeft.nonNegative",
+    "walk.neverBelowAcc",
+    "walk.readsStep",
+];
+
+/// A recursion that passes `List.drop` of the matched list's tail, directly
+/// and through a helper whose local binding drops, opens and is followed
+/// by induction on the list's length; both kernels refuse a descent that
+/// does not shorten the list, a local binding that calls back, and a
+/// hypothesis in the case of the empty list.
+#[test]
+fn both_kernels_follow_a_recursion_on_a_dropped_tail_and_refuse_mutations() {
+    let out = scratch("dropping");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("dropping.av", &out).into_iter().collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), DROPPING_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let pairs = read("pairsLeft.nonNegative");
+    let walk = read("walk.neverBelowAcc");
+    assert!(pairs.contains("(proof (induct pairsLeft "), "{pairs}");
+    assert!(walk.contains("(proof (induct walk "), "{walk}");
+    let mutants = [
+        // A call on the whole cell again, dropping nothing: it never stops.
+        (
+            &pairs,
+            pairs.replace(
+                "(bi List.drop (v t) (i 1))",
+                "(bi List.drop (bi List.prepend (v h) (v t)) (i 0))",
+            ),
+        ),
+        // A call on a list taken from the tail rather than dropped from it.
+        (
+            &pairs,
+            pairs.replace("(bi List.drop (v t) (i 1))", "(bi List.take (v t) (i 1))"),
+        ),
+        // The helper drops from a list it grew first.
+        (
+            &walk,
+            walk.replace(
+                "(bi List.drop (v rest) (v n))",
+                "(bi List.drop (bi List.prepend (v n) (v rest)) (i 0))",
+            ),
+        ),
+        // The helper's local binding calls the definition back.
+        (
+            &walk,
+            walk.replace(
+                "((left (bi List.drop (v rest) (v n))))",
+                "((left (bi List.drop (v rest) (call walk (v rest) (v acc)))))",
+            ),
+        ),
+        // A hypothesis in the case of the empty list, which makes no call.
+        (&walk, replace_in_case(&walk, 0, 1, "(ih1)")),
+    ];
+    for (i, (source, mutant)) in mutants.iter().enumerate() {
+        assert_ne!(mutant, *source, "mutant {i} changed nothing");
+        // Refused by a step, or before any step by the gate every
+        // recursive definition of the script passes.
+        let verdict = aver::proof_kernel::verdict(mutant);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")
+                    || why.ends_with("is part of a mutual recursion")),
+            "mutant {i}: {verdict:?}\n{mutant}"
+        );
+        let path = out.join(format!("mutant{i}.steps"));
+        fs::write(&path, mutant).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(!result.status.success(), "{}", format_output(&result));
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_closes_a_recursion_on_a_dropped_tail_by_its_steps() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("dropping-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "dropping.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in DROPPING_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let lean = fs::read_to_string(out.join("Dropping.lean")).unwrap();
+    assert!(lean.contains("AverSteps.list_length_induct"), "{lean}");
+    let _ = fs::remove_dir_all(out);
+}
+
 const DESCENTS_LAWS: [&str; 2] = ["mixed.atLeastAcc", "splits.nonnegative"];
 
 /// An Int counted toward zero whose recursive calls descend differently:

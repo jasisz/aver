@@ -636,6 +636,28 @@ fn a_recursive_definition_opens_only_when_it_recurses_on_a_part_of_its_match() {
     );
     let on_itself = def(call(vec![var("xs")]));
     assert!(super::induct::recursion(&on_itself, &[]).is_err());
+    // `List.drop` of a part is never longer than the part, whatever the
+    // count: a descent, and an induction along it goes by length.
+    let drop = |l: super::Term, n: super::Term| super::term::builtin("List.drop", vec![l, n], None);
+    let skipping = def(call(vec![drop(
+        drop(var("t"), var("h")),
+        term::int(&(-1).into()),
+    )]));
+    assert_eq!(
+        super::induct::recursion(&skipping, &[]),
+        Ok(Some(super::induct::Recursion { at: 0, guard: None }))
+    );
+    assert!(super::induct::drops(&skipping, &[]));
+    assert!(!super::induct::drops(&on_tail, &[]));
+    // Dropping from the whole value, or taking from a part, is refused.
+    let from_whole = def(call(vec![drop(var("xs"), term::int(&1.into()))]));
+    assert!(super::induct::recursion(&from_whole, &[]).is_err());
+    let taking = def(call(vec![super::term::builtin(
+        "List.take",
+        vec![var("t"), term::int(&1.into())],
+        None,
+    )]));
+    assert!(super::induct::recursion(&taking, &[]).is_err());
 }
 
 #[test]
@@ -718,6 +740,34 @@ fn a_recursion_through_a_helper_is_checked_as_if_the_helper_stood_in_the_arm() {
         )],
     }));
     assert!(super::induct::recursion(&f, &[f.clone(), capturing]).is_err());
+    // A helper's local bindings are substituted before its calls are read:
+    // `r = List.drop(rest, first)` then `f(r)` descends.
+    let with_lets = |value: super::Term, back: super::Term| super::Def {
+        lets: vec![("r".into(), value)],
+        ..g(back)
+    };
+    let dropping = with_lets(
+        super::term::builtin("List.drop", vec![var("rest"), var("first")], None),
+        call(1, vec![var("r")]),
+    );
+    let ds = [f.clone(), dropping];
+    assert_eq!(
+        super::induct::recursion(&f, &ds),
+        Ok(Some(super::induct::Recursion { at: 0, guard: None }))
+    );
+    assert!(super::induct::drops(&f, &ds));
+    // A binding that grows the list is no descent.
+    let growing = with_lets(
+        super::term::builtin("List.prepend", vec![var("first"), var("rest")], None),
+        call(1, vec![var("r")]),
+    );
+    assert!(super::induct::recursion(&f, &[f.clone(), growing]).is_err());
+    // A binding that calls f is refused, whatever the body does with it.
+    let calling = with_lets(call(1, vec![var("rest")]), term::int(&0.into()));
+    assert_eq!(
+        super::induct::recursion(&f, &[f.clone(), calling]),
+        Err("f recurses from a local binding of g".into())
+    );
 }
 
 #[test]
