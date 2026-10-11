@@ -1,6 +1,6 @@
 module BtcShapes
-    intent = "Laws closed by steps that read a list literal as cells, a countdown under the complement of its guard, a constant in a when, a comparison inside a Bool connective, equality with itself, a remainder's range, and an equality that contradicts a stated difference."
-    exposes [readDigits, readAll, fill, under, cap, implied, same, Point, remainderFits, offBy]
+    intent = "Laws closed by steps that read a list literal as cells, a countdown under the complement of its guard, a constant in a when, a comparison inside a Bool connective, equality with itself, a remainder's range, an equality that contradicts a stated difference, and an induction that carries a comparison."
+    exposes [readDigits, largerReason, readAll, fill, under, cap, implied, same, Point, remainderFits, offBy]
     effects []
 
 fn readDigits(reversed: List<Int>, acc: Int) -> Int
@@ -17,6 +17,28 @@ verify readDigits law finalDigit
     given acc: Int = [-1, 0, 5]
     given d: Int = [-1, 0, 255]
     readDigits(List.concat(prefix, [d]), acc) => readDigits(prefix, acc) * 256 + d
+
+fn largerReason(reversed: List<Int>, lower: Int, upper: Int) -> Bool
+    ? "A larger accumulator stays larger after each digit, both advancing together."
+    match reversed
+        [] -> lower < upper
+        [head, ..tail] -> Bool.and(
+            largerReason(tail, lower * 256 + head, upper * 256 + head),
+            readDigits(reversed, lower) < readDigits(reversed, upper)
+        )
+
+verify largerReason
+    largerReason([1, 2], 0, 1) => true
+    largerReason([1, 2], 1, 1) => false
+
+verify readDigits law largerStaysLarger
+    given reversed: List<Int> = [[], [1, 2], [-1, 256]]
+    given lower: Int = [-2, 0, 300]
+    given upper: Int = [-1, 1, 301]
+    when lower < upper
+    because largerReason(reversed, lower, upper)
+    using []
+    readDigits(reversed, lower) < readDigits(reversed, upper) holds
 
 fn readAll(digits: List<Int>) -> Int
     ? "The number little-endian digits spell."

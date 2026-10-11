@@ -419,7 +419,17 @@ fn rendered_steps(
     ctx: &CodegenContext,
 ) -> Option<(String, super::proof_steps::Rendered)> {
     let script = law_steps_for(ctx, &vb.fn_name, &law.name)?;
-    match super::proof_steps::render(&script, ctx) {
+    rendered_or_debug(&script, super::proof_steps::render(&script, ctx))
+}
+
+/// A rendered step proof with the key its rejection is traced under. A
+/// script that does not render leaves its claim to the tactics; under
+/// `AVER_STEPS_DEBUG` it says why.
+fn rendered_or_debug(
+    script: &crate::ir::proof_steps::Script,
+    rendered: Result<super::proof_steps::Rendered, String>,
+) -> Option<(String, super::proof_steps::Rendered)> {
+    match rendered {
         Ok(r) => Some((script.obligation.key.clone(), r)),
         Err(why) => {
             if std::env::var_os("AVER_STEPS_DEBUG").is_some() {

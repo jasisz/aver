@@ -36,7 +36,10 @@ proof workflow does it on every pull request:
 
     python3 tools/steps_ratchet.py --lean-gains <the base branch's baseline>
 
-It fails when Lean does not close such a law by its step proof.
+It fails when Lean does not close such a law by its step proof. Every Lean
+run also fails when the export wrote a step script that Lean was never given
+as a step term (the renderer could not spell it), since its claim would then
+fall back to tactics without the steps ever reaching Lean.
 """
 
 from __future__ import annotations
@@ -110,6 +113,28 @@ def summarize(report: dict) -> dict:
     }
 
 
+OBLIGATION = re.compile(r"\.(implication|because[0-9]+)$")
+
+
+def unrendered(out: Path) -> list[str]:
+    """The step scripts of a Lean export that Lean was never given a step term
+    for. Each rendered term is followed by its fallback, which names the script
+    (`AVER_STEPS_REJECTED:<key>`); a law whose `because` obligations have scripts
+    of their own is stated through them. Any other script left its claim to the
+    tactics without a word, so the steps the Aver kernel accepted would never
+    be checked by Lean."""
+    text = "".join(
+        p.read_text(encoding="utf-8")
+        for p in out.rglob("*.lean")
+        if ".lake" not in p.relative_to(out).parts
+    )
+    keys = {p.stem for p in (out / "proof_steps").glob("*.steps")}
+    through_parts = {OBLIGATION.sub("", k) for k in keys if OBLIGATION.search(k)}
+    return sorted(
+        k for k in keys if f'AVER_STEPS_REJECTED:{k}"' not in text and k not in through_parts
+    )
+
+
 def report(aver: Path, entry: str, lean: bool) -> dict:
     """One `--check-json` report, with the Aver kernel or with Lean. A Lean
     report also lists, under `universal`, every law its manifest credits."""
@@ -123,6 +148,10 @@ def report(aver: Path, entry: str, lean: bool) -> dict:
         if not lines:
             raise RuntimeError(f"{entry}: {' '.join(cmd[1:])} failed\n{run.stdout}{run.stderr}")
         found = json.loads(lines[-1])
+        if lean and (missing := unrendered(Path(out))):
+            raise RuntimeError(
+                f"{entry}: step scripts Lean was not given (AVER_STEPS_DEBUG=1 says why): {', '.join(missing)}"
+            )
         manifest = Path(out) / "proof_manifest.json"
         if lean and manifest.exists():
             laws = json.loads(manifest.read_text()).get("laws", [])

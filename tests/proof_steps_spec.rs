@@ -2529,12 +2529,15 @@ fn lean_tells_constructors_apart_by_their_steps() {
     let _ = fs::remove_dir_all(out);
 }
 
-const SHAPES_LAWS: [&str; 8] = [
+const SHAPES_LAWS: [&str; 11] = [
     "fill.oneStep",
     "implied.always",
     "offBy.otherSize",
     "readAll.lowDigitStep",
     "readDigits.finalDigit",
+    "readDigits.largerStaysLarger",
+    "readDigits.largerStaysLarger.because1",
+    "readDigits.largerStaysLarger.implication",
     "remainderFits.always",
     "same.reflexive",
     "under.belowCap",
@@ -2587,6 +2590,96 @@ fn both_kernels_check_the_btc_shapes_and_refuse_mutations() {
     let _ = fs::remove_dir_all(out);
 }
 
+/// The step files of a Lean export that Lean was never given a step term
+/// for. Each rendered step term is followed by its fallback, which names
+/// the script (`AVER_STEPS_REJECTED:<key>`); a law whose `because`
+/// obligations have scripts of their own is stated through them. A script
+/// with neither left its claim to the tactics without a word.
+fn unrendered_step_files(out: &Path) -> Vec<String> {
+    fn lean_sources(dir: &Path, text: &mut String) {
+        for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if path.file_name().is_some_and(|n| n != ".lake") {
+                    lean_sources(&path, text);
+                }
+            } else if path.extension().is_some_and(|e| e == "lean") {
+                text.push_str(&fs::read_to_string(&path).unwrap());
+            }
+        }
+    }
+    let mut text = String::new();
+    lean_sources(out, &mut text);
+    let keys: Vec<String> = fs::read_dir(out.join("proof_steps"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "steps"))
+        .map(|p| p.file_stem().unwrap().to_string_lossy().to_string())
+        .collect();
+    let obligation_of = |key: &str, law: &str| {
+        key.strip_prefix(law)
+            .and_then(|rest| rest.strip_prefix('.'))
+            .is_some_and(|step| {
+                step == "implication"
+                    || step
+                        .strip_prefix("because")
+                        .is_some_and(|k| !k.is_empty() && k.bytes().all(|b| b.is_ascii_digit()))
+            })
+    };
+    let mut missing: Vec<String> = keys
+        .iter()
+        .filter(|key| !text.contains(&format!("AVER_STEPS_REJECTED:{key}\"")))
+        .filter(|key| !keys.iter().any(|k| obligation_of(k, key)))
+        .cloned()
+        .collect();
+    missing.sort();
+    missing
+}
+
+/// Every step script a fixture's producer wrote reaches Lean as a step
+/// term. A shape the Lean renderer cannot spell falls back to the tactics
+/// with nothing in the report, so the second judge would never check the
+/// steps the kernel written in Aver accepted; this keeps such a shape
+/// from landing unnoticed. The export needs no Lean.
+#[test]
+fn lean_is_given_every_step_script_the_fixtures_write() {
+    let dir = repo_root().join(FIXTURES);
+    let mut fixtures: Vec<PathBuf> = fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "av"))
+        .collect();
+    fixtures.sort();
+    let mut missing = Vec::new();
+    for fixture in fixtures {
+        let name = fixture.file_name().unwrap().to_string_lossy().to_string();
+        let out = scratch(&format!("rendered-{name}"));
+        let result = aver_in(&dir, &["proof", &name, "-o", out.to_str().unwrap()]);
+        assert!(
+            result.status.success(),
+            "{name}: {}",
+            format_output(&result)
+        );
+        missing.extend(
+            unrendered_step_files(&out)
+                .into_iter()
+                .map(|key| format!("{name}: {key}")),
+        );
+        let _ = fs::remove_dir_all(out);
+    }
+    assert!(
+        missing.is_empty(),
+        "step scripts Lean was not given (run with AVER_STEPS_DEBUG=1 for why):\n{}",
+        missing.join("\n")
+    );
+}
+
+/// Lean closes every btc shape by the steps the kernel accepted, each
+/// obligation of a `because` chain too: an induction along a list that
+/// carries a comparison `when` takes it as a Prop and hands the recursor
+/// its Bool equation.
 #[test]
 fn lean_closes_the_btc_shapes_by_their_steps() {
     if !lean_required::lake_available() {

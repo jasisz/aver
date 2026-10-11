@@ -467,9 +467,6 @@ impl Renderer<'_> {
         };
         let mut stated: Vec<(String, Eqn)> = Vec::new();
         for name in carried {
-            if self.prop_hyps.contains(name) {
-                return Err(format!("induct: {name} is a comparison, not carried"));
-            }
             let (_, e) = hyps
                 .iter()
                 .rev()
@@ -490,105 +487,132 @@ impl Renderer<'_> {
         motive.push_str(&self.eqn(eq));
         self.by_recursor = true;
         let (recursor, order) = self.recursor(&args[j])?;
-        let mut minors: Vec<Option<String>> = vec![None; order.len()];
-        for (arm, case) in arms.iter().zip(cases) {
-            let (ctor, recursive) = self.constructor_fields(&arm.pattern)?;
-            let at = order
-                .iter()
-                .position(|c| *c == ctor)
-                .ok_or("induct: an arm matches no constructor of the type")?;
-            if recursive.len() != case.binders.len() {
-                return Err("induct: the pattern does not bind every field".into());
-            }
-            let field_ih = |k: usize| format!("steps_rec_{}", lean(&case.binders[k]));
-            let mut names: Vec<String> = case.binders.iter().map(|b| lean(b)).collect();
-            names.extend((0..recursive.len()).filter(|k| recursive[*k]).map(field_ih));
-            names.extend(gs.iter().cloned());
-            names.extend(hs.iter().cloned());
-            let stated_case = induct::case(
-                def,
-                &self.script.defs,
-                rec,
-                args,
-                v,
-                general,
-                arm,
-                &case.binders,
-                &case.ihs,
-                &eq.lhs,
-                &eq.rhs,
-            )?;
-            let here = [(v.to_string(), stated_case.value.clone())];
-            let mut scope = kept.clone();
-            for (name, e) in &stated {
-                scope.push((
-                    name.clone(),
-                    Eqn::new(term::subst(&e.lhs, &here)?, term::subst(&e.rhs, &here)?),
-                ));
-            }
-            let sources =
-                induct::ih_sources(def, &self.script.defs, args, j, general, arm, &case.binders)?;
-            let mut haves = String::new();
-            let mut taken = Vec::new();
-            for (k, ((ih, e), (part, at))) in stated_case.ihs.iter().zip(&sources).enumerate() {
-                if ih == "_" {
-                    continue;
-                }
-                if !recursive[*part] {
-                    return Err("induct: a call recurses on a field of another type".into());
-                }
-                let mut app = field_ih(*part);
-                for a in at {
-                    app.push_str(&format!(" ({})", self.expr(a)));
-                }
-                for p in case.carry.get(k).into_iter().flatten() {
-                    app.push_str(&format!(" {}", self.proof(p, &scope)?));
-                }
-                haves.push_str(&format!("have {ih} : {} := ({app}); ", self.eqn(e)));
-                taken.push((ih.clone(), e.clone()));
-            }
-            // The further hypotheses: the same field's hypothesis at other
-            // values of the varied givens.
-            for (k, ih) in &case.more {
-                let (part, _) = sources.get(*k).ok_or("induct: no such recursive call")?;
-                if !recursive[*part] {
-                    return Err("induct: a call recurses on a field of another type".into());
-                }
-                let mut at = vec![(v.to_string(), term::var(&case.binders[*part]))];
-                at.extend(
-                    general
-                        .iter()
-                        .map(|(_, g)| g.clone())
-                        .zip(ih.at.iter().cloned()),
-                );
-                let e = Eqn::new(term::subst(&eq.lhs, &at)?, term::subst(&eq.rhs, &at)?);
-                let mut app = field_ih(*part);
-                for a in &ih.at {
-                    app.push_str(&format!(" ({})", self.expr(a)));
-                }
-                for p in &ih.carry {
-                    app.push_str(&format!(" {}", self.proof(p, &scope)?));
-                }
-                haves.push_str(&format!(
-                    "have {} : {} := ({app}); ",
-                    self.hyp_name(&ih.name),
-                    self.eqn(&e)
-                ));
-                taken.push((ih.name.clone(), e));
-            }
-            let mut inner = scope.clone();
-            inner.extend(taken);
-            let body = self.proof(&case.proof, &inner)?;
-            minors[at] = Some(if names.is_empty() {
-                format!("({haves}{body})")
-            } else {
-                format!("(fun {} => {haves}{body})", names.join(" "))
+        // The carried hypotheses as they stand outside, before the cases
+        // rebind them as the equations of Bools the steps read: a carried
+        // comparison is a Prop outside and a Bool equation in the motive.
+        let outer: Vec<String> = carried
+            .iter()
+            .map(|n| self.proof(&Proof::Hyp(n.clone()), hyps))
+            .collect::<Result<_, _>>()?;
+        let saved = self.prop_hyps.clone();
+        self.prop_hyps.retain(|h| !carried.contains(h));
+        for c in cases {
+            self.prop_hyps.retain(|h| {
+                !c.binders.contains(h)
+                    && !c.ihs.contains(h)
+                    && !c.more.iter().any(|(_, m)| &m.name == h)
             });
         }
-        let minors: Vec<String> = minors
-            .into_iter()
-            .map(|m| m.ok_or_else(|| "induct: a constructor has no arm".to_string()))
-            .collect::<Result<_, _>>()?;
+        let minors = (|| -> Result<Vec<String>, String> {
+            let mut minors: Vec<Option<String>> = vec![None; order.len()];
+            for (arm, case) in arms.iter().zip(cases) {
+                let (ctor, recursive) = self.constructor_fields(&arm.pattern)?;
+                let at = order
+                    .iter()
+                    .position(|c| *c == ctor)
+                    .ok_or("induct: an arm matches no constructor of the type")?;
+                if recursive.len() != case.binders.len() {
+                    return Err("induct: the pattern does not bind every field".into());
+                }
+                let field_ih = |k: usize| format!("steps_rec_{}", lean(&case.binders[k]));
+                let mut names: Vec<String> = case.binders.iter().map(|b| lean(b)).collect();
+                names.extend((0..recursive.len()).filter(|k| recursive[*k]).map(field_ih));
+                names.extend(gs.iter().cloned());
+                names.extend(hs.iter().cloned());
+                let stated_case = induct::case(
+                    def,
+                    &self.script.defs,
+                    rec,
+                    args,
+                    v,
+                    general,
+                    arm,
+                    &case.binders,
+                    &case.ihs,
+                    &eq.lhs,
+                    &eq.rhs,
+                )?;
+                let here = [(v.to_string(), stated_case.value.clone())];
+                let mut scope = kept.clone();
+                for (name, e) in &stated {
+                    scope.push((
+                        name.clone(),
+                        Eqn::new(term::subst(&e.lhs, &here)?, term::subst(&e.rhs, &here)?),
+                    ));
+                }
+                let sources = induct::ih_sources(
+                    def,
+                    &self.script.defs,
+                    args,
+                    j,
+                    general,
+                    arm,
+                    &case.binders,
+                )?;
+                let mut haves = String::new();
+                let mut taken = Vec::new();
+                for (k, ((ih, e), (part, at))) in stated_case.ihs.iter().zip(&sources).enumerate() {
+                    if ih == "_" {
+                        continue;
+                    }
+                    if !recursive[*part] {
+                        return Err("induct: a call recurses on a field of another type".into());
+                    }
+                    let mut app = field_ih(*part);
+                    for a in at {
+                        app.push_str(&format!(" ({})", self.expr(a)));
+                    }
+                    for p in case.carry.get(k).into_iter().flatten() {
+                        app.push_str(&format!(" {}", self.proof(p, &scope)?));
+                    }
+                    haves.push_str(&format!("have {ih} : {} := ({app}); ", self.eqn(e)));
+                    taken.push((ih.clone(), e.clone()));
+                }
+                // The further hypotheses: the same field's hypothesis at other
+                // values of the varied givens.
+                for (k, ih) in &case.more {
+                    let (part, _) = sources.get(*k).ok_or("induct: no such recursive call")?;
+                    if !recursive[*part] {
+                        return Err("induct: a call recurses on a field of another type".into());
+                    }
+                    let mut at = vec![(v.to_string(), term::var(&case.binders[*part]))];
+                    at.extend(
+                        general
+                            .iter()
+                            .map(|(_, g)| g.clone())
+                            .zip(ih.at.iter().cloned()),
+                    );
+                    let e = Eqn::new(term::subst(&eq.lhs, &at)?, term::subst(&eq.rhs, &at)?);
+                    let mut app = field_ih(*part);
+                    for a in &ih.at {
+                        app.push_str(&format!(" ({})", self.expr(a)));
+                    }
+                    for p in &ih.carry {
+                        app.push_str(&format!(" {}", self.proof(p, &scope)?));
+                    }
+                    haves.push_str(&format!(
+                        "have {} : {} := ({app}); ",
+                        self.hyp_name(&ih.name),
+                        self.eqn(&e)
+                    ));
+                    taken.push((ih.name.clone(), e));
+                }
+                let mut inner = scope.clone();
+                inner.extend(taken);
+                let body = self.proof(&case.proof, &inner)?;
+                minors[at] = Some(if names.is_empty() {
+                    format!("({haves}{body})")
+                } else {
+                    format!("(fun {} => {haves}{body})", names.join(" "))
+                });
+            }
+            minors
+                .into_iter()
+                .map(|m| m.ok_or_else(|| "induct: a constructor has no arm".to_string()))
+                .collect::<Result<_, _>>()
+        })();
+        self.prop_hyps = saved;
+        let minors = minors?;
         let mut s = format!(
             "({recursor} (motive := fun {} => {motive}) {} {}",
             lean(v),
@@ -598,11 +622,8 @@ impl Renderer<'_> {
         for g in &gs {
             s.push_str(&format!(" {g}"));
         }
-        for name in carried {
-            s.push_str(&format!(
-                " {}",
-                self.proof(&Proof::Hyp(name.clone()), hyps)?
-            ));
+        for proof in &outer {
+            s.push_str(&format!(" {proof}"));
         }
         s.push(')');
         Ok(s)
