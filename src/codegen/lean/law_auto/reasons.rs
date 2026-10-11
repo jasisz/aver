@@ -566,17 +566,17 @@ pub(in crate::codegen::lean) fn emit_reason_law(
             .and_then(|obs| obs.into_iter().nth(index))
             .and_then(|ob| ob.script);
         let steps = match obligation {
-            Some(script) => {
-                crate::codegen::lean::proof_steps::render_obligation(&script, index, ctx)
-                    .ok()
-                    .map(|r| (script.obligation.key.clone(), r))
-            }
+            Some(script) => super::rendered_or_debug(
+                &script,
+                crate::codegen::lean::proof_steps::render_obligation(&script, index, ctx),
+            ),
             // A law guided by `using` alone has one obligation, its own.
             None if reasons.is_empty() => super::law_steps_for(ctx, &vb.fn_name, &law.name)
                 .and_then(|script| {
-                    crate::codegen::lean::proof_steps::render_reason(&script, index, ctx)
-                        .ok()
-                        .map(|r| (script.obligation.key.clone(), r))
+                    super::rendered_or_debug(
+                        &script,
+                        crate::codegen::lean::proof_steps::render_reason(&script, index, ctx),
+                    )
                 }),
             None => None,
         };
