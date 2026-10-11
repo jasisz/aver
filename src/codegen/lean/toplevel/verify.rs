@@ -1344,6 +1344,27 @@ fn emit_verify_law_block(
         return (lines.join("\n"), case_index_start + vb.cases.len());
     }
 
+    // `aver proof` without `--examples` states the law's proof alone. The
+    // samples prove nothing about the law: they only check the Lean model
+    // against the values the VM computed, so `_checked_domain` and
+    // `_sample_N` are examples and leave with the other examples. A sample
+    // the VM declined still charges the law here, as it does with
+    // `--examples`, so a law is declined or not the same way in either mode
+    // and one `--gate` baseline holds for both.
+    if !ctx.export_verify_examples {
+        for idx in sample_indices(vb.cases.len()) {
+            if let Some(reason) = super::sample_literal::decline_reason(vb, ctx, idx) {
+                lines.push(record_declined_case(
+                    vb,
+                    ctx,
+                    case_index_start + idx + 1,
+                    reason,
+                ));
+            }
+        }
+        return (lines.join("\n"), case_index_start + vb.cases.len());
+    }
+
     // Skip checked_domain emission for refinement-lifted laws: the
     // universal theorem already quantifies over the refined type
     // (`∀ a b : Natural`), which strictly entails any

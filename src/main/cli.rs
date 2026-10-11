@@ -695,8 +695,9 @@ pub(super) enum Commands {
         /// alone, in process, without Lean.
         #[arg(long, default_value = "lean", value_parser = parse_proof_backend)]
         backend: String,
-        /// Include the `verify` examples and what only they reach. Without it,
-        /// only the laws and what the laws reach are included.
+        /// Include every example: the `verify` examples with what only they
+        /// reach, and the law samples. Without it, only the laws, their proofs
+        /// and what the laws reach are included.
         #[arg(long)]
         examples: bool,
         /// How to emit `verify` cases and law theorems in generated Lean

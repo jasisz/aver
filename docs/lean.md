@@ -60,7 +60,7 @@ and a call site anywhere passes that callee's own oracle list: `Infra.Store.get 
 
 ## Verify emission
 
-`aver proof` exports every law (`verify ... law`) with its samples, `because` and `using`. The examples, `verify` blocks without `law`, are exported only with `--examples`. Without the flag an example is not in the export at all: it is not a sorry, not a declined claim, and it roots nothing, so an effectful function that only an example calls is not lifted either. `aver verify` still runs every example. A `--gate` baseline holds laws only, so it gates a run with or without `--examples` the same way.
+`aver proof` exports every law (`verify ... law`) with its `because` and `using`. The examples are exported only with `--examples`: the `verify` blocks without `law`, and the law samples, the `_checked_domain` and `_sample_N` theorems that check the Lean model against the values `aver verify` computed. Without the flag an example is not in the export at all: it is not a sorry, not a declined claim, and it roots nothing, so an effectful function that only an example calls is not lifted either. A law sample proves nothing about its law, so leaving the samples out changes no law's tier. `aver verify` still runs every example. A `--gate` baseline holds laws only, so it gates a run with or without `--examples` the same way.
 
 With `--examples`, `verify` blocks become Lean proof obligations:
 
