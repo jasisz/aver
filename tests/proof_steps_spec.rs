@@ -2416,12 +2416,15 @@ fn lean_tells_constructors_apart_by_their_steps() {
     let _ = fs::remove_dir_all(out);
 }
 
-const SHAPES_LAWS: [&str; 8] = [
+const SHAPES_LAWS: [&str; 11] = [
     "fill.oneStep",
     "implied.always",
     "offBy.otherSize",
     "readAll.lowDigitStep",
     "readDigits.finalDigit",
+    "readDigits.largerStaysLarger",
+    "readDigits.largerStaysLarger.because1",
+    "readDigits.largerStaysLarger.implication",
     "remainderFits.always",
     "same.reflexive",
     "under.belowCap",
@@ -2474,6 +2477,10 @@ fn both_kernels_check_the_btc_shapes_and_refuse_mutations() {
     let _ = fs::remove_dir_all(out);
 }
 
+/// Lean closes every btc shape by the steps the kernel accepted, each
+/// obligation of a `because` chain too: an induction along a list that
+/// carries a comparison `when` takes it as a Prop and hands the recursor
+/// its Bool equation.
 #[test]
 fn lean_closes_the_btc_shapes_by_their_steps() {
     if !lean_required::lake_available() {
