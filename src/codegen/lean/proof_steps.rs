@@ -25,6 +25,14 @@ use super::types::type_to_lean;
 /// The prelude section the rendered terms rely on. Each lemma is the Lean
 /// statement of one wall rule (`crate::ir::proof_steps::rules`).
 pub(crate) const LEAN_PRELUDE_AVER_STEPS: &str = r#"namespace AverSteps
+-- `==` on a type with decidable equality is lawful by evaluation. Core's
+-- instance is proved with `propext` and `Quot.sound`; this one with neither,
+-- so a step that reads `a == b` as `a = b` on an `Int` adds no axiom. Both
+-- prove a `Prop`, so which one is found changes no term.
+instance (priority := high) lawfulBEqOfDecidableEq {α : Type _} [DecidableEq α] :
+    LawfulBEq α where
+  eq_of_beq h := of_decide_eq_true h
+  rfl := decide_eq_true rfl
 theorem bool_cases {P : Prop} (c : Bool) (hf : c = false → P) (ht : c = true → P) : P := by
   cases c
   · exact hf rfl
@@ -1684,10 +1692,17 @@ impl Renderer<'_> {
                     format!("decide_eq_false (show ¬ ({prop}) from by {facts}{close})")
                 }
             }
-            // Both sides read as `Lean.Grind.CommRing.Expr` over one list of
-            // atoms; the normaliser Lean's core proves sound
-            // (`CommRing.norm_int`) maps both to one polynomial, which the
-            // kernel checks by evaluation.
+            // A linear identity (no product of two atoms) goes to `omega`,
+            // which reads every other subterm as an atom and closes it with
+            // `propext` and `Quot.sound` alone. Otherwise both sides read as
+            // `Lean.Grind.CommRing.Expr` over one list of atoms; the
+            // normaliser Lean's core proves sound (`CommRing.norm_int`) maps
+            // both to one polynomial, which the kernel checks by evaluation.
+            // That soundness lemma also depends on `Classical.choice`, so it
+            // is kept for the products `omega` cannot multiply out.
+            Proof::Ring { lhs, rhs } if ring_degree(lhs) <= 1 && ring_degree(rhs) <= 1 => {
+                "by omega".to_string()
+            }
             Proof::Ring { lhs, rhs } => {
                 let mut atoms: Vec<Term> = Vec::new();
                 let el = reify(lhs, &mut atoms);
@@ -2013,8 +2028,13 @@ impl Renderer<'_> {
             // A match the statement writes out is elaborated apart from the
             // definition's, so the two need not be equal by `rfl` alone.
             tactic = match arm_tactic(pat, &subject, "h")?.as_str() {
-                // Each earlier literal arm is refuted by its premise.
-                _ if !ruled.is_empty() => "rw [h]; split <;> simp_all".to_string(),
+                // Each earlier literal arm is refuted by its premise:
+                // `contradiction` reads `(253 == 253) = false` as false by
+                // evaluation, while `simp_all` rewrites it with lemmas that
+                // depend on `Classical.choice`, so it only comes after.
+                _ if !ruled.is_empty() => {
+                    "rw [h]; split <;> first | contradiction | simp_all".to_string()
+                }
                 "subst h; rfl" => format!("subst h; first | rfl | {SAME_MATCHES}"),
                 "rw [h]; try rfl" => format!("rw [h]; all_goals first | rfl | {SAME_MATCHES}"),
                 other => other.to_string(),
@@ -2283,6 +2303,26 @@ fn hyps_at(hyps: &Hyps, at: &[(String, Term)]) -> Result<Hyps, String> {
             ))
         })
         .collect()
+}
+
+/// The degree of `t` read the way `reify` reads it: a literal is 0, an
+/// atom 1, and a product adds the degrees of its factors.
+fn ring_degree(t: &Term) -> u32 {
+    use crate::ast::Type;
+    if term::int_value(t).is_some() {
+        return 0;
+    }
+    let int_op = !matches!(t.ty(), Some(Type::Str | Type::Float));
+    match &t.node {
+        ResolvedExpr::BinOp(BinOp::Add | BinOp::Sub, a, b) if int_op => {
+            ring_degree(a).max(ring_degree(b))
+        }
+        ResolvedExpr::BinOp(BinOp::Mul, a, b) if int_op => {
+            ring_degree(a).saturating_add(ring_degree(b))
+        }
+        ResolvedExpr::Neg(a) if int_op => ring_degree(a),
+        _ => 1,
+    }
 }
 
 fn reify(t: &Term, atoms: &mut Vec<Term>) -> String {
@@ -2625,8 +2665,10 @@ fn to_statement(ob: &crate::ir::proof_steps::Obligation, t: String) -> String {
 }
 
 /// Closes `body = body'` where both write the same matches, elaborated
-/// apart: split every match and compare the branches.
-const SAME_MATCHES: &str = "(dsimp only; (repeat' split) <;> simp_all)";
+/// apart: split every match and compare the branches. A branch its own
+/// premises rule out goes to `contradiction` first, which does not reach
+/// for `Classical.choice` as `simp_all` does.
+const SAME_MATCHES: &str = "(dsimp only; (repeat' split) <;> first | contradiction | simp_all)";
 
 /// The marker a rejected step proof leaves in the build log.
 pub(crate) const STEPS_REJECTED_MARKER: &str = "AVER_STEPS_REJECTED:";

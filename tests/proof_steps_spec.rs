@@ -2944,6 +2944,38 @@ fn lean_checks_ring_and_linear_steps() {
     for law in ARITH_LAWS {
         assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
     }
+    // A linear step (`x + x` to `2 * x`) goes to `omega` and keeps the law
+    // off `Classical.choice`; only a product of givens multiplied out goes
+    // through the ring normaliser, whose soundness proof uses it.
+    fs::write(
+        out.join("Axioms.lean"),
+        "import Arith\n#print axioms Arith.twice_law_isDouble\n#print axioms Arith.sqSum_law_expands\n",
+    )
+    .unwrap();
+    let printed = Command::new("lake")
+        .args(["env", "lean", "Axioms.lean"])
+        .current_dir(&out)
+        .output()
+        .expect("lake runs");
+    let printed = String::from_utf8_lossy(&printed.stdout).replace('\n', " ");
+    let axioms_of = |theorem: &str| {
+        if printed.contains(&format!("'{theorem}' does not depend on any axioms")) {
+            return String::new();
+        }
+        let start = printed
+            .find(&format!("'{theorem}' depends on axioms: ["))
+            .unwrap_or_else(|| panic!("no axioms for {theorem}: {printed}"));
+        let rest = &printed[start..];
+        rest[..rest.find(']').unwrap()].to_string()
+    };
+    assert!(
+        !axioms_of("Arith.twice_law_isDouble").contains("Classical.choice"),
+        "{printed}"
+    );
+    assert!(
+        axioms_of("Arith.sqSum_law_expands").contains("Classical.choice"),
+        "{printed}"
+    );
     let lean = fs::read_to_string(out.join("Arith.lean")).unwrap();
     let law = "sqSum.expands";
     let line = exact_line(&lean, "sqSum_law_expands").to_string();
