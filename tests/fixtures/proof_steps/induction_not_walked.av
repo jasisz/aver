@@ -1,0 +1,75 @@
+module InductionNotWalked
+    intent = "Open laws with list givens no recursion in the claim walks: steps do not induct on those lists."
+    exposes [len, tagged, twice, wrapped]
+    effects []
+
+fn len(xs: List<Int>) -> Int
+    ? "Length."
+    match xs
+        [] -> 0
+        [h, ..t] -> 1 + len(t)
+
+verify len
+    len([1]) => 1
+
+fn tagged(xs: List<Int>, ys: List<Int>) -> Int
+    ? "The length of `xs`, plus the head of `ys` when it has one. It reads `ys` once and never recurses."
+    match ys
+        [] -> len(xs)
+        [h, ..t] -> len(xs) + h
+
+verify tagged
+    tagged([1], [5]) => 6
+
+// False. `len` walks `xs` in the claim, so induction on `xs` is tried and
+// says where it stopped. Nothing that recurses holds `ys`: at a cell of
+// `ys` the claim only reads its head, the claim at the tail never comes
+// up, and induction on `ys` is not tried.
+
+verify tagged law lengthOnly
+    given xs: List<Int> = [[], [1]]
+    given ys: List<Int> = [[]]
+    using []
+    tagged(xs, ys) => len(xs)
+
+fn twice(xs: List<Int>) -> Int
+    ? "Twice the length. It does not recurse; `len`, which it calls, does."
+    len(xs) + len(xs)
+
+verify twice
+    twice([1]) => 2
+
+// False. The claim calls only `twice`, a name for a sum of two calls of
+// `len` on `xs`: opened once it shows them, so induction on `xs` is tried.
+
+verify twice law isOne
+    given xs: List<Int> = [[]]
+    using []
+    twice(xs) => 1
+
+fn wrapped(xs: List<Int>, ys: List<Int>) -> Int
+    ? "`tagged` under another name."
+    tagged(xs, ys)
+
+verify wrapped
+    wrapped([1], [5]) => 6
+
+// False. Neither the claim as written nor `wrapped`, opened once, calls
+// anything that recurses, so no list given is inducted on without an
+// `induction` line.
+
+verify wrapped law isZero
+    given xs: List<Int> = [[]]
+    given ys: List<Int> = [[]]
+    using []
+    wrapped(xs, ys) => 0
+
+// The same claim with the line: the author's `induction xs` is followed
+// as written, and says where it stopped.
+
+verify wrapped law isZeroNamed
+    given xs: List<Int> = [[]]
+    given ys: List<Int> = [[]]
+    using []
+    induction xs
+    wrapped(xs, ys) => 0

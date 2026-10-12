@@ -76,8 +76,9 @@ impl Env<'_> {
     /// along `f` only the calls that pass it where `f` recurses are
     /// followed, and a list given no such call passes is inducted on as a
     /// list. Without a line, induction along `f` comes first; when it does
-    /// not close, each list given `f` does not recurse on is tried in
-    /// turn, and the one that closes is hinted as the line to add.
+    /// not close, each list given `f` does not recurse on, and some
+    /// recursion walks ([`Self::walked_by_recursion`]), is tried in turn,
+    /// and the one that closes is hinted as the line to add.
     pub(crate) fn prove_by_induction(
         &mut self,
         f: FnId,
@@ -100,7 +101,7 @@ impl Env<'_> {
         let lists: Vec<String> = ob
             .lists
             .iter()
-            .filter(|v| !self.recurses_on(f, v, ob))
+            .filter(|v| !self.recurses_on(f, v, ob) && self.walked_by_recursion(v, ob))
             .cloned()
             .collect();
         let (hyps, fuel, before) = (self.hyps.clone(), self.fuel, self.hints.len());
@@ -138,6 +139,58 @@ impl Env<'_> {
         calls.iter().any(
             |c| matches!(c.get(rec.at).map(|a| &a.node), Some(ResolvedExpr::Ident(n)) if n == v),
         )
+    }
+
+    /// Whether a call of a function that recurses holds the given `v` in
+    /// the argument it recurses on: in the claim as written, or behind one
+    /// call of a function that does not recurse (a law is often about a
+    /// name for its claim). Only such a call brings the claim at a cell of
+    /// `v` down to the claim at its tail. With none, the hypothesis of an
+    /// induction on `v` has nowhere to apply and each case is the claim
+    /// evaluated over again, so steps induct on `v` only under the law's
+    /// own `induction` line.
+    fn walked_by_recursion(&self, v: &str, ob: &Obligation) -> bool {
+        fn calls(t: &Term, out: &mut Vec<(FnId, Vec<Term>)>) {
+            if let ResolvedExpr::Call(ResolvedCallee::Fn(g), args) = &t.node {
+                out.push((*g, args.clone()));
+            }
+            for c in term::children(t) {
+                calls(c, out);
+            }
+        }
+        // The calls the claim writes, then those one opening shows.
+        let mut at = Vec::new();
+        calls(&ob.lhs, &mut at);
+        calls(&ob.rhs, &mut at);
+        for written in [true, false] {
+            let mut behind = Vec::new();
+            for (g, args) in &at {
+                let Some(def) = self.raw_def(*g) else {
+                    continue;
+                };
+                match induct::recursion(&def, &self.reachable_defs(*g)) {
+                    Ok(Some(rec)) => {
+                        let mut held = Vec::new();
+                        if let Some(a) = args.get(rec.at) {
+                            term::free_vars(a, &mut held);
+                        }
+                        if held.iter().any(|n| n == v) {
+                            return true;
+                        }
+                    }
+                    Ok(None) if written => {
+                        if let Ok(outer) = def.outer(args)
+                            && let Ok(body) = term::subst(&def.body, &outer)
+                        {
+                            calls(&body, &mut behind);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            at = behind;
+        }
+        false
     }
 
     /// Structural induction on the list given `v`, apart from any
