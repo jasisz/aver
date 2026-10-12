@@ -4358,6 +4358,276 @@ fn lean_checks_the_vector_rules_and_refuses_a_mutation() {
     let _ = fs::remove_dir_all(out);
 }
 
+const PICK_LAWS: [&str; 13] = [
+    "distance.absNonNegative",
+    "distance.absOfLiteral",
+    "distance.asAbs",
+    "has.emptyHoldsNothing",
+    "has.literalHoldsNothingLarger",
+    "has.skipsADifferentHead",
+    "has.skipsAnother",
+    "larger.asMax",
+    "larger.maxOfEqual",
+    "larger.minPlusMax",
+    "smaller.asMin",
+    "smaller.minAtMostFirst",
+    "smaller.minCommutes",
+];
+
+/// The false laws of the fixture: the smaller, the larger and the absolute
+/// value are not always the first argument, the element in front of a
+/// list counts for `List.contains`, and a list of one Float does not always
+/// hold it (`0.0 / 0.0` is not equal to itself).
+const PICK_FALSE_LAWS: [&str; 5] = [
+    "dropsHead.headNeverCounts",
+    "holdsItself.alwaysFindsSelf",
+    "smallerIsFirst.absIsIdentity",
+    "smallerIsFirst.alwaysFirst",
+    "smallerIsFirst.maxAlwaysFirst",
+];
+
+/// A script for the false law that a list of one element always holds it,
+/// with nothing saying what the element is. It reads the element in front as
+/// found, through a rule `list.contains.cons` and `x == x`, which the kernel
+/// takes as true of every term; for a Float (`0.0 / 0.0`) the VM answers
+/// otherwise. No rule finds the element in front, so both kernels refuse it.
+const CONTAINS_FINDS_ITSELF: &str = "(steps 13
+  (obligation containsFloat.alwaysFindsSelf (x) (none)
+    (bi List.contains (bi List.prepend (v x) (list)) (v x))
+    (b true))
+  (defs) (consts) (sums) (laws)
+  (proof
+    (trans
+      ((bi List.contains (bi List.prepend (v x) (list)) (v x))
+       (bi Bool.or (op == (v x) (v x)) (bi List.contains (list) (v x)))
+       (bi Bool.or (b true) (bi List.contains (list) (v x)))
+       (b true))
+      (rule list.contains.cons ((x (v x)) (a (list)) (y (v x))))
+      (congr (bi Bool.or (hole) (bi List.contains (list) (v x)))
+        (rule bool.beq.refl ((a (v x)))))
+      (rule bool.or.true_l ((b (bi List.contains (list) (v x))))))))
+";
+
+/// `Int.min`, `Int.max` and `Int.abs` are read by the comparison that picks
+/// their value, and `List.contains` on `[]` and past an element in front
+/// that the value looked for is not, each by a wall rule; a false law about
+/// them gets no step proof, and both kernels refuse a rule taken for
+/// another, and any script that reads the element in front as found.
+#[test]
+fn both_kernels_read_min_max_abs_and_contains_by_their_rules_and_refuse_mutations() {
+    let out = scratch("picks");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("builtin_picks.av", &out).into_iter().collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), PICK_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    let mut all = String::new();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+        all.push_str(&read(law));
+    }
+    for rule in [
+        "int.min.le",
+        "int.min.gt",
+        "int.max.le",
+        "int.max.gt",
+        "int.abs.neg",
+        "int.abs.nonneg",
+        "list.contains.nil",
+        "list.contains.cons_other",
+    ] {
+        assert!(
+            all.contains(&format!("(rule {rule} ")),
+            "{rule} is not used"
+        );
+    }
+    let swap = |law: &str, from: &str, to: &str| {
+        let text = read(law);
+        assert!(text.contains(from), "{law}: {text}");
+        text.replacen(from, to, 1)
+    };
+    for (kind, text) in [
+        (
+            "the smaller taken as the second where the first is at most it",
+            swap("smaller.asMin", "(rule int.min.le", "(rule int.min.gt"),
+        ),
+        (
+            "the smaller taken as the larger",
+            swap("smaller.asMin", "(rule int.min.le", "(rule int.max.le"),
+        ),
+        (
+            "the larger taken as the first where the first is at most the second",
+            swap("larger.asMax", "(rule int.max.le", "(rule int.max.gt"),
+        ),
+        (
+            "the absolute value of a negative taken as itself",
+            swap(
+                "distance.absNonNegative",
+                "(rule int.abs.neg",
+                "(rule int.abs.nonneg",
+            ),
+        ),
+        (
+            "the absolute value of a negative left negated twice",
+            swap(
+                "distance.absNonNegative",
+                "(op >= (op - (i 0) (v a)) (i 0)) (b true))",
+                "(op >= (v a) (i 0)) (b true))",
+            ),
+        ),
+        (
+            "the empty list holding the element",
+            swap("has.emptyHoldsNothing", "(b false)", "(b true)"),
+        ),
+        (
+            "an element in front skipped with nothing showing the value looked for differs",
+            swap(
+                "has.skipsAnother",
+                "(compute (op == (i 2) (i 1)) (b false))",
+                "(rule bool.not.true ())",
+            ),
+        ),
+        (
+            "an element in front skipped though it is the one looked for",
+            swap(
+                "has.skipsAnother",
+                "(rule list.contains.cons_other ((x (i 1)) (a (v acc)) (y (i 2))) (compute (op == (i 2) (i 1)) (b false)))",
+                "(rule list.contains.cons_other ((x (i 2)) (a (v acc)) (y (i 2))) (compute (op == (i 2) (i 2)) (b false)))",
+            ),
+        ),
+        (
+            "an element in front skipped by the comparison the other way round, unswapped",
+            swap(
+                "has.skipsADifferentHead",
+                "(trans ((op == (v y) (v h)) (op == (v h) (v y)) (b false)) (rule bool.beq.symm ((a (v y)) (b (v h)))) (rule int.eq.false_of_ne ((a (v h)) (b (v y))) (hyp when)))",
+                "(rule int.eq.false_of_ne ((a (v h)) (b (v y))) (hyp when))",
+            ),
+        ),
+        (
+            "a list with an element in front read as the empty list",
+            swap(
+                "has.skipsAnother",
+                "(rule list.contains.cons_other ((x (i 1)) (a (v acc)) (y (i 2))) (compute (op == (i 2) (i 1)) (b false)))",
+                "(rule list.contains.nil ((y (i 2))))",
+            ),
+        ),
+        (
+            "the element in front read as found, by x == x of a term of any type",
+            CONTAINS_FINDS_ITSELF.to_string(),
+        ),
+        (
+            "the element in front read as found, by the rule that skips it",
+            CONTAINS_FINDS_ITSELF.replace(
+                "(rule list.contains.cons ((x (v x)) (a (list)) (y (v x))))",
+                "(rule list.contains.cons_other ((x (v x)) (a (list)) (y (v x))) (rule bool.beq.refl ((a (v x)))))",
+            ),
+        ),
+    ] {
+        let refused = aver::proof_kernel::verdict(&text);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "{kind}: {refused:?}"
+        );
+        let path = out.join("mutant.steps");
+        fs::write(&path, &text).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(
+            !result.status.success(),
+            "{kind}: {}",
+            format_output(&result)
+        );
+    }
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "builtin_picks.av",
+            "--backend",
+            "aver",
+            "--check-json",
+        ],
+    );
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap_or_else(|| panic!("{}", format_output(&result))),
+    )
+    .unwrap();
+    for law in PICK_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    for law in PICK_FALSE_LAWS {
+        assert_eq!(summary["closed_by"][law], "open", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_reads_min_max_abs_and_contains_by_their_rules_and_refuses_a_mutation() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("picks-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "builtin_picks.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "5",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in PICK_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    for law in PICK_FALSE_LAWS {
+        assert_eq!(summary["closed_by"][law], "open", "{law}: {summary}");
+    }
+    let lean = fs::read_to_string(out.join("BuiltinPicks.lean")).unwrap();
+    for lemma in [
+        "int_min_le",
+        "int_min_gt",
+        "int_max_le",
+        "int_max_gt",
+        "int_abs_neg",
+        "int_abs_nonneg",
+        "list_contains_nil",
+        "list_contains_cons_other",
+    ] {
+        assert!(lean.contains(&format!("AverSteps.{lemma}")), "{lemma}");
+    }
+    let law = "distance.asAbs";
+    let line = exact_line(&lean, "distance_law_asAbs").to_string();
+    let wrong = line.replacen("AverSteps.int_abs_neg", "AverSteps.int_abs_nonneg", 1);
+    assert_ne!(line, wrong, "{line}");
+    assert!(
+        lean_refuses(
+            &out,
+            "BuiltinPicks.lean",
+            &lean.replacen(&line, &wrong, 1),
+            law
+        ),
+        "the absolute value of a negative taken as itself: Lean must refuse the step term"
+    );
+    let _ = fs::remove_dir_all(out);
+}
+
 const VECTOR_FACT_LAWS: [&str; 4] = [
     "grid.listBack",
     "grid.nothingPastTheEnd",

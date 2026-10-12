@@ -67,6 +67,15 @@ pub enum WallRule {
     DivModRecompose,
     DivRange,
     ModRange,
+    // `Int.min`, `Int.max` and `Int.abs` by the comparison that picks their
+    // value: `a <= b` for the smaller and the larger of two, `a < 0` for
+    // the absolute value (`0 - a` then, else `a`).
+    MinLe,
+    MinGt,
+    MaxLe,
+    MaxGt,
+    AbsNeg,
+    AbsNonneg,
     // The bit-level view of Int (infinite two's complement): complement is
     // `-a - 1`, a shift left by `n >= 0` multiplies by `2^n`, a mask
     // `2^n - 1` keeps the remainder by `2^n` and a mask `2^n` keeps that
@@ -90,6 +99,16 @@ pub enum WallRule {
     DropConsGt,
     ReverseNil,
     ReverseCons,
+    // `List.contains` on `[]`, and on `List.prepend(x, a)` where the value
+    // looked for is not the element in front (`(y == x) = false`): then
+    // the rest decides. There is no rule for the case where it is: a rule
+    // stating it would turn any `y == x` a script derives into what the
+    // builtin returns, and the kernel takes `x == x` as true of every
+    // term, which a Float is not (`0.0 / 0.0`). No rule makes an equality
+    // false of every term, so the premise comes from what the law states,
+    // from computing on values, or from Int arithmetic.
+    ContainsNil,
+    ContainsConsOther,
     // The Map builtins on the empty map and on `Map.set(m, k, v)`: a read
     // at the key just set, at another key (`k != k2`), and the size after a
     // set at a key the map holds or does not hold.
@@ -120,7 +139,7 @@ pub enum WallRule {
 }
 
 impl WallRule {
-    pub const ALL: [WallRule; 78] = [
+    pub const ALL: [WallRule; 86] = [
         WallRule::AndTrueL,
         WallRule::AndFalseL,
         WallRule::AndTrueR,
@@ -163,6 +182,12 @@ impl WallRule {
         WallRule::DivModRecompose,
         WallRule::DivRange,
         WallRule::ModRange,
+        WallRule::MinLe,
+        WallRule::MinGt,
+        WallRule::MaxLe,
+        WallRule::MaxGt,
+        WallRule::AbsNeg,
+        WallRule::AbsNonneg,
         WallRule::BitsNot,
         WallRule::BitsShl,
         WallRule::BitsAndLow,
@@ -179,6 +204,8 @@ impl WallRule {
         WallRule::DropConsGt,
         WallRule::ReverseNil,
         WallRule::ReverseCons,
+        WallRule::ContainsNil,
+        WallRule::ContainsConsOther,
         WallRule::MapGetEmpty,
         WallRule::MapGetSetSame,
         WallRule::MapGetSetOther,
@@ -246,6 +273,12 @@ impl WallRule {
             WallRule::DivModRecompose => "int.div_mod_recompose",
             WallRule::DivRange => "int.div_range",
             WallRule::ModRange => "int.mod_range",
+            WallRule::MinLe => "int.min.le",
+            WallRule::MinGt => "int.min.gt",
+            WallRule::MaxLe => "int.max.le",
+            WallRule::MaxGt => "int.max.gt",
+            WallRule::AbsNeg => "int.abs.neg",
+            WallRule::AbsNonneg => "int.abs.nonneg",
             WallRule::BitsNot => "bits.not",
             WallRule::BitsShl => "bits.shl",
             WallRule::BitsAndLow => "bits.and_low",
@@ -262,6 +295,8 @@ impl WallRule {
             WallRule::DropConsGt => "list.drop.cons_gt",
             WallRule::ReverseNil => "list.reverse.nil",
             WallRule::ReverseCons => "list.reverse.cons",
+            WallRule::ContainsNil => "list.contains.nil",
+            WallRule::ContainsConsOther => "list.contains.cons_other",
             WallRule::MapGetEmpty => "map.get.empty",
             WallRule::MapGetSetSame => "map.get.set_same",
             WallRule::MapGetSetOther => "map.get.set_other",
@@ -308,7 +343,9 @@ impl WallRule {
             WallRule::DivModRecompose | WallRule::ModRange => &["a", "k"],
             WallRule::BeqRefl => &["a"],
             WallRule::DivRange => &["a", "k", "m", "n"],
-            WallRule::BitsNot => &["a"],
+            WallRule::BitsNot | WallRule::AbsNeg | WallRule::AbsNonneg => &["a"],
+            WallRule::ContainsNil => &["y"],
+            WallRule::ContainsConsOther => &["x", "a", "y"],
             WallRule::BitsShl => &["a", "n", "k"],
             WallRule::BitsAndLow => &["a", "m", "k", "n"],
             WallRule::BitsAndBit => &["a", "k", "n"],
@@ -369,6 +406,9 @@ impl WallRule {
         let cons = |h: Term, t: Term| term::builtin("List.prepend", vec![h, t], None);
         let list = |name: &str, args: Vec<Term>| term::builtin(name, args, None);
         let len = |l: Term| term::builtin("List.len", vec![l], Some(crate::ast::Type::Int));
+        let contains = |l: Term, y: Term| {
+            term::builtin("List.contains", vec![l, y], Some(crate::ast::Type::Bool))
+        };
         let at_most_zero = || is(cmp(BinOp::Lte, n(), i(0)), true);
         let above_zero = || is(cmp(BinOp::Gt, n(), i(0)), true);
         let pred = || binop(BinOp::Sub, n(), i(1));
@@ -526,6 +566,32 @@ impl WallRule {
                     true,
                 ),
             ),
+            WallRule::MinLe | WallRule::MinGt | WallRule::MaxLe | WallRule::MaxGt => {
+                let le = matches!(self, WallRule::MinLe | WallRule::MaxLe);
+                let min = matches!(self, WallRule::MinLe | WallRule::MinGt);
+                let name = if min { "Int.min" } else { "Int.max" };
+                (
+                    vec![is(cmp(BinOp::Lte, a(), b()), le)],
+                    Eqn::new(
+                        term::builtin(name, vec![a(), b()], Some(crate::ast::Type::Int)),
+                        if le == min { a() } else { b() },
+                    ),
+                )
+            }
+            WallRule::AbsNeg | WallRule::AbsNonneg => {
+                let neg = self == WallRule::AbsNeg;
+                (
+                    vec![is(cmp(BinOp::Lt, a(), i(0)), neg)],
+                    Eqn::new(
+                        term::builtin("Int.abs", vec![a()], Some(crate::ast::Type::Int)),
+                        if neg {
+                            binop(BinOp::Sub, i(0), a())
+                        } else {
+                            a()
+                        },
+                    ),
+                )
+            }
             WallRule::BitsNot => (
                 vec![],
                 Eqn::new(
@@ -616,6 +682,11 @@ impl WallRule {
                         vec![list("List.reverse", vec![a()]), cons(x(), nil())],
                     ),
                 ),
+            ),
+            WallRule::ContainsNil => (vec![], is(contains(nil(), var("y")), false)),
+            WallRule::ContainsConsOther => (
+                vec![is(cmp(BinOp::Eq, var("y"), x()), false)],
+                Eqn::new(contains(cons(x(), a()), var("y")), contains(a(), var("y"))),
             ),
             WallRule::MapGetEmpty => (
                 vec![],

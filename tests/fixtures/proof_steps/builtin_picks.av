@@ -1,0 +1,151 @@
+module BuiltinPicks
+    intent =
+        "Int.min, Int.max, Int.abs and List.contains read by their rules in proof steps."
+        "The laws under smallerIsFirst, dropsHead and holdsItself are false and must stay open."
+    exposes [smaller, larger, distance, has, smallerIsFirst, dropsHead, holdsItself]
+    effects []
+
+fn smaller(a: Int, b: Int) -> Int
+    ? "The smaller of two, written with a match."
+    match a <= b
+        true -> a
+        false -> b
+
+verify smaller
+    smaller(1, 2) => 1
+    smaller(2, 1) => 1
+
+verify smaller law asMin
+    given a: Int = -3..3
+    given b: Int = -3..3
+    smaller(a, b) => Int.min(a, b)
+
+verify smaller law minCommutes
+    given a: Int = -3..3
+    given b: Int = -3..3
+    Int.min(a, b) => Int.min(b, a)
+
+verify smaller law minAtMostFirst
+    given a: Int = -3..3
+    given b: Int = -3..3
+    Int.min(a, b) <= a => true
+
+fn larger(a: Int, b: Int) -> Int
+    ? "The larger of two, written with a match."
+    match a <= b
+        true -> b
+        false -> a
+
+verify larger
+    larger(1, 2) => 2
+    larger(2, 1) => 2
+
+verify larger law asMax
+    given a: Int = -3..3
+    given b: Int = -3..3
+    larger(a, b) => Int.max(a, b)
+
+verify larger law minPlusMax
+    given a: Int = -3..3
+    given b: Int = -3..3
+    Int.min(a, b) + Int.max(a, b) => a + b
+
+verify larger law maxOfEqual
+    given a: Int = -3..3
+    Int.max(a, a) => a
+
+fn distance(a: Int) -> Int
+    ? "The distance of a from zero, written with a match."
+    match a < 0
+        true -> 0 - a
+        false -> a
+
+verify distance
+    distance(-2) => 2
+    distance(2) => 2
+
+verify distance law asAbs
+    given a: Int = -3..3
+    distance(a) => Int.abs(a)
+
+verify distance law absNonNegative
+    given a: Int = -3..3
+    Int.abs(a) >= 0 => true
+
+verify distance law absOfLiteral
+    given a: Int = -3..3
+    Int.abs(0 - 7) + a => 7 + a
+
+fn has(xs: List<Int>, y: Int) -> Bool
+    ? "Whether y is in xs."
+    List.contains(xs, y)
+
+verify has
+    has([1, 2], 2) => true
+    has([], 2) => false
+
+verify has law emptyHoldsNothing
+    given y: Int = -3..3
+    List.contains([], y) => false
+
+verify has law skipsAnother
+    given acc: List<Int> = [[], [1], [2, 1]]
+    List.contains(List.prepend(1, acc), 2) => List.contains(acc, 2)
+
+verify has law skipsADifferentHead
+    given acc: List<Int> = [[], [1], [2, 1]]
+    given h: Int = -3..3
+    given y: Int = -3..3
+    when h != y
+    List.contains(List.prepend(h, acc), y) => List.contains(acc, y)
+
+verify has law literalHoldsNothingLarger
+    given y: Int = 4..6
+    when y > 3
+    List.contains([1, 2, 3], y) => false
+
+fn smallerIsFirst(a: Int, b: Int) -> Int
+    ? "Carries the false law that the smaller of two is the first."
+    Int.min(a, b)
+
+verify smallerIsFirst
+    smallerIsFirst(1, 2) => 1
+
+verify smallerIsFirst law alwaysFirst
+    given a: Int = 0..0
+    given b: Int = 0..0
+    Int.min(a, b) => a
+
+verify smallerIsFirst law maxAlwaysFirst
+    given a: Int = 0..0
+    given b: Int = 0..0
+    Int.max(a, b) => a
+
+verify smallerIsFirst law absIsIdentity
+    given a: Int = 0..0
+    Int.abs(a) => a
+
+fn dropsHead(xs: List<Int>, y: Int) -> Bool
+    ? "Carries the false law that the element in front never counts."
+    List.contains(xs, y)
+
+verify dropsHead
+    dropsHead([1], 2) => false
+
+verify dropsHead law headNeverCounts
+    given h: Int = 0..0
+    given t: List<Int> = [[]]
+    given y: Int = 1..1
+    List.contains(List.prepend(h, t), y) => List.contains(t, y)
+
+fn holdsItself(x: Float) -> Bool
+    ? "Carries the false law that a list of one Float holds it: 0.0 / 0.0 is not equal to itself."
+    List.contains(List.prepend(x, []), x)
+
+verify holdsItself
+    holdsItself(1.5) => true
+    holdsItself(0.0 / 0.0) => false
+
+verify holdsItself law alwaysFindsSelf
+    given x: Float = [1.5, 0.0]
+    List.contains(List.prepend(x, []), x) => true
