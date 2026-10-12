@@ -248,6 +248,9 @@ def recorded(baseline: dict, current: dict, levels: tuple[str, ...], full: bool)
         if entry in current:
             for level in levels:
                 row[level] = current[entry][level]
+        # A run without Lean leaves the tactic level as recorded, less the laws
+        # steps close now.
+        row["tactic"] = [law for law in row["tactic"] if law not in row["steps"]]
         row = {level: laws for level, laws in row.items() if laws}
         if row:
             out[entry] = row
