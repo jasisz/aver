@@ -1297,6 +1297,58 @@ fn induction_on_a_list_given_the_function_does_not_recurse_on() {
     let _ = fs::remove_dir_all(out);
 }
 
+/// Without an `induction` line a list given is inducted on only when a
+/// call of a function that recurses holds it where it recurses, in the
+/// claim as written or behind one call of a function that does not
+/// recurse: otherwise the hypothesis has nowhere to apply, and each such
+/// attempt would evaluate the whole claim over again for nothing. An
+/// attempt that ran leaves `induction on <given>: …` in the refusal, so
+/// the refusals say which ran. The author's line is followed as written.
+#[test]
+fn a_list_given_no_recursion_walks_is_not_inducted_on() {
+    let out = scratch("induct-not-walked");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "induction_not_walked.av",
+            "--backend",
+            "aver",
+            "-o",
+            out.to_str().unwrap(),
+        ],
+    );
+    let text = String::from_utf8_lossy(&result.stdout);
+    let refusal = |law: &str| {
+        text.lines()
+            .find(|l| l.trim_start().starts_with(&format!("{law}:")))
+            .unwrap_or_else(|| panic!("{law}: {}", format_output(&result)))
+            .to_string()
+    };
+    let attempts = |line: &str| line.matches("induction on ").count();
+    // `len` walks `xs`; `ys` is only read once by a function that does
+    // not recurse.
+    let length_only = refusal("tagged.lengthOnly");
+    assert!(length_only.contains("induction on xs: "), "{length_only}");
+    assert_eq!(attempts(&length_only), 1, "{length_only}");
+    // `twice` is a name for a claim in which `len` walks `xs`.
+    let is_one = refusal("twice.isOne");
+    assert!(is_one.contains("induction on xs: "), "{is_one}");
+    // Neither the claim nor `wrapped`, opened once, calls anything that
+    // recurses.
+    let is_zero = refusal("wrapped.isZero");
+    assert!(
+        is_zero.contains("the law is about wrapped, which does not recurse"),
+        "{is_zero}"
+    );
+    assert_eq!(attempts(&is_zero), 0, "{is_zero}");
+    // The same claim under `induction xs`.
+    let named = refusal("wrapped.isZeroNamed");
+    assert!(named.contains("induction on xs: "), "{named}");
+    assert_eq!(attempts(&named), 1, "{named}");
+    let _ = fs::remove_dir_all(out);
+}
+
 #[test]
 fn lean_inducts_with_the_functional_induction_principle_and_refuses_mutations() {
     if !lean_required::lake_available() {
