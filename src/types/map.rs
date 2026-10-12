@@ -210,7 +210,21 @@ fn ensure_hashable_nv(name: &str, v: NanValue) -> Result<(), RuntimeError> {
 /// Every `Map.*` builtin finds a key through this and nothing else: the table
 /// is addressed by the key's hash, and a hash does not identify a key.
 fn key_slot(map: &PersistentMap, key: NanValue, arena: &Arena) -> Result<u64, u64> {
-    aver_memory::map_key_slot(map, key, arena)
+    aver_memory::map_key_slot_from(map, key, arena, key_home(key, arena))
+}
+
+/// The slot the search for `key` starts at: its hash.
+#[cfg(not(test))]
+fn key_home(key: NanValue, arena: &Arena) -> u64 {
+    key.map_key_hash_deep(arena)
+}
+
+/// The slot the search for `key` starts at: its hash, unless the running test
+/// placed the key (`tests::place`). Three keys with one real hash are out of
+/// reach to compute, and the tests of longer runs of keys need them.
+#[cfg(test)]
+fn key_home(key: NanValue, arena: &Arena) -> u64 {
+    tests::placed(key).unwrap_or_else(|| key.map_key_hash_deep(arena))
 }
 
 /// Remove `key` from a table the caller owns, keeping every other key findable.
@@ -234,7 +248,7 @@ fn remove_key(
     let mut gap = removed;
     let mut probe = gap.wrapping_add(1);
     while let Some(&(stored_key, stored_value)) = map.get(&probe) {
-        let home = stored_key.map_key_hash_deep(arena);
+        let home = key_home(stored_key, arena);
         if gap.wrapping_sub(home) < probe.wrapping_sub(home) {
             map = map
                 .remove_owned(&probe)
@@ -463,7 +477,11 @@ fn get_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
     }
     ensure_hashable_nv("Map.get", args[1])?;
     let map = arena.map_ref_value(args[0]);
-    match aver_memory::map_get_value(map, args[1], arena) {
+    let found = key_slot(map, args[1], arena)
+        .ok()
+        .and_then(|slot| map.get(&slot))
+        .map(|(_, value)| *value);
+    match found {
         Some(v) => Ok(NanValue::new_some_value(v, arena)),
         None => Ok(NanValue::NONE),
     }
@@ -1136,6 +1154,321 @@ mod tests {
         };
         assert_eq!(pending_scan_keys, &[home]);
         assert!(map.get(&home).is_some_and(|(key, _)| key.eq_in(b, &arena)));
+    }
+
+    // ─── Runs of more than two keys ──────────────────────────────────────
+    //
+    // A third key with the hash of the two above cannot be computed, so these
+    // tests say where the search for a key starts instead of deriving it from
+    // the key. Everything after that — the search, the insert, the removal and
+    // the remembered set — is the code a program runs.
+
+    thread_local! {
+        static PLACED: std::cell::RefCell<Vec<(u64, u64)>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// The slot a test gave `key`, if the running test placed it.
+    pub(super) fn placed(key: NanValue) -> Option<u64> {
+        PLACED.with(|placed| {
+            placed
+                .borrow()
+                .iter()
+                .find(|(bits, _)| *bits == key.bits())
+                .map(|(_, home)| *home)
+        })
+    }
+
+    /// Forgets the placements when the test ends, so a test harness that
+    /// reuses the thread does not carry them into the next test.
+    struct Placement;
+
+    impl Drop for Placement {
+        fn drop(&mut self) {
+            PLACED.with(|placed| placed.borrow_mut().clear());
+        }
+    }
+
+    /// Small Int keys `1..=homes.len()`, key `i` searched for from `homes[i - 1]`.
+    fn place(arena: &mut Arena, homes: &[u64]) -> (Placement, Vec<NanValue>) {
+        let keys: Vec<NanValue> = (1..=homes.len() as i64)
+            .map(|n| NanValue::new_int(n, arena))
+            .collect();
+        PLACED.with(|placed| {
+            *placed.borrow_mut() = keys
+                .iter()
+                .zip(homes)
+                .map(|(key, home)| {
+                    assert!(key.is_immediate(), "a placed key is named by its bits");
+                    (key.bits(), *home)
+                })
+                .collect();
+        });
+        (Placement, keys)
+    }
+
+    /// Key `i` set to value `i * 10`, in the order given, on the copying path
+    /// or the owned one.
+    fn build(arena: &mut Arena, owned: bool, keys: &[NanValue]) -> NanValue {
+        let mut map = NanValue::EMPTY_MAP;
+        for (index, key) in keys.iter().enumerate() {
+            let value = NanValue::new_int((index as i64 + 1) * 10, arena);
+            map = if owned {
+                set_nv_owned(&[map, *key, value], arena, None)
+            } else {
+                set_nv(&[map, *key, value], arena)
+            }
+            .expect("insert succeeds");
+        }
+        map
+    }
+
+    fn remove(arena: &mut Arena, owned: bool, map: NanValue, key: NanValue) -> NanValue {
+        if owned {
+            remove_nv_owned(&[map, key], arena)
+        } else {
+            remove_nv(&[map, key], arena)
+        }
+        .expect("removal succeeds")
+    }
+
+    /// The slot each of `keys` sits in, `None` for a key the table lacks. Read
+    /// off the table itself, not through the search under test.
+    fn slots(arena: &Arena, map: NanValue, keys: &[NanValue]) -> Vec<Option<u64>> {
+        let table = arena.map_ref_value(map);
+        keys.iter()
+            .map(|key| {
+                table
+                    .iter()
+                    .find(|(_, (stored, _))| stored.eq_in(*key, arena))
+                    .map(|(slot, _)| *slot)
+            })
+            .collect()
+    }
+
+    /// What `Map.get` and `Map.has` answer for each of `keys`.
+    fn answers(arena: &mut Arena, map: NanValue, keys: &[NanValue]) -> Vec<Option<i64>> {
+        keys.iter()
+            .map(|key| {
+                let found = get(arena, map, *key);
+                let has = has_nv(&[map, *key], arena).unwrap().as_bool();
+                assert_eq!(has, found.is_some(), "Map.has and Map.get disagree");
+                found
+            })
+            .collect()
+    }
+
+    /// One removal from a run of keys: where every key sits before and after,
+    /// and that each key left is still found with its own value.
+    fn check_removal(
+        homes: &[u64],
+        before: &[u64],
+        gone: usize,
+        after: &[Option<u64>],
+        what: &str,
+    ) {
+        for owned in [false, true] {
+            let case = format!("{what}, owned={owned}");
+            let mut arena = Arena::new();
+            let (_placement, keys) = place(&mut arena, homes);
+            let map = build(&mut arena, owned, &keys);
+            let expected_before: Vec<Option<u64>> = before.iter().map(|s| Some(*s)).collect();
+            assert_eq!(slots(&arena, map, &keys), expected_before, "{case}: built");
+            let all: Vec<Option<i64>> = (1..=keys.len() as i64).map(|n| Some(n * 10)).collect();
+            assert_eq!(answers(&mut arena, map, &keys), all, "{case}: built");
+
+            let rest = remove(&mut arena, owned, map, keys[gone]);
+            assert_eq!(slots(&arena, rest, &keys), after, "{case}: removed");
+            let mut left = all.clone();
+            left[gone] = None;
+            assert_eq!(answers(&mut arena, rest, &keys), left, "{case}: removed");
+            assert_eq!(len(&mut arena, rest), keys.len() - 1, "{case}");
+            if !owned {
+                assert_eq!(
+                    answers(&mut arena, map, &keys),
+                    all,
+                    "{case}: the source map"
+                );
+            }
+
+            // The removed key goes back in at the end of the run, and setting
+            // a key that stayed replaces its entry where it is.
+            let back = NanValue::new_int(7, &mut arena);
+            let again = set_nv(&[rest, keys[gone], back], &mut arena).unwrap();
+            let mut restored = left.clone();
+            restored[gone] = Some(7);
+            assert_eq!(answers(&mut arena, again, &keys), restored, "{case}: back");
+            assert_eq!(len(&mut arena, again), keys.len(), "{case}: back");
+            for (index, key) in keys.iter().enumerate() {
+                if index == gone {
+                    continue;
+                }
+                let other = NanValue::new_int(-1, &mut arena);
+                let replaced = set_nv(&[again, *key, other], &mut arena).unwrap();
+                assert_eq!(len(&mut arena, replaced), keys.len(), "{case}: replace");
+                assert_eq!(get(&mut arena, replaced, *key), Some(-1), "{case}: replace");
+            }
+        }
+    }
+
+    #[test]
+    fn three_keys_with_one_home_survive_the_removal_of_any_one() {
+        let h = 1_000;
+        let homes = [h, h, h];
+        let before = [h, h + 1, h + 2];
+        check_removal(
+            &homes,
+            &before,
+            0,
+            &[None, Some(h), Some(h + 1)],
+            "the first of three",
+        );
+        check_removal(
+            &homes,
+            &before,
+            1,
+            &[Some(h), None, Some(h + 1)],
+            "the middle of three",
+        );
+        check_removal(
+            &homes,
+            &before,
+            2,
+            &[Some(h), Some(h + 1), None],
+            "the last of three",
+        );
+    }
+
+    /// Key 3 sits in the slot its own hash names, in the middle of a run of
+    /// keys that started one slot earlier. Moving it up would put it before
+    /// the slot its search starts at, where no lookup would find it; the
+    /// removal has to step over it and move the key behind it instead.
+    #[test]
+    fn a_removal_steps_over_a_key_in_its_own_slot() {
+        let h = 5_000;
+        let homes = [h, h, h + 2, h];
+        let before = [h, h + 1, h + 2, h + 3];
+        check_removal(
+            &homes,
+            &before,
+            0,
+            &[None, Some(h), Some(h + 2), Some(h + 1)],
+            "the first, with a key at home behind it",
+        );
+        check_removal(
+            &homes,
+            &before,
+            1,
+            &[Some(h), None, Some(h + 2), Some(h + 1)],
+            "the second, with a key at home behind it",
+        );
+        check_removal(
+            &homes,
+            &before,
+            2,
+            &[Some(h), Some(h + 1), None, Some(h + 2)],
+            "the key at home",
+        );
+        check_removal(
+            &homes,
+            &before,
+            3,
+            &[Some(h), Some(h + 1), Some(h + 2), None],
+            "the last",
+        );
+    }
+
+    /// A run that starts at the last slot continues at slot 0.
+    #[test]
+    fn a_run_of_keys_wraps_past_the_last_slot() {
+        let last = u64::MAX;
+        let homes = [last, last, last];
+        let before = [last, 0, 1];
+        check_removal(
+            &homes,
+            &before,
+            0,
+            &[None, Some(last), Some(0)],
+            "the first of a wrapped run",
+        );
+        check_removal(
+            &homes,
+            &before,
+            1,
+            &[Some(last), None, Some(0)],
+            "the middle of a wrapped run",
+        );
+        check_removal(
+            &homes,
+            &before,
+            2,
+            &[Some(last), Some(0), None],
+            "the last of a wrapped run",
+        );
+
+        // A key at home in slot 0 stays there when the run it interrupts,
+        // which began at the last slot, closes up around it.
+        let homes = [last, 0, last];
+        let before = [last, 0, 1];
+        check_removal(
+            &homes,
+            &before,
+            0,
+            &[None, Some(0), Some(last)],
+            "the first, with a key at home in slot 0",
+        );
+    }
+
+    /// One owned removal that moves two remembered pairs: both are renamed,
+    /// and the collector then rewrites exactly those two.
+    #[test]
+    fn owned_remove_renames_every_remembered_pair_it_moves() {
+        let h = 9_000;
+        let mut arena = Arena::new();
+        let (_placement, keys) = place(&mut arena, &[h, h, h]);
+        let ten = NanValue::new_int(10, &mut arena);
+        let source = set_nv(&[NanValue::EMPTY_MAP, keys[0], ten], &mut arena).unwrap();
+        let proof = frame_proof(&arena);
+        let second = NanValue::new_string_value("remembered-second-value", &mut arena);
+        let third = NanValue::new_string_value("remembered-third-value", &mut arena);
+        let two = set_nv_owned(&[source, keys[1], second], &mut arena, Some(proof))
+            .expect("owned insert should remember its fresh pair");
+        let three = set_nv_owned(&[two, keys[2], third], &mut arena, Some(proof))
+            .expect("owned insert should remember its fresh pair");
+        let pending = |arena: &Arena, map: NanValue| -> Vec<u64> {
+            let aver_memory::ArenaEntry::Map {
+                pending_scan_keys, ..
+            } = arena.get(map.arena_index())
+            else {
+                panic!("expected a heap map");
+            };
+            pending_scan_keys.clone()
+        };
+        assert_eq!(pending(&arena, three), vec![h + 1, h + 2]);
+
+        let rest = remove_nv_owned(&[three, keys[0]], &mut arena).expect("owned removal");
+        assert_eq!(pending(&arena, rest), vec![h, h + 1]);
+        assert_eq!(
+            slots(&arena, rest, &keys),
+            vec![None, Some(h), Some(h + 1)],
+            "both pairs moved up one slot"
+        );
+
+        let mut roots = [rest];
+        arena.promote_young_roots_to_yard(proof.arena_mark, proof.lane_mark, &mut roots, false);
+        assert_eq!(arena.map_entries_scanned(), 2);
+        let table = arena.map_ref_value(roots[0]);
+        let (_, kept_second) = table.get(&h).expect("the second pair survived");
+        let (_, kept_third) = table.get(&(h + 1)).expect("the third pair survived");
+        assert_eq!(
+            arena.get_string_value(*kept_second),
+            "remembered-second-value"
+        );
+        assert_eq!(
+            arena.get_string_value(*kept_third),
+            "remembered-third-value"
+        );
+        assert!(pending(&arena, roots[0]).is_empty());
     }
 
     /// Every float a program can put in a map key position, including the

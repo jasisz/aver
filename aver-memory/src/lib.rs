@@ -128,7 +128,18 @@ pub fn map_key_slot<T: ArenaTypes>(
     key: NanValue,
     arena: &Arena<T>,
 ) -> Result<u64, u64> {
-    let mut slot = key.map_key_hash_deep(arena);
+    map_key_slot_from::<T>(map, key, arena, key.map_key_hash_deep(arena))
+}
+
+/// [`map_key_slot`] with the slot the search starts at given by the caller,
+/// who has the key's hash already.
+pub fn map_key_slot_from<T: ArenaTypes>(
+    map: &T::Map,
+    key: NanValue,
+    arena: &Arena<T>,
+    home: u64,
+) -> Result<u64, u64> {
+    let mut slot = home;
     loop {
         match map.get(&slot) {
             None => return Err(slot),

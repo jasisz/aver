@@ -408,10 +408,43 @@ fn bool_match_named_default_arm_matches_between_rust_and_vm() {
 /// Two different keys the VM hashes to the same 64 bits, as Int and as
 /// String. The VM addressed its map by that hash alone and merged them; the
 /// generated Rust keys a real hash table on the key itself and never did.
+///
+/// Both are held to the written expected output, each on its own: agreeing
+/// with each other would also pass if both were wrong the same way, and the
+/// other test that reads this file for the VM is only built with `wasm`.
 #[test]
-fn colliding_map_keys_match_between_rust_and_vm() {
-    assert_plain_parity("tests/fixtures/map_colliding_keys_app.av", None)
-        .unwrap_or_else(|e| panic!("{e}"));
+fn colliding_map_keys_match_the_expected_output_on_rust_and_vm() {
+    let relative = "tests/fixtures/map_colliding_keys_app.av";
+    let expected = include_str!("fixtures/map_colliding_keys_app.expected").trim();
+    let file = repo_root().join(relative);
+
+    let vm_stdout = run_vm(&file, None).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(vm_stdout, expected, "the VM's output");
+
+    let ws = temp_dir(&sanitise(relative));
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let name = format!("p_{}", sanitise(relative));
+    let rust_stdout = (|| {
+        compile_rust(&file, &project, &name, None, &[])?;
+        let bin = cargo_build(&project, &name)?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "compiled binary exited non-zero:\n{}",
+                format_output(&out)
+            ));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    assert_eq!(
+        rust_stdout.unwrap_or_else(|e| panic!("{e}")),
+        expected,
+        "the compiled Rust binary's output"
+    );
 }
 
 /// Generic List, Map and Vector builtins over an empty literal nothing
