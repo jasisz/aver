@@ -63,6 +63,11 @@ class CompareTests(unittest.TestCase):
         merged = ratchet.recorded(old, {"a.av": measured(["f.l", "h.l"])}, STEPS, full=True)
         self.assertEqual(merged, {"a.av": {"steps": ["f.l", "h.l"], "tactic": ["g.l"]}})
 
+    def test_recording_steps_takes_the_law_off_the_tactic_level(self) -> None:
+        old = {"a.av": {"steps": ["f.l"], "tactic": ["g.l", "h.l"]}}
+        merged = ratchet.recorded(old, {"a.av": measured(["f.l", "h.l"])}, STEPS, full=True)
+        self.assertEqual(merged, {"a.av": {"steps": ["f.l", "h.l"], "tactic": ["g.l"]}})
+
     def test_summary_splits_the_levels(self) -> None:
         report = {"closed_by": {"f.l": "steps", "g.l": "open", "h.l": "tactic"}}
         self.assertEqual(ratchet.summarize(report), {"steps": ["f.l"], "obligations": [], "tactic": ["h.l"], "laws": 3})

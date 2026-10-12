@@ -27,6 +27,11 @@ on:
     # nightly.
     - cron: '0 3 * * *'
   workflow_dispatch:
+    inputs:
+      record_levels:
+        description: 'Record both proof levels and upload the baseline instead of comparing'
+        type: boolean
+        default: false
 
 # A newer push to the same pull request, or a newer commit on main,
 # supersedes a run still in progress: only the latest one is worth a runner.
@@ -258,9 +263,26 @@ jobs:
           exit 1
 
       - name: Compare both levels with the baseline
+        if: ${{ !inputs.record_levels }}
         run: |
           cargo build -p aver-lang --bin aver
           python3 tools/steps_ratchet.py --lean --aver target/debug/aver --jobs 2
+
+      - name: Record both levels
+        # The tactic level cannot be measured on a pull request, so a dispatch
+        # with `record_levels` measures it here and uploads the baseline to
+        # commit.
+        if: ${{ inputs.record_levels }}
+        run: |
+          cargo build -p aver-lang --bin aver
+          python3 tools/steps_ratchet.py --lean --update --aver target/debug/aver --jobs 2
+
+      - name: Upload the recorded baseline
+        if: ${{ inputs.record_levels }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: steps-baseline
+          path: tools/steps-baseline.json
 
   proof-export:
     # Keep the existing check name: branch protection requires it by name,
