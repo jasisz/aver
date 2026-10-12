@@ -800,34 +800,62 @@ pub(super) fn emit_ref_match_rebindings(pattern: &ResolvedPattern) -> String {
     format!("{}\n            ", lines.join("\n            "))
 }
 
+/// A pattern binding that holds a recursive field is `Arc`-boxed in the
+/// generated type, so an arm that uses it as a value needs the inner value.
+/// Emit `let b = (*b).clone();` for each such binding, wherever in the
+/// pattern its constructor stands: at the top or inside a tuple, at any depth.
 pub(super) fn emit_pattern_rebindings(pattern: &ResolvedPattern, ctx: &CodegenContext) -> String {
     let mut lines = Vec::new();
-    if let ResolvedPattern::Ctor(ctor, bindings) = pattern {
-        // Constructor bindings: only Box-wrapped fields (recursive types) need deref.
-        // Look up the canonical "Type.Variant" name from the resolved ctor and feed it
-        // to constructor_boxed_bindings, which queries fn_sigs.
-        let semantic = semantic_constructor_from_resolved_ctor(ctor, &ctx.symbol_table);
-        let ctor_name = match semantic {
-            SemanticConstructor::TypeConstructor {
-                qualified_type_name,
-                variant_name,
-            } => format!("{}.{}", qualified_type_name, variant_name),
-            SemanticConstructor::Wrapper(_) | SemanticConstructor::NoneValue => {
-                // Wrapper / None ctors never carry Box-wrapped recursive fields.
-                String::new()
-            }
-            SemanticConstructor::Unknown(name) => name,
-        };
-        if !ctor_name.is_empty() {
-            for b in constructor_boxed_bindings(&ctor_name, bindings, ctx) {
-                let b = aver_name_to_rust(&b);
-                lines.push(format!("let {} = (*{}).clone();", b, b));
-            }
-        }
-    }
+    collect_pattern_rebindings(pattern, ctx, &mut lines);
     if lines.is_empty() {
         String::new()
     } else {
         format!("{}\n            ", lines.join("\n            "))
+    }
+}
+
+/// One walk over every pattern form that holds another pattern. The fields
+/// of a constructor and the parts of a list pattern are binder names here
+/// (nested ones are compiled into nested matches before any backend runs),
+/// so a tuple is the only form to descend into.
+fn collect_pattern_rebindings(
+    pattern: &ResolvedPattern,
+    ctx: &CodegenContext,
+    lines: &mut Vec<String>,
+) {
+    match pattern {
+        ResolvedPattern::Tuple(items) => {
+            for item in items {
+                collect_pattern_rebindings(item, ctx, lines);
+            }
+        }
+        ResolvedPattern::Ctor(ctor, bindings) => {
+            // Constructor bindings: only Box-wrapped fields (recursive types) need deref.
+            // Look up the canonical "Type.Variant" name from the resolved ctor and feed it
+            // to constructor_boxed_bindings, which queries fn_sigs.
+            let semantic = semantic_constructor_from_resolved_ctor(ctor, &ctx.symbol_table);
+            let ctor_name = match semantic {
+                SemanticConstructor::TypeConstructor {
+                    qualified_type_name,
+                    variant_name,
+                } => format!("{}.{}", qualified_type_name, variant_name),
+                SemanticConstructor::Wrapper(_) | SemanticConstructor::NoneValue => {
+                    // Wrapper / None ctors never carry Box-wrapped recursive fields.
+                    String::new()
+                }
+                SemanticConstructor::Unknown(name) => name,
+            };
+            if !ctor_name.is_empty() {
+                for b in constructor_boxed_bindings(&ctor_name, bindings, ctx) {
+                    let b = aver_name_to_rust(&b);
+                    lines.push(format!("let {} = (*{}).clone();", b, b));
+                }
+            }
+        }
+        ResolvedPattern::Wildcard
+        | ResolvedPattern::Literal(_)
+        | ResolvedPattern::Ident(_)
+        | ResolvedPattern::EmptyList
+        | ResolvedPattern::Cons(_, _) => {}
     }
 }
