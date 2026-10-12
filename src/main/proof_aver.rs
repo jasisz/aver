@@ -62,7 +62,7 @@ pub(super) fn run(
     // counts only when all of its obligations close.
     let mut obligation_verdicts: BTreeMap<String, Verdict> = BTreeMap::new();
     let mut obligation_cites: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    // Builtin facts that would rewrite where the producer stopped, by law.
+    // What would close a law the producer left open, by law.
     let mut hints: BTreeMap<String, Vec<String>> = BTreeMap::new();
     // The laws a project plan proved, and how a report names that proof.
     let mut by_plan: BTreeMap<String, String> = BTreeMap::new();

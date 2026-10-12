@@ -1,0 +1,104 @@
+module UsingHints
+    intent =
+        "Stuck laws and the `using` line they are hinted: a line is hinted only when the steps"
+        "close the law with it. One law closes with two earlier laws, neither enough alone, and"
+        "is hinted both in one line; one matches an earlier law whose `when` it cannot prove,"
+        "and one matches an earlier law that is itself open, and neither is hinted anything."
+    exposes [count, total, measure, size, weight]
+    effects []
+
+fn count(xs: List<Int>) -> Int
+    ? "How many items the list holds."
+    match xs
+        [] -> 0
+        [h, ..t] -> 1 + count(t)
+
+verify count
+    count([7, 8]) => 2
+
+verify count law ofJoined
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given ys: List<Int> = [[], [3]]
+    induction xs
+    count(List.concat(xs, ys)) => count(xs) + count(ys)
+
+verify count law ofReversed
+    given xs: List<Int> = [[], [1, 2]]
+    using [count.ofJoined]
+    count(List.reverse(xs)) => count(xs)
+
+fn total(xs: List<Int>) -> Int
+    ? "The sum of the items."
+    match xs
+        [] -> 0
+        [h, ..t] -> h + total(t)
+
+verify total
+    total([7, 8]) => 15
+
+verify total law ofJoined
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given ys: List<Int> = [[], [3]]
+    induction xs
+    total(List.concat(xs, ys)) => total(xs) + total(ys)
+
+verify total law ofReversed
+    given xs: List<Int> = [[], [1, 2]]
+    using [total.ofJoined]
+    total(List.reverse(xs)) => total(xs)
+
+fn measure(xs: List<Int>, ys: List<Int>) -> Int
+    ? "The items of one list reversed counted, plus the sum of another reversed."
+    count(List.reverse(xs)) + total(List.reverse(ys))
+
+verify measure
+    measure([7], [8]) => 9
+
+verify measure law backwardsIsForwards
+    given xs: List<Int> = [[], [1, 2]]
+    given ys: List<Int> = [[], [3]]
+    using []
+    measure(xs, ys) => count(xs) + total(ys)
+
+fn size(xs: List<Int>) -> Int
+    ? "How many items the list holds, counted apart from count."
+    match xs
+        [] -> 0
+        [h, ..t] -> 1 + size(t)
+
+verify size
+    size([7, 8]) => 2
+
+verify size law ofJoinedLong
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given ys: List<Int> = [[], [1, 2, 3]]
+    when size(ys) > 2
+    induction xs
+    size(List.concat(xs, ys)) => size(xs) + size(ys)
+
+verify size law ofThreeAnyLength
+    given xs: List<Int> = [[], [1]]
+    given ys: List<Int> = [[], [2, 3]]
+    given zs: List<Int> = [[], [4]]
+    using []
+    size(List.concat(List.concat(xs, ys), zs)) => size(xs) + size(ys) + size(zs)
+
+fn weight(xs: List<Int>) -> Int
+    ? "Twice the sum of the items."
+    match xs
+        [] -> 0
+        [h, ..t] -> 2 * h + weight(t)
+
+verify weight
+    weight([7, 8]) => 30
+
+verify weight law ofReversed
+    given xs: List<Int> = [[], [1, 2]]
+    using []
+    weight(List.reverse(xs)) => weight(xs)
+
+verify weight law ofReversedJoined
+    given xs: List<Int> = [[], [1, 2]]
+    given ys: List<Int> = [[], [3]]
+    using []
+    weight(List.reverse(List.concat(xs, ys))) => weight(List.concat(xs, ys))

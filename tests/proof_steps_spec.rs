@@ -3447,8 +3447,8 @@ fn lean_states_each_cited_fact_once_for_every_element_type() {
 /// The list facts of `facts::NORMALIZING` rewrite where evaluation stops
 /// although no law cites them: the laws close, and each script carries the
 /// facts it used, with their proofs, so the kernel checks them. A law they
-/// do not close is still hinted the fact that would rewrite where it
-/// stopped, in `--backend aver` text and JSON.
+/// do not close is hinted the `using` line that closes it, in
+/// `--backend aver` text and JSON.
 #[test]
 fn laws_close_by_the_list_facts_they_do_not_cite_and_a_stuck_one_is_hinted() {
     let dir = repo_root().join(FIXTURES);
@@ -3464,7 +3464,7 @@ fn laws_close_by_the_list_facts_they_do_not_cite_and_a_stuck_one_is_hinted() {
         "{out}"
     );
     assert!(
-        out.contains("    hint: `Vector.len.asList` rewrites `Vector.len(v)`; add it to `using`"),
+        out.contains("    hint: steps close this law with `using [Vector.len.asList]`"),
         "{out}"
     );
     let json = aver_in(
@@ -3652,10 +3652,11 @@ fn a_hint_never_names_an_unexposed_law_or_one_that_would_cite_back() {
     );
 }
 
-/// A hint is found where the steps stopped, not only in the two sides: in
-/// a subject split on, in the comparison of a `holds` law decided by cases,
-/// in a case of an induction, and as an earlier law the law does not cite.
-/// A fact whose `when` is false where its left side matches is no hint.
+/// The laws of a hint are found where the steps stopped, not only in the
+/// two sides: in a subject split on, in the comparison of a `holds` law
+/// decided by cases, in a case of an induction, and as an earlier law the
+/// law does not cite. A fact whose `when` is false where its left side
+/// matches is no hint, and neither is one the law does not close with.
 /// Those laws stay open; a law steps close by trying each given to induct
 /// on is told the `induction` line that goes straight there.
 #[test]
@@ -3691,7 +3692,7 @@ fn a_stuck_law_is_hinted_where_the_steps_stopped_and_never_a_false_when() {
     };
     has(
         "tail.neverLonger",
-        "`List.len.ofDropAtMost` rewrites `List.len(List.drop(xs, n)) <= List.len(xs)`; add it to `using`",
+        "steps close this law with `using [List.len.ofDropAtMost]`",
     );
     // Two givens to follow: steps try each, close it and say so.
     assert_eq!(summary["closed_by"]["count.ofJoined"], "steps");
@@ -3701,15 +3702,94 @@ fn a_stuck_law_is_hinted_where_the_steps_stopped_and_never_a_false_when() {
     );
     has(
         "count.ofReversed",
-        "`count.ofJoined` rewrites `count(List.concat(List.reverse(",
+        "steps close this law with `using [count.ofJoined]`",
     );
     // `List.take.nonPositive` needs `2 <= 0` at `List.take(xs, 2)`.
-    assert!(
-        !hints("firstTwo.twiceIsOnce")
-            .iter()
-            .any(|h| h.contains("List.take.nonPositive")),
+    assert!(hints("firstTwo.twiceIsOnce").is_empty(), "{summary}");
+    // `List.drop.nonPositive` matches `List.drop(xs, n)` too, and the law
+    // does not close with it.
+    assert_eq!(hints("tail.neverLonger").len(), 1, "{summary}");
+}
+
+/// A stuck law is hinted a `using` line only when the steps close it with
+/// that line. A law that needs two earlier laws, neither enough alone, is
+/// hinted both in one line, and closes with the line pasted. A law that
+/// matches an earlier law whose `when` it cannot prove is hinted nothing,
+/// and neither is one that matches an earlier law that is itself open.
+#[test]
+fn a_using_hint_is_the_whole_line_the_law_closes_with_or_nothing() {
+    let out = scratch("using-hints");
+    let (result, summary) = aver_backend_json("using_hints.av", &out, None);
+    let _ = fs::remove_dir_all(&out);
+    let stuck = [
+        "measure.backwardsIsForwards",
+        // Its left side matches `size.ofJoinedLong`, `when size(ys) > 2`.
+        "size.ofThreeAnyLength",
+        "weight.ofReversed",
+        // Its left side matches `weight.ofReversed`, which is open.
+        "weight.ofReversedJoined",
+    ];
+    for law in stuck {
+        assert_eq!(
+            summary["closed_by"][law],
+            "open",
+            "{law}: {}",
+            format_output(&result)
+        );
+    }
+    for law in ["count.ofReversed", "total.ofReversed", "size.ofJoinedLong"] {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    assert_eq!(
+        summary["steps_hints"],
+        serde_json::json!({
+            "measure.backwardsIsForwards":
+                ["steps close this law with `using [count.ofReversed, total.ofReversed]`"]
+        }),
         "{summary}"
     );
+    // The line, pasted; and each of its laws alone, which does not close.
+    let source = fs::read_to_string(repo_root().join(FIXTURES).join("using_hints.av")).unwrap();
+    let at = "    using []\n    measure(xs, ys)";
+    assert!(source.contains(at));
+    for (line, closes) in [
+        ("using [count.ofReversed, total.ofReversed]", "steps"),
+        ("using [count.ofReversed]", "open"),
+        ("using [total.ofReversed]", "open"),
+    ] {
+        let dir = scratch("using-hints-applied");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("using_hints.av"),
+            source.replace(at, &format!("    {line}\n    measure(xs, ys)")),
+        )
+        .unwrap();
+        let applied = aver_in(
+            &dir,
+            &[
+                "proof",
+                "using_hints.av",
+                "--backend",
+                "aver",
+                "--check-json",
+                "--sorry-budget",
+                "99",
+            ],
+        );
+        let summary: serde_json::Value = serde_json::from_str(
+            String::from_utf8_lossy(&applied.stdout)
+                .lines()
+                .rev()
+                .find(|l| l.starts_with('{'))
+                .unwrap_or_else(|| panic!("{}", format_output(&applied))),
+        )
+        .unwrap();
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(
+            summary["closed_by"]["measure.backwardsIsForwards"], closes,
+            "{line}: {summary}"
+        );
+    }
 }
 
 #[test]

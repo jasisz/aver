@@ -33,7 +33,7 @@ pub(crate) struct Env<'a> {
     /// cited law applies, cited or not
     /// ([`crate::ir::proof_steps::facts::NORMALIZING`]).
     pub fact_rules: Vec<LawRef>,
-    /// The laws before this one it does not cite, offered as hints where
+    /// The laws before this one it does not cite, noted in `hints` where
     /// evaluation stops (never applied).
     pub hint_laws: Vec<LawRef>,
     /// For a law without a `using` line, on the second pass only: the
@@ -53,9 +53,9 @@ pub(crate) struct Env<'a> {
     pub next_ih: usize,
     /// Evaluations in progress, one inside another.
     pub nesting: usize,
-    /// Builtin facts and earlier laws that would rewrite a part of a term
-    /// evaluation stopped at, or the line that names an induction, as
-    /// hints for the report (see [`super::eval`]).
+    /// The keys of the builtin facts and earlier laws whose left side
+    /// matches a part of a term evaluation stopped at: what a hinted
+    /// `using` line may add (see `super::using_hint`).
     pub hints: Vec<String>,
     /// Advice for a law the steps closed: the `induction` line that would
     /// have spared trying the others.
@@ -136,6 +136,9 @@ pub(crate) struct Env<'a> {
     pub reading: usize,
 }
 
+/// The evaluation steps one attempt on an obligation may take.
+pub(crate) const FUEL: usize = 4000;
+
 impl<'a> Env<'a> {
     pub(crate) fn new(inputs: &'a ProofLowerInputs<'a>) -> Self {
         Self {
@@ -153,7 +156,7 @@ impl<'a> Env<'a> {
             hint_laws: Vec::new(),
             auto_laws: Vec::new(),
             hyps: Vec::new(),
-            fuel: 4000,
+            fuel: FUEL,
             normal_fuel: 2000,
             next_hyp: 0,
             next_ih: 0,

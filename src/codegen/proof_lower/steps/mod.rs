@@ -32,6 +32,10 @@
 //! lines) is tried with each plan of the plans modules other `by` lines
 //! name, only for a hint naming the `by` line that would close it.
 //!
+//! A law left open is also proved again with the facts and earlier laws
+//! that match where it stopped added to its `using` line, only for a hint
+//! naming the line it closes with ([`using_hint`]).
+//!
 //! A law no producer handles keeps `steps: None` and its tactic portfolio.
 
 mod accumulator;
@@ -459,59 +463,38 @@ fn cuts_used(p: &Proof) -> bool {
     (1..=64).any(|k| uses_hyp(p, &format!("when_value{k}")))
 }
 
-/// The user functions whose calls `p` splits into the true and false cases,
-/// and a constructor of each sum type `p` splits on.
-fn split_calls(
-    p: &Proof,
-    out: &mut Vec<crate::ir::identity::FnId>,
-    ctors: &mut Vec<crate::ir::hir::ResolvedCtor>,
-) {
-    let mut all = |ps: &[Proof]| ps.iter().for_each(|q| split_calls(q, out, ctors));
+/// Calls `f` on each proof directly inside `p`.
+fn each_part<'a>(p: &'a Proof, f: &mut dyn FnMut(&'a Proof)) {
     match p {
-        Proof::Cases {
-            on,
-            if_true,
-            if_false,
-            ..
-        } => {
-            if let ResolvedExpr::Call(ResolvedCallee::Fn(id), _) = &on.node {
-                out.push(*id);
-            }
-            split_calls(if_true, out, ctors);
-            split_calls(if_false, out, ctors);
-        }
-        Proof::Symm(q) | Proof::Congr { inner: q, .. } => split_calls(q, out, ctors),
-        Proof::Absurd { contradiction, .. } => split_calls(contradiction, out, ctors),
-        Proof::Arm { premise, .. } => split_calls(premise, out, ctors),
+        Proof::Symm(q) | Proof::Congr { inner: q, .. } => f(q),
+        Proof::Absurd { contradiction, .. } => f(contradiction),
+        Proof::Arm { premise, .. } => f(premise),
         Proof::Unfold { premise, .. } | Proof::Law { premise, .. } => {
             if let Some(q) = premise {
-                split_calls(q, out, ctors);
+                f(q);
             }
         }
-        Proof::Trans { steps, .. } => all(steps),
-        Proof::Rule { premises, .. } => all(premises),
-        Proof::Enum { cases, .. } => all(cases),
-        Proof::Split { cases, .. } => {
-            if let Some(crate::ir::proof_steps::SplitCtor::Ctor(c)) = cases.first().map(|c| &c.ctor)
-            {
-                ctors.push(c.clone());
-            }
-            cases.iter().for_each(|c| split_calls(&c.proof, out, ctors))
+        Proof::Trans { steps: all, .. }
+        | Proof::Rule { premises: all, .. }
+        | Proof::Enum { cases: all, .. } => all.iter().for_each(f),
+        Proof::Cases {
+            if_true, if_false, ..
+        } => {
+            f(if_true);
+            f(if_false);
         }
+        Proof::Split { cases, .. } => cases.iter().for_each(|c| f(&c.proof)),
         Proof::Have { proof, body, .. } => {
-            split_calls(proof, out, ctors);
-            split_calls(body, out, ctors);
+            f(proof);
+            f(body);
         }
         Proof::Induct { cases, .. } => cases.iter().for_each(|c| {
-            split_calls(&c.proof, out, ctors);
-            c.carry
-                .iter()
-                .flatten()
-                .for_each(|q| split_calls(q, out, ctors));
+            f(&c.proof);
+            c.carry.iter().flatten().for_each(&mut *f);
         }),
         Proof::InductList { nil, cons, .. } | Proof::ListCases { nil, cons, .. } => {
-            split_calls(nil, out, ctors);
-            split_calls(cons, out, ctors);
+            f(nil);
+            f(cons);
         }
         Proof::Refl(_)
         | Proof::Hyp(_)
@@ -524,43 +507,51 @@ fn split_calls(
     }
 }
 
+/// The user functions whose calls `p` splits into the true and false cases,
+/// and a constructor of each sum type `p` splits on.
+fn split_calls(
+    p: &Proof,
+    out: &mut Vec<crate::ir::identity::FnId>,
+    ctors: &mut Vec<crate::ir::hir::ResolvedCtor>,
+) {
+    match p {
+        Proof::Cases { on, .. } => {
+            if let ResolvedExpr::Call(ResolvedCallee::Fn(id), _) = &on.node {
+                out.push(*id);
+            }
+        }
+        Proof::Split { cases, .. } => {
+            if let Some(crate::ir::proof_steps::SplitCtor::Ctor(c)) = cases.first().map(|c| &c.ctor)
+            {
+                ctors.push(c.clone());
+            }
+        }
+        _ => {}
+    }
+    each_part(p, &mut |q| split_calls(q, out, ctors));
+}
+
 /// Whether `p` may read hypothesis `name` (an over-approximation: a
 /// hypothesis of the same name bound inside counts too).
 fn uses_hyp(p: &Proof, name: &str) -> bool {
-    let any = |ps: &[Proof]| ps.iter().any(|q| uses_hyp(q, name));
-    match p {
+    let mut found = match p {
         Proof::Hyp(n) => n == name,
         Proof::Linear { hyps, .. } => hyps.iter().any(|n| n == name),
-        Proof::Symm(q) | Proof::Congr { inner: q, .. } => uses_hyp(q, name),
-        Proof::Absurd { contradiction, .. } => uses_hyp(contradiction, name),
-        Proof::Arm { premise, .. } => uses_hyp(premise, name),
-        Proof::Unfold { premise, .. } | Proof::Law { premise, .. } => {
-            premise.as_ref().is_some_and(|q| uses_hyp(q, name))
-        }
-        Proof::Trans { steps, .. } => any(steps),
-        Proof::Rule { premises, .. } => any(premises),
-        Proof::Enum { cases, .. } => any(cases),
-        Proof::Cases {
-            if_true, if_false, ..
-        } => uses_hyp(if_true, name) || uses_hyp(if_false, name),
-        Proof::Split { cases, .. } => cases.iter().any(|c| uses_hyp(&c.proof, name)),
-        Proof::Have { proof, body, .. } => uses_hyp(proof, name) || uses_hyp(body, name),
-        Proof::Induct { carried, cases, .. } => {
-            carried.iter().any(|n| n == name)
-                || cases.iter().any(|c| {
-                    uses_hyp(&c.proof, name) || c.carry.iter().flatten().any(|q| uses_hyp(q, name))
-                })
-        }
-        Proof::InductList { nil, cons, .. } | Proof::ListCases { nil, cons, .. } => {
-            uses_hyp(nil, name) || uses_hyp(cons, name)
-        }
-        Proof::Refl(_)
-        | Proof::UnfoldConst { .. }
-        | Proof::Proj { .. }
-        | Proof::Cell { .. }
-        | Proof::Compute { .. }
-        | Proof::Ring { .. } => false,
+        Proof::Induct { carried, .. } => carried.iter().any(|n| n == name),
+        _ => false,
+    };
+    each_part(p, &mut |q| found = found || uses_hyp(q, name));
+    found
+}
+
+/// The keys of the laws `p` applies, each once.
+fn laws_applied(p: &Proof, out: &mut Vec<String>) {
+    if let Proof::Law { law, .. } = p
+        && !out.contains(law)
+    {
+        out.push(law.clone());
     }
+    each_part(p, &mut |q| laws_applied(q, out));
 }
 
 /// What one obligation's proof needs from its environment.
@@ -578,7 +569,8 @@ struct Part {
 /// besides the `when`.
 /// `induct_on` is the function induction may follow, with the given the
 /// law's `induction` line names for it, if any; `algebra` is set for
-/// the claim of a law with an algebraic strategy.
+/// the claim of a law with an algebraic strategy; `fuel` is what each
+/// attempt may spend ([`env::FUEL`], or less for a hint's first try).
 #[allow(clippy::too_many_arguments)]
 fn prove_part(
     inputs: &ProofLowerInputs,
@@ -590,6 +582,7 @@ fn prove_part(
     auto: &[LawRef],
     induct_on: Option<(crate::ir::identity::FnId, Option<&str>)>,
     algebraic: bool,
+    fuel: usize,
     hints: &mut Vec<String>,
 ) -> Result<Part, String> {
     // Each attempt starts from a fresh environment: a failed one may have
@@ -601,6 +594,7 @@ fn prove_part(
         let mut env = fresh_env(inputs, ob, known, using, earlier, auto);
         env.memo = shared.clone();
         env.memo_mode = mode;
+        env.fuel = fuel;
         env
     };
     let mut env = fresh();
@@ -836,8 +830,8 @@ fn under_cuts(cuts: &[Cut], body: Proof, with_proofs: bool) -> Proof {
     proof
 }
 
-/// Prove law `i` by steps; `hints` collects the facts and earlier laws
-/// that would rewrite where a failed attempt stopped.
+/// Prove law `i` by steps; `hints` collects the keys of the facts and
+/// earlier laws whose left side matches where a failed attempt stopped.
 ///
 /// A law with `because` lines is proved the way the user argued it: with
 /// guard `H` and reasons `R1 … Rn`, each `Ri` under `H` and the reasons
@@ -854,7 +848,20 @@ fn produce(
     auto: &[LawRef],
     hints: &mut Vec<String>,
 ) -> Produced {
-    let t = &ir.law_theorems[i];
+    produce_as(inputs, ir, i, &ir.law_theorems[i], auto, env::FUEL, hints)
+}
+
+/// [`produce`] for `t` standing where law `i` stands: law `i` itself, or
+/// law `i` with another `using` line; each attempt may spend `fuel`.
+fn produce_as(
+    inputs: &ProofLowerInputs,
+    ir: &ProofIR,
+    i: usize,
+    t: &LawTheorem,
+    auto: &[LawRef],
+    fuel: usize,
+    hints: &mut Vec<String>,
+) -> Produced {
     let refuse = |why: String| Produced {
         law: Err(why),
         advice: Vec::new(),
@@ -940,7 +947,7 @@ fn produce(
         };
         let known = known_of(&cuts);
         let part = prove_part(
-            inputs, t, &part_ob, &known, &using, &earlier, auto, induct_on, false, hints,
+            inputs, t, &part_ob, &known, &using, &earlier, auto, induct_on, false, fuel, hints,
         )
         .map_err(|why| format!("reason {} of {n}: {why}", i + 1));
         let proof = part.as_ref().ok().map(|p| p.proof.clone());
@@ -971,6 +978,7 @@ fn produce(
         auto,
         Some((t.fn_id, t.induction_given.as_deref())),
         algebraic && n == 0,
+        fuel,
         hints,
     )
     .map_err(|why| {
@@ -1200,10 +1208,138 @@ fn auto_at(
         &[],
         Some((t.fn_id, None)),
         false,
+        env::FUEL,
         &mut hints,
     )?;
     part.proof = under_cuts(&cuts, part.proof, true);
     Ok(part)
+}
+
+/// Most times the laws of one hint are tried: a law added to the `using`
+/// line moves where the steps stop, and what matches there is added for
+/// the next try.
+const MAX_HINT_ROUNDS: usize = 3;
+
+/// What each attempt of a hint's first try may spend: an eighth of
+/// [`env::FUEL`], so a line that does not close the law costs a part of
+/// what the law itself did. A line that closes the law only on more than
+/// this is not hinted.
+const HINT_FUEL: usize = env::FUEL / 8;
+
+/// Most laws one hint adds to a `using` line.
+const MAX_HINT_LAWS: usize = 8;
+
+/// Whether the steps closed the law `key` among `laws`, and every law its
+/// script cites: a law that cites an open law is open too.
+fn closed_by_steps(inputs: &ProofLowerInputs, laws: &[LawTheorem], key: &str) -> bool {
+    let mut pending = vec![key.to_string()];
+    let mut seen: Vec<String> = Vec::new();
+    while let Some(next) = pending.pop() {
+        if seen.contains(&next) {
+            continue;
+        }
+        let Some(script) = laws
+            .iter()
+            .find(|c| law_key(inputs, c) == next)
+            .and_then(|c| c.steps.as_ref())
+        else {
+            return false;
+        };
+        let cited = script.laws.iter().filter(|l| l.fact.is_none());
+        pending.extend(cited.map(|l| l.key.clone()));
+        seen.push(next);
+    }
+    true
+}
+
+/// The hint for law `i`, which the steps left open: the `using` line they
+/// close it with, or `None`. `found` are the facts and earlier laws whose
+/// left side matched where an attempt stopped. Those the steps closed are
+/// added to the law's line and the law is tried again; where it still
+/// stops, what matches there is added too, [`MAX_HINT_ROUNDS`] times at
+/// most. A line is hinted only when the law closed with it, every
+/// obligation of a `because` chain included, so a law whose `when` cannot
+/// be proved where it matched is never hinted, and neither is an open law,
+/// which would leave the citing law open. The line names only the laws the
+/// proof applies when the law closes with those alone.
+fn using_hint(
+    inputs: &ProofLowerInputs,
+    ir: &ProofIR,
+    i: usize,
+    mut found: Vec<String>,
+) -> Option<String> {
+    use crate::ir::proof_steps::facts;
+    let t = &ir.law_theorems[i];
+    if found.is_empty() || t.by_plan.is_some() {
+        return None;
+    }
+    let earlier = &ir.law_theorems[..i];
+    let closed = |key: &str| facts::named(key).is_some() || closed_by_steps(inputs, earlier, key);
+    let base = t.using.clone().unwrap_or_default();
+    // A line that cites an open law leaves the law open whatever is added.
+    let cited_closed = |l: &LawRef| l.fact.is_some() || closed(&l.key);
+    if !cited(inputs, ir, t, &base)?.iter().all(cited_closed) {
+        return None;
+    }
+    // A law of the law's own module is named as its text names it.
+    let own = &inputs.symbol_table.fn_entry(t.fn_id).key.scope;
+    let name = |key: &String| -> String {
+        earlier
+            .iter()
+            .find(|c| law_key(inputs, c) == *key)
+            .map(|c| (&inputs.symbol_table.fn_entry(c.fn_id).key, &c.law_name))
+            .filter(|(k, _)| k.scope == *own)
+            .map_or_else(|| key.clone(), |(k, law)| format!("{}.{law}", k.name))
+    };
+    let line = |added: &[String]| -> Vec<String> {
+        base.iter().cloned().chain(added.iter().map(name)).collect()
+    };
+    let closes = |added: &[String], fuel: usize, found: &mut Vec<String>| {
+        let with = LawTheorem {
+            using: Some(line(added)),
+            ..t.clone()
+        };
+        produce_as(inputs, ir, i, &with, &[], fuel, found).law.ok()
+    };
+    let mut added: Vec<String> = Vec::new();
+    for _ in 0..MAX_HINT_ROUNDS {
+        let before = added.len();
+        for key in std::mem::take(&mut found) {
+            if added.len() < MAX_HINT_LAWS && !added.contains(&key) && closed(&key) {
+                added.push(key);
+            }
+        }
+        if added.len() == before {
+            return None;
+        }
+        // First on a short budget: a line that closes the law seldom needs
+        // more, and a line that does not would spend all there is. Then as
+        // the law will be proved once the line is in its text.
+        if closes(&added, HINT_FUEL, &mut found).is_none() {
+            continue;
+        }
+        let Some(script) = closes(&added, env::FUEL, &mut Vec::new()) else {
+            continue;
+        };
+        let mut applied = Vec::new();
+        laws_applied(&script.proof, &mut applied);
+        let fewer: Vec<String> = added
+            .iter()
+            .filter(|k| applied.contains(k))
+            .cloned()
+            .collect();
+        if !fewer.is_empty()
+            && fewer.len() < added.len()
+            && closes(&fewer, env::FUEL, &mut Vec::new()).is_some()
+        {
+            added = fewer;
+        }
+        return Some(format!(
+            "steps close this law with `using [{}]`",
+            line(&added).join(", ")
+        ));
+    }
+    None
 }
 
 /// Fill `LawTheorem::steps` for every law a producer can prove.
@@ -1214,6 +1350,7 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
     // stays open.
     let mut named_plans = None;
     for i in 0..ir.law_theorems.len() {
+        // The laws that match where an attempt stopped, by key.
         let mut hints = Vec::new();
         // A law that names its plan is proved by that plan alone.
         let mut produced = if ir.law_theorems[i].by_plan.is_some() {
@@ -1284,7 +1421,15 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                 // Then, for a wrapper that starts an accumulator at a
                 // constant, the law about the recursion that closes it.
                 from_plans.extend(accumulator::hint(inputs, ir, i));
-                from_plans.append(&mut hints);
+                // Then the `using` line the steps close it with.
+                let started = std::time::Instant::now();
+                let line = using_hint(inputs, ir, i, hints);
+                if debug {
+                    let key = law_key(inputs, &ir.law_theorems[i]);
+                    let ms = started.elapsed().as_millis();
+                    eprintln!("steps: {key}: using hint in {ms} ms: {line:?}");
+                }
+                from_plans.extend(line);
                 let hints = from_plans;
                 ir.law_theorems[i].steps = None;
                 ir.law_theorems[i].steps_refusal = Some(why);
