@@ -12,8 +12,8 @@ pub(super) struct StepsReport {
     pub rejected: BTreeSet<String>,
     /// Why no steps were written, by law.
     pub refused: BTreeMap<String, String>,
-    /// The builtin facts that would rewrite where the producer stopped, by
-    /// law (see `LawTheorem::steps_hints`).
+    /// What would close a law the producer left open, by law (see
+    /// `LawTheorem::steps_hints`).
     pub hints: BTreeMap<String, Vec<String>>,
     /// The laws a project plan proved (`by Module.plan`), with how a report
     /// names that proof, read from the comment its script starts with.

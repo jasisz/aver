@@ -3991,9 +3991,11 @@ impl Env<'_> {
     /// scope (a subject split on, a `holds` comparison decided by cases),
     /// one match each: pattern matching on the term as it stands, never a
     /// rewrite followed by another match. A match where the law's `when`
-    /// computes to `false`, or a hypothesis states it false, is no hint.
+    /// computes to `false`, or a hypothesis states it false, is no match.
+    /// What is noted is the law's key: a candidate for the `using` line,
+    /// hinted only once the law closes with it ([`super::using_hint`]).
     pub(crate) fn note_fact_hints(&mut self, terms: &[&Term]) {
-        use crate::ir::proof_steps::{facts, show};
+        use crate::ir::proof_steps::facts;
         fn parts<'t>(t: &'t Term, out: &mut Vec<&'t Term>) {
             out.push(t);
             for c in term::children(t) {
@@ -4037,15 +4039,8 @@ impl Env<'_> {
                     said != Some(false)
                 })
             });
-            if let Some(part) = found {
-                let hint = format!(
-                    "`{}` rewrites `{}`; add it to `using`",
-                    law.key,
-                    show::term(part, self.inputs.symbol_table)
-                );
-                if !self.hints.contains(&hint) {
-                    self.hints.push(hint);
-                }
+            if found.is_some() && !self.hints.contains(&law.key) {
+                self.hints.push(law.key);
             }
         }
     }
