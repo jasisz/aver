@@ -2,6 +2,7 @@
 ///
 /// Only pure namespaces are mapped. Effectful services (Console, Disk, Http, etc.)
 /// are skipped by the Lean transpiler — those functions won't appear in output.
+use super::syntax::operand;
 use crate::ast::Spanned;
 use crate::codegen::CodegenContext;
 use crate::codegen::builtins::{Builtin, recognize_builtin};
@@ -220,7 +221,7 @@ pub fn emit_builtin_call(
         // `concatLists` call ends up as `concatLists xs ++ [v] ys`
         // which Lean parses as `concatLists xs ++ ([v] ys)` and fails
         // with "function expected at [v]". Same hazard for `::`.
-        ListPrepend => format!("({} :: {})", a[0], p(&a[1])),
+        ListPrepend => format!("({} :: {})", operand(&a[0]), p(&a[1])),
         // `Int.toNat` takes an `Int`, so a literal count needs no ascription.
         ListTake => format!("{}.take (Int.toNat {})", p(&a[0]), int_arg(&args[1], ctx)),
         ListDrop => format!("{}.drop (Int.toNat {})", p(&a[0]), int_arg(&args[1], ctx)),
@@ -307,18 +308,6 @@ fn emit_list_length_subject(arg: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -
 fn p(s: &str) -> String {
     if s.contains(' ') && !s.starts_with('"') && !is_group_with_projections(s) {
         format!("({})", s)
-    } else {
-        s.to_string()
-    }
-}
-
-/// An operand of a Bool connective. A `match` written bare takes everything
-/// after its last arm into that arm: `match y with | 0 => false | n + 1 => p
-/// && q` is the match whose second arm is `p && q`, not the match and then
-/// `q`. So a `match` operand goes out in brackets.
-fn operand(s: &str) -> String {
-    if s.trim_start().starts_with("match ") {
-        format!("({s})")
     } else {
         s.to_string()
     }

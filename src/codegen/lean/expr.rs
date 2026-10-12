@@ -1,6 +1,7 @@
 /// Aver expressions → Lean 4 expression strings.
 use super::builtins;
 use super::pattern::emit_pattern;
+use super::syntax::operand;
 pub(crate) use super::syntax::{aver_name_to_lean, lean_name_to_aver};
 use crate::ast::{BinOp, Literal, Spanned};
 use crate::codegen::CodegenContext;
@@ -85,7 +86,7 @@ pub(super) fn typed_comparison_operands(
     {
         l = format!("({l} : {})", super::types::type_to_lean(ty));
     }
-    (l, r)
+    (operand(&l), r)
 }
 
 /// Emit a Lean 4 expression from an Aver Expr.
@@ -420,7 +421,7 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
             updates,
             ..
         } => {
-            let base_str = emit_expr(base, ctx);
+            let base_str = operand(&emit_expr(base, ctx));
             let parts: Vec<String> = updates
                 .iter()
                 .map(|(name, expr)| {
@@ -609,7 +610,7 @@ fn int_binop_operands(
     if (is_int_operand(left) || is_int_operand(right)) && !pins_int(left) && !pins_int(right) {
         l = format!("({l} : Int)");
     }
-    (l, r)
+    (operand(&l), r)
 }
 
 /// Lean text of a literal.
@@ -877,7 +878,7 @@ fn emit_fn_call(
             if arg_strs.is_empty() {
                 func
             } else {
-                format!("{} {}", func, arg_strs.join(" "))
+                format!("{} {}", operand(&func), arg_strs.join(" "))
             }
         }
     }
@@ -1005,7 +1006,7 @@ fn emit_match(
         let monadify_arms = ctx.lean_do_block.get()
             && (resolved_expr_contains_error_prop(true_body)
                 || resolved_expr_contains_error_prop(false_body));
-        let cond = emit_expr(subject, ctx);
+        let cond = operand(&emit_expr(subject, ctx));
         let mut t = emit_expr(true_body, ctx);
         let mut f = emit_expr(false_body, ctx);
         if monadify_arms {
@@ -1043,7 +1044,7 @@ fn emit_match(
         && arms
             .iter()
             .any(|arm| resolved_expr_contains_error_prop(&arm.body));
-    let subj = emit_expr(subject, ctx);
+    let subj = operand(&emit_expr(subject, ctx));
     let mut arm_strs = Vec::new();
     for arm in arms {
         let pat = emit_pattern(&arm.pattern, ctx);

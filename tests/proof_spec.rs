@@ -94,6 +94,8 @@ mod literalization;
 mod manifest_compare;
 #[path = "proof_spec/map_set_laws.rs"]
 mod map_set_laws;
+#[path = "proof_spec/match_operands.rs"]
+mod match_operands;
 #[path = "proof_spec/mutual_int_phase.rs"]
 mod mutual_int_phase;
 #[path = "proof_spec/oracle_ground.rs"]

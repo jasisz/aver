@@ -1,0 +1,229 @@
+module LeanMatchOperands
+    intent = "An operand must finish before the operation following it."
+    effects []
+
+fn same(x: Int, b: Bool) -> Bool
+    (match x
+        0 -> true
+        _ -> false
+    ) == b
+
+fn shifted(x: Int, y: Int) -> Int
+    (match x
+        0 -> 1
+        _ -> 2
+    ) + y
+
+verify same
+    same(0, false) => false
+    same(0, true) => true
+    same(1, false) => true
+
+verify shifted
+    shifted(0, 10) => 11
+    shifted(1, 10) => 12
+
+fn minus(x: Int, y: Int) -> Int
+    (match x
+        0 -> 1
+        _ -> 2
+    ) - y
+
+fn times(x: Int, y: Int) -> Int
+    (match x
+        0 -> 1
+        _ -> 2
+    ) * y
+
+fn equal(x: Int, y: Int) -> Bool
+    (match x
+        0 -> 1
+        _ -> 2
+    ) == y
+
+fn unequal(x: Int, y: Int) -> Bool
+    (match x
+        0 -> 1
+        _ -> 2
+    ) != y
+
+fn below(x: Int, y: Int) -> Bool
+    (match x
+        0 -> 1
+        _ -> 2
+    ) < y
+
+fn above(x: Int, y: Int) -> Bool
+    (match x
+        0 -> 1
+        _ -> 2
+    ) > y
+
+fn atMost(x: Int, y: Int) -> Bool
+    (match x
+        0 -> 1
+        _ -> 2
+    ) <= y
+
+fn atLeast(x: Int, y: Int) -> Bool
+    (match x
+        0 -> 1
+        _ -> 2
+    ) >= y
+
+fn divided(x: Int, y: Float) -> Float
+    (match x
+        0 -> 8.0
+        _ -> 12.0
+    ) / y
+
+fn rightOperand(x: Int, y: Int) -> Int
+    y + (match x
+        0 -> 1
+        _ -> 2
+    )
+
+fn anchored(x: Int) -> Int
+    (match x
+        0 -> 1
+        _ -> 2
+    ) + (match x
+        0 -> 3
+        _ -> 4
+    )
+
+fn ifOperand(b: Bool, y: Int) -> Int
+    (match b
+        true -> 1
+        false -> 2
+    ) + y
+
+fn prepend(x: Int, xs: List<Int>) -> List<Int>
+    List.prepend((match x
+        0 -> 1
+        _ -> 2
+    ), xs)
+
+fn concat(x: Int, suffix: String) -> String
+    (match x
+        0 -> "a"
+        _ -> "b"
+    ) + suffix
+
+fn boolOperands(x: Int, b: Bool) -> Bool
+    Bool.or(Bool.and((match x
+        0 -> true
+        _ -> false
+    ), b), Bool.not((match x
+        0 -> true
+        _ -> false
+    )))
+
+record Boxed
+    value: Int
+
+fn projected(x: Int) -> Int
+    (match x
+        0 -> Boxed(value = 1)
+        _ -> Boxed(value = 2)
+    ).value
+
+fn subject(x: Int) -> Int
+    match (match x
+        0 -> 1
+        _ -> 2
+    )
+        1 -> 10
+        _ -> 20
+
+fn condition(x: Int) -> Int
+    match (match x
+        0 -> true
+        _ -> false
+    )
+        true -> 10
+        false -> 20
+
+fn updated(x: Int) -> Boxed
+    Boxed.update((match x
+        0 -> Boxed(value = 1)
+        _ -> Boxed(value = 2)
+    ), value = 3)
+
+fn quotient(x: Int) -> Int
+    Int.div((match x
+        0 -> 8
+        _ -> 12
+    ), 2)
+
+fn remainder(x: Int) -> Int
+    Int.mod((match x
+        0 -> 8
+        _ -> 12
+    ), 3)
+
+verify minus
+    minus(0, 10) => -9
+verify times
+    times(0, 10) => 10
+verify equal
+    equal(0, 2) => false
+verify unequal
+    unequal(0, 1) => false
+verify below
+    below(0, 2) => true
+verify above
+    above(0, 2) => false
+verify atMost
+    atMost(0, 1) => true
+verify atLeast
+    atLeast(0, 2) => false
+verify divided
+    divided(0, 2.0) => 4.0
+verify rightOperand
+    rightOperand(0, 10) => 11
+verify anchored
+    anchored(0) => 4
+verify ifOperand
+    ifOperand(true, 10) => 11
+verify prepend
+    prepend(0, [10]) => [1, 10]
+verify concat
+    concat(0, "z") => "az"
+verify boolOperands
+    boolOperands(0, false) => false
+verify projected
+    projected(0) => 1
+verify subject
+    subject(0) => 10
+verify condition
+    condition(0) => 10
+verify updated
+    updated(0) => Boxed(value = 3)
+verify quotient
+    quotient(0) => 4
+verify remainder
+    remainder(0) => 2
+
+verify same law operandInClaim
+    given x: Int = [0, 1]
+    given b: Bool = [false, true]
+    same(x, b) => (match x
+        0 -> true
+        _ -> false
+    ) == b
+
+verify same law matchOnLeft
+    given x: Int = [0, 1]
+    (match x
+        0 -> true
+        _ -> false
+    ) => same(x, true)
+
+verify same law matchPremise
+    given x: Int = [0, 1]
+    when (match x
+        0 -> true
+        _ -> false
+    )
+    same(x, true) => true

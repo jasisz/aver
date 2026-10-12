@@ -1,3 +1,4 @@
+use super::super::syntax::operand;
 use super::VerifyEmitMode;
 use super::expr::{aver_name_to_lean, emit_expr, emit_int_anchored, resolve_rewrite_output};
 use super::kernel_decide::CaseDecidability;
@@ -29,7 +30,7 @@ fn oracle_subtype_for(method: &str) -> Option<&'static str> {
 pub(super) fn emit_sample_guard(guard: &Spanned<Expr>, ctx: &CodegenContext) -> String {
     let active = ctx.active_module_scope();
     let resolved = ctx.resolve_expr(guard, active.as_deref());
-    super::expr::emit_expr(&resolved, ctx)
+    operand(&super::expr::emit_expr(&resolved, ctx))
 }
 
 /// Emit verify blocks as Lean 4 `example` declarations.
@@ -492,7 +493,7 @@ fn emit_statement_lhs(left: &Spanned<Expr>, ctx: &CodegenContext) -> (String, bo
     let scope = ctx.active_module_scope();
     let resolved = ctx.resolve_expr(left, scope.as_deref());
     if !super::expr::resolved_expr_contains_error_prop(&resolved) {
-        return (super::expr::emit_expr(&resolved, ctx), false);
+        return (operand(&super::expr::emit_expr(&resolved, ctx)), false);
     }
     let body = ctx.with_lean_do_block(true, || super::expr::emit_expr(&resolved, ctx));
     (format!("(do pure ({}))", body), true)
@@ -676,7 +677,7 @@ fn emit_verify_trace_block_proofs(
             &ctx.capabilities,
         );
 
-        let lhs_str = emit_expr(&resolve_rewrite_output(&lhs_rw, ctx, None), ctx);
+        let lhs_str = operand(&emit_expr(&resolve_rewrite_output(&lhs_rw, ctx, None), ctx));
         let rhs_str = emit_expr(&resolve_rewrite_output(&rhs_rw, ctx, None), ctx);
 
         match verify_mode {
@@ -883,7 +884,10 @@ fn emit_verify_law_block(
         // `LE Natural` / `OfNat Natural 10` in Lean.
         let val_projected =
             crate::codegen::common::project_lifted_idents_to_val(&oracle_projected, &lifted_vars);
-        emit_expr(&resolve_rewrite_output(&val_projected, ctx, None), ctx)
+        operand(&emit_expr(
+            &resolve_rewrite_output(&val_projected, ctx, None),
+            ctx,
+        ))
     });
     let fresh_resource_params =
         crate::codegen::common::law_fresh_resource_params(law, &ctx.capabilities);
@@ -1858,13 +1862,16 @@ pub(crate) fn law_as_lemma_statement(
     {
         return None;
     }
-    let lhs = emit_expr(&resolve_rewrite_output(&law_lhs, ctx, None), ctx);
+    let lhs = operand(&emit_expr(
+        &resolve_rewrite_output(&law_lhs, ctx, None),
+        ctx,
+    ));
     let rhs = emit_expr(&resolve_rewrite_output(&law_rhs, ctx, None), ctx);
     // A `when`-law is cited as the conditional rewrite the auto-prover proved:
     // `<premise> = true -> lhs = rhs`, matching the universal theorem.
     match &law.when {
         Some(when) => {
-            let premise = emit_expr(&resolve_rewrite_output(when, ctx, None), ctx);
+            let premise = operand(&emit_expr(&resolve_rewrite_output(when, ctx, None), ctx));
             Some((theorem_base, format!("{premise} = true -> {lhs} = {rhs}")))
         }
         None => Some((theorem_base, format!("{lhs} = {rhs}"))),

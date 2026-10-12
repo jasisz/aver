@@ -7,6 +7,22 @@
 //! emitted proof projects carry) for its own token table, so a toolchain
 //! upgrade fails loudly when this snapshot needs to grow.
 
+/// Close a right-extending term before an operator, projection, argument or
+/// subject delimiter follows it. Terminal terms and already bracketed terms
+/// keep their spelling; this is deliberately narrower than argument atomization.
+/// `match` is emitted bare, `if` is currently bracketed, and generated proof
+/// expressions can also use binders and local declarations.
+pub(super) fn operand(s: &str) -> String {
+    if matches!(
+        s.split_whitespace().next(),
+        Some("match" | "if" | "fun" | "let" | "have")
+    ) {
+        format!("({s})")
+    } else {
+        s.to_string()
+    }
+}
+
 /// Identifier-shaped syntax tokens registered by `import Lean` in Lean 4.32,
 /// plus global declarations whose bare names are ambiguous in generated code.
 const LEAN_RESERVED: &[&str] = &[
@@ -274,6 +290,25 @@ mod tests {
     use std::process::Command;
 
     use super::aver_name_to_lean;
+
+    #[test]
+    fn operand_closes_only_bare_right_extending_terms() {
+        for term in [
+            "match x with | 0 => a | _ => b",
+            "if c then a else b",
+            "fun x => x",
+            "let x := a; x",
+            "have h : p := hp; a",
+            "  match\nx with | _ => a",
+        ] {
+            assert_eq!(super::operand(term), format!("({term})"));
+            let grouped = format!("({term})");
+            assert_eq!(super::operand(&grouped), grouped);
+        }
+        for term in ["x", "f x", "(x + y)", "matchResult", "if'", "\"match x\""] {
+            assert_eq!(super::operand(term), term);
+        }
+    }
 
     /// Whether a failed `lean` invocation died fetching the pinned
     /// toolchain rather than running the probe. The `lean` on PATH is
