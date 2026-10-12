@@ -35,7 +35,10 @@ where
 }
 
 /// A wasm build has no threads to start: the work runs on the caller's
-/// stack, and a panic is still an `Err`.
+/// stack. The wasm targets build with `panic = "abort"`, so a panic there
+/// traps the module instead of unwinding to this `catch_unwind`; the `Err`
+/// arm is reached only on a build that unwinds. Either way a panic is never
+/// an accepted proof.
 #[cfg(target_family = "wasm")]
 pub(crate) fn run<T, F>(what: &str, work: F) -> Result<T, String>
 where
