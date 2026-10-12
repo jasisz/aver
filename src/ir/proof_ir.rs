@@ -508,11 +508,11 @@ pub struct LawTheorem {
     /// Why no producer wrote steps, when none did: where it stopped, with
     /// both sides and the hypotheses in scope.
     pub steps_refusal: Option<String>,
-    /// When no producer wrote steps: each builtin fact whose left side
-    /// matches a part of where evaluation stopped, with that part, as a
-    /// hint to cite it. Never applied without `using`. When steps closed
-    /// the law: advice that would make them faster, such as the
-    /// `induction` line they found by trying each given.
+    /// When no producer wrote steps: what would close the law, each found
+    /// by proving the law with it, such as the `using` line the steps
+    /// close it with. Never applied until the law's text says so. When
+    /// steps closed the law: advice that would make them faster, such as
+    /// the `induction` line they found by trying each given.
     pub steps_hints: Vec<String>,
     /// When the steps closed a law without a `using` line only on the
     /// automatic pass: the earlier laws they applied, in file order, which
