@@ -52,17 +52,21 @@ const READ_FACT_FUEL: usize = 150;
 /// was.
 pub(crate) const READ_CLAIM_FUEL: usize = 500;
 
-/// A budget of this module as an attempt gets it: `limit`, or the percentage
-/// of it `AVER_STEPS_READ_BUDGET_PERCENT` names. The tests set 50 to check
+/// A budget of this module as an attempt gets it: `limit`, or a smaller
+/// percentage of it named by `AVER_STEPS_READ_BUDGET_PERCENT`.
+///
+/// The variable is an internal switch for one test, which sets 50 to check
 /// that the laws these readings close need less than half of each budget,
-/// so a change that eats the room shows there before a law reopens.
+/// so a change that eats the room shows there before a law reopens. It can
+/// only shrink a budget: a value above 100, or one that is not a number, is
+/// read as 100, so no environment makes a source close more than another.
 pub(crate) fn budget(limit: usize) -> usize {
     static PERCENT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     let percent = *PERCENT.get_or_init(|| {
         std::env::var("AVER_STEPS_READ_BUDGET_PERCENT")
             .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(100)
+            .and_then(|v| v.parse::<usize>().ok())
+            .map_or(100, |p| p.min(100))
     });
     limit * percent / 100
 }

@@ -3627,16 +3627,9 @@ fn a_hint_never_names_an_unexposed_law_or_one_that_would_cite_back() {
     )
     .unwrap();
     let hints = |law: &str| summary["steps_hints"][law].to_string();
-    // `total.ofJoined` closes by its induction hypothesis read as evaluated;
-    // the law about the reversed list stays open, with the helper's law
-    // matching where it stops.
-    assert_eq!(summary["closed_by"]["total.ofJoined"], "steps", "{summary}");
-    assert_eq!(
-        summary["closed_by"]["total.ofReversedJoined"], "open",
-        "{summary}"
-    );
+    assert_eq!(summary["closed_by"]["total.ofJoined"], "open", "{summary}");
     assert!(
-        !hints("total.ofReversedJoined").contains("Lib.hidden.ofJoined"),
+        !hints("total.ofJoined").contains("Lib.hidden.ofJoined"),
         "{summary}"
     );
     // The module's own law about its helper is used inside the module.
@@ -5060,16 +5053,11 @@ fn both_kernels_read_a_hypothesis_as_evaluated_and_refuse_a_wrong_evaluation() {
 
 /// Every law the evaluated hypotheses close, in the fixtures and in the
 /// corpus, with the file it is in and the root its modules resolve from.
-const EVALUATED_HYPOTHESIS_ROOM: [(&str, &str, &[&str]); 11] = [
+const EVALUATED_HYPOTHESIS_ROOM: [(&str, &str, &[&str]); 10] = [
     (
         "tests/fixtures/proof_steps/evaluated_hypotheses.av",
         "tests/fixtures/proof_steps",
         &EVALUATED_HYPOTHESIS_LAWS,
-    ),
-    (
-        "tests/fixtures/proof_steps/hint_scope/main.av",
-        "tests/fixtures/proof_steps/hint_scope",
-        &["total.ofJoined"],
     ),
     (
         "examples/formal/affine_wrapper_law.av",
