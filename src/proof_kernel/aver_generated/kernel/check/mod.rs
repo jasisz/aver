@@ -1847,24 +1847,27 @@ pub fn split(
                 (
                     true,
                     crate::proof_kernel::aver_generated::kernel::term::Term::TMatch(s, arms),
-                ) => crate::proof_kernel::aver_generated::kernel::check::splitOn(
-                    (&(crate::proof_kernel::aver_generated::kernel::subst::subst(
-                        &s,
-                        &crate::proof_kernel::aver_generated::kernel::check::bindLets(
-                            d.lets,
-                            crate::proof_kernel::aver_generated::kernel::check::zipBind(
-                                &d.params, xs,
-                            )
-                            .reverse(),
-                        )?,
-                    )?) == on),
-                    &arms,
-                    on,
-                    h,
-                    cs,
-                    env,
-                    path,
-                ),
+                ) => {
+                    let s = (*s).clone();
+                    crate::proof_kernel::aver_generated::kernel::check::splitOn(
+                        (&(crate::proof_kernel::aver_generated::kernel::subst::subst(
+                            &s,
+                            &crate::proof_kernel::aver_generated::kernel::check::bindLets(
+                                d.lets,
+                                crate::proof_kernel::aver_generated::kernel::check::zipBind(
+                                    &d.params, xs,
+                                )
+                                .reverse(),
+                            )?,
+                        )?) == on),
+                        &arms,
+                        on,
+                        h,
+                        cs,
+                        env,
+                        path,
+                    )
+                }
                 _ => crate::proof_kernel::aver_generated::kernel::check::refuse(
                     path,
                     aver_rt::AverStr::from({
