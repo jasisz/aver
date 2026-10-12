@@ -544,10 +544,11 @@ pub struct CodegenContext {
     /// law never changes the definition it is about (#1404).
     pub lean_match_equations: std::cell::Cell<bool>,
     /// Whether a `match` is emitted with `(generalizing := false)`. A step
-    /// proof that inducts by a type's recursor states each case among
-    /// hypotheses about the case's names; a `match` on one of those names
-    /// would otherwise take the hypotheses into its motive, and the case's
-    /// statement would no longer be the one the opened definition gives.
+    /// proof states its terms among hypotheses about the law's names (a
+    /// `when`, a case's premise, an induction hypothesis); a `match` on one
+    /// of those names would otherwise take the hypotheses into its motive,
+    /// and the term would no longer be the one the law or the opened
+    /// definition gives.
     pub lean_match_fixed: std::cell::Cell<bool>,
     /// Claims the exporter refused to state, keyed by identity so the
     /// same refusal seen twice counts once.

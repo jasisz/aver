@@ -55,6 +55,10 @@ fn proof_export_match_operands_are_closed_before_following_syntax() {
         "def ifOperand (b : Bool) (y : Int) : Int := ((if b then (1 : Int) else (2 : Int)) + y)",
         "def projected (x : Int) : Int := (match x with | 0 => { value := 1 : Boxed } | _ => { value := 2 : Boxed }).value",
         "def boolOperands (x : Int) (b : Bool) : Bool := (((match x with | 0 => true | _ => false) && b) || (!(match x with | 0 => true | _ => false)))",
+        // The step proof reads `h_when` at the match the law states: a plain
+        // `match x` beside a hypothesis about `x` would take it into its
+        // motive and be another term.
+        "(show (match (generalizing := false) x with | 0 => true | _ => false : Bool) = (true : Bool) from h_when)",
     ] {
         assert!(flat.contains(expected), "missing `{expected}`:\n{lean}");
     }

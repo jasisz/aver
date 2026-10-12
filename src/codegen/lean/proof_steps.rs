@@ -459,8 +459,6 @@ struct Renderer<'a> {
     /// Hypotheses the theorem introduces whose term is a bare comparison:
     /// Lean states them `(a < b) = true`, an equation of Props.
     prop_hyps: Vec<String>,
-    /// Whether an induction was rendered by a type's recursor.
-    by_recursor: bool,
 }
 
 /// `t` with every empty list that has no type typed `List α`.
@@ -592,7 +590,6 @@ impl Renderer<'_> {
             motive.push_str(&format!("{} → ", self.eqn(e)));
         }
         motive.push_str(&self.eqn(eq));
-        self.by_recursor = true;
         let (recursor, order) = self.recursor(&args[j])?;
         // The carried hypotheses as they stand outside, before the cases
         // rebind them as the equations of Bools the steps read: a carried
@@ -1448,7 +1445,6 @@ impl Renderer<'_> {
                 if order.len() != cases.len() {
                     return Err("split: one case per constructor".into());
                 }
-                self.by_recursor = true;
                 let lean = super::syntax::aver_name_to_lean;
                 let h = self.hyp_name(hyp);
                 let mut s = format!(
@@ -2192,7 +2188,6 @@ pub(crate) fn render_cited_facts(body: &str, ctx: &CodegenContext) -> Result<Str
             support: Vec::new(),
             generic: true,
             prop_hyps: Vec::new(),
-            by_recursor: false,
         };
         let ob = &script.obligation;
         let statement = r.eqn(&Eqn::new(ob.lhs.clone(), ob.rhs.clone()));
@@ -2588,7 +2583,6 @@ fn render_with(
         support: Vec::new(),
         generic: false,
         prop_hyps: Vec::new(),
-        by_recursor: false,
     };
     let mut hyps = Hyps::new();
     if let Some(p) = &script.obligation.premise {
@@ -2603,18 +2597,14 @@ fn render_with(
             r.prop_hyps.push(name.clone());
         }
     }
-    let saved = (r.laws.clone(), r.prop_hyps.clone());
-    let mut term = r.proof(&script.proof, &hyps);
-    // An induction by a type's recursor: every `match` of the proof,
-    // the opened definitions' included, without generalising.
-    if r.by_recursor {
-        let previous = ctx.lean_match_fixed.replace(true);
-        (r.laws, r.prop_hyps) = saved;
-        r.unfolds.clear();
-        r.support.clear();
-        term = r.proof(&script.proof, &hyps);
-        ctx.lean_match_fixed.set(previous);
-    }
+    // Every `match` of the proof is stated without generalising. The term
+    // stands among hypotheses about the law's names (`h_when`, a reason, a
+    // case's premise, an induction hypothesis), and Lean takes each
+    // hypothesis that mentions a matched name into the motive of a plain
+    // `match`: the term would state another match than the law and the
+    // opened definitions do.
+    let _fixed = FixedMatches::new(&ctx.lean_match_fixed);
+    let term = r.proof(&script.proof, &hyps);
     let term = to_statement(&script.obligation, term?);
     Ok(Rendered {
         support: r.support,
