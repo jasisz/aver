@@ -1515,7 +1515,7 @@ pub fn picked(
     })
 }
 
-/// Int.min and Int.max by a <= b, Int.abs by a < 0; List.contains on [] and on an element in front of a list, compared first.
+/// Int.min and Int.max by a <= b, Int.abs by a < 0; List.contains on [] and past an element in front that the value looked for is not. No rule says the element in front is found: it would make a y == x a script derives into what the builtin returns, and x == x is taken as true of every term, also of one that is not equal to itself; no rule makes an equality false of every term.
 #[inline(always)]
 pub fn pickSchema(id @ _: AverStr) -> Option<Schema> {
     crate::proof_kernel::cancel_checkpoint();
@@ -1626,8 +1626,8 @@ pub fn pickSchema(id @ _: AverStr) -> Option<Schema> {
                                 if &*__dispatch_subject == "list.contains.nil" {
                                     crate::proof_kernel::aver_generated::kernel::rules::plain(&aver_rt::AverList::from_vec(vec![AverStr::from("y")]), &crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("contains"), &aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::Term::TList(aver_rt::AverList::empty()), crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("y"))])), &crate::proof_kernel::aver_generated::kernel::term::Term::TBool(false))
                                 } else {
-                                    if &*__dispatch_subject == "list.contains.cons" {
-                                        crate::proof_kernel::aver_generated::kernel::rules::plain(&aver_rt::AverList::from_vec(vec![AverStr::from("x"), AverStr::from("a"), AverStr::from("y")]), &crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("contains"), &aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::cons(&crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("x")), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))), crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("y"))])), &crate::proof_kernel::aver_generated::kernel::rules::conn(AverStr::from("Bool.or"), &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("=="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("x"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("y")))), &found))
+                                    if &*__dispatch_subject == "list.contains.cons_other" {
+                                        crate::proof_kernel::aver_generated::kernel::rules::picked(&aver_rt::AverList::from_vec(vec![AverStr::from("x"), AverStr::from("a"), AverStr::from("y")]), &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("=="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("y"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("x")))), false, &crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("contains"), &aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::cons(&crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("x")), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))), crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("y"))])), &found)
                                     } else {
                                         None
                                     }

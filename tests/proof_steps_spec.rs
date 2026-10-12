@@ -4278,14 +4278,13 @@ fn lean_checks_the_vector_rules_and_refuses_a_mutation() {
     let _ = fs::remove_dir_all(out);
 }
 
-const PICK_LAWS: [&str; 14] = [
+const PICK_LAWS: [&str; 13] = [
     "distance.absNonNegative",
     "distance.absOfLiteral",
     "distance.asAbs",
-    "has.asContains",
     "has.emptyHoldsNothing",
-    "has.findsHead",
-    "has.ofLiteral",
+    "has.literalHoldsNothingLarger",
+    "has.skipsADifferentHead",
     "has.skipsAnother",
     "larger.asMax",
     "larger.maxOfEqual",
@@ -4296,19 +4295,44 @@ const PICK_LAWS: [&str; 14] = [
 ];
 
 /// The false laws of the fixture: the smaller, the larger and the absolute
-/// value are not always the first argument, and the element in front of a
-/// list counts for `List.contains`.
-const PICK_FALSE_LAWS: [&str; 4] = [
+/// value are not always the first argument, the element in front of a
+/// list counts for `List.contains`, and a list of one Float does not always
+/// hold it (`0.0 / 0.0` is not equal to itself).
+const PICK_FALSE_LAWS: [&str; 5] = [
     "dropsHead.headNeverCounts",
+    "holdsItself.alwaysFindsSelf",
     "smallerIsFirst.absIsIdentity",
     "smallerIsFirst.alwaysFirst",
     "smallerIsFirst.maxAlwaysFirst",
 ];
 
+/// A script for the false law that a list of one element always holds it,
+/// with nothing saying what the element is. It reads the element in front as
+/// found, through a rule `list.contains.cons` and `x == x`, which the kernel
+/// takes as true of every term; for a Float (`0.0 / 0.0`) the VM answers
+/// otherwise. No rule finds the element in front, so both kernels refuse it.
+const CONTAINS_FINDS_ITSELF: &str = "(steps 13
+  (obligation containsFloat.alwaysFindsSelf (x) (none)
+    (bi List.contains (bi List.prepend (v x) (list)) (v x))
+    (b true))
+  (defs) (consts) (sums) (laws)
+  (proof
+    (trans
+      ((bi List.contains (bi List.prepend (v x) (list)) (v x))
+       (bi Bool.or (op == (v x) (v x)) (bi List.contains (list) (v x)))
+       (bi Bool.or (b true) (bi List.contains (list) (v x)))
+       (b true))
+      (rule list.contains.cons ((x (v x)) (a (list)) (y (v x))))
+      (congr (bi Bool.or (hole) (bi List.contains (list) (v x)))
+        (rule bool.beq.refl ((a (v x)))))
+      (rule bool.or.true_l ((b (bi List.contains (list) (v x))))))))
+";
+
 /// `Int.min`, `Int.max` and `Int.abs` are read by the comparison that picks
-/// their value and `List.contains` cell by cell, each by a wall rule; a
-/// false law about them gets no step proof, and both kernels refuse a rule
-/// taken for another.
+/// their value, and `List.contains` on `[]` and past an element in front
+/// that the value looked for is not, each by a wall rule; a false law about
+/// them gets no step proof, and both kernels refuse a rule taken for
+/// another, and any script that reads the element in front as found.
 #[test]
 fn both_kernels_read_min_max_abs_and_contains_by_their_rules_and_refuse_mutations() {
     let out = scratch("picks");
@@ -4329,7 +4353,7 @@ fn both_kernels_read_min_max_abs_and_contains_by_their_rules_and_refuse_mutation
         "int.abs.neg",
         "int.abs.nonneg",
         "list.contains.nil",
-        "list.contains.cons",
+        "list.contains.cons_other",
     ] {
         assert!(
             all.contains(&format!("(rule {rule} ")),
@@ -4375,19 +4399,46 @@ fn both_kernels_read_min_max_abs_and_contains_by_their_rules_and_refuse_mutation
             swap("has.emptyHoldsNothing", "(b false)", "(b true)"),
         ),
         (
-            "the element in front not compared",
+            "an element in front skipped with nothing showing the value looked for differs",
             swap(
                 "has.skipsAnother",
-                "(bi Bool.or (op == (i 1) (i 2)) (bi List.contains (v acc) (i 2)))",
-                "(bi List.contains (v acc) (i 2))",
+                "(compute (op == (i 2) (i 1)) (b false))",
+                "(rule bool.not.true ())",
+            ),
+        ),
+        (
+            "an element in front skipped though it is the one looked for",
+            swap(
+                "has.skipsAnother",
+                "(rule list.contains.cons_other ((x (i 1)) (a (v acc)) (y (i 2))) (compute (op == (i 2) (i 1)) (b false)))",
+                "(rule list.contains.cons_other ((x (i 2)) (a (v acc)) (y (i 2))) (compute (op == (i 2) (i 2)) (b false)))",
+            ),
+        ),
+        (
+            "an element in front skipped by the comparison the other way round, unswapped",
+            swap(
+                "has.skipsADifferentHead",
+                "(trans ((op == (v y) (v h)) (op == (v h) (v y)) (b false)) (rule bool.beq.symm ((a (v y)) (b (v h)))) (rule int.eq.false_of_ne ((a (v h)) (b (v y))) (hyp when)))",
+                "(rule int.eq.false_of_ne ((a (v h)) (b (v y))) (hyp when))",
             ),
         ),
         (
             "a list with an element in front read as the empty list",
             swap(
                 "has.skipsAnother",
-                "(rule list.contains.cons ((x (i 1)) (a (v acc)) (y (i 2))))",
+                "(rule list.contains.cons_other ((x (i 1)) (a (v acc)) (y (i 2))) (compute (op == (i 2) (i 1)) (b false)))",
                 "(rule list.contains.nil ((y (i 2))))",
+            ),
+        ),
+        (
+            "the element in front read as found, by x == x of a term of any type",
+            CONTAINS_FINDS_ITSELF.to_string(),
+        ),
+        (
+            "the element in front read as found, by the rule that skips it",
+            CONTAINS_FINDS_ITSELF.replace(
+                "(rule list.contains.cons ((x (v x)) (a (list)) (y (v x))))",
+                "(rule list.contains.cons_other ((x (v x)) (a (list)) (y (v x))) (rule bool.beq.refl ((a (v x)))))",
             ),
         ),
     ] {
@@ -4450,7 +4501,7 @@ fn lean_reads_min_max_abs_and_contains_by_their_rules_and_refuses_a_mutation() {
             out.to_str().unwrap(),
             "--check-json",
             "--sorry-budget",
-            "4",
+            "5",
         ],
     );
     assert!(result.status.success(), "{}", format_output(&result));
@@ -4477,12 +4528,12 @@ fn lean_reads_min_max_abs_and_contains_by_their_rules_and_refuses_a_mutation() {
         "int_abs_neg",
         "int_abs_nonneg",
         "list_contains_nil",
-        "list_contains_cons",
+        "list_contains_cons_other",
     ] {
         assert!(lean.contains(&format!("AverSteps.{lemma}")), "{lemma}");
     }
-    let law = "distance.absNonNegative";
-    let line = exact_line(&lean, "distance_law_absNonNegative").to_string();
+    let law = "distance.asAbs";
+    let line = exact_line(&lean, "distance_law_asAbs").to_string();
     let wrong = line.replacen("AverSteps.int_abs_neg", "AverSteps.int_abs_nonneg", 1);
     assert_ne!(line, wrong, "{line}");
     assert!(

@@ -5162,12 +5162,14 @@ verify window law row
 }
 
 /// CORE when-linear consequence, NEGATIVE gate: the SAME law shape, but one
-/// cone body calls the builtin `Int.abs`. The cone-name collector resolves
-/// user definitions only, so that call leaves no name behind — the older
-/// negative gate could not see it. The positive walker refuses any callee that
-/// does not resolve to a user definition of the cone, so the law keeps its
-/// bounded sampled-domain statement, which the certificate model then declines
-/// to export.
+/// cone body calls the builtins `String.fromInt` and `String.len`. The
+/// cone-name collector resolves user definitions only, so that call leaves no
+/// name behind — the older negative gate could not see it. The positive walker
+/// refuses any callee that does not resolve to a user definition of the cone,
+/// so the law keeps its bounded sampled-domain statement, which the
+/// certificate model then declines to export. The builtin is one no proof
+/// step reads: a law over `Int.abs`, which this test used before, is closed
+/// by its wall rules and is universal for that reason.
 #[test]
 fn cert_model_declines_when_linear_law_whose_cone_calls_a_builtin() {
     let mut ctx = ctx_from_source(
@@ -5188,8 +5190,8 @@ fn lessF(a: Fraction, b: Fraction) -> Bool
     a.top * a.bottom * (b.bottom * b.bottom) < b.top * b.bottom * (a.bottom * a.bottom)
 
 fn nonNeg(a: Fraction) -> Bool
-    ? "Nonnegativity of a fraction, spelled through the absolute value."
-    Int.abs(a.top * a.bottom) == a.top * a.bottom
+    ? "Nonnegativity of a fraction, spelled through the digits of the product."
+    String.len(String.fromInt(a.top * a.bottom)) >= 1
 
 verify nonNeg law nonNegOfPositive
     given x: Fraction = [Fraction(top = 3, bottom = 4), Fraction(top = 1, bottom = 2)]

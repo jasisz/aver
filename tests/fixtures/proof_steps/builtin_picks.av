@@ -1,8 +1,8 @@
 module BuiltinPicks
     intent =
         "Int.min, Int.max, Int.abs and List.contains read by their rules in proof steps."
-        "The laws under smallerIsFirst and dropsHead are false and must stay open."
-    exposes [smaller, larger, distance, has, smallerIsFirst, dropsHead]
+        "The laws under smallerIsFirst, dropsHead and holdsItself are false and must stay open."
+    exposes [smaller, larger, distance, has, smallerIsFirst, dropsHead, holdsItself]
     effects []
 
 fn smaller(a: Int, b: Int) -> Int
@@ -77,10 +77,8 @@ verify distance law absOfLiteral
     Int.abs(0 - 7) + a => 7 + a
 
 fn has(xs: List<Int>, y: Int) -> Bool
-    ? "Whether y is in xs, written with a match."
-    match xs
-        [] -> false
-        [x, ..rest] -> Bool.or(x == y, has(rest, y))
+    ? "Whether y is in xs."
+    List.contains(xs, y)
 
 verify has
     has([1, 2], 2) => true
@@ -94,19 +92,17 @@ verify has law skipsAnother
     given acc: List<Int> = [[], [1], [2, 1]]
     List.contains(List.prepend(1, acc), 2) => List.contains(acc, 2)
 
-verify has law findsHead
+verify has law skipsADifferentHead
     given acc: List<Int> = [[], [1], [2, 1]]
+    given h: Int = -3..3
     given y: Int = -3..3
-    List.contains(List.prepend(y, acc), y) => true
+    when h != y
+    List.contains(List.prepend(h, acc), y) => List.contains(acc, y)
 
-verify has law ofLiteral
-    given y: Int = -3..3
-    Bool.and(List.contains([1, 2, 3], 3), List.contains([1, 2, y], y)) => true
-
-verify has law asContains
-    given xs: List<Int> = [[], [1], [2, 1]]
-    given y: Int = -3..3
-    has(xs, y) => List.contains(xs, y)
+verify has law literalHoldsNothingLarger
+    given y: Int = 4..6
+    when y > 3
+    List.contains([1, 2, 3], y) => false
 
 fn smallerIsFirst(a: Int, b: Int) -> Int
     ? "Carries the false law that the smaller of two is the first."
@@ -141,3 +137,15 @@ verify dropsHead law headNeverCounts
     given t: List<Int> = [[]]
     given y: Int = 1..1
     List.contains(List.prepend(h, t), y) => List.contains(t, y)
+
+fn holdsItself(x: Float) -> Bool
+    ? "Carries the false law that a list of one Float holds it: 0.0 / 0.0 is not equal to itself."
+    List.contains(List.prepend(x, []), x)
+
+verify holdsItself
+    holdsItself(1.5) => true
+    holdsItself(0.0 / 0.0) => false
+
+verify holdsItself law alwaysFindsSelf
+    given x: Float = [1.5, 0.0]
+    List.contains(List.prepend(x, []), x) => true

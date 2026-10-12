@@ -2112,10 +2112,12 @@ impl Env<'_> {
                 v,
             )))));
         }
-        // `List.contains` compares with `==`. Its rule on an element in
-        // front is taken only for an element type whose `==` is equality
-        // (no Float inside), where Lean proves it too; the element type is
-        // the list's, or the looked-for value's where the list has none.
+        // `List.contains` compares with `==`. Its rule past an element in
+        // front needs `(y == x) = false`, which is decided, also from the
+        // comparison written the other way round, only for an element
+        // type whose `==` is equality (no Float inside); the element type
+        // is the list's, or the looked-for value's where the list has
+        // none.
         let is_contains = name == "List.contains" && args.len() == 2;
         let contains = is_contains && {
             let elem = match list.ty() {
@@ -2175,10 +2177,56 @@ impl Env<'_> {
             ("List.contains", 2, None) => {
                 (WallRule::ContainsNil, bind(&["y"], vec![args[1].clone()]))
             }
-            ("List.contains", 2, Some((x, a))) if contains => (
-                WallRule::ContainsCons,
-                bind(&["x", "a", "y"], vec![x, a, args[1].clone()]),
-            ),
+            ("List.contains", 2, Some((x, a))) if contains => {
+                // Past the element in front where the value looked for is
+                // decided to be another, as `y == x` or, by
+                // `bool.beq.symm`, as `x == y` (the order the VM compares
+                // in); undecided, that is where the prover splits. No rule
+                // finds the element in front.
+                let y = args[1].clone();
+                let asked = term::binop(BinOp::Eq, y.clone(), x.clone());
+                let ev = self.whnf(&asked)?;
+                let premise = match term::bool_value(ev.chain.cur()) {
+                    Some(false) => ev.chain.finish().1,
+                    Some(true) => return Ok(None),
+                    None => {
+                        let swapped = term::binop(BinOp::Eq, x.clone(), y.clone());
+                        let ev = self.whnf(&swapped)?;
+                        match term::bool_value(ev.chain.cur()) {
+                            Some(false) => Proof::Trans {
+                                terms: vec![canon(&asked), canon(&swapped), term::boolean(false)],
+                                steps: vec![
+                                    Proof::Rule {
+                                        rule: WallRule::BeqSymm,
+                                        subst: vec![
+                                            ("a".into(), y.clone()),
+                                            ("b".into(), x.clone()),
+                                        ],
+                                        premises: Vec::new(),
+                                    },
+                                    ev.chain.finish().1,
+                                ],
+                            },
+                            Some(true) => return Ok(None),
+                            None => {
+                                let on = ev.blocked.unwrap_or_else(|| canon(&swapped));
+                                return Ok(Some(Step::Blocked(on)));
+                            }
+                        }
+                    }
+                };
+                let rule = WallRule::ContainsConsOther;
+                let subst = bind(&["x", "a", "y"], vec![x, a, y]);
+                let (_, concl) = rule.instantiate(&subst).expect("rule binders");
+                return Ok(Some(Step::Progress(Box::new((
+                    Proof::Rule {
+                        rule,
+                        subst,
+                        premises: vec![premise],
+                    },
+                    concl.rhs,
+                )))));
+            }
             ("List.take", 2, None) => (WallRule::TakeNil, bind(&["n"], vec![args[1].clone()])),
             ("List.drop", 2, None) => (WallRule::DropNil, bind(&["n"], vec![args[1].clone()])),
             ("List.take" | "List.drop", 2, Some((x, a))) => {
