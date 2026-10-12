@@ -70,7 +70,9 @@ struct Schema {
 fn schemas() -> Vec<Schema> {
     let mut out: Vec<Schema> = WallRule::ALL
         .iter()
-        .filter(|r| r.id().starts_with("list."))
+        // `List.contains` is not evaluated by the compiler's evaluator or
+        // the kernel; `pick_rules_differential` runs its rules.
+        .filter(|r| r.id().starts_with("list.") && !r.id().starts_with("list.contains."))
         .map(|r| {
             let (premises, concl) = r.schema();
             Schema {

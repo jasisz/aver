@@ -1724,7 +1724,67 @@ impl Env<'_> {
         if let Some(step) = bits_step(cur) {
             return Ok(step);
         }
+        if let Some(step) = self.pick_step(cur, &blocked)? {
+            return Ok(step);
+        }
         self.settle(cur, blocked)
+    }
+
+    /// `Int.min`, `Int.max` or `Int.abs` takes one step by the rule its
+    /// comparison picks: `a <= b` for the smaller and the larger of two,
+    /// `a < 0` for the absolute value. What a hypothesis or a cited law
+    /// states about the call comes first. An undecided comparison is where
+    /// the prover splits, after what an argument stopped at (`blocked`): the
+    /// inner of two nested calls is read before the outer.
+    fn pick_step(&mut self, cur: &Term, blocked: &Option<Term>) -> Result<Option<Step>, String> {
+        let ResolvedExpr::Call(ResolvedCallee::Builtin(name), args) = &cur.node else {
+            return Ok(None);
+        };
+        let (test, holds, fails, binders): (Term, WallRule, WallRule, &[&str]) =
+            match (name.as_str(), args.as_slice()) {
+                ("Int.min", [a, b]) => (
+                    term::binop(BinOp::Lte, a.clone(), b.clone()),
+                    WallRule::MinLe,
+                    WallRule::MinGt,
+                    &["a", "b"],
+                ),
+                ("Int.max", [a, b]) => (
+                    term::binop(BinOp::Lte, a.clone(), b.clone()),
+                    WallRule::MaxLe,
+                    WallRule::MaxGt,
+                    &["a", "b"],
+                ),
+                ("Int.abs", [a]) => (
+                    term::binop(BinOp::Lt, a.clone(), term::int(&0.into())),
+                    WallRule::AbsNeg,
+                    WallRule::AbsNonneg,
+                    &["a"],
+                ),
+                _ => return Ok(None),
+            };
+        if let Some(step) = self.known(cur)? {
+            return Ok(Some(step));
+        }
+        let ev = self.whnf(&test)?;
+        let Some(value) = term::bool_value(ev.chain.cur()) else {
+            let on = blocked.clone().or(ev.blocked);
+            return Ok(Some(Step::Blocked(on.unwrap_or_else(|| canon(&test)))));
+        };
+        let rule = if value { holds } else { fails };
+        let subst: Vec<(String, Term)> = binders
+            .iter()
+            .map(|n| n.to_string())
+            .zip(args.iter().cloned())
+            .collect();
+        let (_, concl) = rule.instantiate(&subst).expect("rule binders");
+        Ok(Some(Step::Progress(Box::new((
+            Proof::Rule {
+                rule,
+                subst,
+                premises: vec![ev.chain.finish().1],
+            },
+            concl.rhs,
+        )))))
     }
 
     /// A Vector builtin takes one step by its rule where the step can
@@ -2052,13 +2112,31 @@ impl Env<'_> {
                 v,
             )))));
         }
-        if list_builtin
+        // `List.contains` compares with `==`. Its rule on an element in
+        // front is taken only for an element type whose `==` is equality
+        // (no Float inside), where Lean proves it too; the element type is
+        // the list's, or the looked-for value's where the list has none.
+        let is_contains = name == "List.contains" && args.len() == 2;
+        let contains = is_contains && {
+            let elem = match list.ty() {
+                Some(crate::ast::Type::List(e)) => Some((**e).clone()),
+                _ => args[1].ty().cloned(),
+            };
+            elem.is_some_and(|t| self.inputs.symbol_table.beq_is_equality(&t))
+        };
+        // What a hypothesis or a cited law states about the call comes
+        // before its rule.
+        if is_contains && let Some(step) = self.known(cur)? {
+            return Ok(Some(step));
+        }
+        if (list_builtin || contains)
             && let ResolvedExpr::List(xs) = &list.node
             && !xs.is_empty()
-            && term::eval_closed(list).is_none()
+            && (contains || term::eval_closed(list).is_none())
         {
             // A literal with an open element steps as a cell; a closed one
-            // keeps the shape it was written in.
+            // keeps the shape it was written in, except under
+            // `List.contains`, which reads it cell by cell.
             let cell = term::cell_of(list).expect("a list literal with an element");
             let ctx = term::context_at(cur, &[0]);
             let to = term::plug(&ctx, &cell);
@@ -2094,6 +2172,13 @@ impl Env<'_> {
             ("List.reverse", 1, Some((x, a))) => {
                 (WallRule::ReverseCons, bind(&["x", "a"], vec![x, a]))
             }
+            ("List.contains", 2, None) => {
+                (WallRule::ContainsNil, bind(&["y"], vec![args[1].clone()]))
+            }
+            ("List.contains", 2, Some((x, a))) if contains => (
+                WallRule::ContainsCons,
+                bind(&["x", "a", "y"], vec![x, a, args[1].clone()]),
+            ),
             ("List.take", 2, None) => (WallRule::TakeNil, bind(&["n"], vec![args[1].clone()])),
             ("List.drop", 2, None) => (WallRule::DropNil, bind(&["n"], vec![args[1].clone()])),
             ("List.take" | "List.drop", 2, Some((x, a))) => {

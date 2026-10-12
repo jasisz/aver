@@ -91,6 +91,18 @@ theorem mod_range (a k : Int) (h : decide (k > 0) = true) :
     (decide (0 <= a % k) && decide (a % k < k)) = true := by
   simp only [Bool.and_eq_true, decide_eq_true_eq] at h ⊢
   exact ⟨Int.emod_nonneg a (by omega), Int.emod_lt_of_pos a h⟩
+theorem int_min_le (a b : Int) (h : decide (a <= b) = true) : min a b = a := by
+  have := of_decide_eq_true h; omega
+theorem int_min_gt (a b : Int) (h : decide (a <= b) = false) : min a b = b := by
+  have := of_decide_eq_false h; omega
+theorem int_max_le (a b : Int) (h : decide (a <= b) = true) : max a b = b := by
+  have := of_decide_eq_true h; omega
+theorem int_max_gt (a b : Int) (h : decide (a <= b) = false) : max a b = a := by
+  have := of_decide_eq_false h; omega
+theorem int_abs_neg (a : Int) (h : decide (a < 0) = true) : ((a : Int).natAbs : Int) = 0 - a := by
+  have := of_decide_eq_true h; omega
+theorem int_abs_nonneg (a : Int) (h : decide (a < 0) = false) : ((a : Int).natAbs : Int) = a := by
+  have := of_decide_eq_false h; omega
 theorem int_measure_induct {P : Int → Prop} (g : Int → Bool)
     (on_true : ∀ n, g n = true → (∀ m, m.toNat < n.toNat → P m) → P n)
     (on_false : ∀ n, g n = false → (∀ m, m.toNat < n.toNat → P m) → P n) (n : Int) : P n := by
@@ -184,6 +196,10 @@ theorem list_drop_cons_gt {α : Type} (x : α) (a : List α) (n : Int) (h : deci
 theorem list_reverse_nil {α : Type} : ([] : List α).reverse = [] := rfl
 theorem list_reverse_cons {α : Type} (x : α) (a : List α) : (x :: a).reverse = (a.reverse ++ [x]) :=
   List.reverse_cons
+theorem list_contains_nil {α : Type} [BEq α] (y : α) : ([] : List α).contains y = false := rfl
+theorem list_contains_cons {α : Type} [BEq α] [LawfulBEq α] (x : α) (a : List α) (y : α) :
+    (x :: a).contains y = ((x == y) || a.contains y) := by
+  rw [List.contains_cons, beq_symm]
 theorem vector_to_list_of_list {α : Type} (l : List α) : l.toArray.toList = l := List.toList_toArray
 theorem vector_of_list_to_list {α : Type} (v : Array α) : v.toList.toArray = v := Array.toArray_toList
 theorem vector_len_as_list {α : Type} (v : Array α) : (v.size : Int) = (v.toList.length : Int) := by simp
@@ -382,6 +398,12 @@ fn lemma(rule: WallRule) -> &'static str {
         WallRule::DivModRecompose => "AverSteps.div_mod_recompose",
         WallRule::DivRange => "AverSteps.div_range",
         WallRule::ModRange => "AverSteps.mod_range",
+        WallRule::MinLe => "AverSteps.int_min_le",
+        WallRule::MinGt => "AverSteps.int_min_gt",
+        WallRule::MaxLe => "AverSteps.int_max_le",
+        WallRule::MaxGt => "AverSteps.int_max_gt",
+        WallRule::AbsNeg => "AverSteps.int_abs_neg",
+        WallRule::AbsNonneg => "AverSteps.int_abs_nonneg",
         WallRule::BitsNot => "AverSteps.bits_not",
         WallRule::BitsShl => "AverSteps.bits_shl",
         WallRule::BitsAndLow => "AverSteps.bits_and_low",
@@ -398,6 +420,8 @@ fn lemma(rule: WallRule) -> &'static str {
         WallRule::DropConsGt => "AverSteps.list_drop_cons_gt",
         WallRule::ReverseNil => "AverSteps.list_reverse_nil",
         WallRule::ReverseCons => "AverSteps.list_reverse_cons",
+        WallRule::ContainsNil => "AverSteps.list_contains_nil",
+        WallRule::ContainsCons => "AverSteps.list_contains_cons",
         // The Map rules sit with the map model they read.
         WallRule::MapGetEmpty => "AverMap.step_get_empty",
         WallRule::MapGetSetSame => "AverMap.step_get_set_same",

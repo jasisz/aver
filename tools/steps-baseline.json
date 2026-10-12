@@ -110,9 +110,11 @@
   ]
  },
  "examples/formal/int_abs_laws.av": {
-  "tactic": [
+  "steps": [
    "magnitude.idempotent",
-   "magnitude.nonNegative",
+   "magnitude.nonNegative"
+  ],
+  "tactic": [
    "scaledMagnitude.multiplicative"
   ]
  },
@@ -220,6 +222,8 @@
  "examples/games/eggcatch/core.av": {
   "steps": [
    "addMiss.monotone",
+   "capMisses.inRange",
+   "capScore.inRange",
    "chuteIndex.inRange",
    "earn.neverDrops",
    "foxCount.exactlyOne",
@@ -235,13 +239,11 @@
   ],
   "tactic": [
    "basketMark.unitWidth",
-   "capMisses.inRange",
-   "capScore.inRange",
    "placeEgg.conserves"
   ]
  },
  "examples/games/rogue/types.av": {
-  "tactic": [
+  "steps": [
    "calcDamage.alwaysPositive"
   ]
  },
