@@ -1,12 +1,59 @@
 {
+ "examples/core/order_total.av": {
+  "tactic": [
+   "calculateTotal.equalsStepByStep"
+  ]
+ },
+ "examples/core/result_chain.av": {
+  "tactic": [
+   "chainQM.equalsManual"
+  ]
+ },
+ "examples/data/bracket_scan.av": {
+  "tactic": [
+   "scanExpr.scanExprAdvances",
+   "scanSeq.scanSeqAdvances",
+   "skipWs.skipWsAdvances"
+  ]
+ },
+ "examples/data/fibonacci.av": {
+  "tactic": [
+   "fib.fibSpec"
+  ]
+ },
  "examples/data/flatten.av": {
   "steps": [
    "flattenThenCount.countViaFlatten"
   ]
  },
+ "examples/data/json.av": {
+  "tactic": [
+   "afterIntChar.terminatedIntRoundtrip",
+   "escapeJsonChar.encodesEscapeCode",
+   "escapeJsonString.parseStringRoundtrip",
+   "finishInt.fromCanonicalInt",
+   "finishNumber.fromCanonicalIntSlice",
+   "finishString.plainSegmentRoundtrip",
+   "parseEscape.escapeCodeRoundtrip",
+   "parseLiteral.boolRoundtrip",
+   "parseNumber.fromIntRoundtrip",
+   "parseStringChunk.escapedStringRoundtrip",
+   "skipWs.skipWsAdvances"
+  ]
+ },
+ "examples/data/list_length_fold.av": {
+  "tactic": [
+   "lengthFwd.equalsSwap"
+  ]
+ },
  "examples/data/map.av": {
   "steps": [
    "incCount.keyPresent"
+  ],
+  "tactic": [
+   "countWords.presenceMatchesContains",
+   "countWords.trackedWordCount",
+   "incCount.trackedCountStepsByOne"
   ]
  },
  "examples/data/rational.av": {
@@ -23,9 +70,19 @@
    "times.zeroAbsorbs"
   ]
  },
+ "examples/data/sum_acc.av": {
+  "tactic": [
+   "sum.equalsDirect"
+  ]
+ },
  "examples/data/words.av": {
   "steps": [
    "countAll.viaExpand"
+  ]
+ },
+ "examples/formal/affine_wrapper_law.av": {
+  "tactic": [
+   "boundedScale.returnsCore"
   ]
  },
  "examples/formal/bits_laws.av": {
@@ -51,6 +108,13 @@
    "swappedNe.zero"
   ]
  },
+ "examples/formal/int_abs_laws.av": {
+  "tactic": [
+   "magnitude.idempotent",
+   "magnitude.nonNegative",
+   "scaledMagnitude.multiplicative"
+  ]
+ },
  "examples/formal/int_comparison_laws.av": {
   "steps": [
    "comparable.totalOrder",
@@ -74,6 +138,9 @@
    "mul.identityOneLeft",
    "sub.antiCommutative",
    "sub.rightIdentity"
+  ],
+  "tactic": [
+   "incCount.existingKeyIncrements"
   ]
  },
  "examples/formal/length_homomorphism.av": {
@@ -83,9 +150,33 @@
    "pow3.homomorphism"
   ]
  },
+ "examples/formal/log_line_length.av": {
+  "tactic": [
+   "assembledLength.reservationIsExact"
+  ]
+ },
+ "examples/formal/map_set_nonempty.av": {
+  "tactic": [
+   "sizeAfterInsert.nonEmptyAfterInsert"
+  ]
+ },
+ "examples/formal/oracle_independent_products.av": {
+  "tactic": [
+   "pickPair.branchPathLaw"
+  ]
+ },
+ "examples/formal/oracle_trace.av": {
+  "tactic": [
+   "rollOnce.usesOracle"
+  ]
+ },
  "examples/formal/recursive_monotone.av": {
   "steps": [
    "tri.nonneg"
+  ],
+  "tactic": [
+   "fctMonotone.mono",
+   "triMonotone.mono"
   ]
  },
  "examples/formal/spec_laws.av": {
@@ -94,11 +185,23 @@
    "clampNonNegative.clampNonNegativeSpec"
   ]
  },
+ "examples/formal/string_concat_monoid.av": {
+  "tactic": [
+   "label.associative",
+   "label.leftIdentity",
+   "label.rightIdentity"
+  ]
+ },
  "examples/formal/tcp_write_now.av": {
   "steps": [
    "stillToSend.acceptedEverythingLeavesNothing",
    "stillToSend.acceptedNothingKeepsEverything",
    "stillToSend.acceptedPrefixNeverOvershoots"
+  ]
+ },
+ "examples/formal/terminal_size_snapshot.av": {
+  "tactic": [
+   "terminalWidth.mirrorsOracle"
   ]
  },
  "examples/formal/validated_wrapper_law.av": {
@@ -128,6 +231,17 @@
    "stepChute.conserves",
    "stepChute.eggRowStaysInRange",
    "tallyHit.monotone"
+  ],
+  "tactic": [
+   "basketMark.unitWidth",
+   "capMisses.inRange",
+   "capScore.inRange",
+   "placeEgg.conserves"
+  ]
+ },
+ "examples/games/rogue/types.av": {
+  "tactic": [
+   "calcDamage.alwaysPositive"
   ]
  },
  "examples/games/tetris/logic.av": {
@@ -143,6 +257,24 @@
    "headerOf.admitted",
    "mergeAll.appends",
    "runBatches.flatten"
+  ],
+  "tactic": [
+   "body.stable",
+   "body.stableRun",
+   "count.monotone",
+   "merge.commutative",
+   "merge.idempotent",
+   "mergeAll.absorbCovered",
+   "mergeAll.absorbMember",
+   "mergeAll.commuteCovered",
+   "mergeAll.duplicateAdjacent",
+   "mergeAll.moveOne",
+   "mergeAll.orderFree",
+   "mergeAll.sameContributions",
+   "mergeAll.swapAdjacent",
+   "runBatches.anySchedule",
+   "verdict.stable",
+   "verdict.stableRun"
   ]
  },
  "examples/knowledge/stored.av": {
@@ -150,6 +282,38 @@
    "answer.knownFactsAnswer",
    "verdictOf.preservesFlag",
    "verdictOf.roundtrip"
+  ],
+  "tactic": [
+   "accepted.knowledgeCommutes",
+   "accepted.peersCannotWriteVerdicts",
+   "answer.successfulAnswerHasBothFacts",
+   "lookup.stableAnswer",
+   "lookup.stableHistory",
+   "offer.admittedBatchUsesTheModel",
+   "offer.rejectedBatchChangesNothing",
+   "validated.failedWorkAddsNoKnowledge",
+   "validated.workCannotRewriteBodies"
+  ]
+ },
+ "examples/refinement/int_range/int_range.av": {
+  "tactic": [
+   "add.commutative"
+  ]
+ },
+ "examples/refinement/natural/natural.av": {
+  "tactic": [
+   "add.commutative",
+   "mul.commutative"
+  ]
+ },
+ "examples/refinement/natural_app.av": {
+  "tactic": [
+   "safeSum.commutative"
+  ]
+ },
+ "examples/refinement/positive/positive.av": {
+  "tactic": [
+   "mul.commutative"
   ]
  },
  "projects/durable_promise/domain/promise.av": {
@@ -161,6 +325,9 @@
    "resolve.noDoubleSettle",
    "resolve.noResurrection",
    "resolve.settledIsIdentity"
+  ],
+  "tactic": [
+   "observe.timeoutMonotone"
   ]
  },
  "projects/k5_fdiv/domain/awaymodel.av": {
@@ -169,17 +336,41 @@
   ],
   "steps": [
    "rawValuePositive.positivePrecision"
+  ],
+  "tactic": [
+   "normalizedValue.carryPreservesValue",
+   "transferredValue.sameRawValue"
+  ]
+ },
+ "projects/k5_fdiv/domain/binade.av": {
+  "tactic": [
+   "magnitudeWindow.executableMagnitude",
+   "negativeWindow.executableMagnitude",
+   "positiveWindow.executableMagnitude",
+   "significand.normalized"
   ]
  },
  "projects/k5_fdiv/domain/binadeorder.av": {
   "obligations": [
    "fractionWindow.integerMagnitude.because1",
    "fractionWindow.integerMagnitude.because2"
+  ],
+  "tactic": [
+   "fractionWindow.integerMagnitude"
   ]
  },
  "projects/k5_fdiv/domain/estimate.av": {
   "steps": [
    "nrNewErrNum.nrErrorSquares"
+  ],
+  "tactic": [
+   "mulLeMonoRight.guarded",
+   "mulLeTrans.guarded",
+   "mulNonneg.guarded",
+   "nrContraction.guarded",
+   "sqMono.guarded",
+   "sqNonneg.universal",
+   "tripleNonneg.guarded"
   ]
  },
  "projects/k5_fdiv/domain/exponent.av": {
@@ -211,6 +402,15 @@
    "exponentQdl2.table3_row25",
    "exponentQq1.table3_row31",
    "exponentQq2.table3_row30"
+  ],
+  "tactic": [
+   "sumExponentLower_9_3_1.section_9_3_1",
+   "sumExponentUpper_9_3_2.section_9_3_2"
+  ]
+ },
+ "projects/k5_fdiv/domain/floorlaws.av": {
+  "tactic": [
+   "squareLeSumOfSquares.amgmSquareBound"
   ]
  },
  "projects/k5_fdiv/domain/fprep.av": {
@@ -226,6 +426,13 @@
    "pow2SignedDenomPositive.positive",
    "pow2SignedPositive.positive",
    "productExpInRange.productExponentBounds"
+  ],
+  "tactic": [
+   "fpMulValue.denotesProduct",
+   "fracExpoFromMagnitude.fundamentalExponent",
+   "pow2SignedHomomorphism.signedHomomorphism",
+   "pow2SignedLtReflect.fromStrictOrder",
+   "pow2SignedMonotone.allExponents"
   ]
  },
  "projects/k5_fdiv/domain/fractionorder.av": {
@@ -235,6 +442,9 @@
   "steps": [
    "le.fromPositiveCrossProduct",
    "lt.fromPositiveCrossProduct"
+  ],
+  "tactic": [
+   "signedAbsolute.nonnegativeMagnitude"
   ]
  },
  "projects/k5_fdiv/domain/integerorder.av": {
@@ -297,6 +507,30 @@
   ],
   "steps": [
    "twoPow.roundingScale"
+  ],
+  "tactic": [
+   "awayFormula.knownExponent",
+   "binadeSig.significandWindow",
+   "divide.theorem_2",
+   "fracExpo.executableMagnitude",
+   "fracExpo.rationalMagnitude",
+   "modelAway.normalizedModel",
+   "modelAwayRaw.normalizedModel",
+   "modelCeiling.normalizedModel",
+   "modelSign.normalizedSign",
+   "modelSticky.normalizedModel",
+   "modelSticky.positivePrecision",
+   "modelSticky.singleBit",
+   "modelStickyExact.normalizedModel",
+   "modelStickyHalf.normalizedModel",
+   "modelTruncation.normalizedModel",
+   "normalizedValueExponent.executableExponent",
+   "sameAway.normalizedModel",
+   "sameSticky.normalizedModel",
+   "sameTruncation.normalizedModel",
+   "singleBitHalf.normalizedModel",
+   "stickyFormula.knownExponent",
+   "truncationFormula.knownExponent"
   ]
  },
  "projects/k5_fdiv/domain/modelscale.av": {
@@ -321,6 +555,13 @@
   ],
   "steps": [
    "nonzeroValue.normalizedValue"
+  ],
+  "tactic": [
+   "absoluteValue.normalizedMagnitude",
+   "modelWindow.normalizedMagnitude",
+   "scaledWindow.normalizedSignificand",
+   "signedDouble.successor",
+   "uniqueWindow.uniqueExponent"
   ]
  },
  "projects/k5_fdiv/domain/rational.av": {
@@ -338,10 +579,22 @@
    "times.zeroAbsorbs"
   ]
  },
+ "projects/k5_fdiv/domain/recip.av": {
+  "tactic": [
+   "reciprocalBound.lemma_8_1_1"
+  ]
+ },
  "projects/k5_fdiv/domain/remainder.av": {
   "steps": [
    "awayDigitOvershoot.guarded",
    "remainderBound_8_2_3.lemma_8_2_3"
+  ],
+  "tactic": [
+   "digitSeparation_8_2_1.firstImplication",
+   "oppositeSignSumBounded.guarded",
+   "reciprocalMagnitudeBound_8_2_4.reciprocalMagnitudeComposition",
+   "signsDifferent_8_2_2.branchNonpositive",
+   "signsDifferent_8_2_2.branchPositive"
   ]
  },
  "projects/k5_fdiv/domain/round.av": {
@@ -355,6 +608,27 @@
    "truncErrorReconstructs.reconstructsValue",
    "truncKeepsExponent.exponentInvariant",
    "truncNegateSymmetric.signSymmetry"
+  ],
+  "tactic": [
+   "awayErrorBound.strictBound",
+   "awayErrorReconstructs.reconstructsValue",
+   "awayNegateSymmetric.signSymmetry",
+   "awayTruncComposes.composesToInner",
+   "floorDiv.absorbRemainder",
+   "floorDiv.cancelCommonFactor",
+   "floorDiv.dividesPow2Multiple",
+   "floorDiv.nestedFloorCollapse",
+   "floorDivWindow.euclideanWindow",
+   "fpSticky.preservesCoarseTruncation",
+   "fpValueMagnitudePos.positive",
+   "stickyErrorBound.strictBound",
+   "stickyNegateSymmetric.signSymmetry",
+   "truncComposes.composesToInner",
+   "truncErrorBound.strictBound",
+   "truncErrorMagnitudeNonneg.nonneg",
+   "truncErrorSameSign.signCondition",
+   "truncFitsWindow.euclideanWindow",
+   "truncStickyComposes.composesThroughSticky"
   ]
  },
  "projects/k5_fdiv/domain/roundscale.av": {
@@ -364,6 +638,15 @@
    "scaledCeiling.positiveScale.because1",
    "scaledCeiling.positiveScale.because2",
    "scaledCeiling.positiveScale.because3"
+  ],
+  "tactic": [
+   "cancelProduct.positiveFactor",
+   "ceilingExact.exactQuotient",
+   "ceilingFromWindow.euclideanWindow",
+   "ceilingInexact.strictRemainder",
+   "remainderQuotient.smallRemainder",
+   "scaledCeiling.positiveScale",
+   "scaledExactness.positiveScale"
   ]
  },
  "projects/k5_fdiv/domain/stickyint.av": {
@@ -376,12 +659,28 @@
    "pow2.positive",
    "pow2.successor",
    "sigDouble.doubleIsTwice"
+  ],
+  "tactic": [
+   "floorDiv.absorbRemainder",
+   "floorDiv.cancelCommonFactor",
+   "floorDiv.lowBitDrops",
+   "floorDiv.nestedFloorCollapse",
+   "truncSig.truncStickyInt"
   ]
  },
  "projects/k5_fdiv/domain/stickyscale.av": {
   "obligations": [
    "coarsen.dropsStickyBit.because1",
    "coarsen.dropsStickyBit.because3"
+  ],
+  "tactic": [
+   "coarsen.dropsStickyBit"
+  ]
+ },
+ "projects/k5_fdiv/domain/table.av": {
+  "tactic": [
+   "bucketErrorOk.bucketErrorIsSeed",
+   "entryEpsilonOk.tableSeedBound"
   ]
  },
  "projects/k5_fdiv/domain/truncscale.av": {
@@ -392,6 +691,23 @@
   ],
   "steps": [
    "signOfProduct.positiveMagnitudes"
+  ],
+  "tactic": [
+   "equalQuotients.equalPositiveRatios",
+   "restoredValue.exactScale",
+   "scaledQuotient.exactScale",
+   "ulpScale.signedExponent"
+  ]
+ },
+ "projects/k5_fdiv/domain/valuechain.av": {
+  "tactic": [
+   "sameValueThrough.positiveMiddle"
+  ]
+ },
+ "projects/k5_fdiv/leafprobe.av": {
+  "tactic": [
+   "floorDiv.absorbRemainder",
+   "floorDiv.cancelCommonFactor"
   ]
  },
  "projects/song/wave.av": {
@@ -399,11 +715,18 @@
    "clamp16.fitsSixteenBits",
    "header.sizeIsFortyFour",
    "readLe16.roundTrip"
+  ],
+  "tactic": [
+   "header.dataLengthIsLast",
+   "header.riffLengthCoversTheRest"
   ]
  },
  "proof-corpus/decomposed/handwritten/all_zero_sum.av": {
   "steps": [
    "sumList.sumCons"
+  ],
+  "tactic": [
+   "sumList.sumAllZero"
   ]
  },
  "proof-corpus/decomposed/handwritten/qrev_rev.av": {
@@ -416,6 +739,12 @@
   "steps": [
    "count.countConcatMonotone",
    "countMonotone.countAppendMonotone"
+  ]
+ },
+ "proof-corpus/decomposed/isaplanner/prop_19.av": {
+  "tactic": [
+   "drop.lenDropSubGen",
+   "len.lenDropSub"
   ]
  },
  "proof-corpus/decomposed/isaplanner/prop_20.av": {
@@ -433,6 +762,10 @@
  "proof-corpus/decomposed/isaplanner/prop_52.av": {
   "steps": [
    "count.countHomo"
+  ],
+  "tactic": [
+   "count.countRev",
+   "plus.plusComm"
   ]
  },
  "proof-corpus/decomposed/isaplanner/prop_53.av": {
@@ -441,33 +774,62 @@
    "count.countSort"
   ]
  },
+ "proof-corpus/decomposed/isaplanner/prop_55.av": {
+  "tactic": [
+   "drop.dropConcat",
+   "drop.dropConcatGen"
+  ]
+ },
  "proof-corpus/decomposed/isaplanner/prop_60.av": {
   "steps": [
    "last.lastConsNonEmpty"
+  ],
+  "tactic": [
+   "last.lastSnoc"
   ]
  },
  "proof-corpus/decomposed/isaplanner/prop_77.av": {
   "steps": [
    "sorted.sortTail",
    "sorted.sortedConsLeHead"
+  ],
+  "tactic": [
+   "insort.leHeadInsort",
+   "insort.sortedInsort",
+   "le.leTotal",
+   "sorted.sortedCons"
   ]
  },
  "proof-corpus/decomposed/isaplanner/prop_78.av": {
   "steps": [
    "sorted.sortTail",
    "sorted.sortedConsLeHead"
+  ],
+  "tactic": [
+   "insort.leHeadInsort",
+   "insort.sortedInsort",
+   "leq.leTotal",
+   "sort.sortProducesSorted",
+   "sorted.sortedCons"
   ]
  },
  "proof-corpus/decomposed/isaplanner/prop_85.av": {
   "steps": [
    "len.lenRevPreserved",
    "len.lenSnocSucc"
+  ],
+  "tactic": [
+   "zip.zipRev",
+   "zip.zipSnocDistribution"
   ]
  },
  "proof-corpus/decomposed/prod/lemma_05.av": {
   "steps": [
    "drop.dropDropCons",
    "drop.dropSuccCons"
+  ],
+  "tactic": [
+   "drop.dropOuterHeadNorm"
   ]
  },
  "proof-corpus/decomposed/prod/lemma_09.av": {
@@ -476,22 +838,47 @@
    "append.appendBridge",
    "append.appendRightId",
    "rev.revSingleton"
+  ],
+  "tactic": [
+   "rev.revAppendCons",
+   "rev.revAppendDistributes"
   ]
  },
  "proof-corpus/decomposed/prod/lemma_12.av": {
   "steps": [
    "sorted.sortTail",
    "sorted.sortedConsLeHead"
+  ],
+  "tactic": [
+   "insert.leHeadInsert",
+   "insert.sortedInsert",
+   "lessEq.leTotal",
+   "sorted.sortedCons"
+  ]
+ },
+ "proof-corpus/decomposed/prod/lemma_14.av": {
+  "tactic": [
+   "even.evenLengthAppendTwo",
+   "even.evenSuccSucc",
+   "length.lengthAppendTwo"
   ]
  },
  "proof-corpus/decomposed/prod/lemma_16.av": {
   "steps": [
    "plus.plusSuccRight"
+  ],
+  "tactic": [
+   "even.evenPlusShift",
+   "even.evenSuccSucc"
   ]
  },
  "proof-corpus/decomposed/prod/prop_02.av": {
   "steps": [
    "length.lengthConcatHomo"
+  ],
+  "tactic": [
+   "length.lengthConcatComm",
+   "plus.plusComm"
   ]
  },
  "proof-corpus/decomposed/prod/prop_03.av": {
@@ -520,6 +907,10 @@
   "steps": [
    "length.lengthAppend",
    "plus.plusSuccRight"
+  ],
+  "tactic": [
+   "length.lengthRev",
+   "length.revAppendLength"
   ]
  },
  "proof-corpus/decomposed/prod/prop_10.av": {
@@ -527,6 +918,10 @@
    "append.appendAssoc",
    "append.appendBridge",
    "append.appendRightId"
+  ],
+  "tactic": [
+   "rev.revAppendDistributes",
+   "rev.revRev"
   ]
  },
  "proof-corpus/decomposed/prod/prop_11.av": {
@@ -534,17 +929,33 @@
    "app.appAssoc",
    "app.appBridge",
    "app.appRightId"
+  ],
+  "tactic": [
+   "rev.revAppDistributes",
+   "rev.revAppRev",
+   "rev.revInvolutive"
   ]
  },
  "proof-corpus/decomposed/prod/prop_14.av": {
   "steps": [
    "sorted.sortedConsLeHead",
    "sorted.sortedTail"
+  ],
+  "tactic": [
+   "insert.leHeadInsert",
+   "insert.sortedInsert",
+   "isort.sortedIsort",
+   "lessEq.lessEqTotal",
+   "sorted.sortedCons"
   ]
  },
  "proof-corpus/decomposed/prod/prop_16.av": {
   "steps": [
    "plus.plusSuccRight"
+  ],
+  "tactic": [
+   "even.evenDouble",
+   "even.evenPlusTwo"
   ]
  },
  "proof-corpus/decomposed/prod/prop_17.av": {
@@ -573,6 +984,10 @@
  "proof-corpus/decomposed/prod/prop_22.av": {
   "steps": [
    "length.lengthAppendHomo"
+  ],
+  "tactic": [
+   "even.evenLengthAppendComm",
+   "plus.plusComm"
   ]
  },
  "proof-corpus/decomposed/prod/prop_23.av": {
@@ -581,11 +996,28 @@
    "plus.plusComm",
    "plus.plusSuccRight",
    "plus.plusZeroRight"
+  ],
+  "tactic": [
+   "half.halfLengthAppendComm"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_24.av": {
+  "tactic": [
+   "plus.plusComm"
   ]
  },
  "proof-corpus/decomposed/prod/prop_25.av": {
   "steps": [
    "length.lengthConcatHomo"
+  ],
+  "tactic": [
+   "even.evenLengthConcat",
+   "plus.plusComm"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_26.av": {
+  "tactic": [
+   "plus.plusComm"
   ]
  },
  "proof-corpus/decomposed/prod/prop_27.av": {
@@ -633,6 +1065,9 @@
  "proof-corpus/decomposed/prod/prop_34.av": {
   "steps": [
    "plus.plusRightZero"
+  ],
+  "tactic": [
+   "mult.multAccumGen"
   ]
  },
  "proof-corpus/decomposed/prod/prop_39.av": {
@@ -673,6 +1108,36 @@
    "count.countIsort"
   ]
  },
+ "proof-corpus/handwritten/fact_acc_spec.av": {
+  "tactic": [
+   "factFold.equalsSpec"
+  ]
+ },
+ "proof-corpus/handwritten/list_prod_spec.av": {
+  "tactic": [
+   "prodFold.equalsSpec"
+  ]
+ },
+ "proof-corpus/handwritten/nat_tri_spec.av": {
+  "tactic": [
+   "triFold.equalsSpec"
+  ]
+ },
+ "proof-corpus/handwritten/peano_aliased_spec.av": {
+  "tactic": [
+   "factFold.equalsSpec"
+  ]
+ },
+ "proof-corpus/handwritten/sum_acc_spec.av": {
+  "tactic": [
+   "sumFold.equalsSpec"
+  ]
+ },
+ "proof-corpus/tip/isaplanner-mono/prop_12.av": {
+  "tactic": [
+   "drop.dropMapCommute"
+  ]
+ },
  "proof-corpus/tip/isaplanner-mono/prop_14.av": {
   "steps": [
    "filterZ.filterAppendDistribute"
@@ -688,9 +1153,24 @@
    "takeWhileT.takeWhileTrueId"
   ]
  },
+ "proof-corpus/tip/isaplanner-mono/prop_41.av": {
+  "tactic": [
+   "take.takeMapCommute"
+  ]
+ },
  "proof-corpus/tip/isaplanner-mono/prop_43.av": {
   "steps": [
    "takeWhileZ.takeDropWhileAppend"
+  ]
+ },
+ "proof-corpus/tip/isaplanner-mono/prop_66.av": {
+  "tactic": [
+   "filterZ.filterLenLe"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_01.av": {
+  "tactic": [
+   "take.takeDropAppend"
   ]
  },
  "proof-corpus/tip/isaplanner/prop_02.av": {
@@ -703,6 +1183,11 @@
    "countMonotone.countAppendMonotone"
   ]
  },
+ "proof-corpus/tip/isaplanner/prop_04.av": {
+  "tactic": [
+   "count.countCons"
+  ]
+ },
  "proof-corpus/tip/isaplanner/prop_05.av": {
   "steps": [
    "count.countCons"
@@ -711,6 +1196,21 @@
  "proof-corpus/tip/isaplanner/prop_06.av": {
   "steps": [
    "minus.minusPlusZero"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_07.av": {
+  "tactic": [
+   "minus.plusMinusCancel"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_08.av": {
+  "tactic": [
+   "minus.minusPlusCancel"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_09.av": {
+  "tactic": [
+   "minus.minusMinusPlus"
   ]
  },
  "proof-corpus/tip/isaplanner/prop_10.av": {
@@ -743,9 +1243,34 @@
    "le.leZeroEqZero"
   ]
  },
+ "proof-corpus/tip/isaplanner/prop_18.av": {
+  "tactic": [
+   "lt.ltSuccAdd"
+  ]
+ },
  "proof-corpus/tip/isaplanner/prop_21.av": {
   "steps": [
    "le.leNAddNM"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_22.av": {
+  "tactic": [
+   "max.maxAssoc"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_23.av": {
+  "tactic": [
+   "max.maxComm"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_24.av": {
+  "tactic": [
+   "eq.maxEqLessEq"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_25.av": {
+  "tactic": [
+   "max.maxEqLe"
   ]
  },
  "proof-corpus/tip/isaplanner/prop_26.av": {
@@ -758,9 +1283,44 @@
    "elem.elemAppend"
   ]
  },
+ "proof-corpus/tip/isaplanner/prop_29.av": {
+  "tactic": [
+   "elem.elemIns1"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_30.av": {
+  "tactic": [
+   "elem.elemInsInsert"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_31.av": {
+  "tactic": [
+   "min.minAssoc"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_32.av": {
+  "tactic": [
+   "min.minComm"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_33.av": {
+  "tactic": [
+   "eq.minEqLeq"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_34.av": {
+  "tactic": [
+   "eq.minEqLe"
+  ]
+ },
  "proof-corpus/tip/isaplanner/prop_37.av": {
   "steps": [
    "elem.elemDelete"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_38.av": {
+  "tactic": [
+   "count.countAppendSelf"
   ]
  },
  "proof-corpus/tip/isaplanner/prop_39.av": {
@@ -793,10 +1353,58 @@
    "zip.zipNilLeft"
   ]
  },
+ "proof-corpus/tip/isaplanner/prop_47.av": {
+  "tactic": [
+   "height.mirrorHeight"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_49.av": {
+  "tactic": [
+   "butlast.butlastConcatLaw"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_50.av": {
+  "tactic": [
+   "butlast.butlastTakeLenMinusOne"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_51.av": {
+  "tactic": [
+   "butlast.butlastAppendSingleton"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_54.av": {
+  "tactic": [
+   "minus.plusMinusCancel"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_55.av": {
+  "tactic": [
+   "drop.dropConcat"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_56.av": {
+  "tactic": [
+   "drop.dropDropAdd"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_57.av": {
+  "tactic": [
+   "drop.dropTakeMinus"
+  ]
+ },
  "proof-corpus/tip/isaplanner/prop_58.av": {
   "steps": [
    "dropInt.dropIntSelf",
    "zip.zipSelf"
+  ],
+  "tactic": [
+   "dropPair.dropZip"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_61.av": {
+  "tactic": [
+   "last.lastConcatTwo"
   ]
  },
  "proof-corpus/tip/isaplanner/prop_62.av": {
@@ -804,14 +1412,64 @@
    "last.lastConsNonEmpty"
   ]
  },
+ "proof-corpus/tip/isaplanner/prop_64.av": {
+  "tactic": [
+   "last.lastAppendSingleton"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_65.av": {
+  "tactic": [
+   "lt.ltSuccAdd"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_67.av": {
+  "tactic": [
+   "len.lenButlastSub"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_68.av": {
+  "tactic": [
+   "delete.deleteLenLeq"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_69.av": {
+  "tactic": [
+   "le.leAddRight"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_70.av": {
+  "tactic": [
+   "le.leSucc"
+  ]
+ },
  "proof-corpus/tip/isaplanner/prop_71.av": {
   "steps": [
    "elem.insElem"
   ]
  },
+ "proof-corpus/tip/isaplanner/prop_75.av": {
+  "tactic": [
+   "count.countConsSplit"
+  ]
+ },
  "proof-corpus/tip/isaplanner/prop_76.av": {
   "steps": [
    "count.countAppendSingleton"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_79.av": {
+  "tactic": [
+   "sub.subShiftCancel"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_80.av": {
+  "tactic": [
+   "take.takeAppendSplit"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_86.av": {
+  "tactic": [
+   "elem.insElemBelow"
   ]
  },
  "proof-corpus/tip/prod/lemma_01.av": {
@@ -827,6 +1485,11 @@
  "proof-corpus/tip/prod/lemma_03.av": {
   "steps": [
    "length.lengthSnoc"
+  ]
+ },
+ "proof-corpus/tip/prod/lemma_04.av": {
+  "tactic": [
+   "drop.dropDropCons"
   ]
  },
  "proof-corpus/tip/prod/lemma_05.av": {
@@ -874,6 +1537,11 @@
    "elem.insertElemImplies"
   ]
  },
+ "proof-corpus/tip/prod/lemma_20.av": {
+  "tactic": [
+   "count.countInsert"
+  ]
+ },
  "proof-corpus/tip/prod/lemma_21.av": {
   "steps": [
    "count.countInsertNeq"
@@ -884,9 +1552,19 @@
    "append.appendAssoc"
   ]
  },
+ "proof-corpus/tip/prod/lemma_23.av": {
+  "tactic": [
+   "mult.multAssoc"
+  ]
+ },
  "proof-corpus/tip/prod/lemma_24.av": {
   "steps": [
    "plus.plusAssoc"
+  ]
+ },
+ "proof-corpus/tip/prod/prop_01.av": {
+  "tactic": [
+   "double.doublePlus"
   ]
  },
  "proof-corpus/tip/prod/prop_12.av": {
@@ -894,8 +1572,28 @@
    "qrev.qrevRevAppend"
   ]
  },
+ "proof-corpus/tip/prod/prop_15.av": {
+  "tactic": [
+   "plus.plusSuccSelf"
+  ]
+ },
+ "proof-corpus/tip/prod/prop_35.av": {
+  "tactic": [
+   "exp.expQexp"
+  ]
+ },
+ "proof-corpus/tip/prod/prop_36.av": {
+  "tactic": [
+   "elem.elemConcat"
+  ]
+ },
  "proof-corpus/tip/prod/prop_37.av": {
   "steps": [
+   "elem.elemAppend"
+  ]
+ },
+ "proof-corpus/tip/prod/prop_38.av": {
+  "tactic": [
    "elem.elemAppend"
   ]
  },
@@ -912,6 +1610,11 @@
  "proof-corpus/tip/prod/prop_43.av": {
   "steps": [
    "elem.elemUnion"
+  ]
+ },
+ "proof-corpus/tip/prod/prop_45.av": {
+  "tactic": [
+   "elem.elemInsert"
   ]
  },
  "proof-corpus/tip/prod/prop_46.av": {
