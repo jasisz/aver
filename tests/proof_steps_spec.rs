@@ -3627,9 +3627,16 @@ fn a_hint_never_names_an_unexposed_law_or_one_that_would_cite_back() {
     )
     .unwrap();
     let hints = |law: &str| summary["steps_hints"][law].to_string();
-    assert_eq!(summary["closed_by"]["total.ofJoined"], "open", "{summary}");
+    // `total.ofJoined` closes by its induction hypothesis read as evaluated;
+    // the law about the reversed list stays open, with the helper's law
+    // matching where it stops.
+    assert_eq!(summary["closed_by"]["total.ofJoined"], "steps", "{summary}");
+    assert_eq!(
+        summary["closed_by"]["total.ofReversedJoined"], "open",
+        "{summary}"
+    );
     assert!(
-        !hints("total.ofJoined").contains("Lib.hidden.ofJoined"),
+        !hints("total.ofReversedJoined").contains("Lib.hidden.ofJoined"),
         "{summary}"
     );
     // The module's own law about its helper is used inside the module.
@@ -4955,6 +4962,133 @@ fn lean_closes_the_case_contradiction_laws_by_their_steps() {
     )
     .unwrap();
     for law in CASE_CONTRADICTION_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+/// The laws of `evaluated_hypotheses.av` that close only once the
+/// hypotheses of a case are evaluated the way its claim is: a `when` that
+/// evaluates to the claim, a line of an evaluated `when` that decides what
+/// the claim stops at, and a `when` that evaluates to `false` where another
+/// line used to answer for it.
+const EVALUATED_HYPOTHESIS_LAWS: [&str; 3] = [
+    "has.keptWasThere",
+    "sorted.consUnderItsHead",
+    "has.nothingKeepsNone",
+];
+
+/// A false law of the same shape as each of [`EVALUATED_HYPOTHESIS_LAWS`]:
+/// its hypothesis evaluates to something close to what the claim needs, but
+/// not to it.
+const EVALUATED_HYPOTHESIS_FALSE_LAWS: [&str; 3] = [
+    "has.keptOtherWasThere",
+    "sorted.consUnderAnotherHead",
+    "has.allKeepsSome",
+];
+
+/// Where a case stays open, its hypotheses are evaluated the way the claim
+/// was and the claim is tried again under their evaluated forms: each form
+/// is cut in with the evaluation that proves it, which both kernels check;
+/// a wrong evaluation is refused, and a false law of the same shape stays
+/// open.
+#[test]
+fn both_kernels_read_a_hypothesis_as_evaluated_and_refuse_a_wrong_evaluation() {
+    let out = scratch("evaluated-hypotheses");
+    let (result, summary) = aver_backend_json("evaluated_hypotheses.av", &out, None);
+    let _ = fs::remove_dir_all(&out);
+    for law in EVALUATED_HYPOTHESIS_LAWS {
+        assert_eq!(
+            summary["closed_by"][law],
+            "steps",
+            "{law}: {}",
+            format_output(&result)
+        );
+    }
+    for law in EVALUATED_HYPOTHESIS_FALSE_LAWS {
+        assert_eq!(summary["closed_by"][law], "open", "{law}: {summary}");
+    }
+    let export = scratch("evaluated-hypotheses-export");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("evaluated_hypotheses.av", &export)
+            .into_iter()
+            .collect();
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in EVALUATED_HYPOTHESIS_LAWS {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.to_string()));
+    }
+    // The evaluated `when` is cut in as the claim itself.
+    let kept = read("has.keptWasThere");
+    assert!(
+        kept.contains("(have h_read1 (call has (v x) (v xs)) "),
+        "{kept}"
+    );
+    // The wrong arm of `kept`, the other line of the evaluated `when`, and
+    // `Bool.and(false, b)` read as `b`.
+    let mutants = [
+        mutate_proof(
+            &kept,
+            "(unfold kept 1 ((ctor Mode.All) (v xs))",
+            "(unfold kept 2 ((ctor Mode.All) (v xs))",
+        ),
+        mutate_proof(
+            &read("sorted.consUnderItsHead"),
+            "(rule bool.and.elim_l ((a (call lessEq (v z) (v a_c0)))",
+            "(rule bool.and.elim_r ((a (call lessEq (v z) (v a_c0)))",
+        ),
+        mutate_proof(
+            &read("has.nothingKeepsNone"),
+            "(rule bool.and.false_l ((b (call has (v x) (v ys)))))",
+            "(rule bool.and.true_l ((b (call has (v x) (v ys)))))",
+        ),
+    ];
+    for (i, mutant) in mutants.into_iter().enumerate() {
+        let refused = aver::proof_kernel::verdict(&mutant);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "mutant {i}: {refused:?}"
+        );
+        let path = export.join(format!("mutant{i}.steps"));
+        fs::write(&path, &mutant).unwrap();
+        let replayed = replay(std::slice::from_ref(&path));
+        assert!(!replayed.status.success(), "{}", format_output(&replayed));
+    }
+    let _ = fs::remove_dir_all(export);
+}
+
+#[test]
+fn lean_closes_the_evaluated_hypothesis_laws_by_their_steps() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("evaluated-hypotheses-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "evaluated_hypotheses.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "99",
+            "--declined-budget",
+            "99",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in EVALUATED_HYPOTHESIS_LAWS {
         assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
     }
     let _ = fs::remove_dir_all(out);

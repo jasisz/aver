@@ -3040,6 +3040,13 @@ impl Env<'_> {
         if let Some(proof) = self.meet_by_rewriting(&nl, &nr)? {
             return Ok(Ok(proof));
         }
+        // Nothing closed the case as its hypotheses are stated: evaluate
+        // them the way the claim was, and the claim again under them.
+        if let Some(proof) =
+            self.prove_with_evaluated_hypotheses(lhs, rhs, &[nl.cur(), nr.cur()], depth)
+        {
+            return Ok(Ok(proof));
+        }
         Err(self.stopped_at(nl.cur(), nr.cur()))
     }
 
@@ -3193,6 +3200,10 @@ impl Env<'_> {
             },
         };
         if depth == 0 || is_bool_value(&g) || self.hyp_for(&g).is_some() {
+            let stopped = [l.chain.cur(), r.chain.cur(), &g];
+            if let Some(proof) = self.prove_with_evaluated_hypotheses(lhs, rhs, &stopped, depth) {
+                return Ok(proof);
+            }
             return Err(self.stopped_at(l.chain.cur(), r.chain.cur()));
         }
         // Each branch goes on from where evaluation stopped, not from the

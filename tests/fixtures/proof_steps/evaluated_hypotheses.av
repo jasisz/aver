@@ -1,0 +1,116 @@
+module EvaluatedHypotheses
+    intent =
+        "Laws that close only once the hypotheses of a case are evaluated the way its claim is:"
+        "a `when` that evaluates to the claim itself, a line of an evaluated `when` that decides"
+        "what the claim stops at, and a `when` that evaluates to `false` where another line used"
+        "to answer for it. Each has a false law of the same shape, where the evaluated"
+        "hypothesis is close to what the claim needs but not it, which must stay open."
+    exposes [Nat, Mode, lessEq, kept, has, leHead, sorted]
+
+type Nat
+    Z
+    S(Nat)
+
+type Mode
+    All
+    Nothing
+
+fn lessEq(x: Nat, y: Nat) -> Bool
+    ? "Whether x is at most y."
+    match x
+        Nat.Z -> true
+        Nat.S(z) -> match y
+            Nat.Z -> false
+            Nat.S(w) -> lessEq(z, w)
+
+verify lessEq
+    lessEq(Nat.Z, Nat.S(Nat.Z)) => true
+    lessEq(Nat.S(Nat.Z), Nat.Z) => false
+
+fn kept(mode: Mode, xs: List<Int>) -> List<Int>
+    ? "The items a mode keeps: all of them or none."
+    match mode
+        Mode.All -> xs
+        Mode.Nothing -> []
+
+verify kept
+    kept(Mode.All, [1, 2]) => [1, 2]
+    kept(Mode.Nothing, [1, 2]) => []
+
+fn has(x: Int, xs: List<Int>) -> Bool
+    ? "Whether x is an item of xs."
+    match xs
+        [] -> false
+        [h, ..t] -> match h == x
+            true -> true
+            false -> has(x, t)
+
+verify has
+    has(2, [1, 2]) => true
+    has(3, [1, 2]) => false
+
+verify has law keptWasThere
+    given x: Int = [1, 2]
+    given mode: Mode = [Mode.All, Mode.Nothing]
+    given xs: List<Int> = [[], [1], [1, 2]]
+    when has(x, kept(mode, xs))
+    has(x, xs) => true
+
+verify has law keptOtherWasThere
+    given x: Int = [1]
+    given y: Int = [1]
+    given mode: Mode = [Mode.All, Mode.Nothing]
+    given xs: List<Int> = [[], [1]]
+    when has(x, kept(mode, xs))
+    has(y, xs) => true
+
+fn leHead(z: Nat, l: List<Nat>) -> Bool
+    ? "Whether z is at most the first item of l, if l has one."
+    match l
+        [] -> true
+        [a, ..rest] -> lessEq(z, a)
+
+verify leHead
+    leHead(Nat.S(Nat.Z), []) => true
+    leHead(Nat.S(Nat.Z), [Nat.Z]) => false
+
+fn sorted(l: List<Nat>) -> Bool
+    ? "Whether each item of l is at most the next."
+    match l
+        [] -> true
+        [a, ..rest] -> match rest
+            [] -> true
+            [b, ..more] -> Bool.and(lessEq(a, b), sorted(rest))
+
+verify sorted
+    sorted([Nat.Z, Nat.S(Nat.Z)]) => true
+    sorted([Nat.S(Nat.Z), Nat.Z]) => false
+
+verify sorted law consUnderItsHead
+    given z: Nat = [Nat.Z, Nat.S(Nat.Z)]
+    given l: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z)]]
+    when leHead(z, l)
+    when sorted(l)
+    sorted(List.concat([z], l)) => true
+
+verify sorted law consUnderAnotherHead
+    given z: Nat = [Nat.Z]
+    given w: Nat = [Nat.Z]
+    given l: List<Nat> = [[], [Nat.Z]]
+    when leHead(w, l)
+    when sorted(l)
+    sorted(List.concat([z], l)) => true
+
+verify has law nothingKeepsNone
+    given x: Int = [1, 2]
+    given xs: List<Int> = [[], [1]]
+    given ys: List<Int> = [[], [1]]
+    when Bool.and(has(x, kept(Mode.Nothing, xs)), has(x, ys))
+    has(x, xs) => true
+
+verify has law allKeepsSome
+    given x: Int = [1]
+    given xs: List<Int> = [[1]]
+    given ys: List<Int> = [[1]]
+    when Bool.and(has(x, kept(Mode.All, ys)), has(x, ys))
+    has(x, xs) => true

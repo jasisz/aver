@@ -19,6 +19,9 @@
 //! a budget of its own ([`REFUTE_FUEL`]) that neither the claim nor the
 //! normal forms of [`Env::normal_fact`] draw on. A case with the same
 //! hypotheses is read once per attempt.
+//!
+//! Where all of that leaves a case open, its hypotheses are evaluated the
+//! way its claim was ([`super::evaluated`]).
 
 use crate::ast::{BinOp, Type};
 use crate::ir::hir::{ResolvedCallee, ResolvedExpr};

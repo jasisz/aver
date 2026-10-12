@@ -81,7 +81,7 @@
   ]
  },
  "examples/formal/affine_wrapper_law.av": {
-  "tactic": [
+  "steps": [
    "boundedScale.returnsCore"
   ]
  },
@@ -320,14 +320,12 @@
   "steps": [
    "observe.idempotent",
    "observe.settledIsIdentity",
+   "observe.timeoutMonotone",
    "reject.settledIsIdentity",
    "resolve.alwaysSettles",
    "resolve.noDoubleSettle",
    "resolve.noResurrection",
    "resolve.settledIsIdentity"
-  ],
-  "tactic": [
-   "observe.timeoutMonotone"
   ]
  },
  "projects/k5_fdiv/domain/awaymodel.av": {
@@ -790,27 +788,27 @@
  },
  "proof-corpus/decomposed/isaplanner/prop_77.av": {
   "steps": [
+   "insort.leHeadInsort",
    "sorted.sortTail",
+   "sorted.sortedCons",
    "sorted.sortedConsLeHead"
   ],
   "tactic": [
-   "insort.leHeadInsort",
    "insort.sortedInsort",
-   "le.leTotal",
-   "sorted.sortedCons"
+   "le.leTotal"
   ]
  },
  "proof-corpus/decomposed/isaplanner/prop_78.av": {
   "steps": [
+   "insort.leHeadInsort",
    "sorted.sortTail",
+   "sorted.sortedCons",
    "sorted.sortedConsLeHead"
   ],
   "tactic": [
-   "insort.leHeadInsort",
    "insort.sortedInsort",
    "leq.leTotal",
-   "sort.sortProducesSorted",
-   "sorted.sortedCons"
+   "sort.sortProducesSorted"
   ]
  },
  "proof-corpus/decomposed/isaplanner/prop_85.av": {
@@ -837,23 +835,21 @@
    "append.appendAssoc",
    "append.appendBridge",
    "append.appendRightId",
-   "rev.revSingleton"
-  ],
-  "tactic": [
    "rev.revAppendCons",
-   "rev.revAppendDistributes"
+   "rev.revAppendDistributes",
+   "rev.revSingleton"
   ]
  },
  "proof-corpus/decomposed/prod/lemma_12.av": {
   "steps": [
+   "insert.leHeadInsert",
    "sorted.sortTail",
+   "sorted.sortedCons",
    "sorted.sortedConsLeHead"
   ],
   "tactic": [
-   "insert.leHeadInsert",
    "insert.sortedInsert",
-   "lessEq.leTotal",
-   "sorted.sortedCons"
+   "lessEq.leTotal"
   ]
  },
  "proof-corpus/decomposed/prod/lemma_14.av": {
@@ -917,10 +913,10 @@
   "steps": [
    "append.appendAssoc",
    "append.appendBridge",
-   "append.appendRightId"
+   "append.appendRightId",
+   "rev.revAppendDistributes"
   ],
   "tactic": [
-   "rev.revAppendDistributes",
    "rev.revRev"
   ]
  },
@@ -928,25 +924,25 @@
   "steps": [
    "app.appAssoc",
    "app.appBridge",
-   "app.appRightId"
+   "app.appRightId",
+   "rev.revAppDistributes"
   ],
   "tactic": [
-   "rev.revAppDistributes",
    "rev.revAppRev",
    "rev.revInvolutive"
   ]
  },
  "proof-corpus/decomposed/prod/prop_14.av": {
   "steps": [
+   "insert.leHeadInsert",
+   "sorted.sortedCons",
    "sorted.sortedConsLeHead",
    "sorted.sortedTail"
   ],
   "tactic": [
-   "insert.leHeadInsert",
    "insert.sortedInsert",
    "isort.sortedIsort",
-   "lessEq.lessEqTotal",
-   "sorted.sortedCons"
+   "lessEq.lessEqTotal"
   ]
  },
  "proof-corpus/decomposed/prod/prop_16.av": {

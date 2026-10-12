@@ -12,7 +12,9 @@
 //!   ([`split_on_cited_when`]);
 //! - **evaluation**: evaluate both sides, splitting on each undecided Bool
 //!   guard, until both sides are the same term, or until the hypotheses of
-//!   a case rule it out ([`hypotheses`]);
+//!   a case rule it out ([`hypotheses`]); where a case stays open, its
+//!   hypotheses are evaluated the way the claim was and the claim is tried
+//!   again under them ([`evaluated`]);
 //! - **finite domains**: when evaluation alone does not close the law,
 //!   split every given of finite type into all of its values and evaluate
 //!   each case;
@@ -36,6 +38,7 @@ mod by_plan;
 mod chain;
 mod env;
 mod eval;
+mod evaluated;
 mod finite;
 mod hypotheses;
 mod induction;

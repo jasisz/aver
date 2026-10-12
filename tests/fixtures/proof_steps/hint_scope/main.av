@@ -17,6 +17,11 @@ verify total law ofJoined
     given ys: List<Int> = [[], [3]]
     total(List.concat(xs, ys)) => total(xs) + total(ys)
 
+verify total law ofReversedJoined
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given ys: List<Int> = [[], [3]]
+    total(List.concat(List.reverse(xs), ys)) => total(xs) + total(ys)
+
 fn sum(xs: List<Int>) -> Int
     ? "The sum of the items."
     match xs
