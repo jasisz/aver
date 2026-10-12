@@ -20,8 +20,10 @@ fn __mutual_tco_trampoline_1(
             __MutualTco1::ParseAddExprTail(mut pos @ _, mut left @ _) => {
                 crate::cancel_checkpoint();
                 let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
-                let t @ _ =
-                    crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone());
+                let t @ _ = crate::aver_generated::domain::parser_match::continuationAt(
+                    &*tokens,
+                    pos.clone(),
+                );
                 match t {
                     crate::aver_generated::domain::token::Token::TkPlus => {
                         __MutualTco1::ParseAddExprRight(
@@ -107,7 +109,10 @@ fn __mutual_tco_trampoline_2(
             __MutualTco2::ParseMulExprTail(mut pos @ _, mut left @ _) => {
                 crate::cancel_checkpoint();
                 let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
-                match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
+                match crate::aver_generated::domain::parser_match::continuationAt(
+                    &*tokens,
+                    pos.clone(),
+                ) {
                     crate::aver_generated::domain::token::Token::TkStar => {
                         __MutualTco2::ParseMulExprRight(
                             nextPos,
@@ -1441,7 +1446,7 @@ pub fn parsePostfixQuestion(
     expr @ _: &crate::aver_generated::domain::ast::Expr,
 ) -> (crate::aver_generated::domain::ast::Expr, aver_rt::AverInt) {
     crate::cancel_checkpoint();
-    match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
+    match crate::aver_generated::domain::parser_match::continuationAt(tokens, pos.clone()) {
         crate::aver_generated::domain::token::Token::TkQuestion => (
             crate::aver_generated::domain::ast::Expr::ExprPropagate(std::sync::Arc::new(
                 expr.clone(),
@@ -1473,7 +1478,7 @@ pub fn parseCmpExprTail(
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
-    match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
+    match crate::aver_generated::domain::parser_match::continuationAt(tokens, pos.clone()) {
         crate::aver_generated::domain::token::Token::TkEqEq => {
             crate::aver_generated::domain::parser::expr::parseCmpExprRight(
                 tokens,

@@ -120,7 +120,7 @@ A constructor pattern with parentheses lists every field of its variant, one sub
 
 A constructor pattern without parentheses matches its variant whatever the fields hold. `Shape.Rect -> …` takes every `Rect`, `Result.Ok -> …` every `Ok` and `Option.Some -> …` every `Some`, so a match can ask which variant a value is without naming its fields. Such an arm counts for exhaustiveness like `Shape.Rect(_, _)`, and any arm for the same variant after it is unreachable, so an arm that tests a field (`Shape.Rect(0, h)`) goes before it.
 
-A match may nest inside a match arm. The arm body must follow `->` on the same line, so move a complex expression into a named function.
+A match may nest inside a match arm. The arm body must follow `->` on the same line, so move a complex expression into a named function. A match ends with its indented arms: the line after them is the next arm or the next statement, never a continuation of the match. To apply an operator to a match, put the match in parentheses or bind it to a name first.
 
 ### Nested patterns
 

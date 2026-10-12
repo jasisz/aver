@@ -19,7 +19,7 @@ verify parseExpr
 
 fn parsePostfixQuestion(tokens: List<Token>, pos: Int, expr: Expr) -> Tuple<Expr, Int>
     ? "Check for postfix ? (error propagation)."
-    match Domain.ParserMatch.tokenAt(tokens, pos)
+    match Domain.ParserMatch.continuationAt(tokens, pos)
         Token.TkQuestion -> (Expr.ExprPropagate(expr), pos + 1)
         _ -> (expr, pos)
 
@@ -40,7 +40,7 @@ verify parseCmpExpr
 fn parseCmpExprTail(tokens: List<Token>, pos: Int, left: Expr) -> Result<Tuple<Expr, Int>, String>
     ? "Check for comparison operator."
     nextPos = pos + 1
-    match Domain.ParserMatch.tokenAt(tokens, pos)
+    match Domain.ParserMatch.continuationAt(tokens, pos)
         Token.TkEqEq -> parseCmpExprRight(tokens, nextPos, left, 0)
         Token.TkNeq -> parseCmpExprRight(tokens, nextPos, left, 1)
         Token.TkLt -> parseCmpExprRight(tokens, nextPos, left, 2)
@@ -92,7 +92,7 @@ verify parseAddExpr
 fn parseAddExprTail(tokens: List<Token>, pos: Int, left: Expr) -> Result<Tuple<Expr, Int>, String>
     ? "Continue parsing additive operators."
     nextPos = pos + 1
-    t = Domain.ParserMatch.tokenAt(tokens, pos)
+    t = Domain.ParserMatch.continuationAt(tokens, pos)
     match t
         Token.TkPlus -> parseAddExprRight(tokens, nextPos, left, 0)
         Token.TkMinus -> parseAddExprRight(tokens, nextPos, left, 1)
@@ -128,7 +128,7 @@ verify parseMulExpr
 fn parseMulExprTail(tokens: List<Token>, pos: Int, left: Expr) -> Result<Tuple<Expr, Int>, String>
     ? "Continue parsing multiplicative operators."
     nextPos = pos + 1
-    match Domain.ParserMatch.tokenAt(tokens, pos)
+    match Domain.ParserMatch.continuationAt(tokens, pos)
         Token.TkStar -> parseMulExprRight(tokens, nextPos, left, 0)
         Token.TkSlash -> parseMulExprRight(tokens, nextPos, left, 1)
         _ -> Result.Ok((left, pos))
