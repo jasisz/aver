@@ -5037,6 +5037,51 @@ fn both_kernels_read_a_hypothesis_as_the_case_evaluated_it_and_refuse_the_wrong_
     let _ = fs::remove_dir_all(export);
 }
 
+/// The kernel checks a script on a stack of its own, so the thread that
+/// asks does not decide whether a deep proof is checked: these scripts need
+/// more than the 512 KiB the asking thread has here, and are accepted, and
+/// a wrong one is still refused.
+#[test]
+fn the_kernel_checks_a_deep_proof_for_a_thread_with_a_small_stack() {
+    let export = scratch("small-stack-export");
+    let scripts: Vec<(String, String)> = export_steps("case_hypotheses.av", &export)
+        .into_iter()
+        .map(|(law, path)| (law, fs::read_to_string(path).unwrap()))
+        .collect();
+    let _ = fs::remove_dir_all(export);
+    for law in CASE_HYPOTHESIS_LAWS {
+        assert!(scripts.iter().any(|(key, _)| key == law), "{law}");
+    }
+    let verdicts = std::thread::Builder::new()
+        .stack_size(512 * 1024)
+        .spawn(move || {
+            scripts
+                .into_iter()
+                .map(|(law, text)| {
+                    // A variable no case introduces.
+                    let wrong = text.replacen("(v h_c0)", "(v h_c9)", 1);
+                    (
+                        law,
+                        aver::proof_kernel::verdict(&text),
+                        aver::proof_kernel::verdict(&wrong),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap()
+        .join()
+        .expect("the kernel does not run on the asking thread's stack");
+    let mut refusals = 0;
+    for (law, accepted, of_wrong) in verdicts {
+        assert_eq!(accepted, Ok(law.clone()));
+        if of_wrong != accepted {
+            assert!(of_wrong.is_err(), "{law}: {of_wrong:?}");
+            refusals += 1;
+        }
+    }
+    assert!(refusals > 0, "no script was mutated");
+}
+
 #[test]
 fn lean_closes_the_case_hypothesis_laws_by_their_steps() {
     if !lean_required::lake_available() {

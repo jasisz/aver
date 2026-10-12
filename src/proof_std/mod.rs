@@ -36,12 +36,12 @@ pub mod aver_generated;
 /// (`crate::ir::proof_steps::sexpr`, wrapped as `(goal (elems …) SCRIPT)`).
 /// The answer is what a project plan's runner returns: `proof` and the
 /// proof on the next line, `refused` and the reason, or `goal` and why the
-/// goal could not be read.
+/// goal could not be read. Plans run on their own stack
+/// (`crate::proof_stack`), like the kernel.
 pub fn run(plan: &str, goal: &str) -> Result<String, String> {
-    std::panic::catch_unwind(|| {
+    crate::proof_stack::run(&format!("the standard plan {plan}"), || {
         aver_generated::entry::run(AverStr::from(plan), AverStr::from(goal)).to_string()
     })
-    .map_err(|_| format!("the standard plan {plan} stopped with an internal error"))
 }
 
 /// Run a plan's script (`Kernel.Std.Tactic` in step data, as
@@ -52,7 +52,7 @@ pub fn run(plan: &str, goal: &str) -> Result<String, String> {
 /// answered next (an Auto or Plan node), or `goal` and why the input could
 /// not be read.
 pub fn run_script(goal: &str, script: &str, answers: &str) -> Result<String, String> {
-    std::panic::catch_unwind(|| {
+    crate::proof_stack::run("the standard script runner", || {
         aver_generated::entry::script(
             AverStr::from(goal),
             AverStr::from(script),
@@ -60,5 +60,4 @@ pub fn run_script(goal: &str, script: &str, answers: &str) -> Result<String, Str
         )
         .to_string()
     })
-    .map_err(|_| "the standard script runner stopped with an internal error".to_string())
 }

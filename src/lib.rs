@@ -37,6 +37,8 @@ pub mod playground;
 #[cfg(feature = "runtime")]
 pub mod proof_kernel;
 #[cfg(feature = "runtime")]
+mod proof_stack;
+#[cfg(feature = "runtime")]
 pub mod proof_std;
 #[cfg(feature = "runtime")]
 pub mod provider;
