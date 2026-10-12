@@ -1183,6 +1183,53 @@ fn match_literal_wildcard() {
 }
 
 #[test]
+fn line_after_a_match_binding_does_not_change_the_binding() {
+    // The stray `-y` is its own statement; `z` stays the match's value.
+    let src = "fn g(k: Int, y: Int) -> Int\n    z = match k\n        0 -> 10\n        _ -> 20\n    -y\n    z\n";
+    assert_eq!(
+        call_fn(src, "g", vec![Value::int(0), Value::int(7)]),
+        Value::int(10)
+    );
+    assert_eq!(
+        call_fn(src, "g", vec![Value::int(9), Value::int(7)]),
+        Value::int(20)
+    );
+}
+
+#[test]
+fn parenthesised_line_after_a_match_binding_is_the_result() {
+    let src = "fn f(k: Int, y: Int) -> Int\n    z = match k\n        0 -> 1\n        _ -> 2\n    (y + z)\n";
+    assert_eq!(
+        call_fn(src, "f", vec![Value::int(0), Value::int(7)]),
+        Value::int(8)
+    );
+    assert_eq!(
+        call_fn(src, "f", vec![Value::int(9), Value::int(7)]),
+        Value::int(9)
+    );
+}
+
+#[test]
+fn tuple_arm_after_a_nested_match_is_taken() {
+    let src = "fn f(a: Int, b: Int, k: Int) -> Int\n    match (a, b)\n        (0, _) -> match k\n            0 -> 1\n            _ -> 2\n        (_, 0) -> 3\n        _ -> 4\n";
+    let call = |a, b, k| call_fn(src, "f", vec![Value::int(a), Value::int(b), Value::int(k)]);
+    assert_eq!(call(0, 5, 0), Value::int(1));
+    assert_eq!(call(0, 5, 9), Value::int(2));
+    assert_eq!(call(5, 0, 0), Value::int(3));
+    assert_eq!(call(5, 5, 0), Value::int(4));
+}
+
+#[test]
+fn parenthesised_match_still_subtracts() {
+    let src =
+        "fn f(k: Int, y: Int) -> Int\n    (match k\n        0 -> 10\n        _ -> 20\n    ) - y\n";
+    assert_eq!(
+        call_fn(src, "f", vec![Value::int(0), Value::int(7)]),
+        Value::int(3)
+    );
+}
+
+#[test]
 fn match_string_literal_dispatch() {
     let src = "fn handle(cmd: String) -> Int\n    match cmd\n        \"verack\" -> 1\n        \"tx\" -> 4\n        _ -> 0\n";
     assert_eq!(

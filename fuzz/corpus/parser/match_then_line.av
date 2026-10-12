@@ -1,0 +1,56 @@
+module MatchThenLine
+    intent =
+        "Lines that follow the indented arms of a match."
+        "A tuple arm after a nested match, and statements starting with '(' or '-' after a binding to a match."
+    effects []
+
+fn pick(a: Int, b: Int, k: Int) -> Int
+    ? "A tuple arm right after an arm whose body is a nested match."
+    match (a, b)
+        (0, _) -> match k
+            0 -> 1
+            _ -> 2
+        (_, 0) -> 3
+        _ -> 4
+
+verify pick
+    pick(0, 5, 0) => 1
+    pick(0, 5, 9) => 2
+    pick(5, 0, 0) => 3
+    pick(5, 5, 0) => 4
+
+fn keep(k: Int, y: Int) -> Int
+    ? "A line starting with minus after a binding to a match is its own statement."
+    z = match k
+        0 -> 10
+        _ -> 20
+    -y
+    z
+
+verify keep
+    keep(0, 7) => 10
+    keep(9, 7) => 20
+
+fn add(k: Int, y: Int) -> Int
+    ? "A parenthesised line after a binding to a match is the result, not a call."
+    z = match k
+        0 -> 1
+        _ -> 2
+    (y + z)
+
+verify add
+    add(0, 7) => 8
+
+fn sub(k: Int, y: Int) -> Int
+    ? "A match in parentheses still takes an operator."
+    (match k
+        0 -> 10
+        _ -> 20
+    ) - y
+
+verify sub
+    sub(0, 7) => 3
+
+fn main() -> Int
+    ! []
+    pick(0, 5, 0) + keep(0, 7) + add(0, 7) + sub(0, 7)

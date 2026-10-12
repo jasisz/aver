@@ -154,6 +154,24 @@ impl Parser {
         matches!(self.current().kind, TokenKind::Dedent)
     }
 
+    /// True when the token just consumed closed an indented block, so the
+    /// expression parsed so far ended with that block (a `match` and its
+    /// arms). Such an expression is complete: the next token starts a new
+    /// line and must not continue it as a call, a field access, a `?` or a
+    /// binary operator. Every place that extends an expression past its
+    /// atom asks this first.
+    ///
+    /// The only expression that ends on a DEDENT is `match`: bracketed
+    /// forms skip the DEDENTs inside them and end on their closing token,
+    /// which is also why `(match ...) - y` keeps working.
+    pub(super) fn expr_ended_with_block(&self) -> bool {
+        self.pos > 0
+            && self
+                .tokens
+                .get(self.pos - 1)
+                .is_some_and(|tok| tok.kind == TokenKind::Dedent)
+    }
+
     pub(super) fn is_eof(&self) -> bool {
         matches!(self.current().kind, TokenKind::Eof)
     }

@@ -44,6 +44,9 @@ impl Parser {
         let mut left = self.parse_additive()?;
 
         loop {
+            if self.expr_ended_with_block() {
+                break;
+            }
             // `<<` / `>>` in OPERATOR position is always an attempted shift.
             // It cannot be lexed as a rejected operator the way `^` and `&`
             // are, because `<` and `>` are real tokens and `>>` closes a
@@ -92,6 +95,9 @@ impl Parser {
         let mut left = self.parse_multiplicative()?;
 
         loop {
+            if self.expr_ended_with_block() {
+                break;
+            }
             let line = self.current().line;
             let op = match &self.current().kind {
                 TokenKind::Plus => BinOp::Add,
@@ -110,6 +116,9 @@ impl Parser {
         let mut left = self.parse_unary()?;
 
         loop {
+            if self.expr_ended_with_block() {
+                break;
+            }
             let line = self.current().line;
             let op = match &self.current().kind {
                 TokenKind::Star => BinOp::Mul,
@@ -166,6 +175,9 @@ impl Parser {
         let mut postfix_depth: u32 = 0;
 
         loop {
+            if self.expr_ended_with_block() {
+                break;
+            }
             if self.check_exact(&TokenKind::Question) && self.peek(1).kind == TokenKind::Bang {
                 // ?! on tuple: independent product with Result unwrapping
                 let line = self.current().line;
@@ -309,7 +321,7 @@ impl Parser {
     pub(super) fn parse_call_or_atom(&mut self) -> Result<Spanned<Expr>, ParseError> {
         let atom = self.parse_atom()?;
 
-        if self.check_exact(&TokenKind::LParen) {
+        if !self.expr_ended_with_block() && self.check_exact(&TokenKind::LParen) {
             if let Some(path) = Self::dotted_name(&atom) {
                 self.reject_zero_arg_constructor_call(&path)?;
             }

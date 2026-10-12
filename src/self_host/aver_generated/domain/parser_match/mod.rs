@@ -490,6 +490,50 @@ pub fn tokenAtWalk(
     }
 }
 
+/// Token at position, as a possible continuation of the expression that ends just before it. TkNewline when that expression ended with an indented block: a match and its arms are complete, the next line starts fresh.
+#[inline(always)]
+pub fn continuationAt(
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    pos @ _: aver_rt::AverInt,
+) -> crate::aver_generated::domain::token::Token {
+    crate::cancel_checkpoint();
+    if (pos < aver_rt::AverInt::from_i64(1)) {
+        crate::aver_generated::domain::parser_match::tokenAt(tokens, pos)
+    } else {
+        crate::aver_generated::domain::parser_match::continuationAtWalk(
+            tokens.clone(),
+            pos,
+            aver_rt::AverInt::from_i64(1),
+        )
+    }
+}
+
+/// Walk to the token before target; a DEDENT there ends the expression, anything else hands over the token at target.
+#[inline(always)]
+pub fn continuationAtWalk(
+    mut tokens @ _: aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    mut target @ _: aver_rt::AverInt,
+    mut idx @ _: aver_rt::AverInt,
+) -> crate::aver_generated::domain::token::Token {
+    loop {
+        crate::cancel_checkpoint();
+        aver_list_match!(tokens, [] => { return crate::aver_generated::domain::token::Token::TkEof; }, [t, rest] => { if (idx == target) { match t {
+        crate::aver_generated::domain::token::Token::TkDedent => {
+            return crate::aver_generated::domain::token::Token::TkNewline;
+        },
+        _ => {
+            return crate::aver_generated::domain::parser_match::tokenAt(&rest, aver_rt::AverInt::from_i64(0));
+        }
+    } } else { {
+            let __tco0 = rest;
+            let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
+            tokens = __tco0;
+            idx = __tco2;
+            continue;
+        } } })
+    }
+}
+
 /// Check if token matches expected (structural equality via repr).
 pub fn isToken(
     t @ _: &crate::aver_generated::domain::token::Token,

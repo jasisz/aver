@@ -4,7 +4,7 @@ module ParserMatch
         "Separated from core parser to keep each module under 500 lines."
         "No dependency on Domain.Parser — this is a leaf module."
     depends [Domain.Token, Domain.Ast]
-    exposes [parsePattern, tokenAt, isToken, expect, skipNewlines, skipNewlinesAndDedents, skipTypeAnnotation, skipReturnType, skipDescAndEffects, skipBlock, parseModuleHeader, parseParamList, isBodyEndFlat, isArmStart]
+    exposes [parsePattern, tokenAt, continuationAt, isToken, expect, skipNewlines, skipNewlinesAndDedents, skipTypeAnnotation, skipReturnType, skipDescAndEffects, skipBlock, parseModuleHeader, parseParamList, isBodyEndFlat, isArmStart]
     effects []
 
 fn tokenAt(tokens: List<Token>, pos: Int) -> Token
@@ -26,6 +26,35 @@ fn tokenAtWalk(tokens: List<Token>, target: Int, idx: Int) -> Token
 verify tokenAtWalk
     tokenAtWalk([Token.TkPlus, Token.TkMinus, Token.TkEof], 1, 0) => Token.TkMinus
     tokenAtWalk([], 0, 0) => Token.TkEof
+
+fn continuationAt(tokens: List<Token>, pos: Int) -> Token
+    ? "Token at position, as a possible continuation of the expression that ends just before it."
+      "TkNewline when that expression ended with an indented block: a match and its arms are complete, the next line starts fresh."
+    match pos < 1
+        true -> tokenAt(tokens, pos)
+        false -> continuationAtWalk(tokens, pos, 1)
+
+verify continuationAt
+    continuationAt([Token.TkInt(1), Token.TkMinus, Token.TkEof], 1) => Token.TkMinus
+    continuationAt([Token.TkDedent, Token.TkMinus, Token.TkEof], 1) => Token.TkNewline
+    continuationAt([Token.TkDedent, Token.TkRParen, Token.TkMinus, Token.TkEof], 2) => Token.TkMinus
+    continuationAt([Token.TkMinus, Token.TkEof], 0) => Token.TkMinus
+    continuationAt([Token.TkInt(1)], 5) => Token.TkEof
+
+fn continuationAtWalk(tokens: List<Token>, target: Int, idx: Int) -> Token
+    ? "Walk to the token before target; a DEDENT there ends the expression, anything else hands over the token at target."
+    match tokens
+        [] -> Token.TkEof
+        [t, ..rest] -> match idx == target
+            false -> continuationAtWalk(rest, target, idx + 1)
+            true -> match t
+                Token.TkDedent -> Token.TkNewline
+                _ -> tokenAt(rest, 0)
+
+verify continuationAtWalk
+    continuationAtWalk([Token.TkInt(1), Token.TkPlus, Token.TkEof], 1, 1) => Token.TkPlus
+    continuationAtWalk([Token.TkInt(1), Token.TkDedent, Token.TkPlus, Token.TkEof], 2, 1) => Token.TkNewline
+    continuationAtWalk([], 1, 1) => Token.TkEof
 
 fn isToken(t: Token, expected: Token) -> Bool
     ? "Check if token matches expected (structural equality via repr)."

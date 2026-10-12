@@ -918,6 +918,163 @@ fn negative_int_literal_pattern_is_rejected() {
     );
 }
 
+// A `match` ends with its indented arms. The line after them starts a new
+// arm or a new statement; it never continues the `match` as a call, a
+// subtraction or any other operator.
+
+fn fn_body_stmts(src: &str) -> Vec<Stmt> {
+    let items = parse(src);
+    let TopLevel::FnDef(fd) = &items[0] else {
+        panic!("expected FnDef");
+    };
+    let FnBody::Block(stmts) = fd.body.as_ref();
+    stmts.clone()
+}
+
+#[test]
+fn tuple_arm_after_a_nested_match_is_the_next_arm() {
+    let src = "fn f(a: Int, b: Int, k: Int) -> Int\n    match (a, b)\n        (0, _) -> match k\n            0 -> 1\n            _ -> 2\n        (_, 0) -> 3\n        _ -> 4\n";
+    let stmts = fn_body_stmts(src);
+    let [
+        Stmt::Expr(Spanned {
+            node: Expr::Match { arms, .. },
+            ..
+        }),
+    ] = stmts.as_slice()
+    else {
+        panic!("expected one match statement, got {stmts:?}");
+    };
+    assert_eq!(arms.len(), 3, "arms: {arms:?}");
+    assert!(matches!(&arms[0].body.node, Expr::Match { arms, .. } if arms.len() == 2));
+    assert!(matches!(&arms[1].pattern, Pattern::Tuple(items) if items.len() == 2));
+    assert!(matches!(arms[1].body.node, Expr::Literal(Literal::Int(3))));
+    assert!(matches!(arms[2].pattern, Pattern::Wildcard));
+}
+
+#[test]
+fn negative_literal_arm_after_a_nested_match_is_rejected_as_a_pattern() {
+    // `-1` is not a pattern anywhere; after a nested match it must get the
+    // same answer, not be read as `(match ...) - 1`.
+    let src = "fn f(a: Int, k: Int) -> Int\n    match a\n        0 -> match k\n            0 -> 1\n            _ -> 2\n        -1 -> 3\n        _ -> 4\n";
+    let err = parse_error(src);
+    assert!(
+        err.contains("Expected match pattern"),
+        "unexpected error: {}",
+        err
+    );
+}
+
+#[test]
+fn minus_line_after_a_match_binding_is_its_own_statement() {
+    let src = "fn g(k: Int, y: Int) -> Int\n    z = match k\n        0 -> 10\n        _ -> 20\n    -y\n    z\n";
+    let stmts = fn_body_stmts(src);
+    assert_eq!(stmts.len(), 3, "stmts: {stmts:?}");
+    assert!(matches!(
+        &stmts[0],
+        Stmt::Binding(name, _, Spanned { node: Expr::Match { .. }, .. }) if name == "z"
+    ));
+    assert!(matches!(
+        &stmts[1],
+        Stmt::Expr(Spanned {
+            node: Expr::Neg(_),
+            ..
+        })
+    ));
+    assert!(matches!(
+        &stmts[2],
+        Stmt::Expr(Spanned { node: Expr::Ident(name), .. }) if name == "z"
+    ));
+}
+
+#[test]
+fn parenthesised_line_after_a_match_binding_is_not_a_call() {
+    let src = "fn f(k: Int, y: Int) -> Int\n    z = match k\n        0 -> 1\n        _ -> 2\n    (y + z)\n";
+    let stmts = fn_body_stmts(src);
+    assert_eq!(stmts.len(), 2, "stmts: {stmts:?}");
+    assert!(matches!(
+        &stmts[0],
+        Stmt::Binding(
+            _,
+            _,
+            Spanned {
+                node: Expr::Match { .. },
+                ..
+            }
+        )
+    ));
+    assert!(matches!(
+        &stmts[1],
+        Stmt::Expr(Spanned {
+            node: Expr::BinOp(BinOp::Add, _, _),
+            ..
+        })
+    ));
+}
+
+#[test]
+fn no_operator_on_the_next_line_continues_a_match() {
+    // Each of these lines used to be glued onto the `match` above it. None
+    // of them can start a statement, so each is now a parse error at that
+    // line instead of a silently different program.
+    for tail in [".field", "+ y", "* y", "/ y", "== y", "< y", "?"] {
+        let src = format!(
+            "fn f(k: Int, y: Int) -> Int\n    z = match k\n        0 -> 1\n        _ -> 2\n    {tail}\n    z\n"
+        );
+        let err = parse_error(&src);
+        assert!(
+            err.starts_with("error[5:5]"),
+            "line `{tail}` must be rejected where it starts, got: {err}"
+        );
+    }
+}
+
+#[test]
+fn nested_match_in_the_last_arm_closes_both_blocks() {
+    let src = "fn f(a: Int, k: Int) -> Int\n    z = match a\n        0 -> 1\n        _ -> match k\n            0 -> 2\n            _ -> 3\n    -z\n";
+    let stmts = fn_body_stmts(src);
+    assert_eq!(stmts.len(), 2, "stmts: {stmts:?}");
+    assert!(matches!(
+        &stmts[1],
+        Stmt::Expr(Spanned {
+            node: Expr::Neg(_),
+            ..
+        })
+    ));
+}
+
+#[test]
+fn parenthesised_match_still_takes_an_operator() {
+    let src =
+        "fn f(k: Int, y: Int) -> Int\n    (match k\n        0 -> 10\n        _ -> 20\n    ) - y\n";
+    let stmts = fn_body_stmts(src);
+    let [
+        Stmt::Expr(Spanned {
+            node: Expr::BinOp(BinOp::Sub, left, _),
+            ..
+        }),
+    ] = stmts.as_slice()
+    else {
+        panic!("expected one subtraction, got {stmts:?}");
+    };
+    assert!(matches!(left.node, Expr::Match { .. }));
+}
+
+#[test]
+fn match_as_a_call_argument_still_takes_what_follows_the_call() {
+    let src = "fn f(k: Int, y: Int) -> Int\n    Int.abs(match k\n        0 -> 10\n        _ -> 20\n    ) - y\n";
+    let stmts = fn_body_stmts(src);
+    assert!(
+        matches!(
+            stmts.as_slice(),
+            [Stmt::Expr(Spanned {
+                node: Expr::BinOp(BinOp::Sub, _, _),
+                ..
+            })]
+        ),
+        "stmts: {stmts:?}"
+    );
+}
+
 #[test]
 fn match_subject_colon_is_not_type_ascription() {
     let items = parse("match xs\n    [] -> 0\n    _ -> 1\n");
