@@ -71,8 +71,9 @@
   ]
  },
  "examples/data/sum_acc.av": {
-  "tactic": [
-   "sum.equalsDirect"
+  "steps": [
+   "sum.equalsDirect",
+   "sumTR.accGeneralizes"
   ]
  },
  "examples/data/words.av": {
@@ -1124,9 +1125,16 @@
    "factFold.equalsSpec"
   ]
  },
+ "proof-corpus/handwritten/qrev_rev.av": {
+  "steps": [
+   "fastRev.equalsRev",
+   "qrev.accGeneralizes"
+  ]
+ },
  "proof-corpus/handwritten/sum_acc_spec.av": {
-  "tactic": [
-   "sumFold.equalsSpec"
+  "steps": [
+   "sumFold.equalsSpec",
+   "sumTR.accGeneralizes"
   ]
  },
  "proof-corpus/tip/isaplanner-mono/prop_12.av": {

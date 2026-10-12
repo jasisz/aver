@@ -274,6 +274,23 @@ A `using` list may also name builtin facts, such as `List.len.ofConcat` (`List.l
 
 A law without a `using` line that the steps leave open is tried once more, with the earlier laws the steps already closed in the same run: those a `using` line of the law could name (before it in the order the proofs are exported, which puts a function's laws ahead of the laws whose functions call it, of its module or exposed by a module it depends on, and not citing it back through their `using` lines), minus any that would loop as a rewrite rule, and minus both laws of a pair where each rewrites what the other produces. A law that only Lean's tactics close is not among them. They apply only where evaluation stops and neither a cited law nor a builtin fact does, left to right as each is written, at most four candidates for one stopped term, the smallest result first and then the earlier one; a law with a `when` applies only where its `when` at that instance is proved, as a cited one does. The first pass is exactly the one without them, so a law that closed before keeps its proof. A law closed on the second pass gets a hint naming exactly the laws it used, ``hint: steps closed it with earlier laws they chose; add `using [count.ofJoined]` to go straight to it``, and a proof that would need more than eight of them is not taken. `using []` turns the second pass off, and so does a `by` line. `--check-json` counts `closed_with_automatic_using` apart from `closed_with_pinned_using` and lists the laws used under `automatic_using`.
 
+A law about a wrapper that starts an accumulator at a constant stays open, with the law that would close it as a hint. In `sum(xs) => sumDirect(xs)`, where `sum(xs)` is `sumTR(xs, 0)`, no induction closes the law as stated: the recursive call moves the accumulator (`sumTR(t, 0 + h)`), and the claim speaks of it only at `0`. The law that closes states the recursion with the accumulator as a given, `sumTR(xs, acc) => acc + sumDirect(xs)`, and which law that is cannot be read off the program. So the steps do not prove one behind the author's back. Where the claim's left side evaluates to one call of a function that recurses, with a given where it recurses and exactly one constant at a place its recursive calls change, and that constant is `0`, `1` or `[]`, they try a fixed list of right sides for the law with a fresh given `acc` in the constant's place, `R` being the law's right side: `acc + R` and `R + acc` for `0`, `acc * R` and `R * acc` for `1`, `List.concat(R, acc)` and `List.concat(acc, R)` for `[]`. Each is `R` at the constant. A candidate is checked on the law's samples and a few values of `acc`, then proved by the steps like any law, and then the wrapper's law is proved citing it. The first candidate that passes all three is offered, as text to paste:
+
+```
+hint: steps close this law once the accumulator of `sumTR` is a given; add this law before it:
+
+    verify sumTR law accGeneralizes
+        given xs: List<Int> = [[], [1], [1, 2, 3], [4, 5, 6, 7]]
+        given acc: Int = [0, 1, 5]
+        sumTR(xs, acc) => acc + sumDirect(xs)
+
+    and this line to `sum.equalsDirect`:
+
+        using [sumTR.accGeneralizes]
+```
+
+The law stays open until both are in the file; then both close by steps, and every step of the proof cites a law the file states. The search runs only for a law the steps leave open, without a `when`, `because` or `by` line, whose function the entry file defines after the recursive one, and where no `accGeneralizes` law of that function exists yet. No hint is given where no candidate closes (a false law, an accumulator of another type, a start that is no neutral element such as `totalFrom(xs, 7)`).
+
 `aver proof --check` lists every law with what closed it: `closed by steps`, `closed by tactic`, or `not closed` followed by where the steps producer stopped. `--backend aver` prints the same for the steps it checks, and `--check-json` carries it in `closed_by`. A step proof the kernel written in Aver has accepted but Lean refuses is a bug in the producer or the kernel, not a reason to fall back: it fails the run and names the law. `tools/steps_ratchet.py` keeps both levels per law for the corpus (`tools/steps-baseline.json`), so a law that falls from steps to tactics, or a tactic portfolio withdrawn once steps replace it, is a visible change to that baseline. A law a change adds to the steps level was closed by the kernel written in Aver; on a pull request it is checked under Lean as well (`steps_ratchet.py --lean-gains`, only in the files that gained one), so the Aver kernel alone never earns that credit.
 
 ## What "kernel-genuine" does and does not cover

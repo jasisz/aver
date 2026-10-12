@@ -34,6 +34,7 @@
 //!
 //! A law no producer handles keeps `steps: None` and its tactic portfolio.
 
+mod accumulator;
 mod by_plan;
 mod chain;
 mod env;
@@ -1280,6 +1281,9 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                 // A plan that closes the law comes first:
                 // it is the one hint that closes the law outright.
                 let mut from_plans = by_plan::hints(inputs, ir, i, &mut plans, &mut named_plans);
+                // Then, for a wrapper that starts an accumulator at a
+                // constant, the law about the recursion that closes it.
+                from_plans.extend(accumulator::hint(inputs, ir, i));
                 from_plans.append(&mut hints);
                 let hints = from_plans;
                 ir.law_theorems[i].steps = None;

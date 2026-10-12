@@ -5189,6 +5189,129 @@ fn lean_closes_the_evaluated_hypothesis_laws_by_their_steps() {
     let _ = fs::remove_dir_all(out);
 }
 
+/// The hint the steps give for `total.isPlain` of `accumulator_hint.av`,
+/// word for word.
+const ACCUMULATOR_HINT: &str =
+    "steps close this law once the accumulator of `totalFrom` is a given; add this law before it:
+
+    verify totalFrom law accGeneralizes
+        given xs: List<Int> = [[], [1], [1, 2, 3]]
+        given acc: Int = [0, 1, 5]
+        totalFrom(xs, acc) => acc + plain(xs)
+
+    and this line to `total.isPlain`:
+
+        using [totalFrom.accGeneralizes]";
+
+/// `source` with an accumulator hint for law `law` (`fn.name`) applied as
+/// it says, nothing reworded: the hinted law before the law, the `using`
+/// line after the law's givens.
+fn apply_accumulator_hint(source: &str, law: &str, hint: &str) -> String {
+    let parts: Vec<&str> = hint.split("\n\n").collect();
+    assert_eq!(parts.len(), 4, "{hint}");
+    let block: Vec<&str> = parts[1]
+        .lines()
+        .map(|l| l.strip_prefix("    ").expect("an indented block"))
+        .collect();
+    let using = parts[3].trim();
+    let (f, name) = law.split_once('.').expect("fn.law");
+    let header = format!("verify {f} law {name}");
+    let mut out = Vec::new();
+    let mut inside = false;
+    for line in source.lines() {
+        if line == header {
+            out.extend(block.iter().map(|l| l.to_string()));
+            out.push(String::new());
+            inside = true;
+        } else if inside && !line.trim_start().starts_with("given ") {
+            out.push(format!("    {using}"));
+            inside = false;
+        }
+        out.push(line.to_string());
+    }
+    out.join("\n") + "\n"
+}
+
+/// A law about a wrapper that starts an accumulator at a constant stays
+/// open, and the steps hint the law about the recursion, with the
+/// accumulator as a given, that they proved and under which the wrapper's
+/// law closes. Pasted as the hint says, both close. A false law of the same
+/// shape gets no hint, nor does one whose start is no neutral element.
+#[test]
+fn a_wrapper_over_an_accumulator_is_hinted_the_law_that_closes_it() {
+    let out = scratch("accumulator-hint");
+    let (result, summary) = aver_backend_json("accumulator_hint.av", &out, None);
+    let _ = fs::remove_dir_all(&out);
+    for law in ["total.isPlain", "total.isFirst", "shifted.isPlainShifted"] {
+        assert_eq!(
+            summary["closed_by"][law],
+            "open",
+            "{law}: {}",
+            format_output(&result)
+        );
+    }
+    let hints = |law: &str| -> Vec<String> {
+        summary["steps_hints"][law]
+            .as_array()
+            .map(|hs| {
+                hs.iter()
+                    .filter_map(|h| h.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    assert!(
+        hints("total.isPlain").iter().any(|h| h == ACCUMULATOR_HINT),
+        "{:#?}",
+        hints("total.isPlain")
+    );
+    for law in ["total.isFirst", "shifted.isPlainShifted"] {
+        assert!(
+            !hints(law).iter().any(|h| h.contains("accGeneralizes")),
+            "{law}: {:#?}",
+            hints(law)
+        );
+    }
+    // The hint, pasted.
+    let source =
+        fs::read_to_string(repo_root().join(FIXTURES).join("accumulator_hint.av")).unwrap();
+    let dir = scratch("accumulator-hint-applied");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("accumulator_hint.av"),
+        apply_accumulator_hint(&source, "total.isPlain", ACCUMULATOR_HINT),
+    )
+    .unwrap();
+    let applied_out = dir.join("out");
+    let applied = aver_in(
+        &dir,
+        &[
+            "proof",
+            "accumulator_hint.av",
+            "--backend",
+            "aver",
+            "-o",
+            applied_out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "99",
+        ],
+    );
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&applied.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap_or_else(|| panic!("{}", format_output(&applied))),
+    )
+    .unwrap();
+    let _ = fs::remove_dir_all(&dir);
+    for law in ["totalFrom.accGeneralizes", "total.isPlain"] {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    assert_eq!(summary["closed_by"]["total.isFirst"], "open", "{summary}");
+}
+
 /// The law of `cited_when_split.av` that closes only by a split on a line
 /// of a cited law's `when` that stays open where the law matches.
 const CITED_WHEN_SPLIT_LAW: &str = "smallSize.oneDigitRange";

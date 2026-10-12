@@ -1,0 +1,60 @@
+module AccumulatorHint
+    intent =
+        "Laws about a wrapper that starts an accumulator at a constant. The steps leave each open"
+        "and, where a law about the recursion with the accumulator as a given closes it, hint"
+        "that law: for a sum started at 0. Not for a false law of the same shape, and not where"
+        "the start is no neutral element."
+    exposes [totalFrom, total, shifted, plain, first]
+
+fn totalFrom(xs: List<Int>, acc: Int) -> Int
+    ? "The sum of the items on top of acc."
+    match xs
+        [] -> acc
+        [h, ..t] -> totalFrom(t, acc + h)
+
+verify totalFrom
+    totalFrom([1, 2], 4) => 7
+
+fn total(xs: List<Int>) -> Int
+    ? "The sum of the items, counted up from 0."
+    totalFrom(xs, 0)
+
+verify total
+    total([1, 2, 3]) => 6
+
+fn shifted(xs: List<Int>) -> Int
+    ? "The sum of the items, counted up from 7."
+    totalFrom(xs, 7)
+
+verify shifted
+    shifted([1, 2]) => 10
+
+fn plain(xs: List<Int>) -> Int
+    ? "The sum of the items, one at a time."
+    match xs
+        [] -> 0
+        [h, ..t] -> h + plain(t)
+
+verify plain
+    plain([1, 2, 3]) => 6
+
+fn first(xs: List<Int>) -> Int
+    ? "The first item, or 0."
+    match xs
+        [] -> 0
+        [h, ..t] -> h
+
+verify first
+    first([4, 5]) => 4
+
+verify total law isPlain
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    total(xs) => plain(xs)
+
+verify total law isFirst
+    given xs: List<Int> = [[], [3]]
+    total(xs) => first(xs)
+
+verify shifted law isPlainShifted
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    shifted(xs) => 7 + plain(xs)
