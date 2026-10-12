@@ -465,17 +465,37 @@ impl Env<'_> {
                 let mut more: Vec<(usize, IhAt)> = Vec::new();
                 let mut stated: Vec<(String, Eqn)> = Vec::new();
                 let mut rounds = 0;
+                // While the claim at other values of the varied givens may
+                // still be stated, the case is tried as its hypotheses stand;
+                // they are evaluated the way the claim is
+                // ([`Env::prove_with_evaluated_hypotheses`]) once no such
+                // hypothesis is left to add.
+                let evaluated = |env: &mut Self, stated: &[(String, Eqn)], stop: String| {
+                    env.hyps = scope.clone();
+                    env.hyps.extend(stated.iter().cloned());
+                    let mark = env.mark();
+                    env.prove_by_evaluation(&case.goal.lhs, &case.goal.rhs, depth)
+                        .map_err(|_| {
+                            env.rewind(mark);
+                            in_case(stop)
+                        })
+                };
                 let proof = loop {
                     self.hyps = scope.clone();
                     self.hyps.extend(stated.iter().cloned());
-                    let stop = match self.prove_by_evaluation(&case.goal.lhs, &case.goal.rhs, depth)
-                    {
+                    self.hypotheses_as_stated = !general.is_empty();
+                    let tried = self.prove_by_evaluation(&case.goal.lhs, &case.goal.rhs, depth);
+                    self.hypotheses_as_stated = false;
+                    let stop = match tried {
                         Ok(p) => break p,
                         Err(m) => m,
                     };
                     rounds += 1;
-                    if general.is_empty() || rounds > 3 {
+                    if general.is_empty() {
                         return Err(in_case(stop));
+                    }
+                    if rounds > 3 {
+                        break evaluated(self, &stated, stop)?;
                     }
                     let mut found = Vec::new();
                     for side in [&case.goal.lhs, &case.goal.rhs] {
@@ -535,7 +555,7 @@ impl Env<'_> {
                         ));
                     }
                     if more.len() == before {
-                        return Err(in_case(stop));
+                        break evaluated(self, &stated, stop)?;
                     }
                 };
                 cases.push(InductCase {

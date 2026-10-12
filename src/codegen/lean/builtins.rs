@@ -160,9 +160,9 @@ pub fn emit_builtin_call(
         BitsLow => bits_low(&a),
 
         // ---- Bool ----
-        BoolOr => format!("({} || {})", a[0], a[1]),
-        BoolAnd => format!("({} && {})", a[0], a[1]),
-        BoolNot => format!("(!{})", a[0]),
+        BoolOr => format!("({} || {})", operand(&a[0]), operand(&a[1])),
+        BoolAnd => format!("({} && {})", operand(&a[0]), operand(&a[1])),
+        BoolNot => format!("(!{})", operand(&a[0])),
 
         // ---- Char ----
         StringFirstCodePoint => format!("String.firstCodePointAv {}", p(&a[0])),
@@ -307,6 +307,18 @@ fn emit_list_length_subject(arg: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -
 fn p(s: &str) -> String {
     if s.contains(' ') && !s.starts_with('"') && !is_group_with_projections(s) {
         format!("({})", s)
+    } else {
+        s.to_string()
+    }
+}
+
+/// An operand of a Bool connective. A `match` written bare takes everything
+/// after its last arm into that arm: `match y with | 0 => false | n + 1 => p
+/// && q` is the match whose second arm is `p && q`, not the match and then
+/// `q`. So a `match` operand goes out in brackets.
+fn operand(s: &str) -> String {
+    if s.trim_start().starts_with("match ") {
+        format!("({s})")
     } else {
         s.to_string()
     }

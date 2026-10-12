@@ -4960,6 +4960,235 @@ fn lean_closes_the_case_contradiction_laws_by_their_steps() {
     let _ = fs::remove_dir_all(out);
 }
 
+/// The laws of `evaluated_hypotheses.av` that close only once the
+/// hypotheses of a case are evaluated the way its claim is: a `when` that
+/// evaluates to the claim, a line of an evaluated `when` that decides what
+/// the claim stops at, and a `when` that evaluates to `false` where another
+/// line used to answer for it.
+const EVALUATED_HYPOTHESIS_LAWS: [&str; 3] = [
+    "has.keptWasThere",
+    "sorted.consUnderItsHead",
+    "has.nothingKeepsNone",
+];
+
+/// A false law of the same shape as each of [`EVALUATED_HYPOTHESIS_LAWS`]:
+/// its hypothesis evaluates to something close to what the claim needs, but
+/// not to it.
+const EVALUATED_HYPOTHESIS_FALSE_LAWS: [&str; 3] = [
+    "has.keptOtherWasThere",
+    "sorted.consUnderAnotherHead",
+    "has.allKeepsSome",
+];
+
+/// Where a case stays open, its hypotheses are evaluated the way the claim
+/// was and the claim is tried again under their evaluated forms: each form
+/// is cut in with the evaluation that proves it, which both kernels check;
+/// a wrong evaluation is refused, and a false law of the same shape stays
+/// open.
+#[test]
+fn both_kernels_read_a_hypothesis_as_evaluated_and_refuse_a_wrong_evaluation() {
+    let out = scratch("evaluated-hypotheses");
+    let (result, summary) = aver_backend_json("evaluated_hypotheses.av", &out, None);
+    let _ = fs::remove_dir_all(&out);
+    for law in EVALUATED_HYPOTHESIS_LAWS {
+        assert_eq!(
+            summary["closed_by"][law],
+            "steps",
+            "{law}: {}",
+            format_output(&result)
+        );
+    }
+    for law in EVALUATED_HYPOTHESIS_FALSE_LAWS {
+        assert_eq!(summary["closed_by"][law], "open", "{law}: {summary}");
+    }
+    let export = scratch("evaluated-hypotheses-export");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("evaluated_hypotheses.av", &export)
+            .into_iter()
+            .collect();
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in EVALUATED_HYPOTHESIS_LAWS {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.to_string()));
+    }
+    // The evaluated `when` is cut in as the claim itself.
+    let kept = read("has.keptWasThere");
+    assert!(
+        kept.contains("(have h_read1 (call has (v x) (v xs)) "),
+        "{kept}"
+    );
+    // The wrong arm of `kept`, the other line of the evaluated `when`, and
+    // `Bool.and(false, b)` read as `b`.
+    let mutants = [
+        mutate_proof(
+            &kept,
+            "(unfold kept 1 ((ctor Mode.All) (v xs))",
+            "(unfold kept 2 ((ctor Mode.All) (v xs))",
+        ),
+        mutate_proof(
+            &read("sorted.consUnderItsHead"),
+            "(rule bool.and.elim_l ((a (call lessEq (v z) (v a_c0)))",
+            "(rule bool.and.elim_r ((a (call lessEq (v z) (v a_c0)))",
+        ),
+        mutate_proof(
+            &read("has.nothingKeepsNone"),
+            "(rule bool.and.false_l ((b (call has (v x) (v ys)))))",
+            "(rule bool.and.true_l ((b (call has (v x) (v ys)))))",
+        ),
+    ];
+    for (i, mutant) in mutants.into_iter().enumerate() {
+        let refused = aver::proof_kernel::verdict(&mutant);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "mutant {i}: {refused:?}"
+        );
+        let path = export.join(format!("mutant{i}.steps"));
+        fs::write(&path, &mutant).unwrap();
+        let replayed = replay(std::slice::from_ref(&path));
+        assert!(!replayed.status.success(), "{}", format_output(&replayed));
+    }
+    let _ = fs::remove_dir_all(export);
+}
+
+/// Every law the evaluated hypotheses close, in the fixtures and in the
+/// corpus, with the file it is in and the root its modules resolve from.
+const EVALUATED_HYPOTHESIS_ROOM: [(&str, &str, &[&str]); 10] = [
+    (
+        "tests/fixtures/proof_steps/evaluated_hypotheses.av",
+        "tests/fixtures/proof_steps",
+        &EVALUATED_HYPOTHESIS_LAWS,
+    ),
+    (
+        "examples/formal/affine_wrapper_law.av",
+        "examples/formal",
+        &["boundedScale.returnsCore"],
+    ),
+    (
+        "projects/durable_promise/domain/promise.av",
+        "projects/durable_promise",
+        &["observe.timeoutMonotone"],
+    ),
+    (
+        "proof-corpus/decomposed/isaplanner/prop_77.av",
+        "proof-corpus/decomposed/isaplanner",
+        &["insort.leHeadInsort", "sorted.sortedCons"],
+    ),
+    (
+        "proof-corpus/decomposed/isaplanner/prop_78.av",
+        "proof-corpus/decomposed/isaplanner",
+        &["insort.leHeadInsort", "sorted.sortedCons"],
+    ),
+    (
+        "proof-corpus/decomposed/prod/lemma_09.av",
+        "proof-corpus/decomposed/prod",
+        &["rev.revAppendCons", "rev.revAppendDistributes"],
+    ),
+    (
+        "proof-corpus/decomposed/prod/lemma_12.av",
+        "proof-corpus/decomposed/prod",
+        &["insert.leHeadInsert", "sorted.sortedCons"],
+    ),
+    (
+        "proof-corpus/decomposed/prod/prop_10.av",
+        "proof-corpus/decomposed/prod",
+        &["rev.revAppendDistributes"],
+    ),
+    (
+        "proof-corpus/decomposed/prod/prop_11.av",
+        "proof-corpus/decomposed/prod",
+        &["rev.revAppDistributes"],
+    ),
+    (
+        "proof-corpus/decomposed/prod/prop_14.av",
+        "proof-corpus/decomposed/prod",
+        &["insert.leHeadInsert", "sorted.sortedCons"],
+    ),
+];
+
+/// The budgets for evaluating hypotheses have room: every law those
+/// readings close still closes with each budget at half its size
+/// (`AVER_STEPS_READ_BUDGET_PERCENT=50`). A change that makes a reading
+/// cost more fails here, by name, while the laws still close at the full
+/// budgets, instead of reopening one in the corpus later. No clock is read.
+#[test]
+fn the_budgets_for_evaluated_hypotheses_leave_half_of_themselves_unused() {
+    for (i, (entry, root, laws)) in EVALUATED_HYPOTHESIS_ROOM.iter().enumerate() {
+        let out = scratch(&format!("evaluated-hypotheses-room-{i}"));
+        let result = Command::new(aver_bin())
+            .args([
+                "proof",
+                entry,
+                "--module-root",
+                root,
+                "--backend",
+                "aver",
+                "-o",
+                out.to_str().unwrap(),
+                "--check-json",
+                "--sorry-budget",
+                "99",
+                "--declined-budget",
+                "99",
+            ])
+            .env("AVER_STEPS_READ_BUDGET_PERCENT", "50")
+            .current_dir(repo_root())
+            .output()
+            .expect("aver runs");
+        let _ = fs::remove_dir_all(&out);
+        let summary: serde_json::Value = serde_json::from_str(
+            String::from_utf8_lossy(&result.stdout)
+                .lines()
+                .rev()
+                .find(|l| l.starts_with('{'))
+                .unwrap_or_else(|| panic!("{entry}: {}", format_output(&result))),
+        )
+        .unwrap();
+        for law in *laws {
+            assert_eq!(
+                summary["closed_by"][law], "steps",
+                "{entry}: {law} needs more than half of a budget for evaluating hypotheses"
+            );
+        }
+    }
+}
+
+#[test]
+fn lean_closes_the_evaluated_hypothesis_laws_by_their_steps() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("evaluated-hypotheses-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "evaluated_hypotheses.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "99",
+            "--declined-budget",
+            "99",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in EVALUATED_HYPOTHESIS_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
 /// The law of `cited_when_split.av` that closes only by a split on a line
 /// of a cited law's `when` that stays open where the law matches.
 const CITED_WHEN_SPLIT_LAW: &str = "smallSize.oneDigitRange";

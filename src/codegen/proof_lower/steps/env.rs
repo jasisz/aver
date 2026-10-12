@@ -115,6 +115,25 @@ pub(crate) struct Env<'a> {
     /// is split on ([`Env::linear_proof`]), so the evaluation everywhere
     /// else pays nothing for it.
     pub wide_linear: bool,
+    /// Steps left for evaluating the hypotheses of a case the way its claim
+    /// was evaluated ([`super::evaluated`]), apart from every other budget.
+    pub read_fuel: usize,
+    /// How many evaluated forms were named so far, so their names stay
+    /// distinct.
+    pub next_read: usize,
+    /// Whether a case is tried only as its hypotheses stand: set while an
+    /// induction may still state its claim at other values, so the proof it
+    /// finds that way comes first.
+    pub hypotheses_as_stated: bool,
+    /// Steps left for evaluating a claim again under its evaluated
+    /// hypotheses.
+    pub read_claim_fuel: usize,
+    /// The cases (their hypotheses and claim, hashed) whose hypotheses were
+    /// evaluated so far.
+    pub read_seen: Vec<u64>,
+    /// How many such readings are in progress, one inside the claim another
+    /// went on to.
+    pub reading: usize,
 }
 
 impl<'a> Env<'a> {
@@ -160,6 +179,12 @@ impl<'a> Env<'a> {
             open_whens: Vec::new(),
             discharging: false,
             wide_linear: false,
+            read_fuel: super::evaluated::budget(super::evaluated::READ_FUEL),
+            read_claim_fuel: super::evaluated::budget(super::evaluated::READ_CLAIM_FUEL),
+            next_read: 0,
+            hypotheses_as_stated: false,
+            read_seen: Vec::new(),
+            reading: 0,
         }
     }
 
@@ -183,6 +208,12 @@ impl<'a> Env<'a> {
     /// How many hypothesis names [`Self::fresh_hyp`] has given out.
     pub(crate) fn next_hyp_count(&self) -> usize {
         self.next_hyp
+    }
+
+    /// Give the names from `count` on out again: what named them was
+    /// dropped, so nothing in scope or in a proof holds one.
+    pub(crate) fn rewind_hyp_count(&mut self, count: usize) {
+        self.next_hyp = count;
     }
 
     pub(crate) fn fresh_hyp(&mut self) -> String {

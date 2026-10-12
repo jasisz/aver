@@ -555,6 +555,7 @@
   "laws": [
    "observe.idempotent",
    "observe.settledIsIdentity",
+   "observe.timeoutMonotone",
    "reject.settledIsIdentity",
    "resolve.alwaysSettles",
    "resolve.noDoubleSettle",
@@ -1553,8 +1554,10 @@
    "sorted": "L1"
   },
   "laws": [
+   "insort.leHeadInsort",
    "le.leTotal",
    "sorted.sortTail",
+   "sorted.sortedCons",
    "sorted.sortedConsLeHead"
   ]
  },
@@ -1571,9 +1574,11 @@
    "sorted": "L1"
   },
   "laws": [
+   "insort.leHeadInsort",
    "leq.leTotal",
    "sort.sortProducesSorted",
    "sorted.sortTail",
+   "sorted.sortedCons",
    "sorted.sortedConsLeHead"
   ]
  },
@@ -1638,8 +1643,10 @@
    "sorted": "L1"
   },
   "laws": [
+   "insert.leHeadInsert",
    "lessEq.leTotal",
    "sorted.sortTail",
+   "sorted.sortedCons",
    "sorted.sortedConsLeHead"
   ]
  },
@@ -1779,8 +1786,10 @@
    "sorted": "L1"
   },
   "laws": [
+   "insert.leHeadInsert",
    "isort.sortedIsort",
    "lessEq.lessEqTotal",
+   "sorted.sortedCons",
    "sorted.sortedConsLeHead",
    "sorted.sortedTail"
   ]
