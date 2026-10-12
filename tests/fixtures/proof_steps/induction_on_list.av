@@ -1,0 +1,53 @@
+module InductionOnList
+    intent = "Claims whose function recurses only on a list the claim builds, never on a given: induction on the list given itself."
+    exposes [sum, total]
+    effects []
+
+fn total(xs: List<Int>) -> Int
+    ? "The sum under another name, so the claims call `sum` only on a joined list."
+    match xs
+        [] -> 0
+        [h, ..t] -> h + total(t)
+
+verify total
+    total([1, 2]) => 3
+
+fn sum(xs: List<Int>) -> Int
+    ? "Sum, recursing on the list."
+    match xs
+        [] -> 0
+        [h, ..t] -> h + sum(t)
+
+verify sum
+    sum([1, 2]) => 3
+
+// `sum` recurses on `List.concat(xs, [y])`, never on a given: steps induct
+// on `xs` and hint the line.
+
+verify sum law ofOneMore
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given y: Int = [0, 5]
+    sum(List.concat(xs, [y])) => total(xs) + y
+
+// The same claim with the line, citing nothing: induction on `xs`, no
+// hint.
+
+verify sum law ofOneMoreNamed
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given y: Int = [0, 5]
+    using []
+    induction xs
+    sum(List.concat(xs, [y])) => total(xs) + y
+
+// The same shape, false: it stays open with or without the line.
+
+verify sum law offByOne
+    given xs: List<Int> = [[], [1]]
+    given y: Int = [0, 5]
+    sum(List.concat(xs, [y])) => total(xs) + y + 1
+
+verify sum law offByOneNamed
+    given xs: List<Int> = [[], [1]]
+    given y: Int = [0, 5]
+    induction xs
+    sum(List.concat(xs, [y])) => total(xs) + y + 1

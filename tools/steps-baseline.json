@@ -426,12 +426,19 @@
  },
  "proof-corpus/decomposed/isaplanner/prop_28.av": {
   "steps": [
+   "elem.elemAppendSelf",
    "eqNat.eqNatRefl"
   ]
  },
  "proof-corpus/decomposed/isaplanner/prop_52.av": {
   "steps": [
    "count.countHomo"
+  ]
+ },
+ "proof-corpus/decomposed/isaplanner/prop_53.av": {
+  "steps": [
+   "count.countInsortPerm",
+   "count.countSort"
   ]
  },
  "proof-corpus/decomposed/isaplanner/prop_60.av": {
@@ -643,7 +650,8 @@
  "proof-corpus/decomposed/prod/prop_43.av": {
   "steps": [
    "barbar.barbarTrueRight",
-   "elem.elemConcatSingleton"
+   "elem.elemConcatSingleton",
+   "elem.elemUnion"
   ]
  },
  "proof-corpus/decomposed/prod/prop_44.av": {
@@ -657,6 +665,12 @@
   "steps": [
    "insert.insertPreservesLength",
    "length.isortPreservesLength"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_50.av": {
+  "steps": [
+   "count.countInsertPerm",
+   "count.countIsort"
   ]
  },
  "proof-corpus/tip/isaplanner-mono/prop_14.av": {
@@ -682,6 +696,11 @@
  "proof-corpus/tip/isaplanner/prop_02.av": {
   "steps": [
    "count.countPlusConcat"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_03.av": {
+  "steps": [
+   "countMonotone.countAppendMonotone"
   ]
  },
  "proof-corpus/tip/isaplanner/prop_05.av": {
@@ -732,6 +751,16 @@
  "proof-corpus/tip/isaplanner/prop_26.av": {
   "steps": [
    "elem.elemConcat"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_27.av": {
+  "steps": [
+   "elem.elemAppend"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_37.av": {
+  "steps": [
+   "elem.elemDelete"
   ]
  },
  "proof-corpus/tip/isaplanner/prop_39.av": {
@@ -790,6 +819,11 @@
    "plus.plusSuccRight"
   ]
  },
+ "proof-corpus/tip/prod/lemma_02.av": {
+  "steps": [
+   "length.lengthAppendCons"
+  ]
+ },
  "proof-corpus/tip/prod/lemma_03.av": {
   "steps": [
    "length.lengthSnoc"
@@ -805,6 +839,11 @@
    "rev.revAppendSingleton"
   ]
  },
+ "proof-corpus/tip/prod/lemma_10.av": {
+  "steps": [
+   "rev.revAppendSingleton"
+  ]
+ },
  "proof-corpus/tip/prod/lemma_11.av": {
   "steps": [
    "append.appendSnocAssoc"
@@ -813,6 +852,11 @@
  "proof-corpus/tip/prod/lemma_13.av": {
   "steps": [
    "append.appendAssocSingleton"
+  ]
+ },
+ "proof-corpus/tip/prod/lemma_15.av": {
+  "steps": [
+   "length.lengthAppendTwo"
   ]
  },
  "proof-corpus/tip/prod/lemma_17.av": {
@@ -850,6 +894,11 @@
    "qrev.qrevRevAppend"
   ]
  },
+ "proof-corpus/tip/prod/prop_37.av": {
+  "steps": [
+   "elem.elemAppend"
+  ]
+ },
  "proof-corpus/tip/prod/prop_40.av": {
   "steps": [
    "union.subsetUnion"
@@ -858,6 +907,16 @@
  "proof-corpus/tip/prod/prop_41.av": {
   "steps": [
    "intersect.subsetIntersect"
+  ]
+ },
+ "proof-corpus/tip/prod/prop_43.av": {
+  "steps": [
+   "elem.elemUnion"
+  ]
+ },
+ "proof-corpus/tip/prod/prop_46.av": {
+  "steps": [
+   "elem.insertElem"
   ]
  },
  "proof-corpus/tip/prod/prop_47.av": {

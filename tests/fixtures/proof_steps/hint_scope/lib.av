@@ -15,6 +15,12 @@ fn hidden(xs: List<Int>) -> Int
 verify hidden
     hidden([1, 2]) => 3
 
+verify hidden law ofJoined
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given ys: List<Int> = [[], [3]]
+    induction xs
+    hidden(List.concat(xs, ys)) => hidden(xs) + hidden(ys)
+
 fn shown(xs: List<Int>) -> Int
     ? "The sum, as the module hands it on."
     hidden(xs)
@@ -22,14 +28,7 @@ fn shown(xs: List<Int>) -> Int
 verify shown
     shown([1, 2]) => 3
 
-verify hidden law ofJoined
-    given xs: List<Int> = [[], [1], [1, 2]]
-    given ys: List<Int> = [[], [3]]
-    induction xs
-    hidden(List.concat(xs, ys)) => hidden(xs) + hidden(ys)
-
 verify shown law splits
     given xs: List<Int> = [[], [1], [1, 2]]
     given ys: List<Int> = [[], [3]]
-    induction xs
-    hidden(List.concat(xs, ys)) => hidden(xs) + hidden(ys)
+    hidden(List.concat(List.reverse(xs), ys)) => hidden(List.reverse(xs)) + hidden(ys)

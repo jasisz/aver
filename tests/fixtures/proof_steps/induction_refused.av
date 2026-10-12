@@ -1,5 +1,5 @@
 module InductionRefused
-    intent = "A law about a function that does not recurse: steps do not induct along another one."
+    intent = "A law about a function that does not recurse: steps do not induct along another one, only on a list given itself."
     exposes [len, double]
     effects []
 
@@ -21,4 +21,13 @@ verify double
 
 verify double law isTwiceTheLength
     given xs: List<Int> = [[], [1]]
+    double(xs) >= len(xs) => true
+
+// A `when` that mentions the list rules out induction on the list itself,
+// so, citing nothing, the refusal names the function that does recurse.
+
+verify double law isTwiceTheLengthWhenShort
+    given xs: List<Int> = [[], [1]]
+    when len(xs) < 3
+    using []
     double(xs) >= len(xs) => true

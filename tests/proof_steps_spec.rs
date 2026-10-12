@@ -1039,8 +1039,22 @@ fn induction_follows_only_the_function_the_law_is_about() {
         ],
     );
     let text = String::from_utf8_lossy(&result.stdout);
+    // `double` does not recurse: the law closes by induction on its list
+    // given itself, and is told the line.
+    assert!(
+        text.contains("double.isTwiceTheLength: closed by steps\n    hint: steps closed it by trying each given in turn; add `induction xs` to go straight to it"),
+        "{}",
+        format_output(&result)
+    );
+    // Where a `when` mentions the list, that induction is ruled out, and
+    // the refusal names the function that does recurse.
     assert!(
         text.contains("double does not recurse but len does"),
+        "{}",
+        format_output(&result)
+    );
+    assert!(
+        text.contains("induction on xs: a hypothesis in scope mentions xs"),
         "{}",
         format_output(&result)
     );
@@ -1168,9 +1182,10 @@ fn an_induction_line_names_the_given_the_induction_follows() {
         "{}",
         format_output(&result)
     );
+    // `append` never recurses on `z`, a list: the line means induction on
+    // `z` itself, which does not close this claim.
     assert!(
-        line("append.assocAlongZ")
-            .contains("the law names z, but no call of append passes z where append recurses"),
+        line("append.assocAlongZ").contains("induction on z: evaluation stops at"),
         "{text}"
     );
     assert!(
@@ -1235,6 +1250,50 @@ fn without_an_induction_line_steps_try_each_given_and_a_false_law_stays_open() {
         "{text}"
     );
     assert!(!text.contains("induction y` to go straight"), "{text}");
+    let _ = fs::remove_dir_all(out);
+}
+
+/// A claim whose function recurses only on a list the claim builds is
+/// proved by induction on the list given itself: without a line steps try
+/// it after induction along the function and hint `induction xs`; with the
+/// line they go straight to it. A false law of the same shape stays open,
+/// and the kernel refuses the proof once its hypothesis is not the claim
+/// at the tail.
+#[test]
+fn induction_on_a_list_given_the_function_does_not_recurse_on() {
+    let out = scratch("induct-list");
+    let (result, summary) = aver_backend_json("induction_on_list.av", &out, None);
+    assert_eq!(summary["steps_rejected"], serde_json::json!([]));
+    let closed = &summary["closed_by"];
+    for law in ["sum.ofOneMore", "sum.ofOneMoreNamed"] {
+        assert_eq!(closed[law], "steps", "{law}: {}", format_output(&result));
+    }
+    for law in ["sum.offByOne", "sum.offByOneNamed"] {
+        assert_eq!(closed[law], "open", "{law}: {summary}");
+    }
+    assert_eq!(
+        summary["steps_hints"]["sum.ofOneMore"],
+        serde_json::json!([
+            "steps closed it by trying each given in turn; add `induction xs` to go straight to it"
+        ]),
+        "{summary}"
+    );
+    assert!(
+        summary["steps_hints"]["sum.ofOneMoreNamed"].is_null(),
+        "{summary}"
+    );
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("induction_on_list.av", &out)
+            .into_iter()
+            .collect();
+    let law = fs::read_to_string(&files["sum.ofOneMoreNamed"]).unwrap();
+    assert_eq!(
+        aver::proof_kernel::verdict(&law),
+        Ok("sum.ofOneMoreNamed".to_string())
+    );
+    assert!(law.contains("(listinduct xs "), "{law}");
+    let mutated = law.replacen("(listinduct xs ", "(listinduct y ", 1);
+    assert!(aver::proof_kernel::verdict(&mutated).is_err(), "{mutated}");
     let _ = fs::remove_dir_all(out);
 }
 

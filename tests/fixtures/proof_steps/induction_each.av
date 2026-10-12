@@ -13,6 +13,7 @@ verify append
     append([1], [2]) => [1, 2]
 
 // Steps close it along x, the first given they try.
+
 verify append law assoc
     given x: List<Int> = [[], [1], [1, 2]]
     given y: List<Int> = [[], [3]]
@@ -20,6 +21,7 @@ verify append law assoc
     append(append(x, y), z) => append(x, append(y, z))
 
 // The same shape, false: no given closes it.
+
 verify append law swapsFirstTwo
     given x: List<Int> = [[], [1]]
     given y: List<Int> = [[], [3]]
