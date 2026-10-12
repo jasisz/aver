@@ -509,6 +509,27 @@ fn nested_literal_and_list_patterns_match_between_rust_and_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A field of a recursive type bound inside a tuple pattern and used as a
+/// value: `match (t, k)` with the arm `(Ty.TyList(a), _) -> a`. The generated
+/// type boxes a recursive field, and the arm unboxed it only when the
+/// constructor was the whole pattern, so inside a tuple `a` stayed an
+/// `Arc<Ty>` where a `Ty` was expected and the crate did not build. The
+/// fixture puts the constructor in each tuple position, beside a string
+/// literal, in a tuple inside a tuple, and under another constructor, and
+/// both returns the field and stores it in a new constructor. `check`,
+/// `verify`, the VM and wasm-gc accept all of it; only a build shows the
+/// type error.
+#[test]
+fn recursive_field_bound_in_a_tuple_pattern_matches_between_rust_and_vm() {
+    const FIXTURE: &str = "tests/fixtures/tuple_pattern_recursive_field_app.av";
+    let vm = run_vm(&repo_root().join(FIXTURE), None).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        vm, "first 1 0\nsecond 1 0\nboth 2 2 0\ndeeper 3 1 2\ninside 1 1 2\nwrapped 1 2 0 2",
+        "the VM is the oracle and must print the expected lines"
+    );
+    assert_plain_parity(FIXTURE, None).unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A value read twice in one expression: once where it is kept, and once
 /// inside a part that hands it on (`Clock.update(later(c, n + leftMs),
 /// answeredMs = leftMs)`, #1454). The last-use facts follow Aver's order —

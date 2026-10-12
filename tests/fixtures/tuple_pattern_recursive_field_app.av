@@ -1,0 +1,107 @@
+module TuplePatternRecursiveField
+    intent =
+        "A field of a recursive type bound inside a tuple pattern and used as a value."
+        "Each function returns the bound field or puts it into a constructor."
+    effects [Console.print]
+
+type Ty
+    TyInt
+    TyList(Ty)
+    TyPair(Ty, Ty)
+
+type Wrap
+    One(Ty)
+    Tagged(Ty, Int)
+
+fn depth(t: Ty) -> Int
+    ? "How deep a type nests."
+    match t
+        Ty.TyInt -> 0
+        Ty.TyList(x) -> 1 + depth(x)
+        Ty.TyPair(a, b) -> 1 + depth(a) + depth(b)
+
+verify depth
+    depth(Ty.TyInt) => 0
+    depth(Ty.TyList(Ty.TyList(Ty.TyInt))) => 2
+    depth(Ty.TyPair(Ty.TyList(Ty.TyInt), Ty.TyInt)) => 2
+
+fn first(t: Ty, k: Int) -> Ty
+    ? "The constructor is the first part of the tuple; the field is returned."
+    match (t, k)
+        (Ty.TyList(a), _) -> a
+        _ -> t
+
+verify first
+    first(Ty.TyList(Ty.TyInt), 0) => Ty.TyInt
+    first(Ty.TyInt, 0) => Ty.TyInt
+
+fn second(c: String, t: Ty) -> Ty
+    ? "The constructor is the second part, beside a string literal."
+    match (c, t)
+        ("cons", Ty.TyList(a)) -> a
+        _ -> Ty.TyInt
+
+verify second
+    second("cons", Ty.TyList(Ty.TyList(Ty.TyInt))) => Ty.TyList(Ty.TyInt)
+    second("nil", Ty.TyList(Ty.TyList(Ty.TyInt))) => Ty.TyInt
+
+fn both(t: Ty, u: Ty) -> Ty
+    ? "Two constructors in one tuple; both fields go into a new constructor."
+    match (t, u)
+        (Ty.TyList(a), Ty.TyList(b)) -> Ty.TyPair(b, a)
+        (Ty.TyPair(a, b), _) -> Ty.TyPair(b, a)
+        _ -> Ty.TyInt
+
+verify both
+    both(Ty.TyList(Ty.TyInt), Ty.TyList(Ty.TyList(Ty.TyInt))) => Ty.TyPair(Ty.TyList(Ty.TyInt), Ty.TyInt)
+    both(Ty.TyPair(Ty.TyInt, Ty.TyList(Ty.TyInt)), Ty.TyInt) => Ty.TyPair(Ty.TyList(Ty.TyInt), Ty.TyInt)
+    both(Ty.TyInt, Ty.TyInt) => Ty.TyInt
+
+fn deeper(t: Ty, k: Int, u: Ty) -> Ty
+    ? "A constructor in a tuple in a tuple."
+    match ((t, k), u)
+        ((Ty.TyList(a), _), Ty.TyPair(b, c)) -> Ty.TyPair(a, c)
+        ((_, _), Ty.TyList(b)) -> b
+        _ -> t
+
+verify deeper
+    deeper(Ty.TyList(Ty.TyInt), 1, Ty.TyPair(Ty.TyInt, Ty.TyList(Ty.TyInt))) => Ty.TyPair(Ty.TyInt, Ty.TyList(Ty.TyInt))
+    deeper(Ty.TyInt, 1, Ty.TyList(Ty.TyList(Ty.TyInt))) => Ty.TyList(Ty.TyInt)
+    deeper(Ty.TyInt, 1, Ty.TyInt) => Ty.TyInt
+
+fn inside(t: Ty) -> Ty
+    ? "A recursive field of a constructor inside a constructor."
+    match t
+        Ty.TyList(Ty.TyList(a)) -> a
+        Ty.TyPair(Ty.TyList(a), _) -> a
+        _ -> t
+
+verify inside
+    inside(Ty.TyList(Ty.TyList(Ty.TyPair(Ty.TyInt, Ty.TyInt)))) => Ty.TyPair(Ty.TyInt, Ty.TyInt)
+    inside(Ty.TyPair(Ty.TyList(Ty.TyInt), Ty.TyInt)) => Ty.TyInt
+    inside(Ty.TyList(Ty.TyInt)) => Ty.TyList(Ty.TyInt)
+
+fn wrapped(w: Wrap, k: Int) -> Ty
+    ? "A recursive field of a constructor inside another type's constructor, inside a tuple."
+    match (w, k)
+        (Wrap.One(Ty.TyList(a)), _) -> a
+        (Wrap.Tagged(Ty.TyPair(a, b), _), _) -> Ty.TyPair(b, a)
+        (Wrap.One(t), _) -> t
+        (Wrap.Tagged(t, _), _) -> t
+
+verify wrapped
+    wrapped(Wrap.One(Ty.TyList(Ty.TyList(Ty.TyInt))), 0) => Ty.TyList(Ty.TyInt)
+    wrapped(Wrap.Tagged(Ty.TyPair(Ty.TyInt, Ty.TyList(Ty.TyInt)), 3), 0) => Ty.TyPair(Ty.TyList(Ty.TyInt), Ty.TyInt)
+    wrapped(Wrap.One(Ty.TyInt), 0) => Ty.TyInt
+    wrapped(Wrap.Tagged(Ty.TyList(Ty.TyInt), 3), 0) => Ty.TyList(Ty.TyInt)
+
+fn main() -> Unit
+    ! [Console.print]
+    two = Ty.TyList(Ty.TyList(Ty.TyInt))
+    pair = Ty.TyPair(Ty.TyInt, Ty.TyList(Ty.TyInt))
+    Console.print("first {depth(first(two, 0))} {depth(first(Ty.TyInt, 0))}")
+    Console.print("second {depth(second("cons", two))} {depth(second("nil", two))}")
+    Console.print("both {depth(both(two, Ty.TyList(Ty.TyInt)))} {depth(both(pair, two))} {depth(both(Ty.TyInt, two))}")
+    Console.print("deeper {depth(deeper(two, 1, pair))} {depth(deeper(Ty.TyInt, 1, two))} {depth(deeper(pair, 1, Ty.TyInt))}")
+    Console.print("inside {depth(inside(Ty.TyList(two)))} {depth(inside(Ty.TyPair(two, Ty.TyInt)))} {depth(inside(pair))}")
+    Console.print("wrapped {depth(wrapped(Wrap.One(two), 0))} {depth(wrapped(Wrap.Tagged(pair, 3), 0))} {depth(wrapped(Wrap.One(Ty.TyInt), 0))} {depth(wrapped(Wrap.Tagged(two, 3), 0))}")
