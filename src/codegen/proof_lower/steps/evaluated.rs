@@ -40,17 +40,32 @@ use super::env::Env;
 /// Steps evaluating the hypotheses the way the claim was evaluated may take
 /// in one attempt ([`Env::prove_with_evaluated_hypotheses`]), apart from
 /// every other budget.
-pub(crate) const READ_FUEL: usize = 600;
+pub(crate) const READ_FUEL: usize = 800;
 
 /// Steps evaluating one hypothesis may take: one that takes longer is a
 /// computation, not a shape to read.
-const READ_FACT_FUEL: usize = 100;
+const READ_FACT_FUEL: usize = 150;
 
 /// Steps the evaluations of a claim under its evaluated hypotheses may take
 /// in one attempt, all of them together. One that closes the claim also
 /// pays them from the claim's fuel; one that fails leaves that fuel as it
 /// was.
 pub(crate) const READ_CLAIM_FUEL: usize = 500;
+
+/// A budget of this module as an attempt gets it: `limit`, or the percentage
+/// of it `AVER_STEPS_READ_BUDGET_PERCENT` names. The tests set 50 to check
+/// that the laws these readings close need less than half of each budget,
+/// so a change that eats the room shows there before a law reopens.
+pub(crate) fn budget(limit: usize) -> usize {
+    static PERCENT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let percent = *PERCENT.get_or_init(|| {
+        std::env::var("AVER_STEPS_READ_BUDGET_PERCENT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(100)
+    });
+    limit * percent / 100
+}
 
 /// How many evaluations of the hypotheses may be in progress, one inside
 /// the claim another went on to.
@@ -148,7 +163,7 @@ impl Env<'_> {
         fact: &Term,
         hyps: Vec<(String, Eqn)>,
     ) -> Option<super::eval::NormalFact> {
-        let budget = self.read_fuel.min(READ_FACT_FUEL);
+        let budget = self.read_fuel.min(budget(READ_FACT_FUEL));
         let saved = std::mem::replace(&mut self.hyps, hyps);
         // `normal_fact` draws on `normal_fuel` alone.
         let normal = std::mem::replace(&mut self.normal_fuel, budget);
@@ -422,7 +437,8 @@ impl Env<'_> {
                 steps: vec![Proof::Symm(Box::new(n.proof.clone())), Proof::Hyp(name)],
             };
             let to = n.to.clone();
-            if let Some(contradiction) = self.take_forms(&mut forms, &to, said, from, &[n.clone()])
+            if let Some(contradiction) =
+                self.take_forms(&mut forms, &to, said, from, std::slice::from_ref(&n))
             {
                 self.keep_needs(&n);
                 absurd = Some(Proof::Absurd {

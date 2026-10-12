@@ -5058,6 +5058,113 @@ fn both_kernels_read_a_hypothesis_as_evaluated_and_refuse_a_wrong_evaluation() {
     let _ = fs::remove_dir_all(export);
 }
 
+/// Every law the evaluated hypotheses close, in the fixtures and in the
+/// corpus, with the file it is in and the root its modules resolve from.
+const EVALUATED_HYPOTHESIS_ROOM: [(&str, &str, &[&str]); 11] = [
+    (
+        "tests/fixtures/proof_steps/evaluated_hypotheses.av",
+        "tests/fixtures/proof_steps",
+        &EVALUATED_HYPOTHESIS_LAWS,
+    ),
+    (
+        "tests/fixtures/proof_steps/hint_scope/main.av",
+        "tests/fixtures/proof_steps/hint_scope",
+        &["total.ofJoined"],
+    ),
+    (
+        "examples/formal/affine_wrapper_law.av",
+        "examples/formal",
+        &["boundedScale.returnsCore"],
+    ),
+    (
+        "projects/durable_promise/domain/promise.av",
+        "projects/durable_promise",
+        &["observe.timeoutMonotone"],
+    ),
+    (
+        "proof-corpus/decomposed/isaplanner/prop_77.av",
+        "proof-corpus/decomposed/isaplanner",
+        &["insort.leHeadInsort", "sorted.sortedCons"],
+    ),
+    (
+        "proof-corpus/decomposed/isaplanner/prop_78.av",
+        "proof-corpus/decomposed/isaplanner",
+        &["insort.leHeadInsort", "sorted.sortedCons"],
+    ),
+    (
+        "proof-corpus/decomposed/prod/lemma_09.av",
+        "proof-corpus/decomposed/prod",
+        &["rev.revAppendCons", "rev.revAppendDistributes"],
+    ),
+    (
+        "proof-corpus/decomposed/prod/lemma_12.av",
+        "proof-corpus/decomposed/prod",
+        &["insert.leHeadInsert", "sorted.sortedCons"],
+    ),
+    (
+        "proof-corpus/decomposed/prod/prop_10.av",
+        "proof-corpus/decomposed/prod",
+        &["rev.revAppendDistributes"],
+    ),
+    (
+        "proof-corpus/decomposed/prod/prop_11.av",
+        "proof-corpus/decomposed/prod",
+        &["rev.revAppDistributes"],
+    ),
+    (
+        "proof-corpus/decomposed/prod/prop_14.av",
+        "proof-corpus/decomposed/prod",
+        &["insert.leHeadInsert", "sorted.sortedCons"],
+    ),
+];
+
+/// The budgets for evaluating hypotheses have room: every law those
+/// readings close still closes with each budget at half its size
+/// (`AVER_STEPS_READ_BUDGET_PERCENT=50`). A change that makes a reading
+/// cost more fails here, by name, while the laws still close at the full
+/// budgets, instead of reopening one in the corpus later. No clock is read.
+#[test]
+fn the_budgets_for_evaluated_hypotheses_leave_half_of_themselves_unused() {
+    for (i, (entry, root, laws)) in EVALUATED_HYPOTHESIS_ROOM.iter().enumerate() {
+        let out = scratch(&format!("evaluated-hypotheses-room-{i}"));
+        let result = Command::new(aver_bin())
+            .args([
+                "proof",
+                entry,
+                "--module-root",
+                root,
+                "--backend",
+                "aver",
+                "-o",
+                out.to_str().unwrap(),
+                "--check-json",
+                "--sorry-budget",
+                "99",
+                "--declined-budget",
+                "99",
+            ])
+            .env("AVER_STEPS_READ_BUDGET_PERCENT", "50")
+            .current_dir(repo_root())
+            .output()
+            .expect("aver runs");
+        let _ = fs::remove_dir_all(&out);
+        let summary: serde_json::Value = serde_json::from_str(
+            String::from_utf8_lossy(&result.stdout)
+                .lines()
+                .rev()
+                .find(|l| l.starts_with('{'))
+                .unwrap_or_else(|| panic!("{entry}: {}", format_output(&result))),
+        )
+        .unwrap();
+        for law in *laws {
+            assert_eq!(
+                summary["closed_by"][law], "steps",
+                "{entry}: {law} needs more than half of a budget for evaluating hypotheses"
+            );
+        }
+    }
+}
+
 #[test]
 fn lean_closes_the_evaluated_hypothesis_laws_by_their_steps() {
     if !lean_required::lake_available() {
