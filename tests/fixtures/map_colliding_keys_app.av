@@ -1,0 +1,185 @@
+module MapCollidingKeysApp
+    intent =
+        "Keys a map on two different values the VM hashes to the same 64 bits, as Int and as String."
+        "They are two keys, so every backend has to keep both and answer for each one separately."
+    effects [Console.print]
+
+fn intA() -> Int
+    ? "The first Int key."
+    0 - 1195071822729167888
+
+fn intB() -> Int
+    ? "A different Int with the same VM key hash as intA."
+    6146533188634962189
+
+fn textA() -> String
+    ? "The first String key."
+    "ka8971bb89fa1b124"
+
+fn textB() -> String
+    ? "A different String with the same VM key hash as textA."
+    "k0c777abb5c4901e3"
+
+fn show(found: Option<String>) -> String
+    ? "An optional String as text."
+    match found
+        Option.Some(value) -> "Some({value})"
+        Option.None -> "None"
+
+fn showInt(found: Option<Int>) -> String
+    ? "An optional Int as text."
+    match found
+        Option.Some(value) -> "Some({value})"
+        Option.None -> "None"
+
+fn yes(answer: Bool) -> String
+    ? "A Bool as text."
+    match answer
+        true -> "yes"
+        false -> "no"
+
+fn size(m: Map<Int, String>) -> String
+    ? "How many entries a map has, as text."
+    String.fromInt(Map.len(m))
+
+fn at(m: Map<Int, String>, key: Int) -> String
+    ? "What a map holds under a key, as text."
+    show(Map.get(m, key))
+
+fn onlyA() -> Map<Int, String>
+    ? "A map that holds intA alone."
+    Map.set({}, intA(), "a")
+
+fn onlyB() -> Map<Int, String>
+    ? "A map that holds intB alone, under the value onlyA gives intA."
+    Map.set({}, intB(), "a")
+
+fn bothAB() -> Map<Int, String>
+    ? "intA set first, then intB."
+    Map.set(onlyA(), intB(), "b")
+
+fn bothBA() -> Map<Int, String>
+    ? "intB set first, then intA."
+    Map.set(Map.set({}, intB(), "b"), intA(), "a")
+
+fn written() -> Map<Int, String>
+    ? "The same two entries as a map literal."
+    {intA() => "a", intB() => "b"}
+
+fn listed() -> Map<Int, String>
+    ? "The same two entries from a list of pairs."
+    Map.fromList([(intB(), "b"), (intA(), "a")])
+
+fn joinedFrom(keys: List<Int>, acc: String) -> String
+    ? "Appends Int keys to acc in the order given, a space before each."
+    match keys
+        [] -> acc
+        [key, ..rest] -> joinedFrom(rest, "{acc} {key}")
+
+fn joined(keys: List<Int>) -> String
+    ? "Int keys in the order given, a space before each."
+    joinedFrom(keys, "")
+
+fn joinedTextFrom(items: List<String>, acc: String) -> String
+    ? "Appends Strings to acc in the order given, a space before each."
+    match items
+        [] -> acc
+        [item, ..rest] -> joinedTextFrom(rest, "{acc} {item}")
+
+fn joinedText(items: List<String>) -> String
+    ? "Strings in the order given, a space before each."
+    joinedTextFrom(items, "")
+
+fn fill(acc: Map<Int, Int>, i: Int, n: Int) -> Map<Int, Int>
+    ? "Sets intA, intB and the numbers below 7 over and over, n rounds."
+    match i >= n
+        true -> acc
+        false -> fill(Map.set(Map.set(Map.set(acc, Int.mod(i, 7), i), intA(), i), intB(), 0 - i), i + 1, n)
+
+fn textBoth() -> Map<String, Int>
+    ? "textA set first, then textB."
+    Map.set(Map.set({}, textA(), 1), textB(), 2)
+
+fn main() -> Unit
+    ! [Console.print]
+    ab = bothAB()
+    ba = bothBA()
+    intsDiffer = yes(intA() != intB())
+    textsDiffer = yes(textA() != textB())
+    Console.print("distinct {intsDiffer} {textsDiffer}")
+    getOther = at(onlyA(), intB())
+    hasOther = yes(Map.has(onlyA(), intB()))
+    Console.print("other key {getOther} {hasOther}")
+    lenAB = size(ab)
+    lenBA = size(ba)
+    Console.print("len {lenAB} {lenBA}")
+    abA = at(ab, intA())
+    abB = at(ab, intB())
+    baA = at(ba, intA())
+    baB = at(ba, intB())
+    Console.print("get {abA} {abB} {baA} {baB}")
+    keysAB = joined(Map.keys(ab))
+    keysBA = joined(Map.keys(ba))
+    Console.print("keys{keysAB} |{keysBA}")
+    valuesBA = joinedText(Map.values(ba))
+    entriesAB = String.fromInt(List.len(Map.entries(ab)))
+    Console.print("values{valuesBA} entries {entriesAB}")
+    over = Map.set(ab, intB(), "c")
+    overA = at(over, intA())
+    overB = at(over, intB())
+    overLen = size(over)
+    Console.print("overwrite {overA} {overB} {overLen}")
+    noA = Map.remove(ab, intA())
+    noALen = size(noA)
+    noAA = at(noA, intA())
+    noAB = at(noA, intB())
+    Console.print("remove first {noALen} {noAA} {noAB}")
+    noB = Map.remove(ab, intB())
+    noBLen = size(noB)
+    noBA = at(noB, intA())
+    noBB = at(noB, intB())
+    Console.print("remove second {noBLen} {noBA} {noBB}")
+    same = Map.remove(onlyA(), intB())
+    sameLen = size(same)
+    sameA = at(same, intA())
+    Console.print("remove absent {sameLen} {sameA}")
+    back = Map.set(noA, intA(), "again")
+    backLen = size(back)
+    backA = at(back, intA())
+    backB = at(back, intB())
+    Console.print("put back {backLen} {backA} {backB}")
+    oneKeyEqual = yes(onlyA() == onlyB())
+    orderEqual = yes(ab == ba)
+    changedEqual = yes(ab == over)
+    Console.print("equal {oneKeyEqual} {orderEqual} {changedEqual}")
+    writtenLen = size(written())
+    writtenEqual = yes(written() == ab)
+    writtenB = at(written(), intB())
+    Console.print("literal {writtenLen} {writtenEqual} {writtenB}")
+    listedLen = size(listed())
+    listedEqual = yes(listed() == ab)
+    listedA = at(listed(), intA())
+    Console.print("fromList {listedLen} {listedEqual} {listedA}")
+    full = fill({}, 0, 50)
+    fullLen = String.fromInt(Map.len(full))
+    fullA = showInt(Map.get(full, intA()))
+    fullB = showInt(Map.get(full, intB()))
+    fullThree = showInt(Map.get(full, 3))
+    Console.print("fill {fullLen} {fullA} {fullB} {fullThree}")
+    texts = textBoth()
+    textLen = String.fromInt(Map.len(texts))
+    textGetA = showInt(Map.get(texts, textA()))
+    textGetB = showInt(Map.get(texts, textB()))
+    Console.print("text {textLen} {textGetA} {textGetB}")
+    textOnlyA = Map.set({}, textA(), 1)
+    textOnlyB = Map.set({}, textB(), 1)
+    textHasOther = yes(Map.has(textOnlyA, textB()))
+    textEqual = yes(textOnlyA == textOnlyB)
+    Console.print("text other key {textHasOther} equal {textEqual}")
+    textKeys = joinedText(Map.keys(texts))
+    Console.print("text keys{textKeys}")
+    noText = Map.remove(texts, textA())
+    noTextLen = String.fromInt(Map.len(noText))
+    noTextB = showInt(Map.get(noText, textB()))
+    noTextA = showInt(Map.get(noText, textA()))
+    Console.print("text remove {noTextLen} {noTextA} {noTextB}")

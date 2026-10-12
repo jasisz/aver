@@ -97,12 +97,12 @@ impl NanValueConvert for NanValue {
                 for (k, v) in map {
                     let nk = NanValue::from_value(k, arena);
                     let nv = NanValue::from_value(v, arena);
-                    // Use the structural (deep) key hash so it matches the
-                    // hashing scheme every `Map.*` builtin queries with
-                    // (`map.rs::nv_key_bits`). The shallow hash would return
-                    // the arena index for ℤ-overflow int keys (mis-keying).
+                    // The slot every `Map.*` builtin would look this key up
+                    // in (`aver_memory::map_key_slot`): its structural hash,
+                    // or the next free slot when another key shares the hash.
                     let entries_before = nv_map.len();
-                    nv_map = nv_map.insert_owned(nk.map_key_hash_deep(arena), (nk, nv));
+                    let (Ok(slot) | Err(slot)) = aver_memory::map_key_slot(&nv_map, nk, arena);
+                    nv_map = nv_map.insert_owned(slot, (nk, nv));
                     let table_after = nv_map.table_id();
                     if table_after != table {
                         arena.note_map_entries_copied(entries_before);

@@ -1,0 +1,19 @@
+distinct yes yes
+other key None no
+len 2 2
+get Some(a) Some(b) Some(a) Some(b)
+keys -1195071822729167888 6146533188634962189 | -1195071822729167888 6146533188634962189
+values a b entries 2
+overwrite Some(a) Some(c) 2
+remove first 1 None Some(b)
+remove second 1 Some(a) None
+remove absent 1 Some(a)
+put back 2 Some(again) Some(b)
+equal no yes no
+literal 2 yes Some(b)
+fromList 2 yes Some(a)
+fill 9 Some(49) Some(-49) Some(45)
+text 2 Some(1) Some(2)
+text other key no equal no
+text keys k0c777abb5c4901e3 ka8971bb89fa1b124
+text remove 1 None Some(2)
