@@ -21,7 +21,7 @@ use std::cmp::Ordering;
 
 use aver_memory::TakenMap;
 
-use crate::nan_value::{Arena, LaneMark, NanValue};
+use crate::nan_value::{Arena, LaneMark, NanValue, PersistentMap};
 use crate::value::{RuntimeError, Value, aver_repr};
 
 /// Order the NaN-boxed representation's keys the way [`compare_scalar_keys`]
@@ -205,8 +205,46 @@ fn ensure_hashable_nv(name: &str, v: NanValue) -> Result<(), RuntimeError> {
     }
 }
 
-fn nv_key_bits(v: NanValue, arena: &Arena) -> u64 {
-    v.map_key_hash_deep(arena)
+/// Where `key` lives in `map`, or where an insert has to put it.
+///
+/// Every `Map.*` builtin finds a key through this and nothing else: the table
+/// is addressed by the key's hash, and a hash does not identify a key.
+fn key_slot(map: &PersistentMap, key: NanValue, arena: &Arena) -> Result<u64, u64> {
+    aver_memory::map_key_slot(map, key, arena)
+}
+
+/// Remove `key` from a table the caller owns, keeping every other key findable.
+///
+/// A key whose own slot was taken sits in the slot after it, and a lookup stops
+/// at the first empty slot. Emptying a slot can therefore cut a later key off
+/// from where its search starts, so the keys behind the removed one are moved
+/// up into the gap whenever that brings them no further than their own hash.
+/// `moved(from, to)` reports each such move. A map with no shared hash has
+/// nothing behind the removed key and pays one table read for the check.
+fn remove_key(
+    map: PersistentMap,
+    key: NanValue,
+    arena: &Arena,
+    mut moved: impl FnMut(u64, u64),
+) -> (PersistentMap, Option<u64>) {
+    let Ok(removed) = key_slot(&map, key, arena) else {
+        return (map, None);
+    };
+    let mut map = map.remove_owned(&removed);
+    let mut gap = removed;
+    let mut probe = gap.wrapping_add(1);
+    while let Some(&(stored_key, stored_value)) = map.get(&probe) {
+        let home = stored_key.map_key_hash_deep(arena);
+        if gap.wrapping_sub(home) < probe.wrapping_sub(home) {
+            map = map
+                .remove_owned(&probe)
+                .insert_owned(gap, (stored_key, stored_value));
+            moved(probe, gap);
+            gap = probe;
+        }
+        probe = probe.wrapping_add(1);
+    }
+    (map, Some(removed))
 }
 
 /// Transient proof supplied by the VM frame that owns the next destructive
@@ -293,12 +331,12 @@ pub(crate) fn set_nv_owned(
     // was marked when it went in.
     arena.note_held_elsewhere(args[1]);
     arena.note_held_elsewhere(args[2]);
-    let key_hash = nv_key_bits(args[1], arena);
     let TakenMap {
         map: old_map,
         scan_receipt: _,
         mut pending_scan_keys,
     } = arena.take_map_value(source);
+    let (Ok(key_hash) | Err(key_hash)) = key_slot(&old_map, args[1], arena);
     let new_map = old_map.insert_owned(key_hash, (args[1], args[2]));
     let scan_receipt = if let Some((receipt, pair_predates_frame)) = inherited_provenance {
         if pair_predates_frame {
@@ -351,14 +389,27 @@ pub fn remove_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue,
     ensure_hashable_nv("Map.remove", args[1])?;
     let source = args[0];
     let all_immediate = arena.map_all_immediate_value(source);
-    let key_hash = nv_key_bits(args[1], arena);
     let TakenMap {
         map: old_map,
         scan_receipt,
         mut pending_scan_keys,
     } = arena.take_map_value(source);
-    let new_map = old_map.remove_owned(&key_hash);
-    pending_scan_keys.retain(|pending| *pending != key_hash);
+    // The remembered set names pairs by slot, so it follows the table: the
+    // removed slot is forgotten first, then a pair that moved is renamed.
+    let mut renamed: Vec<(u64, u64)> = Vec::new();
+    let (new_map, removed) = remove_key(old_map, args[1], arena, |from, to| {
+        renamed.push((from, to));
+    });
+    if let Some(removed) = removed {
+        pending_scan_keys.retain(|pending| *pending != removed);
+    }
+    for (from, to) in renamed {
+        for pending in pending_scan_keys.iter_mut() {
+            if *pending == from {
+                *pending = to;
+            }
+        }
+    }
     if new_map.is_empty() {
         return Ok(NanValue::EMPTY_MAP);
     }
@@ -392,7 +443,7 @@ fn set_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
     // The target stays reachable through its arena slot, so `insert` duplicates
     // the whole storage. `set_nv_owned` is the path that avoids this.
     arena.note_map_entries_copied(old_map.len());
-    let key_hash = nv_key_bits(args[1], arena);
+    let (Ok(key_hash) | Err(key_hash)) = key_slot(&old_map, args[1], arena);
     let new_map = old_map.insert(key_hash, (args[1], args[2]));
     let map_idx = arena.push_map(new_map);
     Ok(NanValue::new_map(map_idx))
@@ -411,10 +462,9 @@ fn get_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
         ));
     }
     ensure_hashable_nv("Map.get", args[1])?;
-    let key_hash = nv_key_bits(args[1], arena);
     let map = arena.map_ref_value(args[0]);
-    match map.get(&key_hash) {
-        Some((_, v)) => Ok(NanValue::new_some_value(*v, arena)),
+    match aver_memory::map_get_value(map, args[1], arena) {
+        Some(v) => Ok(NanValue::new_some_value(v, arena)),
         None => Ok(NanValue::NONE),
     }
 }
@@ -433,9 +483,14 @@ fn remove_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeEr
     }
     ensure_hashable_nv("Map.remove", args[1])?;
     let old_map = arena.clone_map_value(args[0]);
-    arena.note_map_entries_copied(old_map.len());
-    let key_hash = nv_key_bits(args[1], arena);
-    let new_map = old_map.remove(&key_hash);
+    let (entries, table) = (old_map.len(), old_map.table_id());
+    // The arena still holds this table, so the first write duplicates it and
+    // the rest of the removal works on that private copy. An absent key writes
+    // nothing, and then nothing was copied.
+    let (new_map, _) = remove_key(old_map, args[1], arena, |_, _| {});
+    if new_map.table_id() != table {
+        arena.note_map_entries_copied(entries);
+    }
     if new_map.is_empty() {
         Ok(NanValue::EMPTY_MAP)
     } else {
@@ -457,9 +512,8 @@ fn has_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
         ));
     }
     ensure_hashable_nv("Map.has", args[1])?;
-    let key_hash = nv_key_bits(args[1], arena);
     let map = arena.map_ref_value(args[0]);
-    Ok(NanValue::new_bool(map.contains_key(&key_hash)))
+    Ok(NanValue::new_bool(key_slot(map, args[1], arena).is_ok()))
 }
 
 fn keys_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
@@ -565,7 +619,7 @@ fn from_list_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtim
         ));
     }
     let items = arena.list_to_vec_value(args[0]);
-    let mut out = crate::nan_value::PersistentMap::new();
+    let mut out = PersistentMap::new();
     // The map under construction is ours alone until it is pushed into the
     // arena, so every entry goes in through the owned path. Spelling this loop
     // `out = out.insert(..)` — which is what it used to be — made `Map.fromList`
@@ -596,7 +650,7 @@ fn from_list_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtim
         let key = parts[0];
         let value = parts[1];
         ensure_hashable_nv("Map.fromList", key)?;
-        let key_hash = nv_key_bits(key, arena);
+        let (Ok(key_hash) | Err(key_hash)) = key_slot(&out, key, arena);
         let entries_before = out.len();
         out = out.insert_owned(key_hash, (key, value));
         let table_after = out.table_id();
@@ -873,6 +927,215 @@ mod tests {
             panic!("expected owned map result");
         };
         assert!(pending_scan_keys.is_empty());
+    }
+
+    /// Two different Int keys with one key hash, and two different String
+    /// keys with one key hash — the keys `tests/fixtures/map_colliding_keys_app.av`
+    /// runs on every backend.
+    const INT_A: i64 = -1195071822729167888;
+    const INT_B: i64 = 6146533188634962189;
+    const TEXT_A: &str = "ka8971bb89fa1b124";
+    const TEXT_B: &str = "k0c777abb5c4901e3";
+
+    fn colliding_ints(arena: &mut Arena) -> (NanValue, NanValue) {
+        (
+            NanValue::new_int(INT_A, arena),
+            NanValue::new_int(INT_B, arena),
+        )
+    }
+
+    fn get(arena: &mut Arena, map: NanValue, key: NanValue) -> Option<i64> {
+        let found = get_nv(&[map, key], arena).expect("Map.get succeeds");
+        if found.is_none() {
+            return None;
+        }
+        use crate::nan_value::NanValueConvert;
+        match found.to_value(arena) {
+            Value::Some(inner) => match *inner {
+                Value::Int(n) => n.to_i64(),
+                other => panic!("expected an Int value, got {other:?}"),
+            },
+            other => panic!("expected an Option, got {other:?}"),
+        }
+    }
+
+    fn len(arena: &mut Arena, map: NanValue) -> usize {
+        arena.map_ref_value(map).len()
+    }
+
+    /// The regression tests below and the cross-backend fixture mean nothing
+    /// if these keys stop colliding, which a change to the key hash would do
+    /// without failing anything else. Find a new pair then; do not delete this.
+    #[test]
+    fn the_fixture_keys_still_share_a_hash() {
+        let mut arena = Arena::new();
+        let (a, b) = colliding_ints(&mut arena);
+        assert!(!a.eq_in(b, &arena));
+        assert_eq!(a.map_key_hash_deep(&arena), b.map_key_hash_deep(&arena));
+
+        let text_a = NanValue::new_string_value(TEXT_A, &mut arena);
+        let text_b = NanValue::new_string_value(TEXT_B, &mut arena);
+        assert!(!text_a.eq_in(text_b, &arena));
+        assert_eq!(
+            text_a.map_key_hash_deep(&arena),
+            text_b.map_key_hash_deep(&arena)
+        );
+    }
+
+    /// The bug: a map addressed by key hash alone answered for the wrong key.
+    #[test]
+    fn two_keys_with_one_hash_are_two_keys() {
+        let mut arena = Arena::new();
+        let (a, b) = colliding_ints(&mut arena);
+        let one = NanValue::new_int(1, &mut arena);
+        let two = NanValue::new_int(2, &mut arena);
+
+        let only_a = set_nv(&[NanValue::EMPTY_MAP, a, one], &mut arena).unwrap();
+        assert_eq!(get(&mut arena, only_a, b), None);
+        assert!(!has_nv(&[only_a, b], &mut arena).unwrap().as_bool());
+
+        let both = set_nv(&[only_a, b, two], &mut arena).unwrap();
+        assert_eq!(len(&mut arena, both), 2);
+        assert_eq!(get(&mut arena, both, a), Some(1));
+        assert_eq!(get(&mut arena, both, b), Some(2));
+        assert_eq!(len(&mut arena, only_a), 1, "the source map is untouched");
+
+        // Setting a key that is already there replaces its own entry only.
+        let three = NanValue::new_int(3, &mut arena);
+        let replaced = set_nv(&[both, b, three], &mut arena).unwrap();
+        assert_eq!(len(&mut arena, replaced), 2);
+        assert_eq!(get(&mut arena, replaced, a), Some(1));
+        assert_eq!(get(&mut arena, replaced, b), Some(3));
+
+        let pairs = vec![
+            NanValue::new_tuple(arena.push_tuple(vec![b, two])),
+            NanValue::new_tuple(arena.push_tuple(vec![a, one])),
+        ];
+        let list = NanValue::new_list(arena.push_list(pairs));
+        let listed = from_list_nv(&[list], &mut arena).unwrap();
+        assert_eq!(len(&mut arena, listed), 2);
+        assert_eq!(get(&mut arena, listed, a), Some(1));
+        assert_eq!(get(&mut arena, listed, b), Some(2));
+    }
+
+    /// Removing the key that holds the shared slot must leave the other one
+    /// where a lookup finds it, on the copying path and on the owned one.
+    #[test]
+    fn removing_one_of_two_keys_with_one_hash_keeps_the_other() {
+        for owned in [false, true] {
+            for remove_first in [false, true] {
+                let mut arena = Arena::new();
+                let (a, b) = colliding_ints(&mut arena);
+                let one = NanValue::new_int(1, &mut arena);
+                let two = NanValue::new_int(2, &mut arena);
+                let only_a = set_nv_owned(&[NanValue::EMPTY_MAP, a, one], &mut arena, None)
+                    .expect("owned insert succeeds");
+                let both =
+                    set_nv_owned(&[only_a, b, two], &mut arena, None).expect("second insert");
+                assert_eq!(len(&mut arena, both), 2);
+
+                let (gone, kept, kept_value) = if remove_first { (a, b, 2) } else { (b, a, 1) };
+                let rest = if owned {
+                    remove_nv_owned(&[both, gone], &mut arena)
+                } else {
+                    remove_nv(&[both, gone], &mut arena)
+                }
+                .expect("removal succeeds");
+                let case = format!("owned={owned} remove_first={remove_first}");
+                assert_eq!(len(&mut arena, rest), 1, "{case}");
+                assert_eq!(get(&mut arena, rest, gone), None, "{case}");
+                assert_eq!(get(&mut arena, rest, kept), Some(kept_value), "{case}");
+
+                // The kept key is back in the slot its own hash names, so a
+                // later insert of the removed key cannot shadow it.
+                let hash = kept.map_key_hash_deep(&arena);
+                assert!(arena.map_ref_value(rest).get(&hash).is_some(), "{case}");
+                let nine = NanValue::new_int(9, &mut arena);
+                let again = set_nv(&[rest, gone, nine], &mut arena).unwrap();
+                assert_eq!(len(&mut arena, again), 2, "{case}");
+                assert_eq!(get(&mut arena, again, gone), Some(9), "{case}");
+                assert_eq!(get(&mut arena, again, kept), Some(kept_value), "{case}");
+            }
+        }
+    }
+
+    /// Removing a key the map does not hold changes nothing, even when a
+    /// different key with the same hash is there.
+    #[test]
+    fn removing_an_absent_key_with_a_taken_hash_removes_nothing() {
+        let mut arena = Arena::new();
+        let (a, b) = colliding_ints(&mut arena);
+        let one = NanValue::new_int(1, &mut arena);
+        let only_a = set_nv(&[NanValue::EMPTY_MAP, a, one], &mut arena).unwrap();
+
+        let copied = remove_nv(&[only_a, b], &mut arena).unwrap();
+        assert_eq!(get(&mut arena, copied, a), Some(1));
+        let owned = remove_nv_owned(&[copied, b], &mut arena).unwrap();
+        assert_eq!(len(&mut arena, owned), 1);
+        assert_eq!(get(&mut arena, owned, a), Some(1));
+    }
+
+    /// Map equality pairs entries by key. The two maps below hold the same two
+    /// entries in opposite slots, and the two one-key maps hold different keys
+    /// in the same slot.
+    #[test]
+    fn map_equality_compares_keys_not_slots() {
+        let mut arena = Arena::new();
+        let (a, b) = colliding_ints(&mut arena);
+        let one = NanValue::new_int(1, &mut arena);
+        let two = NanValue::new_int(2, &mut arena);
+
+        let only_a = set_nv(&[NanValue::EMPTY_MAP, a, one], &mut arena).unwrap();
+        let only_b = set_nv(&[NanValue::EMPTY_MAP, b, one], &mut arena).unwrap();
+        assert!(!only_a.eq_in(only_b, &arena));
+
+        let a_then_b = set_nv(&[only_a, b, two], &mut arena).unwrap();
+        let b_first = set_nv(&[NanValue::EMPTY_MAP, b, two], &mut arena).unwrap();
+        let b_then_a = set_nv(&[b_first, a, one], &mut arena).unwrap();
+        assert!(a_then_b.eq_in(b_then_a, &arena));
+        assert!(b_then_a.eq_in(a_then_b, &arena));
+
+        let swapped = set_nv(&[only_b, a, two], &mut arena).unwrap();
+        assert!(!a_then_b.eq_in(swapped, &arena), "same keys, other values");
+    }
+
+    /// The collector's remembered set names a pair by its slot. A pair that
+    /// was remembered and then moved up by a removal has to be remembered
+    /// under the slot it moved to, or its rewrite is silently skipped.
+    #[test]
+    fn owned_remove_renames_a_remembered_pair_it_moves() {
+        let mut arena = Arena::new();
+        let (a, b) = colliding_ints(&mut arena);
+        let one = NanValue::new_int(1, &mut arena);
+        let source = set_nv(&[NanValue::EMPTY_MAP, a, one], &mut arena).unwrap();
+        let proof = frame_proof(&arena);
+        let fresh_value = NanValue::new_string_value("remembered-colliding-value", &mut arena);
+        let both = set_nv_owned(&[source, b, fresh_value], &mut arena, Some(proof))
+            .expect("owned insert should remember its fresh pair");
+        let home = a.map_key_hash_deep(&arena);
+        let aver_memory::ArenaEntry::Map {
+            pending_scan_keys, ..
+        } = arena.get(both.arena_index())
+        else {
+            panic!("expected owned map result");
+        };
+        assert_eq!(
+            pending_scan_keys,
+            &[home.wrapping_add(1)],
+            "the second key with this hash lives one slot on"
+        );
+
+        let rest = remove_nv_owned(&[both, a], &mut arena).expect("owned removal succeeds");
+        let aver_memory::ArenaEntry::Map {
+            map,
+            pending_scan_keys,
+            ..
+        } = arena.get(rest.arena_index())
+        else {
+            panic!("expected owned map result");
+        };
+        assert_eq!(pending_scan_keys, &[home]);
+        assert!(map.get(&home).is_some_and(|(key, _)| key.eq_in(b, &arena)));
     }
 
     /// Every float a program can put in a map key position, including the

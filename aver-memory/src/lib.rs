@@ -71,7 +71,9 @@ pub trait FnValueName {
 
 /// Trait abstracting the persistent-map operations needed by the arena.
 ///
-/// Implementors provide a hash-keyed map from `u64` to `(NanValue, NanValue)`.
+/// Implementors provide a map from a `u64` slot to `(NanValue, NanValue)`.
+/// The slot is the key's hash unless a different key with the same hash holds
+/// it already; [`map_key_slot`] is the one way to find the slot of a key.
 pub trait MapLike: Sized {
     fn new() -> Self;
     fn get(&self, key: &u64) -> Option<&(NanValue, NanValue)>;
@@ -111,6 +113,39 @@ pub trait MapLike: Sized {
     }
     fn iter(&self) -> impl Iterator<Item = (&u64, &(NanValue, NanValue))>;
     fn values(&self) -> impl Iterator<Item = &(NanValue, NanValue)>;
+}
+
+/// Where `key` lives in `map`: `Ok(slot)` when the map holds it, `Err(slot)`
+/// with the slot an insert has to use when it does not.
+///
+/// The table is addressed by the key's 64-bit hash, and two different keys can
+/// share one. A hash is therefore only where the search starts: the key stored
+/// there is compared in full, and a different key sends the search to the next
+/// slot, which is where an insert that found its own slot taken put the
+/// newcomer. With no shared hash this is one table read and one key comparison.
+pub fn map_key_slot<T: ArenaTypes>(
+    map: &T::Map,
+    key: NanValue,
+    arena: &Arena<T>,
+) -> Result<u64, u64> {
+    let mut slot = key.map_key_hash_deep(arena);
+    loop {
+        match map.get(&slot) {
+            None => return Err(slot),
+            Some((stored, _)) if stored.key_eq_in(key, arena) => return Ok(slot),
+            Some(_) => slot = slot.wrapping_add(1),
+        }
+    }
+}
+
+/// The value `map` holds under `key`, if any — see [`map_key_slot`].
+pub fn map_get_value<T: ArenaTypes>(
+    map: &T::Map,
+    key: NanValue,
+    arena: &Arena<T>,
+) -> Option<NanValue> {
+    let slot = map_key_slot::<T>(map, key, arena).ok()?;
+    map.get(&slot).map(|(_, value)| *value)
 }
 
 /// Whether every key and every value in `map` is [`NanValue::is_immediate`] —

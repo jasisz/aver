@@ -2,7 +2,25 @@ use super::*;
 use alloc::string::ToString;
 
 impl NanValue {
+    #[inline]
     pub fn eq_in<T: ArenaTypes>(self, other: Self, arena: &Arena<T>) -> bool {
+        self.eq_as::<T, false>(other, arena)
+    }
+
+    /// Whether `self` and `other` are the same map key.
+    ///
+    /// This is `eq_in` everywhere except on a float, where it is the relation
+    /// [`NanValue::hash_in`] hashes by: both zeroes are one key and a NaN is
+    /// the key it was stored under. `==` cannot serve there, because IEEE 754
+    /// makes a NaN unequal to itself and a map would never find it again. The
+    /// checker refuses a float in key position, so this only decides values
+    /// the runtime is handed from outside the language.
+    #[inline]
+    pub fn key_eq_in<T: ArenaTypes>(self, other: Self, arena: &Arena<T>) -> bool {
+        self.eq_as::<T, true>(other, arena)
+    }
+
+    fn eq_as<T: ArenaTypes, const KEY: bool>(self, other: Self, arena: &Arena<T>) -> bool {
         // Float comparison goes first and never short-circuits on
         // bit-pattern equality. IEEE 754 says `NaN == NaN` is false
         // and `+0.0 == -0.0` is true; both rules disagree with raw
@@ -13,14 +31,15 @@ impl NanValue {
             if !(self.is_float() && other.is_float()) {
                 return false;
             }
-            return self.as_float() == other.as_float();
+            let (a, b) = (self.as_float(), other.as_float());
+            return a == b || (KEY && a.to_bits() == b.to_bits());
         }
         if self.0 == other.0 {
             return true;
         }
         match (self.wrapper_parts(arena), other.wrapper_parts(arena)) {
             (Some((self_kind, self_inner)), Some((other_kind, other_inner))) => {
-                return self_kind == other_kind && self_inner.eq_in(other_inner, arena);
+                return self_kind == other_kind && self_inner.eq_as::<T, KEY>(other_inner, arena);
             }
             (Some(_), None) | (None, Some(_)) => return false,
             (None, None) => {}
@@ -34,12 +53,12 @@ impl NanValue {
                     // Same constructor — compare field(s)
                     if self.tag() == TAG_INLINE_VARIANT && other.tag() == TAG_INLINE_VARIANT {
                         self.inline_variant_inner()
-                            .eq_in(other.inline_variant_inner(), arena)
+                            .eq_as::<T, KEY>(other.inline_variant_inner(), arena)
                     } else {
                         // Cross-representation: extract the single field from each side
                         let sf = self.variant_single_field(arena);
                         let of = other.variant_single_field(arena);
-                        sf.eq_in(of, arena)
+                        sf.eq_as::<T, KEY>(of, arena)
                     }
                 }
                 (Some(_), Some(_)) => false,
@@ -51,7 +70,7 @@ impl NanValue {
                 return st == ot
                     && sv == ov
                     && sf.len() == of.len()
-                    && sf.iter().zip(of).all(|(a, b)| a.eq_in(*b, arena));
+                    && sf.iter().zip(of).all(|(a, b)| a.eq_as::<T, KEY>(*b, arena));
             }
             (Some(_), None) | (None, Some(_)) => return false,
             (None, None) => {}
@@ -76,32 +95,41 @@ impl NanValue {
                         arena
                             .list_get_value(self, i)
                             .zip(arena.list_get_value(other, i))
-                            .is_some_and(|(x, y)| x.eq_in(y, arena))
+                            .is_some_and(|(x, y)| x.eq_as::<T, KEY>(y, arena))
                     })
             }
             TAG_TUPLE => {
                 let a = arena.get_tuple(self.arena_index());
                 let b = arena.get_tuple(other.arena_index());
-                a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.eq_in(*y, arena))
+                a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.eq_as::<T, KEY>(*y, arena))
             }
             TAG_VECTOR => {
                 let a = arena.vector_ref_value(self);
                 let b = arena.vector_ref_value(other);
-                a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.eq_in(*y, arena))
+                a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.eq_as::<T, KEY>(*y, arena))
             }
             TAG_MAP => {
                 let a = arena.map_ref_value(self);
                 let b = arena.map_ref_value(other);
+                // A slot names a key only up to its hash, so every pairing is
+                // confirmed on the key itself. The slot `a` keeps an entry in
+                // is where `b` keeps it too unless one of them holds a second
+                // key with the same hash; only then is the key looked up.
                 a.len() == b.len()
-                    && a.iter()
-                        .all(|(k, (_, v1))| b.get(k).is_some_and(|(_, v2)| v1.eq_in(*v2, arena)))
+                    && a.iter().all(|(slot, (k, v1))| {
+                        let found = match b.get(slot) {
+                            Some((k2, v2)) if k.key_eq_in(*k2, arena) => Some(*v2),
+                            _ => map_get_value::<T>(b, *k, arena),
+                        };
+                        found.is_some_and(|v2| v1.eq_as::<T, KEY>(v2, arena))
+                    })
             }
             TAG_RECORD => {
                 let (ta, fa) = arena.get_record(self.arena_index());
                 let (tb, fb) = arena.get_record(other.arena_index());
                 ta == tb
                     && fa.len() == fb.len()
-                    && fa.iter().zip(fb).all(|(a, b)| a.eq_in(*b, arena))
+                    && fa.iter().zip(fb).all(|(a, b)| a.eq_as::<T, KEY>(*b, arena))
             }
             TAG_VARIANT | TAG_INLINE_VARIANT => {
                 unreachable!("variant comparison handled above")

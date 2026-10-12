@@ -94,6 +94,26 @@ fn stdout(output: &std::process::Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
+/// Two different keys the VM hashes to the same 64 bits stay two keys here
+/// too. `cross_backend_stress` holds the VM, wasm-gc and self-host to the same
+/// expected output; this is the wasip2 run of that program.
+#[test]
+fn colliding_map_keys_stay_two_keys() {
+    let dir = tempdir("collide");
+    let fixture = write_fixture(
+        &dir,
+        "collide.av",
+        include_str!("fixtures/map_colliding_keys_app.av"),
+    );
+    let out = run_wasip2(&dir, &fixture, &[]);
+    assert_ok(&out, "collide.av");
+    assert_eq!(
+        stdout(&out).trim(),
+        include_str!("fixtures/map_colliding_keys_app.expected").trim()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn roundtrip_100x() {
     let dir = tempdir("rt100");

@@ -1248,3 +1248,46 @@ fn equality_on_a_newtype_erased_field_compares_by_value_wasm_gc() {
         NEWTYPE_FIELD_EQ_OUT,
     );
 }
+
+// ─── Two keys with one hash ────────────────────────────────────────────
+
+/// Two different Int keys, and two different String keys, that the VM hashes
+/// to the same 64 bits. The VM used to address its map by that hash alone, so
+/// the second key read and overwrote the first one's entry: `Map.get` answered
+/// for the wrong key, a two-key map had length 1, and two one-key maps on
+/// different keys compared equal. wasm-gc compares the key itself and always
+/// answered correctly, so the backends disagreed.
+///
+/// The expected output is written out rather than taken from one backend:
+/// every backend is held to the same answers, not to each other. The unit
+/// test `the_fixture_keys_still_share_a_hash` in `src/types/map.rs` pins that
+/// these keys do collide, so this cannot quietly stop testing a collision.
+const COLLIDING_KEYS_SRC: &str = include_str!("fixtures/map_colliding_keys_app.av");
+const COLLIDING_KEYS_OUT: &str = include_str!("fixtures/map_colliding_keys_app.expected");
+
+#[test]
+fn colliding_map_keys_stay_two_keys_vm() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-collide-vm", COLLIDING_KEYS_SRC),
+        COLLIDING_KEYS_OUT.trim(),
+    );
+}
+
+#[test]
+fn colliding_map_keys_stay_two_keys_wasm_gc() {
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-collide-wasmgc", COLLIDING_KEYS_SRC),
+        COLLIDING_KEYS_OUT.trim(),
+    );
+}
+
+#[test]
+fn colliding_map_keys_stay_two_keys_self_host() {
+    assert_eq_with_label(
+        "self-host",
+        &run_self_host("aver-cross-collide-sh", COLLIDING_KEYS_SRC),
+        COLLIDING_KEYS_OUT.trim(),
+    );
+}

@@ -405,6 +405,15 @@ fn bool_match_named_default_arm_matches_between_rust_and_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// Two different keys the VM hashes to the same 64 bits, as Int and as
+/// String. The VM addressed its map by that hash alone and merged them; the
+/// generated Rust keys a real hash table on the key itself and never did.
+#[test]
+fn colliding_map_keys_match_between_rust_and_vm() {
+    assert_plain_parity("tests/fixtures/map_colliding_keys_app.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// Generic List, Map and Vector builtins over an empty literal nothing
 /// else types (`List.len([])`, `Map.len({})`, `[] == []`). rustc cannot
 /// infer the element type of `AverList::empty().len()`, so the walker names
