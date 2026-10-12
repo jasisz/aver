@@ -70,10 +70,151 @@ fn fresh(base: &str, taken: &[String]) -> String {
 }
 
 impl Env<'_> {
-    /// Prove `ob` by induction along `f`, the function the law is about.
-    /// `named` is the given the law's `induction` line names: only the
-    /// calls that pass it where `f` recurses are followed.
+    /// Prove `ob` by induction: along `f`, the function the law is about,
+    /// or, on a given of list type that `f` does not recurse on, on the
+    /// list itself. `named` is the given the law's `induction` line names:
+    /// along `f` only the calls that pass it where `f` recurses are
+    /// followed, and a list given no such call passes is inducted on as a
+    /// list. Without a line, induction along `f` comes first; when it does
+    /// not close, each list given `f` does not recurse on is tried in
+    /// turn, and the one that closes is hinted as the line to add.
     pub(crate) fn prove_by_induction(
+        &mut self,
+        f: FnId,
+        named: Option<&str>,
+        ob: &Obligation,
+        depth: usize,
+    ) -> Result<Proof, String> {
+        if let Some(n) = named {
+            if !self.recurses_on(f, n, ob) && ob.lists.iter().any(|l| l == n) {
+                return self
+                    .prove_by_list_induction(n, ob, depth)
+                    .map_err(|why| format!("induction on {n}: {why}"));
+            }
+            return self.induction_along(f, named, ob, depth);
+        }
+        let along = self.induction_along(f, None, ob, depth);
+        let Err(why) = along else {
+            return along;
+        };
+        let lists: Vec<String> = ob
+            .lists
+            .iter()
+            .filter(|v| !self.recurses_on(f, v, ob))
+            .cloned()
+            .collect();
+        let (hyps, fuel, before) = (self.hyps.clone(), self.fuel, self.hints.len());
+        let mut tried = Vec::new();
+        for v in lists {
+            match self.prove_by_list_induction(&v, ob, depth) {
+                Ok(proof) => {
+                    self.hints.truncate(before);
+                    self.advice.push(format!(
+                        "steps closed it by trying each given in turn; add `induction {v}` to go straight to it"
+                    ));
+                    return Ok(proof);
+                }
+                Err(m) => tried.push(format!("induction on {v}: {m}")),
+            }
+            self.hyps = hyps.clone();
+            self.fuel = fuel;
+        }
+        Err(std::iter::once(why)
+            .chain(tried)
+            .collect::<Vec<_>>()
+            .join("; "))
+    }
+
+    /// Whether a call of `f` in the claim passes the given `v` where `f`
+    /// recurses.
+    fn recurses_on(&mut self, f: FnId, v: &str, ob: &Obligation) -> bool {
+        let ds = self.reachable_defs(f);
+        let Some(Ok(Some(rec))) = self.def(f).map(|d| induct::recursion(&d, &ds)) else {
+            return false;
+        };
+        let mut calls = Vec::new();
+        calls_of(&ob.lhs, f, &mut calls);
+        calls_of(&ob.rhs, f, &mut calls);
+        calls.iter().any(
+            |c| matches!(c.get(rec.at).map(|a| &a.node), Some(ResolvedExpr::Ident(n)) if n == v),
+        )
+    }
+
+    /// Structural induction on the list given `v`, apart from any
+    /// function's recursion: the claim at `[]`, and at a cell under the
+    /// claim at its tail as a hypothesis, each case closed by evaluation.
+    /// No hypothesis in scope may mention `v`.
+    fn prove_by_list_induction(
+        &mut self,
+        v: &str,
+        ob: &Obligation,
+        depth: usize,
+    ) -> Result<Proof, String> {
+        let mentions_v = |e: &Eqn| {
+            let mut fv = Vec::new();
+            term::free_vars(&e.lhs, &mut fv);
+            term::free_vars(&e.rhs, &mut fv);
+            fv.iter().any(|n| n == v)
+        };
+        if self.hyps.iter().any(|(_, e)| mentions_v(e)) {
+            return Err(format!("a hypothesis in scope mentions {v}"));
+        }
+        let mut taken = ob.givens.clone();
+        term::free_vars(&ob.lhs, &mut taken);
+        term::free_vars(&ob.rhs, &mut taken);
+        for (n, e) in &self.hyps {
+            taken.push(n.clone());
+            term::free_vars(&e.lhs, &mut taken);
+            term::free_vars(&e.rhs, &mut taken);
+        }
+        let h = fresh(&format!("{v}Head"), &taken);
+        taken.push(h.clone());
+        let t = fresh(&format!("{v}Tail"), &taken);
+        let at = |x: Term| -> Result<Eqn, String> {
+            let m = [(v.to_string(), x)];
+            Ok(Eqn::new(
+                term::subst(&ob.lhs, &m)?,
+                term::subst(&ob.rhs, &m)?,
+            ))
+        };
+        let nil_term = canon(&crate::ast::Spanned::bare(ResolvedExpr::List(Vec::new())));
+        let tail = term::var(&t);
+        let cell = term::builtin("List.prepend", vec![term::var(&h), tail.clone()], None);
+        let nil_goal = at(nil_term)?;
+        let saved = self.hyps.clone();
+        let nil = self.prove_by_evaluation(&nil_goal.lhs, &nil_goal.rhs, depth);
+        self.hyps = saved.clone();
+        let nil = nil?;
+        let ih_eq = at(tail)?;
+        if self.rewrites_forever(&ih_eq) {
+            return Err("the hypothesis would rewrite forever".into());
+        }
+        self.next_ih += 1;
+        let ih = format!("ih{}", self.next_ih);
+        self.hyps.push((ih.clone(), ih_eq));
+        let goal = at(cell)?;
+        let cons = self.prove_by_evaluation(&goal.lhs, &goal.rhs, depth);
+        self.hyps = saved;
+        let cons = cons?;
+        Ok(Proof::InductList {
+            var: v.to_string(),
+            lhs: canon(&ob.lhs),
+            rhs: canon(&ob.rhs),
+            nil: Box::new(nil),
+            head: h,
+            tail: t,
+            general: Vec::new(),
+            ihs: vec![crate::ir::proof_steps::IhAt {
+                name: ih,
+                at: Vec::new(),
+                carry: Vec::new(),
+            }],
+            cons: Box::new(cons),
+        })
+    }
+
+    /// Induction along `f` (see [`Self::prove_by_induction`]).
+    fn induction_along(
         &mut self,
         f: FnId,
         named: Option<&str>,
@@ -384,7 +525,7 @@ impl Env<'_> {
             (self.hyps.clone(), self.open_premises.clone(), self.fuel);
         let before = self.hints.len();
         for n in lines {
-            if let Ok(proof) = self.prove_by_induction(f, Some(n), ob, depth) {
+            if let Ok(proof) = self.induction_along(f, Some(n), ob, depth) {
                 self.hints.truncate(before);
                 self.open_premises = open_premises;
                 return Some((n.clone(), proof));

@@ -2031,7 +2031,8 @@
   },
   "laws": [
    "barbar.barbarTrueRight",
-   "elem.elemConcatSingleton"
+   "elem.elemConcatSingleton",
+   "elem.elemUnion"
   ]
  },
  "proof-corpus/decomposed/prod/prop_44.av": {
