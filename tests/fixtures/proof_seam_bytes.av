@@ -59,7 +59,7 @@ verify allInRange
     allInRange([256]) => false
 
 verify fromList
-    fromList([1, 2]) => Result.Ok(Bytes(values = [1, 2]))
+    fromList([1, 2]) => Bytes(values = [1, 2])
     fromList([300]) => Result.Err("byte 300 at index 0 is outside 0..=255")
 
 verify doubled

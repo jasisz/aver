@@ -1009,35 +1009,35 @@ impl TypeChecker {
                         self.infer_type(right)
                     };
                     self.check_effects_in_expr(right, &caller, &inherited_effects);
-                    // A `verify … law` body `LHS => RHS` asserts the two sides are
-                    // EQUAL — it is bounded-checked by `aver verify` and emitted as
-                    // `LHS = RHS` to every proof backend — so they must have
-                    // compatible types. The checker inferred each side but never
-                    // compared them, so a law across types slipped through: e.g. a
-                    // `Nat`-returning fn equated with the `Int`-returning `List.len`
-                    // — the Lean lowering drops the Int and proves a spurious
-                    // `Nat = Nat` (`universal:true`) while `aver verify` refutes it.
-                    // Flag only when BOTH sides are fully concrete (a type variable
-                    // means the instantiation isn't pinned here — leave it to
-                    // inference) and neither direction of `compatible` holds.
-                    // `compatible` already rejects `Int` vs a user ADT, so this
-                    // closes the gap backend-agnostically.
-                    if let crate::ast::VerifyKind::Law(law) = &vb.kind
-                        && super::infer::type_is_fully_concrete(&left_ty)
-                        && super::infer::type_is_fully_concrete(&right_ty)
-                        && !self.compatible(&left_ty, &right_ty)
-                        && !self.compatible(&right_ty, &left_ty)
-                    {
+                    // `left => right` asserts the two sides are EQUAL: `aver
+                    // verify` compares them and every proof backend receives
+                    // `left = right`. So their types must agree, by the rule
+                    // `==` itself uses. Without this a case across types
+                    // reached `aver verify` as a failing case, and a law across
+                    // types reached the proof backends, where a `Nat`-returning
+                    // fn equated with the `Int`-returning `List.len` lost the
+                    // Int and proved a false `Nat = Nat`.
+                    //
+                    // The other half of `==`, its refusal to compare capability
+                    // resources, is deliberately not applied: a case such as
+                    // `sockets({}, [], {}) => {}` is the only way to cover a
+                    // function that returns a collection of resources, and
+                    // `aver check` asks every such function for a verify block.
+                    if !self.equality_types_agree(&left_ty, &right_ty) {
+                        let (subject, claim) = match &vb.kind {
+                            crate::ast::VerifyKind::Law(law) => {
+                                (format!("Verify law '{}.{}'", vb.fn_name, law.name), "law")
+                            }
+                            crate::ast::VerifyKind::Cases => {
+                                (format!("Verify block '{}'", vb.fn_name), "case")
+                            }
+                        };
                         let (left, right) = self.describe_type_pair(&left_ty, &right_ty);
                         self.error_at_line(
                             case_line,
                             format!(
-                                "Verify law '{}.{}' case #{}: the two sides of `=>` have incompatible types ({} vs {}) — a law asserts they are equal, so both sides must have the same type",
-                                vb.fn_name,
-                                law.name,
-                                idx + 1,
-                                left,
-                                right
+                                "{subject} case #{}: the two sides of `=>` have incompatible types ({left} vs {right}) — a {claim} asserts they are equal, so both sides must have the same type",
+                                idx + 1
                             ),
                         );
                     }

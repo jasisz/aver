@@ -127,6 +127,181 @@ fn equality_context_keeps_rejecting_incompatible_elements() {
 // Valid programs — must pass with zero errors
 // ---------------------------------------------------------------------------
 
+/// The message and line of every type error, for tests that pin where a
+/// diagnostic points.
+fn located_errors(src: &str) -> Vec<(usize, String)> {
+    let items = parse(src);
+    run_type_check(&items)
+        .into_iter()
+        .map(|e| (e.line, e.message))
+        .collect()
+}
+
+#[test]
+fn error_verify_case_sides_of_different_types() {
+    // `aver check` used to accept this and leave `aver verify` to report a
+    // failed case: the two sides of a plain case were never compared.
+    let src = concat!(
+        "module Plain\n",
+        "    intent = \"repro\"\n",
+        "    exposes [one]\n",
+        "    effects []\n",
+        "\n",
+        "fn one() -> Int\n",
+        "    1\n",
+        "\n",
+        "verify one\n",
+        "    one() => \"one\"\n",
+    );
+    assert_eq!(
+        located_errors(src),
+        vec![(
+            10,
+            "Verify block 'one' case #1: the two sides of `=>` have incompatible types \
+             (Int vs String) — a case asserts they are equal, so both sides must have the \
+             same type"
+                .to_string()
+        )]
+    );
+}
+
+#[test]
+fn error_verify_case_names_the_case_that_disagrees() {
+    let src = concat!(
+        "fn half(n: Int) -> Result<Int, String>\n",
+        "    Int.div(n, n)\n",
+        "\n",
+        "verify half\n",
+        "    half(4) => Result.Ok(2)\n",
+        "    half(6) => 3\n",
+        "    half(8) => 4.0\n",
+    );
+    let errs = located_errors(src);
+    assert_eq!(errs.len(), 2, "{errs:?}");
+    assert_eq!(errs[0].0, 6);
+    assert!(
+        errs[0]
+            .1
+            .contains("case #2: the two sides of `=>` have incompatible types"),
+        "{errs:?}"
+    );
+    assert!(errs[0].1.contains("Result<Int, String> vs Int"), "{errs:?}");
+    assert_eq!(errs[1].0, 7);
+    assert!(
+        errs[1].1.contains("Result<Int, String> vs Float"),
+        "{errs:?}"
+    );
+}
+
+#[test]
+fn error_verify_law_sides_of_different_types() {
+    let src = concat!(
+        "fn size(xs: List<Int>) -> Int\n",
+        "    List.len(xs)\n",
+        "\n",
+        "verify size law wrong\n",
+        "    given xs: List<Int> = [[], [1]]\n",
+        "    size(xs) => \"none\"\n",
+    );
+    assert_error_containing(
+        src,
+        "Verify law 'size.wrong' case #1: the two sides of `=>` have incompatible types \
+         (Int vs String) — a law asserts they are equal",
+    );
+}
+
+#[test]
+fn verify_case_accepts_what_equality_accepts() {
+    // Each right side is one `==` accepts against the left: a constructor
+    // that leaves a type open, an empty list, `Option.None`, numeric
+    // literals, a record, and nested collections of these.
+    assert_no_errors(concat!(
+        "record Point\n",
+        "    x: Int\n",
+        "    y: Int\n",
+        "\n",
+        "fn half(n: Int) -> Result<Int, String>\n",
+        "    Int.div(n, n)\n",
+        "\n",
+        "fn none(n: Int) -> List<Int>\n",
+        "    []\n",
+        "\n",
+        "fn first(xs: List<Int>) -> Option<Int>\n",
+        "    match xs\n",
+        "        [] -> Option.None\n",
+        "        [head, ..tail] -> Option.Some(head)\n",
+        "\n",
+        "fn scale(x: Float) -> Float\n",
+        "    x * 2.0\n",
+        "\n",
+        "fn origin(n: Int) -> Point\n",
+        "    Point(x = n, y = n)\n",
+        "\n",
+        "fn pairs(n: Int) -> List<Tuple<Option<Int>, Int>>\n",
+        "    [(Option.None, n)]\n",
+        "\n",
+        "verify half\n",
+        "    half(4) => Result.Ok(2)\n",
+        "    half(4) == Result.Ok(2) => true\n",
+        "\n",
+        "verify none\n",
+        "    none(1) => []\n",
+        "\n",
+        "verify first\n",
+        "    first([]) => Option.None\n",
+        "    first([1]) => Option.Some(1)\n",
+        "\n",
+        "verify scale\n",
+        "    scale(1.5) => 3.0\n",
+        "\n",
+        "verify origin\n",
+        "    origin(0) => Point(x = 0, y = 0)\n",
+        "    origin(2).x => 2\n",
+        "\n",
+        "verify pairs\n",
+        "    pairs(1) => [(Option.None, 1)]\n",
+    ));
+}
+
+#[test]
+fn verify_case_follows_a_literal_call_to_a_validating_constructor() {
+    // `fromList([1, 2])` with a literal list in range is the record itself,
+    // not a `Result`; the same call on a computed list keeps the `Result`.
+    let module = concat!(
+        "module Octets\n",
+        "    intent = \"A list of octets.\"\n",
+        "    exposes opaque [Bytes]\n",
+        "    effects []\n",
+        "\n",
+        "record Bytes\n",
+        "    values: List<Int>\n",
+        "\n",
+        "fn allInRange(xs: List<Int>) -> Bool\n",
+        "    match xs\n",
+        "        [] -> true\n",
+        "        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)\n",
+        "            true -> allInRange(tail)\n",
+        "            false -> false\n",
+        "\n",
+        "fn fromList(xs: List<Int>) -> Result<Bytes, String>\n",
+        "    match allInRange(xs)\n",
+        "        true -> Result.Ok(Bytes(values = xs))\n",
+        "        false -> Result.Err(\"out of range\")\n",
+        "\n",
+        "verify fromList\n",
+    );
+    assert_no_errors(&format!(
+        "{module}{}{}",
+        "    fromList([1, 2]) => Bytes(values = [1, 2])\n",
+        "    fromList(List.concat([1], [2])) => Result.Ok(Bytes(values = [1, 2]))\n",
+    ));
+    assert_error_containing(
+        &format!("{module}    fromList([1, 2]) => Result.Ok(Bytes(values = [1, 2]))\n"),
+        "Verify block 'fromList' case #1: the two sides of `=>` have incompatible types \
+         (Bytes vs Result<Bytes, E>)",
+    );
+}
+
 #[test]
 fn valid_int_function() {
     assert_no_errors("fn add(a: Int, b: Int) -> Int\n    a + b\n");

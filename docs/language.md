@@ -283,6 +283,8 @@ verify add
     add(2, 3) => 5
 ```
 
+A case `left => right` states that the two sides are equal, so they must have types `==` could compare: writing `add(2, 3) => "5"` is a type error that `aver check` reports at the case, naming both types, before anything runs. The same holds for the two sides of a law. One difference from `==`: a case may compare values that hold a capability resource, which `==` refuses, so a function returning a map of sockets can still be covered by `sockets({}, [], {}) => {}`.
+
 A law-style verify block is a finite universal check over explicit domains:
 
 ```aver
