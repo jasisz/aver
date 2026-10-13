@@ -5980,3 +5980,133 @@ fn a_law_without_using_closes_with_the_earlier_laws_the_steps_closed() {
     assert!(summary.get("automatic_using").is_none(), "{summary}");
     let _ = fs::remove_dir_all(out);
 }
+
+/// The laws of `fixture` (in `dir`) the Aver backend closes by steps and
+/// the ones it leaves open, with the step scripts it wrote, by law.
+fn closed_and_open(
+    dir: &Path,
+    fixture: &str,
+    name: &str,
+) -> (Vec<String>, Vec<String>, Vec<(String, String)>) {
+    let out = scratch(name);
+    let result = aver_in(
+        dir,
+        &[
+            "proof",
+            fixture,
+            "--backend",
+            "aver",
+            "-o",
+            out.to_str().unwrap(),
+        ],
+    );
+    let text = String::from_utf8_lossy(&result.stdout).to_string();
+    let law = |line: &str, how: &str| {
+        line.strip_prefix("  ")
+            .and_then(|l| l.split_once(how))
+            .map(|(law, _)| law.to_string())
+    };
+    let closed: Vec<String> = text
+        .lines()
+        .filter_map(|l| law(l, ": closed by steps"))
+        .collect();
+    let open: Vec<String> = text
+        .lines()
+        .filter_map(|l| law(l, ": not closed by this backend"))
+        .collect();
+    assert!(
+        !closed.is_empty() && !open.is_empty(),
+        "{}",
+        format_output(&result)
+    );
+    let mut scripts: Vec<(String, String)> = fs::read_dir(out.join("proof_steps"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .map(|p| {
+            (
+                p.file_stem().unwrap().to_string_lossy().to_string(),
+                fs::read_to_string(&p).unwrap(),
+            )
+        })
+        .collect();
+    scripts.sort();
+    let _ = fs::remove_dir_all(out);
+    (closed, open, scripts)
+}
+
+/// A given, a parameter and a name a pattern binds may each be spelled like
+/// a module-level binding, and then hide it. A step script reads the binding
+/// under a name none of them can have (`.n`), so unfolding a function that
+/// reads the binding does not turn it into the local: the false laws of the
+/// fixture stay open, the true ones close.
+#[test]
+fn a_local_spelled_like_a_module_binding_is_not_read_as_the_binding() {
+    let (closed, open, scripts) = closed_and_open(
+        &repo_root().join(FIXTURES),
+        "binding_names.av",
+        "binding-names",
+    );
+    assert_eq!(
+        closed,
+        [
+            "addN.addsSeven",
+            "addPayload.someAddsSeven",
+            "countN.addsSevenInFront",
+            "pick.isSeven",
+            "seven.isSeven"
+        ]
+    );
+    // `pick.isItsArgument` is the same claim left to a plan
+    // (`by Kernel.Std.cases`), which gets the definitions with their
+    // binding reads spelled the same way.
+    assert_eq!(
+        open,
+        [
+            "addN.isDouble",
+            "addPayload.someIsTwice",
+            "countN.isTotal",
+            "pick.isItsArgument",
+            "seven.isItsArgument"
+        ]
+    );
+    let script = &scripts
+        .iter()
+        .find(|(law, _)| law == "seven.isSeven")
+        .expect("a script for seven.isSeven")
+        .1;
+    for expected in [
+        "(obligation seven.isSeven ((n int)) (none) (call seven (v n)) (i 7))",
+        "(def readsN () int () (v .n))",
+        "(const .n int (i 7))",
+    ] {
+        assert!(script.contains(expected), "missing `{expected}`\n{script}");
+    }
+    // Every module-level binding a script declares has a dot in its name.
+    for (law, script) in &scripts {
+        for decl in script.split("(const ").skip(1) {
+            let name = decl.split([' ', ')']).next().unwrap();
+            assert!(name.contains('.'), "{law}: binding `{name}`\n{script}");
+        }
+    }
+}
+
+/// The same in a module another one imports: its parameter `n` is not its
+/// binding `n`, in its own laws and in a law of the importing module that
+/// reaches the function.
+#[test]
+fn a_local_of_an_imported_module_is_not_read_as_its_binding() {
+    let (closed, open, _) = closed_and_open(
+        &repo_root().join(FIXTURES).join("binding_names_dep"),
+        "main.av",
+        "binding-names-dep",
+    );
+    assert_eq!(closed, ["Lib.same.isItsArgument", "viaLib.isItsArgument"]);
+    assert_eq!(
+        open,
+        [
+            "Lib.same.givenIsSeven",
+            "Lib.same.isSeven",
+            "viaLib.isSeven"
+        ]
+    );
+}

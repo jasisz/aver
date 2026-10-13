@@ -1,0 +1,25 @@
+module Lib
+    intent = "A parameter and a given spelled like the module-level binding of a module another one imports."
+    exposes [same]
+    effects []
+
+n: Int = 7
+
+fn same(n: Int) -> Int
+    ? "Its argument."
+    n
+
+verify same
+    same(1) => 1
+
+verify same law isSeven
+    given k: Int = [7]
+    same(k) => 7
+
+verify same law givenIsSeven
+    given n: Int = [7]
+    same(n) => 7
+
+verify same law isItsArgument
+    given n: Int = [7, 1]
+    same(n) => n

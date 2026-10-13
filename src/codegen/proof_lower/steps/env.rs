@@ -290,10 +290,10 @@ impl<'a> Env<'a> {
     }
 
     fn build_const(&self, name: &str) -> Option<Const> {
-        let (scope, short) = match name.rsplit_once('.') {
-            Some((prefix, short)) => (Some(prefix), short),
-            None => (None, name),
-        };
+        // A name without a dot is a local: a given, a parameter or a name a
+        // pattern binds, whatever module-level binding is spelled like it.
+        let (prefix, short) = name.rsplit_once('.')?;
+        let scope = (!prefix.is_empty()).then_some(prefix);
         let binding = crate::codegen::proof_lower::module_bindings_of(self.inputs, scope)
             .into_iter()
             .find(|b| b.name == short)?;
@@ -302,7 +302,7 @@ impl<'a> Env<'a> {
         Some(Const {
             name: name.to_string(),
             ty: super::finite::qualify(self.inputs, &ty, scope),
-            value: qualify_bindings(&value, self.inputs, scope),
+            value: qualify_bindings(&value, self.inputs, scope, &[]),
         })
     }
 
@@ -399,23 +399,28 @@ impl<'a> Env<'a> {
         let Stmt::Expr(body) = last else {
             return None;
         };
-        let read = |e| {
+        // The parameters, and each local binding from the line after its
+        // own, hide a module-level binding of the same name.
+        let mut locals: Vec<String> = fd.params.iter().map(|(n, _)| n.clone()).collect();
+        let read = |e, locals: &[String]| {
             qualify_bindings(
                 &canon(&self.inputs.resolve_expr(e, scope)),
                 self.inputs,
                 scope,
+                locals,
             )
         };
         let mut lets = Vec::new();
         for stmt in before {
             match stmt {
                 Stmt::Binding(name, _, value) if name != "_" => {
-                    lets.push((name.clone(), read(value)))
+                    lets.push((name.clone(), read(value, &locals)));
+                    locals.push(name.clone());
                 }
                 _ => return None,
             }
         }
-        let body = read(body);
+        let body = read(body, &locals);
         let name = match scope {
             Some(prefix) => format!("{prefix}.{}", key.name),
             None => key.name.clone(),
@@ -512,25 +517,43 @@ impl<'a> Env<'a> {
     }
 }
 
+/// The name step terms read module `scope`'s binding `name` under:
+/// `Module.name` for a dependency, `.name` for the entry module. Either has
+/// a dot, which no given, parameter or pattern name has, so a local spelled
+/// like a module-level binding is never read as that binding, and unfolding
+/// a function that reads the binding never turns it into the local.
+pub(crate) fn binding_read(scope: Option<&str>, name: &str) -> String {
+    format!("{}.{name}", scope.unwrap_or(""))
+}
+
 /// `t`, written in module `scope`, with each read of one of that module's
-/// bindings spelled the way every step term spells it: bare for the entry
-/// module, `Module.name` for a dependency, so a dependency's `base` unfolded
-/// into an entry law is not read as the entry's own `base`.
-pub(crate) fn qualify_bindings(t: &Term, inputs: &ProofLowerInputs, scope: Option<&str>) -> Term {
-    let Some(prefix) = scope else {
+/// bindings spelled the way every step term spells it ([`binding_read`]).
+/// `locals` are the names in scope where `t` is written (a law's givens, a
+/// function's parameters and local bindings): each hides a module-level
+/// binding of the same name, as a name a pattern binds does in its arm.
+pub(crate) fn qualify_bindings(
+    t: &Term,
+    inputs: &ProofLowerInputs,
+    scope: Option<&str>,
+    locals: &[String],
+) -> Term {
+    let mut free = Vec::new();
+    crate::ir::proof_steps::term::free_vars(t, &mut free);
+    free.retain(|n| !locals.contains(n));
+    if free.is_empty() {
         return t.clone();
-    };
-    let map: Vec<(String, Term)> =
-        crate::codegen::proof_lower::module_bindings_of(inputs, Some(prefix))
-            .into_iter()
-            .map(|b| {
-                let read = crate::ir::proof_steps::term::var(&format!("{prefix}.{}", b.name));
-                if let Ok(ty) = b.declared_type() {
-                    read.set_ty(ty);
-                }
-                (b.name, read)
-            })
-            .collect();
+    }
+    let map: Vec<(String, Term)> = crate::codegen::proof_lower::module_bindings_of(inputs, scope)
+        .into_iter()
+        .filter(|b| free.contains(&b.name))
+        .map(|b| {
+            let read = crate::ir::proof_steps::term::var(&binding_read(scope, &b.name));
+            if let Ok(ty) = b.declared_type() {
+                read.set_ty(ty);
+            }
+            (b.name, read)
+        })
+        .collect();
     if map.is_empty() {
         return t.clone();
     }

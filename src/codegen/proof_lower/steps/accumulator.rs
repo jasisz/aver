@@ -97,6 +97,12 @@ fn given_line(g: &crate::ast::VerifyGiven) -> String {
     format!("given {}: {} = {domain}", g.name, g.type_name)
 }
 
+/// A sample value written in an entry law, as a term: no given is in scope
+/// there, so a name in it reads a module-level binding.
+fn sample_term(inputs: &ProofLowerInputs, e: &crate::ast::Spanned<crate::ast::Expr>) -> Term {
+    super::env::qualify_bindings(&canon(&inputs.resolve_expr(e, None)), inputs, None, &[])
+}
+
 /// The sample values of a given, as terms.
 fn samples(inputs: &ProofLowerInputs, g: &crate::ast::VerifyGiven) -> Vec<Term> {
     match &g.domain {
@@ -107,7 +113,7 @@ fn samples(inputs: &ProofLowerInputs, g: &crate::ast::VerifyGiven) -> Vec<Term> 
         VerifyGivenDomain::Explicit(values) => values
             .iter()
             .take(MAX_SAMPLES)
-            .map(|e| canon(&inputs.resolve_expr(e, None)))
+            .map(|e| sample_term(inputs, e))
             .collect(),
     }
 }
@@ -263,7 +269,7 @@ fn shape(
                 for e in values {
                     let text = crate::checker::expr_to_str(e);
                     if out.len() < 3 && !out.iter().any(|(t, _)| *t == text) {
-                        out.push((text, canon(&inputs.resolve_expr(e, None))));
+                        out.push((text, sample_term(inputs, e)));
                     }
                 }
             }

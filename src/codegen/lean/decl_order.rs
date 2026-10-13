@@ -207,9 +207,15 @@ pub(super) fn plan_scoped_declarations<'a>(
     ScopedDeclPlan { components, order }
 }
 
-/// `node` reads every module-level binding `expr` names. A local never
-/// shadows a module-level name (the checker refuses it), so a bare
-/// identifier spelled like a binding is a read of that binding.
+/// `node` reads every module-level binding `expr` names. A parameter or a
+/// name a pattern binds may be spelled like a module-level binding, and
+/// then hides it. In a function body the resolver has already turned every
+/// local into `Expr::Resolved`, so an `Expr::Ident` spelled like a binding
+/// is a read of that binding. A binding's own value is not resolved: a name
+/// a `match` in it binds is still an `Expr::Ident`, and one spelled like
+/// another binding counts as a read of it. That only adds an ordering
+/// edge; where it closes a cycle, the declarations keep their source order
+/// and Lean reports what it cannot find.
 fn add_binding_reads(
     node: usize,
     expr: &Spanned<Expr>,

@@ -151,10 +151,11 @@ impl Def {
 
 /// A module-level binding (`base = 40` outside any fn) an
 /// [`Proof::UnfoldConst`] step opens. A term reads it as the variable
-/// `name`: bare for the entry module's own binding, qualified by module for
-/// a dependency's (`Lib.base`), so two modules' `base` stay apart. A law's
-/// givens never take such a name: the checker refuses a local that shadows
-/// a module-level one.
+/// `name`, which always has a dot: `Lib.base` for a dependency's binding,
+/// `.base` for the entry module's own. Two modules' `base` stay apart, and
+/// so do a binding and a local spelled like it: the language lets a given,
+/// a parameter or a name a pattern binds take a module-level binding's
+/// name, and none of them can have a dot.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Const {
     pub name: String,

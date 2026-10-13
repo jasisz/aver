@@ -87,10 +87,12 @@ fn law_ref(inputs: &ProofLowerInputs, t: &LawTheorem) -> LawRef {
 }
 
 /// A term of law `t`, with its module's binding reads spelled as every
-/// step term spells them (`env::qualify_bindings`).
+/// step term spells them (`env::qualify_bindings`). A given hides a
+/// module-level binding of the same name.
 fn law_term(inputs: &ProofLowerInputs, t: &LawTheorem, term: &Term) -> Term {
     let scope = inputs.symbol_table.fn_entry(t.fn_id).key.scope_str();
-    env::qualify_bindings(&canon(term), inputs, scope)
+    let givens: Vec<String> = t.quantifiers.iter().map(|q| q.name.clone()).collect();
+    env::qualify_bindings(&canon(term), inputs, scope, &givens)
 }
 
 fn premise_of(inputs: &ProofLowerInputs, t: &LawTheorem) -> Option<Term> {
