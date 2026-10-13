@@ -795,8 +795,8 @@ fn a_definition_opens_its_local_bindings_in_order() {
         fn_id: crate::ir::identity::FnId(0),
         name: "f".into(),
         params: vec!["x".into()],
-        param_types: Vec::new(),
-        ret: crate::ast::Type::Invalid,
+        param_types: vec![crate::ast::Type::Int; 1],
+        ret: crate::ast::Type::Int,
         lets: vec![
             ("y".into(), add(var("x"), var("x"))),
             ("z".into(), add(var("y"), var("x"))),
@@ -879,8 +879,8 @@ fn a_recursive_definition_opens_only_when_it_recurses_on_a_part_of_its_match() {
         fn_id: FnId(7),
         name: "f".into(),
         params: vec!["xs".into()],
-        param_types: Vec::new(),
-        ret: crate::ast::Type::Invalid,
+        param_types: vec![crate::ast::Type::Int; 1],
+        ret: crate::ast::Type::Int,
         lets: Vec::new(),
         body: Spanned::bare(ResolvedExpr::Match {
             subject: Box::new(var("xs")),
@@ -938,8 +938,8 @@ fn a_recursion_through_a_helper_is_checked_as_if_the_helper_stood_in_the_arm() {
         fn_id: FnId(1),
         name: "f".into(),
         params: vec!["xs".into()],
-        param_types: Vec::new(),
-        ret: crate::ast::Type::Invalid,
+        param_types: vec![crate::ast::Type::Int; 1],
+        ret: crate::ast::Type::Int,
         lets: Vec::new(),
         body: Spanned::bare(ResolvedExpr::Match {
             subject: Box::new(var("xs")),
@@ -957,8 +957,8 @@ fn a_recursion_through_a_helper_is_checked_as_if_the_helper_stood_in_the_arm() {
         fn_id: FnId(2),
         name: "g".into(),
         params: vec!["first".into(), "rest".into()],
-        param_types: Vec::new(),
-        ret: crate::ast::Type::Invalid,
+        param_types: vec![crate::ast::Type::Int; 2],
+        ret: crate::ast::Type::Int,
         lets: Vec::new(),
         body: back,
     };
@@ -1243,8 +1243,8 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
         fn_id: f,
         name: "__fn_3".into(),
         params: vec!["x".into()],
-        param_types: Vec::new(),
-        ret: crate::ast::Type::Invalid,
+        param_types: vec![crate::ast::Type::Int; 1],
+        ret: crate::ast::Type::Int,
         lets: Vec::new(),
         body: add(var("x"), var("x")),
     };
@@ -1272,8 +1272,8 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
         fn_id: g,
         name: "__fn_4".into(),
         params: vec!["xs".into()],
-        param_types: Vec::new(),
-        ret: crate::ast::Type::Invalid,
+        param_types: vec![crate::ast::Type::List(Box::new(crate::ast::Type::Int))],
+        ret: crate::ast::Type::Int,
         lets: Vec::new(),
         body: Spanned::bare(ResolvedExpr::Match {
             subject: Box::new(var("xs")),
@@ -1774,8 +1774,14 @@ mod toward_zero {
             fn_id: F,
             name: "__fn_9".into(),
             params: params.iter().map(|p| p.to_string()).collect(),
-            param_types: Vec::new(),
-            ret: crate::ast::Type::Invalid,
+            param_types: params
+                .iter()
+                .map(|p| match *p {
+                    "xs" => crate::ast::Type::List(Box::new(crate::ast::Type::Int)),
+                    _ => crate::ast::Type::Int,
+                })
+                .collect(),
+            ret: crate::ast::Type::Int,
             lets: Vec::new(),
             body: Spanned::bare(ResolvedExpr::Match {
                 subject: Box::new(subject),
@@ -1834,7 +1840,13 @@ mod toward_zero {
             .obligation
             .givens
             .iter()
-            .map(|g| (g.clone(), crate::ast::Type::Int))
+            .map(|g| {
+                let ty = match g.as_str() {
+                    "xs" | "ys" => crate::ast::Type::List(Box::new(crate::ast::Type::Int)),
+                    _ => crate::ast::Type::Int,
+                };
+                (g.clone(), ty)
+            })
             .collect();
         s.defs.push(d);
         s
@@ -2016,7 +2028,7 @@ fn an_induction_toward_zero_has_no_hypothesis_outside_the_comparison() {
     let mut untyped = trivially(d(), &["ih"], refl(), refl());
     untyped.obligation.types.clear();
     untyped.obligation.ints.clear();
-    refused(&untyped, "n is not a given of type Int");
+    refused(&untyped, "? is not Int");
     // The comparison's hypothesis has one name.
     let mut unnamed = trivially(d(), &["ih"], refl(), refl());
     if let Proof::Induct { cases, .. } = &mut unnamed.proof {
@@ -2551,8 +2563,8 @@ fn a_split_on_literal_arms_has_one_case_per_arm() {
         fn_id: FnId(0),
         name: "__fn_0".into(),
         params: vec!["x".into()],
-        param_types: Vec::new(),
-        ret: crate::ast::Type::Invalid,
+        param_types: vec![crate::ast::Type::Int; 1],
+        ret: crate::ast::Type::Int,
         lets: Vec::new(),
         body: Spanned::bare(ResolvedExpr::Match {
             subject: Box::new(var("x")),

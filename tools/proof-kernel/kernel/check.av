@@ -1041,7 +1041,7 @@ fn checkScript(s: Script) -> Result<String, String>
     ? "The proof must prove exactly the obligation, under its when; every cited builtin fact is checked first."
     Kernel.Induct.refuseMutualRecursion(s.defs)?
     checkFacts(s.facts, [])?
-    env = Env(defs = s.defs, consts = s.consts, laws = List.concat(s.laws, factLaws(s.facts)), hyps = lawHyps(s.obligation), vars = s.obligation.givens, sums = s.sums, recs = s.recs, sigs = s.sigs)
+    env = Env(defs = s.defs, consts = s.consts, laws = List.concat(s.laws, factLaws(s.facts)), hyps = lawHyps(s.obligation), vars = Kernel.Types.rigidVars(s.obligation.givens), sums = s.sums, recs = s.recs, sigs = s.sigs)
     statementTyped(s.obligation, env)?
     e = conclude(s.proof, env, "proof")?
     match e == Eqn(lhs = s.obligation.lhs, rhs = s.obligation.rhs)

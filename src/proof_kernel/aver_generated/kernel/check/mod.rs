@@ -4080,7 +4080,7 @@ pub fn checkScript(
             &crate::proof_kernel::aver_generated::kernel::check::factLaws(&s.facts),
         ),
         hyps: crate::proof_kernel::aver_generated::kernel::check::lawHyps(&s.obligation),
-        vars: s.obligation.givens.clone(),
+        vars: crate::proof_kernel::aver_generated::kernel::types::rigidVars(&s.obligation.givens),
         sums: s.sums,
         recs: s.recs,
         sigs: s.sigs,

@@ -8,7 +8,7 @@ module Types
         "Option.None, Map.empty) leaves a hole, which fits any type; a variable ?t marked as"
         "needing equality takes only a type whose == is equality: which types those are is data, the"
         "shapes in Kernel.Builtins and what each declared type's declaration says."
-    exposes [TyEnv, typeOf, typesOf, join, fits, bindTyped, finOf, ctorFields, ctorsOf, elemOf, sumOf, hasEq, show, withVars, patVars, paramsOf, namedVars, typesOfVars, empty]
+    exposes [TyEnv, typeOf, typesOf, join, fits, bindTyped, finOf, ctorFields, ctorsOf, elemOf, sumOf, hasEq, rigidVars, show, withVars, patVars, paramsOf, namedVars, typesOfVars, empty]
     depends [Kernel.Term, Kernel.Proof, Kernel.Builtins]
     effects []
 
@@ -188,7 +188,7 @@ verify fits
 fn hasEq(t: Ty, e: TyEnv) -> Bool
     ? "Whether == between two values of the type is equality. Data, not a rule of the kernel: a declared type has one when its declaration in the script says so, any other type by its shape in Kernel.Builtins and then part by part; a type variable when it asks for one."
     match t
-        Ty.TyNamed(n) -> declaredEq(sumNamed(n, e.sums), recNamed(n, e.recs))
+        Ty.TyNamed(n) -> Bool.or(String.startsWith(n, "?="), declaredEq(sumNamed(n, e.sums), recNamed(n, e.recs)))
         Ty.TyVar(n, eq) -> eq
         _ -> Bool.and(Kernel.Builtins.equality(headOf(t)), allEq(partsOf(t), e))
 
@@ -200,6 +200,39 @@ verify hasEq
     hasEq(Ty.TyOption(Ty.TyNamed("R")), TyEnv(vars = [], defs = [], consts = [], sums = [], recs = [Rec(name = "R", eq = true, fields = [])], sigs = [])) => true
     hasEq(Ty.TyNamed("R"), TyEnv(vars = [], defs = [], consts = [], sums = [], recs = [Rec(name = "R", eq = false, fields = [])], sigs = [])) => false
     hasEq(Ty.TyList(Ty.TyAny), empty()) => true
+
+fn rigid(t: Ty) -> Ty
+    ? "A type as the proof of its own statement sees it: each type variable is one unknown type, which fits only itself and has an equality only when the variable asks for one (?=NAME)."
+    match t
+        Ty.TyVar(n, eq) -> match eq
+            true -> Ty.TyNamed("?={n}")
+            false -> Ty.TyNamed("?{n}")
+        _ -> rebuild(t, rigidAll(partsOf(t)))
+
+verify rigid
+    rigid(Ty.TyList(Ty.TyVar("T", false))) => Ty.TyList(Ty.TyNamed("?T"))
+    rigid(Ty.TyMap(Ty.TyVar("K", true), Ty.TyInt)) => Ty.TyMap(Ty.TyNamed("?=K"), Ty.TyInt)
+    hasEq(rigid(Ty.TyVar("K", true)), empty()) => true
+    hasEq(rigid(Ty.TyVar("T", false)), empty()) => false
+    fits(rigid(Ty.TyVar("T", false)), Ty.TyInt) => false
+
+fn rigidAll(ts: List<Ty>) -> List<Ty>
+    ? "Each type with its variables fixed."
+    match ts
+        [] -> []
+        [t, ..rest] -> List.prepend(rigid(t), rigidAll(rest))
+
+verify rigidAll
+    rigidAll([]) => []
+
+fn rigidVars(vs: List<TypedVar>) -> List<TypedVar>
+    ? "The givens of a statement as its own proof sees them."
+    match vs
+        [] -> []
+        [v, ..rest] -> List.prepend(Kernel.Term.typed(v.name, rigid(v.ty)), rigidVars(rest))
+
+verify rigidVars
+    rigidVars([Kernel.Term.typed("x", Ty.TyVar("T", false))]) => [Kernel.Term.typed("x", Ty.TyNamed("?T"))]
 
 fn declaredEq(s: Option<Sum>, r: Option<Rec>) -> Bool
     ? "What a declared type's declaration says of its ==; a name the script does not declare has none."

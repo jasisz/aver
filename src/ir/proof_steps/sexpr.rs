@@ -20,7 +20,8 @@
 //! TYPE    := int | bool | str | float | unit | (list TYPE) | (option TYPE)
 //!          | (result TYPE TYPE) | (map TYPE TYPE) | (vector TYPE)
 //!          | (tuple TYPE…) | (named NAME)
-//!          | _                         ; a type the data cannot state: fits any
+//!          | (var NAME) | (var NAME eq) ; a type variable of a builtin fact; `eq`: its == is equality
+//!          | _                         ; a type the data cannot state: one unknown type, fits only itself
 //!   `sums` and `recs` declare every type a TYPE names, with the types of
 //!   its fields; `eq` marks one whose `==` is equality. `sigs` gives the
 //!   signature of each function a term calls and `defs` does not open.
@@ -74,8 +75,9 @@ pub trait Names {
 
 /// A type in the data: `int`, `bool`, `str`, `float`, `unit`, `(list T)`,
 /// `(option T)`, `(result T E)`, `(map K V)`, `(vector T)`, `(tuple T…)`,
-/// `(named NAME)`; a type the data cannot state (a function, a type
-/// variable) is the hole `_`, which fits anything.
+/// `(named NAME)`, a builtin fact's type variable `(var NAME)`; a type the
+/// data cannot state (a function) is `_`, one unknown type that fits only
+/// itself.
 pub fn ty_text(t: &crate::ast::Type, names: &dyn Names) -> String {
     use crate::ast::Type;
     match t {
@@ -96,7 +98,9 @@ pub fn ty_text(t: &crate::ast::Type, names: &dyn Names) -> String {
                 .collect::<String>()
         ),
         Type::Named { .. } => format!("(named {})", names.type_name(t)),
-        Type::Fn(..) | Type::Var(_) | Type::Invalid => "_".into(),
+        Type::Var(n) if n == super::facts::KEY_TYPE_VAR => format!("(var {n} eq)"),
+        Type::Var(n) => format!("(var {n})"),
+        Type::Fn(..) | Type::Invalid => "_".into(),
     }
 }
 

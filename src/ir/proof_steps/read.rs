@@ -932,13 +932,16 @@ fn operator(sym: &str, a: Term, b: Term) -> Result<Term, String> {
         ">=" => BinOp::Gte,
         _ => return Err(format!("unknown operator {sym}")),
     };
+    // `term::binop` takes an untyped left operand of `+`, `-` or `*` for
+    // an Int; what is read back is typed by whichever operand is known,
+    // and left untyped when neither is.
+    let arithmetic = matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div);
     let operand = a.ty().or(b.ty()).cloned();
-    let t = term::binop(op, a, b);
-    if let Some(ty) = operand
-        && matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div)
-        && t.ty().is_none()
-    {
-        t.set_ty(ty);
+    let t = Spanned::bare(ResolvedExpr::BinOp(op, Box::new(a), Box::new(b)));
+    match (arithmetic, operand) {
+        (true, Some(ty)) => t.set_ty(ty),
+        (true, None) => {}
+        (false, _) => t.set_ty(Type::Bool),
     }
     Ok(t)
 }
@@ -946,6 +949,31 @@ fn operator(sym: &str, a: Term, b: Term) -> Result<Term, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An arithmetic operator read back has the type of whichever operand
+    /// is known, and none when neither is: never Int by default.
+    #[test]
+    fn an_operator_takes_the_type_an_operand_is_known_to_have() {
+        let untyped = || term::builtin("String.trim", vec![term::var("s")], None);
+        let text = || {
+            let t = term::var("t");
+            t.set_ty(Type::Str);
+            t
+        };
+        assert_eq!(
+            operator("+", untyped(), text()).unwrap().ty(),
+            Some(&Type::Str)
+        );
+        assert_eq!(
+            operator("+", text(), untyped()).unwrap().ty(),
+            Some(&Type::Str)
+        );
+        assert_eq!(operator("+", untyped(), untyped()).unwrap().ty(), None);
+        assert_eq!(
+            operator("<", untyped(), untyped()).unwrap().ty(),
+            Some(&Type::Bool)
+        );
+    }
 
     #[test]
     fn parses_and_prints_back() {

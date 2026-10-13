@@ -36,15 +36,20 @@ pub enum Sort {
     Int,
 }
 
-/// The type a fact's given is written with: a list, map or vector of
-/// anything (a type variable, written as a hole), an Int, or anything.
+/// The type variable a fact's map keys have: one whose `==` must be
+/// equality, which the data marks (`sexpr::ty_text`).
+pub(crate) const KEY_TYPE_VAR: &str = "K";
+
+/// The type a fact's given is written with: a list, map or vector over
+/// type variables, a type variable, or an Int. A fact holds at every type
+/// of each variable; its own proof sees each as one unknown type.
 fn sort_type(s: Sort) -> crate::ast::Type {
     use crate::ast::Type;
     let var = |n: &str| Type::Var(n.to_string());
     match s {
         Sort::List => Type::List(Box::new(var("T"))),
-        Sort::Map => Type::Map(Box::new(var("K")), Box::new(var("V"))),
-        Sort::Key => var("K"),
+        Sort::Map => Type::Map(Box::new(var(KEY_TYPE_VAR)), Box::new(var("V"))),
+        Sort::Key => var(KEY_TYPE_VAR),
         Sort::Value => var("V"),
         Sort::Vector => Type::Vector(Box::new(var("T"))),
         Sort::Elem => var("T"),

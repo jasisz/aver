@@ -262,22 +262,63 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                 &crate::proof_std::aver_generated::kernel::wire::tyTexts(&xs),
             )
         }
-        crate::proof_std::aver_generated::kernel::term::Ty::TyNamed(n) => aver_rt::AverStr::from({
-            let mut __b = {
-                let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity(
-                        (aver_rt::AverInt::from_i64(24)).to_usize().unwrap_or(0),
-                    );
-                    __b.push_str(&AverStr::from("(named "));
+        crate::proof_std::aver_generated::kernel::term::Ty::TyNamed(n) => {
+            if (&*n == "?") {
+                AverStr::from("_")
+            } else {
+                aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = {
+                            let mut __b = aver_rt::Buffer::with_capacity(
+                                (aver_rt::AverInt::from_i64(24)).to_usize().unwrap_or(0),
+                            );
+                            __b.push_str(&AverStr::from("(named "));
+                            __b
+                        };
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                        __b
+                    };
+                    __b.push_str(&AverStr::from(")"));
                     __b
-                };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
-                __b
-            };
-            __b.push_str(&AverStr::from(")"));
-            __b
-        }),
-        _ => AverStr::from("_"),
+                })
+            }
+        }
+        crate::proof_std::aver_generated::kernel::term::Ty::TyVar(n, eq) => {
+            if eq {
+                aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = {
+                            let mut __b = aver_rt::Buffer::with_capacity(
+                                (aver_rt::AverInt::from_i64(25)).to_usize().unwrap_or(0),
+                            );
+                            __b.push_str(&AverStr::from("(var "));
+                            __b
+                        };
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                        __b
+                    };
+                    __b.push_str(&AverStr::from(" eq)"));
+                    __b
+                })
+            } else {
+                aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = {
+                            let mut __b = aver_rt::Buffer::with_capacity(
+                                (aver_rt::AverInt::from_i64(22)).to_usize().unwrap_or(0),
+                            );
+                            __b.push_str(&AverStr::from("(var "));
+                            __b
+                        };
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                        __b
+                    };
+                    __b.push_str(&AverStr::from(")"));
+                    __b
+                })
+            }
+        }
+        crate::proof_std::aver_generated::kernel::term::Ty::TyAny => AverStr::from("_"),
     }
 }
 

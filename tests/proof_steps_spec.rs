@@ -655,7 +655,7 @@ fn both_kernels_split_a_list_given_into_its_two_cases_and_refuse_mutations() {
         (
             "a split of a given that is not a list",
             script.replace("((xs (list int)))", "((xs _))"),
-            "xs is not a variable of list type",
+            "? is not List<",
         ),
         (
             "a head named like the variable split",
@@ -3066,7 +3066,7 @@ fn joining_texts_is_never_read_as_int_arithmetic() {
         aver::proof_kernel::verdict(&script("int")),
         Ok("k".to_string())
     );
-    for ty in ["str", "float", "_"] {
+    for ty in ["str", "float"] {
         assert_eq!(
             aver::proof_kernel::verdict(&script(ty)),
             Err("step proof: ring needs two Int terms".to_string()),
@@ -3316,15 +3316,15 @@ fn a_cited_builtin_fact_is_checked_with_the_law_and_refused_when_mutated() {
             "a fact stated with a different right side",
             swap(
                 "joined.lengthAdds",
-                "(fact List.len.ofConcat ((a (list _)) (b (list _))) (none) (bi List.len (bi List.concat (v a) (v b))) (op + (bi List.len (v a)) (bi List.len (v b)))",
-                "(fact List.len.ofConcat ((a (list _)) (b (list _))) (none) (bi List.len (bi List.concat (v a) (v b))) (op + (bi List.len (v a)) (bi List.len (v a)))",
+                "(fact List.len.ofConcat ((a (list (var T))) (b (list (var T)))) (none) (bi List.len (bi List.concat (v a) (v b))) (op + (bi List.len (v a)) (bi List.len (v b)))",
+                "(fact List.len.ofConcat ((a (list (var T))) (b (list (var T)))) (none) (bi List.len (bi List.concat (v a) (v b))) (op + (bi List.len (v a)) (bi List.len (v a)))",
             ),
         ),
         (
             "a fact whose induction is on a given not declared a list",
             swap(
                 "joined.regroups",
-                "(fact List.concat.assoc ((a (list _))",
+                "(fact List.concat.assoc ((a (list (var T)))",
                 "(fact List.concat.assoc ((a int)",
             ),
         ),
@@ -3340,8 +3340,8 @@ fn a_cited_builtin_fact_is_checked_with_the_law_and_refused_when_mutated() {
             "a fact on a count stated without its when",
             swap(
                 "joined.takesNothingBelowOne",
-                "(fact List.take.nonPositive ((l (list _)) (n int)) (op <= (v n) (i 0))",
-                "(fact List.take.nonPositive ((l (list _)) (n int)) (none)",
+                "(fact List.take.nonPositive ((l (list (var T))) (n int)) (op <= (v n) (i 0))",
+                "(fact List.take.nonPositive ((l (list (var T))) (n int)) (none)",
             ),
         ),
         ("a fact cited before a fact its proof cites", {
@@ -4103,8 +4103,8 @@ fn a_cited_map_fact_is_checked_with_its_when_and_refused_when_mutated() {
             "a fact stated without its when",
             swap(
                 "store.leavesOtherKeys",
-                "(fact Map.get.afterSetOther ((m (map _ _)) (k _) (v _) (k2 _)) (op != (v k) (v k2))",
-                "(fact Map.get.afterSetOther ((m (map _ _)) (k _) (v _) (k2 _)) (none)",
+                "(fact Map.get.afterSetOther ((m (map (var K eq) (var V))) (k (var K eq)) (v (var V)) (k2 (var K eq))) (op != (v k) (v k2))",
+                "(fact Map.get.afterSetOther ((m (map (var K eq) (var V))) (k (var K eq)) (v (var V)) (k2 (var K eq))) (none)",
             ),
         ),
         (

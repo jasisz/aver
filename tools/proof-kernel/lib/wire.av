@@ -59,12 +59,18 @@ fn tyText(t: Ty) -> String
         Ty.TyResult(a, b) -> "(result {tyText(a)} {tyText(b)})"
         Ty.TyMap(a, b) -> "(map {tyText(a)} {tyText(b)})"
         Ty.TyTuple(xs) -> headed("tuple", tyTexts(xs))
-        Ty.TyNamed(n) -> "(named {n})"
-        _ -> "_"
+        Ty.TyNamed(n) -> match n == "?"
+            true -> "_"
+            false -> "(named {n})"
+        Ty.TyVar(n, eq) -> match eq
+            true -> "(var {n} eq)"
+            false -> "(var {n})"
+        Ty.TyAny -> "_"
 
 verify tyText
     tyText(Ty.TyList(Ty.TyNamed("Shape"))) => "(list (named Shape))"
-    tyText(Ty.TyTuple([Ty.TyInt, Ty.TyAny])) => "(tuple int _)"
+    tyText(Ty.TyTuple([Ty.TyInt, Ty.TyNamed("?")])) => "(tuple int _)"
+    tyText(Ty.TyVar("K", true)) => "(var K eq)"
 
 fn tyTexts(ts: List<Ty>) -> List<String>
     ? "Each type in the step grammar."

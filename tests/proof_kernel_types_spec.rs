@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// (script, what the kernel says, whether an untyped kernel accepted it)
-const REFUSED: [(&str, &str, bool); 23] = [
+const REFUSED: [(&str, &str, bool); 25] = [
     // A law about a sum, cited at an Int: `x = One.Only` for every `x` of
     // the one-value type `One`, read at 0 and at 1, gives `0 = 1`.
     (
@@ -99,6 +99,19 @@ const REFUSED: [(&str, &str, bool); 23] = [
     (
         "reflexive_equality_of_a_float",
         "rule bool.beq.refl: a := == on Float is not equality",
+        false,
+    ),
+    // A type the data cannot state (`_`, a function's) is one unknown type,
+    // not any type: a text or a Float passed through a definition written
+    // over it does not come back as a term of every type.
+    (
+        "int_rule_at_texts_through_an_untyped_function",
+        "f: x := String is not ?",
+        false,
+    ),
+    (
+        "reflexive_equality_of_a_float_through_an_untyped_function",
+        "f: y := Float is not ?",
         false,
     ),
     // A given split by its values or as a list, which is an Int.

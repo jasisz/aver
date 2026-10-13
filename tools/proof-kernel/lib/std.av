@@ -679,7 +679,7 @@ verify readSub
 fn subOf(base: Goal, s: Sexp) -> Result<Goal, String>
     ? "The goal of a read (sub …)."
     match s
-        Sexp.Node([Sexp.Atom("sub"), Sexp.Node(gs), Sexp.Node([Sexp.Atom("from"), .._]), Sexp.Node([Sexp.Atom("hyps"), ..hs]), p, l, r]) -> subGoal(Kernel.Wire.withGivens(Goal.update(base, obligation = Law.update(base.obligation, givens = []), finite = [], lists = [], ints = []), Kernel.Decode.typedVars(gs)?), readPremise(p)?, Kernel.Decode.term(l)?, Kernel.Decode.term(r)?, readHyps(hs)?)
+        Sexp.Node([Sexp.Atom("sub"), Sexp.Node(gs), Sexp.Node([Sexp.Atom("from"), .._]), Sexp.Node([Sexp.Atom("hyps"), ..hs]), p, l, r]) -> subGoal(Kernel.Wire.withGivens(Goal.update(base, obligation = Law.update(base.obligation, givens = []), finite = [], lists = [], ints = []), Kernel.Decode.typedVars(gs, false)?), readPremise(p)?, Kernel.Decode.term(l)?, Kernel.Decode.term(r)?, readHyps(hs)?)
         _ -> Result.Err("malformed question")
 
 verify subOf
