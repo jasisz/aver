@@ -97,6 +97,33 @@ pub(crate) enum Equation {
     Unfold(crate::ir::identity::FnId),
 }
 
+/// `t = true` for `t = Bool.and(a, b)`, from `pa : a = true` and
+/// `pb : b = true`: `Bool.and(a, b)` is `Bool.and(true, b)` by `pa`, which
+/// is `b`, which is `true` by `pb`.
+pub(crate) fn both(t: &Term, b: &Term, pa: Proof, pb: Proof) -> Proof {
+    let truth = term::boolean(true);
+    Proof::Trans {
+        terms: vec![
+            t.clone(),
+            canon(&term::bool_and(truth.clone(), b.clone())),
+            b.clone(),
+            truth,
+        ],
+        steps: vec![
+            Proof::Congr {
+                ctx: term::bool_and(term::hole(), b.clone()),
+                inner: Box::new(pa),
+            },
+            Proof::Rule {
+                rule: WallRule::AndTrueL,
+                subst: vec![("b".into(), b.clone())],
+                premises: Vec::new(),
+            },
+            pb,
+        ],
+    }
+}
+
 impl Env<'_> {
     /// Prove `t = true`, for a Bool `t`.
     pub(crate) fn discharge(&mut self, t: &Term) -> Option<Proof> {
@@ -171,6 +198,51 @@ impl Env<'_> {
         self.discharge_by_evaluation(&t)
     }
 
+    /// Prove what the cited law `law` assumes at an instance, `when`: its
+    /// premise there. A law with no given of a refined type has only its
+    /// own `when`, proved as [`Self::discharge`] proves any fact. Otherwise
+    /// each line about such a given is proved on its own, then the law's
+    /// own `when`, and the conjunction is put back together one level at a
+    /// time ([`both`]), so the proof of the law's own `when` is where the
+    /// Lean export, whose theorem takes only that, reads it from.
+    pub(crate) fn discharge_when(&mut self, law: &LawRef, when: &Term) -> Option<Proof> {
+        if law.refined.is_empty() {
+            return self.discharge(when);
+        }
+        self.discharge_lines(&canon(when), law.refined.len(), law.when().is_some())
+    }
+
+    /// [`Self::discharge_when`] for a premise that starts with `lines`
+    /// lines about givens of refined types.
+    fn discharge_lines(&mut self, t: &Term, lines: usize, then_when: bool) -> Option<Proof> {
+        if lines == 0 {
+            return self.discharge(t);
+        }
+        if lines == 1 && !then_when {
+            return self.discharge_refined(t);
+        }
+        let ResolvedExpr::Call(ResolvedCallee::Builtin(b), args) = &t.node else {
+            return None;
+        };
+        if b != "Bool.and" || args.len() != 2 {
+            return None;
+        }
+        let (a, b) = (canon(&args[0]), canon(&args[1]));
+        let pa = self.discharge_refined(&a)?;
+        let pb = self.discharge_lines(&b, lines - 1, then_when)?;
+        Some(both(t, &b, pa, pb))
+    }
+
+    /// Prove `t = true` where `t` states what a refined type holds of a
+    /// value: as any fact, or by evaluating it (the check of a smart
+    /// constructor may be any Bool term, `allInRange(xs)`).
+    fn discharge_refined(&mut self, t: &Term) -> Option<Proof> {
+        match self.discharge(t) {
+            Some(p) => Some(p),
+            None => self.evaluates_true(t),
+        }
+    }
+
     /// `t = true` for an Int comparison `t` that evaluation, within
     /// [`DISCHARGE_FUEL`] steps of the fuel left, brings to `true`.
     fn discharge_by_evaluation(&mut self, t: &Term) -> Option<Proof> {
@@ -183,6 +255,12 @@ impl Env<'_> {
         ) {
             return None;
         }
+        self.evaluates_true(t)
+    }
+
+    /// `t = true` for a Bool term `t` that evaluation, within
+    /// [`DISCHARGE_FUEL`] steps of the fuel left, brings to `true`.
+    fn evaluates_true(&mut self, t: &Term) -> Option<Proof> {
         // Not again inside that evaluation: one premise's evaluation does
         // not spend its budget on the premises of the laws it meets.
         if self.discharging {
@@ -227,27 +305,7 @@ impl Env<'_> {
             Some(p) => p,
             None => return Err(Box::new(self.first_open_conjunct(&b))),
         };
-        let truth = term::boolean(true);
-        Ok(Proof::Trans {
-            terms: vec![
-                t.clone(),
-                canon(&term::bool_and(truth.clone(), b.clone())),
-                b.clone(),
-                truth,
-            ],
-            steps: vec![
-                Proof::Congr {
-                    ctx: term::bool_and(term::hole(), b.clone()),
-                    inner: Box::new(pa),
-                },
-                Proof::Rule {
-                    rule: WallRule::AndTrueL,
-                    subst: vec![("b".into(), b)],
-                    premises: Vec::new(),
-                },
-                pb,
-            ],
-        })
+        Ok(both(&t, &b, pa, pb))
     }
 
     /// Every conjunct of `t`, innermost, that [`Self::discharge`] does not
@@ -371,11 +429,11 @@ impl Env<'_> {
                 let premise = match &law.premise {
                     Some(when) => {
                         let when = term::subst(when, &subst).ok()?;
-                        match self.discharge(&when) {
+                        match self.discharge_when(law, &when) {
                             Some(p) => Some(Box::new(p)),
                             None => {
                                 let open = self.open_conjuncts(&when);
-                                self.note_open_premise(&law.key, &subst, &open);
+                                self.note_open_premise(law, &subst, &open);
                                 if law.fact.is_none()
                                     && let [line] = open.as_slice()
                                 {
@@ -817,11 +875,11 @@ impl Env<'_> {
                         None => None,
                         Some(when) => {
                             let when = term::subst(when, &subst).ok()?;
-                            match self.discharge(&when) {
+                            match self.discharge_when(&law, &when) {
                                 Some(p) => Some(Box::new(p)),
                                 None => {
                                     let open = self.open_conjuncts(&when);
-                                    self.note_open_premise(&law.key, &subst, &open);
+                                    self.note_open_premise(&law, &subst, &open);
                                     if law.fact.is_none()
                                         && let [line] = open.as_slice()
                                     {

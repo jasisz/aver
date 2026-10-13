@@ -5872,6 +5872,7 @@ verify identity law openAfterPlan
             lists: Vec::new(),
             ints: Vec::new(),
             premise: None,
+            refined: Vec::new(),
             lhs: lhs.clone(),
             rhs: lhs.clone(),
         },

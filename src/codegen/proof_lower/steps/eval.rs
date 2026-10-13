@@ -2881,7 +2881,7 @@ impl Env<'_> {
                             continue;
                         };
                         self.proving_cited_when = true;
-                        let proof = self.discharge(&when);
+                        let proof = self.discharge_when(&law, &when);
                         self.proving_cited_when = false;
                         match proof {
                             Some(p) => Some(Box::new(p)),
@@ -4190,6 +4190,7 @@ pub(crate) fn empty_script() -> crate::ir::proof_steps::Script {
             lists: Vec::new(),
             ints: Vec::new(),
             premise: None,
+            refined: Vec::new(),
             lhs: term::boolean(true),
             rhs: term::boolean(true),
         },
