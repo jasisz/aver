@@ -331,6 +331,7 @@ mod tests {
     const OCTETS: &str = r#"
 module Octets
     intent = "generic structural refinement"
+    exposes opaque [Octets]
     effects []
 
 record Octets
@@ -377,6 +378,7 @@ fn fromList(xs: List<Int>) -> Result<Octets, String>
     #[test]
     fn derives_signed_i8_for_negative_elements() {
         let src = OCTETS
+            .replace("opaque [Octets]", "opaque [Samples]")
             .replace("record Octets", "record Samples")
             .replace("Result<Octets", "Result<Samples")
             .replace("Octets(values", "Samples(values")

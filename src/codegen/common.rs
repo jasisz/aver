@@ -147,29 +147,14 @@ fn refinement_info_from_shape<'a>(
 
     let (carrier_field, carrier_type) = match scope.as_deref() {
         None => inputs.entry_items.iter().find_map(|i| match i {
-            TopLevel::TypeDef(TypeDef::Product { name, fields, .. })
-                if name == type_name && fields.len() == 1 =>
-            {
-                let (fname, ftype) = &fields[0];
-                Some((fname.as_str(), ftype.as_str()))
-            }
+            TopLevel::TypeDef(td) => carrier_of(td, type_name),
             _ => None,
         }),
         Some(prefix) => inputs
             .dep_modules
             .iter()
             .find(|m| m.prefix == prefix)
-            .and_then(|m| {
-                m.type_defs.iter().find_map(|td| match td {
-                    TypeDef::Product { name, fields, .. }
-                        if name == type_name && fields.len() == 1 =>
-                    {
-                        let (fname, ftype) = &fields[0];
-                        Some((fname.as_str(), ftype.as_str()))
-                    }
-                    _ => None,
-                })
-            }),
+            .and_then(|m| m.type_defs.iter().find_map(|td| carrier_of(td, type_name))),
     }?;
 
     let constructor_fd: &'a FnDef = match scope.as_deref() {
@@ -200,6 +185,15 @@ fn refinement_info_from_shape<'a>(
         constructor_fn: constructor_fd.name.as_str(),
         predicate: subject,
     })
+}
+
+/// The carrier field and its type when `td` is the refinement record named
+/// `type_name`. Which records qualify is
+/// [`crate::analysis::shape::refinement_carrier`]'s decision alone.
+fn carrier_of<'a>(td: &'a TypeDef, type_name: &str) -> Option<(&'a str, &'a str)> {
+    crate::analysis::shape::refinement_carrier(td)
+        .filter(|(name, _, _)| *name == type_name)
+        .map(|(_, field, ty)| (field, ty))
 }
 
 fn refinement_info_for_walk_legacy<'a>(
@@ -239,13 +233,7 @@ fn refinement_info_for_walk_legacy<'a>(
     let (carrier_field, carrier_type) = entry_typedefs
         .into_iter()
         .chain(module_typedefs)
-        .find_map(|td| match td {
-            TypeDef::Product { name, fields, .. } if name == type_name && fields.len() == 1 => {
-                let (fname, ftype) = &fields[0];
-                Some((fname.as_str(), ftype.as_str()))
-            }
-            _ => None,
-        })?;
+        .find_map(|td| carrier_of(td, type_name))?;
 
     let entry_fns: Vec<&'a FnDef> = if allow_entry {
         inputs
@@ -4062,6 +4050,7 @@ mod tests {
                 name: "Natural".to_string(),
                 fields: vec![("value".to_string(), "Int".to_string())],
                 line: 1,
+                opaque: false,
             }],
             fn_defs: Vec::new(),
             capability_items: Vec::new(),
@@ -4149,6 +4138,7 @@ mod tests {
             name: "Natural".to_string(),
             fields: vec![("value".to_string(), "Int".to_string())],
             line: 1,
+            opaque: false,
         };
         let module = ModuleInfo {
             bindings: Vec::new(),
@@ -4160,6 +4150,7 @@ mod tests {
                 name: "Natural".to_string(),
                 fields: vec![("value".to_string(), "Int".to_string())],
                 line: 1,
+                opaque: false,
             }],
             fn_defs: Vec::new(),
             capability_items: Vec::new(),

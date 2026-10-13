@@ -514,6 +514,7 @@ fn cross_literal_divisor_discharge_self_host() {
 /// unwrap. `dynamic` keeps the fallible path in the same program, so a
 /// backend that discharged too much or too little diverges here.
 const LITERAL_REFINEMENT_SRC: &str = r#"module Local
+    exposes opaque [Octets]
 
 record Octets
     values: List<Int>

@@ -5,6 +5,7 @@ use crate::source::parse_source;
 const PROGRAM: &str = r#"
 module Octets
     intent = "exercise identity-pinned list refinement provenance"
+    exposes opaque [Octets]
     effects []
 
 record Octets

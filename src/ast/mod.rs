@@ -1094,6 +1094,13 @@ pub enum TypeDef {
         name: String,
         fields: Vec<(String, String)>,
         line: usize,
+        /// The declaring module lists this record under `exposes opaque`.
+        /// The parser sets it from the module header, so the fact stays on
+        /// the declaration when the record is copied into another program
+        /// view (a `ModuleInfo`, the flattened wasm-gc compile unit). Read
+        /// by `analysis::shape::refinement_carrier`: only an opaque record
+        /// can carry a smart constructor's invariant.
+        opaque: bool,
     },
 }
 

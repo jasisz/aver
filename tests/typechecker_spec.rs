@@ -2077,8 +2077,33 @@ fn literal_bytes_discharge_decides_the_same_for_every_callee_spelling() {
     // indistinguishable. A spelling-sensitive rule would discharge before
     // the flatten and not after, forking the checked and unchecked
     // pipelines. Both fns below therefore return the refined type.
-    let src = "module Local\n    intent = \"an entry-scope refinement\"\n    effects []\n\nrecord Octets\n    values: List<Int>\n\nfn allInRange(xs: List<Int>) -> Bool\n    ? \"probe\"\n    match xs\n        [] -> true\n        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)\n            true -> allInRange(tail)\n            false -> false\n\nfn fromList(xs: List<Int>) -> Result<Octets, String>\n    ? \"probe\"\n    match allInRange(xs)\n        true -> Result.Ok(Octets(values = xs))\n        false -> Result.Err(\"oob\")\n\nfn unqualified() -> Octets\n    ? \"probe\"\n    fromList([1, 2])\n\nfn qualified() -> Octets\n    ? \"probe\"\n    Local.fromList([1, 2])\n\nfn stillFallible(xs: List<Int>) -> Result<Octets, String>\n    ? \"probe\"\n    fromList(xs)\n";
+    let src = "module Local\n    intent = \"an entry-scope refinement\"\n    exposes opaque [Octets]\n    effects []\n\nrecord Octets\n    values: List<Int>\n\nfn allInRange(xs: List<Int>) -> Bool\n    ? \"probe\"\n    match xs\n        [] -> true\n        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)\n            true -> allInRange(tail)\n            false -> false\n\nfn fromList(xs: List<Int>) -> Result<Octets, String>\n    ? \"probe\"\n    match allInRange(xs)\n        true -> Result.Ok(Octets(values = xs))\n        false -> Result.Err(\"oob\")\n\nfn unqualified() -> Octets\n    ? \"probe\"\n    fromList([1, 2])\n\nfn qualified() -> Octets\n    ? \"probe\"\n    Local.fromList([1, 2])\n\nfn stillFallible(xs: List<Int>) -> Result<Octets, String>\n    ? \"probe\"\n    fromList(xs)\n";
     assert_no_errors(src);
+}
+
+#[test]
+fn a_record_that_is_not_opaque_keeps_the_result_of_its_constructor() {
+    // The same module without `exposes opaque [Octets]`. Any module may
+    // write `Octets(values = ...)` directly, so the record carries no
+    // invariant and its constructor is an ordinary function: the literal
+    // call keeps the declared `Result`.
+    let header = "module Local\n    intent = \"an entry-scope record\"\n    effects []\n\nrecord Octets\n    values: List<Int>\n\nfn allInRange(xs: List<Int>) -> Bool\n    ? \"probe\"\n    match xs\n        [] -> true\n        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)\n            true -> allInRange(tail)\n            false -> false\n\nfn fromList(xs: List<Int>) -> Result<Octets, String>\n    ? \"probe\"\n    match allInRange(xs)\n        true -> Result.Ok(Octets(values = xs))\n        false -> Result.Err(\"oob\")\n\n";
+    assert_no_errors(&format!(
+        "{header}fn literal() -> Result<Octets, String>\n    ? \"probe\"\n    fromList([1, 2])\n"
+    ));
+    assert_error_containing(
+        &format!("{header}fn literal() -> Octets\n    ? \"probe\"\n    fromList([1, 2])\n"),
+        "Result<Octets, String>",
+    );
+    // With the line, the same call is the refined type.
+    let opaque = header.replace(
+        "    effects []\n",
+        "    exposes opaque [Octets]\n    effects []\n",
+    );
+    assert_ne!(opaque, header);
+    assert_no_errors(&format!(
+        "{opaque}fn literal() -> Octets\n    ? \"probe\"\n    fromList([1, 2])\n"
+    ));
 }
 
 #[test]

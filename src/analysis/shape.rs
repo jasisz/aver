@@ -799,6 +799,29 @@ fn indirect_rec_variants(variants: &[crate::ast::TypeVariant], type_name: &str) 
     false
 }
 
+/// The record half of `refinement-via-opaque`: one carrier field, on a
+/// record its module lists under `exposes opaque`. Returns
+/// `(type name, carrier field, carrier type)`.
+///
+/// This is the one place that decides which records may carry a smart
+/// constructor's invariant. A record another module can construct directly
+/// holds whatever that module wrote into it, so a function that validates
+/// its field proves nothing about its values: it is an ordinary record to
+/// the proof export, to the literal discharge and to the packed layouts
+/// alike. The same holds for a record in a file with no `exposes opaque`
+/// line.
+pub fn refinement_carrier(td: &crate::ast::TypeDef) -> Option<(&str, &str, &str)> {
+    match td {
+        crate::ast::TypeDef::Product {
+            name,
+            fields,
+            opaque: true,
+            ..
+        } if fields.len() == 1 => Some((name.as_str(), fields[0].0.as_str(), fields[0].1.as_str())),
+        _ => None,
+    }
+}
+
 /// Walk entry items + dep modules and emit every typed
 /// `ModulePattern` we can recognize. Used by `analyze_program_with_modules`
 /// to populate `ProgramShape.patterns`.
@@ -811,7 +834,7 @@ pub fn detect_module_patterns(
     entry_items: &[crate::ast::TopLevel],
     dep_modules: &[crate::codegen::ModuleInfo],
 ) -> Vec<ModulePattern> {
-    use crate::ast::{Expr, Stmt, TopLevel, TypeDef};
+    use crate::ast::{Expr, Stmt, TopLevel};
 
     let mut out = Vec::new();
 
@@ -842,15 +865,12 @@ pub fn detect_module_patterns(
         TopLevel::TypeDef(td) => Some(td),
         _ => None,
     }) {
-        if let TypeDef::Product { name, fields, .. } = td
-            && fields.len() == 1
-        {
-            let (fname, ftype) = &fields[0];
+        if let Some((type_name, carrier_field, carrier_type)) = refinement_carrier(td) {
             candidates.push(CandidateRecord {
                 scope: None,
-                type_name: name.as_str(),
-                carrier_field: fname.as_str(),
-                carrier_type: ftype.as_str(),
+                type_name,
+                carrier_field,
+                carrier_type,
                 fns: entry_fns.clone(),
             });
         }
@@ -858,15 +878,12 @@ pub fn detect_module_patterns(
     for m in dep_modules {
         let module_fns: Vec<&crate::ast::FnDef> = m.fn_defs.iter().collect();
         for td in &m.type_defs {
-            if let TypeDef::Product { name, fields, .. } = td
-                && fields.len() == 1
-            {
-                let (fname, ftype) = &fields[0];
+            if let Some((type_name, carrier_field, carrier_type)) = refinement_carrier(td) {
                 candidates.push(CandidateRecord {
                     scope: Some(m.prefix.clone()),
-                    type_name: name.as_str(),
-                    carrier_field: fname.as_str(),
-                    carrier_type: ftype.as_str(),
+                    type_name,
+                    carrier_field,
+                    carrier_type,
                     fns: module_fns.clone(),
                 });
             }

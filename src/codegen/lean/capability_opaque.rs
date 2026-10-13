@@ -513,6 +513,7 @@ mod tests {
             name: name.to_string(),
             fields: vec![(field.to_string(), ty.to_string())],
             line: 1,
+            opaque: false,
         }
     }
 

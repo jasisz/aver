@@ -72,7 +72,9 @@ pub fn document_symbols(source: &str, base_dir: Option<&str>) -> Option<Document
                 line_range(*line),
                 None,
             )),
-            TopLevel::TypeDef(TypeDef::Product { name, line, fields }) => Some(make_symbol(
+            TopLevel::TypeDef(TypeDef::Product {
+                name, line, fields, ..
+            }) => Some(make_symbol(
                 name.clone(),
                 Some(format!("record {} fields", fields.len())),
                 SymbolKind::STRUCT,
