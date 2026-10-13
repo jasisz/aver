@@ -300,6 +300,22 @@ impl Parser {
             module.seatings = seatings;
         }
 
+        // A record carries its own opacity, so a later copy of the
+        // declaration into another program view keeps it without the
+        // module header beside it.
+        let opaque_names: Vec<String> = items
+            .iter()
+            .find_map(|item| match item {
+                TopLevel::Module(module) => Some(module.exposes_opaque.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        for item in &mut items {
+            if let TopLevel::TypeDef(TypeDef::Product { name, opaque, .. }) = item {
+                *opaque = opaque_names.contains(name);
+            }
+        }
+
         self.refuse_compiler_references()?;
         Ok(items)
     }

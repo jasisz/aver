@@ -1,5 +1,6 @@
 module M
     intent = "generic packed sequence"
+    exposes opaque [Octets, SevenBit]
     effects [Console]
 
 record Octets

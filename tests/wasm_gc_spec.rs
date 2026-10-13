@@ -1397,6 +1397,7 @@ fn cross_module_same_bare_name_record_does_not_inherit_packed_layout() {
     let entry_src = r#"
 module Entry
     intent = "packed layout must not leak to same-bare-name dep types"
+    exposes opaque [Octets]
     depends [Left, Right]
 
 record Octets
@@ -1464,7 +1465,7 @@ module Entry
     depends [Dep]
 
 fn firstValue(o: Dep.Octets) -> Int
-    match o.values
+    match Dep.toList(o)
         [head, .._] -> head
         [] -> 0 - 1
 
@@ -1480,7 +1481,8 @@ fn main() -> Int
     let dep_src = r#"
 module Dep
     intent = "sole-declarer gated Octets refinement"
-    exposes [Octets, fromList]
+    exposes opaque [Octets]
+    exposes [fromList, toList]
     depends []
 
 record Octets
@@ -1497,6 +1499,9 @@ fn fromList(xs: List<Int>) -> Result<Octets, String>
     match allInRange(xs)
         true -> Result.Ok(Octets(values = xs))
         false -> Result.Err("oob")
+
+fn toList(o: Octets) -> List<Int>
+    o.values
 "#;
     let result = run_int_multi(entry_src, &[("Dep", dep_src)]);
     assert_eq!(
@@ -3203,6 +3208,7 @@ fn cross_module_same_bare_name_record_does_not_inherit_carrier_i64_erasure() {
     let entry_src = r#"
 module Entry
     intent = "carrier i64 erasure must not leak to same-bare-name dep types"
+    exposes opaque [IntRange]
     depends [Left, Right]
 
 record IntRange
@@ -3259,7 +3265,7 @@ module Entry
     depends [Dep]
 
 fn value(r: Dep.IntRange) -> Int
-    r.value
+    Dep.toInt(r)
 
 fn run() -> Result<Int, String>
     r: Dep.IntRange = Dep.fromInt(70)?
@@ -3273,7 +3279,8 @@ fn main() -> Int
     let dep_src = r#"
 module Dep
     intent = "sole-declarer gated IntRange carrier"
-    exposes [IntRange, fromInt]
+    exposes opaque [IntRange]
+    exposes [fromInt, toInt]
     depends []
 
 record IntRange
@@ -3283,6 +3290,9 @@ fn fromInt(n: Int) -> Result<IntRange, String>
     match Bool.and(n >= 0, n <= 100)
         true -> Result.Ok(IntRange(value = n))
         false -> Result.Err("oob")
+
+fn toInt(r: IntRange) -> Int
+    r.value
 "#;
     let result = run_int_multi(entry_src, &[("Dep", dep_src)]);
     assert_eq!(
@@ -3325,7 +3335,8 @@ fn main() -> Int
     let dep_src = r#"
 module Dep
     intent = "sole-declarer gated IntRange carrier"
-    exposes [IntRange, fromInt]
+    exposes opaque [IntRange]
+    exposes [fromInt, toInt]
     depends []
 
 record IntRange
@@ -3335,6 +3346,9 @@ fn fromInt(n: Int) -> Result<IntRange, String>
     match Bool.and(n >= 0, n <= 100)
         true -> Result.Ok(IntRange(value = n))
         false -> Result.Err("oob")
+
+fn toInt(r: IntRange) -> Int
+    r.value
 "#;
     let result = run_int_multi(entry_src, &[("Dep", dep_src)]);
     assert_eq!(

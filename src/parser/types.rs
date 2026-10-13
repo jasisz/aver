@@ -90,6 +90,8 @@ impl Parser {
             name: type_name,
             fields,
             line,
+            // Set by `Parser::parse` once the module header is known.
+            opaque: false,
         })
     }
 

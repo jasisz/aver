@@ -1143,6 +1143,7 @@ fn main() -> Unit
 fn rust_byte_sink_matches_vm() {
     let src = r#"module ByteSinkDifferential
     intent = "Every byte-sink shape in one program, for cross-backend agreement"
+    exposes opaque [Bytes]
     effects [Console.print]
 
 record Bytes

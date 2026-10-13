@@ -1789,11 +1789,13 @@ mod tests {
             name: "Key".to_string(),
             fields: vec![("parts".to_string(), "List<Int>".to_string())],
             line: 1,
+            opaque: false,
         };
         let float_key = TypeDef::Product {
             name: "Weights".to_string(),
             fields: vec![("values".to_string(), "List<Float>".to_string())],
             line: 2,
+            opaque: false,
         };
         let mut ctx = empty_ctx();
         ctx.type_defs.push(int_key.clone());
@@ -1817,11 +1819,13 @@ mod tests {
             name: "VectorHolder".to_string(),
             fields: vec![("values".to_string(), "Vector<Int>".to_string())],
             line: 1,
+            opaque: false,
         };
         let float_value = TypeDef::Product {
             name: "Measurement".to_string(),
             fields: vec![("value".to_string(), "Float".to_string())],
             line: 2,
+            opaque: false,
         };
         let mut ctx = empty_ctx();
         ctx.type_defs.push(vector_key.clone());
@@ -1860,6 +1864,7 @@ mod tests {
             name: "Bytes".to_string(),
             fields: vec![("values".to_string(), "List<Int>".to_string())],
             line: 1,
+            opaque: false,
         };
         let mut ordinary_ctx = empty_ctx();
         ordinary_ctx.type_defs.push(td.clone());

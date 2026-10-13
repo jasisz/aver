@@ -1056,6 +1056,7 @@ fn list_build_pass_reports_the_byte_sink() {
         r#"
 module ByteSink
     intent = "one loop feeds fromList alone, another is also read directly"
+    exposes opaque [Bytes]
     depends []
 
 record Bytes

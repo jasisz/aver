@@ -1176,6 +1176,7 @@ mod tests {
             name: name.to_string(),
             fields: vec![("value".to_string(), "Int".to_string())],
             line,
+            opaque: false,
         }
     }
 

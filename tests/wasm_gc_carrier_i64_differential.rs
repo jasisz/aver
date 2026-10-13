@@ -145,6 +145,7 @@ fn assert_carrier_revert_agrees(prefix: &str, source: &str, expected: &str) {
 fn carrier_function_slot_matches_vm_and_reverts() {
     let src = r#"module M
     intent = "carrier-i64 function slot"
+    exposes opaque [IntRange]
     effects [Console]
 
 record IntRange
@@ -181,6 +182,7 @@ fn main() -> Unit
 fn carrier_bound_edges_and_transient_overflow_match_vm() {
     let src = r#"module M
     intent = "carrier-i64 edges + transient"
+    exposes opaque [IntRange]
     effects [Console]
 
 record IntRange
@@ -221,6 +223,7 @@ fn main() -> Unit
 fn carrier_struct_field_matches_vm_and_reverts() {
     let src = r#"module M
     intent = "carrier-i64 struct field"
+    exposes opaque [IntRange]
     effects [Console]
 
 record IntRange
@@ -278,6 +281,7 @@ fn main() -> Unit
 fn carrier_struct_field_equality_matches_vm() {
     let src = r#"module M
     intent = "carrier-i64 struct field equality"
+    exposes opaque [IntRange]
     effects [Console]
 
 record IntRange
@@ -329,6 +333,7 @@ fn main() -> Unit
 fn carrier_in_containers_build_read_matches_vm() {
     let src = r#"module M
     intent = "carrier-i64 build/read in Vector/Map"
+    exposes opaque [IntRange]
     effects [Console]
 
 record IntRange
@@ -388,6 +393,7 @@ fn main() -> Unit
 fn carrier_in_containers_eq_matches_vm() {
     let src = r#"module M
     intent = "carrier-i64 container eq/contains"
+    exposes opaque [IntRange]
     effects [Console]
 
 record IntRange
@@ -468,6 +474,7 @@ fn main() -> Unit
 fn carrier_arith_add_and_mul_literal_match_vm() {
     let src = r#"module M
     intent = "carrier-i64 add + mul-literal arithmetic"
+    exposes opaque [IntRange]
     effects [Console]
 
 record IntRange
@@ -510,6 +517,7 @@ fn main() -> Unit
 fn carrier_value_comparison_match_vm() {
     let src = r#"module M
     intent = "carrier-i64 value comparison"
+    exposes opaque [IntRange]
     effects [Console]
 
 record IntRange
@@ -554,6 +562,7 @@ fn main() -> Unit
 fn carrier_mixed_field_and_param_value_match_vm() {
     let src = r#"module M
     intent = "carrier-i64 mixed field/param value comparison + subtraction"
+    exposes opaque [Coord]
     effects [Console]
 
 record Coord
@@ -603,6 +612,7 @@ fn main() -> Unit
 fn carrier_record_field_arithmetic_and_snake_pattern_match_vm() {
     let src = r#"module M
     intent = "carrier-i64 record field arithmetic + snake score increment"
+    exposes opaque [Coord]
     effects [Console]
 
 record Coord
@@ -654,6 +664,7 @@ fn main() -> Unit
 fn carrier_wide_bound_mul_overflow_stays_boxed_match_vm() {
     let src = r#"module M
     intent = "carrier-i64 wide-bound multiply overflow"
+    exposes opaque [Wide]
     effects [Console]
 
 record Wide
@@ -705,6 +716,7 @@ fn main() -> Unit
 fn nested_carrier_field_add_matches_vm() {
     let src = r#"module M
     intent = "nested carrier-field read add"
+    exposes opaque [IntRange]
     effects [Console]
 
 record IntRange
@@ -746,6 +758,7 @@ fn main() -> Unit
 fn nested_carrier_field_snake_move_matches_vm() {
     let src = r#"module M
     intent = "snake-shaped nested carrier-field arithmetic"
+    exposes opaque [Coord]
     effects [Console]
 
 record Coord
@@ -804,6 +817,7 @@ fn main() -> Unit
 fn nested_carrier_field_into_sinks_box_at_boundary() {
     let src = r#"module M
     intent = "nested carrier-field result into $AverInt sinks"
+    exposes opaque [IntRange]
     effects [Console]
 
 record IntRange
@@ -872,6 +886,7 @@ fn main() -> Unit
 fn mutual_recursion_member_stringifies_carrier_field_boxes_at_boundary() {
     let src = r#"module M
     intent = "mutual-TCO member stringifies a nested carrier field"
+    exposes opaque [Score]
     effects [Console]
 
 record Score
@@ -923,6 +938,7 @@ fn main() -> Unit
 fn nested_carrier_field_wide_bound_mul_stays_boxed_match_vm() {
     let src = r#"module M
     intent = "nested carrier-field wide-bound multiply overflow"
+    exposes opaque [Wide]
     effects [Console]
 
 record Wide
@@ -971,6 +987,7 @@ fn main() -> Unit
 fn nested_carrier_field_snake_size_drops_vs_boxed() {
     let src = r#"module M
     intent = "record-threaded snake size: native carrier-field arithmetic"
+    exposes opaque [Coord]
     effects [Console]
 
 record Coord
@@ -1115,6 +1132,7 @@ fn carrier_boxed_arith_token_count(prefix: &str, source: &str, no_carrier: bool)
 fn carrier_bare_call_into_string_from_int_boxes_at_boundary() {
     let src = r#"module M
     intent = "carrier arith result into String.fromInt"
+    exposes opaque [C]
     effects [Console]
 
 record C
@@ -1150,6 +1168,7 @@ fn main() -> Unit
 fn carrier_bare_call_into_interpolation_boxes_at_boundary() {
     let src = r#"module M
     intent = "carrier arith result into interpolation embed"
+    exposes opaque [C]
     effects [Console]
 
 record C
@@ -1183,6 +1202,7 @@ fn main() -> Unit
 fn carrier_bare_call_into_record_field_boxes_at_boundary() {
     let src = r#"module M
     intent = "carrier arith result into record Int field"
+    exposes opaque [C]
     effects [Console]
 
 record C
@@ -1219,6 +1239,7 @@ fn main() -> Unit
 fn carrier_bare_call_into_map_value_boxes_at_boundary() {
     let src = r#"module M
     intent = "carrier arith result into Map Int value"
+    exposes opaque [C]
     effects [Console]
 
 record C
@@ -1252,6 +1273,7 @@ fn main() -> Unit
 fn carrier_bare_call_into_map_key_boxes_at_boundary() {
     let src = r#"module M
     intent = "carrier arith result into Map Int key"
+    exposes opaque [C]
     effects [Console]
 
 record C
@@ -1285,6 +1307,7 @@ fn main() -> Unit
 fn carrier_bare_call_into_tuple_payload_boxes_at_boundary() {
     let src = r#"module M
     intent = "carrier arith result into Tuple Int payload"
+    exposes opaque [C]
     effects [Console]
 
 record C
@@ -1322,6 +1345,7 @@ fn main() -> Unit
 fn carrier_bare_call_into_option_payload_boxes_at_boundary() {
     let src = r#"module M
     intent = "carrier arith result into Option Int payload"
+    exposes opaque [C]
     effects [Console]
 
 record C
@@ -1355,6 +1379,7 @@ fn main() -> Unit
 fn carrier_bare_call_into_result_payload_boxes_at_boundary() {
     let src = r#"module M
     intent = "carrier arith result into Result Int payload"
+    exposes opaque [C]
     effects [Console]
 
 record C
@@ -1394,6 +1419,7 @@ fn main() -> Unit
 fn carrier_bare_call_into_boxed_user_param_boxes_at_boundary() {
     let src = r#"module M
     intent = "carrier arith result into boxed user-fn Int param"
+    exposes opaque [C]
     effects [Console]
 
 record C
@@ -1433,6 +1459,7 @@ fn main() -> Unit
 fn carrier_wide_overflow_into_string_from_int_stays_exact() {
     let src = r#"module M
     intent = "wide-bound carrier overflow into String.fromInt stays exact"
+    exposes opaque [Wide]
     effects [Console]
 
 record Wide
@@ -1620,6 +1647,7 @@ fn wasm_tools_print(wasm: &std::path::Path) -> String {
 fn bare_construct_bypass_demotes_to_boxed() {
     let src = r#"module M
     intent = "carrier bypass via bare ctor beyond i64"
+    exposes opaque [IntRange]
     effects [Console]
 
 record IntRange
@@ -1669,6 +1697,7 @@ fn main() -> Unit
 fn carrier_as_map_key_demotes_to_boxed() {
     let src = r#"module M
     intent = "carrier as Map KEY"
+    exposes opaque [IntRange]
     effects [Console]
 
 record IntRange
@@ -1727,6 +1756,7 @@ fn main() -> Unit
 fn carrier_as_map_key_via_local_binding_demotes_to_boxed() {
     let src = r#"module M
     intent = "carrier as Map KEY via local binding annotation"
+    exposes opaque [IntRange]
     effects [Console]
 
 record IntRange
@@ -1774,6 +1804,7 @@ fn main() -> Unit
 fn carrier_as_map_key_fully_inferred_demotes_to_boxed() {
     let src = r#"module M
     intent = "carrier as Map KEY, fully inferred (no annotation)"
+    exposes opaque [IntRange]
     effects [Console]
 
 record IntRange
@@ -1823,6 +1854,7 @@ fn main() -> Unit
 fn carrier_as_inferred_map_value_stays_i64() {
     let src = r#"module M
     intent = "carrier as Map VALUE, fully inferred — must stay i64"
+    exposes opaque [IntRange]
     effects [Console]
 
 record IntRange
@@ -1873,6 +1905,7 @@ fn main() -> Unit
 fn mixed_program_demotes_per_type() {
     let src = r#"module M
     intent = "two carriers: one bare-bypassed (boxed), one clean (i64)"
+    exposes opaque [Clean, Tainted]
     effects [Console]
 
 record Tainted
@@ -1967,6 +2000,7 @@ fn main() -> Unit
 fn carrier_bare_call_as_match_subject_boxes_at_boundary() {
     let src = r#"module M
     intent = "carrier arith result as no-bind Int match subject"
+    exposes opaque [C]
     effects [Console]
 
 record C
@@ -2006,6 +2040,7 @@ fn main() -> Unit
 fn carrier_bare_call_as_bool_match_subject_boxes_at_boundary() {
     let src = r#"module M
     intent = "carrier arith result as no-bind subject, Bool arms"
+    exposes opaque [C]
     effects [Console]
 
 record C
@@ -2100,6 +2135,7 @@ fn main() -> Unit
 fn carrier_bare_call_in_independent_product_boxes_at_boundary() {
     let src = r#"module M
     intent = "carrier arith result in independent-product (!) element"
+    exposes opaque [C]
     effects [Console]
 
 record C
@@ -3144,6 +3180,7 @@ fn raw_carrier_string_from_int_exhaustive_edges_match_vm() {
     // itoa digit loop. Each `show(sc(N))` stringifies the bare carrier value.
     let src = r#"module M
     intent = "exhaustive raw-carrier String.fromInt"
+    exposes opaque [Score]
     effects [Console]
 
 record Score
@@ -3184,6 +3221,7 @@ fn main() -> Unit
 fn raw_carrier_interpolation_exhaustive_edges_match_vm() {
     let src = r#"module M
     intent = "exhaustive raw-carrier interpolation embed"
+    exposes opaque [Score]
     effects [Console]
 
 record Score
@@ -3225,6 +3263,7 @@ fn main() -> Unit
 fn raw_signed_carrier_negatives_match_vm() {
     let src = r#"module M
     intent = "exhaustive raw-carrier negatives"
+    exposes opaque [Signed]
     effects [Console]
 
 record Signed
@@ -3271,6 +3310,7 @@ fn main() -> Unit
 fn raw_carrier_negative_min_bound_matches_vm() {
     let src = r#"module M
     intent = "raw-carrier at its negative-min bound"
+    exposes opaque [NegRange]
     effects [Console]
 
 record NegRange
@@ -3307,6 +3347,7 @@ fn main() -> Unit
 fn mixed_carrier_and_unbounded_int_stringify_match_vm() {
     let src = r#"module M
     intent = "mixed raw-carrier + genuine unbounded-Int stringify"
+    exposes opaque [Score]
     effects [Console]
 
 record Score
@@ -3378,6 +3419,7 @@ fn main() -> Unit
 fn all_raw_stringify_dces_the_bignum_formatter() {
     let all_raw = r#"module M
     intent = "all-raw stringify — bignum formatter must DCE"
+    exposes opaque [Score]
     effects [Console]
 
 record Score
@@ -3406,6 +3448,7 @@ fn main() -> Unit
     // therefore NOT DCE'd.
     let with_bignum = r#"module M
     intent = "raw stringify + one genuine unbounded-Int stringify"
+    exposes opaque [Score]
     effects [Console]
 
 record Score

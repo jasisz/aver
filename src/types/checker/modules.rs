@@ -529,6 +529,7 @@ impl TypeChecker {
                 name: type_name,
                 fields,
                 line,
+                ..
             } => {
                 let canonical_type = canonical_name(module_name, type_name);
                 // Same duplicate-type rule as the Sum arm — a record

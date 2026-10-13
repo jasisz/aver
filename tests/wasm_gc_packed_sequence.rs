@@ -283,6 +283,7 @@ fn bytes_from_hex_keeps_source_traversal_in_the_boxed_fallback() {
 
 const OCTETS: &str = r#"module M
     intent = "generic packed sequence"
+    exposes opaque [Octets]
     effects [Console]
 
 record Octets
@@ -321,8 +322,29 @@ fn main() -> Unit
         Result.Err(error) -> Console.print(error)
 "#;
 
+/// The same program without `exposes opaque [Octets]`: the record is an
+/// ordinary record, so no packed array is derived for it and the two
+/// compilations agree.
+#[test]
+fn a_record_that_is_not_opaque_keeps_the_boxed_layout() {
+    let open = OCTETS.replace("    exposes opaque [Octets]\n", "");
+    assert_ne!(open, OCTETS);
+    let (vm_ok, vm) = run(&open, false, true);
+    let (wasm_ok, wasm) = run(&open, true, true);
+    assert!(vm_ok, "VM failed: {vm}");
+    assert!(wasm_ok, "wasm failed: {wasm}");
+    assert_eq!(wasm, vm);
+    assert_eq!(vm, "5");
+    assert_eq!(
+        i8_array_count(&compile(&open, true)),
+        i8_array_count(&compile(&open, false)),
+        "a record that is not opaque must not earn a packed array"
+    );
+}
+
 const BYPASSED_OCTETS: &str = r#"module M
     intent = "an ungated constructor must demote the packed representation"
+    exposes opaque [Octets]
     effects [Console]
 
 record Octets
@@ -392,7 +414,7 @@ const QUALIFIED_ENTRY: &str = r#"module Main
     effects [Console]
 
 fn firstValue(o: Dep.Octets) -> Int
-    match o.values
+    match Dep.toList(o)
         [head, .._] -> head
         [] -> 0 - 1
 
@@ -409,7 +431,8 @@ fn main() -> Unit
 
 const QUALIFIED_DEP: &str = r#"module Dep
     intent = "sole-declarer gated Octets refinement"
-    exposes [Octets, fromList]
+    exposes opaque [Octets]
+    exposes [fromList, toList]
     depends []
 
 record Octets
@@ -426,6 +449,9 @@ fn fromList(xs: List<Int>) -> Result<Octets, String>
     match allInRange(xs)
         true -> Result.Ok(Octets(values = xs))
         false -> Result.Err("oob")
+
+fn toList(o: Octets) -> List<Int>
+    o.values
 "#;
 
 #[test]
@@ -467,12 +493,22 @@ fn main() -> Unit
         [] -> Console.print("empty")
 "#;
 
+// Only a record the entry may construct can be bypassed this way, and such
+// a record is not listed under `exposes opaque` — so it is an ordinary
+// record and never earns the packed layout in the first place. The scan
+// stays as a second line of defence; this test pins the outcome.
 #[test]
 fn qualified_ungated_constructor_demotes_instead_of_truncating() {
-    let (vm_ok, vm) = run_multi(QUALIFIED_BYPASS_ENTRY, "dep.av", QUALIFIED_DEP, false, true);
-    let (packed_ok, packed) =
-        run_multi(QUALIFIED_BYPASS_ENTRY, "dep.av", QUALIFIED_DEP, true, true);
-    let (boxed_ok, boxed) = run_multi(QUALIFIED_BYPASS_ENTRY, "dep.av", QUALIFIED_DEP, true, false);
+    let open_dep = QUALIFIED_DEP
+        .replace("    exposes opaque [Octets]\n", "")
+        .replace(
+            "exposes [fromList, toList]",
+            "exposes [Octets, fromList, toList]",
+        );
+    assert!(!open_dep.contains("opaque"));
+    let (vm_ok, vm) = run_multi(QUALIFIED_BYPASS_ENTRY, "dep.av", &open_dep, false, true);
+    let (packed_ok, packed) = run_multi(QUALIFIED_BYPASS_ENTRY, "dep.av", &open_dep, true, true);
+    let (boxed_ok, boxed) = run_multi(QUALIFIED_BYPASS_ENTRY, "dep.av", &open_dep, true, false);
     assert!(vm_ok, "VM failed: {vm}");
     assert!(packed_ok, "packed wasm failed: {packed}");
     assert!(boxed_ok, "boxed wasm failed: {boxed}");
@@ -640,7 +676,7 @@ const DISCHARGED_ENTRY: &str = r#"module Main
     effects [Console]
 
 fn firstValue(o: Dep.Octets) -> Int
-    match o.values
+    match Dep.toList(o)
         [head, .._] -> head
         [] -> 0 - 1
 
@@ -679,7 +715,8 @@ fn main() -> Unit
 
 const DISCHARGE_DEP: &str = r#"module Dep
     intent = "sole-declarer gated Octets refinement with a reader"
-    exposes [Octets, fromList, toList]
+    exposes opaque [Octets]
+    exposes [fromList, toList]
     depends []
 
 record Octets
@@ -778,6 +815,7 @@ fn out_of_interval_literal_declines_the_discharge_on_every_backend() {
 //     `showInts` — which is what a user writes instead.
 const INTERPOLATED_OCTETS: &str = r#"module M
     intent = "interpolate the projected carrier of a packed refinement"
+    exposes opaque [Octets]
     effects [Console]
 
 record Octets
@@ -842,6 +880,7 @@ fn interpolating_a_packed_field_is_a_type_error() {
 // parts-array indexing is covered.
 const NAMED_SHOW_OCTETS: &str = r#"module M
     intent = "render the projected carrier of a packed refinement via a named fn"
+    exposes opaque [Octets]
     effects [Console]
 
 record Octets
@@ -909,6 +948,7 @@ fn packed_field_rendered_by_a_named_fn_matches_vm_and_boxed_wasm() {
 // green. Same named-conversion shape, driven from verify cases.
 const NAMED_SHOW_OCTETS_VERIFY: &str = r#"module M
     intent = "verify a named-conversion render of a packed carrier on the wasm-gc runner"
+    exposes opaque [Octets]
     effects []
 
 record Octets

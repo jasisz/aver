@@ -978,7 +978,10 @@ fn fromList(xs: List<Int>) -> Result<Nibbles, String>
         true -> Result.Ok(Nibbles(values = xs))
         false -> Result.Err("oob")
 "#;
-        let dep = format!("{OCTETS}{second}");
+        let dep = format!("{OCTETS}{second}").replace(
+            "exposes opaque [Octets]",
+            "exposes opaque [Octets, Nibbles]",
+        );
         let symbols = symbols_for(CONSUMER, &[("Octets", &dep)]);
         assert!(
             symbols.literal_refinements().is_empty(),

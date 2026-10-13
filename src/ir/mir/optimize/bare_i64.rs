@@ -2419,6 +2419,7 @@ mod tests {
     const CARRIER_SRC: &str = r#"
 module Toy
     intent = "t"
+    exposes opaque [IntRange]
     depends []
 
 record IntRange
@@ -2600,6 +2601,7 @@ fn main() -> Int
     const NESTED_CARRIER_SRC: &str = r#"
 module Toy
     intent = "t"
+    exposes opaque [IntRange, Wide]
     depends []
 
 record IntRange

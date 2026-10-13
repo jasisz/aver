@@ -95,6 +95,51 @@ fn nonneg_float_module_emits_one_refinement_pattern() {
     assert_eq!(carrier_type, "Float");
 }
 
+/// One record, one validating constructor, with and without the
+/// `exposes opaque` line. Only the opaque record is a refinement: a record
+/// other modules may construct holds whatever they wrote into it.
+#[test]
+fn only_an_opaque_record_is_a_refinement() {
+    let opaque = r#"module Octets
+    intent = "the same record, opaque or not"
+    exposes [fromList]
+    exposes opaque [Octets]
+    effects []
+
+record Octets
+    values: List<Int>
+
+fn allInRange(xs: List<Int>) -> Bool
+    match xs
+        [] -> true
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> allInRange(tail)
+            false -> false
+
+fn fromList(xs: List<Int>) -> Result<Octets, String>
+    match allInRange(xs)
+        true -> Result.Ok(Octets(values = xs))
+        false -> Result.Err("oob")
+"#;
+    let open = opaque.replace("    exposes opaque [Octets]\n", "");
+    assert_ne!(open, opaque);
+    let refinements = |src: &str| -> Vec<String> {
+        let items = aver::source::parse_source(src).expect("parse");
+        detect_module_patterns(&items, &[])
+            .into_iter()
+            .filter_map(|p| match p {
+                ModulePattern::RefinementSmartConstructor { type_name, .. } => Some(type_name),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(refinements(opaque), vec!["Octets".to_string()]);
+    assert!(
+        refinements(&open).is_empty(),
+        "a record the module does not keep opaque is an ordinary record"
+    );
+}
+
 #[test]
 fn module_with_no_refinement_emits_no_refinement_pattern() {
     // Plain orchestration module — no opaque + smart constructor pair.
