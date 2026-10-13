@@ -605,7 +605,7 @@ fn both_kernels_split_a_finite_given_into_every_value_and_refuse_mutations() {
         ),
         (
             "a split of a given that is not finite",
-            agree.replace("((a (tbool)) (b (tbool)))", "((a (tbool)) b)"),
+            agree.replace("((a bool) (b bool))", "((a bool) (b _))"),
         ),
         ("an absurd case that is not", {
             let open = safe.find("(absurd ").unwrap();
@@ -654,8 +654,8 @@ fn both_kernels_split_a_list_given_into_its_two_cases_and_refuse_mutations() {
     for (kind, text, why) in [
         (
             "a split of a given that is not a list",
-            script.replace("((xs (tlist)))", "(xs)"),
-            "xs is not a variable of list type",
+            script.replace("((xs (list int)))", "((xs _))"),
+            "? is not List<",
         ),
         (
             "a head named like the variable split",
@@ -677,7 +677,8 @@ fn both_kernels_split_a_list_given_into_its_two_cases_and_refuse_mutations() {
                 &script[nil_from..nil_to],
                 &script[cons_to..]
             ),
-            "the case proves a different equation",
+            // The cell's names are not in scope where the list is empty.
+            "hd is not a variable in scope",
         ),
         (
             "a missing case",
@@ -702,7 +703,7 @@ fn both_kernels_split_a_list_given_into_its_two_cases_and_refuse_mutations() {
     // The tail `t` of the first split no longer occurs in the claim, but it
     // stays a list variable: a later split may not name an element `t`,
     // which a split on `t` would then take for a list.
-    let reused = "(steps 13\n (obligation k ((xs (tlist))) (none) (b true) (b true))\n (defs)\n (consts)\n (sums)\n (laws)\n (proof (listcases xs (b true) (b true) (refl (b true)) (h t) (listcases xs (b true) (b true) (refl (b true)) (t u) (refl (b true))))))\n";
+    let reused = "(steps 14\n (obligation k ((xs (list int))) (none) (b true) (b true))\n (defs)\n (consts)\n (sums)\n (recs)\n (sigs)\n (laws)\n (proof (listcases xs (b true) (b true) (refl (b true)) (h t) (listcases xs (b true) (b true) (refl (b true)) (t u) (refl (b true))))))\n";
     let refused = aver::proof_kernel::verdict(reused);
     assert!(
         refused
@@ -1469,7 +1470,7 @@ fn both_kernels_induct_on_an_int_down_to_zero_and_refuse_mutations() {
     // first, without a hypothesis.
     assert!(pow2.contains("(proof (induct pow2 ((v n)) "), "{pow2}");
     assert!(pow2.contains("(case (h_steps1) () () "), "{pow2}");
-    assert!(pow2.contains("((n (tint)))"), "{pow2}");
+    assert!(pow2.contains("((n int))"), "{pow2}");
     // The `when` and its lines about `a`, `b` and `c` are carried down
     // with `c`, `a` and `b` generalised.
     assert!(reason.contains(" (carry when when1 when2) "), "{reason}");
@@ -1522,7 +1523,7 @@ fn both_kernels_induct_on_an_int_down_to_zero_and_refuse_mutations() {
         ),
         (
             "induction on a given not known to be an Int",
-            pow2.replacen("((n (tint)))", "(n)", 1),
+            pow2.replacen("((n int))", "((n _))", 1),
         ),
         (
             "an equality used for another value",
@@ -3053,19 +3054,25 @@ fn both_kernels_check_ring_and_linear_steps_and_refuse_mutations() {
 
 #[test]
 fn joining_texts_is_never_read_as_int_arithmetic() {
-    // `+` on texts does not commute: written as `++`, no Int rule or ring
-    // step applies to it, even in a script made by hand.
-    let script = |op: &str| {
+    // `+` on texts does not commute and on Floats does not associate: a
+    // ring step takes two Int terms, so it reads neither, even in a script
+    // made by hand.
+    let script = |ty: &str| {
         format!(
-            "(steps 13 (obligation k (a b) (none) (op {op} (v a) (v b)) (op {op} (v b) (v a))) (defs) (consts) (sums) (laws) (proof (ring (op {op} (v a) (v b)) (op {op} (v b) (v a)))))"
+            "(steps 14 (obligation k ((a {ty}) (b {ty})) (none) (op + (v a) (v b)) (op + (v b) (v a))) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (ring (op + (v a) (v b)) (op + (v b) (v a)))))"
         )
     };
     assert_eq!(
-        aver::proof_kernel::verdict(&script("+")),
+        aver::proof_kernel::verdict(&script("int")),
         Ok("k".to_string())
     );
-    assert!(aver::proof_kernel::verdict(&script("++")).is_err());
-    assert!(aver::proof_kernel::verdict(&script("+.")).is_err());
+    for ty in ["str", "float"] {
+        assert_eq!(
+            aver::proof_kernel::verdict(&script(ty)),
+            Err("step proof: ring needs two Int terms".to_string()),
+            "{ty}"
+        );
+    }
 }
 
 #[test]
@@ -3309,16 +3316,16 @@ fn a_cited_builtin_fact_is_checked_with_the_law_and_refused_when_mutated() {
             "a fact stated with a different right side",
             swap(
                 "joined.lengthAdds",
-                "(fact List.len.ofConcat ((a (tlist)) (b (tlist))) (none) (bi List.len (bi List.concat (v a) (v b))) (op + (bi List.len (v a)) (bi List.len (v b)))",
-                "(fact List.len.ofConcat ((a (tlist)) (b (tlist))) (none) (bi List.len (bi List.concat (v a) (v b))) (op + (bi List.len (v a)) (bi List.len (v a)))",
+                "(fact List.len.ofConcat ((a (list (var T))) (b (list (var T)))) (none) (bi List.len (bi List.concat (v a) (v b))) (op + (bi List.len (v a)) (bi List.len (v b)))",
+                "(fact List.len.ofConcat ((a (list (var T))) (b (list (var T)))) (none) (bi List.len (bi List.concat (v a) (v b))) (op + (bi List.len (v a)) (bi List.len (v a)))",
             ),
         ),
         (
             "a fact whose induction is on a given not declared a list",
             swap(
                 "joined.regroups",
-                "(fact List.concat.assoc ((a (tlist))",
-                "(fact List.concat.assoc (a",
+                "(fact List.concat.assoc ((a (list (var T)))",
+                "(fact List.concat.assoc ((a int)",
             ),
         ),
         (
@@ -3333,8 +3340,8 @@ fn a_cited_builtin_fact_is_checked_with_the_law_and_refused_when_mutated() {
             "a fact on a count stated without its when",
             swap(
                 "joined.takesNothingBelowOne",
-                "(fact List.take.nonPositive ((l (tlist)) n) (op <= (v n) (i 0))",
-                "(fact List.take.nonPositive ((l (tlist)) n) (none)",
+                "(fact List.take.nonPositive ((l (list (var T))) (n int)) (op <= (v n) (i 0))",
+                "(fact List.take.nonPositive ((l (list (var T))) (n int)) (none)",
             ),
         ),
         ("a fact cited before a fact its proof cites", {
@@ -4096,8 +4103,8 @@ fn a_cited_map_fact_is_checked_with_its_when_and_refused_when_mutated() {
             "a fact stated without its when",
             swap(
                 "store.leavesOtherKeys",
-                "(fact Map.get.afterSetOther (m k v k2) (op != (v k) (v k2))",
-                "(fact Map.get.afterSetOther (m k v k2) (none)",
+                "(fact Map.get.afterSetOther ((m (map (var K eq) (var V))) (k (var K eq)) (v (var V)) (k2 (var K eq))) (op != (v k) (v k2))",
+                "(fact Map.get.afterSetOther ((m (map (var K eq) (var V))) (k (var K eq)) (v (var V)) (k2 (var K eq))) (none)",
             ),
         ),
         (
@@ -4388,14 +4395,15 @@ const PICK_FALSE_LAWS: [&str; 5] = [
 
 /// A script for the false law that a list of one element always holds it,
 /// with nothing saying what the element is. It reads the element in front as
-/// found, through a rule `list.contains.cons` and `x == x`, which the kernel
-/// takes as true of every term; for a Float (`0.0 / 0.0`) the VM answers
-/// otherwise. No rule finds the element in front, so both kernels refuse it.
-const CONTAINS_FINDS_ITSELF: &str = "(steps 13
-  (obligation containsFloat.alwaysFindsSelf (x) (none)
+/// found, through a rule `list.contains.cons` and `x == x`; for a Float
+/// (`0.0 / 0.0`) the VM answers otherwise. No rule finds the element in
+/// front, and `x == x` is true only of a type whose `==` is equality, so
+/// both kernels refuse it.
+const CONTAINS_FINDS_ITSELF: &str = "(steps 14
+  (obligation containsFloat.alwaysFindsSelf ((x float)) (none)
     (bi List.contains (bi List.prepend (v x) (list)) (v x))
     (b true))
-  (defs) (consts) (sums) (laws)
+  (defs) (consts) (sums) (recs) (sigs) (laws)
   (proof
     (trans
       ((bi List.contains (bi List.prepend (v x) (list)) (v x))

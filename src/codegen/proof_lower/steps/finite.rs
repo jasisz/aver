@@ -123,6 +123,42 @@ pub(crate) fn finite_givens(inputs: &ProofLowerInputs, t: &LawTheorem) -> Vec<(S
 
 /// The givens whose type is a `List`.
 /// The givens of type Int: what an Int induction may count down.
+/// The type of each given of law `t`, resolved against its module so the
+/// script names every declared type the way it names its constructors.
+pub(crate) fn given_types(inputs: &ProofLowerInputs, t: &LawTheorem) -> Vec<(String, Type)> {
+    let scope = inputs.symbol_table.fn_entry(t.fn_id).key.scope_str();
+    t.quantifiers
+        .iter()
+        .map(|q| {
+            let QuantifierType::Plain(ty) = &q.binder_type;
+            (
+                q.name.clone(),
+                qualify(inputs, &crate::types::parse_type_str(ty), scope),
+            )
+        })
+        .collect()
+}
+
+/// `ty` with every named type resolved to its identity in the program, as
+/// seen from module `scope`; a name that does not resolve is kept as
+/// written.
+pub(crate) fn qualify(inputs: &ProofLowerInputs, ty: &Type, scope: Option<&str>) -> Type {
+    let q = |t: &Type| qualify(inputs, t, scope);
+    match ty {
+        Type::Named { id: None, name } => Type::Named {
+            id: inputs.symbol_table.resolve_type_id_in(name, scope),
+            name: name.clone(),
+        },
+        Type::List(a) => Type::List(Box::new(q(a))),
+        Type::Option(a) => Type::Option(Box::new(q(a))),
+        Type::Vector(a) => Type::Vector(Box::new(q(a))),
+        Type::Result(a, b) => Type::Result(Box::new(q(a)), Box::new(q(b))),
+        Type::Map(a, b) => Type::Map(Box::new(q(a)), Box::new(q(b))),
+        Type::Tuple(xs) => Type::Tuple(xs.iter().map(q).collect()),
+        other => other.clone(),
+    }
+}
+
 pub(crate) fn int_givens(t: &LawTheorem) -> Vec<String> {
     t.quantifiers
         .iter()
@@ -131,42 +167,6 @@ pub(crate) fn int_givens(t: &LawTheorem) -> Vec<String> {
             matches!(crate::types::parse_type_str(ty), crate::ast::Type::Int)
         })
         .map(|q| q.name.clone())
-        .collect()
-}
-
-/// What a list given holds, as a proof plan's goal tells it
-/// (`Kernel.Proof.Ty`): a finite type, Int, a list of something, or other.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum ElemType {
-    Fin(Finite),
-    Int,
-    List(Box<ElemType>),
-    Other,
-}
-
-fn elem_type(inputs: &ProofLowerInputs, ty: &Type, scope: Option<&str>) -> ElemType {
-    match ty {
-        Type::Int => ElemType::Int,
-        Type::List(inner) => ElemType::List(Box::new(elem_type(inputs, inner, scope))),
-        _ => finite_of(inputs, ty, scope, 4).map_or(ElemType::Other, ElemType::Fin),
-    }
-}
-
-/// The list givens of law `t`, each with the type of its elements.
-pub(crate) fn list_elem_types(
-    inputs: &ProofLowerInputs,
-    t: &LawTheorem,
-) -> Vec<(String, ElemType)> {
-    let scope = inputs.symbol_table.fn_entry(t.fn_id).key.scope_str();
-    t.quantifiers
-        .iter()
-        .filter_map(|q| {
-            let QuantifierType::Plain(ty) = &q.binder_type;
-            match crate::types::parse_type_str(ty) {
-                Type::List(inner) => Some((q.name.clone(), elem_type(inputs, &inner, scope))),
-                _ => None,
-            }
-        })
         .collect()
 }
 

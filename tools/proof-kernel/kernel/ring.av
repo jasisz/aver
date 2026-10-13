@@ -30,7 +30,7 @@ verify samePolynomial
     samePolynomial(Term.TOp("*", Term.TOp("+", Term.TVar("a"), Term.TInt(1)), Term.TVar("b")), Term.TOp("+", Term.TOp("*", Term.TVar("b"), Term.TVar("a")), Term.TVar("b"))) => true
     samePolynomial(Term.TOp("-", Term.TVar("a"), Term.TVar("a")), Term.TInt(0)) => true
     samePolynomial(Term.TOp("+", Term.TVar("a"), Term.TVar("a")), Term.TVar("a")) => false
-    samePolynomial(Term.TOp("++", Term.TVar("a"), Term.TVar("b")), Term.TOp("++", Term.TVar("b"), Term.TVar("a"))) => false
+    samePolynomial(Term.TOp("/", Term.TVar("a"), Term.TVar("b")), Term.TOp("/", Term.TVar("b"), Term.TVar("a"))) => false
     samePolynomial(Term.TNeg(Term.TCall("f", [Term.TVar("x")])), Term.TOp("*", Term.TInt(0 - 1), Term.TCall("f", [Term.TVar("x")]))) => true
 
 fn readPoly(t: Term, atoms: List<Term>) -> Read

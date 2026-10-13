@@ -10,6 +10,11 @@ Two entries under `tools/proof-kernel/` are compiled with
   plan writes. They live in their own tree so the kernel's stays exactly
   the kernel.
 
+Before either, the kernel's table of builtin signatures and of the type
+shapes whose `==` is equality (`tools/proof-kernel/kernel/builtins.av`) is
+written from the compiler's own type checker by `aver kernel-builtins`, so
+the kernel carries no second copy of them.
+
 Each one's generated modules land in `aver_generated/` plus
 `runtime_support.rs`, with every `crate::` path re-rooted under the tree's
 own module. The hand-written `mod.rs` of each tree is its only interface:
@@ -35,6 +40,14 @@ KERNEL_DIR = REPO_ROOT / "tools" / "proof-kernel"
 GENERATED_PARTS = ["aver_generated", "runtime_support.rs"]
 # (entry under tools/proof-kernel, the crate module it is installed as)
 TREES = [("embed.av", "proof_kernel"), ("embed_std.av", "proof_std")]
+BUILTINS = KERNEL_DIR / "kernel" / "builtins.av"
+
+
+def builtins_source(aver_bin: Path) -> str:
+    """The kernel's builtin table, as the compiler writes it."""
+    return subprocess.run(
+        [str(aver_bin), "kernel-builtins"], cwd=REPO_ROOT, check=True, capture_output=True, text=True
+    ).stdout
 
 
 def run(command: list[str], cwd: Path = REPO_ROOT) -> None:
@@ -115,6 +128,8 @@ def rs_files(root: Path) -> set[Path]:
 
 def check(aver_bin: Path) -> None:
     differences = []
+    if builtins_source(aver_bin) != BUILTINS.read_text():
+        differences.append(f"content differs: {BUILTINS.relative_to(REPO_ROOT)}")
     for entry, module in TREES:
         installed = REPO_ROOT / "src" / module
         with tempfile.TemporaryDirectory(prefix="aver-proof-kernel-check-") as temp:
@@ -148,6 +163,8 @@ def main() -> None:
     if args.check:
         check(aver_bin)
         return
+    BUILTINS.write_text(builtins_source(aver_bin))
+    print(f"Wrote {BUILTINS.relative_to(REPO_ROOT)}")
     for entry, module in TREES:
         installed = REPO_ROOT / "src" / module
         for part in GENERATED_PARTS:

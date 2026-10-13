@@ -4185,6 +4185,7 @@ pub(crate) fn empty_script() -> crate::ir::proof_steps::Script {
         obligation: Obligation {
             key: String::new(),
             givens: Vec::new(),
+            types: Vec::new(),
             finite: Vec::new(),
             lists: Vec::new(),
             ints: Vec::new(),
@@ -4195,7 +4196,8 @@ pub(crate) fn empty_script() -> crate::ir::proof_steps::Script {
         defs: Vec::new(),
         consts: Vec::new(),
         laws: Vec::new(),
-        sums: Vec::new(),
+        decls: Default::default(),
+        sigs: Vec::new(),
         plan: None,
         proof: Proof::Refl(term::boolean(true)),
     }

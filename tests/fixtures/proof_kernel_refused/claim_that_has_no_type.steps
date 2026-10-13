@@ -1,0 +1,9 @@
+(steps 14
+ (obligation k () (none) (op + (i 1) (b true)) (op + (i 1) (b true)))
+ (defs)
+ (consts)
+ (sums)
+ (recs)
+ (sigs)
+ (laws)
+ (proof (refl (op + (i 1) (b true)))))

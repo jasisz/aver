@@ -1,0 +1,20 @@
+(steps 14
+ (obligation floatEqualsItself ((x float)) (none)
+  (op == (v x) (v x))
+  (b true))
+ (defs
+  (def f ((y _)) _ () (v y)))
+ (consts)
+ (sums)
+ (recs)
+ (sigs)
+ (laws)
+ (proof
+  (trans
+   ((op == (v x) (v x))
+    (op == (call f (v x)) (v x))
+    (op == (call f (v x)) (call f (v x)))
+    (b true))
+   (symm (congr (op == (hole) (v x)) (unfold f 0 ((v x)) ())))
+   (symm (congr (op == (call f (v x)) (hole)) (unfold f 0 ((v x)) ())))
+   (rule bool.beq.refl ((a (call f (v x))))))))

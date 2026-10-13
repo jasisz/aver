@@ -918,6 +918,11 @@ impl SymbolTable {
     /// Borrow a type entry when this table contains the canonical identity.
     /// Foreign table-local vector positions are not interpreted as this
     /// table's declarations.
+    /// Every declared type with this bare name, across modules.
+    pub fn type_ids_named(&self, bare: &str) -> Vec<TypeId> {
+        self.type_name_index.get(bare).cloned().unwrap_or_default()
+    }
+
     pub fn type_entry_if_present(&self, id: TypeId) -> Option<&TypeEntry> {
         if let Some(position) = self.type_positions.get(&id) {
             return self.types.get(*position);

@@ -1,0 +1,12 @@
+(steps 14
+ (obligation eqVarAtFloat ((x float)) (none)
+  (op == (list) (list))
+  (b true))
+ (defs)
+ (consts)
+ (sums)
+ (recs)
+ (sigs)
+ (laws
+  (law k ((a (var T)) (b (list (var T eq)))) (none) (op == (v b) (v b)) (b true)))
+ (proof (law k ((a (v x)) (b (list))))))

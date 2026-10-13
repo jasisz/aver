@@ -1,0 +1,12 @@
+(steps 14
+ (obligation k () (none) (i 0) (i 1))
+ (defs)
+ (consts)
+ (sums)
+ (recs)
+ (sigs)
+ (laws
+  (law one.isOnly ((x (named One))) (none) (v x) (ctor One.Only)))
+ (proof (trans ((i 0) (ctor One.Only) (i 1))
+  (law one.isOnly ((x (i 0))))
+  (symm (law one.isOnly ((x (i 1))))))))

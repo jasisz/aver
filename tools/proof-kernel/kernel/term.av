@@ -2,8 +2,29 @@ module Term
     intent =
         "Terms of the proof-step data: Aver expressions as the compiler wrote them."
         "Variables are names; a hole marks the rewrite position of a congruence step."
-    exposes [Term, Arm, Field, Pat, Binding, Eqn, Fin, FinField, isHole, bind]
+    exposes [Term, Arm, Field, Pat, Binding, Eqn, Fin, FinField, Ty, TypedVar, isHole, bind, typed]
     effects []
+
+type Ty
+    TyInt
+    TyBool
+    TyStr
+    TyFloat
+    TyUnit
+    TyList(Ty)
+    TyOption(Ty)
+    TyResult(Ty, Ty)
+    TyMap(Ty, Ty)
+    TyVector(Ty)
+    TyTuple(List<Ty>)
+    TyNamed(String)
+    TyAny
+    TyVar(String, Bool)
+    TyRigid(String, Bool)
+
+record TypedVar
+    name: String
+    ty: Ty
 
 type Term
     TInt(Int)
@@ -76,3 +97,10 @@ fn bind(name: String, value: Term) -> Binding
 
 verify bind
     bind("x", Term.TInt(1)) => Binding(name = "x", value = Term.TInt(1))
+
+fn typed(name: String, ty: Ty) -> TypedVar
+    ? "A variable with its type."
+    TypedVar(name = name, ty = ty)
+
+verify typed
+    typed("n", Ty.TyInt) => TypedVar(name = "n", ty = Ty.TyInt)

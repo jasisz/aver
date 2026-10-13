@@ -455,11 +455,11 @@ fn letBindings(d: Def, args: List<Term>) -> Result<List<Binding>, String>
     ? "What opening d at args binds, in the kernel's order: the parameters, then each local binding under everything before it, the latest first."
     match List.len(d.params) == List.len(args)
         false -> Result.Err("{d.name} takes {List.len(d.params)} arguments")
-        true -> bindLets(d.lets, List.reverse(zipBind(d.params, args)))
+        true -> bindLets(d.lets, List.reverse(zipBind(Kernel.Proof.givenNames(d.params), args)))
 
 verify letBindings
-    letBindings(Def(name = "f", returnsBool = false, params = ["a"], lets = [Kernel.Term.bind("b", Term.TOp("+", Term.TVar("a"), Term.TInt(1)))], body = Term.TVar("b")), [Term.TInt(1)]) => Result.Ok([Kernel.Term.bind("b", Term.TOp("+", Term.TInt(1), Term.TInt(1))), Kernel.Term.bind("a", Term.TInt(1))])
-    letBindings(Def(name = "f", returnsBool = false, params = ["a"], lets = [], body = Term.TVar("a")), []) => Result.Err("f takes 1 arguments")
+    letBindings(Def(name = "f", params = [Kernel.Term.typed("a", Ty.TyAny)], ret = Ty.TyAny, lets = [Kernel.Term.bind("b", Term.TOp("+", Term.TVar("a"), Term.TInt(1)))], body = Term.TVar("b")), [Term.TInt(1)]) => Result.Ok([Kernel.Term.bind("b", Term.TOp("+", Term.TInt(1), Term.TInt(1))), Kernel.Term.bind("a", Term.TInt(1))])
+    letBindings(Def(name = "f", params = [Kernel.Term.typed("a", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TVar("a")), []) => Result.Err("f takes 1 arguments")
 
 fn bindLets(lets: List<Binding>, outer: List<Binding>) -> Result<List<Binding>, String>
     ? "Each local binding with what comes before it substituted, put in front."
@@ -546,7 +546,7 @@ fn unfoldAt(s: Scope, d: Def, args: List<Term>, subject: Term, arms: List<Arm>, 
         Option.Some((k, arm, parts)) -> Result.Ok(Option.Some(Rw(to = Kernel.Subst.subst(arm.body, List.concat(patternBinds(arm.pattern, parts), outer))?, proof = Proof.PUnfold(d.name, k, args, parts, [r.proof]))))
 
 verify unfoldAt
-    unfoldAt(Scope(defs = [], known = []), Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TInt(0)), [], Term.TInt(1), [Arm(pattern = Pat.PLit(Term.TInt(1)), body = Term.TInt(7))], [], 5) => Result.Ok(Option.Some(Rw(to = Term.TInt(7), proof = Proof.PUnfold("f", 1, [], [], [Proof.PRefl(Term.TInt(1))]))))
+    unfoldAt(Scope(defs = [], known = []), Def(name = "f", params = [], ret = Ty.TyAny, lets = [], body = Term.TInt(0)), [], Term.TInt(1), [Arm(pattern = Pat.PLit(Term.TInt(1)), body = Term.TInt(7))], [], 5) => Result.Ok(Option.Some(Rw(to = Term.TInt(7), proof = Proof.PUnfold("f", 1, [], [], [Proof.PRefl(Term.TInt(1))]))))
 
 fn selectArm(arms: List<Arm>, value: Term) -> Option<Tuple<Int, Arm, List<Term>>>
     ? "The arm a literal or a list value decides, counted from 1, with what the kernel's unfold takes as binders: the parts of a cell, nothing for a literal, the value itself for a catch-all; none when an earlier arm cannot be ruled out."
@@ -674,10 +674,10 @@ fn taken(goal: Goal) -> List<String>
     ? "Every name a goal already uses, for fresh to avoid: the givens, the variables of the claim and of the `when`, the hypothesis `when` itself, the module-level bindings, the list variables, and each hypothesis's name and variables."
     ob = goal.obligation
     vars = Kernel.Subst.freeVarsAll(List.concat([ob.lhs, ob.rhs], ob.premise))
-    List.concat(List.concat(List.concat(ob.givens, vars), List.concat(List.concat(whenLabel(goal), constNames(goal.consts)), goal.lists)), hypNames(goal.hyps))
+    List.concat(List.concat(List.concat(Kernel.Proof.givenNames(ob.givens), vars), List.concat(List.concat(whenLabel(goal), constNames(goal.consts)), goal.lists)), hypNames(goal.hyps))
 
 verify taken
-    taken(Goal(obligation = Law(key = "k", givens = ["xs"], premise = [Term.TOp(">=", Term.TBi("List.len", [Term.TVar("xs")]), Term.TVar("n"))], lhs = Term.TVar("xs"), rhs = Term.TVar("top")), finite = [], lists = ["xs"], ints = [], defs = [], consts = [Const(name = "top", value = Term.TInt(1))], sums = [], laws = [], facts = [], hyps = [], listElems = [])) => ["xs", "xs", "top", "xs", "n", "when", "top", "xs"]
+    taken(Goal(obligation = Law(key = "k", givens = [Kernel.Term.typed("xs", Ty.TyAny)], premise = [Term.TOp(">=", Term.TBi("List.len", [Term.TVar("xs")]), Term.TVar("n"))], lhs = Term.TVar("xs"), rhs = Term.TVar("top")), finite = [], lists = ["xs"], ints = [], defs = [], consts = [Const(name = "top", ty = Ty.TyAny, value = Term.TInt(1))], sums = [], recs = [], laws = [], facts = [], hyps = [])) => ["xs", "xs", "top", "xs", "n", "when", "top", "xs"]
     taken(goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)))) => []
     fresh("when", taken(goalFor(Law(key = "k", givens = [], premise = [Term.TBool(true)], lhs = Term.TInt(1), rhs = Term.TInt(1))))) => "when1"
 
@@ -707,14 +707,15 @@ fn constNames(cs: List<Const>) -> List<String>
         [c, ..rest] -> List.prepend(c.name, constNames(rest))
 
 verify constNames
-    constNames([Const(name = "top", value = Term.TInt(1))]) => ["top"]
+    constNames([Const(name = "top", ty = Ty.TyAny, value = Term.TInt(1))]) => ["top"]
 
 fn goalFor(law: Law) -> Goal
-    ? "A goal for law with nothing else in it: no definitions, laws, hypotheses or givens of special type. For a plan's examples, so they keep reading the same when Goal gains a field."
-    Goal(obligation = law, finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [], hyps = [], listElems = [])
+    ? "A goal for law with nothing else in it: no definitions, laws or hypotheses, its givens listed by what their types are. For a plan's examples, so they keep reading the same when Goal gains a field."
+    Kernel.Wire.withGivens(Goal(obligation = Law.update(law, givens = []), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], recs = [], laws = [], facts = [], hyps = []), law.givens)
 
 verify goalFor
     goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))).hyps => []
+    goalFor(Law(key = "k", givens = [Kernel.Term.typed("xs", Ty.TyList(Ty.TyInt))], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))).lists => ["xs"]
 
 fn readGoal(text: String) -> Result<Goal, String>
     ? "The goal step data states, its proof left out: how the compiler hands a plan its goal."

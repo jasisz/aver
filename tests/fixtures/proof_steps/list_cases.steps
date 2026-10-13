@@ -1,9 +1,11 @@
-(steps 13
- (obligation isEmpty.falseWhenLong ((xs (tlist))) (op >= (bi List.len (v xs)) (i 1)) (call isEmpty (v xs)) (b false))
+(steps 14
+ (obligation isEmpty.falseWhenLong ((xs (list int))) (op >= (bi List.len (v xs)) (i 1)) (call isEmpty (v xs)) (b false))
  (defs
-  (def isEmpty (xs) () (match (v xs) (arm (pnil) (b true)) (arm (pcons h t) (b false))) bool))
+  (def isEmpty ((xs (list int))) bool () (match (v xs) (arm (pnil) (b true)) (arm (pcons h t) (b false)))))
  (consts)
  (sums)
+ (recs)
+ (sigs)
  (laws)
  (proof (listcases xs (call isEmpty (v xs)) (b false)
   (absurd (trans ((b true) (op >= (bi List.len (list)) (i 1)) (op >= (i 0) (i 1)) (b false)) (symm (hyp when)) (congr (op >= (hole) (i 1)) (rule list.len.nil ())) (compute (op >= (i 0) (i 1)) (b false))) (call isEmpty (list)) (b false))

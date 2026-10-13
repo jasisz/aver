@@ -1,0 +1,24 @@
+(steps 14
+ (obligation stringCommutes () (none)
+  (op + (s "a") (s "b"))
+  (op + (s "b") (s "a")))
+ (defs
+  (def f ((x _)) _ () (v x)))
+ (consts)
+ (sums)
+ (recs)
+ (sigs)
+ (laws)
+ (proof
+  (trans
+   ((op + (s "a") (s "b"))
+    (op + (call f (s "a")) (s "b"))
+    (op + (call f (s "a")) (call f (s "b")))
+    (op + (call f (s "b")) (call f (s "a")))
+    (op + (s "b") (call f (s "a")))
+    (op + (s "b") (s "a")))
+   (symm (congr (op + (hole) (s "b")) (unfold f 0 ((s "a")) ())))
+   (symm (congr (op + (call f (s "a")) (hole)) (unfold f 0 ((s "b")) ())))
+   (rule int.add_comm ((a (call f (s "a"))) (b (call f (s "b")))))
+   (congr (op + (hole) (call f (s "a"))) (unfold f 0 ((s "b")) ()))
+   (congr (op + (s "b") (hole)) (unfold f 0 ((s "a")) ())))))

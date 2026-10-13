@@ -7,7 +7,7 @@ module Std
         "returns proof steps or why it does not apply; a callback such as splitBool's gets a Goal too."
         "Nothing here is trusted: the kernel checks every step a plan writes, like any other proof."
     exposes [cases, assume, close, splitBool, Tactic, script, scriptAnswer, goalAt]
-    depends [Kernel.Term, Kernel.Proof, Kernel.Lib, Kernel.Finite, Kernel.Subst, Kernel.Wire, Kernel.Sexp, Kernel.Decode]
+    depends [Kernel.Term, Kernel.Proof, Kernel.Lib, Kernel.Finite, Kernel.Subst, Kernel.Wire, Kernel.Sexp, Kernel.Decode, Kernel.Types]
     effects []
     plans [cases]
 
@@ -30,7 +30,7 @@ fn cases(goal: Goal) -> Result<Proof, String>
 
 verify cases
     cases(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)))) => Result.Err("no given of finite type")
-    cases(Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = ["b"], premise = [], lhs = Term.TVar("b"), rhs = Term.TVar("b"))), finite = [Given(name = "b", fin = Fin.FBool)])) => Result.Ok(Proof.PEnum("b", Term.TVar("b"), Term.TVar("b"), [Proof.PTrans([Term.TBool(false), Term.TBool(false), Term.TBool(false)], [Proof.PRefl(Term.TBool(false)), Proof.PSymm(Proof.PRefl(Term.TBool(false)))]), Proof.PTrans([Term.TBool(true), Term.TBool(true), Term.TBool(true)], [Proof.PRefl(Term.TBool(true)), Proof.PSymm(Proof.PRefl(Term.TBool(true)))])]))
+    cases(Kernel.Lib.goalFor(Law(key = "k", givens = [Kernel.Term.typed("b", Ty.TyBool)], premise = [], lhs = Term.TVar("b"), rhs = Term.TVar("b")))) => Result.Ok(Proof.PEnum("b", Term.TVar("b"), Term.TVar("b"), [Proof.PTrans([Term.TBool(false), Term.TBool(false), Term.TBool(false)], [Proof.PRefl(Term.TBool(false)), Proof.PSymm(Proof.PRefl(Term.TBool(false)))]), Proof.PTrans([Term.TBool(true), Term.TBool(true), Term.TBool(true)], [Proof.PRefl(Term.TBool(true)), Proof.PSymm(Proof.PRefl(Term.TBool(true)))])]))
 
 fn caseCount(gs: List<Given>) -> Int
     ? "How many cases splitting every given writes."
@@ -77,7 +77,7 @@ fn at(goal: Goal, v: String, x: Term) -> Result<Goal, String>
     Result.Ok(Goal.update(goal, obligation = claim, finite = withoutGiven(goal.finite, v), hyps = substHyps(goal.hyps, v, x)?))
 
 verify at
-    at(Kernel.Lib.goalFor(Law(key = "k", givens = ["b"], premise = [], lhs = Term.TVar("b"), rhs = Term.TInt(1))), "b", Term.TBool(true)) => Result.Ok(Kernel.Lib.goalFor(Law(key = "k", givens = ["b"], premise = [], lhs = Term.TBool(true), rhs = Term.TInt(1))))
+    at(Kernel.Lib.goalFor(Law(key = "k", givens = [Kernel.Term.typed("b", Ty.TyAny)], premise = [], lhs = Term.TVar("b"), rhs = Term.TInt(1))), "b", Term.TBool(true)) => Result.Ok(Kernel.Lib.goalFor(Law(key = "k", givens = [Kernel.Term.typed("b", Ty.TyAny)], premise = [], lhs = Term.TBool(true), rhs = Term.TInt(1))))
 
 fn withoutGiven(gs: List<Given>, v: String) -> List<Given>
     ? "The finite givens other than v."
@@ -128,7 +128,7 @@ fn close(goal: Goal) -> Result<Proof, String>
 
 verify close
     close(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2)))) => Result.Err("the sides stop at (i 1) and (i 2)")
-    close(assume(Kernel.Lib.goalFor(Law(key = "k", givens = ["x"], premise = [], lhs = Term.TVar("x"), rhs = Term.TInt(1))), "h", Term.TVar("x"), Term.TInt(1))) => Result.Ok(Proof.PTrans([Term.TVar("x"), Term.TInt(1), Term.TInt(1)], [Proof.PHyp("h"), Proof.PSymm(Proof.PRefl(Term.TInt(1)))]))
+    close(assume(Kernel.Lib.goalFor(Law(key = "k", givens = [Kernel.Term.typed("x", Ty.TyAny)], premise = [], lhs = Term.TVar("x"), rhs = Term.TInt(1))), "h", Term.TVar("x"), Term.TInt(1))) => Result.Ok(Proof.PTrans([Term.TVar("x"), Term.TInt(1), Term.TInt(1)], [Proof.PHyp("h"), Proof.PSymm(Proof.PRefl(Term.TInt(1)))]))
 
 fn rounds(s: Scope, hyps: List<Hyp>, t: Term, n: Int) -> Result<Rw, String>
     ? "Evaluate, rewrite once by a hypothesis, and repeat while n lasts."
@@ -264,7 +264,7 @@ fn splitBool(goal: Goal, on: Term, next: Fn(Goal) -> Result<Proof, String>) -> R
     Result.Ok(Proof.PCases(on, h, yes, no))
 
 verify splitBool
-    splitBool(Kernel.Lib.goalFor(Law(key = "k", givens = ["x"], premise = [], lhs = Term.TOp("<", Term.TVar("x"), Term.TInt(0)), rhs = Term.TOp("<", Term.TVar("x"), Term.TInt(0)))), Term.TOp("<", Term.TVar("x"), Term.TInt(0)), close) => Result.Ok(Proof.PCases(Term.TOp("<", Term.TVar("x"), Term.TInt(0)), "c", Proof.PTrans([Term.TOp("<", Term.TVar("x"), Term.TInt(0)), Term.TBool(true), Term.TOp("<", Term.TVar("x"), Term.TInt(0))], [Proof.PHyp("c"), Proof.PSymm(Proof.PHyp("c"))]), Proof.PTrans([Term.TOp("<", Term.TVar("x"), Term.TInt(0)), Term.TBool(false), Term.TOp("<", Term.TVar("x"), Term.TInt(0))], [Proof.PHyp("c"), Proof.PSymm(Proof.PHyp("c"))])))
+    splitBool(Kernel.Lib.goalFor(Law(key = "k", givens = [Kernel.Term.typed("x", Ty.TyAny)], premise = [], lhs = Term.TOp("<", Term.TVar("x"), Term.TInt(0)), rhs = Term.TOp("<", Term.TVar("x"), Term.TInt(0)))), Term.TOp("<", Term.TVar("x"), Term.TInt(0)), close) => Result.Ok(Proof.PCases(Term.TOp("<", Term.TVar("x"), Term.TInt(0)), "c", Proof.PTrans([Term.TOp("<", Term.TVar("x"), Term.TInt(0)), Term.TBool(true), Term.TOp("<", Term.TVar("x"), Term.TInt(0))], [Proof.PHyp("c"), Proof.PSymm(Proof.PHyp("c"))]), Proof.PTrans([Term.TOp("<", Term.TVar("x"), Term.TInt(0)), Term.TBool(false), Term.TOp("<", Term.TVar("x"), Term.TInt(0))], [Proof.PHyp("c"), Proof.PSymm(Proof.PHyp("c"))])))
 
 type Tactic
     Auto
@@ -314,9 +314,9 @@ fn runScript(goal: Goal, t: Tactic, answers: List<Answer>) -> Result<Proof, Stop
     within(Node(goal = goal, path = "", from = [], depth = 0), t, answers)
 
 verify runScript
-    runScript(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), Tactic.Auto, []) => Result.Err(Stop.Ask("auto\n(sub () (elems) (from) (hyps) (none) (i 1) (i 1))"))
-    runScript(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), Tactic.Auto, [Answer(key = "auto\n(sub () (elems) (from) (hyps) (none) (i 1) (i 1))", reply = Reply.Closed(0))]) => Result.Ok(Proof.PHyp("#0"))
-    runScript(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), Tactic.Plan("p"), [Answer(key = "plan p\n(sub () (elems) (from) (hyps) (none) (i 1) (i 1))", reply = Reply.Declined("no"))]) => Result.Err(Stop.Refused("Plan(p): no"))
+    runScript(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), Tactic.Auto, []) => Result.Err(Stop.Ask("auto\n(sub () (from) (hyps) (none) (i 1) (i 1))"))
+    runScript(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), Tactic.Auto, [Answer(key = "auto\n(sub () (from) (hyps) (none) (i 1) (i 1))", reply = Reply.Closed(0))]) => Result.Ok(Proof.PHyp("#0"))
+    runScript(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), Tactic.Plan("p"), [Answer(key = "plan p\n(sub () (from) (hyps) (none) (i 1) (i 1))", reply = Reply.Declined("no"))]) => Result.Err(Stop.Refused("Plan(p): no"))
 
 fn within(n: Node, t: Tactic, answers: List<Answer>) -> Result<Proof, Stop>
     ? "Run the script t at one node of the proof."
@@ -444,7 +444,7 @@ fn caseNode(n: Node, v: String, x: Term) -> Result<Node, Stop>
         Result.Err(why) -> Result.Err(Stop.Refused("{n.path}: {why}"))
 
 verify caseNode
-    caseNode(Node(goal = Kernel.Lib.goalFor(Law(key = "k", givens = ["b"], premise = [], lhs = Term.TVar("b"), rhs = Term.TVar("b"))), path = "Cases", from = [], depth = 0), "b", Term.TBool(true)) => Result.Ok(Node(goal = Kernel.Lib.goalFor(Law(key = "k", givens = ["b"], premise = [], lhs = Term.TBool(true), rhs = Term.TBool(true))), path = "Cases/b = true", from = [], depth = 0))
+    caseNode(Node(goal = Kernel.Lib.goalFor(Law(key = "k", givens = [Kernel.Term.typed("b", Ty.TyAny)], premise = [], lhs = Term.TVar("b"), rhs = Term.TVar("b"))), path = "Cases", from = [], depth = 0), "b", Term.TBool(true)) => Result.Ok(Node(goal = Kernel.Lib.goalFor(Law(key = "k", givens = [Kernel.Term.typed("b", Ty.TyAny)], premise = [], lhs = Term.TBool(true), rhs = Term.TBool(true))), path = "Cases/b = true", from = [], depth = 0))
 
 fn valueText(x: Term) -> String
     ? "A value of a finite type as Aver writes it, for a path; a record or tuple value is only described."
@@ -467,7 +467,7 @@ fn listStep(n: Node, v: String, h: String, tl: String, nil: Tactic, cons: Tactic
         Option.None -> listCases(n, v, h, tl, nil, cons, induct, used, answers)
 
 verify listStep
-    listStep(Node(goal = Kernel.Lib.goalFor(Law(key = "k", givens = ["xs"], premise = [], lhs = Term.TVar("xs"), rhs = Term.TVar("xs"))), path = "Split(xs)", from = [], depth = 0), "xs", "h", "t", Tactic.Auto, Tactic.Auto, false, []) => Result.Err(Stop.Refused("Split(xs): xs is not a list variable here"))
+    listStep(Node(goal = Kernel.Lib.goalFor(Law(key = "k", givens = [Kernel.Term.typed("xs", Ty.TyAny)], premise = [], lhs = Term.TVar("xs"), rhs = Term.TVar("xs"))), path = "Split(xs)", from = [], depth = 0), "xs", "h", "t", Tactic.Auto, Tactic.Auto, false, []) => Result.Err(Stop.Refused("Split(xs): xs is not a list variable here"))
 
 fn listStepRefusal(goal: Goal, v: String, h: String, tl: String, induct: Bool, used: List<String>) -> Option<String>
     ? "Why the list split or induction cannot be written, if it cannot."
@@ -481,9 +481,9 @@ fn listStepRefusal(goal: Goal, v: String, h: String, tl: String, induct: Bool, u
             false -> Option.None
 
 verify listStepRefusal
-    listStepRefusal(Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = ["xs"], premise = [], lhs = Term.TVar("xs"), rhs = Term.TVar("xs"))), lists = ["xs"]), "xs", "xs", "t", false, ["xs"]) => Option.Some("the name xs is already taken")
-    listStepRefusal(Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = ["xs"], premise = [Term.TVar("xs")], lhs = Term.TVar("xs"), rhs = Term.TVar("xs"))), lists = ["xs"]), "xs", "h", "t", true, ["xs"]) => Option.Some("a hypothesis or the `when` mentions xs, so the claim at the tail is not a hypothesis the kernel allows; use Split")
-    listStepRefusal(Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = ["xs"], premise = [], lhs = Term.TVar("xs"), rhs = Term.TVar("xs"))), lists = ["xs"]), "xs", "h", "h", false, ["xs"]) => Option.Some("the head and the tail need two names, not h twice")
+    listStepRefusal(Kernel.Lib.goalFor(Law(key = "k", givens = [Kernel.Term.typed("xs", Ty.TyList(Ty.TyInt))], premise = [], lhs = Term.TVar("xs"), rhs = Term.TVar("xs"))), "xs", "xs", "t", false, ["xs"]) => Option.Some("the name xs is already taken")
+    listStepRefusal(Kernel.Lib.goalFor(Law(key = "k", givens = [Kernel.Term.typed("xs", Ty.TyList(Ty.TyInt))], premise = [Term.TVar("xs")], lhs = Term.TVar("xs"), rhs = Term.TVar("xs"))), "xs", "h", "t", true, ["xs"]) => Option.Some("a hypothesis or the `when` mentions xs, so the claim at the tail is not a hypothesis the kernel allows; use Split")
+    listStepRefusal(Kernel.Lib.goalFor(Law(key = "k", givens = [Kernel.Term.typed("xs", Ty.TyList(Ty.TyInt))], premise = [], lhs = Term.TVar("xs"), rhs = Term.TVar("xs"))), "xs", "h", "h", false, ["xs"]) => Option.Some("the head and the tail need two names, not h twice")
 
 fn mentionedBelow(goal: Goal, v: String) -> Bool
     ? "Whether the `when` or a hypothesis mentions v."
@@ -516,7 +516,7 @@ fn listCases(n: Node, v: String, h: String, tl: String, nil: Tactic, cons: Tacti
         false -> Result.Ok(Proof.PListCases(v, ob.lhs, ob.rhs, nilProof, h, tl, consProof))
 
 verify listCases
-    listCases(Node(goal = Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = ["xs"], premise = [], lhs = Term.TVar("xs"), rhs = Term.TVar("xs"))), lists = ["xs"]), path = "", from = [], depth = 0), "xs", "h", "t", Tactic.Auto, Tactic.Auto, false, ["xs"], []) => Result.Err(Stop.Ask("auto\n(sub () (elems) (from) (hyps) (none) (list) (list))"))
+    listCases(Node(goal = Kernel.Lib.goalFor(Law(key = "k", givens = [Kernel.Term.typed("xs", Ty.TyList(Ty.TyInt))], premise = [], lhs = Term.TVar("xs"), rhs = Term.TVar("xs"))), path = "", from = [], depth = 0), "xs", "h", "t", Tactic.Auto, Tactic.Auto, false, ["xs"], []) => Result.Err(Stop.Ask("auto\n(sub () (from) (hyps) (none) (list) (list))"))
 
 fn substituted(n: Node, r: Result<Goal, String>) -> Result<Goal, Stop>
     ? "A goal with a variable replaced, or the refusal at this node."
@@ -547,57 +547,43 @@ verify withIhOf
     withIhOf(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), "ih", Result.Ok(Term.TVar("a")), Result.Ok(Term.TVar("b"))) => Result.Ok(Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), hyps = [Hyp(name = "ih", eqn = Eqn(lhs = Term.TVar("a"), rhs = Term.TVar("b")))]))
 
 fn withoutList(goal: Goal, v: String) -> Goal
-    ? "The goal once v is gone: no longer a given, a list variable or a list with an element type."
-    Goal.update(goal, obligation = Law.update(goal.obligation, givens = without(goal.obligation.givens, v)), lists = without(goal.lists, v), listElems = elemsWithout(goal.listElems, v))
+    ? "The goal once v is gone: no longer a given or a list variable."
+    Goal.update(goal, obligation = Law.update(goal.obligation, givens = withoutVar(goal.obligation.givens, v)), lists = without(goal.lists, v))
 
 verify withoutList
-    withoutList(Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = ["xs"], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), lists = ["xs"]), "xs").lists => []
+    withoutList(Kernel.Lib.goalFor(Law(key = "k", givens = [Kernel.Term.typed("xs", Ty.TyList(Ty.TyInt))], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), "xs") => Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)))
+
+fn withoutVar(gs: List<TypedVar>, v: String) -> List<TypedVar>
+    ? "The givens other than v."
+    match gs
+        [] -> []
+        [g, ..rest] -> match g.name == v
+            true -> withoutVar(rest, v)
+            false -> List.prepend(g, withoutVar(rest, v))
+
+verify withoutVar
+    withoutVar([Kernel.Term.typed("a", Ty.TyInt)], "a") => []
 
 fn opened(goal: Goal, v: String, h: String, tl: String) -> Goal
-    ? "The goal of the cell case: v gone, h and tl givens in its place; tl a list variable holding what v held, and h a list, an Int or a given of finite type when v's elements are one."
-    elem = elemOf(goal.listElems, v)
-    g = withoutList(goal, v)
-    base = Goal.update(g, obligation = Law.update(g.obligation, givens = List.concat(g.obligation.givens, [h, tl])), lists = List.prepend(tl, g.lists), listElems = withElem(g.listElems, tl, elem))
-    match elem
-        Option.Some(Ty.TyList(e)) -> Goal.update(base, lists = List.prepend(h, base.lists), listElems = List.prepend(ListElem(list = h, elem = e), base.listElems))
-        Option.Some(Ty.TyInt) -> Goal.update(base, ints = List.prepend(h, base.ints))
-        Option.Some(Ty.TyFin(f)) -> Goal.update(base, finite = List.prepend(Given(name = h, fin = f), base.finite))
-        _ -> base
+    ? "The goal of the cell case: v gone, h and tl givens in its place, h of the type v's elements have and tl of v's own."
+    elem = elemType(goal.obligation.givens, v)
+    Kernel.Wire.withGivens(withoutList(goal, v), [Kernel.Term.typed(h, elem), Kernel.Term.typed(tl, Ty.TyList(elem))])
 
 verify opened
-    opened(Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = ["xs"], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), lists = ["xs"], listElems = [ListElem(list = "xs", elem = Ty.TyInt)]), "xs", "h", "t") => Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = ["h", "t"], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), lists = ["t"], ints = ["h"], listElems = [ListElem(list = "t", elem = Ty.TyInt)])
+    opened(Kernel.Lib.goalFor(Law(key = "k", givens = [Kernel.Term.typed("xs", Ty.TyList(Ty.TyInt))], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), "xs", "h", "t") => Kernel.Lib.goalFor(Law(key = "k", givens = [Kernel.Term.typed("h", Ty.TyInt), Kernel.Term.typed("t", Ty.TyList(Ty.TyInt))], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)))
+    opened(Kernel.Lib.goalFor(Law(key = "k", givens = [Kernel.Term.typed("xs", Ty.TyList(Ty.TyBool))], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), "xs", "h", "t").finite => [Given(name = "h", fin = Fin.FBool)]
 
-fn elemOf(es: List<ListElem>, v: String) -> Option<Ty>
-    ? "What the list v holds, when the goal says."
-    match es
-        [] -> Option.None
-        [e, ..rest] -> match e.list == v
-            true -> Option.Some(e.elem)
-            false -> elemOf(rest, v)
+fn elemType(gs: List<TypedVar>, v: String) -> Ty
+    ? "What the list given v holds; anything when the goal does not say."
+    match gs
+        [] -> Ty.TyAny
+        [g, ..rest] -> match g.name == v
+            true -> Option.withDefault(Kernel.Types.elemOf(g.ty), Ty.TyAny)
+            false -> elemType(rest, v)
 
-verify elemOf
-    elemOf([ListElem(list = "xs", elem = Ty.TyInt)], "xs") => Option.Some(Ty.TyInt)
-    elemOf([], "xs") => Option.None
-
-fn withElem(es: List<ListElem>, v: String, elem: Option<Ty>) -> List<ListElem>
-    ? "es with v holding elem, when it is known."
-    match elem
-        Option.Some(e) -> List.prepend(ListElem(list = v, elem = e), es)
-        Option.None -> es
-
-verify withElem
-    withElem([], "t", Option.None) => []
-
-fn elemsWithout(es: List<ListElem>, v: String) -> List<ListElem>
-    ? "The element types of the lists other than v."
-    match es
-        [] -> []
-        [e, ..rest] -> match e.list == v
-            true -> elemsWithout(rest, v)
-            false -> List.prepend(e, elemsWithout(rest, v))
-
-verify elemsWithout
-    elemsWithout([ListElem(list = "xs", elem = Ty.TyInt)], "xs") => []
+verify elemType
+    elemType([Kernel.Term.typed("xs", Ty.TyList(Ty.TyInt))], "xs") => Ty.TyInt
+    elemType([], "xs") => Ty.TyAny
 
 fn without(ns: List<String>, v: String) -> List<String>
     ? "The names other than v."
@@ -621,18 +607,17 @@ verify boolStep
     boolStep(Node(goal = Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), path = "SplitBool", from = [], depth = 0), Term.TVar("b"), Tactic.First([]), Tactic.Auto, []) => Result.Err(Stop.Refused("SplitBool/true/First: none closes: "))
 
 fn subText(n: Node) -> String
-    ? "The goal at a node, as the compiler reads a question about it: (sub (GIVEN…) (elems (LIST TYPE)…) (from (NAME head|tail LIST)…) (hyps (NAME TERM TERM)…) PREMISE TERM TERM)."
+    ? "The goal at a node, as the compiler reads a question about it: (sub ((NAME TYPE)…) (from (NAME head|tail LIST)…) (hyps (NAME TERM TERM)…) PREMISE TERM TERM)."
       "The givens are typed as in an obligation; from says which list each split variable came from, oldest first; the definitions, constants and laws are the goal's own and are not repeated."
     g = n.goal
     ob = g.obligation
-    givens = Kernel.Wire.spaced(givenTexts(g, ob.givens))
-    elems = Kernel.Wire.spaced(elemTexts(g.listElems))
+    givens = Kernel.Wire.spaced(givenTexts(ob.givens))
     from = Kernel.Wire.spaced(originTexts(List.reverse(n.from)))
     hyps = Kernel.Wire.spaced(hypTexts(List.reverse(g.hyps)))
-    "(sub ({givens}) {headedText("elems", elems)} {headedText("from", from)} {headedText("hyps", hyps)} {premiseText(ob.premise)} {Kernel.Wire.termText(ob.lhs)} {Kernel.Wire.termText(ob.rhs)})"
+    "(sub ({givens}) {headedText("from", from)} {headedText("hyps", hyps)} {premiseText(ob.premise)} {Kernel.Wire.termText(ob.lhs)} {Kernel.Wire.termText(ob.rhs)})"
 
 verify subText
-    subText(Node(goal = Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = ["xs", "b", "n", "z"], premise = [Term.TVar("b")], lhs = Term.TVar("xs"), rhs = Term.TVar("xs"))), lists = ["xs"], ints = ["n"], finite = [Given(name = "b", fin = Fin.FBool)], listElems = [ListElem(list = "xs", elem = Ty.TyInt)], hyps = [Hyp(name = "c", eqn = Eqn(lhs = Term.TVar("b"), rhs = Term.TBool(true)))]), path = "", from = [Origin(name = "xs", part = "tail", list = "ys")], depth = 0)) => "(sub ((xs (tlist)) (b (tbool)) (n (tint)) z) (elems (xs (tint))) (from (xs tail ys)) (hyps (c (v b) (b true))) (v b) (v xs) (v xs))"
+    subText(Node(goal = Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = [Kernel.Term.typed("xs", Ty.TyList(Ty.TyInt)), Kernel.Term.typed("b", Ty.TyBool), Kernel.Term.typed("n", Ty.TyInt), Kernel.Term.typed("z", Ty.TyStr)], premise = [Term.TVar("b")], lhs = Term.TVar("xs"), rhs = Term.TVar("xs"))), hyps = [Hyp(name = "c", eqn = Eqn(lhs = Term.TVar("b"), rhs = Term.TBool(true)))]), path = "", from = [Origin(name = "xs", part = "tail", list = "ys")], depth = 0)) => "(sub ((xs (list int)) (b bool) (n int) (z str)) (from (xs tail ys)) (hyps (c (v b) (b true))) (v b) (v xs) (v xs))"
 
 fn headedText(head: String, body: String) -> String
     ? "(HEAD BODY), or (HEAD) when the body is empty."
@@ -653,88 +638,14 @@ fn premiseText(p: List<Term>) -> String
 verify premiseText
     premiseText([]) => "(none)"
 
-fn givenTexts(g: Goal, names: List<String>) -> List<String>
-    ? "Each given as an obligation writes it: (NAME (tlist)), (NAME (tint)), (NAME TYPE) for a finite type, or the bare name."
-    match names
+fn givenTexts(gs: List<TypedVar>) -> List<String>
+    ? "(NAME TYPE) for each given, as an obligation writes it."
+    match gs
         [] -> []
-        [n, ..rest] -> List.prepend(givenText(g, n), givenTexts(g, rest))
+        [g, ..rest] -> List.prepend("({g.name} {Kernel.Wire.tyText(g.ty)})", givenTexts(rest))
 
 verify givenTexts
-    givenTexts(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), ["x"]) => ["x"]
-
-fn givenText(g: Goal, n: String) -> String
-    ? "One given, typed as far as the goal says."
-    match (List.contains(g.lists, n), List.contains(g.ints, n), finOf(g.finite, n))
-        (true, _, _) -> "({n} (tlist))"
-        (_, true, _) -> "({n} (tint))"
-        (_, _, Option.Some(f)) -> "({n} {finText(f)})"
-        _ -> n
-
-verify givenText
-    givenText(Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), ints = ["n"]), "n") => "(n (tint))"
-
-fn finOf(gs: List<Given>, n: String) -> Option<Fin>
-    ? "The finite type of the given n, if it has one."
-    match gs
-        [] -> Option.None
-        [g, ..rest] -> match g.name == n
-            true -> Option.Some(g.fin)
-            false -> finOf(rest, n)
-
-verify finOf
-    finOf([Given(name = "b", fin = Fin.FBool)], "b") => Option.Some(Fin.FBool)
-    finOf([], "b") => Option.None
-
-fn finText(f: Fin) -> String
-    ? "A finite type in the step grammar: (tbool), (tsum CTOR…), (trec TYPE (FIELD TYPE)…) or (ttuple TYPE…)."
-    match f
-        Fin.FBool -> "(tbool)"
-        Fin.FSum(cs) -> headedText("tsum", Kernel.Wire.spaced(cs))
-        Fin.FRec(n, fs) -> headedText("trec {n}", Kernel.Wire.spaced(finFieldTexts(fs)))
-        Fin.FTuple(ts) -> headedText("ttuple", Kernel.Wire.spaced(finTexts(ts)))
-
-verify finText
-    finText(Fin.FSum(["C.A", "C.B"])) => "(tsum C.A C.B)"
-    finText(Fin.FRec("R", [FinField(name = "a", fin = Fin.FBool)])) => "(trec R (a (tbool)))"
-    finText(Fin.FTuple([Fin.FBool, Fin.FBool])) => "(ttuple (tbool) (tbool))"
-
-fn finTexts(fs: List<Fin>) -> List<String>
-    ? "Each finite type in the step grammar."
-    match fs
-        [] -> []
-        [f, ..rest] -> List.prepend(finText(f), finTexts(rest))
-
-verify finTexts
-    finTexts([]) => []
-
-fn finFieldTexts(fs: List<FinField>) -> List<String>
-    ? "(FIELD TYPE) for each field."
-    match fs
-        [] -> []
-        [f, ..rest] -> List.prepend("({f.name} {finText(f.fin)})", finFieldTexts(rest))
-
-verify finFieldTexts
-    finFieldTexts([]) => []
-
-fn elemTexts(es: List<ListElem>) -> List<String>
-    ? "(LIST TYPE) for each list whose elements the goal knows."
-    match es
-        [] -> []
-        [e, ..rest] -> List.prepend("({e.list} {tyText(e.elem)})", elemTexts(rest))
-
-verify elemTexts
-    elemTexts([ListElem(list = "xs", elem = Ty.TyList(Ty.TyOther))]) => ["(xs (tlist (tother)))"]
-
-fn tyText(t: Ty) -> String
-    ? "An element type: (tint), (tlist TYPE), (tother), or a finite type."
-    match t
-        Ty.TyInt -> "(tint)"
-        Ty.TyOther -> "(tother)"
-        Ty.TyList(e) -> "(tlist {tyText(e)})"
-        Ty.TyFin(f) -> finText(f)
-
-verify tyText
-    tyText(Ty.TyFin(Fin.FBool)) => "(tbool)"
+    givenTexts([Kernel.Term.typed("n", Ty.TyInt)]) => ["(n int)"]
 
 fn originTexts(os: List<Origin>) -> List<String>
     ? "(NAME head|tail LIST) for each split variable."
@@ -762,30 +673,18 @@ fn readSub(base: Goal, text: String) -> Result<Goal, String>
 
 verify readSub
     readSub(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), "") => Result.Ok(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))))
-    readSub(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), "(sub ((xs (tlist)) (b (tbool)) (n (tint)) z) (elems (xs (tint))) (from (xs tail ys)) (hyps (c (v b) (b true))) (v b) (v xs) (v xs))") => Result.Ok(Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = ["xs", "b", "n", "z"], premise = [Term.TVar("b")], lhs = Term.TVar("xs"), rhs = Term.TVar("xs"))), lists = ["xs"], ints = ["n"], finite = [Given(name = "b", fin = Fin.FBool)], listElems = [ListElem(list = "xs", elem = Ty.TyInt)], hyps = [Hyp(name = "c", eqn = Eqn(lhs = Term.TVar("b"), rhs = Term.TBool(true)))]))
+    readSub(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), "(sub ((xs (list int)) (b bool) (n int) (z str)) (from (xs tail ys)) (hyps (c (v b) (b true))) (v b) (v xs) (v xs))") => Result.Ok(Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = [Kernel.Term.typed("xs", Ty.TyList(Ty.TyInt)), Kernel.Term.typed("b", Ty.TyBool), Kernel.Term.typed("n", Ty.TyInt), Kernel.Term.typed("z", Ty.TyStr)], premise = [Term.TVar("b")], lhs = Term.TVar("xs"), rhs = Term.TVar("xs"))), hyps = [Hyp(name = "c", eqn = Eqn(lhs = Term.TVar("b"), rhs = Term.TBool(true)))]))
     readSub(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), "(sub)") => Result.Err("malformed question")
 
 fn subOf(base: Goal, s: Sexp) -> Result<Goal, String>
     ? "The goal of a read (sub …)."
     match s
-        Sexp.Node([Sexp.Atom("sub"), Sexp.Node(gs), Sexp.Node([Sexp.Atom("elems"), ..es]), Sexp.Node([Sexp.Atom("from"), .._]), Sexp.Node([Sexp.Atom("hyps"), ..hs]), p, l, r]) -> subGoal(readGivens(gs, Goal.update(base, finite = [], lists = [], ints = []), [])?, readPremise(p)?, Kernel.Decode.term(l)?, Kernel.Decode.term(r)?, Kernel.Wire.listElems(es)?, readHyps(hs)?)
+        Sexp.Node([Sexp.Atom("sub"), Sexp.Node(gs), Sexp.Node([Sexp.Atom("from"), .._]), Sexp.Node([Sexp.Atom("hyps"), ..hs]), p, l, r]) -> subGoal(Kernel.Wire.withGivens(Goal.update(base, obligation = Law.update(base.obligation, givens = []), finite = [], lists = [], ints = []), Kernel.Decode.typedVars(gs, false)?), readPremise(p)?, Kernel.Decode.term(l)?, Kernel.Decode.term(r)?, readHyps(hs)?)
         _ -> Result.Err("malformed question")
 
 verify subOf
     subOf(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), Sexp.Atom("x")) => Result.Err("malformed question")
-
-fn readGivens(ss: List<Sexp>, g: Goal, names: List<String>) -> Result<Goal, String>
-    ? "g with the typed givens ss read into its finite, list and Int givens, and their names, in order, as the claim's givens."
-    match ss
-        [] -> Result.Ok(Goal.update(g, obligation = Law.update(g.obligation, givens = List.reverse(names))))
-        [Sexp.Atom(n), ..rest] -> readGivens(rest, g, List.prepend(n, names))
-        [Sexp.Node([Sexp.Atom(n), Sexp.Node([Sexp.Atom("tlist")])]), ..rest] -> readGivens(rest, Goal.update(g, lists = List.concat(g.lists, [n])), List.prepend(n, names))
-        [Sexp.Node([Sexp.Atom(n), Sexp.Node([Sexp.Atom("tint")])]), ..rest] -> readGivens(rest, Goal.update(g, ints = List.concat(g.ints, [n])), List.prepend(n, names))
-        [Sexp.Node([Sexp.Atom(n), t]), ..rest] -> readGivens(rest, Goal.update(g, finite = List.concat(g.finite, [Given(name = n, fin = Kernel.Decode.fin(t)?)])), List.prepend(n, names))
-        _ -> Result.Err("malformed given")
-
-verify readGivens
-    readGivens([Sexp.Node([])], Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), []) => Result.Err("malformed given")
+    subOf(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), Sexp.Node([Sexp.Atom("sub"), Sexp.Node([Sexp.Atom("n")]), Sexp.Node([Sexp.Atom("from")]), Sexp.Node([Sexp.Atom("hyps")]), Sexp.Node([Sexp.Atom("none")]), Sexp.Node([Sexp.Atom("unit")]), Sexp.Node([Sexp.Atom("unit")])])) => Result.Err("malformed typed name")
 
 fn readPremise(s: Sexp) -> Result<List<Term>, String>
     ? "(none), or the `when`."
@@ -796,12 +695,12 @@ fn readPremise(s: Sexp) -> Result<List<Term>, String>
 verify readPremise
     readPremise(Sexp.Node([Sexp.Atom("none")])) => Result.Ok([])
 
-fn subGoal(g: Goal, premise: List<Term>, l: Term, r: Term, elems: List<ListElem>, hyps: List<Hyp>) -> Result<Goal, String>
-    ? "g, its givens read, with the read claim, element types and hypotheses."
-    Result.Ok(Goal.update(g, obligation = Law.update(g.obligation, premise = premise, lhs = l, rhs = r), listElems = elems, hyps = hyps))
+fn subGoal(g: Goal, premise: List<Term>, l: Term, r: Term, hyps: List<Hyp>) -> Result<Goal, String>
+    ? "g, its givens read, with the read claim and hypotheses."
+    Result.Ok(Goal.update(g, obligation = Law.update(g.obligation, premise = premise, lhs = l, rhs = r), hyps = hyps))
 
 verify subGoal
-    subGoal(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), [], Term.TInt(2), Term.TInt(2), [], []) => Result.Ok(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(2), rhs = Term.TInt(2))))
+    subGoal(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), [], Term.TInt(2), Term.TInt(2), []) => Result.Ok(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(2), rhs = Term.TInt(2))))
 
 fn readHyps(ss: List<Sexp>) -> Result<List<Hyp>, String>
     ? "(NAME TERM TERM)…, the first the newest, as a goal lists its hypotheses."
@@ -902,9 +801,9 @@ fn script(goalText: String, scriptText: String, answersText: String) -> String
         Result.Ok((g, t, as)) -> outcome(runScript(g, t, as))
 
 verify script
-    script("(steps 13 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (laws) (proof (refl (i 1))))", "(auto)", "(answers)") => "ask\nauto\n(sub () (elems) (from) (hyps) (none) (i 1) (i 1))"
-    script("(steps 13 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (laws) (proof (refl (i 1))))", "(auto)", "(answers (a \"auto\\n(sub () (elems) (from) (hyps) (none) (i 1) (i 1))\" (closed 0)))") => "proof\n(hyp #0)"
-    script("(steps 13 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (laws) (proof (refl (i 1))))", "(cases (auto))", "(answers)") => "refused\nCases: no given of finite type"
+    script("(steps 14 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))", "(auto)", "(answers)") => "ask\nauto\n(sub () (from) (hyps) (none) (i 1) (i 1))"
+    script("(steps 14 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))", "(auto)", "(answers (a \"auto\\n(sub () (from) (hyps) (none) (i 1) (i 1))\" (closed 0)))") => "proof\n(hyp #0)"
+    script("(steps 14 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))", "(cases (auto))", "(answers)") => "refused\nCases: no given of finite type"
     script("(a", "(auto)", "(answers)") => "goal\nunexpected end of data"
 
 fn readScriptInput(goalText: String, scriptText: String, answersText: String) -> Result<Tuple<Goal, Tactic, List<Answer>>, String>

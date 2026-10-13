@@ -1,0 +1,12 @@
+(steps 14
+ (obligation floatEqualsItself ((x float)) (none)
+  (op == (v x) (v x))
+  (b true))
+ (defs)
+ (consts)
+ (sums)
+ (recs)
+ (sigs)
+ (laws
+  (fact List.selfEqual ((a (var =T))) (none) (op == (v a) (v a)) (b true) (rule bool.beq.refl ((a (v a))))))
+ (proof (law List.selfEqual ((a (v x))))))

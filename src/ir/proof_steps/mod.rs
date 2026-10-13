@@ -22,6 +22,7 @@
 pub mod claim;
 pub mod facts;
 pub mod induct;
+pub mod kernel_builtins;
 pub mod linear;
 pub mod read;
 pub mod ring;
@@ -36,7 +37,35 @@ pub use term::Term;
 use crate::ir::identity::FnId;
 
 /// Version of the step data. Bump on any change a replayer could observe.
-pub const FORMAT_VERSION: u32 = 13;
+pub const FORMAT_VERSION: u32 = 14;
+
+/// The types a script declares for the kernel's type checks: every sum
+/// (each constructor with its field types) and every record (each field
+/// with its type) that a type in the script mentions, transitively.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Decls {
+    pub sums: Vec<SumDecl>,
+    pub recs: Vec<RecDecl>,
+}
+
+/// A declared sum: its name as the data writes it, whether `==` between
+/// two of its values is equality
+/// ([`crate::ir::SymbolTable::beq_is_equality`]), and each constructor with
+/// its field types.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SumDecl {
+    pub name: String,
+    pub eq: bool,
+    pub ctors: Vec<(crate::ir::hir::ResolvedCtor, Vec<crate::ast::Type>)>,
+}
+
+/// A declared record, as [`SumDecl`]: each field with its type.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecDecl {
+    pub name: String,
+    pub eq: bool,
+    pub fields: Vec<(String, crate::ast::Type)>,
+}
 
 /// An equation `lhs = rhs` between two terms.
 #[derive(Debug, Clone, PartialEq)]
@@ -61,6 +90,9 @@ pub struct LawRef {
     /// law lives in a dependency (`Domain.Message.littleEndian.lowDigitStep`).
     pub key: String,
     pub givens: Vec<String>,
+    /// The type of each given, by name; a given without one is written
+    /// as a hole (a builtin fact's list given, which holds anything).
+    pub types: Vec<(String, crate::ast::Type)>,
     /// The law's `when`, as one Bool term that must equal `true`.
     pub premise: Option<Term>,
     pub lhs: Term,
@@ -79,10 +111,10 @@ pub struct Def {
     /// Canonical qualified name (`Domain.LockTime.reached`).
     pub name: String,
     pub params: Vec<String>,
-    /// Whether the function returns a Bool; the kernel splits into the true
-    /// and false cases only a term that is a Bool, and a call is one when
-    /// its definition says so.
-    pub returns_bool: bool,
+    /// The type of each parameter, and of the result: the kernel types a
+    /// call by them.
+    pub param_types: Vec<crate::ast::Type>,
+    pub ret: crate::ast::Type,
     /// `name = value` bindings before the final expression. Each value may
     /// read the parameters and the bindings before it.
     pub lets: Vec<(String, Term)>,
@@ -126,6 +158,7 @@ impl Def {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Const {
     pub name: String,
+    pub ty: crate::ast::Type,
     pub value: Term,
 }
 
@@ -495,6 +528,9 @@ pub fn unequal(on: &Term, k: &Term) -> Eqn {
 pub struct Obligation {
     pub key: String,
     pub givens: Vec<String>,
+    /// The type of each given, by name; a given without one is written
+    /// as a hole.
+    pub types: Vec<(String, crate::ast::Type)>,
     /// The givens of a finite type, with that type: what a
     /// [`Proof::Enum`] split may enumerate.
     pub finite: Vec<(String, Finite)>,
@@ -517,10 +553,12 @@ pub struct Script {
     pub defs: Vec<Def>,
     pub consts: Vec<Const>,
     pub laws: Vec<LawRef>,
-    /// Every sum type a [`Proof::Split`] splits on, as the program declares
-    /// it: each constructor in order with how many fields it has. The
-    /// kernel takes a split's cases from here, not from the split.
-    pub sums: Vec<Vec<(crate::ir::hir::ResolvedCtor, usize)>>,
+    /// The sums and records the script's types mention, with their field
+    /// types: what the kernel types constructors and fields by.
+    pub decls: Decls,
+    /// The signature of every function a term calls without the script
+    /// opening it: what the kernel types such a call by.
+    pub sigs: Vec<(FnId, Vec<crate::ast::Type>, crate::ast::Type)>,
     pub proof: Proof,
     /// The project proof plan that wrote `proof`, when a law named one with
     /// `by`: recorded in the script for audit, never read by a checker.
@@ -583,6 +621,147 @@ impl Script {
 }
 
 impl Proof {
+    /// Every term the proof writes, in any step, handed to `f`.
+    pub fn each_term(&self, f: &mut dyn FnMut(&Term)) {
+        let all = |ts: &[Term], f: &mut dyn FnMut(&Term)| ts.iter().for_each(f);
+        match self {
+            Proof::Refl(t) | Proof::Proj { term: t } | Proof::Cell { list: t } => f(t),
+            Proof::Hyp(_) | Proof::UnfoldConst { .. } => {}
+            Proof::Symm(p) => p.each_term(f),
+            Proof::Trans { terms, steps } => {
+                all(terms, f);
+                steps.iter().for_each(|p| p.each_term(f));
+            }
+            Proof::Congr { ctx, inner } => {
+                f(ctx);
+                inner.each_term(f);
+            }
+            Proof::Unfold {
+                args,
+                binders,
+                premise,
+                ..
+            } => {
+                all(args, f);
+                all(binders, f);
+                premise.iter().for_each(|p| p.each_term(f));
+            }
+            Proof::Arm {
+                term,
+                binders,
+                premise,
+                ..
+            } => {
+                f(term);
+                all(binders, f);
+                premise.each_term(f);
+            }
+            Proof::Rule {
+                subst, premises, ..
+            } => {
+                subst.iter().for_each(|(_, t)| f(t));
+                premises.iter().for_each(|p| p.each_term(f));
+            }
+            Proof::Law { subst, premise, .. } => {
+                subst.iter().for_each(|(_, t)| f(t));
+                premise.iter().for_each(|p| p.each_term(f));
+            }
+            Proof::Compute { lhs, rhs } | Proof::Ring { lhs, rhs } => {
+                f(lhs);
+                f(rhs);
+            }
+            Proof::Cases {
+                on,
+                if_true,
+                if_false,
+                ..
+            } => {
+                f(on);
+                if_true.each_term(f);
+                if_false.each_term(f);
+            }
+            Proof::Split {
+                args, on, cases, ..
+            } => {
+                all(args, f);
+                f(on);
+                cases.iter().for_each(|c| c.proof.each_term(f));
+            }
+            Proof::Have {
+                fact, proof, body, ..
+            } => {
+                f(fact);
+                proof.each_term(f);
+                body.each_term(f);
+            }
+            Proof::Absurd {
+                contradiction,
+                lhs,
+                rhs,
+            } => {
+                contradiction.each_term(f);
+                f(lhs);
+                f(rhs);
+            }
+            Proof::Induct {
+                args,
+                lhs,
+                rhs,
+                cases,
+                ..
+            } => {
+                all(args, f);
+                f(lhs);
+                f(rhs);
+                for c in cases {
+                    c.carry.iter().flatten().for_each(|p| p.each_term(f));
+                    for (_, ih) in &c.more {
+                        all(&ih.at, f);
+                        ih.carry.iter().for_each(|p| p.each_term(f));
+                    }
+                    c.proof.each_term(f);
+                }
+            }
+            Proof::InductList {
+                lhs,
+                rhs,
+                nil,
+                ihs,
+                cons,
+                ..
+            } => {
+                f(lhs);
+                f(rhs);
+                nil.each_term(f);
+                for ih in ihs {
+                    all(&ih.at, f);
+                    ih.carry.iter().for_each(|p| p.each_term(f));
+                }
+                cons.each_term(f);
+            }
+            Proof::ListCases {
+                lhs,
+                rhs,
+                nil,
+                cons,
+                ..
+            } => {
+                f(lhs);
+                f(rhs);
+                nil.each_term(f);
+                cons.each_term(f);
+            }
+            Proof::Linear { goal, .. } => f(goal),
+            Proof::Enum {
+                lhs, rhs, cases, ..
+            } => {
+                f(lhs);
+                f(rhs);
+                cases.iter().for_each(|p| p.each_term(f));
+            }
+        }
+    }
+
     /// Number of nodes, for reports.
     pub fn size(&self) -> usize {
         1 + match self {

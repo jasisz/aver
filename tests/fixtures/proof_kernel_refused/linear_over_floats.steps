@@ -1,0 +1,11 @@
+(steps 14
+ (obligation k ((a float) (b float) (c float)) (bi Bool.and (op < (v a) (v b)) (op < (v b) (v c))) (op < (v a) (v c)) (b true))
+ (defs)
+ (consts)
+ (sums)
+ (recs)
+ (sigs)
+ (laws)
+ (proof (have h1 (op < (v a) (v b)) (rule bool.and.elim_l ((a (op < (v a) (v b))) (b (op < (v b) (v c)))) (hyp when))
+  (have h2 (op < (v b) (v c)) (rule bool.and.elim_r ((a (op < (v a) (v b))) (b (op < (v b) (v c)))) (hyp when))
+   (linear (op < (v a) (v c)) true (h1 h2) (1 1 1))))))

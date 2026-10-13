@@ -6,17 +6,26 @@
 //!
 //! ```text
 //! script  := [; proof by PLAN sha256:HEX, N steps]   ; the plan that wrote it, for audit only
-//!            (steps VERSION (obligation KEY (OGIVEN…) PREMISE TERM TERM)
-//!                    (defs (def NAME (PARAM…) ((NAME TERM)…) TERM [bool])…)
-//!                    (consts (const NAME TERM)…)
+//!            (steps VERSION (obligation KEY (GIVEN…) PREMISE TERM TERM)
+//!                    (defs (def NAME (GIVEN…) TYPE ((NAME TERM)…) TERM)…)
+//!                    (consts (const NAME TYPE TERM)…)
+//!                    (sums (sum NAME [eq] (CTOR TYPE…)…)…)
+//!                    (recs (rec NAME [eq] (FIELD TYPE)…)…)
+//!                    (sigs (FN (TYPE…) TYPE)…)
 //!                    (laws (law KEY (GIVEN…) PREMISE TERM TERM)…
-//!                          (fact KEY (OGIVEN…) PREMISE TERM TERM PROOF)…)
+//!                          (fact KEY (GIVEN…) PREMISE TERM TERM PROOF)…)
 //!   a fact comes after the facts its proof cites, and may cite only them
 //!                    (proof PROOF))
-//! OGIVEN  := NAME | (NAME TYPE)       ; a given of finite type, with its type
-//!          | (NAME (tlist))            ; a given of list type
-//!          | (NAME (tint))             ; a given of type Int
-//! TYPE    := (tbool) | (tsum CTOR…) | (trec TYPE (FIELD TYPE)…) | (ttuple TYPE…)
+//! GIVEN   := (NAME TYPE)              ; a variable with its type
+//! TYPE    := int | bool | str | float | unit | (list TYPE) | (option TYPE)
+//!          | (result TYPE TYPE) | (map TYPE TYPE) | (vector TYPE)
+//!          | (tuple TYPE…) | (named NAME)
+//!          | (var NAME) | (var NAME eq) ; a type variable of a builtin fact; `eq`: its == is equality
+//!          | _                         ; a type the data cannot state: one unknown type, fits only itself
+//!   `sums` and `recs` declare every type a TYPE names, with the types of
+//!   its fields; `eq` marks one whose `==` is equality. `sigs` gives the
+//!   signature of each function a term calls and `defs` does not open.
+//!   The kernel types every term from these: a proof states no type.
 //! PREMISE := (none) | TERM
 //! TERM    := (i INT) | (b true|false) | (s "TEXT") | (unit) | (v NAME) | (hole)
 //!          | (get TERM FIELD) | (call FN TERM…) | (bi BUILTIN TERM…)
@@ -48,17 +57,64 @@ use crate::ir::hir::{
 use crate::ir::identity::FnId;
 
 use super::term::{HOLE, Term};
-use super::{FORMAT_VERSION, Finite, Proof, Script};
+use super::{FORMAT_VERSION, Proof, Script};
 
 /// How identities are spelled in the data.
 pub trait Names {
     fn fn_name(&self, id: FnId) -> String;
     fn ctor_name(&self, ctor: &ResolvedCtor) -> String;
-    /// Whether a value of this type may hold a Float; a named type is
-    /// assumed to unless the names know its fields.
-    fn may_hold_float(&self, ty: &crate::ast::Type) -> bool {
-        crate::ir::SymbolTable::default().may_hold_float(ty)
+    /// How a declared type is named in the data: the way its constructors
+    /// are, qualified by its module.
+    fn type_name(&self, ty: &crate::ast::Type) -> String {
+        match ty {
+            crate::ast::Type::Named { name, .. } => name.clone(),
+            _ => String::new(),
+        }
     }
+}
+
+/// A type in the data: `int`, `bool`, `str`, `float`, `unit`, `(list T)`,
+/// `(option T)`, `(result T E)`, `(map K V)`, `(vector T)`, `(tuple T…)`,
+/// `(named NAME)`, a builtin fact's type variable `(var NAME)`; a type the
+/// data cannot state (a function) is `_`, one unknown type that fits only
+/// itself.
+pub fn ty_text(t: &crate::ast::Type, names: &dyn Names) -> String {
+    use crate::ast::Type;
+    match t {
+        Type::Int => "int".into(),
+        Type::Bool => "bool".into(),
+        Type::Str => "str".into(),
+        Type::Float => "float".into(),
+        Type::Unit => "unit".into(),
+        Type::List(a) => format!("(list {})", ty_text(a, names)),
+        Type::Option(a) => format!("(option {})", ty_text(a, names)),
+        Type::Vector(a) => format!("(vector {})", ty_text(a, names)),
+        Type::Result(a, b) => format!("(result {} {})", ty_text(a, names), ty_text(b, names)),
+        Type::Map(k, v) => format!("(map {} {})", ty_text(k, names), ty_text(v, names)),
+        Type::Tuple(xs) => format!(
+            "(tuple{})",
+            xs.iter()
+                .map(|x| format!(" {}", ty_text(x, names)))
+                .collect::<String>()
+        ),
+        Type::Named { .. } => format!("(named {})", names.type_name(t)),
+        Type::Var(n) if n == super::facts::KEY_TYPE_VAR => format!("(var {n} eq)"),
+        Type::Var(n) => format!("(var {n})"),
+        Type::Fn(..) | Type::Invalid => "_".into(),
+    }
+}
+
+/// `(NAME TYPE)` for a given: its declared type. A given the data holds
+/// no type for (one a plan's question names) is written by what it is known
+/// to be, a list of anything or an Int, and otherwise as a hole.
+fn given_text(name: &str, o: &super::Obligation, names: &dyn Names) -> String {
+    let ty = match o.types.iter().find(|(n, _)| n == name) {
+        Some((_, t)) => ty_text(t, names),
+        None if o.lists.iter().any(|l| l == name) => "(list _)".into(),
+        None if o.ints.iter().any(|i| i == name) => "int".into(),
+        None => "_".into(),
+    };
+    format!("({name} {ty})")
 }
 
 /// Names for data that mentions no user function or type: the builtin
@@ -79,8 +135,27 @@ impl Names for BuiltinsOnly {
 }
 
 impl Names for crate::ir::SymbolTable {
-    fn may_hold_float(&self, ty: &crate::ast::Type) -> bool {
-        crate::ir::SymbolTable::may_hold_float(self, ty)
+    fn type_name(&self, ty: &crate::ast::Type) -> String {
+        let crate::ast::Type::Named { id, name } = ty else {
+            return String::new();
+        };
+        let id = match id {
+            Some(id) => Some(*id),
+            None => {
+                let bare = name.rsplit('.').next().unwrap_or(name);
+                match self.type_ids_named(bare).as_slice() {
+                    [one] => Some(*one),
+                    _ => None,
+                }
+            }
+        };
+        match id.and_then(|id| self.type_entry_if_present(id)) {
+            Some(entry) => match entry.key.scope_str() {
+                Some(scope) => format!("{scope}.{}", entry.key.name),
+                None => entry.key.name.clone(),
+            },
+            None => name.clone(),
+        }
     }
 
     fn fn_name(&self, id: FnId) -> String {
@@ -153,25 +228,17 @@ fn op_symbol(op: BinOp) -> &'static str {
     }
 }
 
-/// An operator spelled by the type it works on, so that a rule about Int
-/// arithmetic never applies to joining texts or to Float arithmetic, which
-/// have other laws (`+` on texts does not commute; on Floats it does not
-/// associate). Int keeps the plain symbols. `==` and `!=` between values
-/// that may hold a Float are `==.` and `!=.`: there `a == b` does not make
-/// `a` and `b` the same value (`0.0 == -0.0`), and `a == a` can be false
-/// (NaN), so no rule about equality applies to them.
-fn typed_op_symbol(op: BinOp, ty: Option<&crate::ast::Type>, names: &dyn Names) -> String {
-    use crate::ast::Type;
-    let plain = op_symbol(op);
-    let arithmetic = matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div);
-    let ordering = matches!(op, BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte);
-    let equality = matches!(op, BinOp::Eq | BinOp::Neq);
-    match ty {
-        Some(Type::Str) if op == BinOp::Add => "++".to_string(),
-        Some(Type::Float) if arithmetic || ordering => format!("{plain}."),
-        Some(ty) if equality && names.may_hold_float(ty) => format!("{plain}."),
-        _ => plain.to_string(),
-    }
+/// A record type as a literal of it names it: the way its declaration in
+/// the script does (`Names::type_name`), whatever module wrote the literal.
+pub fn record_name(
+    type_id: Option<crate::ir::identity::TypeId>,
+    type_name: &str,
+    names: &dyn Names,
+) -> String {
+    names.type_name(&crate::ast::Type::Named {
+        id: type_id,
+        name: type_name.to_string(),
+    })
 }
 
 fn literal(lit: &Literal) -> Result<String, String> {
@@ -253,14 +320,7 @@ pub fn term(t: &Term, names: &dyn Names) -> Result<String, String> {
         ResolvedExpr::BinOp(op, a, b) => {
             format!(
                 "(op {} {} {})",
-                typed_op_symbol(
-                    *op,
-                    t.ty()
-                        .filter(|ty| **ty != crate::ast::Type::Bool)
-                        .or(a.ty())
-                        .or(b.ty()),
-                    names
-                ),
+                op_symbol(*op),
                 term(a, names)?,
                 term(b, names)?
             )
@@ -296,9 +356,11 @@ pub fn term(t: &Term, names: &dyn Names) -> Result<String, String> {
         ResolvedExpr::List(xs) => with_args("list", xs, names)?,
         ResolvedExpr::Tuple(xs) => with_args("tuple", xs, names)?,
         ResolvedExpr::RecordCreate {
-            type_name, fields, ..
+            type_id,
+            type_name,
+            fields,
         } => {
-            let mut s = format!("(rec {type_name}");
+            let mut s = format!("(rec {}", record_name(*type_id, type_name, names));
             for (f, v) in fields {
                 s.push_str(&format!(" ({f} {})", term(v, names)?));
             }
@@ -306,12 +368,16 @@ pub fn term(t: &Term, names: &dyn Names) -> Result<String, String> {
             s
         }
         ResolvedExpr::RecordUpdate {
+            type_id,
             type_name,
             base,
             updates,
-            ..
         } => {
-            let mut s = format!("(upd {type_name} {}", term(base, names)?);
+            let mut s = format!(
+                "(upd {} {}",
+                record_name(*type_id, type_name, names),
+                term(base, names)?
+            );
             for (f, v) in updates {
                 s.push_str(&format!(" ({f} {})", term(v, names)?));
             }
@@ -608,40 +674,6 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
     })
 }
 
-pub fn finite(f: &Finite, names: &dyn Names) -> String {
-    match f {
-        Finite::Bool => "(tbool)".to_string(),
-        Finite::Sum(ctors) => {
-            let mut s = String::from("(tsum");
-            for c in ctors {
-                s.push(' ');
-                s.push_str(&names.ctor_name(c));
-            }
-            s.push(')');
-            s
-        }
-        Finite::Record {
-            type_name, fields, ..
-        } => {
-            let mut s = format!("(trec {type_name}");
-            for (n, t) in fields {
-                s.push_str(&format!(" ({n} {})", finite(t, names)));
-            }
-            s.push(')');
-            s
-        }
-        Finite::Tuple(parts) => {
-            let mut s = String::from("(ttuple");
-            for t in parts {
-                s.push(' ');
-                s.push_str(&finite(t, names));
-            }
-            s.push(')');
-            s
-        }
-    }
-}
-
 fn premise(p: &Option<Term>, names: &dyn Names) -> Result<String, String> {
     match p {
         Some(t) => term(t, names),
@@ -651,16 +683,7 @@ fn premise(p: &Option<Term>, names: &dyn Names) -> Result<String, String> {
 
 pub fn script(s: &Script, names: &dyn Names) -> Result<String, String> {
     let o = &s.obligation;
-    let givens: Vec<String> = o
-        .givens
-        .iter()
-        .map(|g| match o.finite.iter().find(|(n, _)| n == g) {
-            Some((_, f)) => format!("({g} {})", finite(f, names)),
-            None if o.lists.contains(g) => format!("({g} (tlist))"),
-            None if o.ints.contains(g) => format!("({g} (tint))"),
-            None => g.clone(),
-        })
-        .collect();
+    let givens: Vec<String> = o.givens.iter().map(|g| given_text(g, o, names)).collect();
     // Which plan wrote the proof: a comment, which no checker reads.
     let provenance = match &s.plan {
         Some(plan) => format!(
@@ -680,30 +703,70 @@ pub fn script(s: &Script, names: &dyn Names) -> Result<String, String> {
         term(&o.rhs, names)?
     );
     for d in &s.defs {
+        let params: Vec<String> = d
+            .params
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let t = d
+                    .param_types
+                    .get(i)
+                    .map(|t| ty_text(t, names))
+                    .unwrap_or_else(|| "_".into());
+                format!("({p} {t})")
+            })
+            .collect();
         out.push_str(&format!(
-            "\n  (def {} ({}) {} {}{})",
+            "\n  (def {} ({}) {} {} {})",
             d.name,
-            d.params.join(" "),
+            params.join(" "),
+            ty_text(&d.ret, names),
             bindings(&d.lets, names)?,
-            term(&d.body, names)?,
-            if d.returns_bool { " bool" } else { "" }
+            term(&d.body, names)?
         ));
     }
     out.push_str(")\n (consts");
     for c in &s.consts {
         out.push_str(&format!(
-            "\n  (const {} {})",
+            "\n  (const {} {} {})",
             c.name,
+            ty_text(&c.ty, names),
             term(&c.value, names)?
         ));
     }
     out.push_str(")\n (sums");
-    for sum in &s.sums {
-        out.push_str("\n  (sum");
-        for (c, n) in sum {
-            out.push_str(&format!(" ({} {n})", names.ctor_name(c)));
+    let eq = |eq: bool| if eq { " eq" } else { "" };
+    for d in &s.decls.sums {
+        out.push_str(&format!("\n  (sum {}{}", d.name, eq(d.eq)));
+        for (c, fields) in &d.ctors {
+            out.push_str(&format!(" ({}", names.ctor_name(c)));
+            for f in fields {
+                out.push_str(&format!(" {}", ty_text(f, names)));
+            }
+            out.push(')');
         }
         out.push(')');
+    }
+    out.push_str(")\n (recs");
+    for d in &s.decls.recs {
+        out.push_str(&format!("\n  (rec {}{}", d.name, eq(d.eq)));
+        for (f, t) in &d.fields {
+            out.push_str(&format!(" ({f} {})", ty_text(t, names)));
+        }
+        out.push(')');
+    }
+    out.push_str(")\n (sigs");
+    for (id, params, ret) in &s.sigs {
+        out.push_str(&format!(
+            "\n  ({} ({}) {})",
+            names.fn_name(*id),
+            params
+                .iter()
+                .map(|t| ty_text(t, names))
+                .collect::<Vec<_>>()
+                .join(" "),
+            ty_text(ret, names)
+        ));
     }
     out.push_str(")\n (laws");
     // A cited fact comes after every fact its own proof cites, each once.
@@ -721,17 +784,10 @@ pub fn script(s: &Script, names: &dyn Names) -> Result<String, String> {
     with_facts(&s.laws, &mut cited);
     for l in cited {
         if let Some(fact) = &l.fact {
-            let lists = &fact.obligation.lists;
             let givens: Vec<String> = l
                 .givens
                 .iter()
-                .map(|g| {
-                    if lists.contains(g) {
-                        format!("({g} (tlist))")
-                    } else {
-                        g.clone()
-                    }
-                })
+                .map(|g| given_text(g, &fact.obligation, names))
                 .collect();
             out.push_str(&format!(
                 "\n  (fact {} ({}) {} {} {} {})",
@@ -744,10 +800,23 @@ pub fn script(s: &Script, names: &dyn Names) -> Result<String, String> {
             ));
             continue;
         }
+        let givens: Vec<String> = l
+            .givens
+            .iter()
+            .map(|g| {
+                let t = l
+                    .types
+                    .iter()
+                    .find(|(n, _)| n == g)
+                    .map(|(_, t)| ty_text(t, names))
+                    .unwrap_or_else(|| "_".into());
+                format!("({g} {t})")
+            })
+            .collect();
         out.push_str(&format!(
             "\n  (law {} ({}) {} {} {})",
             l.key,
-            l.givens.join(" "),
+            givens.join(" "),
             premise(&l.premise, names)?,
             term(&l.lhs, names)?,
             term(&l.rhs, names)?

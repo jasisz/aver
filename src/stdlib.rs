@@ -138,6 +138,14 @@ pub(crate) fn find_kernel_api(name: &str) -> Option<EmbeddedModule> {
             virtual_path: "<aver-stdlib>/kernel/finite.av",
             source: include_str!("../tools/proof-kernel/kernel/finite.av"),
         }),
+        "Kernel.Types" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/kernel/types.av",
+            source: include_str!("../tools/proof-kernel/kernel/types.av"),
+        }),
+        "Kernel.Builtins" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/kernel/builtins.av",
+            source: include_str!("../tools/proof-kernel/kernel/builtins.av"),
+        }),
         "Kernel.Eval" => Some(EmbeddedModule {
             virtual_path: "<aver-stdlib>/kernel/eval.av",
             source: include_str!("../tools/proof-kernel/kernel/eval.av"),

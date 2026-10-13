@@ -10,21 +10,21 @@ module Conventions
 
 fn law(premise: List<Term>, lhs: Term, rhs: Term) -> Law
     ? "An obligation over the given b."
-    Law(key = "k", givens = ["b"], premise = premise, lhs = lhs, rhs = rhs)
+    Law(key = "k", givens = [Kernel.Term.typed("b", Ty.TyBool)], premise = premise, lhs = lhs, rhs = rhs)
 
 verify law
-    law([], Term.TInt(1), Term.TInt(1)) => Law(key = "k", givens = ["b"], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))
+    law([], Term.TInt(1), Term.TInt(1)) => Law(key = "k", givens = [Kernel.Term.typed("b", Ty.TyBool)], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))
 
 fn pick() -> Def
     ? "pick(x) is 10 when x is 1 and 20 otherwise: a literal arm, then a catch-all."
-    Def(name = "pick", returnsBool = false, params = ["x"], lets = [], body = Term.TMatch(Term.TVar("x"), [Arm(pattern = Pat.PLit(Term.TInt(1)), body = Term.TInt(10)), Arm(pattern = Pat.PWild, body = Term.TInt(20))]))
+    Def(name = "pick", params = [Kernel.Term.typed("x", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TMatch(Term.TVar("x"), [Arm(pattern = Pat.PLit(Term.TInt(1)), body = Term.TInt(10)), Arm(pattern = Pat.PWild, body = Term.TInt(20))]))
 
 verify pick
     pick().name => "pick"
 
 fn check(ob: Law, defs: List<Def>, proof: Proof) -> Result<String, String>
     ? "The kernel's verdict on one proof of ob."
-    Kernel.Check.checkScript(Script(obligation = ob, finite = [], lists = [], ints = [], defs = defs, consts = [], sums = [], laws = [], facts = [], proof = proof))
+    Kernel.Check.checkScript(Script(obligation = ob, defs = defs, consts = [], sums = [], recs = [], sigs = [], laws = [], facts = [], proof = proof))
 
 verify check
     check(law([], Term.TInt(1), Term.TInt(1)), [], Proof.PRefl(Term.TInt(1))) => Result.Ok("k")

@@ -1,3 +1,5 @@
+pub mod builtins;
+
 pub mod decode;
 
 pub mod eval;
@@ -15,5 +17,7 @@ pub mod std;
 pub mod subst;
 
 pub mod term;
+
+pub mod types;
 
 pub mod wire;

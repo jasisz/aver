@@ -1,0 +1,827 @@
+module Types
+    intent =
+        "The type of a term, read from its leaves up, and whether it fits a declared type."
+        "One check for every place a proof binds a term to a typed variable: a rule's or a law's"
+        "binder, an induction hypothesis, a definition's parameter, the parts of a pattern."
+        "A builtin is typed by its signature in Kernel.Builtins, its type variables bound by the"
+        "arguments in order; a rule's binders are typed the same way. An empty literal ([],"
+        "Option.None, Map.empty) leaves a hole, which fits any type; a variable ?t marked as"
+        "needing equality takes only a type whose == is equality: which types those are is data, the"
+        "shapes in Kernel.Builtins and what each declared type's declaration says."
+    exposes [TyEnv, typeOf, typesOf, join, fits, bindTyped, finOf, ctorFields, ctorsOf, elemOf, sumOf, hasEq, rigidVars, show, withVars, patVars, paramsOf, namedVars, typesOfVars, empty]
+    depends [Kernel.Term, Kernel.Proof, Kernel.Builtins]
+    effects []
+
+record TyEnv
+    vars: List<TypedVar>
+    defs: List<Def>
+    consts: List<Const>
+    sums: List<Sum>
+    recs: List<Rec>
+    sigs: List<FnSig>
+
+fn withVars(e: TyEnv, vs: List<TypedVar>) -> TyEnv
+    ? "The environment with these variables in front."
+    TyEnv(vars = List.concat(vs, e.vars), defs = e.defs, consts = e.consts, sums = e.sums, recs = e.recs, sigs = e.sigs)
+
+verify withVars
+    withVars(empty(), [Kernel.Term.typed("n", Ty.TyInt)]).vars => [Kernel.Term.typed("n", Ty.TyInt)]
+
+fn empty() -> TyEnv
+    ? "No variables and no declarations."
+    TyEnv(vars = [], defs = [], consts = [], sums = [], recs = [], sigs = [])
+
+verify empty
+    empty().vars => []
+
+fn show(t: Ty) -> String
+    ? "A type as Aver spells it; a hole is _."
+    match t
+        Ty.TyInt -> "Int"
+        Ty.TyBool -> "Bool"
+        Ty.TyStr -> "String"
+        Ty.TyFloat -> "Float"
+        Ty.TyUnit -> "Unit"
+        Ty.TyList(a) -> "List<{show(a)}>"
+        Ty.TyOption(a) -> "Option<{show(a)}>"
+        Ty.TyResult(a, b) -> "Result<{show(a)}, {show(b)}>"
+        Ty.TyMap(k, v) -> "Map<{show(k)}, {show(v)}>"
+        Ty.TyVector(a) -> "Vector<{show(a)}>"
+        Ty.TyTuple(xs) -> "({String.join(showAll(xs), ", ")})"
+        Ty.TyNamed(n) -> n
+        Ty.TyAny -> "_"
+        Ty.TyVar(n, eq) -> "?{n}"
+        Ty.TyRigid(n, eq) -> "?{n}"
+
+verify show
+    show(Ty.TyList(Ty.TyAny)) => "List<_>"
+    show(Ty.TyTuple([Ty.TyInt, Ty.TyBool])) => "(Int, Bool)"
+
+fn showAll(ts: List<Ty>) -> List<String>
+    ? "Each type spelled."
+    match ts
+        [] -> []
+        [t, ..rest] -> List.prepend(show(t), showAll(rest))
+
+verify showAll
+    showAll([Ty.TyInt]) => ["Int"]
+
+fn find(n: String, vs: List<TypedVar>) -> Option<Ty>
+    ? "The type of a named variable, the first of its name."
+    match vs
+        [] -> Option.None
+        [v, ..rest] -> match v.name == n
+            true -> Option.Some(v.ty)
+            false -> find(n, rest)
+
+verify find
+    find("n", [Kernel.Term.typed("n", Ty.TyInt)]) => Option.Some(Ty.TyInt)
+    find("m", []) => Option.None
+
+fn constType(n: String, cs: List<Const>) -> Option<Ty>
+    ? "The declared type of a module-level binding."
+    match cs
+        [] -> Option.None
+        [c, ..rest] -> match c.name == n
+            true -> Option.Some(c.ty)
+            false -> constType(n, rest)
+
+verify constType
+    constType("base", [Const(name = "base", ty = Ty.TyInt, value = Term.TInt(40))]) => Option.Some(Ty.TyInt)
+
+fn headOf(t: Ty) -> String
+    ? "What a type is made of: its outermost shape, or the whole type when it has no parts. A declared name, a type variable and an unknown type each have a head no other kind of type has, whatever their name: _ is the head of a hole alone."
+    match t
+        Ty.TyList(a) -> "List"
+        Ty.TyOption(a) -> "Option"
+        Ty.TyVector(a) -> "Vector"
+        Ty.TyResult(a, b) -> "Result"
+        Ty.TyMap(a, b) -> "Map"
+        Ty.TyTuple(xs) -> "tuple"
+        Ty.TyNamed(n) -> "named {n}"
+        Ty.TyVar(n, eq) -> "var {n}"
+        Ty.TyRigid(n, eq) -> "unknown {eq} {n}"
+        _ -> show(t)
+
+verify headOf
+    headOf(Ty.TyList(Ty.TyInt)) => "List"
+    headOf(Ty.TyInt) => "Int"
+    headOf(Ty.TyNamed("Int")) => "named Int"
+    headOf(Ty.TyNamed("_")) => "named _"
+    headOf(Ty.TyRigid("T", true)) => "unknown true T"
+
+fn partsOf(t: Ty) -> List<Ty>
+    ? "The types a type is made of, in order."
+    match t
+        Ty.TyList(a) -> [a]
+        Ty.TyOption(a) -> [a]
+        Ty.TyVector(a) -> [a]
+        Ty.TyResult(a, b) -> [a, b]
+        Ty.TyMap(a, b) -> [a, b]
+        Ty.TyTuple(xs) -> xs
+        _ -> []
+
+verify partsOf
+    partsOf(Ty.TyMap(Ty.TyInt, Ty.TyStr)) => [Ty.TyInt, Ty.TyStr]
+    partsOf(Ty.TyInt) => []
+
+fn rebuild(t: Ty, parts: List<Ty>) -> Ty
+    ? "The same shape over new parts."
+    match t
+        Ty.TyList(a) -> Ty.TyList(nth(parts, 0))
+        Ty.TyOption(a) -> Ty.TyOption(nth(parts, 0))
+        Ty.TyVector(a) -> Ty.TyVector(nth(parts, 0))
+        Ty.TyResult(a, b) -> Ty.TyResult(nth(parts, 0), nth(parts, 1))
+        Ty.TyMap(a, b) -> Ty.TyMap(nth(parts, 0), nth(parts, 1))
+        Ty.TyTuple(xs) -> Ty.TyTuple(parts)
+        _ -> t
+
+verify rebuild
+    rebuild(Ty.TyList(Ty.TyAny), [Ty.TyInt]) => Ty.TyList(Ty.TyInt)
+
+fn nth(ts: List<Ty>, i: Int) -> Ty
+    ? "The type at a place, a hole past the end."
+    match (ts, i)
+        ([t, ..rest], 0) -> t
+        ([t, ..rest], _) -> nth(rest, i - 1)
+        _ -> Ty.TyAny
+
+verify nth
+    nth([Ty.TyInt, Ty.TyStr], 1) => Ty.TyStr
+    nth([], 0) => Ty.TyAny
+
+fn join(a: Ty, b: Ty) -> Result<Ty, String>
+    ? "The one type two types of a value can both be: a hole takes the other side, the rest must agree in shape and part by part."
+    match (headOf(a) == "_", headOf(b) == "_", Bool.and(headOf(a) == headOf(b), List.len(partsOf(a)) == List.len(partsOf(b))))
+        (true, _, _) -> Result.Ok(b)
+        (_, true, _) -> Result.Ok(a)
+        (_, _, true) -> Result.Ok(rebuild(a, joinEach(partsOf(a), partsOf(b))?))
+        _ -> Result.Err("{show(a)} is not {show(b)}")
+
+verify join
+    join(Ty.TyList(Ty.TyAny), Ty.TyList(Ty.TyInt)) => Result.Ok(Ty.TyList(Ty.TyInt))
+    join(Ty.TyInt, Ty.TyStr) => Result.Err("Int is not String")
+    join(Ty.TyTuple([Ty.TyInt]), Ty.TyTuple([Ty.TyInt, Ty.TyInt])) => Result.Err("(Int) is not (Int, Int)")
+
+fn joinEach(xs: List<Ty>, ys: List<Ty>) -> Result<List<Ty>, String>
+    ? "Two lists of types joined part by part, as far as both go."
+    match (xs, ys)
+        ([x, ..xr], [y, ..yr]) -> Result.Ok(List.prepend(join(x, y)?, joinEach(xr, yr)?))
+        _ -> Result.Ok([])
+
+verify joinEach
+    joinEach([], []) => Result.Ok([])
+
+fn joinAll(ts: List<Ty>, acc: Ty) -> Result<Ty, String>
+    ? "Every type joined with the one before; a hole when there is none."
+    match ts
+        [] -> Result.Ok(acc)
+        [t, ..rest] -> joinAll(rest, join(acc, t)?)
+
+verify joinAll
+    joinAll([], Ty.TyAny) => Result.Ok(Ty.TyAny)
+    joinAll([Ty.TyInt, Ty.TyInt], Ty.TyAny) => Result.Ok(Ty.TyInt)
+
+fn fits(actual: Ty, expected: Ty) -> Bool
+    ? "Whether a value of the first type can stand where the second is expected."
+    match join(actual, expected)
+        Result.Ok(t) -> true
+        Result.Err(why) -> false
+
+verify fits
+    fits(Ty.TyOption(Ty.TyAny), Ty.TyOption(Ty.TyStr)) => true
+    fits(Ty.TyInt, Ty.TyBool) => false
+    fits(Ty.TyStr, Ty.TyNamed("_")) => false
+    fits(Ty.TyInt, Ty.TyNamed("Int")) => false
+    fits(Ty.TyNamed("tuple"), Ty.TyTuple([])) => false
+    fits(Ty.TyRigid("T", false), Ty.TyInt) => false
+    fits(Ty.TyRigid("T", false), Ty.TyRigid("T", true)) => false
+    fits(Ty.TyRigid("", false), Ty.TyRigid("", false)) => true
+
+fn hasEq(t: Ty, e: TyEnv) -> Bool
+    ? "Whether == between two values of the type is equality. Data, not a rule of the kernel: a declared type has one when its declaration in the script says so, any other type by its shape in Kernel.Builtins and then part by part; a type variable when it asks for one."
+    match t
+        Ty.TyNamed(n) -> declaredEq(sumNamed(n, e.sums), recNamed(n, e.recs))
+        Ty.TyVar(n, eq) -> eq
+        Ty.TyRigid(n, eq) -> eq
+        _ -> Bool.and(Kernel.Builtins.equality(headOf(t)), allEq(partsOf(t), e))
+
+verify hasEq
+    hasEq(Ty.TyList(Ty.TyInt), empty()) => true
+    hasEq(Ty.TyList(Ty.TyFloat), empty()) => false
+    hasEq(Ty.TyMap(Ty.TyInt, Ty.TyInt), empty()) => false
+    hasEq(Ty.TyNamed("R"), empty()) => false
+    hasEq(Ty.TyOption(Ty.TyNamed("R")), TyEnv(vars = [], defs = [], consts = [], sums = [], recs = [Rec(name = "R", eq = true, fields = [])], sigs = [])) => true
+    hasEq(Ty.TyNamed("R"), TyEnv(vars = [], defs = [], consts = [], sums = [], recs = [Rec(name = "R", eq = false, fields = [])], sigs = [])) => false
+    hasEq(Ty.TyList(Ty.TyAny), empty()) => true
+    hasEq(Ty.TyNamed("?=T"), empty()) => false
+    hasEq(Ty.TyRigid("=T", false), empty()) => false
+
+fn rigid(t: Ty) -> Ty
+    ? "A type as the proof of its own statement sees it: each type variable is one unknown type, which fits only itself and has an equality only when the variable asks for one."
+    match t
+        Ty.TyVar(n, eq) -> Ty.TyRigid(n, eq)
+        _ -> rebuild(t, rigidAll(partsOf(t)))
+
+verify rigid
+    rigid(Ty.TyList(Ty.TyVar("T", false))) => Ty.TyList(Ty.TyRigid("T", false))
+    hasEq(rigid(Ty.TyVar("K", true)), empty()) => true
+    hasEq(rigid(Ty.TyVar("=T", false)), empty()) => false
+    rigid(Ty.TyVar("=T", false)) => Ty.TyRigid("=T", false)
+
+fn rigidAll(ts: List<Ty>) -> List<Ty>
+    ? "Each type with its variables fixed."
+    match ts
+        [] -> []
+        [t, ..rest] -> List.prepend(rigid(t), rigidAll(rest))
+
+verify rigidAll
+    rigidAll([]) => []
+
+fn rigidVars(vs: List<TypedVar>) -> List<TypedVar>
+    ? "The givens of a statement as its own proof sees them."
+    match vs
+        [] -> []
+        [v, ..rest] -> List.prepend(Kernel.Term.typed(v.name, rigid(v.ty)), rigidVars(rest))
+
+verify rigidVars
+    rigidVars([Kernel.Term.typed("x", Ty.TyVar("T", false))]) => [Kernel.Term.typed("x", Ty.TyRigid("T", false))]
+
+fn declaredEq(s: Option<Sum>, r: Option<Rec>) -> Bool
+    ? "What a declared type's declaration says of its ==; a name the script does not declare has none."
+    match (s, r)
+        (Option.Some(sum), _) -> sum.eq
+        (_, Option.Some(rec)) -> rec.eq
+        _ -> false
+
+verify declaredEq
+    declaredEq(Option.None, Option.None) => false
+
+fn allEq(ts: List<Ty>, e: TyEnv) -> Bool
+    ? "Whether every type has an equality."
+    match ts
+        [] -> true
+        [t, ..rest] -> Bool.and(hasEq(t, e), allEq(rest, e))
+
+verify allEq
+    allEq([], empty()) => true
+
+fn typesOfVars(vs: List<TypedVar>) -> List<Ty>
+    ? "The types of typed variables, in order."
+    match vs
+        [] -> []
+        [v, ..rest] -> List.prepend(v.ty, typesOfVars(rest))
+
+verify typesOfVars
+    typesOfVars([Kernel.Term.typed("a", Ty.TyInt)]) => [Ty.TyInt]
+
+fn paramsOf(d: Def) -> List<String>
+    ? "The parameter names of a definition."
+    Kernel.Proof.givenNames(d.params)
+
+verify paramsOf
+    paramsOf(Def(name = "f", params = [Kernel.Term.typed("x", Ty.TyInt)], ret = Ty.TyInt, lets = [], body = Term.TVar("x"))) => ["x"]
+
+fn sumNamed(n: String, ss: List<Sum>) -> Option<Sum>
+    ? "A declared sum by name."
+    match ss
+        [] -> Option.None
+        [s, ..rest] -> match s.name == n
+            true -> Option.Some(s)
+            false -> sumNamed(n, rest)
+
+verify sumNamed
+    sumNamed("S", []) => Option.None
+
+fn recNamed(n: String, rs: List<Rec>) -> Option<Rec>
+    ? "A declared record by name."
+    match rs
+        [] -> Option.None
+        [r, ..rest] -> match r.name == n
+            true -> Option.Some(r)
+            false -> recNamed(n, rest)
+
+verify recNamed
+    recNamed("R", []) => Option.None
+
+fn sumOf(c: String, ss: List<Sum>) -> Option<Sum>
+    ? "The declared sum a constructor belongs to: the one named by the constructor up to its last dot."
+    sumNamed(typeName(c), ss)
+
+verify sumOf
+    sumOf("C.A", [Sum(name = "C", eq = false, variants = [Variant(name = "C.A", fields = [])])]) => Option.Some(Sum(name = "C", eq = false, variants = [Variant(name = "C.A", fields = [])]))
+
+fn typeName(c: String) -> String
+    ? "A constructor's name up to its last dot."
+    String.join(List.reverse(List.drop(List.reverse(String.split(c, ".")), 1)), ".")
+
+verify typeName
+    typeName("K.Verdict.Valid") => "K.Verdict"
+    typeName("Valid") => ""
+
+fn variantFields(c: String, vs: List<Variant>) -> Option<List<Ty>>
+    ? "The field types of a constructor among a sum's variants."
+    match vs
+        [] -> Option.None
+        [v, ..rest] -> match v.name == c
+            true -> Option.Some(v.fields)
+            false -> variantFields(c, rest)
+
+verify variantFields
+    variantFields("C.A", []) => Option.None
+
+fn ctorFields(c: String, subject: Ty, e: TyEnv) -> Result<List<Ty>, String>
+    ? "The field types of a constructor: a list's, Option's and Result's read off a subject of that type, any other off the declared sum, whatever the constructor is named."
+    match (c, headOf(subject))
+        ("nil", "List") -> Result.Ok([])
+        ("cons", "List") -> Result.Ok([nth(partsOf(subject), 0), Ty.TyList(nth(partsOf(subject), 0))])
+        ("Option.None", "Option") -> Result.Ok([])
+        ("Option.Some", "Option") -> Result.Ok([nth(partsOf(subject), 0)])
+        ("Result.Ok", "Result") -> Result.Ok([nth(partsOf(subject), 0)])
+        ("Result.Err", "Result") -> Result.Ok([nth(partsOf(subject), 1)])
+        _ -> match sumOf(c, e.sums)
+            Option.None -> Result.Err("unknown constructor {c}")
+            Option.Some(s) -> match variantFields(c, s.variants)
+                Option.None -> Result.Err("unknown constructor {c}")
+                Option.Some(fs) -> Result.Ok(fs)
+
+verify ctorFields
+    ctorFields("Option.Some", Ty.TyOption(Ty.TyInt), empty()) => Result.Ok([Ty.TyInt])
+    ctorFields("C.A", Ty.TyNamed("C"), empty()) => Result.Err("unknown constructor C.A")
+    ctorFields("cons", Ty.TyList(Ty.TyInt), empty()) => Result.Ok([Ty.TyInt, Ty.TyList(Ty.TyInt)])
+
+fn elemOf(t: Ty) -> Option<Ty>
+    ? "What a list holds, if the type is a list."
+    match t
+        Ty.TyList(a) -> Option.Some(a)
+        _ -> Option.None
+
+verify elemOf
+    elemOf(Ty.TyList(Ty.TyInt)) => Option.Some(Ty.TyInt)
+    elemOf(Ty.TyInt) => Option.None
+
+fn ctorsOf(t: Ty, e: TyEnv) -> List<String>
+    ? "The constructors of a type in order, as a split names them: nil and cons for a list, Option's, Result's, or a declared sum's; none for any other type."
+    match t
+        Ty.TyList(a) -> ["nil", "cons"]
+        Ty.TyOption(a) -> ["Option.None", "Option.Some"]
+        Ty.TyResult(a, b) -> ["Result.Err", "Result.Ok"]
+        Ty.TyNamed(n) -> match sumNamed(n, e.sums)
+            Option.Some(s) -> Kernel.Proof.variantNames(s.variants)
+            Option.None -> []
+        _ -> []
+
+verify ctorsOf
+    ctorsOf(Ty.TyList(Ty.TyInt), empty()) => ["nil", "cons"]
+    ctorsOf(Ty.TyInt, empty()) => []
+
+fn typeOf(t: Term, e: TyEnv) -> Result<Ty, String>
+    ? "The type of a term, from its leaves up; an ill-typed term is refused with the first part that does not fit."
+    match t
+        Term.TInt(n) -> Result.Ok(Ty.TyInt)
+        Term.TBool(b) -> Result.Ok(Ty.TyBool)
+        Term.TStr(s) -> Result.Ok(Ty.TyStr)
+        Term.TUnit -> Result.Ok(Ty.TyUnit)
+        Term.TVar(n) -> varType(n, e)
+        Term.THole -> Result.Err("the hole has no type")
+        Term.TGet(r, f) -> fieldType(typeOf(r, e)?, f, e)
+        Term.TCall(f, xs) -> callType(f, typesOf(xs, e)?, e)
+        Term.TBi(n, xs) -> builtinType(n, typesOf(xs, e)?)
+        Term.TOp(o, a, b) -> opType(o, typeOf(a, e)?, typeOf(b, e)?)
+        Term.TNeg(a) -> must(typeOf(a, e)?, Ty.TyInt, "a negation")
+        Term.TCtor(c, xs) -> ctorType(c, typesOf(xs, e)?, e)
+        Term.TMatch(s, []) -> Result.Err("a match with no arms has no type")
+        Term.TMatch(s, arms) -> armsType(typeOf(s, e)?, arms, Ty.TyAny, e)
+        Term.TParts(xs) -> partsType(typesOf(xs, e)?)
+        Term.TList(xs) -> Result.Ok(Ty.TyList(joinAll(typesOf(xs, e)?, Ty.TyAny)?))
+        Term.TTuple(xs) -> Result.Ok(Ty.TyTuple(typesOf(xs, e)?))
+        Term.TRec(n, fs) -> fieldsFit(n, fs, declaredRec(n, e)?, e)
+        Term.TUpd(n, b, fs) -> fieldsFit(n, fs, must(typeOf(b, e)?, Ty.TyNamed(n), "an update of {n}")?, e)
+
+verify typeOf
+    typeOf(Term.TOp("+", Term.TInt(1), Term.TInt(2)), empty()) => Result.Ok(Ty.TyInt)
+    typeOf(Term.TOp("+", Term.TStr("a"), Term.TStr("b")), empty()) => Result.Ok(Ty.TyStr)
+    typeOf(Term.TOp("-", Term.TStr("a"), Term.TStr("b")), empty()) => Result.Err("- does not take String")
+    typeOf(Term.TOp("==", Term.TList([]), Term.TList([Term.TInt(1)])), empty()) => Result.Ok(Ty.TyBool)
+    typeOf(Term.TVar("x"), empty()) => Result.Err("x is not a variable in scope")
+    typeOf(Term.TBi("List.prepend", [Term.TInt(1), Term.TList([])]), empty()) => Result.Ok(Ty.TyList(Ty.TyInt))
+    typeOf(Term.TBi("List.prepend", [Term.TInt(1), Term.TList([Term.TStr("a")])]), empty()) => Result.Err("List.prepend: Int is not String")
+    typeOf(Term.TCtor("Option.Some", [Term.TInt(1)]), empty()) => Result.Ok(Ty.TyOption(Ty.TyInt))
+    typeOf(Term.TMatch(Term.TList([Term.TInt(1)]), [Arm(pattern = Pat.PNil, body = Term.TInt(0)), Arm(pattern = Pat.PCons("h", "t"), body = Term.TVar("h"))]), empty()) => Result.Ok(Ty.TyInt)
+    typeOf(Term.TMatch(Term.TInt(0), []), empty()) => Result.Err("a match with no arms has no type")
+    typeOf(Term.TNeg(Term.TBool(true)), empty()) => Result.Err("a negation takes Int, not Bool")
+
+fn varType(n: String, e: TyEnv) -> Result<Ty, String>
+    ? "The declared type of a variable or module-level binding."
+    match find(n, e.vars)
+        Option.Some(t) -> Result.Ok(t)
+        Option.None -> match constType(n, e.consts)
+            Option.Some(t) -> Result.Ok(t)
+            Option.None -> Result.Err("{n} is not a variable in scope")
+
+verify varType
+    varType("n", withVars(empty(), [Kernel.Term.typed("n", Ty.TyInt)])) => Result.Ok(Ty.TyInt)
+
+fn typesOf(ts: List<Term>, e: TyEnv) -> Result<List<Ty>, String>
+    ? "The type of each term."
+    match ts
+        [] -> Result.Ok([])
+        [t, ..rest] -> Result.Ok(List.prepend(typeOf(t, e)?, typesOf(rest, e)?))
+
+verify typesOf
+    typesOf([Term.TInt(1)], empty()) => Result.Ok([Ty.TyInt])
+
+fn must(actual: Ty, expected: Ty, what: String) -> Result<Ty, String>
+    ? "The expected type, once the actual one fits it."
+    match fits(actual, expected)
+        true -> Result.Ok(expected)
+        false -> Result.Err("{what} takes {show(expected)}, not {show(actual)}")
+
+verify must
+    must(Ty.TyAny, Ty.TyInt, "x") => Result.Ok(Ty.TyInt)
+
+fn fieldType(r: Ty, f: String, e: TyEnv) -> Result<Ty, String>
+    ? "The type of a field of a declared record."
+    match r
+        Ty.TyNamed(n) -> recField(n, f, e)
+        _ -> Result.Err("{show(r)} has no field {f}")
+
+verify fieldType
+    fieldType(Ty.TyNamed("R"), "a", empty()) => Result.Err("R is not a declared record")
+
+fn recField(n: String, f: String, e: TyEnv) -> Result<Ty, String>
+    ? "The type of a field of a declared record, by name."
+    match recNamed(n, e.recs)
+        Option.None -> Result.Err("{n} is not a declared record")
+        Option.Some(rec) -> match find(f, rec.fields)
+            Option.None -> Result.Err("{n} has no field {f}")
+            Option.Some(t) -> Result.Ok(t)
+
+verify recField
+    recField("R", "a", TyEnv(vars = [], defs = [], consts = [], sums = [], recs = [Rec(name = "R", eq = false, fields = [])], sigs = [])) => Result.Err("R has no field a")
+
+fn declaredRec(n: String, e: TyEnv) -> Result<Ty, String>
+    ? "The type of a literal of a record the script declares."
+    match recNamed(n, e.recs)
+        Option.Some(r) -> Result.Ok(Ty.TyNamed(n))
+        Option.None -> Result.Err("{n} is not a declared record")
+
+verify declaredRec
+    declaredRec("R", empty()) => Result.Err("R is not a declared record")
+
+fn fieldsFit(n: String, fs: List<Field>, result: Ty, e: TyEnv) -> Result<Ty, String>
+    ? "A record's fields each fit their declared type."
+    match fs
+        [] -> Result.Ok(result)
+        [f, ..rest] -> match fits(typeOf(f.value, e)?, fieldType(Ty.TyNamed(n), f.name, e)?)
+            true -> fieldsFit(n, rest, result, e)
+            false -> Result.Err("field {f.name} of {n} does not fit its type")
+
+verify fieldsFit
+    fieldsFit("R", [], Ty.TyNamed("R"), empty()) => Result.Ok(Ty.TyNamed("R"))
+
+fn callType(f: String, args: List<Ty>, e: TyEnv) -> Result<Ty, String>
+    ? "A definition's result, once the arguments fit its parameters."
+    match Kernel.Proof.findDef(f, e.defs)
+        Option.None -> sigType(f, args, e.sigs, e)
+        Option.Some(d) -> match bindEach(typesOfVars(d.params), args, [], e, "{f}:")
+            Result.Ok(bound) -> Result.Ok(d.ret)
+            Result.Err(why) -> Result.Err(why)
+
+verify callType
+    callType("f", [], empty()) => Result.Err("no signature of f")
+
+fn sigType(f: String, args: List<Ty>, sigs: List<FnSig>, e: TyEnv) -> Result<Ty, String>
+    ? "The result of a function the script only names, by its declared signature."
+    match sigs
+        [] -> Result.Err("no signature of {f}")
+        [s, ..rest] -> match s.name == f
+            false -> sigType(f, args, rest, e)
+            true -> match bindEach(s.params, args, [], e, "{f}:")
+                Result.Ok(bound) -> Result.Ok(s.ret)
+                Result.Err(why) -> Result.Err(why)
+
+verify sigType
+    sigType("f", [Ty.TyInt], [FnSig(name = "f", params = [Ty.TyInt], ret = Ty.TyBool)], empty()) => Result.Ok(Ty.TyBool)
+
+fn builtinType(n: String, args: List<Ty>) -> Result<Ty, String>
+    ? "A builtin's result at these argument types, its type variables bound by them."
+    match Kernel.Builtins.sig(n)
+        Option.None -> Result.Err("unknown builtin {n}")
+        Option.Some(s) -> Result.Ok(instantiate(s.ret, bindEach(s.params, args, [], empty(), "{n}:")?))
+
+verify builtinType
+    builtinType("List.len", [Ty.TyList(Ty.TyAny)]) => Result.Ok(Ty.TyInt)
+    builtinType("List.nope", []) => Result.Err("unknown builtin List.nope")
+
+fn bindEach(expected: List<Ty>, actual: List<Ty>, bound: List<TypedVar>, e: TyEnv, what: String) -> Result<List<TypedVar>, String>
+    ? "Each actual type fits its expected one, binding the expected side's type variables in order."
+    match (expected, actual)
+        ([], []) -> Result.Ok(bound)
+        ([x, ..xs], [y, ..ys]) -> bindEach(xs, ys, bindVars(x, y, bound, e, what)?, e, what)
+        _ -> Result.Err("{what} takes {List.len(expected)} arguments")
+
+verify bindEach
+    bindEach([Ty.TyInt], [], [], empty(), "f") => Result.Err("f takes 1 arguments")
+
+fn bindVars(expected: Ty, actual: Ty, bound: List<TypedVar>, e: TyEnv, what: String) -> Result<List<TypedVar>, String>
+    ? "An actual type against an expected one that may hold type variables: a variable takes the actual type, joined with what it already holds; the rest must fit part by part."
+    match expected
+        Ty.TyVar(n, eq) -> bindVar(n, eq, actual, bound, e, what)
+        _ -> bindShape(expected, actual, bound, e, what)
+
+verify bindVars
+    bindVars(Ty.TyList(Ty.TyVar("T", false)), Ty.TyList(Ty.TyInt), [], empty(), "f:") => Result.Ok([Kernel.Term.typed("T", Ty.TyInt)])
+    bindVars(Ty.TyInt, Ty.TyStr, [], empty(), "f:") => Result.Err("f: String is not Int")
+
+fn bindShape(expected: Ty, actual: Ty, bound: List<TypedVar>, e: TyEnv, what: String) -> Result<List<TypedVar>, String>
+    ? "Two types of one shape, bound part by part; a hole fits anything."
+    match (Bool.or(headOf(actual) == "_", headOf(expected) == "_"), Bool.and(headOf(expected) == headOf(actual), List.len(partsOf(expected)) == List.len(partsOf(actual))))
+        (true, _) -> Result.Ok(bound)
+        (_, true) -> bindEach(partsOf(expected), partsOf(actual), bound, e, what)
+        _ -> Result.Err("{what} {show(actual)} is not {show(expected)}")
+
+verify bindShape
+    bindShape(Ty.TyList(Ty.TyInt), Ty.TyOption(Ty.TyInt), [], empty(), "f:") => Result.Err("f: Option<Int> is not List<Int>")
+
+fn bindVar(n: String, eq: Bool, actual: Ty, bound: List<TypedVar>, e: TyEnv, what: String) -> Result<List<TypedVar>, String>
+    ? "A type variable takes the actual type, joined with what it already holds; one marked as needing equality refuses a type whose == is not equality."
+    match Bool.and(eq, Bool.not(hasEq(actual, e)))
+        true -> Result.Err("{what} == on {show(actual)} is not equality")
+        false -> match find(n, bound)
+            Option.None -> Result.Ok(List.prepend(Kernel.Term.typed(n, actual), bound))
+            Option.Some(prev) -> match join(prev, actual)
+                Result.Ok(t) -> Result.Ok(List.prepend(Kernel.Term.typed(n, t), bound))
+                Result.Err(why) -> Result.Err("{what} {why}")
+
+verify bindVar
+    bindVar("T", false, Ty.TyInt, [Kernel.Term.typed("T", Ty.TyStr)], empty(), "f:") => Result.Err("f: String is not Int")
+    bindVar("T", true, Ty.TyFloat, [], empty(), "f:") => Result.Err("f: == on Float is not equality")
+
+fn instantiate(t: Ty, bound: List<TypedVar>) -> Ty
+    ? "A type with its variables replaced by what they are bound to; an unbound one is a hole."
+    match t
+        Ty.TyVar(n, eq) -> Option.withDefault(find(n, bound), Ty.TyAny)
+        Ty.TyList(a) -> Ty.TyList(instantiate(a, bound))
+        Ty.TyOption(a) -> Ty.TyOption(instantiate(a, bound))
+        Ty.TyVector(a) -> Ty.TyVector(instantiate(a, bound))
+        Ty.TyResult(a, b) -> Ty.TyResult(instantiate(a, bound), instantiate(b, bound))
+        Ty.TyMap(a, b) -> Ty.TyMap(instantiate(a, bound), instantiate(b, bound))
+        Ty.TyTuple(xs) -> Ty.TyTuple(instantiateAll(xs, bound))
+        _ -> t
+
+verify instantiate
+    instantiate(Ty.TyList(Ty.TyVar("T", false)), []) => Ty.TyList(Ty.TyAny)
+
+fn instantiateAll(ts: List<Ty>, bound: List<TypedVar>) -> List<Ty>
+    ? "Each type instantiated."
+    match ts
+        [] -> []
+        [t, ..rest] -> List.prepend(instantiate(t, bound), instantiateAll(rest, bound))
+
+verify instantiateAll
+    instantiateAll([], []) => []
+
+fn opType(o: String, a: Ty, b: Ty) -> Result<Ty, String>
+    ? "An operator's result at the one type of its operands: == and != compare any two values; an order takes two Int, Float or texts; + adds two of those, and - * / two Int or Float. Which of them a step may read as integer arithmetic is that step's business."
+    t = operands(o, a, b)?
+    match (List.contains(["==", "!="], o), List.contains(["<", "<=", ">", ">="], o), List.contains(["+", "-", "*", "/"], o))
+        (true, _, _) -> Result.Ok(Ty.TyBool)
+        (_, true, _) -> numeric(o, t, true, Ty.TyBool)
+        (_, _, true) -> numeric(o, t, o == "+", t)
+        _ -> Result.Err("unknown operator {o}")
+
+verify opType
+    opType("<", Ty.TyInt, Ty.TyInt) => Result.Ok(Ty.TyBool)
+    opType("+", Ty.TyStr, Ty.TyStr) => Result.Ok(Ty.TyStr)
+    opType("-", Ty.TyStr, Ty.TyStr) => Result.Err("- does not take String")
+    opType("*", Ty.TyFloat, Ty.TyFloat) => Result.Ok(Ty.TyFloat)
+    opType("+", Ty.TyInt, Ty.TyBool) => Result.Err("+ takes two values of one type: Int is not Bool")
+    opType("==", Ty.TyInt, Ty.TyStr) => Result.Err("== takes two values of one type: Int is not String")
+    opType("%", Ty.TyInt, Ty.TyInt) => Result.Err("unknown operator %")
+
+fn operands(o: String, a: Ty, b: Ty) -> Result<Ty, String>
+    ? "The one type both operands have."
+    match join(a, b)
+        Result.Ok(t) -> Result.Ok(t)
+        Result.Err(why) -> Result.Err("{o} takes two values of one type: {why}")
+
+verify operands
+    operands("==", Ty.TyList(Ty.TyAny), Ty.TyList(Ty.TyInt)) => Result.Ok(Ty.TyList(Ty.TyInt))
+
+fn numeric(o: String, t: Ty, texts: Bool, result: Ty) -> Result<Ty, String>
+    ? "The result, once the operands are Int or Float, or texts where the operator takes them."
+    match (t, texts)
+        (Ty.TyInt, _) -> Result.Ok(result)
+        (Ty.TyFloat, _) -> Result.Ok(result)
+        (Ty.TyAny, _) -> Result.Ok(result)
+        (Ty.TyStr, true) -> Result.Ok(result)
+        _ -> Result.Err("{o} does not take {show(t)}")
+
+verify numeric
+    numeric("<", Ty.TyBool, true, Ty.TyBool) => Result.Err("< does not take Bool")
+
+fn ctorType(c: String, args: List<Ty>, e: TyEnv) -> Result<Ty, String>
+    ? "A constructor application: Option and Result by their builtin shape, a declared constructor by its sum."
+    match (c, args)
+        ("Option.None", []) -> Result.Ok(Ty.TyOption(Ty.TyAny))
+        ("Option.Some", [a]) -> Result.Ok(Ty.TyOption(a))
+        ("Result.Ok", [a]) -> Result.Ok(Ty.TyResult(a, Ty.TyAny))
+        ("Result.Err", [a]) -> Result.Ok(Ty.TyResult(Ty.TyAny, a))
+        _ -> match sumOf(c, e.sums)
+            Option.None -> Result.Err("unknown constructor {c}")
+            Option.Some(s) -> match variantFields(c, s.variants)
+                Option.None -> Result.Err("unknown constructor {c}")
+                Option.Some(fs) -> Result.Ok(instantiate(Ty.TyNamed(s.name), bindEach(fs, args, [], e, "{c}:")?))
+
+verify ctorType
+    ctorType("Option.None", [], empty()) => Result.Ok(Ty.TyOption(Ty.TyAny))
+    ctorType("C.A", [], empty()) => Result.Err("unknown constructor C.A")
+
+fn partsType(ts: List<Ty>) -> Result<Ty, String>
+    ? "A text made of parts is a text, whatever the parts are."
+    Result.Ok(Ty.TyStr)
+
+verify partsType
+    partsType([Ty.TyInt]) => Result.Ok(Ty.TyStr)
+
+fn patVars(p: Pat, subject: Ty, e: TyEnv) -> Result<List<TypedVar>, String>
+    ? "The variables a pattern binds over a subject of this type, each with its type; a wildcard part binds nothing."
+    match (p, headOf(subject))
+        (Pat.PWild, _) -> Result.Ok([])
+        (Pat.PVar(n), _) -> Result.Ok(namedVars([n], [subject]))
+        (Pat.PLit(k), _) -> litFits(typeOf(k, e)?, subject)
+        (Pat.PNil, "List") -> Result.Ok([])
+        (Pat.PCons(h, t), "List") -> Result.Ok(namedVars([h, t], ctorFields("cons", subject, e)?))
+        (Pat.PTuple(ps), "tuple") -> patVarsAll(ps, partsOf(subject), e)
+        (Pat.PCtor(c, ns), _) -> Result.Ok(namedVars(ns, ctorFields(c, subject, e)?))
+        _ -> Result.Err("the pattern does not fit {show(subject)}")
+
+verify patVars
+    patVars(Pat.PCons("h", "t"), Ty.TyList(Ty.TyInt), empty()) => Result.Ok([Kernel.Term.typed("h", Ty.TyInt), Kernel.Term.typed("t", Ty.TyList(Ty.TyInt))])
+    patVars(Pat.PNil, Ty.TyInt, empty()) => Result.Err("the pattern does not fit Int")
+    patVars(Pat.PCtor("Option.Some", ["_"]), Ty.TyOption(Ty.TyInt), empty()) => Result.Ok([])
+
+fn litFits(k: Ty, subject: Ty) -> Result<List<TypedVar>, String>
+    ? "A literal pattern has the subject's type and binds nothing."
+    match fits(k, subject)
+        true -> Result.Ok([])
+        false -> Result.Err("the pattern does not fit {show(subject)}")
+
+verify litFits
+    litFits(Ty.TyInt, Ty.TyStr) => Result.Err("the pattern does not fit String")
+
+fn patVarsAll(ps: List<Pat>, ts: List<Ty>, e: TyEnv) -> Result<List<TypedVar>, String>
+    ? "The variables of each part of a tuple pattern."
+    match (ps, ts)
+        ([], []) -> Result.Ok([])
+        ([p, ..pr], [t, ..tr]) -> Result.Ok(List.concat(patVars(p, t, e)?, patVarsAll(pr, tr, e)?))
+        _ -> Result.Err("the pattern does not fit {show(Ty.TyTuple(ts))}")
+
+verify patVarsAll
+    patVarsAll([], [], empty()) => Result.Ok([])
+
+fn namedVars(ns: List<String>, ts: List<Ty>) -> List<TypedVar>
+    ? "Names paired with types, as far as both go, wildcards left out."
+    match (ns, ts)
+        ([n, ..nr], [t, ..tr]) -> namedOne(n, t, namedVars(nr, tr))
+        _ -> []
+
+verify namedVars
+    namedVars(["_", "x"], [Ty.TyInt, Ty.TyBool]) => [Kernel.Term.typed("x", Ty.TyBool)]
+
+fn namedOne(n: String, t: Ty, rest: List<TypedVar>) -> List<TypedVar>
+    ? "One name with its type in front of the rest, unless it is the wildcard."
+    match n == "_"
+        true -> rest
+        false -> List.prepend(Kernel.Term.typed(n, t), rest)
+
+verify namedOne
+    namedOne("_", Ty.TyInt, []) => []
+
+fn armsType(subject: Ty, arms: List<Arm>, acc: Ty, e: TyEnv) -> Result<Ty, String>
+    ? "The one type every arm's body has, each under the variables its pattern binds."
+    match arms
+        [] -> Result.Ok(acc)
+        [a, ..rest] -> armsType(subject, rest, join(acc, typeOf(a.body, withVars(e, patVars(a.pattern, subject, e)?))?)?, e)
+
+verify armsType
+    armsType(Ty.TyInt, [], Ty.TyAny, empty()) => Result.Ok(Ty.TyAny)
+
+fn bindTyped(bs: List<Binding>, declared: List<TypedVar>, bound: List<TypedVar>, e: TyEnv, what: String) -> Result<List<TypedVar>, String>
+    ? "The one check of a substitution: each bound term's type fits the declared type of its name, the declaration's type variables bound in order; a variable marked as needing equality takes only a type that has one."
+    match bs
+        [] -> eqKept(typesOfVars(declared), bound, e, what)
+        [b, ..rest] -> match find(b.name, declared)
+            Option.None -> Result.Err("{what} does not bind {b.name}")
+            Option.Some(want) -> bindTyped(rest, declared, bindVars(want, typeOf(b.value, e)?, bound, e, "{what}: {b.name} :=")?, e, what)
+
+verify bindTyped
+    bindTyped([Kernel.Term.bind("a", Term.TInt(1))], [Kernel.Term.typed("a", Ty.TyInt)], [], empty(), "r") => Result.Ok([])
+    bindTyped([Kernel.Term.bind("a", Term.TStr("x"))], [Kernel.Term.typed("a", Ty.TyInt)], [], empty(), "r") => Result.Err("r: a := String is not Int")
+    bindTyped([Kernel.Term.bind("a", Term.TList([Term.TStr("x")]))], [Kernel.Term.typed("a", Ty.TyVar("t", true))], [], empty(), "r") => Result.Ok([Kernel.Term.typed("t", Ty.TyList(Ty.TyStr))])
+    bindTyped([Kernel.Term.bind("a", Term.TVar("f"))], [Kernel.Term.typed("a", Ty.TyVar("t", true))], [], withVars(empty(), [Kernel.Term.typed("f", Ty.TyFloat)]), "r") => Result.Err("r: a := == on Float is not equality")
+
+fn eqKept(ts: List<Ty>, bound: List<TypedVar>, e: TyEnv, what: String) -> Result<List<TypedVar>, String>
+    ? "Every type variable some declared type marks as needing equality is bound, once all terms are in, to a type that has one: the mark is the variable's, whichever of its places a term reached it through."
+    match ts
+        [] -> Result.Ok(bound)
+        [Ty.TyVar(n, true), ..rest] -> match hasEq(Option.withDefault(find(n, bound), Ty.TyAny), e)
+            true -> eqKept(rest, bound, e, what)
+            false -> Result.Err("{what}: == on {show(Option.withDefault(find(n, bound), Ty.TyAny))} is not equality")
+        [t, ..rest] -> eqKept(List.concat(partsOf(t), rest), bound, e, what)
+
+verify eqKept
+    eqKept([Ty.TyVar("T", false), Ty.TyList(Ty.TyVar("T", true))], [Kernel.Term.typed("T", Ty.TyFloat)], empty(), "r") => Result.Err("r: == on Float is not equality")
+    eqKept([Ty.TyVar("T", true)], [Kernel.Term.typed("T", Ty.TyInt)], empty(), "r") => Result.Ok([Kernel.Term.typed("T", Ty.TyInt)])
+
+fn finOf(t: Ty, e: TyEnv, seen: List<String>) -> Option<Fin>
+    ? "The values of a type can be listed when it is Bool, a sum whose constructors carry nothing, or a record or tuple of such types."
+    match t
+        Ty.TyBool -> Option.Some(Fin.FBool)
+        Ty.TyTuple(xs) -> finTuple(finAll(xs, e, seen))
+        Ty.TyNamed(n) -> finSeen(n, e, seen)
+        _ -> Option.None
+
+verify finOf
+    finOf(Ty.TyBool, empty(), []) => Option.Some(Fin.FBool)
+    finOf(Ty.TyNamed("C"), TyEnv(vars = [], defs = [], consts = [], sums = [Sum(name = "C", eq = false, variants = [Variant(name = "C.A", fields = []), Variant(name = "C.B", fields = [])])], recs = [], sigs = []), []) => Option.Some(Fin.FSum(["C.A", "C.B"]))
+    finOf(Ty.TyNamed("C"), TyEnv(vars = [], defs = [], consts = [], sums = [Sum(name = "C", eq = false, variants = [Variant(name = "C.A", fields = [Ty.TyInt])])], recs = [], sigs = []), []) => Option.None
+    finOf(Ty.TyInt, empty(), []) => Option.None
+
+fn finTuple(parts: Option<List<Fin>>) -> Option<Fin>
+    ? "A tuple of finite parts."
+    match parts
+        Option.Some(fs) -> Option.Some(Fin.FTuple(fs))
+        Option.None -> Option.None
+
+verify finTuple
+    finTuple(Option.None) => Option.None
+
+fn finSeen(n: String, e: TyEnv, seen: List<String>) -> Option<Fin>
+    ? "A declared name, unless it is being read already: a type that holds itself is not finite."
+    match List.contains(seen, n)
+        true -> Option.None
+        false -> finNamed(n, e, List.prepend(n, seen))
+
+verify finSeen
+    finSeen("R", empty(), ["R"]) => Option.None
+
+fn finNamed(n: String, e: TyEnv, seen: List<String>) -> Option<Fin>
+    ? "A declared sum of bare constructors, or a record of finite fields."
+    match (sumNamed(n, e.sums), recNamed(n, e.recs))
+        (Option.Some(s), _) -> finSum(s)
+        (_, Option.Some(r)) -> finRec(n, finFields(r.fields, e, seen))
+        _ -> Option.None
+
+verify finNamed
+    finNamed("R", empty(), []) => Option.None
+
+fn finSum(s: Sum) -> Option<Fin>
+    ? "A sum is finite when no constructor carries a field."
+    match bare(s.variants)
+        true -> Option.Some(Fin.FSum(Kernel.Proof.variantNames(s.variants)))
+        false -> Option.None
+
+verify finSum
+    finSum(Sum(name = "C", eq = false, variants = [])) => Option.Some(Fin.FSum([]))
+
+fn finRec(n: String, fields: Option<List<FinField>>) -> Option<Fin>
+    ? "A record of finite fields."
+    match fields
+        Option.Some(fs) -> Option.Some(Fin.FRec(n, fs))
+        Option.None -> Option.None
+
+verify finRec
+    finRec("R", Option.None) => Option.None
+
+fn bare(vs: List<Variant>) -> Bool
+    ? "Whether no constructor carries a field."
+    match vs
+        [] -> true
+        [v, ..rest] -> Bool.and(List.len(v.fields) == 0, bare(rest))
+
+verify bare
+    bare([Variant(name = "C.A", fields = [Ty.TyInt])]) => false
+
+fn finAll(ts: List<Ty>, e: TyEnv, seen: List<String>) -> Option<List<Fin>>
+    ? "Every type finite, or nothing."
+    match ts
+        [] -> Option.Some([])
+        [t, ..rest] -> match (finOf(t, e, seen), finAll(rest, e, seen))
+            (Option.Some(f), Option.Some(fs)) -> Option.Some(List.prepend(f, fs))
+            _ -> Option.None
+
+verify finAll
+    finAll([Ty.TyInt], empty(), []) => Option.None
+
+fn finFields(fs: List<TypedVar>, e: TyEnv, seen: List<String>) -> Option<List<FinField>>
+    ? "Every field finite, or nothing."
+    match fs
+        [] -> Option.Some([])
+        [f, ..rest] -> match (finOf(f.ty, e, seen), finFields(rest, e, seen))
+            (Option.Some(fin), Option.Some(more)) -> Option.Some(List.prepend(FinField(name = f.name, fin = fin), more))
+            _ -> Option.None
+
+verify finFields
+    finFields([Kernel.Term.typed("a", Ty.TyBool)], empty(), []) => Option.Some([FinField(name = "a", fin = Fin.FBool)])

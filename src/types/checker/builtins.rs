@@ -6,6 +6,20 @@ use super::*;
 /// owned by the `.av` contract, and a second Rust-side declaration of the
 /// same name is a copy that can disagree with it — which is what the
 /// migration off legacy service builtins removed.
+/// Every builtin signature the checker registers, by name: what the proof
+/// kernel's generated table of builtins is written from
+/// (`crate::ir::proof_steps::kernel_builtins`).
+pub fn builtin_signatures() -> Vec<(String, Vec<Type>, Type)> {
+    let checker = TypeChecker::new_with_symbols(SymbolTable::default());
+    let mut out: Vec<(String, Vec<Type>, Type)> = checker
+        .extra_sigs
+        .iter()
+        .map(|(k, s)| (k.clone(), s.params.clone(), s.ret.clone()))
+        .collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
 #[cfg(test)]
 pub(crate) fn builtin_signature_names() -> std::collections::BTreeSet<String> {
     TypeChecker::new_with_symbols(SymbolTable::default())

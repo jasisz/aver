@@ -259,6 +259,9 @@ fn main_impl(
         } => {
             facts_cmd::cmd_facts(prefix.as_deref(), *json, *markdown);
         }
+        Commands::KernelBuiltins => {
+            print!("{}", aver::ir::proof_steps::kernel_builtins::aver_source());
+        }
         Commands::Effects {
             file,
             module_root,

@@ -1,3 +1,5 @@
+pub mod builtins;
+
 pub mod check;
 
 pub mod decode;
@@ -19,5 +21,7 @@ pub mod sexp;
 pub mod subst;
 
 pub mod term;
+
+pub mod types;
 
 pub mod verdict;

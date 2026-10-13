@@ -1,7 +1,10 @@
 module Rules
     intent =
-        "The wall: every rule a step may apply, as an equation schema over named binders."
+        "The wall: every rule a step may apply, as an equation schema over typed binders."
         "The replayer's own copy of src/ir/proof_steps/rules.rs; an identifier not listed here is refused."
+        "A binder's type is what the rule is true at: Int for arithmetic and order, Bool for the connectives,"
+        "any one type ?t for the list, map and vector shapes, and a type whose == is equality where a"
+        "rule reads == at that type: the types Lean's statement of the same rule holds at."
         "The list rules are the constructor equations of the list builtins, with Aver's truncation of a count."
         "Int.min, Int.max and Int.abs are read by the comparison that picks their value; List.contains on [] and past an element that is not the one looked for."
         "The map rules read Map.get, Map.has and Map.len on the empty map and on Map.set(m, k, v)."
@@ -12,7 +15,7 @@ module Rules
     effects []
 
 record Schema
-    binders: List<String>
+    binders: List<TypedVar>
     premises: List<Eqn>
     concl: Eqn
 
@@ -22,6 +25,69 @@ fn v(n: String) -> Term
 
 verify v
     v("a") => Term.TVar("a")
+
+fn i(n: String) -> TypedVar
+    ? "A binder of type Int."
+    Kernel.Term.typed(n, Ty.TyInt)
+
+verify i
+    i("a") => TypedVar(name = "a", ty = Ty.TyInt)
+
+fn bo(n: String) -> TypedVar
+    ? "A binder of type Bool."
+    Kernel.Term.typed(n, Ty.TyBool)
+
+verify bo
+    bo("a") => TypedVar(name = "a", ty = Ty.TyBool)
+
+fn any(n: String) -> TypedVar
+    ? "A binder of the rule's one type ?t."
+    Kernel.Term.typed(n, Ty.TyVar("t", false))
+
+verify any
+    any("x") => TypedVar(name = "x", ty = Ty.TyVar("t", false))
+
+fn same(n: String) -> TypedVar
+    ? "A binder of the rule's one type ?t, whose == must be equality."
+    Kernel.Term.typed(n, Ty.TyVar("t", true))
+
+verify same
+    same("x") => TypedVar(name = "x", ty = Ty.TyVar("t", true))
+
+fn lt(n: String) -> TypedVar
+    ? "A binder of type List<?t>."
+    Kernel.Term.typed(n, Ty.TyList(Ty.TyVar("t", false)))
+
+verify lt
+    lt("a") => TypedVar(name = "a", ty = Ty.TyList(Ty.TyVar("t", false)))
+
+fn kv(n: String) -> TypedVar
+    ? "A binder of type Map<?k, ?v>, the key with an equality."
+    Kernel.Term.typed(n, Ty.TyMap(Ty.TyVar("k", true), Ty.TyVar("v", false)))
+
+verify kv
+    kv("m") => TypedVar(name = "m", ty = Ty.TyMap(Ty.TyVar("k", true), Ty.TyVar("v", false)))
+
+fn key(n: String) -> TypedVar
+    ? "A binder of the map's key type ?k."
+    Kernel.Term.typed(n, Ty.TyVar("k", true))
+
+verify key
+    key("k") => TypedVar(name = "k", ty = Ty.TyVar("k", true))
+
+fn val(n: String) -> TypedVar
+    ? "A binder of the map's value type ?v."
+    Kernel.Term.typed(n, Ty.TyVar("v", false))
+
+verify val
+    val("v") => TypedVar(name = "v", ty = Ty.TyVar("v", false))
+
+fn vec(n: String) -> TypedVar
+    ? "A binder of type Vector<?t>."
+    Kernel.Term.typed(n, Ty.TyVector(Ty.TyVar("t", false)))
+
+verify vec
+    vec("v") => TypedVar(name = "v", ty = Ty.TyVector(Ty.TyVar("t", false)))
 
 fn eq(l: Term, r: Term) -> Eqn
     ? "An equation."
@@ -44,7 +110,7 @@ fn conn(name: String, a: Term, b: Term) -> Term
 verify conn
     conn("Bool.and", Term.TVar("a"), Term.TVar("b")) => Term.TBi("Bool.and", [Term.TVar("a"), Term.TVar("b")])
 
-fn plain(binders: List<String>, l: Term, r: Term) -> Option<Schema>
+fn plain(binders: List<TypedVar>, l: Term, r: Term) -> Option<Schema>
     ? "A rule without premises."
     Option.Some(Schema(binders = binders, premises = [], concl = eq(l, r)))
 
@@ -54,74 +120,75 @@ verify plain
 fn schema(id: String) -> Option<Schema>
     ? "The rule with this identifier."
     match id
-        "bool.and.true_l" -> plain(["b"], conn("Bool.and", Term.TBool(true), v("b")), v("b"))
-        "bool.and.false_l" -> plain(["b"], conn("Bool.and", Term.TBool(false), v("b")), Term.TBool(false))
-        "bool.and.true_r" -> plain(["a"], conn("Bool.and", v("a"), Term.TBool(true)), v("a"))
-        "bool.and.false_r" -> plain(["a"], conn("Bool.and", v("a"), Term.TBool(false)), Term.TBool(false))
-        "bool.or.true_l" -> plain(["b"], conn("Bool.or", Term.TBool(true), v("b")), Term.TBool(true))
-        "bool.or.false_l" -> plain(["b"], conn("Bool.or", Term.TBool(false), v("b")), v("b"))
-        "bool.or.true_r" -> plain(["a"], conn("Bool.or", v("a"), Term.TBool(true)), Term.TBool(true))
-        "bool.or.false_r" -> plain(["a"], conn("Bool.or", v("a"), Term.TBool(false)), v("a"))
+        "bool.and.true_l" -> plain([bo("b")], conn("Bool.and", Term.TBool(true), v("b")), v("b"))
+        "bool.and.false_l" -> plain([bo("b")], conn("Bool.and", Term.TBool(false), v("b")), Term.TBool(false))
+        "bool.and.true_r" -> plain([bo("a")], conn("Bool.and", v("a"), Term.TBool(true)), v("a"))
+        "bool.and.false_r" -> plain([bo("a")], conn("Bool.and", v("a"), Term.TBool(false)), Term.TBool(false))
+        "bool.or.true_l" -> plain([bo("b")], conn("Bool.or", Term.TBool(true), v("b")), Term.TBool(true))
+        "bool.or.false_l" -> plain([bo("b")], conn("Bool.or", Term.TBool(false), v("b")), v("b"))
+        "bool.or.true_r" -> plain([bo("a")], conn("Bool.or", v("a"), Term.TBool(true)), Term.TBool(true))
+        "bool.or.false_r" -> plain([bo("a")], conn("Bool.or", v("a"), Term.TBool(false)), v("a"))
         "bool.not.true" -> plain([], Term.TBi("Bool.not", [Term.TBool(true)]), Term.TBool(false))
         "bool.not.false" -> plain([], Term.TBi("Bool.not", [Term.TBool(false)]), Term.TBool(true))
-        "bool.and.elim_l" -> Option.Some(Schema(binders = ["a", "b"], premises = [is(conn("Bool.and", v("a"), v("b")), true)], concl = is(v("a"), true)))
-        "bool.and.elim_r" -> Option.Some(Schema(binders = ["a", "b"], premises = [is(conn("Bool.and", v("a"), v("b")), true)], concl = is(v("b"), true)))
+        "bool.and.elim_l" -> Option.Some(Schema(binders = [bo("a"), bo("b")], premises = [is(conn("Bool.and", v("a"), v("b")), true)], concl = is(v("a"), true)))
+        "bool.and.elim_r" -> Option.Some(Schema(binders = [bo("a"), bo("b")], premises = [is(conn("Bool.and", v("a"), v("b")), true)], concl = is(v("b"), true)))
         _ -> comparisonSchema(id)
 
 verify schema
     schema("simp") => Option.None
     schema("bool.not.true") => Option.Some(Schema(binders = [], premises = [], concl = eq(Term.TBi("Bool.not", [Term.TBool(true)]), Term.TBool(false))))
 
-fn complement(p: String, pv: Bool, q: String, qv: Bool) -> Option<Schema>
+fn complement(p: String, pv: Bool, q: String, qv: Bool, binders: List<TypedVar>) -> Option<Schema>
     ? "A decided comparison decides its complement."
-    Option.Some(Schema(binders = ["a", "b"], premises = [is(Term.TOp(p, v("a"), v("b")), pv)], concl = is(Term.TOp(q, v("a"), v("b")), qv)))
+    Option.Some(Schema(binders = binders, premises = [is(Term.TOp(p, v("a"), v("b")), pv)], concl = is(Term.TOp(q, v("a"), v("b")), qv)))
 
 verify complement
-    complement(">", false, "<=", true) => Option.Some(Schema(binders = ["a", "b"], premises = [is(Term.TOp(">", v("a"), v("b")), false)], concl = is(Term.TOp("<=", v("a"), v("b")), true)))
+    complement(">", false, "<=", true, [i("a"), i("b")]) => Option.Some(Schema(binders = [i("a"), i("b")], premises = [is(Term.TOp(">", v("a"), v("b")), false)], concl = is(Term.TOp("<=", v("a"), v("b")), true)))
 
 fn comparisonSchema(id: String) -> Option<Schema>
-    ? "The comparison complement rules."
+    ? "The comparison complement rules on Int, and == as equality, as reflexive and as symmetric where the type's == is equality."
+    ints = [i("a"), i("b")]
     match id
-        "int.le.of_not_gt" -> complement(">", false, "<=", true)
-        "int.le.false_of_gt" -> complement(">", true, "<=", false)
-        "int.ge.of_not_lt" -> complement("<", false, ">=", true)
-        "int.ge.false_of_lt" -> complement("<", true, ">=", false)
-        "int.lt.of_not_ge" -> complement(">=", false, "<", true)
-        "int.lt.false_of_ge" -> complement(">=", true, "<", false)
-        "int.gt.of_not_le" -> complement("<=", false, ">", true)
-        "int.gt.false_of_le" -> complement("<=", true, ">", false)
-        "int.eq.of_not_ne" -> complement("!=", false, "==", true)
-        "int.eq.false_of_ne" -> complement("!=", true, "==", false)
-        "int.ne.of_not_eq" -> complement("==", false, "!=", true)
-        "int.ne.false_of_eq" -> complement("==", true, "!=", false)
-        "int.eq.of_le_ge" -> Option.Some(Schema(binders = ["a", "b"], premises = [is(Term.TOp("<=", v("a"), v("b")), true), is(Term.TOp(">=", v("a"), v("b")), true)], concl = is(Term.TOp("==", v("a"), v("b")), true)))
-        "int.eq.false_of_lt" -> complement("<", true, "==", false)
-        "int.eq.false_of_gt" -> complement(">", true, "==", false)
-        "int.eq.of_beq" -> Option.Some(Schema(binders = ["a", "b"], premises = [is(Term.TOp("==", v("a"), v("b")), true)], concl = eq(v("a"), v("b"))))
-        "bool.beq.refl" -> plain(["a"], Term.TOp("==", v("a"), v("a")), Term.TBool(true))
-        "bool.beq.symm" -> plain(["a", "b"], Term.TOp("==", v("a"), v("b")), Term.TOp("==", v("b"), v("a")))
+        "int.le.of_not_gt" -> complement(">", false, "<=", true, ints)
+        "int.le.false_of_gt" -> complement(">", true, "<=", false, ints)
+        "int.ge.of_not_lt" -> complement("<", false, ">=", true, ints)
+        "int.ge.false_of_lt" -> complement("<", true, ">=", false, ints)
+        "int.lt.of_not_ge" -> complement(">=", false, "<", true, ints)
+        "int.lt.false_of_ge" -> complement(">=", true, "<", false, ints)
+        "int.gt.of_not_le" -> complement("<=", false, ">", true, ints)
+        "int.gt.false_of_le" -> complement("<=", true, ">", false, ints)
+        "int.eq.of_not_ne" -> complement("!=", false, "==", true, ints)
+        "int.eq.false_of_ne" -> complement("!=", true, "==", false, ints)
+        "int.ne.of_not_eq" -> complement("==", false, "!=", true, ints)
+        "int.ne.false_of_eq" -> complement("==", true, "!=", false, ints)
+        "int.eq.of_le_ge" -> Option.Some(Schema(binders = ints, premises = [is(Term.TOp("<=", v("a"), v("b")), true), is(Term.TOp(">=", v("a"), v("b")), true)], concl = is(Term.TOp("==", v("a"), v("b")), true)))
+        "int.eq.false_of_lt" -> complement("<", true, "==", false, ints)
+        "int.eq.false_of_gt" -> complement(">", true, "==", false, ints)
+        "int.eq.of_beq" -> Option.Some(Schema(binders = [same("a"), same("b")], premises = [is(Term.TOp("==", v("a"), v("b")), true)], concl = eq(v("a"), v("b"))))
+        "bool.beq.refl" -> plain([same("a")], Term.TOp("==", v("a"), v("a")), Term.TBool(true))
+        "bool.beq.symm" -> plain([same("a"), same("b")], Term.TOp("==", v("a"), v("b")), Term.TOp("==", v("b"), v("a")))
         _ -> ringSchema(id)
 
 verify comparisonSchema
     comparisonSchema("nope") => Option.None
-    comparisonSchema("int.eq.of_beq") => Option.Some(Schema(binders = ["a", "b"], premises = [is(Term.TOp("==", v("a"), v("b")), true)], concl = eq(v("a"), v("b"))))
+    comparisonSchema("int.eq.of_beq") => Option.Some(Schema(binders = [same("a"), same("b")], premises = [is(Term.TOp("==", v("a"), v("b")), true)], concl = eq(v("a"), v("b"))))
 
 fn ringSchema(id: String) -> Option<Schema>
     ? "Ring laws of Int."
     match id
-        "int.add_comm" -> plain(["a", "b"], Term.TOp("+", v("a"), v("b")), Term.TOp("+", v("b"), v("a")))
-        "int.mul_comm" -> plain(["a", "b"], Term.TOp("*", v("a"), v("b")), Term.TOp("*", v("b"), v("a")))
-        "int.add_assoc" -> plain(["a", "b", "c"], Term.TOp("+", Term.TOp("+", v("a"), v("b")), v("c")), Term.TOp("+", v("a"), Term.TOp("+", v("b"), v("c"))))
-        "int.mul_assoc" -> plain(["a", "b", "c"], Term.TOp("*", Term.TOp("*", v("a"), v("b")), v("c")), Term.TOp("*", v("a"), Term.TOp("*", v("b"), v("c"))))
-        "int.add_zero" -> plain(["a"], Term.TOp("+", v("a"), Term.TInt(0)), v("a"))
-        "int.zero_add" -> plain(["a"], Term.TOp("+", Term.TInt(0), v("a")), v("a"))
-        "int.mul_one" -> plain(["a"], Term.TOp("*", v("a"), Term.TInt(1)), v("a"))
-        "int.one_mul" -> plain(["a"], Term.TOp("*", Term.TInt(1), v("a")), v("a"))
-        "int.sub_zero" -> plain(["a"], Term.TOp("-", v("a"), Term.TInt(0)), v("a"))
+        "int.add_comm" -> plain([i("a"), i("b")], Term.TOp("+", v("a"), v("b")), Term.TOp("+", v("b"), v("a")))
+        "int.mul_comm" -> plain([i("a"), i("b")], Term.TOp("*", v("a"), v("b")), Term.TOp("*", v("b"), v("a")))
+        "int.add_assoc" -> plain([i("a"), i("b"), i("c")], Term.TOp("+", Term.TOp("+", v("a"), v("b")), v("c")), Term.TOp("+", v("a"), Term.TOp("+", v("b"), v("c"))))
+        "int.mul_assoc" -> plain([i("a"), i("b"), i("c")], Term.TOp("*", Term.TOp("*", v("a"), v("b")), v("c")), Term.TOp("*", v("a"), Term.TOp("*", v("b"), v("c"))))
+        "int.add_zero" -> plain([i("a")], Term.TOp("+", v("a"), Term.TInt(0)), v("a"))
+        "int.zero_add" -> plain([i("a")], Term.TOp("+", Term.TInt(0), v("a")), v("a"))
+        "int.mul_one" -> plain([i("a")], Term.TOp("*", v("a"), Term.TInt(1)), v("a"))
+        "int.one_mul" -> plain([i("a")], Term.TOp("*", Term.TInt(1), v("a")), v("a"))
+        "int.sub_zero" -> plain([i("a")], Term.TOp("-", v("a"), Term.TInt(0)), v("a"))
         _ -> divisionSchema(id)
 
 verify ringSchema
-    ringSchema("int.add_zero") => plain(["a"], Term.TOp("+", v("a"), Term.TInt(0)), v("a"))
+    ringSchema("int.add_zero") => plain([i("a")], Term.TOp("+", v("a"), Term.TInt(0)), v("a"))
 
 fn divE(a: Term, k: Term) -> Term
     ? "Euclidean division by a literal, as the compiler writes it."
@@ -147,9 +214,9 @@ verify range
 fn divisionSchema(id: String) -> Option<Schema>
     ? "Euclidean division by a positive divisor."
     match id
-        "int.div_mod_recompose" -> Option.Some(Schema(binders = ["a", "k"], premises = [is(Term.TOp(">", v("k"), Term.TInt(0)), true)], concl = eq(Term.TOp("+", Term.TOp("*", divE(v("a"), v("k")), v("k")), modE(v("a"), v("k"))), v("a"))))
-        "int.mod_range" -> Option.Some(Schema(binders = ["a", "k"], premises = [is(Term.TOp(">", v("k"), Term.TInt(0)), true)], concl = is(range(modE(v("a"), v("k")), v("k")), true)))
-        "int.div_range" -> Option.Some(Schema(binders = ["a", "k", "m", "n"], premises = [is(range(v("a"), v("m")), true), is(conn("Bool.and", Term.TOp(">", v("k"), Term.TInt(0)), Term.TOp("==", v("m"), Term.TOp("*", v("n"), v("k")))), true)], concl = is(range(divE(v("a"), v("k")), v("n")), true)))
+        "int.div_mod_recompose" -> Option.Some(Schema(binders = [i("a"), i("k")], premises = [is(Term.TOp(">", v("k"), Term.TInt(0)), true)], concl = eq(Term.TOp("+", Term.TOp("*", divE(v("a"), v("k")), v("k")), modE(v("a"), v("k"))), v("a"))))
+        "int.mod_range" -> Option.Some(Schema(binders = [i("a"), i("k")], premises = [is(Term.TOp(">", v("k"), Term.TInt(0)), true)], concl = is(range(modE(v("a"), v("k")), v("k")), true)))
+        "int.div_range" -> Option.Some(Schema(binders = [i("a"), i("k"), i("m"), i("n")], premises = [is(range(v("a"), v("m")), true), is(conn("Bool.and", Term.TOp(">", v("k"), Term.TInt(0)), Term.TOp("==", v("m"), Term.TOp("*", v("n"), v("k")))), true)], concl = is(range(divE(v("a"), v("k")), v("n")), true)))
         _ -> bitsSchema(id)
 
 verify divisionSchema
@@ -172,14 +239,14 @@ verify powerOfTwo
 fn bitsSchema(id: String) -> Option<Schema>
     ? "The bit-level view of Int, infinite two's complement: complement, a shift left, a low mask 2^n - 1 and a one-bit mask 2^n."
     match id
-        "bits.not" -> plain(["a"], Term.TBi("Bits.not", [v("a")]), Term.TOp("-", Term.TOp("-", Term.TInt(0), v("a")), Term.TInt(1)))
-        "bits.shl" -> Option.Some(Schema(binders = ["a", "n", "k"], premises = [is(powerOfTwo(v("k")), true)], concl = eq(shl(v("a"), v("n")), Term.TOp("*", v("a"), v("k")))))
-        "bits.and_low" -> Option.Some(Schema(binders = ["a", "m", "k", "n"], premises = [is(conn("Bool.and", conn("Bool.and", Term.TOp("<=", Term.TInt(0), v("n")), Term.TOp("==", Term.TOp("+", v("m"), Term.TInt(1)), v("k"))), Term.TOp("==", v("k"), shl(Term.TInt(1), v("n")))), true)], concl = eq(Term.TBi("Bits.and", [v("a"), v("m")]), modE(v("a"), v("k")))))
-        "bits.and_bit" -> Option.Some(Schema(binders = ["a", "k", "n"], premises = [is(powerOfTwo(v("k")), true)], concl = eq(Term.TBi("Bits.and", [v("a"), v("k")]), Term.TOp("*", v("k"), modE(divE(v("a"), v("k")), Term.TInt(2))))))
+        "bits.not" -> plain([i("a")], Term.TBi("Bits.not", [v("a")]), Term.TOp("-", Term.TOp("-", Term.TInt(0), v("a")), Term.TInt(1)))
+        "bits.shl" -> Option.Some(Schema(binders = [i("a"), i("n"), i("k")], premises = [is(powerOfTwo(v("k")), true)], concl = eq(shl(v("a"), v("n")), Term.TOp("*", v("a"), v("k")))))
+        "bits.and_low" -> Option.Some(Schema(binders = [i("a"), i("m"), i("k"), i("n")], premises = [is(conn("Bool.and", conn("Bool.and", Term.TOp("<=", Term.TInt(0), v("n")), Term.TOp("==", Term.TOp("+", v("m"), Term.TInt(1)), v("k"))), Term.TOp("==", v("k"), shl(Term.TInt(1), v("n")))), true)], concl = eq(Term.TBi("Bits.and", [v("a"), v("m")]), modE(v("a"), v("k")))))
+        "bits.and_bit" -> Option.Some(Schema(binders = [i("a"), i("k"), i("n")], premises = [is(powerOfTwo(v("k")), true)], concl = eq(Term.TBi("Bits.and", [v("a"), v("k")]), Term.TOp("*", v("k"), modE(divE(v("a"), v("k")), Term.TInt(2))))))
         _ -> listSchema(id)
 
 verify bitsSchema
-    bitsSchema("bits.not") => plain(["a"], Term.TBi("Bits.not", [v("a")]), Term.TOp("-", Term.TOp("-", Term.TInt(0), v("a")), Term.TInt(1)))
+    bitsSchema("bits.not") => plain([i("a")], Term.TBi("Bits.not", [v("a")]), Term.TOp("-", Term.TOp("-", Term.TInt(0), v("a")), Term.TInt(1)))
     bitsSchema("bits.and_bit") == Option.None => false
 
 fn cons(x: Term, xs: Term) -> Term
@@ -196,7 +263,7 @@ fn lb(name: String, args: List<Term>) -> Term
 verify lb
     lb("len", [v("a")]) => Term.TBi("List.len", [v("a")])
 
-fn counted(binders: List<String>, positive: Bool, l: Term, r: Term) -> Option<Schema>
+fn counted(binders: List<TypedVar>, positive: Bool, l: Term, r: Term) -> Option<Schema>
     ? "A rule on a count n that holds when n > 0 (positive) or when n <= 0."
     premise = match positive
         true -> is(Term.TOp(">", v("n"), Term.TInt(0)), true)
@@ -204,26 +271,27 @@ fn counted(binders: List<String>, positive: Bool, l: Term, r: Term) -> Option<Sc
     Option.Some(Schema(binders = binders, premises = [premise], concl = eq(l, r)))
 
 verify counted
-    counted(["n"], false, Term.TUnit, Term.TUnit) => Option.Some(Schema(binders = ["n"], premises = [is(Term.TOp("<=", v("n"), Term.TInt(0)), true)], concl = eq(Term.TUnit, Term.TUnit)))
+    counted([i("n")], false, Term.TUnit, Term.TUnit) => Option.Some(Schema(binders = [i("n")], premises = [is(Term.TOp("<=", v("n"), Term.TInt(0)), true)], concl = eq(Term.TUnit, Term.TUnit)))
 
 fn listSchema(id: String) -> Option<Schema>
     ? "Each list builtin on the empty list and on an element in front of a list."
     xa = cons(v("x"), v("a"))
     nil = Term.TList([])
     less = Term.TOp("-", v("n"), Term.TInt(1))
+    xan = [any("x"), lt("a"), i("n")]
     match id
-        "list.concat.nil" -> plain(["b"], lb("concat", [nil, v("b")]), v("b"))
-        "list.concat.cons" -> plain(["x", "a", "b"], lb("concat", [xa, v("b")]), cons(v("x"), lb("concat", [v("a"), v("b")])))
+        "list.concat.nil" -> plain([lt("b")], lb("concat", [nil, v("b")]), v("b"))
+        "list.concat.cons" -> plain([any("x"), lt("a"), lt("b")], lb("concat", [xa, v("b")]), cons(v("x"), lb("concat", [v("a"), v("b")])))
         "list.len.nil" -> plain([], lb("len", [nil]), Term.TInt(0))
-        "list.len.cons" -> plain(["x", "a"], lb("len", [xa]), Term.TOp("+", lb("len", [v("a")]), Term.TInt(1)))
-        "list.take.nil" -> plain(["n"], lb("take", [nil, v("n")]), nil)
-        "list.take.cons_le" -> counted(["x", "a", "n"], false, lb("take", [xa, v("n")]), nil)
-        "list.take.cons_gt" -> counted(["x", "a", "n"], true, lb("take", [xa, v("n")]), cons(v("x"), lb("take", [v("a"), less])))
-        "list.drop.nil" -> plain(["n"], lb("drop", [nil, v("n")]), nil)
-        "list.drop.cons_le" -> counted(["x", "a", "n"], false, lb("drop", [xa, v("n")]), xa)
-        "list.drop.cons_gt" -> counted(["x", "a", "n"], true, lb("drop", [xa, v("n")]), lb("drop", [v("a"), less]))
+        "list.len.cons" -> plain([any("x"), lt("a")], lb("len", [xa]), Term.TOp("+", lb("len", [v("a")]), Term.TInt(1)))
+        "list.take.nil" -> plain([i("n")], lb("take", [nil, v("n")]), nil)
+        "list.take.cons_le" -> counted(xan, false, lb("take", [xa, v("n")]), nil)
+        "list.take.cons_gt" -> counted(xan, true, lb("take", [xa, v("n")]), cons(v("x"), lb("take", [v("a"), less])))
+        "list.drop.nil" -> plain([i("n")], lb("drop", [nil, v("n")]), nil)
+        "list.drop.cons_le" -> counted(xan, false, lb("drop", [xa, v("n")]), xa)
+        "list.drop.cons_gt" -> counted(xan, true, lb("drop", [xa, v("n")]), lb("drop", [v("a"), less]))
         "list.reverse.nil" -> plain([], lb("reverse", [nil]), nil)
-        "list.reverse.cons" -> plain(["x", "a"], lb("reverse", [xa]), lb("concat", [lb("reverse", [v("a")]), cons(v("x"), nil)]))
+        "list.reverse.cons" -> plain([any("x"), lt("a")], lb("reverse", [xa]), lb("concat", [lb("reverse", [v("a")]), cons(v("x"), nil)]))
         _ -> mapSchema(id)
 
 verify listSchema
@@ -242,16 +310,18 @@ fn mapSchema(id: String) -> Option<Schema>
     set = mb("set", [v("m"), v("k"), v("v")])
     empty = mb("empty", [])
     other = [is(Term.TOp("!=", v("k"), v("k2")), true)]
+    mkv = [kv("m"), key("k"), val("v")]
+    mkv2 = [kv("m"), key("k"), val("v"), key("k2")]
     match id
-        "map.get.empty" -> plain(["k"], mb("get", [empty, v("k")]), Term.TCtor("Option.None", []))
-        "map.get.set_same" -> plain(["m", "k", "v"], mb("get", [set, v("k")]), Term.TCtor("Option.Some", [v("v")]))
-        "map.get.set_other" -> Option.Some(Schema(binders = ["m", "k", "v", "k2"], premises = other, concl = eq(mb("get", [set, v("k2")]), mb("get", [v("m"), v("k2")]))))
-        "map.has.empty" -> plain(["k"], mb("has", [empty, v("k")]), Term.TBool(false))
-        "map.has.set_same" -> plain(["m", "k", "v"], mb("has", [set, v("k")]), Term.TBool(true))
-        "map.has.set_other" -> Option.Some(Schema(binders = ["m", "k", "v", "k2"], premises = other, concl = eq(mb("has", [set, v("k2")]), mb("has", [v("m"), v("k2")]))))
+        "map.get.empty" -> plain([key("k")], mb("get", [empty, v("k")]), Term.TCtor("Option.None", []))
+        "map.get.set_same" -> plain(mkv, mb("get", [set, v("k")]), Term.TCtor("Option.Some", [v("v")]))
+        "map.get.set_other" -> Option.Some(Schema(binders = mkv2, premises = other, concl = eq(mb("get", [set, v("k2")]), mb("get", [v("m"), v("k2")]))))
+        "map.has.empty" -> plain([key("k")], mb("has", [empty, v("k")]), Term.TBool(false))
+        "map.has.set_same" -> plain(mkv, mb("has", [set, v("k")]), Term.TBool(true))
+        "map.has.set_other" -> Option.Some(Schema(binders = mkv2, premises = other, concl = eq(mb("has", [set, v("k2")]), mb("has", [v("m"), v("k2")]))))
         "map.len.empty" -> plain([], mb("len", [empty]), Term.TInt(0))
-        "map.len.set_present" -> Option.Some(Schema(binders = ["m", "k", "v"], premises = [is(mb("has", [v("m"), v("k")]), true)], concl = eq(mb("len", [set]), mb("len", [v("m")]))))
-        "map.len.set_absent" -> Option.Some(Schema(binders = ["m", "k", "v"], premises = [is(mb("has", [v("m"), v("k")]), false)], concl = eq(mb("len", [set]), Term.TOp("+", mb("len", [v("m")]), Term.TInt(1)))))
+        "map.len.set_present" -> Option.Some(Schema(binders = mkv, premises = [is(mb("has", [v("m"), v("k")]), true)], concl = eq(mb("len", [set]), mb("len", [v("m")]))))
+        "map.len.set_absent" -> Option.Some(Schema(binders = mkv, premises = [is(mb("has", [v("m"), v("k")]), false)], concl = eq(mb("len", [set]), Term.TOp("+", mb("len", [v("m")]), Term.TInt(1)))))
         _ -> vectorSchema(id)
 
 verify mapSchema
@@ -277,30 +347,32 @@ fn vectorSchema(id: String) -> Option<Schema>
     len = vb("len", [v("v")])
     written = Term.TBi("Option.withDefault", [vb("set", [v("v"), v("i"), v("x")]), v("v")])
     made = Term.TBi("__vector_new", [v("n"), v("x")])
+    vi = [vec("v"), i("i")]
+    vix = [vec("v"), i("i"), any("x")]
     match id
-        "vector.to_list.of_list" -> plain(["l"], Term.TBi("List.fromVector", [vb("fromList", [v("l")])]), v("l"))
-        "vector.of_list.to_list" -> plain(["v"], vb("fromList", [Term.TBi("List.fromVector", [v("v")])]), v("v"))
-        "vector.len.to_list" -> plain(["v"], len, Term.TBi("List.len", [Term.TBi("List.fromVector", [v("v")])]))
-        "vector.get.negative" -> Option.Some(Schema(binders = ["v", "i"], premises = [is(Term.TOp("<", v("i"), Term.TInt(0)), true)], concl = eq(vb("get", [v("v"), v("i")]), Term.TCtor("Option.None", []))))
-        "vector.get.past_end" -> Option.Some(Schema(binders = ["v", "i"], premises = [is(Term.TOp(">=", v("i"), len), true)], concl = eq(vb("get", [v("v"), v("i")]), Term.TCtor("Option.None", []))))
-        "vector.set.out_of_range" -> Option.Some(Schema(binders = ["v", "i", "x"], premises = [is(conn("Bool.or", Term.TOp("<", v("i"), Term.TInt(0)), Term.TOp(">=", v("i"), len)), true)], concl = eq(vb("set", [v("v"), v("i"), v("x")]), Term.TCtor("Option.None", []))))
-        "vector.get.set_same" -> Option.Some(Schema(binders = ["v", "i", "x"], premises = [inRange(v("i"), len)], concl = eq(vb("get", [written, v("i")]), Term.TCtor("Option.Some", [v("x")]))))
-        "vector.get.set_other" -> Option.Some(Schema(binders = ["v", "i", "x", "j"], premises = [inRange(v("i"), len), is(Term.TOp("!=", v("i"), v("j")), true)], concl = eq(vb("get", [written, v("j")]), vb("get", [v("v"), v("j")]))))
-        "vector.len.set" -> plain(["v", "i", "x"], vb("len", [written]), len)
-        "vector.len.new" -> Option.Some(Schema(binders = ["n", "x"], premises = [is(Term.TOp("<=", Term.TInt(0), v("n")), true)], concl = eq(vb("len", [made]), v("n"))))
-        "vector.get.new" -> Option.Some(Schema(binders = ["n", "x", "i"], premises = [inRange(v("i"), v("n"))], concl = eq(vb("get", [made, v("i")]), Term.TCtor("Option.Some", [v("x")]))))
+        "vector.to_list.of_list" -> plain([lt("l")], Term.TBi("List.fromVector", [vb("fromList", [v("l")])]), v("l"))
+        "vector.of_list.to_list" -> plain([vec("v")], vb("fromList", [Term.TBi("List.fromVector", [v("v")])]), v("v"))
+        "vector.len.to_list" -> plain([vec("v")], len, Term.TBi("List.len", [Term.TBi("List.fromVector", [v("v")])]))
+        "vector.get.negative" -> Option.Some(Schema(binders = vi, premises = [is(Term.TOp("<", v("i"), Term.TInt(0)), true)], concl = eq(vb("get", [v("v"), v("i")]), Term.TCtor("Option.None", []))))
+        "vector.get.past_end" -> Option.Some(Schema(binders = vi, premises = [is(Term.TOp(">=", v("i"), len), true)], concl = eq(vb("get", [v("v"), v("i")]), Term.TCtor("Option.None", []))))
+        "vector.set.out_of_range" -> Option.Some(Schema(binders = vix, premises = [is(conn("Bool.or", Term.TOp("<", v("i"), Term.TInt(0)), Term.TOp(">=", v("i"), len)), true)], concl = eq(vb("set", [v("v"), v("i"), v("x")]), Term.TCtor("Option.None", []))))
+        "vector.get.set_same" -> Option.Some(Schema(binders = vix, premises = [inRange(v("i"), len)], concl = eq(vb("get", [written, v("i")]), Term.TCtor("Option.Some", [v("x")]))))
+        "vector.get.set_other" -> Option.Some(Schema(binders = [vec("v"), i("i"), any("x"), i("j")], premises = [inRange(v("i"), len), is(Term.TOp("!=", v("i"), v("j")), true)], concl = eq(vb("get", [written, v("j")]), vb("get", [v("v"), v("j")]))))
+        "vector.len.set" -> plain(vix, vb("len", [written]), len)
+        "vector.len.new" -> Option.Some(Schema(binders = [i("n"), any("x")], premises = [is(Term.TOp("<=", Term.TInt(0), v("n")), true)], concl = eq(vb("len", [made]), v("n"))))
+        "vector.get.new" -> Option.Some(Schema(binders = [i("n"), any("x"), i("i")], premises = [inRange(v("i"), v("n"))], concl = eq(vb("get", [made, v("i")]), Term.TCtor("Option.Some", [v("x")]))))
         _ -> pickSchema(id)
 
 verify vectorSchema
     vectorSchema("vector.len.set") == Option.None => false
     vectorSchema("vector.keys") => Option.None
 
-fn picked(binders: List<String>, test: Term, holds: Bool, l: Term, r: Term) -> Option<Schema>
+fn picked(binders: List<TypedVar>, test: Term, holds: Bool, l: Term, r: Term) -> Option<Schema>
     ? "A rule whose value a comparison picks: l is r where the test has this value."
     Option.Some(Schema(binders = binders, premises = [is(test, holds)], concl = eq(l, r)))
 
 verify picked
-    picked(["a"], v("a"), true, Term.TUnit, Term.TUnit) => Option.Some(Schema(binders = ["a"], premises = [is(v("a"), true)], concl = eq(Term.TUnit, Term.TUnit)))
+    picked([bo("a")], v("a"), true, Term.TUnit, Term.TUnit) => Option.Some(Schema(binders = [bo("a")], premises = [is(v("a"), true)], concl = eq(Term.TUnit, Term.TUnit)))
 
 fn pickSchema(id: String) -> Option<Schema>
     ? "Int.min and Int.max by a <= b, Int.abs by a < 0; List.contains on [] and past an element in front that the value looked for is not. No rule says the element in front is found: it would make a y == x a script derives into what the builtin returns, and x == x is taken as true of every term, also of one that is not equal to itself; no rule makes an equality false of every term."
@@ -311,25 +383,25 @@ fn pickSchema(id: String) -> Option<Schema>
     abs = Term.TBi("Int.abs", [v("a")])
     found = lb("contains", [v("a"), v("y")])
     match id
-        "int.min.le" -> picked(["a", "b"], le, true, min, v("a"))
-        "int.min.gt" -> picked(["a", "b"], le, false, min, v("b"))
-        "int.max.le" -> picked(["a", "b"], le, true, max, v("b"))
-        "int.max.gt" -> picked(["a", "b"], le, false, max, v("a"))
-        "int.abs.neg" -> picked(["a"], neg, true, abs, Term.TOp("-", Term.TInt(0), v("a")))
-        "int.abs.nonneg" -> picked(["a"], neg, false, abs, v("a"))
-        "list.contains.nil" -> plain(["y"], lb("contains", [Term.TList([]), v("y")]), Term.TBool(false))
-        "list.contains.cons_other" -> picked(["x", "a", "y"], Term.TOp("==", v("y"), v("x")), false, lb("contains", [cons(v("x"), v("a")), v("y")]), found)
+        "int.min.le" -> picked([i("a"), i("b")], le, true, min, v("a"))
+        "int.min.gt" -> picked([i("a"), i("b")], le, false, min, v("b"))
+        "int.max.le" -> picked([i("a"), i("b")], le, true, max, v("b"))
+        "int.max.gt" -> picked([i("a"), i("b")], le, false, max, v("a"))
+        "int.abs.neg" -> picked([i("a")], neg, true, abs, Term.TOp("-", Term.TInt(0), v("a")))
+        "int.abs.nonneg" -> picked([i("a")], neg, false, abs, v("a"))
+        "list.contains.nil" -> plain([any("y")], lb("contains", [Term.TList([]), v("y")]), Term.TBool(false))
+        "list.contains.cons_other" -> picked([same("x"), lt("a"), same("y")], Term.TOp("==", v("y"), v("x")), false, lb("contains", [cons(v("x"), v("a")), v("y")]), found)
         _ -> Option.None
 
 verify pickSchema
-    pickSchema("int.min.le") => Option.Some(Schema(binders = ["a", "b"], premises = [is(Term.TOp("<=", v("a"), v("b")), true)], concl = eq(Term.TBi("Int.min", [v("a"), v("b")]), v("a"))))
-    pickSchema("int.min.gt") => Option.Some(Schema(binders = ["a", "b"], premises = [is(Term.TOp("<=", v("a"), v("b")), false)], concl = eq(Term.TBi("Int.min", [v("a"), v("b")]), v("b"))))
-    pickSchema("int.max.le") => Option.Some(Schema(binders = ["a", "b"], premises = [is(Term.TOp("<=", v("a"), v("b")), true)], concl = eq(Term.TBi("Int.max", [v("a"), v("b")]), v("b"))))
-    pickSchema("int.max.gt") => Option.Some(Schema(binders = ["a", "b"], premises = [is(Term.TOp("<=", v("a"), v("b")), false)], concl = eq(Term.TBi("Int.max", [v("a"), v("b")]), v("a"))))
-    pickSchema("int.abs.neg") => Option.Some(Schema(binders = ["a"], premises = [is(Term.TOp("<", v("a"), Term.TInt(0)), true)], concl = eq(Term.TBi("Int.abs", [v("a")]), Term.TOp("-", Term.TInt(0), v("a")))))
-    pickSchema("int.abs.nonneg") => Option.Some(Schema(binders = ["a"], premises = [is(Term.TOp("<", v("a"), Term.TInt(0)), false)], concl = eq(Term.TBi("Int.abs", [v("a")]), v("a"))))
-    pickSchema("list.contains.nil") => plain(["y"], Term.TBi("List.contains", [Term.TList([]), v("y")]), Term.TBool(false))
-    pickSchema("list.contains.cons_other") => Option.Some(Schema(binders = ["x", "a", "y"], premises = [is(Term.TOp("==", v("y"), v("x")), false)], concl = eq(Term.TBi("List.contains", [Term.TBi("List.prepend", [v("x"), v("a")]), v("y")]), Term.TBi("List.contains", [v("a"), v("y")]))))
+    pickSchema("int.min.le") => Option.Some(Schema(binders = [i("a"), i("b")], premises = [is(Term.TOp("<=", v("a"), v("b")), true)], concl = eq(Term.TBi("Int.min", [v("a"), v("b")]), v("a"))))
+    pickSchema("int.min.gt") => Option.Some(Schema(binders = [i("a"), i("b")], premises = [is(Term.TOp("<=", v("a"), v("b")), false)], concl = eq(Term.TBi("Int.min", [v("a"), v("b")]), v("b"))))
+    pickSchema("int.max.le") => Option.Some(Schema(binders = [i("a"), i("b")], premises = [is(Term.TOp("<=", v("a"), v("b")), true)], concl = eq(Term.TBi("Int.max", [v("a"), v("b")]), v("b"))))
+    pickSchema("int.max.gt") => Option.Some(Schema(binders = [i("a"), i("b")], premises = [is(Term.TOp("<=", v("a"), v("b")), false)], concl = eq(Term.TBi("Int.max", [v("a"), v("b")]), v("a"))))
+    pickSchema("int.abs.neg") => Option.Some(Schema(binders = [i("a")], premises = [is(Term.TOp("<", v("a"), Term.TInt(0)), true)], concl = eq(Term.TBi("Int.abs", [v("a")]), Term.TOp("-", Term.TInt(0), v("a")))))
+    pickSchema("int.abs.nonneg") => Option.Some(Schema(binders = [i("a")], premises = [is(Term.TOp("<", v("a"), Term.TInt(0)), false)], concl = eq(Term.TBi("Int.abs", [v("a")]), v("a"))))
+    pickSchema("list.contains.nil") => plain([any("y")], Term.TBi("List.contains", [Term.TList([]), v("y")]), Term.TBool(false))
+    pickSchema("list.contains.cons_other") => Option.Some(Schema(binders = [same("x"), lt("a"), same("y")], premises = [is(Term.TOp("==", v("y"), v("x")), false)], concl = eq(Term.TBi("List.contains", [Term.TBi("List.prepend", [v("x"), v("a")]), v("y")]), Term.TBi("List.contains", [v("a"), v("y")]))))
     pickSchema("list.contains.cons") => Option.None
     pickSchema("int.min") => Option.None
     pickSchema("list.contains") => Option.None

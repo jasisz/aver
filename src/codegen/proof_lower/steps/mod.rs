@@ -41,6 +41,7 @@
 mod accumulator;
 mod by_plan;
 mod chain;
+mod decls;
 mod env;
 mod eval;
 mod evaluated;
@@ -77,6 +78,7 @@ fn law_ref(inputs: &ProofLowerInputs, t: &LawTheorem) -> LawRef {
     LawRef {
         key: law_key(inputs, t),
         givens: t.quantifiers.iter().map(|q| q.name.clone()).collect(),
+        types: finite::given_types(inputs, t),
         premise: premise_of(inputs, t),
         lhs: law_term(inputs, t, &t.claim_lhs),
         rhs: law_term(inputs, t, &t.claim_rhs),
@@ -218,6 +220,7 @@ fn obligation(inputs: &ProofLowerInputs, t: &LawTheorem) -> Obligation {
     Obligation {
         key: law_key(inputs, t),
         givens: t.quantifiers.iter().map(|q| q.name.clone()).collect(),
+        types: finite::given_types(inputs, t),
         finite: finite::finite_givens(inputs, t),
         lists: finite::list_givens(t),
         ints: finite::int_givens(t),
@@ -507,28 +510,14 @@ fn each_part<'a>(p: &'a Proof, f: &mut dyn FnMut(&'a Proof)) {
     }
 }
 
-/// The user functions whose calls `p` splits into the true and false cases,
-/// and a constructor of each sum type `p` splits on.
-fn split_calls(
-    p: &Proof,
-    out: &mut Vec<crate::ir::identity::FnId>,
-    ctors: &mut Vec<crate::ir::hir::ResolvedCtor>,
-) {
-    match p {
-        Proof::Cases { on, .. } => {
-            if let ResolvedExpr::Call(ResolvedCallee::Fn(id), _) = &on.node {
-                out.push(*id);
-            }
-        }
-        Proof::Split { cases, .. } => {
-            if let Some(crate::ir::proof_steps::SplitCtor::Ctor(c)) = cases.first().map(|c| &c.ctor)
-            {
-                ctors.push(c.clone());
-            }
-        }
-        _ => {}
+/// The user functions whose calls `p` splits into the true and false cases.
+fn split_calls(p: &Proof, out: &mut Vec<crate::ir::identity::FnId>) {
+    if let Proof::Cases { on, .. } = p
+        && let ResolvedExpr::Call(ResolvedCallee::Fn(id), _) = &on.node
+    {
+        out.push(*id);
     }
-    each_part(p, &mut |q| split_calls(q, out, ctors));
+    each_part(p, &mut |q| split_calls(q, out));
 }
 
 /// Whether `p` may read hypothesis `name` (an over-approximation: a
@@ -562,7 +551,6 @@ struct Part {
     defs: Vec<crate::ir::proof_steps::Def>,
     consts: Vec<crate::ir::proof_steps::Const>,
     laws: Vec<LawRef>,
-    sums: Vec<Vec<(crate::ir::hir::ResolvedCtor, usize)>>,
 }
 
 /// Prove one obligation of the law: `ob` under the hypotheses `known`
@@ -706,26 +694,12 @@ fn prove_part(
             None => format!("{}{tried}", refusals.join("; ")),
         })?
     };
-    // The kernel splits on a call only when its definition says the call
-    // is a Bool, so a function split on comes with its definition.
-    // A split on a constructor comes with its type as the program
-    // declares it.
+    // The kernel types a call it splits on by its definition, so a
+    // function split on comes with it.
     let mut split = Vec::new();
-    let mut ctors = Vec::new();
-    split_calls(&proof, &mut split, &mut ctors);
+    split_calls(&proof, &mut split);
     for id in split {
         env.mark_used(id);
-    }
-    let mut sums: Vec<Vec<(crate::ir::hir::ResolvedCtor, usize)>> = Vec::new();
-    for c in &ctors {
-        let sum: Vec<_> = split::variants_of(inputs, c, None)
-            .ok_or("split: the type of a constructor split on is not a sum")?
-            .into_iter()
-            .map(|(ctor, fields)| (ctor, fields.len()))
-            .collect();
-        if !sums.contains(&sum) {
-            sums.push(sum);
-        }
     }
     Ok(Part {
         proof,
@@ -733,7 +707,6 @@ fn prove_part(
         defs: env.used_defs(),
         consts: env.used_consts(),
         laws: env.laws.clone(),
-        sums,
     })
 }
 
@@ -799,11 +772,6 @@ fn merge_into(script: &mut Script, part: &Part) {
     for l in &part.laws {
         if !script.laws.iter().any(|x| x.key == l.key) {
             script.laws.push(l.clone());
-        }
-    }
-    for s in &part.sums {
-        if !script.sums.contains(s) {
-            script.sums.push(s.clone());
         }
     }
 }
@@ -999,8 +967,17 @@ fn produce_as(
         }
         // The kernel judges what the producers built; a script it refuses,
         // or cannot read back, is refused here by the kernel's reason.
+        let mut script = script;
+        decls::declare_types(inputs, &mut script);
         let text = crate::ir::proof_steps::sexpr::script(&script, inputs.symbol_table)?;
-        crate::proof_kernel::verdict(&text)?;
+        crate::proof_kernel::verdict(&text).inspect_err(|why| {
+            if std::env::var_os("AVER_STEPS_DEBUG").is_some() {
+                eprintln!(
+                    "steps: {}: the kernel refuses: {why}",
+                    script.obligation.key
+                );
+            }
+        })?;
         Ok(script)
     };
 
@@ -1061,7 +1038,8 @@ fn produce_as(
                     defs: Vec::new(),
                     consts: Vec::new(),
                     laws: Vec::new(),
-                    sums: Vec::new(),
+                    decls: Default::default(),
+                    sigs: Vec::new(),
                     plan: None,
                     proof,
                 };
@@ -1096,7 +1074,8 @@ fn produce_as(
         defs: Vec::new(),
         consts: Vec::new(),
         laws: Vec::new(),
-        sums: Vec::new(),
+        decls: Default::default(),
+        sigs: Vec::new(),
         plan: None,
         proof,
     };

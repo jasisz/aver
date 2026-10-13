@@ -626,8 +626,8 @@ fn a_standard_plan_closes_a_law_like_a_project_plan() {
 /// kernel refuses the script, while it accepts the proof as written.
 #[test]
 fn the_kernel_refuses_a_wrong_proof_from_a_standard_plan() {
-    let goal = "(steps 13\n (obligation next.comesBackAfterThree ((l (tsum Light.Red Light.Amber Light.Green))) (none) (call next (call next (call next (v l)))) (v l))\n (defs\n  (def next (l) () (match (v l) (arm (pc Light.Red) (ctor Light.Green)) (arm (pc Light.Green) (ctor Light.Amber)) (arm (pc Light.Amber) (ctor Light.Red)))))\n (consts)\n (sums\n  (sum (Light.Red 0) (Light.Amber 0) (Light.Green 0)))\n (laws)\n (proof (refl (v l))))";
-    let answer = aver::proof_std::run("cases", &format!("(goal (elems) {goal})")).unwrap();
+    let goal = "(steps 14\n (obligation next.comesBackAfterThree ((l (named Light))) (none) (call next (call next (call next (v l)))) (v l))\n (defs\n  (def next ((l (named Light))) (named Light) () (match (v l) (arm (pc Light.Red) (ctor Light.Green)) (arm (pc Light.Green) (ctor Light.Amber)) (arm (pc Light.Amber) (ctor Light.Red)))))\n (consts)\n (sums\n  (sum Light eq (Light.Red) (Light.Amber) (Light.Green)))\n (recs)\n (sigs)\n (laws)\n (proof (refl (v l))))";
+    let answer = aver::proof_std::run("cases", goal).unwrap();
     let proof = answer
         .strip_prefix("proof\n")
         .unwrap_or_else(|| panic!("the plan did not write a proof: {answer}"));
@@ -645,7 +645,7 @@ fn the_kernel_refuses_a_wrong_proof_from_a_standard_plan() {
     let refused = aver::proof_kernel::verdict(&wrong).expect_err("a wrong step must be refused");
     assert!(refused.starts_with("step proof/enum.0"), "{refused}");
     // A plan the library does not have refuses, it does not guess.
-    let none = aver::proof_std::run("nope", &format!("(goal (elems) {goal})")).unwrap();
+    let none = aver::proof_std::run("nope", goal).unwrap();
     assert_eq!(none, "refused\nKernel.Std has no plan nope");
 }
 
@@ -725,19 +725,18 @@ fn a_plan_may_return_a_script_whose_auto_nodes_the_automatic_steps_close() {
 /// `#N` the compiler fills in, and says where it stops.
 #[test]
 fn the_standard_library_runs_a_script_by_asking_for_its_auto_nodes() {
-    let goal = "(goal (elems (xs (tint))) (steps 13 (obligation k ((xs (tlist))) (none) (v xs) (v xs)) (defs) (consts) (sums) (laws) (proof (refl (v xs)))))";
+    let goal = "(steps 14 (obligation k ((xs (list int))) (none) (v xs) (v xs)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (v xs))))";
     let script = "(split xs h t (auto) (auto))";
     let first = aver::proof_std::run_script(goal, script, "(answers)").unwrap();
     assert_eq!(
         first,
-        "ask\nauto\n(sub () (elems) (from) (hyps) (none) (list) (list))"
+        "ask\nauto\n(sub () (from) (hyps) (none) (list) (list))"
     );
-    let answers =
-        "(answers (a \"auto\\n(sub () (elems) (from) (hyps) (none) (list) (list))\" (closed 0)))";
+    let answers = "(answers (a \"auto\\n(sub () (from) (hyps) (none) (list) (list))\" (closed 0)))";
     let second = aver::proof_std::run_script(goal, script, answers).unwrap();
     assert_eq!(
         second,
-        "ask\nauto\n(sub ((h (tint)) (t (tlist))) (elems (t (tint))) (from (h head xs) (t tail xs)) (hyps) (none) (bi List.prepend (v h) (v t)) (bi List.prepend (v h) (v t)))"
+        "ask\nauto\n(sub ((h int) (t (list int))) (from (h head xs) (t tail xs)) (hyps) (none) (bi List.prepend (v h) (v t)) (bi List.prepend (v h) (v t)))"
     );
     let refused =
         aver::proof_std::run_script(goal, "(split xs xs t (auto) (auto))", "(answers)").unwrap();

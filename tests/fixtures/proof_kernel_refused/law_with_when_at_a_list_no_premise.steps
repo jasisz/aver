@@ -1,0 +1,11 @@
+(steps 14
+ (obligation k () (none) (op >= (call bump (list)) (i 1)) (b true))
+ (defs
+  (def bump ((x int)) int () (op + (v x) (i 1))))
+ (consts)
+ (sums)
+ (recs)
+ (sigs)
+ (laws
+  (law bump.staysPositive ((x int)) (op >= (v x) (i 0)) (op >= (call bump (v x)) (i 1)) (b true)))
+ (proof (law bump.staysPositive ((x (list))))))

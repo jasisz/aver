@@ -1,0 +1,9 @@
+(steps 14
+ (obligation k ((n int)) (none) (b true) (b true))
+ (defs)
+ (consts)
+ (sums)
+ (recs)
+ (sigs)
+ (laws)
+ (proof (listcases n (b true) (b true) (refl (b true)) (h t) (refl (b true)))))

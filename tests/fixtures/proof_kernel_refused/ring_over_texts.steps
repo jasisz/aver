@@ -1,0 +1,9 @@
+(steps 14
+ (obligation k ((a str) (b str)) (none) (op + (v a) (v b)) (op + (v b) (v a)))
+ (defs)
+ (consts)
+ (sums)
+ (recs)
+ (sigs)
+ (laws)
+ (proof (ring (op + (v a) (v b)) (op + (v b) (v a)))))

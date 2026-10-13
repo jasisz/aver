@@ -1,0 +1,17 @@
+(steps 14
+ (obligation zero.isOne ((n int)) (none) (call zero (v n)) (i 1))
+ (defs
+  (def zero ((n int)) int () (i 0))
+  (def only ((x (named One))) (named One) () (v x)))
+ (consts)
+ (sums)
+ (recs)
+ (sigs)
+ (laws
+  (law only.isOnly ((x (named One))) (none) (call only (v x)) (ctor One.Only)))
+ (proof (trans ((call zero (v n)) (i 0) (call only (i 0)) (ctor One.Only) (call only (i 1)) (i 1))
+  (unfold zero 0 ((v n)) ())
+  (symm (unfold only 0 ((i 0)) ()))
+  (law only.isOnly ((x (i 0))))
+  (symm (law only.isOnly ((x (i 1)))))
+  (unfold only 0 ((i 1)) ()))))

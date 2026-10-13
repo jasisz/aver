@@ -148,7 +148,9 @@ fn parse_one(cs: &[char], at: &mut usize) -> Result<Sx, String> {
 pub struct Reader {
     fns: HashMap<String, FnId>,
     ctors: HashMap<String, ResolvedCtor>,
-    records: HashMap<String, Option<crate::ir::identity::TypeId>>,
+    /// A record type by the name the data writes it with: its identity and
+    /// the name the program's own literals carry.
+    records: HashMap<String, (Option<crate::ir::identity::TypeId>, String)>,
     builtins: HashMap<String, ResolvedCallee>,
     var_types: std::cell::RefCell<HashMap<String, Type>>,
     call_types: HashMap<String, Type>,
@@ -173,8 +175,8 @@ impl Reader {
             r.fns.insert(d.name.clone(), d.fn_id);
             r.def_bodies.insert(d.name.clone(), d.body.clone());
         }
-        for sum in &goal.sums {
-            for (c, _) in sum {
+        for sum in &goal.decls.sums {
+            for (c, _) in &sum.ctors {
                 r.ctors.insert(names.ctor_name(c), c.clone());
             }
         }
@@ -243,7 +245,10 @@ impl Reader {
             | ResolvedExpr::RecordUpdate {
                 type_id, type_name, ..
             } => {
-                self.records.insert(type_name.clone(), *type_id);
+                self.records.insert(
+                    super::sexpr::record_name(*type_id, type_name, names),
+                    (*type_id, type_name.clone()),
+                );
             }
             ResolvedExpr::Match { arms, .. } => {
                 for arm in arms {
@@ -498,18 +503,18 @@ impl Reader {
             }
             "tuple" => Spanned::bare(ResolvedExpr::Tuple(self.terms(args)?)),
             "rec" => {
-                let ty = self.atom(one(0)?)?;
+                let (type_id, type_name) = self.record(self.atom(one(0)?)?)?;
                 Spanned::bare(ResolvedExpr::RecordCreate {
-                    type_id: self.record(ty)?,
-                    type_name: ty.to_string(),
+                    type_id,
+                    type_name,
                     fields: self.fields(&args[1..])?,
                 })
             }
             "upd" => {
-                let ty = self.atom(one(0)?)?;
+                let (type_id, type_name) = self.record(self.atom(one(0)?)?)?;
                 Spanned::bare(ResolvedExpr::RecordUpdate {
-                    type_id: self.record(ty)?,
-                    type_name: ty.to_string(),
+                    type_id,
+                    type_name,
                     base: Box::new(self.term(one(1)?)?),
                     updates: self.fields(&args[2..])?,
                 })
@@ -518,10 +523,10 @@ impl Reader {
         })
     }
 
-    fn record(&self, ty: &str) -> Result<Option<crate::ir::identity::TypeId>, String> {
+    fn record(&self, ty: &str) -> Result<(Option<crate::ir::identity::TypeId>, String), String> {
         self.records
             .get(ty)
-            .copied()
+            .cloned()
             .ok_or_else(|| format!("the goal has no record type {ty}"))
     }
 
@@ -910,15 +915,11 @@ fn builtin_type(name: &str, args: &[Term]) -> Option<Type> {
     }
 }
 
-/// An operator by the symbol the step printer writes for it, typed so it
-/// prints back as the same symbol.
+/// An operator by the symbol the step printer writes for it. One symbol
+/// serves Int, Float and texts; the result of an arithmetic one takes the
+/// type its operands are known to have.
 fn operator(sym: &str, a: Term, b: Term) -> Result<Term, String> {
-    let (plain, typed) = match sym.strip_suffix('.') {
-        Some(p) => (p, Some(Type::Float)),
-        None if sym == "++" => ("+", Some(Type::Str)),
-        None => (sym, None),
-    };
-    let op = match plain {
+    let op = match sym {
         "+" => BinOp::Add,
         "-" => BinOp::Sub,
         "*" => BinOp::Mul,
@@ -931,16 +932,16 @@ fn operator(sym: &str, a: Term, b: Term) -> Result<Term, String> {
         ">=" => BinOp::Gte,
         _ => return Err(format!("unknown operator {sym}")),
     };
-    if let Some(ty) = &typed
-        && a.ty().is_none()
-    {
-        a.set_ty(ty.clone());
-    }
-    let t = term::binop(op, a, b);
-    if let Some(ty) = typed
-        && matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div)
-    {
-        t.set_ty(ty);
+    // `term::binop` takes an untyped left operand of `+`, `-` or `*` for
+    // an Int; what is read back is typed by whichever operand is known,
+    // and left untyped when neither is.
+    let arithmetic = matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div);
+    let operand = a.ty().or(b.ty()).cloned();
+    let t = Spanned::bare(ResolvedExpr::BinOp(op, Box::new(a), Box::new(b)));
+    match (arithmetic, operand) {
+        (true, Some(ty)) => t.set_ty(ty),
+        (true, None) => {}
+        (false, _) => t.set_ty(Type::Bool),
     }
     Ok(t)
 }
@@ -948,6 +949,31 @@ fn operator(sym: &str, a: Term, b: Term) -> Result<Term, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An arithmetic operator read back has the type of whichever operand
+    /// is known, and none when neither is: never Int by default.
+    #[test]
+    fn an_operator_takes_the_type_an_operand_is_known_to_have() {
+        let untyped = || term::builtin("String.trim", vec![term::var("s")], None);
+        let text = || {
+            let t = term::var("t");
+            t.set_ty(Type::Str);
+            t
+        };
+        assert_eq!(
+            operator("+", untyped(), text()).unwrap().ty(),
+            Some(&Type::Str)
+        );
+        assert_eq!(
+            operator("+", text(), untyped()).unwrap().ty(),
+            Some(&Type::Str)
+        );
+        assert_eq!(operator("+", untyped(), untyped()).unwrap().ty(), None);
+        assert_eq!(
+            operator("<", untyped(), untyped()).unwrap().ty(),
+            Some(&Type::Bool)
+        );
+    }
 
     #[test]
     fn parses_and_prints_back() {

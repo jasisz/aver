@@ -2,7 +2,7 @@ module Decode
     intent =
         "From S-expressions to terms, patterns and proofs."
         "The grammar is the one written at the top of src/ir/proof_steps/sexpr.rs; anything else is refused by name."
-    exposes [term, terms, proof, script, fin]
+    exposes [term, terms, proof, script, typ, typedVars]
     depends [Kernel.Sexp, Kernel.Term, Kernel.Proof]
     effects []
 
@@ -667,83 +667,61 @@ fn absurdProof(args: List<Sexp>) -> Result<Proof, String>
 verify absurdProof
     absurdProof([]) => Result.Err("malformed absurd")
 
-fn fin(s: Sexp) -> Result<Fin, String>
-    ? "A finite type: (tbool), (tsum CTOR…), (trec TYPE (FIELD TYPE)…) or (ttuple TYPE…)."
-    match tagged(s)?
-        ("tbool", []) -> Result.Ok(Fin.FBool)
-        ("tsum", cs) -> Result.Ok(Fin.FSum(atoms(cs)?))
-        ("trec", [Sexp.Atom(n), ..fs]) -> Result.Ok(Fin.FRec(n, finFields(fs)?))
-        ("ttuple", ts) -> Result.Ok(Fin.FTuple(fins(ts)?))
-        _ -> Result.Err("malformed finite type")
+fn typ(s: Sexp, vars: Bool) -> Result<Ty, String>
+    ? "A type: int, bool, str, float, unit, (list T), (option T), (result T E), (map K V), (vector T), (tuple T…), (named NAME), a type variable (var NAME) or (var NAME eq) whose == is equality (in the givens of a law only), or _: a type the data cannot state, read as one unknown type (shown as ?) that fits only itself."
+    match s
+        Sexp.Atom("int") -> Result.Ok(Ty.TyInt)
+        Sexp.Atom("bool") -> Result.Ok(Ty.TyBool)
+        Sexp.Atom("str") -> Result.Ok(Ty.TyStr)
+        Sexp.Atom("float") -> Result.Ok(Ty.TyFloat)
+        Sexp.Atom("unit") -> Result.Ok(Ty.TyUnit)
+        Sexp.Atom("_") -> Result.Ok(Ty.TyRigid("", false))
+        Sexp.Node([Sexp.Atom("var"), Sexp.Atom(n)]) -> typeVar(n, false, vars)
+        Sexp.Node([Sexp.Atom("var"), Sexp.Atom(n), Sexp.Atom("eq")]) -> typeVar(n, true, vars)
+        Sexp.Node([Sexp.Atom("list"), t]) -> Result.Ok(Ty.TyList(typ(t, vars)?))
+        Sexp.Node([Sexp.Atom("option"), t]) -> Result.Ok(Ty.TyOption(typ(t, vars)?))
+        Sexp.Node([Sexp.Atom("vector"), t]) -> Result.Ok(Ty.TyVector(typ(t, vars)?))
+        Sexp.Node([Sexp.Atom("result"), t, e]) -> Result.Ok(Ty.TyResult(typ(t, vars)?, typ(e, vars)?))
+        Sexp.Node([Sexp.Atom("map"), k, v]) -> Result.Ok(Ty.TyMap(typ(k, vars)?, typ(v, vars)?))
+        Sexp.Node([Sexp.Atom("tuple"), ..ts]) -> Result.Ok(Ty.TyTuple(tys(ts, vars)?))
+        Sexp.Node([Sexp.Atom("named"), Sexp.Atom(n)]) -> Result.Ok(Ty.TyNamed(n))
+        _ -> Result.Err("malformed type")
 
-verify fin
-    fin(Sexp.Node([Sexp.Atom("tbool")])) => Result.Ok(Fin.FBool)
-    fin(Sexp.Node([Sexp.Atom("tsum"), Sexp.Atom("C.A"), Sexp.Atom("C.B")])) => Result.Ok(Fin.FSum(["C.A", "C.B"]))
-    fin(Sexp.Node([Sexp.Atom("tint")])) => Result.Err("malformed finite type")
+verify typ
+    typ(Sexp.Atom("int"), true) => Result.Ok(Ty.TyInt)
+    typ(Sexp.Node([Sexp.Atom("list"), Sexp.Atom("bool")]), true) => Result.Ok(Ty.TyList(Ty.TyBool))
+    typ(Sexp.Node([Sexp.Atom("tint")]), true) => Result.Err("malformed type")
+    typ(Sexp.Atom("_"), true) => Result.Ok(Ty.TyRigid("", false))
+    typ(Sexp.Node([Sexp.Atom("var"), Sexp.Atom("K"), Sexp.Atom("eq")]), true) => Result.Ok(Ty.TyVar("K", true))
 
-fn fins(ss: List<Sexp>) -> Result<List<Fin>, String>
-    ? "Several finite types."
+fn typeVar(n: String, eq: Bool, vars: Bool) -> Result<Ty, String>
+    ? "A type variable, where one may stand: in the givens of a law, never in a definition, a signature or a declared type."
+    match vars
+        true -> Result.Ok(Ty.TyVar(n, eq))
+        false -> Result.Err("a type variable outside a law's givens")
+
+verify typeVar
+    typeVar("T", false, false) => Result.Err("a type variable outside a law's givens")
+
+fn tys(ss: List<Sexp>, vars: Bool) -> Result<List<Ty>, String>
+    ? "Several types."
     match ss
         [] -> Result.Ok([])
-        [s, ..rest] -> Result.Ok(List.prepend(fin(s)?, fins(rest)?))
+        [s, ..rest] -> Result.Ok(List.prepend(typ(s, vars)?, tys(rest, vars)?))
 
-verify fins
-    fins([]) => Result.Ok([])
+verify tys
+    tys([], true) => Result.Ok([])
 
-fn finFields(ss: List<Sexp>) -> Result<List<FinField>, String>
-    ? "(FIELD TYPE)…"
+fn typedVars(ss: List<Sexp>, vars: Bool) -> Result<List<TypedVar>, String>
+    ? "(NAME TYPE)…: names with their types."
     match ss
         [] -> Result.Ok([])
-        [Sexp.Node([Sexp.Atom(n), t]), ..rest] -> Result.Ok(List.prepend(FinField(name = n, fin = fin(t)?), finFields(rest)?))
-        _ -> Result.Err("malformed finite field")
+        [Sexp.Node([Sexp.Atom(n), t]), ..rest] -> Result.Ok(List.prepend(Kernel.Term.typed(n, typ(t, vars)?), typedVars(rest, vars)?))
+        _ -> Result.Err("malformed typed name")
 
-verify finFields
-    finFields([Sexp.Atom("x")]) => Result.Err("malformed finite field")
-
-record Givens
-    names: List<String>
-    finite: List<Given>
-    lists: List<String>
-    ints: List<String>
-
-fn obligationGivens(ss: List<Sexp>) -> Result<Givens, String>
-    ? "The obligation's givens: a bare name, (NAME TYPE) for a given of finite type, (NAME (tlist)) for a given of list type, or (NAME (tint)) for a given of type Int."
-    match ss
-        [] -> Result.Ok(Givens(names = [], finite = [], lists = [], ints = []))
-        [s, ..rest] -> withGiven(s, obligationGivens(rest)?)
-
-verify obligationGivens
-    obligationGivens([Sexp.Atom("a"), Sexp.Node([Sexp.Atom("b"), Sexp.Node([Sexp.Atom("tbool")])])]) => Result.Ok(Givens(names = ["a", "b"], finite = [Given(name = "b", fin = Fin.FBool)], lists = [], ints = []))
-    obligationGivens([Sexp.Node([Sexp.Atom("xs"), Sexp.Node([Sexp.Atom("tlist")])])]) => Result.Ok(Givens(names = ["xs"], finite = [], lists = ["xs"], ints = []))
-    obligationGivens([Sexp.Node([Sexp.Atom("n"), Sexp.Node([Sexp.Atom("tint")])])]) => Result.Ok(Givens(names = ["n"], finite = [], lists = [], ints = ["n"]))
-
-fn withGiven(s: Sexp, rest: Givens) -> Result<Givens, String>
-    ? "One given in front of the rest."
-    match s
-        Sexp.Atom(n) -> Result.Ok(Givens(names = List.prepend(n, rest.names), finite = rest.finite, lists = rest.lists, ints = rest.ints))
-        Sexp.Node([Sexp.Atom(n), Sexp.Node([Sexp.Atom("tlist")])]) -> Result.Ok(Givens(names = List.prepend(n, rest.names), finite = rest.finite, lists = List.prepend(n, rest.lists), ints = rest.ints))
-        Sexp.Node([Sexp.Atom(n), Sexp.Node([Sexp.Atom("tint")])]) -> Result.Ok(Givens(names = List.prepend(n, rest.names), finite = rest.finite, lists = rest.lists, ints = List.prepend(n, rest.ints)))
-        Sexp.Node([Sexp.Atom(n), t]) -> Result.Ok(Givens(names = List.prepend(n, rest.names), finite = List.prepend(Given(name = n, fin = fin(t)?), rest.finite), lists = rest.lists, ints = rest.ints))
-        _ -> Result.Err("malformed given")
-
-verify withGiven
-    withGiven(Sexp.Node([]), Givens(names = [], finite = [], lists = [], ints = [])) => Result.Err("malformed given")
-
-fn obligation(s: Sexp) -> Result<Tuple<Law, Givens>, String>
-    ? "(obligation KEY (GIVEN…) PREMISE TERM TERM): the law it states and its typed givens."
-    match s
-        Sexp.Node([Sexp.Atom("obligation"), Sexp.Atom(k), gs, p, l, r]) -> obligationOf(k, obligationGivens(items(gs)?)?, premise(p)?, term(l)?, term(r)?)
-        _ -> Result.Err("malformed obligation")
-
-verify obligation
-    obligation(Sexp.Atom("x")) => Result.Err("malformed obligation")
-
-fn obligationOf(k: String, gs: Givens, p: List<Term>, l: Term, r: Term) -> Result<Tuple<Law, Givens>, String>
-    ? "The obligation once its parts are read."
-    Result.Ok((Law(key = k, givens = gs.names, premise = p, lhs = l, rhs = r), gs))
-
-verify obligationOf
-    obligationOf("k", Givens(names = [], finite = [], lists = [], ints = []), [], Term.TUnit, Term.TUnit) => Result.Ok((Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit), Givens(names = [], finite = [], lists = [], ints = [])))
+verify typedVars
+    typedVars([Sexp.Node([Sexp.Atom("n"), Sexp.Atom("int")])], true) => Result.Ok([Kernel.Term.typed("n", Ty.TyInt)])
+    typedVars([Sexp.Atom("n")], true) => Result.Err("malformed typed name")
 
 fn premise(s: Sexp) -> Result<List<Term>, String>
     ? "(none) or a term."
@@ -755,15 +733,15 @@ verify premise
     premise(Sexp.Node([Sexp.Atom("none")])) => Result.Ok([])
 
 fn law(s: Sexp, head: String) -> Result<Law, String>
-    ? "(law KEY (GIVEN…) PREMISE TERM TERM), or the same headed obligation."
+    ? "(law KEY ((NAME TYPE)…) PREMISE TERM TERM), or the same headed obligation or fact."
     match s
-        Sexp.Node([Sexp.Atom(h), Sexp.Atom(k), gs, p, l, r]) -> lawOf(h == head, k, atoms(items(gs)?)?, premise(p)?, term(l)?, term(r)?)
+        Sexp.Node([Sexp.Atom(h), Sexp.Atom(k), gs, p, l, r]) -> lawOf(h == head, k, typedVars(items(gs)?, true)?, premise(p)?, term(l)?, term(r)?)
         _ -> Result.Err("malformed {head}")
 
 verify law
     law(Sexp.Atom("x"), "law") => Result.Err("malformed law")
 
-fn lawOf(expected: Bool, k: String, gs: List<String>, p: List<Term>, l: Term, r: Term) -> Result<Law, String>
+fn lawOf(expected: Bool, k: String, gs: List<TypedVar>, p: List<Term>, l: Term, r: Term) -> Result<Law, String>
     ? "A law once its head was checked."
     match expected
         true -> Result.Ok(Law(key = k, givens = gs, premise = p, lhs = l, rhs = r))
@@ -786,35 +764,24 @@ verify laws
     laws([]) => Result.Ok(Cited(laws = [], facts = []))
 
 fn withCited(s: Sexp, rest: Cited) -> Result<Cited, String>
-    ? "One cited law or fact in front of the rest."
+    ? "One cited law or fact in front of the rest; (fact KEY ((NAME TYPE)…) PREMISE TERM TERM PROOF)."
     match s
-        Sexp.Node([Sexp.Atom("fact"), Sexp.Atom(k), gs, w, l, r, p]) -> Result.Ok(Cited(laws = rest.laws, facts = List.prepend(factOf(k, obligationGivens(items(gs)?)?, premise(w)?, term(l)?, term(r)?, proof(p)?)?, rest.facts)))
+        Sexp.Node([Sexp.Atom("fact"), Sexp.Atom(k), gs, w, l, r, p]) -> Result.Ok(Cited(laws = rest.laws, facts = List.prepend(Fact(law = Law(key = k, givens = typedVars(items(gs)?, true)?, premise = premise(w)?, lhs = term(l)?, rhs = term(r)?), proof = proof(p)?), rest.facts)))
         _ -> Result.Ok(Cited(laws = List.prepend(law(s, "law")?, rest.laws), facts = rest.facts))
 
 verify withCited
     withCited(Sexp.Atom("x"), Cited(laws = [], facts = [])) => Result.Err("malformed law")
 
-fn factOf(k: String, gs: Givens, w: List<Term>, l: Term, r: Term, p: Proof) -> Result<Fact, String>
-    ? "(fact KEY (GIVEN…) PREMISE TERM TERM PROOF): a fact has no given of finite type."
-    match gs.finite
-        [] -> Result.Ok(Fact(law = Law(key = k, givens = gs.names, premise = w, lhs = l, rhs = r), lists = gs.lists, proof = p))
-        _ -> Result.Err("fact {k}: a given of finite type")
-
-verify factOf
-    factOf("k", Givens(names = ["b"], finite = [Given(name = "b", fin = Fin.FBool)], lists = [], ints = []), [], Term.TUnit, Term.TUnit, Proof.PRefl(Term.TUnit)) => Result.Err("fact k: a given of finite type")
-
 fn def(s: Sexp) -> Result<Def, String>
-    ? "(def NAME (PARAM…) ((NAME TERM)…) TERM [bool]): parameters, local bindings in order, the final expression; `bool` marks a function that returns a Bool."
+    ? "(def NAME ((PARAM TYPE)…) TYPE ((NAME TERM)…) TERM): typed parameters, the result type, local bindings in order, the final expression."
     match s
-        Sexp.Node([Sexp.Atom("def"), Sexp.Atom(n), ps, ls, b]) -> Result.Ok(Def(name = n, returnsBool = false, params = atoms(items(ps)?)?, lets = bindings(ls)?, body = term(b)?))
-        Sexp.Node([Sexp.Atom("def"), Sexp.Atom(n), ps, ls, b, Sexp.Atom("bool")]) -> Result.Ok(Def(name = n, returnsBool = true, params = atoms(items(ps)?)?, lets = bindings(ls)?, body = term(b)?))
+        Sexp.Node([Sexp.Atom("def"), Sexp.Atom(n), ps, rt, ls, b]) -> Result.Ok(Def(name = n, params = typedVars(items(ps)?, false)?, ret = typ(rt, false)?, lets = bindings(ls)?, body = term(b)?))
         _ -> Result.Err("malformed def")
 
 verify def
     def(Sexp.Atom("x")) => Result.Err("malformed def")
-    def(Sexp.Node([Sexp.Atom("def"), Sexp.Atom("p"), Sexp.Node([]), Sexp.Node([]), Sexp.Node([Sexp.Atom("b"), Sexp.Atom("true")]), Sexp.Atom("bool")])) => Result.Ok(Def(name = "p", returnsBool = true, params = [], lets = [], body = Term.TBool(true)))
-    def(Sexp.Node([Sexp.Atom("def"), Sexp.Atom("p"), Sexp.Node([]), Sexp.Node([]), Sexp.Node([Sexp.Atom("b"), Sexp.Atom("true")]), Sexp.Atom("int")])) => Result.Err("malformed def")
-    def(Sexp.Node([Sexp.Atom("def"), Sexp.Atom("f"), Sexp.Node([Sexp.Atom("x")]), Sexp.Node([Sexp.Node([Sexp.Atom("y"), Sexp.Node([Sexp.Atom("v"), Sexp.Atom("x")])])]), Sexp.Node([Sexp.Atom("v"), Sexp.Atom("y")])])) => Result.Ok(Def(name = "f", returnsBool = false, params = ["x"], lets = [Kernel.Term.bind("y", Term.TVar("x"))], body = Term.TVar("y")))
+    def(Sexp.Node([Sexp.Atom("def"), Sexp.Atom("p"), Sexp.Node([]), Sexp.Atom("bool"), Sexp.Node([]), Sexp.Node([Sexp.Atom("b"), Sexp.Atom("true")])])) => Result.Ok(Def(name = "p", params = [], ret = Ty.TyBool, lets = [], body = Term.TBool(true)))
+    def(Sexp.Node([Sexp.Atom("def"), Sexp.Atom("f"), Sexp.Node([Sexp.Node([Sexp.Atom("x"), Sexp.Atom("int")])]), Sexp.Atom("int"), Sexp.Node([Sexp.Node([Sexp.Atom("y"), Sexp.Node([Sexp.Atom("v"), Sexp.Atom("x")])])]), Sexp.Node([Sexp.Atom("v"), Sexp.Atom("y")])])) => Result.Ok(Def(name = "f", params = [Kernel.Term.typed("x", Ty.TyInt)], ret = Ty.TyInt, lets = [Kernel.Term.bind("y", Term.TVar("x"))], body = Term.TVar("y")))
 
 fn defs(ss: List<Sexp>) -> Result<List<Def>, String>
     ? "Definitions."
@@ -826,14 +793,14 @@ verify defs
     defs([]) => Result.Ok([])
 
 fn constant(s: Sexp) -> Result<Const, String>
-    ? "(const NAME TERM)"
+    ? "(const NAME TYPE TERM)"
     match s
-        Sexp.Node([Sexp.Atom("const"), Sexp.Atom(n), v]) -> Result.Ok(Const(name = n, value = term(v)?))
+        Sexp.Node([Sexp.Atom("const"), Sexp.Atom(n), t, v]) -> Result.Ok(Const(name = n, ty = typ(t, false)?, value = term(v)?))
         _ -> Result.Err("malformed const")
 
 verify constant
     constant(Sexp.Atom("x")) => Result.Err("malformed const")
-    constant(Sexp.Node([Sexp.Atom("const"), Sexp.Atom("base"), Sexp.Node([Sexp.Atom("i"), Sexp.Atom("40")])])) => Result.Ok(Const(name = "base", value = Term.TInt(40)))
+    constant(Sexp.Node([Sexp.Atom("const"), Sexp.Atom("base"), Sexp.Atom("int"), Sexp.Node([Sexp.Atom("i"), Sexp.Atom("40")])])) => Result.Ok(Const(name = "base", ty = Ty.TyInt, value = Term.TInt(40)))
 
 fn consts(ss: List<Sexp>) -> Result<List<Const>, String>
     ? "Module-level bindings."
@@ -844,41 +811,65 @@ fn consts(ss: List<Sexp>) -> Result<List<Const>, String>
 verify consts
     consts([]) => Result.Ok([])
 
-fn sums(ss: List<Sexp>) -> Result<List<List<Variant>>, String>
-    ? "(sum (CTOR ARITY)…)…: the sum types the program declares, each constructor in order."
+fn sums(ss: List<Sexp>) -> Result<List<Sum>, String>
+    ? "(sum NAME (CTOR TYPE…)…)…: the sum types the program declares, each constructor in order with the types of its fields; `eq` after the name where == between two values of the type is equality."
     match ss
         [] -> Result.Ok([])
-        [Sexp.Node([Sexp.Atom("sum"), ..vs]), ..rest] -> Result.Ok(List.prepend(variants(vs)?, sums(rest)?))
+        [Sexp.Node([Sexp.Atom("sum"), Sexp.Atom(n), Sexp.Atom("eq"), ..vs]), ..rest] -> Result.Ok(List.prepend(Sum(name = n, eq = true, variants = variants(vs)?), sums(rest)?))
+        [Sexp.Node([Sexp.Atom("sum"), Sexp.Atom(n), ..vs]), ..rest] -> Result.Ok(List.prepend(Sum(name = n, eq = false, variants = variants(vs)?), sums(rest)?))
         _ -> Result.Err("malformed sum")
 
 verify sums
     sums([Sexp.Atom("x")]) => Result.Err("malformed sum")
-    sums([Sexp.Node([Sexp.Atom("sum"), Sexp.Node([Sexp.Atom("C.A"), Sexp.Atom("0")]), Sexp.Node([Sexp.Atom("C.B"), Sexp.Atom("1")])])]) => Result.Ok([[Variant(name = "C.A", arity = 0), Variant(name = "C.B", arity = 1)]])
+    sums([Sexp.Node([Sexp.Atom("sum"), Sexp.Atom("C"), Sexp.Node([Sexp.Atom("C.A")]), Sexp.Node([Sexp.Atom("C.B"), Sexp.Atom("int")])])]) => Result.Ok([Sum(name = "C", eq = false, variants = [Variant(name = "C.A", fields = []), Variant(name = "C.B", fields = [Ty.TyInt])])])
 
 fn variants(vs: List<Sexp>) -> Result<List<Variant>, String>
-    ? "(CTOR ARITY)…"
+    ? "(CTOR TYPE…)…"
     match vs
         [] -> Result.Ok([])
-        [Sexp.Node([Sexp.Atom(c), Sexp.Atom(n)]), ..rest] -> Result.Ok(List.prepend(Variant(name = c, arity = Int.fromString(n)?), variants(rest)?))
+        [Sexp.Node([Sexp.Atom(c), ..ts]), ..rest] -> Result.Ok(List.prepend(Variant(name = c, fields = tys(ts, false)?), variants(rest)?))
         _ -> Result.Err("malformed constructor of a sum")
 
 verify variants
     variants([Sexp.Atom("x")]) => Result.Err("malformed constructor of a sum")
 
+fn recs(ss: List<Sexp>) -> Result<List<Rec>, String>
+    ? "(rec NAME (FIELD TYPE)…)…: the record types the program declares; `eq` after the name where == between two values of the type is equality."
+    match ss
+        [] -> Result.Ok([])
+        [Sexp.Node([Sexp.Atom("rec"), Sexp.Atom(n), Sexp.Atom("eq"), ..fs]), ..rest] -> Result.Ok(List.prepend(Rec(name = n, eq = true, fields = typedVars(fs, false)?), recs(rest)?))
+        [Sexp.Node([Sexp.Atom("rec"), Sexp.Atom(n), ..fs]), ..rest] -> Result.Ok(List.prepend(Rec(name = n, eq = false, fields = typedVars(fs, false)?), recs(rest)?))
+        _ -> Result.Err("malformed rec")
+
+verify recs
+    recs([Sexp.Atom("x")]) => Result.Err("malformed rec")
+    recs([Sexp.Node([Sexp.Atom("rec"), Sexp.Atom("R"), Sexp.Atom("eq")])]) => Result.Ok([Rec(name = "R", eq = true, fields = [])])
+    recs([Sexp.Node([Sexp.Atom("rec"), Sexp.Atom("R"), Sexp.Node([Sexp.Atom("a"), Sexp.Atom("int")])])]) => Result.Ok([Rec(name = "R", eq = false, fields = [Kernel.Term.typed("a", Ty.TyInt)])])
+
+fn sigs(ss: List<Sexp>) -> Result<List<FnSig>, String>
+    ? "(NAME (TYPE…) TYPE)…: the signature of every function the script calls without opening it."
+    match ss
+        [] -> Result.Ok([])
+        [Sexp.Node([Sexp.Atom(n), ps, r]), ..rest] -> Result.Ok(List.prepend(FnSig(name = n, params = tys(items(ps)?, false)?, ret = typ(r, false)?), sigs(rest)?))
+        _ -> Result.Err("malformed signature")
+
+verify sigs
+    sigs([Sexp.Atom("x")]) => Result.Err("malformed signature")
+    sigs([Sexp.Node([Sexp.Atom("f"), Sexp.Node([Sexp.Atom("int")]), Sexp.Atom("bool")])]) => Result.Ok([FnSig(name = "f", params = [Ty.TyInt], ret = Ty.TyBool)])
+
 fn script(s: Sexp) -> Result<Script, String>
-    ? "(steps 13 (obligation …) (defs …) (consts …) (sums …) (laws …) (proof …)); version 13 only."
+    ? "(steps 14 (obligation …) (defs …) (consts …) (sums …) (recs …) (sigs …) (laws …) (proof …)); version 14 only."
     match s
-        Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("13"), o, Sexp.Node([Sexp.Atom("defs"), ..ds]), Sexp.Node([Sexp.Atom("consts"), ..cs]), Sexp.Node([Sexp.Atom("sums"), ..ss]), Sexp.Node([Sexp.Atom("laws"), ..ls]), Sexp.Node([Sexp.Atom("proof"), p])]) -> scriptOf(obligation(o)?, defs(ds)?, consts(cs)?, sums(ss)?, laws(ls)?, proof(p)?)
+        Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("14"), o, Sexp.Node([Sexp.Atom("defs"), ..ds]), Sexp.Node([Sexp.Atom("consts"), ..cs]), Sexp.Node([Sexp.Atom("sums"), ..ss]), Sexp.Node([Sexp.Atom("recs"), ..rs]), Sexp.Node([Sexp.Atom("sigs"), ..gs]), Sexp.Node([Sexp.Atom("laws"), ..ls]), Sexp.Node([Sexp.Atom("proof"), p])]) -> scriptOf(law(o, "obligation")?, defs(ds)?, consts(cs)?, sums(ss)?, recs(rs)?, sigs(gs)?, laws(ls)?, proof(p)?)
         Sexp.Node([Sexp.Atom("steps"), Sexp.Atom(v), ..rest]) -> Result.Err("unsupported step format version {v}")
         _ -> Result.Err("not a step script")
 
 verify script
     script(Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("3")])) => Result.Err("unsupported step format version 3")
 
-fn scriptOf(o: Tuple<Law, Givens>, ds: List<Def>, cs: List<Const>, ss: List<List<Variant>>, ls: Cited, p: Proof) -> Result<Script, String>
+fn scriptOf(ob: Law, ds: List<Def>, cs: List<Const>, ss: List<Sum>, rs: List<Rec>, gs: List<FnSig>, ls: Cited, p: Proof) -> Result<Script, String>
     ? "The script once its parts are read."
-    match o
-        (ob, gs) -> Result.Ok(Script(obligation = ob, finite = gs.finite, lists = gs.lists, ints = gs.ints, defs = ds, consts = cs, sums = ss, laws = ls.laws, facts = ls.facts, proof = p))
+    Result.Ok(Script(obligation = ob, defs = ds, consts = cs, sums = ss, recs = rs, sigs = gs, laws = ls.laws, facts = ls.facts, proof = p))
 
 verify scriptOf
-    scriptOf((Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit), Givens(names = [], finite = [], lists = [], ints = [])), [], [], [], Cited(laws = [], facts = []), Proof.PRefl(Term.TUnit)) => Result.Ok(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [], proof = Proof.PRefl(Term.TUnit)))
+    scriptOf(Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit), [], [], [], [], [], Cited(laws = [], facts = []), Proof.PRefl(Term.TUnit)) => Result.Ok(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit), defs = [], consts = [], sums = [], recs = [], sigs = [], laws = [], facts = [], proof = Proof.PRefl(Term.TUnit)))
