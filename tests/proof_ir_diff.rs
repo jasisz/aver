@@ -1699,26 +1699,26 @@ fn simp_omega_unfold_pinned_on_sub_anti_comm_via_zero() {
         ref unfold_fns,
         wrapper_return,
         ref smart_guard,
-        lifted,
+        refined_given,
     } = theorem.strategy
     else {
         panic!("expected LinearArithmetic, got: {:?}", theorem.strategy);
     };
     assert!(unfold_fns.contains(&"sub".to_string()));
     assert!(!wrapper_return, "sub returns Int, not a wrapper");
-    assert!(!lifted, "no refinement lift in plain Int law");
+    assert!(!refined_given, "no refined given in a plain Int law");
     assert!(smart_guard.is_none(), "no refinement in chain");
 }
 
 #[test]
-fn linear_arithmetic_pinned_with_lifted_for_refinement_law() {
-    // Refinement-lifted law: givens are Int but used as
-    // `Natural(value = a)` carriers in the law body. The outer fn
-    // takes Natural params; the legacy backend bypassed the
-    // strategy chain via `refinement_auto_proof` in toplevel.rs.
-    // Step 30 routes these through `LinearArithmetic { lifted:
-    // true }` — backend skips by_cases (Subtype carries the
-    // invariant) and emits the unfold + simp tactic directly.
+fn linear_arithmetic_pinned_with_refined_given_for_refinement_law() {
+    // A law over givens of a refined type: the outer fn takes
+    // Natural params. These route through `LinearArithmetic {
+    // refined_given: true }` — the backend skips by_cases (the
+    // Subtype carries the invariant) and emits the unfold + simp
+    // tactic directly. The same law written over `given a: Int`
+    // with `Natural(value = a)` is a law about every Int and gets
+    // no such plan.
     let src = "module M\n\
          \x20   intent = \"t\"\n\
          \x20   exposes opaque [Natural]\n\
@@ -1735,6 +1735,11 @@ fn linear_arithmetic_pinned_with_lifted_for_refinement_law() {
          \x20   fromInt(a.value + b.value)\n\
          \n\
          verify add law commutative\n\
+         \x20   given a: Natural = [Natural(value = 0), Natural(value = 1), Natural(value = 7)]\n\
+         \x20   given b: Natural = [Natural(value = 0), Natural(value = 1), Natural(value = 7)]\n\
+         \x20   add(a, b) => add(b, a)\n\
+         \n\
+         verify add law commutativeOfInts\n\
          \x20   given a: Int = [0, 1, 7]\n\
          \x20   given b: Int = [0, 1, 7]\n\
          \x20   when a >= 0\n\
@@ -1745,17 +1750,27 @@ fn linear_arithmetic_pinned_with_lifted_for_refinement_law() {
         law_theorem(&ctx, "add", "commutative").expect("add::commutative law theorem missing");
     let aver::ir::ProofStrategy::LinearArithmetic {
         wrapper_return,
-        lifted,
+        refined_given,
         ..
     } = theorem.strategy
     else {
         panic!(
-            "expected LinearArithmetic for refinement-lifted law, got: {:?}",
+            "expected LinearArithmetic for a law over refined givens, got: {:?}",
             theorem.strategy
         );
     };
     assert!(wrapper_return, "add returns Result, wrapper");
-    assert!(lifted, "givens used as Natural carriers — lifted=true");
+    assert!(refined_given, "the givens are of a refined type");
+    let of_ints = law_theorem(&ctx, "add", "commutativeOfInts")
+        .expect("add::commutativeOfInts law theorem missing");
+    assert!(
+        !matches!(
+            of_ints.strategy,
+            aver::ir::ProofStrategy::LinearArithmetic { .. }
+        ),
+        "Int givens are not refined: {:?}",
+        of_ints.strategy
+    );
 }
 
 #[test]

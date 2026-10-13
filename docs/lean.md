@@ -423,30 +423,43 @@ Minimization is therefore **fail-safe** (it can never ship a proof that does not
 
 ## Refinement records (refinement-via-opaque)
 
-An Aver single-field record that its module lists under `exposes opaque`, paired with a validating smart constructor `fn fromX(value: T) -> Result<X, String>`, whose body has the canonical `match <pred(value)> { true -> Result.Ok(X(v = value)); false -> Result.Err(_) }` shape, lifts to a true refinement subtype in Lean:
+An Aver single-field record that its module lists under `exposes opaque`, paired with a validating smart constructor `fn fromX(value: T) -> Result<X, String>`, whose body has the canonical `match <pred(value)> { true -> Result.Ok(X(v = value)); false -> Result.Err(_) }` shape, is a true refinement subtype in Lean:
 
 ```lean
 abbrev Natural := { v : Int // v ≥ 0 }
 ```
 
-The predicate from the smart constructor's bool guard lives in the type itself, so a `verify add law commutative` over `Natural` quantifies directly over the refined type:
+The predicate from the smart constructor's bool guard lives in the type itself. A law about values of the type says so in its givens:
+
+```aver
+verify add law commutative
+    given a: Natural = [Natural(value = 0), Natural(value = 1), Natural(value = 7), Natural(value = 100)]
+    given b: Natural = [Natural(value = 0), Natural(value = 1), Natural(value = 7), Natural(value = 100)]
+    add(a, b) => add(b, a)
+```
+
+and its theorem quantifies over the refined type:
 
 ```lean
-theorem add_law_commutative : ∀ (a b : Natural), add a b = add b a := by
+theorem add_law_commutative : ∀ (a : Natural) (b : Natural), add a b = add b a := by
   intro a b
   unfold add fromInt
   simp [Int.add_comm, Int.mul_comm]
 ```
 
-That is one line. Before 0.22, each law shape needed its own `by_cases h_a : a ≥ 0 / by_cases h_b : b ≥ 0 / unfold / hand-rolled tactic` plumbing. The lift is automatic and needs no source-language change. It supports `Int`, structural containers (`List`, `Vector`, `Map`, `Result`, `Option`, tuples), and named carriers, including one refinement nested inside another. The exporter orders predicate functions and types by dependency, so a source file may declare the record before its predicate. `Float` and `String` carriers keep the plain structure path: IEEE 754 NaN breaks universal float laws, and strings have no universal algebraic structure to exploit.
+The samples are values of the type: `Natural(value = 7)` in the module that declares the record, `Natural.fromInt(7)` in any other (a literal call to the constructor has the refined type, see [language.md](language.md)).
+
+A given keeps the type the law wrote. `given a: Int` is stated as `∀ (a : Int)`, also where the law writes `Natural(value = a)`: the record is then `⟨a, proof⟩`, and Lean has to find the proof where the record is written. Before 0.31 the export restated such a law over `a : Natural` whenever it found `Natural(value = a)`, with or without a `when a >= 0`; without one the theorem said less than the law, which `aver verify` could refute at `a = -1`. A law about the values of the type is written with `given a: Natural`.
+
+The subtype shape supports `Int`, structural containers (`List`, `Vector`, `Map`, `Result`, `Option`, tuples), and named carriers, including one refinement nested inside another. The exporter orders predicate functions and types by dependency, so a source file may declare the record before its predicate. `Float` and `String` carriers keep the plain structure path: IEEE 754 NaN breaks universal float laws, and strings have no universal algebraic structure to exploit.
 
 For example, `Bytes(values: List<Int>)` may carry an `allInRange(values)` invariant, and `Digest32(bytes: Bytes)` may add `hasLength32(bytes)`. Both invariants stay in their generated Subtypes instead of degrading to plain structures.
 
 `exposes opaque` is part of the shape. Without it any module may write `Natural(value = -1)`, so the predicate holds of no value of the type: the record is then emitted as a plain `structure`, a law with `given n: Natural` is stated about every record, and a step script adds no premise for it. This applies to an entry file too: one with no `exposes opaque` line has no refined types. Before 0.31 the constructor's shape alone was enough, and a law could be reported closed that fails for a record another module writes directly.
 
-Refinement records work the same way whether the type is declared in the entry file or in a dependent module. `aver proof natural.av` and `aver proof natural_app.av --module-root examples` both emit the same lifted Subtype shape. Before 0.22, the cross-module case fell back to the wrapper shape and lost the one-line universal proof.
+Refinement records work the same way whether the type is declared in the entry file or in a dependent module. `aver proof natural.av` and `aver proof natural_app.av --module-root examples` both emit the same Subtype shape.
 
-A `verify ... law` block with a `when` clause keeps the clause as a theorem premise when it carries information beyond the refinement type's invariant. A `when a >= 10` over `Natural` (invariant `a.val >= 0`) shows up as a real `(a.val ≥ 10) -> ...` antecedent on the universal. A redundant `when a >= 0` is dropped, so the universal keeps the one-line `∀ (a : Natural), ...` shape.
+A `when` clause of a law over a refined given is a premise of the theorem like any other: `when n.value <= cap` over `given n: Natural` is the antecedent `(n.val <= cap) = true -> ...`. What the type itself holds is not written as a `when`; the type carries it.
 
 ## Current end-to-end examples
 

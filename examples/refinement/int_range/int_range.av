@@ -45,8 +45,6 @@ verify add
     add(IntRange(value = 60), IntRange(value = 50)) => Result.Err("IntRange must be in 0..=100")
 
 verify add law commutative
-    given a: Int = [0, 1, 50, 99, 100]
-    given b: Int = [0, 1, 50, 99, 100]
-    when Bool.and(a >= 0, a <= 100)
-    when Bool.and(b >= 0, b <= 100)
-    add(IntRange(value = a), IntRange(value = b)) => add(IntRange(value = b), IntRange(value = a))
+    given a: IntRange = [IntRange(value = 0), IntRange(value = 1), IntRange(value = 50), IntRange(value = 99), IntRange(value = 100)]
+    given b: IntRange = [IntRange(value = 0), IntRange(value = 1), IntRange(value = 50), IntRange(value = 99), IntRange(value = 100)]
+    add(a, b) => add(b, a)

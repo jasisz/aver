@@ -381,251 +381,10 @@ fn is_ok_constructor_with_identity(
     }
 }
 
-/// Walk `lhs`/`rhs` looking for `RecordCreate { type_name: X, fields:
-/// [(_, Ident(given_name))] }` where `X` is a refinement record whose
-/// carrier matches `given_type`. Returns the refined type name when
-/// found, so callers can lift `given_name`'s quantifier from the
-/// carrier type to the refined type. Without this, theorems would
-/// emit `∀ (a : Int), … RecordCreate(a) …` where the smart-
-/// constructor predicate has to be discharged from `a`'s `when`
-/// clause inside the theorem type — which is exactly what the
-/// previous heuristic-laden auto-proof had to work around.
-pub fn refinement_lift_for_given(
-    given_name: &str,
-    given_type: &str,
-    lhs: &Spanned<Expr>,
-    rhs: &Spanned<Expr>,
-    ctx: &CodegenContext,
-) -> Option<String> {
-    // Float carriers don't get lifted: `Int.add_comm` exists and is
-    // universally provable in Lean's `Int` model, but `Float.add_
-    // comm` doesn't hold across IEEE 754 — `NaN ≠ NaN` blows up
-    // the universal claim. Sample-form assertions (concrete Float
-    // values, no NaN in the declared `given` domain) still pass
-    // through the older auto-proof shape; we only lift when the
-    // underlying arithmetic has a true universal law.
-    if given_type == "Float" {
-        return None;
-    }
-    // Round-4 finding 2: return the *canonical key* the IR uses
-    // (e.g. `AAA.Natural` for module-owned, bare `Natural` for
-    // entry), not the bare `TypeDef.name`. Downstream
-    // `strip_refinement_wrappers` / `when_is_redundant` / backend
-    // emit all key off this same identifier, so two modules with
-    // distinct refined `Natural` records can no longer merge under
-    // a single bare name.
-    let mut result: Option<String> = None;
-    search_refinement_wrapper(lhs, given_name, given_type, ctx, &mut result);
-    search_refinement_wrapper(rhs, given_name, given_type, ctx, &mut result);
-    result
-}
-
-fn search_refinement_wrapper(
-    expr: &Spanned<Expr>,
-    given_name: &str,
-    given_type: &str,
-    ctx: &CodegenContext,
-    result: &mut Option<String>,
-) {
-    if result.is_some() {
-        return;
-    }
-    match &expr.node {
-        Expr::RecordCreate { type_name, fields } if fields.len() == 1 => {
-            let (_, fvalue) = &fields[0];
-            let matches_var = matches!(
-                &fvalue.node,
-                Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == given_name
-            );
-            if matches_var
-                && let Some((canonical_key, decl)) = find_refined_type_with_key(ctx, type_name)
-                && decl.carrier_type == given_type
-            {
-                *result = Some(canonical_key);
-                return;
-            }
-            for (_, v) in fields {
-                search_refinement_wrapper(v, given_name, given_type, ctx, result);
-            }
-        }
-        Expr::FnCall(callee, args) => {
-            search_refinement_wrapper(callee, given_name, given_type, ctx, result);
-            for a in args {
-                search_refinement_wrapper(a, given_name, given_type, ctx, result);
-            }
-        }
-        Expr::BinOp(_, l, r) => {
-            search_refinement_wrapper(l, given_name, given_type, ctx, result);
-            search_refinement_wrapper(r, given_name, given_type, ctx, result);
-        }
-        Expr::Attr(o, _) => search_refinement_wrapper(o, given_name, given_type, ctx, result),
-        Expr::Neg(i) | Expr::ErrorProp(i) => {
-            search_refinement_wrapper(i, given_name, given_type, ctx, result);
-        }
-        Expr::Match { subject, arms } => {
-            search_refinement_wrapper(subject, given_name, given_type, ctx, result);
-            for arm in arms {
-                search_refinement_wrapper(&arm.body, given_name, given_type, ctx, result);
-            }
-        }
-        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
-            for it in items {
-                search_refinement_wrapper(it, given_name, given_type, ctx, result);
-            }
-        }
-        Expr::Constructor(_, Some(arg)) => {
-            search_refinement_wrapper(arg, given_name, given_type, ctx, result);
-        }
-        _ => {}
-    }
-}
-
-/// Strip `RecordCreate { type_name: X, fields: [(_, Ident(g))] }` →
-/// `Ident(g)` when `g` is in `lifted_vars` and `X` is the refined
-/// type those vars were lifted to. Used after `refinement_lift_for_
-/// given` decides the lift: theorem body talks about `g : Natural`
-/// directly, so the `Natural(value = g)` wrapper that aver source
-/// wrote becomes redundant noise.
-/// Rewrite bare references to refinement-lifted given variables
-/// (`a` → `a.val`) inside scalar / arithmetic contexts so the emitted
-/// Lean expression typechecks against the Subtype carrier.
-///
-/// Background: a `verify ... law` with `given a: Int` whose body
-/// wraps `a` in `Natural(value = a)` lifts the quantifier from
-/// `∀ (a : Int)` to `∀ (a : Natural)`. The law's `when` clause stays
-/// in the user's variable space — `when a >= 10` references the bare
-/// `a`, which in Lean is now the Subtype `Natural := { v : Int //
-/// v ≥ 0 }`, NOT the underlying Int. `a >= 10` then fails to
-/// synthesize an `LE Natural` / `OfNat Natural 10` instance.
-///
-/// Transform projects bare lifted-var Idents to `.val` ONLY inside
-/// `BinOp` comparators and the `Bool.and` / `Bool.or` chains the
-/// parser builds for multi-`when` lines. Lifted-var refs in function
-/// arguments (e.g. `add(a, b)` over `a, b : Natural`) stay bare —
-/// those positions DO expect the Subtype carrier, not the underlying
-/// Int. The two cases mirror `strip_refinement_wrappers`'s
-/// counterpart (stripping `Natural(value = a)` → `a` in
-/// function-arg positions).
-pub fn project_lifted_idents_to_val(
-    expr: &Spanned<Expr>,
-    lifted_vars: &std::collections::HashMap<String, String>,
-) -> Spanned<Expr> {
-    if lifted_vars.is_empty() {
-        return expr.clone();
-    }
-    let new_node = match &expr.node {
-        Expr::BinOp(op, l, r) if is_comparator_binop(*op) => {
-            let l_proj = project_lifted_ident_leaf(l, lifted_vars);
-            let r_proj = project_lifted_ident_leaf(r, lifted_vars);
-            Expr::BinOp(*op, Box::new(l_proj), Box::new(r_proj))
-        }
-        Expr::FnCall(callee, args) => {
-            let name = expr_to_dotted_name(&callee.node);
-            if matches!(name.as_deref(), Some("Bool.and") | Some("Bool.or")) {
-                Expr::FnCall(
-                    callee.clone(),
-                    args.iter()
-                        .map(|a| project_lifted_idents_to_val(a, lifted_vars))
-                        .collect(),
-                )
-            } else {
-                return expr.clone();
-            }
-        }
-        _ => return expr.clone(),
-    };
-    Spanned::new(new_node, expr.line)
-}
-
-fn is_comparator_binop(op: crate::ast::BinOp) -> bool {
-    use crate::ast::BinOp::*;
-    matches!(op, Lt | Gt | Lte | Gte | Eq | Neq)
-}
-
-fn project_lifted_ident_leaf(
-    expr: &Spanned<Expr>,
-    lifted_vars: &std::collections::HashMap<String, String>,
-) -> Spanned<Expr> {
-    let target_name = match &expr.node {
-        Expr::Ident(n) | Expr::Resolved { name: n, .. } => n,
-        _ => return expr.clone(),
-    };
-    if lifted_vars.contains_key(target_name) {
-        Spanned::new(
-            Expr::Attr(
-                Box::new(Spanned::new(Expr::Ident(target_name.clone()), expr.line)),
-                "val".to_string(),
-            ),
-            expr.line,
-        )
-    } else {
-        expr.clone()
-    }
-}
-
-pub fn strip_refinement_wrappers(
-    expr: &Spanned<Expr>,
-    lifted_vars: &std::collections::HashMap<String, String>,
-    ctx: &CodegenContext,
-) -> Spanned<Expr> {
-    let new_node = match &expr.node {
-        Expr::RecordCreate { type_name, fields } if fields.len() == 1 => {
-            let (_, fvalue) = &fields[0];
-            let var_name = match &fvalue.node {
-                Expr::Ident(n) | Expr::Resolved { name: n, .. } => Some(n.clone()),
-                _ => None,
-            };
-            // Round-4 finding 2: `lifted_vars[name]` holds the
-            // *canonical key* (`AAA.Natural` for module-owned, bare
-            // for entry). Canonicalise the AST's `type_name` against
-            // the same resolver so a bare `Natural` written inside a
-            // dep module strips against `AAA.Natural`, not the
-            // unrelated entry-bare slot of the same name.
-            let canonical_for_ast = find_refined_type_with_key(ctx, type_name).map(|(k, _)| k);
-            if let Some(name) = var_name
-                && let Some(refined) = lifted_vars.get(&name)
-                && canonical_for_ast.as_deref() == Some(refined.as_str())
-            {
-                return Spanned::new(Expr::Ident(name), expr.line);
-            }
-            let new_fields: Vec<(String, Spanned<Expr>)> = fields
-                .iter()
-                .map(|(n, v)| (n.clone(), strip_refinement_wrappers(v, lifted_vars, ctx)))
-                .collect();
-            Expr::RecordCreate {
-                type_name: type_name.clone(),
-                fields: new_fields,
-            }
-        }
-        Expr::FnCall(callee, args) => Expr::FnCall(
-            Box::new(strip_refinement_wrappers(callee, lifted_vars, ctx)),
-            args.iter()
-                .map(|a| strip_refinement_wrappers(a, lifted_vars, ctx))
-                .collect(),
-        ),
-        Expr::BinOp(op, l, r) => Expr::BinOp(
-            *op,
-            Box::new(strip_refinement_wrappers(l, lifted_vars, ctx)),
-            Box::new(strip_refinement_wrappers(r, lifted_vars, ctx)),
-        ),
-        Expr::Attr(o, f) => Expr::Attr(
-            Box::new(strip_refinement_wrappers(o, lifted_vars, ctx)),
-            f.clone(),
-        ),
-        Expr::Neg(i) => Expr::Neg(Box::new(strip_refinement_wrappers(i, lifted_vars, ctx))),
-        Expr::ErrorProp(i) => {
-            Expr::ErrorProp(Box::new(strip_refinement_wrappers(i, lifted_vars, ctx)))
-        }
-        _ => expr.node.clone(),
-    };
-    Spanned::new(new_node, expr.line)
-}
-
 /// Swap a comparison BinOp's operands canonically: `a OP b` ≡ `b OP' a`
 /// where OP' is the commutator-flipped op (`Lt ↔ Gt`, `Lte ↔ Gte`,
 /// `Eq` and `Neq` symmetric). Returns `None` for non-comparator BinOps.
-/// Used by `predicate_syntactic_eq_resolved` so `0 <= a` matches `a >= 0`
-/// for the `when`-vs-refinement-invariant check.
+/// Used by [`canonicalize_comparison`].
 pub fn swap_comparison_operands_op(op: &crate::ast::BinOp) -> Option<crate::ast::BinOp> {
     use crate::ast::BinOp::*;
     match op {
@@ -677,39 +436,6 @@ pub fn flatten_bool_and_conjuncts_resolved(
         return out;
     }
     vec![expr.clone()]
-}
-
-/// Structural equality on resolved predicate expressions with commutator
-/// relaxation: at every `BinOp` comparator node, allow the operands +
-/// operator to be swapped. Both `a >= 0` and `0 <= a` compare equal,
-/// recursively. Used by the `when`-vs-refinement-invariant identity
-/// check so a redundantly-written user `when` gets recognised even when
-/// the operand order doesn't match the smart constructor's predicate
-/// verbatim.
-pub fn predicate_syntactic_eq_resolved(
-    a: &Spanned<crate::ir::hir::ResolvedExpr>,
-    b: &Spanned<crate::ir::hir::ResolvedExpr>,
-) -> bool {
-    use crate::ir::hir::ResolvedExpr;
-    match (&a.node, &b.node) {
-        (ResolvedExpr::BinOp(op_a, la, ra), ResolvedExpr::BinOp(op_b, lb, rb)) => {
-            if op_a == op_b
-                && predicate_syntactic_eq_resolved(la, lb)
-                && predicate_syntactic_eq_resolved(ra, rb)
-            {
-                return true;
-            }
-            if let Some(swapped) = swap_comparison_operands_op(op_a)
-                && &swapped == op_b
-                && predicate_syntactic_eq_resolved(la, rb)
-                && predicate_syntactic_eq_resolved(ra, lb)
-            {
-                return true;
-            }
-            false
-        }
-        _ => a.node == b.node,
-    }
 }
 
 /// `ResolvedExpr` mirror of [`substitute_ident_in_expr`]. Rewrites
@@ -923,78 +649,6 @@ pub fn substitute_ident_in_expr(expr: &Spanned<Expr>, from: &str, to: &str) -> S
         ))),
     };
     Spanned::new(new_node, line)
-}
-
-/// True iff every refinement-lifted given's invariant is
-/// syntactically captured by some clause of `when` (and vice versa —
-/// a bijection between conjuncts). Used by the Lean law emitter
-/// to decide whether `when` is provably redundant with the
-/// types of the lifted givens; if yes, drop it from the theorem
-/// premise (carrier is now the type's invariant); if no, keep it so
-/// the user's stronger / orthogonal predicate stays part of the claim
-/// and isn't silently lost.
-///
-/// Same `Spanned<Expr>`-as-predicate path opaque smart constructors
-/// already use — `refinement_info_for` provides the invariant, the
-/// substitution maps the smart constructor's param name into the
-/// given's variable space, and `predicate_syntactic_eq_resolved` does the
-/// commutator-relaxed compare. No new representation, no parallel
-/// emitter.
-pub fn when_is_redundant_with_refinement_lifts(
-    when_expr: &Spanned<Expr>,
-    lifted_vars: &std::collections::HashMap<String, String>,
-    ctx: &CodegenContext,
-) -> bool {
-    if lifted_vars.is_empty() {
-        return false;
-    }
-    // The `when` clause arrives as raw AST (verify block parses
-    // straight from source); the refinement invariants on the other
-    // side now ride [`crate::ir::hir::ResolvedExpr`] (Phase E PR 12
-    // Scope A). Resolve the `when` once and run the conjunct
-    // comparison in resolved space so identity holds modulo the
-    // resolver's canonicalisation (e.g. `Bool.and` lifts to
-    // `ResolvedCallee::Builtin("Bool.and")` on both sides).
-    let resolved_when = ctx.resolve_expr(when_expr, ctx.active_module_scope().as_deref());
-    let when_conjuncts = flatten_bool_and_conjuncts_resolved(&resolved_when);
-    // Flatten BOTH sides — IntRange-style refinement predicates carry a
-    // compound `Bool.and(n >= 0, n <= 100)` invariant; without
-    // flattening, a `when Bool.and(a >= 0, a <= 100)` user clause
-    // (which the parser also flattens into atoms during conjunct
-    // walk) would length-mismatch and keep the now-redundant
-    // premise. Same flatten on both sides keeps natural / positive
-    // / int_range behavior identical to pre-fix.
-    // Round-3 finding 3: same canonical-IR routing as
-    // `search_refinement_wrapper`. The legacy `refinement_info_for`
-    // walks every module looking for a same-bare-name record, so
-    // two modules with distinct predicates would share whichever
-    // walked first. `find_refined_type` reads from
-    // `proof_ir.refined_types` keyed by canonical `Module.Name`.
-    let mut lifted_predicates: Vec<Spanned<crate::ir::hir::ResolvedExpr>> = Vec::new();
-    for (given_name, refined_type) in lifted_vars {
-        let Some(decl) = find_refined_type(ctx, refined_type) else {
-            return false;
-        };
-        let substituted = substitute_ident_in_resolved_expr(
-            &decl.invariant.expr,
-            decl.predicate_param.as_str(),
-            given_name,
-        );
-        lifted_predicates.extend(flatten_bool_and_conjuncts_resolved(&substituted));
-    }
-    if when_conjuncts.len() != lifted_predicates.len() {
-        return false;
-    }
-    let mut matched = vec![false; lifted_predicates.len()];
-    for wc in &when_conjuncts {
-        let Some(idx) = (0..lifted_predicates.len())
-            .find(|&i| !matched[i] && predicate_syntactic_eq_resolved(wc, &lifted_predicates[i]))
-        else {
-            return false;
-        };
-        matched[idx] = true;
-    }
-    true
 }
 
 fn is_err_constructor(expr: &Spanned<Expr>) -> bool {
@@ -1347,17 +1001,6 @@ pub fn fn_id_for_dotted_name(ctx: &CodegenContext, dotted: &str) -> Option<crate
     ctx.symbol_table.fn_id_of(&key)
 }
 
-/// Canonical-key-aware resolver — returns `(canonical_key, decl)`
-/// so consumers thread one stable identifier through refinement
-/// lift / strip-wrappers / when-redundancy / backend emit instead
-/// of recomputing identity from bare AST names.
-pub fn find_refined_type_with_key<'a>(
-    ctx: &'a CodegenContext,
-    name: &str,
-) -> Option<(String, &'a crate::ir::proof_ir::RefinedTypeDecl)> {
-    find_refined_type_with_key_scoped(ctx, name, None)
-}
-
 /// Module-scope-aware variant of [`find_refined_type`]. When the
 /// caller knows which module's emit-pass is in flight (`scope =
 /// Some(module.prefix)`), the resolver tries `Module.Name` *before*
@@ -1442,7 +1085,7 @@ pub fn find_refined_type_with_key_scoped<'a>(
 /// in-flight `refined_types` map plus dep-module list — used inside
 /// `proof_lower` where there is no `CodegenContext` yet. Returns the
 /// canonical `TypeId` paired with the decl — used by IR-internal
-/// callers (the proof-lower side `walk_for_refinement_carrier`) so
+/// callers (the proof-lower side `detect_simp_omega_unfold`) so
 /// they thread the opaque identity through downstream comparisons
 /// without re-introducing bare-name heuristics.
 pub fn resolve_refined_type_in_with_key<'a>(

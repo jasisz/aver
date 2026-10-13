@@ -54,11 +54,9 @@ verify add
     add(Natural(value = 3), Natural(value = 4)) => Result.Ok(Natural(value = 7))
 
 verify add law commutative
-    given a: Int = [0, 1, 7, 100]
-    given b: Int = [0, 1, 7, 100]
-    when a >= 0
-    when b >= 0
-    add(Natural(value = a), Natural(value = b)) => add(Natural(value = b), Natural(value = a))
+    given a: Natural = [Natural(value = 0), Natural(value = 1), Natural(value = 7), Natural(value = 100)]
+    given b: Natural = [Natural(value = 0), Natural(value = 1), Natural(value = 7), Natural(value = 100)]
+    add(a, b) => add(b, a)
 
 fn mul(a: Natural, b: Natural) -> Result<Natural, String>
     ? "Product of two Nats — routes through fromInt to maintain the"
@@ -71,8 +69,6 @@ verify mul
     mul(Natural(value = 2), Natural(value = 3)) => Result.Ok(Natural(value = 6))
 
 verify mul law commutative
-    given a: Int = [0, 1, 7, 12]
-    given b: Int = [0, 1, 7, 12]
-    when a >= 0
-    when b >= 0
-    mul(Natural(value = a), Natural(value = b)) => mul(Natural(value = b), Natural(value = a))
+    given a: Natural = [Natural(value = 0), Natural(value = 1), Natural(value = 7), Natural(value = 12)]
+    given b: Natural = [Natural(value = 0), Natural(value = 1), Natural(value = 7), Natural(value = 12)]
+    mul(a, b) => mul(b, a)

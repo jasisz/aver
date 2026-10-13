@@ -6271,6 +6271,73 @@ fn lean_states_a_refined_given_by_its_type_and_not_by_a_premise() {
     let _ = fs::remove_dir_all(out);
 }
 
+/// A law over `given x: Int` is a law about every Int, also where it writes
+/// a refined record from `x`. The Lean export used to restate such a law
+/// over `x : Natural`, with or without a `when` that gives what `Natural`
+/// holds; `holds.ofAnyInt` has none, so its theorem said less than the law
+/// (which is false at `x = -1`). The given keeps its type, and the record is
+/// written with a proof Lean has to find. The export needs no Lean.
+#[test]
+fn lean_states_an_int_given_as_an_int_where_the_law_wraps_it_in_a_refined_record() {
+    let out = scratch("refined-givens-int-lean");
+    let result = aver_in(
+        &repo_root().join("tests/fixtures"),
+        &["proof", "refined_givens.av", "-o", out.to_str().unwrap()],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let lean = fs::read_to_string(out.join("RefinedGivens.lean")).unwrap();
+    let theorem = |name: &str| {
+        lean.lines()
+            .find(|line| line.starts_with(&format!("theorem holds_law_{name} :")))
+            .unwrap_or_else(|| panic!("the theorem of holds.{name}\n{lean}"))
+    };
+    let record = "isNonNegative (⟨x, by ";
+    let any = theorem("ofAnyInt");
+    assert!(any.contains("∀ (x : Int), isNonNegative (⟨x, by "), "{any}");
+    assert!(!any.contains("(x : Natural)"), "{any}");
+    let non_negative = theorem("ofNonNegative");
+    assert!(
+        non_negative.contains(&format!("∀ (x : Int), (x >= 0) = true -> {record}")),
+        "{non_negative}"
+    );
+    for name in ["underCapOfNonNegative", "underCapOfAnyInt"] {
+        let line = theorem(name);
+        assert!(line.contains("∀ (x : Int), "), "{line}");
+        assert!(!line.contains("x.val"), "{line}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+/// A law about values of a refined type says `given a: Natural`, and Lean
+/// states it over the type. The theorem and its proof are the text the
+/// export gave when the law was written over `given a: Int` with
+/// `when a >= 0` and `Natural(value = a)`, and the export restated it.
+#[test]
+fn lean_states_a_law_over_refined_givens_over_the_type() {
+    let out = scratch("natural-lean");
+    let result = aver_in(
+        &repo_root().join("examples/refinement/natural"),
+        &["proof", "natural.av", "-o", out.to_str().unwrap()],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let lean = fs::read_to_string(out.join("Natural.lean")).unwrap();
+    for expected in [
+        "-- aver:law-class add_law_commutative universal add.commutative\n\
+         theorem add_law_commutative : ∀ (a : Natural) (b : Natural), add a b = add b a := by\n\
+         \x20 intro a b\n\
+         \x20 unfold add fromInt\n\
+         \x20 simp [Int.add_comm, Int.mul_comm]\n",
+        "-- aver:law-class mul_law_commutative universal mul.commutative\n\
+         theorem mul_law_commutative : ∀ (a : Natural) (b : Natural), mul a b = mul b a := by\n\
+         \x20 intro a b\n\
+         \x20 unfold mul fromInt\n\
+         \x20 simp [Int.add_comm, Int.mul_comm]\n",
+    ] {
+        assert!(lean.contains(expected), "missing `{expected}`\n{lean}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
 /// The same in a module another one imports: its parameter `n` is not its
 /// binding `n`, in its own laws and in a law of the importing module that
 /// reaches the function.

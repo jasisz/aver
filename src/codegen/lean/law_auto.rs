@@ -1872,7 +1872,7 @@ fn emit_verify_law_forall_auto_proof_inner(
                 ref unfold_fns,
                 wrapper_return,
                 ref smart_guard,
-                lifted,
+                refined_given,
             }) = law_strategy_for(ctx, &vb.fn_name, &law.name)
             {
                 // `when`-premise + wrapper-return: DECLINE. The
@@ -1886,27 +1886,16 @@ fn emit_verify_law_forall_auto_proof_inner(
                 // `emit_guarded_domain_law`, which closes the bounded
                 // guarded statement by domain case-split +
                 // `native_decide`.
-                if wrapper_return && !lifted && law.when.is_some() {
+                if wrapper_return && !refined_given && law.when.is_some() {
                     return None;
                 }
-                // Lifted laws use base intro names — the Subtype
-                // lift incorporates the `when` premise into the
-                // theorem's quantifier types, so the user-side
-                // hypotheses (`h_a`, `h_b`, `h_when`) aren't
-                // available in the proof goal. Non-lifted paths
-                // keep premise expansion for by_cases hypotheses.
-                let chosen_intro: &[String] = if lifted {
-                    &intro_names
-                } else {
-                    &proof_intro_names
-                };
                 let uses_max_min = linear_arith_uses_max_min(unfold_fns, ctx);
                 let simp_omega = emit_simp_omega_from_ir(
                     unfold_fns,
                     wrapper_return,
                     smart_guard.as_ref(),
-                    lifted,
-                    chosen_intro,
+                    refined_given,
+                    &proof_intro_names,
                     &intro_names,
                     law.when.is_some(),
                     uses_max_min,
@@ -3057,7 +3046,7 @@ fn emit_simp_omega_from_ir(
     unfold_fns: &[String],
     wrapper_return: bool,
     smart_guard: Option<&crate::ir::SmartGuard>,
-    lifted: bool,
+    refined_given: bool,
     intro_names: &[String],
     given_names: &[String],
     has_when: bool,
@@ -3066,11 +3055,10 @@ fn emit_simp_omega_from_ir(
 ) -> SimpOmegaProof {
     use super::tactic_ir::Tactic;
     let lean_names: Vec<String> = unfold_fns.iter().map(|n| aver_name_to_lean(n)).collect();
-    if lifted && wrapper_return {
-        // Subtype/subset lift carries the smart-constructor
-        // invariant in the type — the law-quantified vars are
-        // already `Natural` (etc.) in the theorem statement, so
-        // by_cases case-split is unnecessary. Plain unfold + simp
+    if refined_given && wrapper_return {
+        // A refined given carries the smart-constructor invariant
+        // in its type (`a : Natural`), so the by_cases case-split
+        // is unnecessary. Plain unfold + simp
         // with arithmetic lemmas closes via Lean's built-in
         // commutativity normalisation.
         SimpOmegaProof {

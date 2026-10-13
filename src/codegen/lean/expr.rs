@@ -339,12 +339,14 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
             //   * for literal sample positions (`⟨7, _⟩` in a
             //     theorem about `7 ≥ 0`) omega closes by constant
             //     evaluation.
-            //   * for law-quantified positions where the law's
-            //     `when` clause guarantees the predicate, the
-            //     quant-lifter (toplevel.rs) emits the refined
-            //     type directly so RecordCreate never appears
-            //     against a free Int — only against concrete
-            //     samples and intro-bound values.
+            //   * a law that writes the record from a given of the
+            //     carrier type (`given a: Int`, `Natural(value = a)`)
+            //     gets the same ladder with nothing to read: the
+            //     law's `when` is a premise of the statement, not a
+            //     hypothesis in scope where the record is written,
+            //     so the proof is not found and Lean refuses the
+            //     statement. A law about values of the refined type
+            //     says `given a: Natural` and writes no record.
             // Refinement records emit as Subtype only when the
             // carrier is `Int` (see emit_product_type for the
             // matching guard). Float-carrier records keep the

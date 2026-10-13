@@ -2913,123 +2913,13 @@ fn scan_lemma_not_emitted_for_pos_free_exit_scanner() {
 }
 
 #[test]
-fn proof_mode_when_stronger_than_refinement_invariant_stays_in_theorem() {
-    // Before fix: `when` was dropped unconditionally whenever a
-    // given was refinement-lifted, on the assumption that `when`
-    // restated the type's invariant. A user-written stronger
-    // predicate (`when a >= 10` over `Natural` whose invariant is
-    // `a.val >= 0`) would silently disappear from the emitted
-    // theorem — the proof artifact would universally quantify
-    // over ALL Naturals while the user's source claim was
-    // restricted to `a >= 10`. After fix: `when_is_redundant_
-    // with_refinement_lifts` compares user's predicate to the
-    // type's invariant (via commutator-relaxed compare). Drop
-    // only fires when they match.
-    let src = "module Stronger\n\
-             \x20   intent = \"t\"\n\
-             \x20   exposes opaque [Natural]\n\
-             \n\
-             record Natural\n\
-             \x20   value: Int\n\
-             \n\
-             fn fromInt(n: Int) -> Result<Natural, String>\n\
-             \x20   match n >= 0\n\
-             \x20       true  -> Result.Ok(Natural(value = n))\n\
-             \x20       false -> Result.Err(\"must be >= 0\")\n\
-             \n\
-             fn identity(a: Natural) -> Natural\n\
-             \x20   a\n\
-             \n\
-             verify identity law selfEq\n\
-             \x20   given a: Int = [10, 20, 30]\n\
-             \x20   when a >= 10\n\
-             \x20   identity(Natural(value = a)) => identity(Natural(value = a))\n";
-    let mut ctx = ctx_from_source(src, "stronger");
-    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
-    let lean = generated_lean_file(&out);
-    // `when a >= 10` is STRONGER than Natural's `n >= 0` invariant
-    // so the universal theorem must keep it as a premise — AND
-    // project `a` to `a.val` because the quantifier is now over
-    // the Subtype carrier, not the underlying Int. The bare-`a`
-    // shape would fail `lake build` with `failed to synthesize LE
-    // Natural / OfNat Natural 10`.
-    let universal_theorem = lean
-        .lines()
-        .find(|l| l.contains("theorem identity_law_selfEq"))
-        .unwrap_or_else(|| panic!("expected universal theorem line, got:\n{}", lean));
-    assert!(
-        universal_theorem.contains("a.val >= 10"),
-        "expected `when a.val >= 10` (projected) in universal theorem premise, got:\n{}",
-        universal_theorem
-    );
-    assert!(
-        !universal_theorem.contains(" a >= 10"),
-        "must NOT emit bare `a >= 10` — Subtype carrier has no `LE Natural` instance, got:\n{}",
-        universal_theorem
-    );
-}
-
-#[test]
-fn proof_mode_when_compound_equivalent_to_compound_invariant_drops_cleanly() {
-    // Regression guard for `examples/refinement/int_range/int_range.av`:
-    // the refinement predicate itself is `Bool.and(n >= 0, n <=
-    // 100)`. A naive bijective match (lift `[Bool.and(a >= 0, a <=
-    // 100), Bool.and(b >= 0, b <= 100)]` against flattened `when`
-    // `[a >= 0, a <= 100, b >= 0, b <= 100]`) would length-
-    // mismatch and keep the redundant premise — re-introducing
-    // the type-mismatch shape that pre-fix already worked around.
-    // The fix flattens BOTH sides; this test pins that.
-    let src = "module IR\n\
-             \x20   intent = \"t\"\n\
-             \x20   exposes opaque [IntRange]\n\
-             \n\
-             record IntRange\n\
-             \x20   value: Int\n\
-             \n\
-             fn fromInt(n: Int) -> Result<IntRange, String>\n\
-             \x20   match Bool.and(n >= 0, n <= 100)\n\
-             \x20       true  -> Result.Ok(IntRange(value = n))\n\
-             \x20       false -> Result.Err(\"oob\")\n\
-             \n\
-             fn identity(a: IntRange) -> IntRange\n\
-             \x20   a\n\
-             \n\
-             verify identity law selfEq\n\
-             \x20   given a: Int = [0, 50, 100]\n\
-             \x20   when Bool.and(a >= 0, a <= 100)\n\
-             \x20   identity(IntRange(value = a)) => identity(IntRange(value = a))\n";
-    let mut ctx = ctx_from_source(src, "ir");
-    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
-    let lean = generated_lean_file(&out);
-    let universal_theorem = lean
-        .lines()
-        .find(|l| l.contains("theorem identity_law_selfEq"))
-        .unwrap_or_else(|| panic!("expected universal theorem line, got:\n{}", lean));
-    assert!(
-        !universal_theorem.contains("a >= 0"),
-        "expected compound `when` to be dropped when it matches compound invariant, got:\n{}",
-        universal_theorem
-    );
-    assert!(
-        !universal_theorem.contains("a <= 100"),
-        "expected compound `when` to be dropped when it matches compound invariant, got:\n{}",
-        universal_theorem
-    );
-    assert!(
-        universal_theorem.contains("∀ (a : IntRange)"),
-        "expected universal to quantify over IntRange, got:\n{}",
-        universal_theorem
-    );
-}
-
-#[test]
-fn proof_mode_when_equivalent_to_refinement_invariant_drops_cleanly() {
-    // Regression: the typical natural.av-style case — `when a >=
-    // 0` over `Natural` (invariant `n >= 0`) — must continue to
-    // drop the redundant `when` so the universal theorem is `∀ (a
-    // : Natural), ...` not `∀ (a : Natural), a.val >= 0 -> ...`
-    // (which Lean type-mismatches against the Subtype carrier).
-    let src = "module Equiv\n\
+fn proof_mode_int_given_wrapped_in_a_refined_record_stays_int() {
+    // A law over `given a: Int` that writes `Natural(value = a)` is a law
+    // about every Int. The export used to restate it over `a : Natural`,
+    // with or without a `when` that gives the invariant; without one the
+    // theorem then said less than the source. The given keeps its type and
+    // the `when` stays a premise.
+    let src = "module Wrapped\n\
              \x20   intent = \"t\"\n\
              \x20   exposes opaque [Natural]\n\
              \n\
@@ -3046,37 +2936,39 @@ fn proof_mode_when_equivalent_to_refinement_invariant_drops_cleanly() {
              \n\
              verify identity law selfEq\n\
              \x20   given a: Int = [0, 1, 2]\n\
+             \x20   identity(Natural(value = a)) => identity(Natural(value = a))\n\
+             \n\
+             verify identity law selfEqWhen\n\
+             \x20   given a: Int = [0, 1, 2]\n\
              \x20   when a >= 0\n\
              \x20   identity(Natural(value = a)) => identity(Natural(value = a))\n";
-    let mut ctx = ctx_from_source(src, "equiv");
+    let mut ctx = ctx_from_source(src, "wrapped");
     let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
     let lean = generated_lean_file(&out);
-    let universal_theorem = lean
-        .lines()
-        .find(|l| l.contains("theorem identity_law_selfEq"))
-        .unwrap_or_else(|| panic!("expected universal theorem line, got:\n{}", lean));
-    // Predicate equivalent to invariant → drop.
+    let theorem = |name: &str| {
+        lean.lines()
+            .find(|l| l.contains(&format!("theorem identity_law_{name} :")))
+            .unwrap_or_else(|| panic!("expected the theorem of {name}, got:\n{lean}"))
+    };
+    for name in ["selfEq", "selfEqWhen"] {
+        let line = theorem(name);
+        assert!(line.contains("∀ (a : Int)"), "{line}");
+        assert!(!line.contains("(a : Natural)"), "{line}");
+        assert!(line.contains("(⟨a, by "), "{line}");
+    }
     assert!(
-        !universal_theorem.contains("a >= 0"),
-        "expected redundant `when a >= 0` to be dropped from universal theorem, got:\n{}",
-        universal_theorem
-    );
-    assert!(
-        universal_theorem.contains("∀ (a : Natural)"),
-        "expected universal to quantify over Natural, got:\n{}",
-        universal_theorem
+        theorem("selfEqWhen").contains("(a >= 0) = true -> "),
+        "{}",
+        theorem("selfEqWhen")
     );
 }
 
 #[test]
-fn proof_mode_refinement_lift_escapes_reserved_type_binder() {
-    // The refinement-lift quantifier binder interpolated the IR's canonical
-    // refined-type key as raw Lean type text. A refined record named `Type`
-    // (legal Aver — the lexer reserves only lowercase keywords) then emitted
-    // `∀ (a : Type), …` against a declaration escaped to `Type'`, so the
-    // theorem referenced Lean's `Type` sort instead of the record. The
-    // binder must route through the same spelling helper as every other
-    // type reference.
+fn proof_mode_refined_given_escapes_reserved_type_binder() {
+    // A refined record named `Type` (legal Aver — the lexer reserves only
+    // lowercase keywords) is declared as `Type'`. The binder of a given of
+    // that type must be spelled the same way, or the theorem reads Lean's
+    // `Type` sort instead of the record.
     let src = "module Lift\n\
              \x20   intent = \"t\"\n\
              \x20   exposes opaque [Type]\n\
@@ -3093,9 +2985,8 @@ fn proof_mode_refinement_lift_escapes_reserved_type_binder() {
              \x20   a\n\
              \n\
              verify identity law selfEq\n\
-             \x20   given a: Int = [0, 1, 2]\n\
-             \x20   when a >= 0\n\
-             \x20   identity(Type(value = a)) => identity(Type(value = a))\n";
+             \x20   given a: Type = [Type(value = 0), Type(value = 1)]\n\
+             \x20   identity(a) => identity(a)\n";
     let mut ctx = ctx_from_source(src, "lift");
     let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
     let lean = generated_lean_file(&out);
@@ -3105,7 +2996,7 @@ fn proof_mode_refinement_lift_escapes_reserved_type_binder() {
         .unwrap_or_else(|| panic!("expected universal theorem line, got:\n{}", lean));
     assert!(
         universal_theorem.contains("∀ (a : Type')"),
-        "refinement-lifted binder must escape the reserved type name, got:\n{}",
+        "the binder of a refined given must escape the reserved type name, got:\n{}",
         universal_theorem
     );
     assert!(
