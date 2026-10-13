@@ -162,6 +162,7 @@ fn kernel_computes(t: &Term, value: &Term) -> Result<String, String> {
             lists: Vec::new(),
             ints: Vec::new(),
             premise: None,
+            refined: Vec::new(),
             lhs: t.clone(),
             rhs: value.clone(),
         },
