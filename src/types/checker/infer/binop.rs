@@ -1,6 +1,14 @@
 use super::*;
 
 impl TypeChecker {
+    /// Whether two types may stand on the two sides of an equality. This is
+    /// the one rule for it: `==` and `!=` use it, and so does a `verify`
+    /// case, whose `left => right` is the same comparison. Two types `==`
+    /// takes may be the two sides of a case, and two it refuses may not.
+    pub(in super::super) fn equality_types_agree(&self, lt: &Type, rt: &Type) -> bool {
+        self.compatible(lt, rt) || self.compatible(rt, lt)
+    }
+
     pub(in super::super) fn check_binop(&mut self, op: &BinOp, lt: &Type, rt: &Type, line: usize) {
         if matches!(lt, Type::Invalid) || matches!(rt, Type::Invalid) {
             return; // gradual — skip
@@ -63,7 +71,7 @@ impl TypeChecker {
                     );
                     return;
                 }
-                if !self.compatible(lt, rt) && !self.compatible(rt, lt) {
+                if !self.equality_types_agree(lt, rt) {
                     let (left, right) = self.describe_type_pair(lt, rt);
                     self.error_at_line(
                         line,
