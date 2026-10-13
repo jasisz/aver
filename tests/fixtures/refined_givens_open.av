@@ -1,0 +1,44 @@
+module RefinedGivensOpen
+    intent =
+        "The record of refined_givens.av, not listed under exposes opaque."
+        "Any module may write Natural(value = -1), so the smart constructor's"
+        "check holds of no given: a law about a Natural is about every record."
+
+record Natural
+    value: Int
+
+fn fromInt(n: Int) -> Result<Natural, String>
+    ? "A Natural from a non-negative Int."
+    match n >= 0
+        true -> Result.Ok(Natural(value = n))
+        false -> Result.Err("negative")
+
+verify fromInt
+    fromInt(3) => Result.Ok(Natural(value = 3))
+
+fn isNonNegative(n: Natural) -> Bool
+    ? "Whether the value is at least zero."
+    n.value >= 0
+
+verify isNonNegative
+    isNonNegative(Natural(value = 1)) => true
+
+verify isNonNegative law always
+    given n: Natural = [Natural(value = 0), Natural(value = 7)]
+    isNonNegative(n) => true
+
+verify isNonNegative law whenChecked
+    given n: Natural = [Natural(value = 0), Natural(value = 7)]
+    when n.value >= 0
+    isNonNegative(n) => true
+
+fn same(n: Natural) -> Natural
+    ? "The Natural itself."
+    n
+
+verify same
+    same(Natural(value = 1)) => Natural(value = 1)
+
+verify same law isItself
+    given n: Natural = [Natural(value = 0), Natural(value = 7)]
+    same(n) => n

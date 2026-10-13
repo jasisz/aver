@@ -94,6 +94,7 @@ fn untranslate_record_context_declines_refinement_structure_lifts() {
     let ctx = ctx_from_source(
         r#"
 module Carrier
+    exposes opaque [Natural]
     effects []
 record Natural
     value: Int

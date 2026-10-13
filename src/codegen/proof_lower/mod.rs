@@ -487,11 +487,35 @@ pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             .map(move |td| (Some(m.prefix.as_str()), td))
     });
 
+    // The types each module lists under `exposes opaque`. Only for such a
+    // type does the smart constructor's check hold of every value: no
+    // other module can write the record with a value the constructor
+    // would refuse. A record any module may construct is an ordinary
+    // record, whatever function validates it; so is one in an entry
+    // module with no `exposes` line.
+    let entry_opaque: &[String] = crate::visibility::module_decl(inputs.entry_items)
+        .map(|m| m.exposes_opaque.as_slice())
+        .unwrap_or(&[]);
+    let opaque_in = |module_prefix: Option<&str>| -> &[String] {
+        match module_prefix {
+            None => entry_opaque,
+            Some(prefix) => inputs
+                .dep_modules
+                .iter()
+                .find(|m| m.prefix == prefix)
+                .map(|m| m.exposes_opaque.as_slice())
+                .unwrap_or(&[]),
+        }
+    };
+
     for (module_prefix, td) in entry_typedefs.chain(module_typedefs) {
         let TypeDef::Product { name, fields, .. } = td else {
             continue;
         };
         if fields.len() != 1 {
+            continue;
+        }
+        if !opaque_in(module_prefix).iter().any(|o| o == name) {
             continue;
         }
         let type_key = match module_prefix {

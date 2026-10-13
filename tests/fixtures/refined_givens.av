@@ -1,10 +1,13 @@
 module RefinedGivens
     intent =
         "Laws about a given of a refined type, and laws that cite them."
-        "A Natural holds a non-negative Int: its smart constructor checks it."
-        "A law about a Natural assumes that, and a law that cites it has to"
-        "show it of the value it puts for the given. The false laws below put"
-        "a record the constructor would refuse, and must stay open."
+        "A Natural holds a non-negative Int: its smart constructor checks it,"
+        "and the type is opaque, so no other module can write the record."
+        "A law about a Natural assumes the check, and a law that cites it has"
+        "to show it of the value it puts for the given. The false laws below"
+        "put a record the constructor would refuse, and must stay open."
+    exposes [fromInt, isNonNegative, atMost, holds, same]
+    exposes opaque [Natural]
 
 record Natural
     value: Int

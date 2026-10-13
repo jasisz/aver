@@ -5,6 +5,7 @@ module ProofSeamBytes
         "Fixture for the proof snapshot seam: the emitted proof must describe THIS"
         "source — no collected variant, no byte builder, no deleted fromList call —"
         "whether or not the optimising passes rewrote the program for a runtime backend."
+    exposes opaque [Bytes]
     effects [Console]
 
 record Bytes

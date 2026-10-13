@@ -6090,8 +6090,9 @@ fn a_local_spelled_like_a_module_binding_is_not_read_as_the_binding() {
     }
 }
 
-/// A value of a refined type satisfies what its smart constructor checks,
-/// but a step term may write the record with any value in its field. A
+/// A value of a refined type satisfies what its smart constructor checks:
+/// the type is listed under `exposes opaque`, so only its own module can
+/// write the record. A step term may still write it with any value. A
 /// script therefore states what the type holds of each given of a refined
 /// type as a premise: the law's own proof may use it, and a law that cites
 /// it has to prove it of the value it puts for the given. The laws of the
@@ -6185,6 +6186,50 @@ fn a_law_about_a_refined_given_is_cited_only_at_a_value_its_type_admits() {
         aver::proof_kernel::verdict(&at_minus_one(unstated, "")),
         Ok("holds.ofMinusOne".to_string())
     );
+}
+
+/// A record with a validating constructor that is not listed under
+/// `exposes opaque` is an ordinary record: any module may write
+/// `Natural(value = -1)`, so the constructor's check holds of no given. A
+/// law about such a given is about every record: the false one stays open,
+/// no script gets a premise the law did not write, and Lean states the
+/// type as a plain structure.
+#[test]
+fn a_record_any_module_may_construct_is_not_a_refined_type() {
+    let fixtures = repo_root().join("tests/fixtures");
+    let (closed, open, scripts) =
+        closed_and_open(&fixtures, "refined_givens_open.av", "refined-givens-open");
+    assert_eq!(closed, ["isNonNegative.whenChecked", "same.isItself"]);
+    assert_eq!(open, ["isNonNegative.always"]);
+    let obligations: Vec<&str> = scripts
+        .iter()
+        .map(|(_, script)| script.lines().nth(1).unwrap().trim())
+        .collect();
+    assert_eq!(
+        obligations,
+        [
+            "(obligation isNonNegative.whenChecked ((n (named Natural))) (op >= (get (v n) value) (i 0)) (call isNonNegative (v n)) (b true))",
+            "(obligation same.isItself ((n (named Natural))) (none) (call same (v n)) (v n))"
+        ]
+    );
+    let out = scratch("refined-givens-open-lean");
+    let result = aver_in(
+        &fixtures,
+        &[
+            "proof",
+            "refined_givens_open.av",
+            "-o",
+            out.to_str().unwrap(),
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let lean = fs::read_to_string(out.join("RefinedGivensOpen.lean")).unwrap();
+    assert!(lean.contains("structure Natural where"), "{lean}");
+    assert!(!lean.contains("abbrev Natural"), "{lean}");
+    // Nothing here reads a type that carries a proof, so every script
+    // reaches Lean as a step term.
+    assert_eq!(unrendered_step_files(&out), Vec::<String>::new());
+    let _ = fs::remove_dir_all(out);
 }
 
 /// Lean states a given of a refined type by a type that carries the proof
