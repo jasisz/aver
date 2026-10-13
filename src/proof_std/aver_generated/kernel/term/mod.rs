@@ -18,6 +18,7 @@ pub enum Ty {
     TyNamed(AverStr),
     TyAny,
     TyVar(AverStr, bool),
+    TyRigid(AverStr, bool),
 }
 
 impl Ty {
@@ -32,11 +33,12 @@ impl Ty {
             Ty::TyNamed(..) => 6,
             Ty::TyOption(..) => 7,
             Ty::TyResult(..) => 8,
-            Ty::TyStr => 9,
-            Ty::TyTuple(..) => 10,
-            Ty::TyUnit => 11,
-            Ty::TyVar(..) => 12,
-            Ty::TyVector(..) => 13,
+            Ty::TyRigid(..) => 9,
+            Ty::TyStr => 10,
+            Ty::TyTuple(..) => 11,
+            Ty::TyUnit => 12,
+            Ty::TyVar(..) => 13,
+            Ty::TyVector(..) => 14,
         }
     }
 }
@@ -65,6 +67,9 @@ impl Ord for Ty {
                 std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
             }
             (Ty::TyResult(a0, a1), Ty::TyResult(b0, b1)) => std::cmp::Ordering::Equal
+                .then_with(|| a0.cmp(b0))
+                .then_with(|| a1.cmp(b1)),
+            (Ty::TyRigid(a0, a1), Ty::TyRigid(b0, b1)) => std::cmp::Ordering::Equal
                 .then_with(|| a0.cmp(b0))
                 .then_with(|| a1.cmp(b1)),
             (Ty::TyTuple(a0), Ty::TyTuple(b0)) => {
@@ -105,6 +110,10 @@ impl aver_rt::AverDisplay for Ty {
             Ty::TyAny => "TyAny".to_string(),
             Ty::TyVar(f0, f1) => format!(
                 "TyVar({})",
+                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+            ),
+            Ty::TyRigid(f0, f1) => format!(
+                "TyRigid({})",
                 vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
             ),
         }

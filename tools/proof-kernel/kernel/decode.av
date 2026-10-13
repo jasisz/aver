@@ -675,7 +675,7 @@ fn typ(s: Sexp, vars: Bool) -> Result<Ty, String>
         Sexp.Atom("str") -> Result.Ok(Ty.TyStr)
         Sexp.Atom("float") -> Result.Ok(Ty.TyFloat)
         Sexp.Atom("unit") -> Result.Ok(Ty.TyUnit)
-        Sexp.Atom("_") -> Result.Ok(Ty.TyNamed("?"))
+        Sexp.Atom("_") -> Result.Ok(Ty.TyRigid("", false))
         Sexp.Node([Sexp.Atom("var"), Sexp.Atom(n)]) -> typeVar(n, false, vars)
         Sexp.Node([Sexp.Atom("var"), Sexp.Atom(n), Sexp.Atom("eq")]) -> typeVar(n, true, vars)
         Sexp.Node([Sexp.Atom("list"), t]) -> Result.Ok(Ty.TyList(typ(t, vars)?))
@@ -691,7 +691,7 @@ verify typ
     typ(Sexp.Atom("int"), true) => Result.Ok(Ty.TyInt)
     typ(Sexp.Node([Sexp.Atom("list"), Sexp.Atom("bool")]), true) => Result.Ok(Ty.TyList(Ty.TyBool))
     typ(Sexp.Node([Sexp.Atom("tint")]), true) => Result.Err("malformed type")
-    typ(Sexp.Atom("_"), true) => Result.Ok(Ty.TyNamed("?"))
+    typ(Sexp.Atom("_"), true) => Result.Ok(Ty.TyRigid("", false))
     typ(Sexp.Node([Sexp.Atom("var"), Sexp.Atom("K"), Sexp.Atom("eq")]), true) => Result.Ok(Ty.TyVar("K", true))
 
 fn typeVar(n: String, eq: Bool, vars: Bool) -> Result<Ty, String>

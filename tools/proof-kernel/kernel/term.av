@@ -20,6 +20,7 @@ type Ty
     TyNamed(String)
     TyAny
     TyVar(String, Bool)
+    TyRigid(String, Bool)
 
 record TypedVar
     name: String

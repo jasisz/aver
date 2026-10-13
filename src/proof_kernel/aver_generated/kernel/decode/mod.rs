@@ -2170,7 +2170,7 @@ pub fn typ(
                                 Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyUnit)
                             } else {
                                 if &*__dispatch_subject == "_" {
-                                    Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(AverStr::from("?")))
+                                    Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyRigid(AverStr::from(""), false))
                                 } else {
                                     Err(AverStr::from("malformed type"))
                                 }

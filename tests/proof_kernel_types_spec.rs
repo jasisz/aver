@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// (script, what the kernel says, whether an untyped kernel accepted it)
-const REFUSED: [(&str, &str, bool); 25] = [
+const REFUSED: [(&str, &str, bool); 27] = [
     // A law about a sum, cited at an Int: `x = One.Only` for every `x` of
     // the one-value type `One`, read at 0 and at 1, gives `0 = 1`.
     (
@@ -114,6 +114,19 @@ const REFUSED: [(&str, &str, bool); 25] = [
         "f: y := Float is not ?",
         false,
     ),
+    // No name a script can write stands for the kernel's own notions: a
+    // declared type named `_` is not a hole, and a type variable named
+    // `=T` has no equality.
+    (
+        "int_rule_at_texts_through_a_type_named_like_the_unknown",
+        "f: x := String is not _",
+        false,
+    ),
+    (
+        "reflexive_equality_of_a_float_through_a_fact_variable",
+        "fact List.selfEqual: step proof: rule bool.beq.refl: a := == on ?=T is not equality",
+        false,
+    ),
     // A given split by its values or as a list, which is an Int.
     (
         "enum_of_an_int_given",
@@ -149,7 +162,7 @@ fn the_kernel_refuses_a_term_bound_at_another_type() {
         match aver::proof_kernel::verdict(&text) {
             Ok(law) => panic!("{name}: the kernel accepted it as a proof of {law}"),
             Err(refusal) => assert!(
-                refusal.starts_with("step proof") && refusal.contains(why),
+                refusal.contains("step proof") && refusal.contains(why),
                 "{name}: refused for another reason: {refusal}"
             ),
         }

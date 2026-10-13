@@ -51,6 +51,7 @@ fn show(t: Ty) -> String
         Ty.TyNamed(n) -> n
         Ty.TyAny -> "_"
         Ty.TyVar(n, eq) -> "?{n}"
+        Ty.TyRigid(n, eq) -> "?{n}"
 
 verify show
     show(Ty.TyList(Ty.TyAny)) => "List<_>"
@@ -89,7 +90,7 @@ verify constType
     constType("base", [Const(name = "base", ty = Ty.TyInt, value = Term.TInt(40))]) => Option.Some(Ty.TyInt)
 
 fn headOf(t: Ty) -> String
-    ? "What a type is made of: its outermost shape, a declared name, or the whole type when it has no parts."
+    ? "What a type is made of: its outermost shape, or the whole type when it has no parts. A declared name, a type variable and an unknown type each have a head no other kind of type has, whatever their name: _ is the head of a hole alone."
     match t
         Ty.TyList(a) -> "List"
         Ty.TyOption(a) -> "Option"
@@ -97,11 +98,17 @@ fn headOf(t: Ty) -> String
         Ty.TyResult(a, b) -> "Result"
         Ty.TyMap(a, b) -> "Map"
         Ty.TyTuple(xs) -> "tuple"
+        Ty.TyNamed(n) -> "named {n}"
+        Ty.TyVar(n, eq) -> "var {n}"
+        Ty.TyRigid(n, eq) -> "unknown {eq} {n}"
         _ -> show(t)
 
 verify headOf
     headOf(Ty.TyList(Ty.TyInt)) => "List"
     headOf(Ty.TyInt) => "Int"
+    headOf(Ty.TyNamed("Int")) => "named Int"
+    headOf(Ty.TyNamed("_")) => "named _"
+    headOf(Ty.TyRigid("T", true)) => "unknown true T"
 
 fn partsOf(t: Ty) -> List<Ty>
     ? "The types a type is made of, in order."
@@ -184,12 +191,19 @@ fn fits(actual: Ty, expected: Ty) -> Bool
 verify fits
     fits(Ty.TyOption(Ty.TyAny), Ty.TyOption(Ty.TyStr)) => true
     fits(Ty.TyInt, Ty.TyBool) => false
+    fits(Ty.TyStr, Ty.TyNamed("_")) => false
+    fits(Ty.TyInt, Ty.TyNamed("Int")) => false
+    fits(Ty.TyNamed("tuple"), Ty.TyTuple([])) => false
+    fits(Ty.TyRigid("T", false), Ty.TyInt) => false
+    fits(Ty.TyRigid("T", false), Ty.TyRigid("T", true)) => false
+    fits(Ty.TyRigid("", false), Ty.TyRigid("", false)) => true
 
 fn hasEq(t: Ty, e: TyEnv) -> Bool
     ? "Whether == between two values of the type is equality. Data, not a rule of the kernel: a declared type has one when its declaration in the script says so, any other type by its shape in Kernel.Builtins and then part by part; a type variable when it asks for one."
     match t
-        Ty.TyNamed(n) -> Bool.or(String.startsWith(n, "?="), declaredEq(sumNamed(n, e.sums), recNamed(n, e.recs)))
+        Ty.TyNamed(n) -> declaredEq(sumNamed(n, e.sums), recNamed(n, e.recs))
         Ty.TyVar(n, eq) -> eq
+        Ty.TyRigid(n, eq) -> eq
         _ -> Bool.and(Kernel.Builtins.equality(headOf(t)), allEq(partsOf(t), e))
 
 verify hasEq
@@ -200,21 +214,20 @@ verify hasEq
     hasEq(Ty.TyOption(Ty.TyNamed("R")), TyEnv(vars = [], defs = [], consts = [], sums = [], recs = [Rec(name = "R", eq = true, fields = [])], sigs = [])) => true
     hasEq(Ty.TyNamed("R"), TyEnv(vars = [], defs = [], consts = [], sums = [], recs = [Rec(name = "R", eq = false, fields = [])], sigs = [])) => false
     hasEq(Ty.TyList(Ty.TyAny), empty()) => true
+    hasEq(Ty.TyNamed("?=T"), empty()) => false
+    hasEq(Ty.TyRigid("=T", false), empty()) => false
 
 fn rigid(t: Ty) -> Ty
-    ? "A type as the proof of its own statement sees it: each type variable is one unknown type, which fits only itself and has an equality only when the variable asks for one (?=NAME)."
+    ? "A type as the proof of its own statement sees it: each type variable is one unknown type, which fits only itself and has an equality only when the variable asks for one."
     match t
-        Ty.TyVar(n, eq) -> match eq
-            true -> Ty.TyNamed("?={n}")
-            false -> Ty.TyNamed("?{n}")
+        Ty.TyVar(n, eq) -> Ty.TyRigid(n, eq)
         _ -> rebuild(t, rigidAll(partsOf(t)))
 
 verify rigid
-    rigid(Ty.TyList(Ty.TyVar("T", false))) => Ty.TyList(Ty.TyNamed("?T"))
-    rigid(Ty.TyMap(Ty.TyVar("K", true), Ty.TyInt)) => Ty.TyMap(Ty.TyNamed("?=K"), Ty.TyInt)
+    rigid(Ty.TyList(Ty.TyVar("T", false))) => Ty.TyList(Ty.TyRigid("T", false))
     hasEq(rigid(Ty.TyVar("K", true)), empty()) => true
-    hasEq(rigid(Ty.TyVar("T", false)), empty()) => false
-    fits(rigid(Ty.TyVar("T", false)), Ty.TyInt) => false
+    hasEq(rigid(Ty.TyVar("=T", false)), empty()) => false
+    rigid(Ty.TyVar("=T", false)) => Ty.TyRigid("=T", false)
 
 fn rigidAll(ts: List<Ty>) -> List<Ty>
     ? "Each type with its variables fixed."
@@ -232,7 +245,7 @@ fn rigidVars(vs: List<TypedVar>) -> List<TypedVar>
         [v, ..rest] -> List.prepend(Kernel.Term.typed(v.name, rigid(v.ty)), rigidVars(rest))
 
 verify rigidVars
-    rigidVars([Kernel.Term.typed("x", Ty.TyVar("T", false))]) => [Kernel.Term.typed("x", Ty.TyNamed("?T"))]
+    rigidVars([Kernel.Term.typed("x", Ty.TyVar("T", false))]) => [Kernel.Term.typed("x", Ty.TyRigid("T", false))]
 
 fn declaredEq(s: Option<Sum>, r: Option<Rec>) -> Bool
     ? "What a declared type's declaration says of its ==; a name the script does not declare has none."
@@ -318,14 +331,14 @@ verify variantFields
     variantFields("C.A", []) => Option.None
 
 fn ctorFields(c: String, subject: Ty, e: TyEnv) -> Result<List<Ty>, String>
-    ? "The field types of a constructor: Option and Result read theirs off the subject's type, a declared sum off its declaration."
-    match c
-        "nil" -> Result.Ok([])
-        "cons" -> Result.Ok([nth(partsOf(subject), 0), Ty.TyList(nth(partsOf(subject), 0))])
-        "Option.None" -> Result.Ok([])
-        "Option.Some" -> Result.Ok([nth(partsOf(subject), 0)])
-        "Result.Ok" -> Result.Ok([nth(partsOf(subject), 0)])
-        "Result.Err" -> Result.Ok([nth(partsOf(subject), 1)])
+    ? "The field types of a constructor: a list's, Option's and Result's read off a subject of that type, any other off the declared sum, whatever the constructor is named."
+    match (c, headOf(subject))
+        ("nil", "List") -> Result.Ok([])
+        ("cons", "List") -> Result.Ok([nth(partsOf(subject), 0), Ty.TyList(nth(partsOf(subject), 0))])
+        ("Option.None", "Option") -> Result.Ok([])
+        ("Option.Some", "Option") -> Result.Ok([nth(partsOf(subject), 0)])
+        ("Result.Ok", "Result") -> Result.Ok([nth(partsOf(subject), 0)])
+        ("Result.Err", "Result") -> Result.Ok([nth(partsOf(subject), 1)])
         _ -> match sumOf(c, e.sums)
             Option.None -> Result.Err("unknown constructor {c}")
             Option.Some(s) -> match variantFields(c, s.variants)
@@ -381,7 +394,7 @@ fn typeOf(t: Term, e: TyEnv) -> Result<Ty, String>
         Term.TParts(xs) -> partsType(typesOf(xs, e)?)
         Term.TList(xs) -> Result.Ok(Ty.TyList(joinAll(typesOf(xs, e)?, Ty.TyAny)?))
         Term.TTuple(xs) -> Result.Ok(Ty.TyTuple(typesOf(xs, e)?))
-        Term.TRec(n, fs) -> fieldsFit(n, fs, Ty.TyNamed(n), e)
+        Term.TRec(n, fs) -> fieldsFit(n, fs, declaredRec(n, e)?, e)
         Term.TUpd(n, b, fs) -> fieldsFit(n, fs, must(typeOf(b, e)?, Ty.TyNamed(n), "an update of {n}")?, e)
 
 verify typeOf
@@ -444,6 +457,15 @@ fn recField(n: String, f: String, e: TyEnv) -> Result<Ty, String>
 
 verify recField
     recField("R", "a", TyEnv(vars = [], defs = [], consts = [], sums = [], recs = [Rec(name = "R", eq = false, fields = [])], sigs = [])) => Result.Err("R has no field a")
+
+fn declaredRec(n: String, e: TyEnv) -> Result<Ty, String>
+    ? "The type of a literal of a record the script declares."
+    match recNamed(n, e.recs)
+        Option.Some(r) -> Result.Ok(Ty.TyNamed(n))
+        Option.None -> Result.Err("{n} is not a declared record")
+
+verify declaredRec
+    declaredRec("R", empty()) => Result.Err("R is not a declared record")
 
 fn fieldsFit(n: String, fs: List<Field>, result: Ty, e: TyEnv) -> Result<Ty, String>
     ? "A record's fields each fit their declared type."
