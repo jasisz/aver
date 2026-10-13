@@ -18,6 +18,7 @@
     "map_key_order": 5.97,
     "native_provider_rust_spec": 53.53,
     "proof_spec": 2.08,
+    "proof_steps_vm_differential": 300.0,
     "provider_package_workflow_spec": 33.88,
     "provider_vm_host_spec": 998.43,
     "rust_codegen_differential": 94.72,
