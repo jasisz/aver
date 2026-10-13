@@ -1031,12 +1031,19 @@ pub fn typeOf(
         }
         crate::proof_std::aver_generated::kernel::term::Term::TMatch(s, arms) => {
             let s = (*s).clone();
-            crate::proof_std::aver_generated::kernel::types::armsType(
-                crate::proof_std::aver_generated::kernel::types::typeOf(&s, e.clone())?,
-                arms,
-                crate::proof_std::aver_generated::kernel::term::Ty::TyAny,
-                e,
-            )
+            {
+                let __list_subject = arms.clone();
+                if __list_subject.is_empty() {
+                    Err(AverStr::from("a match with no arms has no type"))
+                } else {
+                    crate::proof_std::aver_generated::kernel::types::armsType(
+                        crate::proof_std::aver_generated::kernel::types::typeOf(&s, e.clone())?,
+                        arms,
+                        crate::proof_std::aver_generated::kernel::term::Ty::TyAny,
+                        e,
+                    )
+                }
+            }
         }
         crate::proof_std::aver_generated::kernel::term::Term::TParts(xs) => {
             crate::proof_std::aver_generated::kernel::types::partsType(
@@ -2131,13 +2138,48 @@ pub fn bindTyped(
     let e @ _ = std::sync::Arc::new(e);
     loop {
         crate::proof_std::cancel_checkpoint();
-        aver_list_match!(bs, [] => { return Ok(bound); }, [b, rest] => { match crate::proof_std::aver_generated::kernel::types::find(b.name.clone(), (*declared).clone()) { None => { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(47)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(what)))); __b }; __b.push_str(&AverStr::from(" does not bind ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(b.name)))); __b })); }, Some(want @ _) => { {
+        aver_list_match!(bs, [] => { return crate::proof_std::aver_generated::kernel::types::eqKept(crate::proof_std::aver_generated::kernel::types::typesOfVars(&*declared), bound, (*e).clone(), what); }, [b, rest] => { match crate::proof_std::aver_generated::kernel::types::find(b.name.clone(), (*declared).clone()) { None => { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(47)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(what)))); __b }; __b.push_str(&AverStr::from(" does not bind ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(b.name)))); __b })); }, Some(want @ _) => { {
             let __tco0 = rest;
             let __tco2 = crate::proof_std::aver_generated::kernel::types::bindVars(&want, &crate::proof_std::aver_generated::kernel::types::typeOf(&b.value, (*e).clone())?, &bound, (*e).clone(), aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(37)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(what)))); __b }; __b.push_str(&AverStr::from(": ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(b.name)))); __b }; __b.push_str(&AverStr::from(" :=")); __b }))?;
             bs = __tco0;
             bound = __tco2;
             continue;
         } } } })
+    }
+}
+
+/// Every type variable some declared type marks as needing equality is bound, once all terms are in, to a type that has one: the mark is the variable's, whichever of its places a term reached it through.
+#[inline(always)]
+pub fn eqKept(
+    mut ts @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Ty>,
+    bound @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>,
+    e @ _: TyEnv,
+    mut what @ _: AverStr,
+) -> Result<aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>, AverStr> {
+    let bound @ _ = std::sync::Arc::new(bound);
+    let e @ _ = std::sync::Arc::new(e);
+    loop {
+        crate::proof_std::cancel_checkpoint();
+        aver_list_match!(ts, [] => { return Ok((*bound).clone()); }, [t, rest] => { match t.clone() {
+        crate::proof_std::aver_generated::kernel::term::Ty::TyVar(n, __pat0) => {
+            if __pat0 { if crate::proof_std::aver_generated::kernel::types::hasEq(&crate::proof_std::aver_generated::kernel::types::find(n.clone(), (*bound).clone()).unwrap_or(crate::proof_std::aver_generated::kernel::term::Ty::TyAny), &*e) { {
+            let __tco0 = rest;
+            ts = __tco0;
+            continue;
+        } } else { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(56)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(what)))); __b }; __b.push_str(&AverStr::from(": == on ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::types::show(&crate::proof_std::aver_generated::kernel::types::find(n, (*bound).clone()).unwrap_or(crate::proof_std::aver_generated::kernel::term::Ty::TyAny)))))); __b }; __b.push_str(&AverStr::from(" is not equality")); __b })); } } else { {
+            let __tco0 = aver_rt::AverList::concat(&crate::proof_std::aver_generated::kernel::types::partsOf(&t), &rest);
+            ts = __tco0;
+            continue;
+        } }
+        },
+        _ => {
+            {
+            let __tco0 = aver_rt::AverList::concat(&crate::proof_std::aver_generated::kernel::types::partsOf(&t), &rest);
+            ts = __tco0;
+            continue;
+        }
+        }
+    } })
     }
 }
 

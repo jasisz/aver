@@ -390,6 +390,7 @@ fn typeOf(t: Term, e: TyEnv) -> Result<Ty, String>
         Term.TOp(o, a, b) -> opType(o, typeOf(a, e)?, typeOf(b, e)?)
         Term.TNeg(a) -> must(typeOf(a, e)?, Ty.TyInt, "a negation")
         Term.TCtor(c, xs) -> ctorType(c, typesOf(xs, e)?, e)
+        Term.TMatch(s, []) -> Result.Err("a match with no arms has no type")
         Term.TMatch(s, arms) -> armsType(typeOf(s, e)?, arms, Ty.TyAny, e)
         Term.TParts(xs) -> partsType(typesOf(xs, e)?)
         Term.TList(xs) -> Result.Ok(Ty.TyList(joinAll(typesOf(xs, e)?, Ty.TyAny)?))
@@ -407,6 +408,7 @@ verify typeOf
     typeOf(Term.TBi("List.prepend", [Term.TInt(1), Term.TList([Term.TStr("a")])]), empty()) => Result.Err("List.prepend: Int is not String")
     typeOf(Term.TCtor("Option.Some", [Term.TInt(1)]), empty()) => Result.Ok(Ty.TyOption(Ty.TyInt))
     typeOf(Term.TMatch(Term.TList([Term.TInt(1)]), [Arm(pattern = Pat.PNil, body = Term.TInt(0)), Arm(pattern = Pat.PCons("h", "t"), body = Term.TVar("h"))]), empty()) => Result.Ok(Ty.TyInt)
+    typeOf(Term.TMatch(Term.TInt(0), []), empty()) => Result.Err("a match with no arms has no type")
     typeOf(Term.TNeg(Term.TBool(true)), empty()) => Result.Err("a negation takes Int, not Bool")
 
 fn varType(n: String, e: TyEnv) -> Result<Ty, String>
@@ -709,7 +711,7 @@ verify armsType
 fn bindTyped(bs: List<Binding>, declared: List<TypedVar>, bound: List<TypedVar>, e: TyEnv, what: String) -> Result<List<TypedVar>, String>
     ? "The one check of a substitution: each bound term's type fits the declared type of its name, the declaration's type variables bound in order; a variable marked as needing equality takes only a type that has one."
     match bs
-        [] -> Result.Ok(bound)
+        [] -> eqKept(typesOfVars(declared), bound, e, what)
         [b, ..rest] -> match find(b.name, declared)
             Option.None -> Result.Err("{what} does not bind {b.name}")
             Option.Some(want) -> bindTyped(rest, declared, bindVars(want, typeOf(b.value, e)?, bound, e, "{what}: {b.name} :=")?, e, what)
@@ -719,6 +721,19 @@ verify bindTyped
     bindTyped([Kernel.Term.bind("a", Term.TStr("x"))], [Kernel.Term.typed("a", Ty.TyInt)], [], empty(), "r") => Result.Err("r: a := String is not Int")
     bindTyped([Kernel.Term.bind("a", Term.TList([Term.TStr("x")]))], [Kernel.Term.typed("a", Ty.TyVar("t", true))], [], empty(), "r") => Result.Ok([Kernel.Term.typed("t", Ty.TyList(Ty.TyStr))])
     bindTyped([Kernel.Term.bind("a", Term.TVar("f"))], [Kernel.Term.typed("a", Ty.TyVar("t", true))], [], withVars(empty(), [Kernel.Term.typed("f", Ty.TyFloat)]), "r") => Result.Err("r: a := == on Float is not equality")
+
+fn eqKept(ts: List<Ty>, bound: List<TypedVar>, e: TyEnv, what: String) -> Result<List<TypedVar>, String>
+    ? "Every type variable some declared type marks as needing equality is bound, once all terms are in, to a type that has one: the mark is the variable's, whichever of its places a term reached it through."
+    match ts
+        [] -> Result.Ok(bound)
+        [Ty.TyVar(n, true), ..rest] -> match hasEq(Option.withDefault(find(n, bound), Ty.TyAny), e)
+            true -> eqKept(rest, bound, e, what)
+            false -> Result.Err("{what}: == on {show(Option.withDefault(find(n, bound), Ty.TyAny))} is not equality")
+        [t, ..rest] -> eqKept(List.concat(partsOf(t), rest), bound, e, what)
+
+verify eqKept
+    eqKept([Ty.TyVar("T", false), Ty.TyList(Ty.TyVar("T", true))], [Kernel.Term.typed("T", Ty.TyFloat)], empty(), "r") => Result.Err("r: == on Float is not equality")
+    eqKept([Ty.TyVar("T", true)], [Kernel.Term.typed("T", Ty.TyInt)], empty(), "r") => Result.Ok([Kernel.Term.typed("T", Ty.TyInt)])
 
 fn finOf(t: Ty, e: TyEnv, seen: List<String>) -> Option<Fin>
     ? "The values of a type can be listed when it is Bool, a sum whose constructors carry nothing, or a record or tuple of such types."

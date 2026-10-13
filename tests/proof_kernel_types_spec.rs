@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// (script, what the kernel says, whether an untyped kernel accepted it)
-const REFUSED: [(&str, &str, bool); 27] = [
+const REFUSED: [(&str, &str, bool); 30] = [
     // A law about a sum, cited at an Int: `x = One.Only` for every `x` of
     // the one-value type `One`, read at 0 and at 1, gives `0 = 1`.
     (
@@ -125,6 +125,24 @@ const REFUSED: [(&str, &str, bool); 27] = [
     (
         "reflexive_equality_of_a_float_through_a_fact_variable",
         "fact List.selfEqual: step proof: rule bool.beq.refl: a := == on ?=T is not equality",
+        false,
+    ),
+    // A match with no arms is no term: it would have every type.
+    (
+        "int_rule_at_a_match_with_no_arms",
+        "a match with no arms has no type",
+        false,
+    ),
+    (
+        "reflexive_equality_of_a_match_with_no_arms_as_a_float",
+        "a match with no arms has no type",
+        false,
+    ),
+    // A type variable marked as needing equality needs it wherever a
+    // term reaches it: here through the given that does not carry the mark.
+    (
+        "equality_mark_of_a_type_variable_met_at_a_float",
+        "law k: == on Float is not equality",
         false,
     ),
     // A given split by its values or as a list, which is an Int.

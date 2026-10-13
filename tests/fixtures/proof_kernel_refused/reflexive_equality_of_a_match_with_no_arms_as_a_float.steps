@@ -1,0 +1,18 @@
+(steps 14
+ (obligation holeIsAFloatEqualToItself () (none)
+  (call same (match (i 0)))
+  (b true))
+ (defs
+  (def same ((y float)) bool () (op == (v y) (v y))))
+ (consts)
+ (sums)
+ (recs)
+ (sigs)
+ (laws)
+ (proof
+  (trans
+   ((call same (match (i 0)))
+    (op == (match (i 0)) (match (i 0)))
+    (b true))
+   (unfold same 0 ((match (i 0))) ())
+   (rule bool.beq.refl ((a (match (i 0))))))))

@@ -1,0 +1,11 @@
+(steps 14
+ (obligation holeCommutes () (none)
+  (op + (match (i 0)) (i 1))
+  (op + (i 1) (match (i 0))))
+ (defs)
+ (consts)
+ (sums)
+ (recs)
+ (sigs)
+ (laws)
+ (proof (rule int.add_comm ((a (match (i 0))) (b (i 1))))))
