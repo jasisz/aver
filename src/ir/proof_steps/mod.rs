@@ -623,7 +623,7 @@ impl Script {
 impl Proof {
     /// Every term the proof writes, in any step, handed to `f`.
     pub fn each_term(&self, f: &mut dyn FnMut(&Term)) {
-        let all = |ts: &[Term], f: &mut dyn FnMut(&Term)| ts.iter().for_each(|t| f(t));
+        let all = |ts: &[Term], f: &mut dyn FnMut(&Term)| ts.iter().for_each(f);
         match self {
             Proof::Refl(t) | Proof::Proj { term: t } | Proof::Cell { list: t } => f(t),
             Proof::Hyp(_) | Proof::UnfoldConst { .. } => {}
