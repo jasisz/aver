@@ -76,7 +76,9 @@ pub fn term(t: &Term, names: &dyn Names) -> String {
             if n == HOLE {
                 "□".into()
             } else {
-                n.clone()
+                // The entry module's own binding reads as `.base` in a step
+                // term; the source writes it `base`.
+                n.strip_prefix('.').unwrap_or(n).to_string()
             }
         }
         ResolvedExpr::Attr(o, f) => format!("{}.{f}", operand(o, names)),

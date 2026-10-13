@@ -1,0 +1,107 @@
+module BindingNames
+    intent = "Givens, parameters and pattern names spelled like a module-level binding a function reads."
+    exposes [seven, addN, addPayload, countN, total, pick]
+    effects []
+
+n: Int = 7
+
+fn readsN() -> Int
+    ? "The module-level binding."
+    n
+
+verify readsN
+    readsN() => 7
+
+fn seven(x: Int) -> Int
+    ? "The module-level binding, whatever the argument."
+    readsN()
+
+verify seven
+    seven(1) => 7
+
+verify seven law isItsArgument
+    given n: Int = [7]
+    seven(n) => n
+
+verify seven law isSeven
+    given n: Int = [7, 1]
+    seven(n) => 7
+
+fn addN(n: Int) -> Int
+    ? "The argument plus the module-level binding."
+    n + readsN()
+
+verify addN
+    addN(1) => 8
+
+verify addN law isDouble
+    given n: Int = [7]
+    addN(n) => n + n
+
+verify addN law addsSeven
+    given n: Int = [7, 1]
+    addN(n) => n + 7
+
+fn addPayload(o: Option<Int>) -> Int
+    ? "The payload plus the module-level binding."
+    match o
+        Option.Some(n) -> n + readsN()
+        Option.None -> readsN()
+
+verify addPayload
+    addPayload(Option.Some(1)) => 8
+
+verify addPayload law someIsTwice
+    given n: Int = [7]
+    addPayload(Option.Some(n)) => n + n
+
+verify addPayload law someAddsSeven
+    given n: Int = [7, 1]
+    addPayload(Option.Some(n)) => n + 7
+
+fn countN(xs: List<Int>) -> Int
+    ? "The module-level binding once for every element."
+    match xs
+        [] -> 0
+        [n, ..rest] -> readsN() + countN(rest)
+
+verify countN
+    countN([1]) => 7
+
+fn total(xs: List<Int>) -> Int
+    ? "The sum of the elements."
+    match xs
+        [] -> 0
+        [n, ..rest] -> n + total(rest)
+
+verify total
+    total([1]) => 1
+
+verify countN law isTotal
+    given xs: List<Int> = [[], [7], [7, 7]]
+    countN(xs) => total(xs)
+
+verify countN law addsSevenInFront
+    given n: Int = [7, 1]
+    given xs: List<Int> = [[], [1]]
+    countN(List.prepend(n, xs)) => 7 + countN(xs)
+
+fn pick(b: Bool, x: Int) -> Int
+    ? "The module-level binding either way."
+    match b
+        true -> readsN()
+        false -> readsN()
+
+verify pick
+    pick(true, 1) => 7
+
+verify pick law isItsArgument
+    given b: Bool = [true, false]
+    given n: Int = [7]
+    by Kernel.Std.cases
+    pick(b, n) => n
+
+verify pick law isSeven
+    given b: Bool = [true, false]
+    given n: Int = [7, 1]
+    pick(b, n) => 7

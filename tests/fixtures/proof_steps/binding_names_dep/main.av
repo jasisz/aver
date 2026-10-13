@@ -1,0 +1,20 @@
+module Main
+    intent = "A law about an imported function whose parameter is spelled like that module's binding."
+    depends [Lib]
+    exposes [viaLib]
+    effects []
+
+fn viaLib(x: Int) -> Int
+    ? "The imported function's result."
+    Lib.same(x)
+
+verify viaLib
+    viaLib(1) => 1
+
+verify viaLib law isSeven
+    given x: Int = [7]
+    viaLib(x) => 7
+
+verify viaLib law isItsArgument
+    given x: Int = [7, 1]
+    viaLib(x) => x

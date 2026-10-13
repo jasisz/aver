@@ -517,22 +517,36 @@ fn is_bool_term(t: &Term) -> bool {
 }
 
 impl Renderer<'_> {
-    fn expr(&self, t: &Term) -> String {
-        // A dependency's binding reads as `Lib.base`; Lean spells each
-        // segment of that path on its own (`Lib.local'`).
+    /// `t` with each read of a module-level binding spelled as Lean names
+    /// the binding. A dependency's reads as `Lib.base`; Lean spells each
+    /// segment of that path on its own (`Lib.local'`). The entry module's
+    /// reads as `.base`, which is `base` in the namespace the proof is
+    /// written in. Where a given or a pattern of the term is spelled `base`
+    /// too, that name is the local one to Lean, the proof does not build,
+    /// and the law falls back to its tactics.
+    fn binding_reads(&self, t: &Term) -> Term {
         let qualified: Vec<(String, Term)> = self
             .script
             .consts
             .iter()
-            .filter(|c| c.name.contains('.'))
             .map(|c| {
-                let read = term::var(&super::syntax::aver_path_to_lean(&c.name));
+                let read = match c.name.strip_prefix('.') {
+                    Some(own) => term::var(own),
+                    None => term::var(&super::syntax::aver_path_to_lean(&c.name)),
+                };
                 if let Some(ty) = c.value.ty() {
                     read.set_ty(ty.clone());
                 }
                 (c.name.clone(), read)
             })
             .collect();
+        if qualified.is_empty() {
+            return t.clone();
+        }
+        term::subst(t, &qualified).unwrap_or_else(|_| t.clone())
+    }
+
+    fn expr(&self, t: &Term) -> String {
         let generic;
         let t = if self.generic {
             generic = over_alpha(t);
@@ -540,13 +554,7 @@ impl Renderer<'_> {
         } else {
             t
         };
-        let renamed;
-        let t = if qualified.is_empty() {
-            t
-        } else {
-            renamed = term::subst(t, &qualified).unwrap_or_else(|_| t.clone());
-            &renamed
-        };
+        let t = &self.binding_reads(t);
         let s = emit_expr(t, self.ctx);
         if is_bool_term(t) {
             format!("({s} : Bool)")
@@ -1704,7 +1712,7 @@ impl Renderer<'_> {
                 // after normalising; `omega` does not multiply out, so a
                 // product of givens goes to `grind`, which normalises the
                 // ring first.
-                let prop = emit_expr(goal, self.ctx);
+                let prop = emit_expr(&self.binding_reads(goal), self.ctx);
                 let close = "first | omega | grind";
                 if *value {
                     format!("decide_eq_true (show {prop} from by {facts}{close})")
