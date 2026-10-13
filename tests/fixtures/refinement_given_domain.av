@@ -15,7 +15,8 @@ fn fromInt(value: Int) -> Result<Natural, String>
         false -> Result.Err("negative")
 
 verify fromInt
-    fromInt(3) => Result.Ok(Natural(v = 3))
+    fromInt(3) => Natural(v = 3)
+    fromInt(1 + 2) => Result.Ok(Natural(v = 3))
 
 fn keep(x: Int, d: Natural) -> Int
     ? "x itself."

@@ -3268,7 +3268,7 @@ fn value(r: Dep.IntRange) -> Int
     Dep.toInt(r)
 
 fn run() -> Result<Int, String>
-    r: Dep.IntRange = Dep.fromInt(70)?
+    r: Dep.IntRange = Dep.fromInt(70 + 0)?
     Result.Ok(value(r))
 
 fn main() -> Int
@@ -3324,7 +3324,7 @@ fn lookup(r: Dep.IntRange) -> Int
         Option.None -> 0 - 1
 
 fn run() -> Result<Int, String>
-    r: Dep.IntRange = Dep.fromInt(70)?
+    r: Dep.IntRange = Dep.fromInt(70 + 0)?
     Result.Ok(lookup(r))
 
 fn main() -> Int

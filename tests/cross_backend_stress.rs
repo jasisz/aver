@@ -680,6 +680,78 @@ fn cross_literal_refinement_discharge_rejected_by_self_host_replay() {
     );
 }
 
+/// The same rule over an `Int` carrier: `natural(5)` and `percent(100)` are
+/// the refined values themselves, a literal outside the interval and a
+/// computed argument keep the `Result`. `Natural` is open above, so it
+/// stays boxed on wasm-gc; `Percent` is closed and is stored as an `i64`.
+/// `tests/wasip2_stress.rs` and `tests/rust_codegen_differential.rs` run
+/// the same file on the other two backends.
+const LITERAL_INT_REFINEMENT_SRC: &str = include_str!("fixtures/literal_int_refinement.av");
+const LITERAL_INT_REFINEMENT_OUT: &str = include_str!("fixtures/literal_int_refinement.expected");
+
+#[test]
+fn cross_literal_int_refinement_discharge_vm() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-litint-vm", LITERAL_INT_REFINEMENT_SRC),
+        LITERAL_INT_REFINEMENT_OUT.trim(),
+    );
+}
+
+#[test]
+fn cross_literal_int_refinement_discharge_wasm_gc() {
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-litint-wasmgc", LITERAL_INT_REFINEMENT_SRC),
+        LITERAL_INT_REFINEMENT_OUT.trim(),
+    );
+}
+
+#[test]
+fn cross_literal_int_refinement_discharge_rejected_by_self_host() {
+    // The same refusal as for a list carrier: the self-hosted resolver
+    // would build a `Result` where the host-checked source has the value.
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let path = temp_module("aver-cross-litint-sh", LITERAL_INT_REFINEMENT_SRC);
+    let module_root = path.parent().expect("temp module has parent");
+    let out = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("run")
+        .arg(&path)
+        .arg("--module-root")
+        .arg(module_root)
+        .arg("--self-host")
+        .output()
+        .expect("expected `aver run --self-host` to execute");
+    cleanup(&path);
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !out.status.success(),
+        "self-host must REFUSE a discharged program, not run it:\n{combined}"
+    );
+    assert!(
+        combined.contains("does not support the literal smart-constructor discharge"),
+        "self-host refusal must name the rule:\n{combined}"
+    );
+    assert!(
+        combined.contains("Ranges.natural") && combined.contains("percent"),
+        "self-host refusal must name the offending call sites:\n{combined}"
+    );
+    // A literal outside the interval and a computed argument are not
+    // discharged, so they are not listed.
+    assert!(
+        !combined.contains("line 57:")
+            && !combined.contains("line 63:")
+            && !combined.contains("line 69:"),
+        "only discharged calls are listed:\n{combined}"
+    );
+}
+
 // ─── Local shadowing of a recognized smart constructor ──────────────────
 //
 // A module declaring its own `fromList` shadows the dependency's

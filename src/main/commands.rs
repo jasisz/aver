@@ -1710,7 +1710,7 @@ pub(super) fn reject_literal_refinement_discharge(
         "The self-host pipeline does not support the literal smart-constructor discharge.\n\
          These calls type as the refined type on the host but would build a Result in the \
          self-hosted interpreter:\n{}\n\
-         Pass the list through a binding or a non-literal expression to keep the Result path, \
+         Pass the argument through a binding or a non-literal expression to keep the Result path, \
          or run without --self-host.",
         listed.join("\n")
     ))

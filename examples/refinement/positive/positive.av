@@ -20,10 +20,11 @@ fn fromInt(n: Int) -> Result<Positive, String>
         false -> Result.Err("Positive must be > 0")
 
 verify fromInt
-    fromInt(1)  => Result.Ok(Positive(value = 1))
-    fromInt(7)  => Result.Ok(Positive(value = 7))
-    fromInt(0)  => Result.Err("Positive must be > 0")
-    fromInt(-1) => Result.Err("Positive must be > 0")
+    fromInt(1)     => Positive(value = 1)
+    fromInt(7)     => Positive(value = 7)
+    fromInt(3 + 4) => Result.Ok(Positive(value = 7))
+    fromInt(0)     => Result.Err("Positive must be > 0")
+    fromInt(-1)    => Result.Err("Positive must be > 0")
 
 fn value(n: Positive) -> Int
     ? "Unwrap a Positive into its underlying Int. Always > 0."

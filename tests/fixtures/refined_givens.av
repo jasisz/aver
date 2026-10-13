@@ -19,7 +19,8 @@ fn fromInt(n: Int) -> Result<Natural, String>
         false -> Result.Err("negative")
 
 verify fromInt
-    fromInt(3) => Result.Ok(Natural(value = 3))
+    fromInt(3) => Natural(value = 3)
+    fromInt(1 + 2) => Result.Ok(Natural(value = 3))
 
 fn isNonNegative(n: Natural) -> Bool
     ? "Whether the value is at least zero: true of every Natural."

@@ -22,11 +22,12 @@ fn fromInt(n: Int) -> Result<IntRange, String>
         false -> Result.Err("IntRange must be in 0..=100")
 
 verify fromInt
-    fromInt(0)   => Result.Ok(IntRange(value = 0))
-    fromInt(50)  => Result.Ok(IntRange(value = 50))
-    fromInt(100) => Result.Ok(IntRange(value = 100))
-    fromInt(-1)  => Result.Err("IntRange must be in 0..=100")
-    fromInt(101) => Result.Err("IntRange must be in 0..=100")
+    fromInt(0)       => IntRange(value = 0)
+    fromInt(50)      => IntRange(value = 50)
+    fromInt(100)     => IntRange(value = 100)
+    fromInt(20 + 30) => Result.Ok(IntRange(value = 50))
+    fromInt(-1)      => Result.Err("IntRange must be in 0..=100")
+    fromInt(101)     => Result.Err("IntRange must be in 0..=100")
 
 fn value(n: IntRange) -> Int
     ? "Unwrap into the underlying Int. Always in 0..=100."
