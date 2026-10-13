@@ -1,16 +1,24 @@
 //! Derived gate for the literal smart-constructor discharge.
 //!
-//! A call to a recognized `List<Int>` refinement's smart constructor whose
-//! single argument is a syntactic list of integer literals, every one of
-//! them inside the refinement's OWN proven element interval, cannot fail:
-//! the constructor's validating predicate is decided at compile time. Such
-//! a call therefore types as the refined type itself instead of
-//! `Result<T, String>`, and lowers straight to the carrier construction.
+//! A call to a recognized refinement's smart constructor whose single
+//! argument is written out as integer literals, every one of them inside the
+//! refinement's OWN proven interval, cannot fail: the constructor's
+//! validating predicate is decided at compile time. Such a call therefore
+//! types as the refined type itself instead of `Result<T, String>`, and
+//! lowers straight to the carrier construction.
+//!
+//! Two carriers are recognized. A `List<Int>` field takes a list of integer
+//! literals, each checked against the interval proven for every element; an
+//! `Int` field takes one integer literal, checked against the interval the
+//! constructor's own predicate proves.
 //!
 //! ```text
-//! Bytes.fromList([1, 2, 3])   : Bytes                  (discharged)
-//! Bytes.fromList([1, 256])    : Result<Bytes, String>  (out of interval)
-//! Bytes.fromList(values)      : Result<Bytes, String>  (not a literal list)
+//! Bytes.fromList([1, 2, 3])   : Bytes                    (discharged)
+//! Bytes.fromList([1, 256])    : Result<Bytes, String>    (out of interval)
+//! Bytes.fromList(values)      : Result<Bytes, String>    (not a literal list)
+//! Natural.fromInt(5)          : Natural                  (discharged)
+//! Natural.fromInt(-1)         : Result<Natural, String>  (out of interval)
+//! Natural.fromInt(2 + 3)      : Result<Natural, String>  (not a literal)
 //! ```
 //!
 //! # The gate is derived, never named
@@ -22,16 +30,25 @@
 //!   `RefinementSmartConstructor` — the single-field record plus its
 //!   validating `match pred(x) { true -> Ok(T(f = x)); false -> Err(…) }`
 //!   constructor — and hands back the carrier field and the predicate AST.
-//! * `packed_sequence::element_interval_from_predicate` turns that
+//! * For a `List<Int>` carrier,
+//!   `packed_sequence::element_interval_from_predicate` turns that
 //!   predicate into the per-element interval, via the same recursive-`all`
 //!   recognizer and the same [`crate::ir::interval::interval_of_invariant`]
 //!   engine the wasm-gc packed layout is derived from.
+//! * For an `Int` carrier, [`crate::ir::interval::interval_of_invariant`]
+//!   reads the interval straight off the predicate, exactly as
+//!   `proof_lower::carrier_interval_table` does for the native-`i64`
+//!   carrier layout. The engine recognizes comparisons of the parameter
+//!   with integer literals joined by `Bool.and` and nothing else, and the
+//!   interval it returns for those is exact, so a literal inside it makes
+//!   the predicate true. A bound may be open on one side (`n >= 0`). Any
+//!   other predicate yields no interval and nothing is discharged.
 //!
 //! Sharing the second step is what makes the discharge safe on wasm-gc: a
 //! packed carrier stores its elements in a raw `i8`/`i16` array with no
-//! range check, so "the discharge admits it" and "the packed layout can
-//! store it" MUST be the same predicate. They are — literally the same
-//! function.
+//! range check, and an `Int` carrier with a bound inside `i64` is stored as
+//! a raw `i64`, so "the discharge admits it" and "the layout can store it"
+//! MUST be the same predicate. They are — literally the same function.
 //!
 //! # The discharge is keyed on RESOLVED IDENTITY, never on spelling
 //!
@@ -65,12 +82,16 @@
 //!
 //! # Boundary
 //!
-//! * Exactly one argument, and it must be a syntactic list literal whose
-//!   every element is a plain integer literal with at most one unary minus
-//!   (`crate::ast::literal_int_list_elements`). An identifier, a call, a
-//!   `BigInt` literal, or any computed list declines.
-//! * Every element must be inside the derived interval. `[65, 256]`
-//!   declines against `[0, 255]`.
+//! * Exactly one argument. For a `List<Int>` carrier it must be a syntactic
+//!   list literal whose every element is a plain integer literal with at
+//!   most one unary minus (`crate::ast::literal_int_list_elements`); for an
+//!   `Int` carrier it must be one such literal
+//!   (`crate::ast::single_negation_int_literal`). An identifier, a named
+//!   constant, a call, arithmetic such as `2 + 3`, a `BigInt` literal, or
+//!   any computed list declines. Parentheses are not part of the syntax
+//!   tree, so `fromInt((5))` is `fromInt(5)`.
+//! * Every literal must be inside the derived interval. `[65, 256]`
+//!   declines against `[0, 255]`, and `-1` against `[0, +inf]`.
 //! * An EMPTY list literal discharges: every element is in range
 //!   vacuously, and the constructor's predicate is `true` on `[]` by the
 //!   recognized shape's own base case.
@@ -85,10 +106,20 @@ use crate::ir::hir::{ResolveCtx, ResolvedCallee};
 use crate::ir::identity::{FnId, FnKey, TypeId, TypeKey};
 use crate::ir::interval::Interval;
 
-/// One recognized smart constructor over a `List<Int>` carrier whose
-/// element interval the refinement itself proves.
+/// What the refined record's single field holds, which decides the shape
+/// of the literal argument a call must have to discharge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiteralCarrier {
+    /// `List<Int>`: the argument is a list of integer literals.
+    IntList,
+    /// `Int`: the argument is one integer literal.
+    Int,
+}
+
+/// One recognized smart constructor over a `List<Int>` or an `Int` carrier
+/// whose interval the refinement itself proves.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ListRefinementCtor {
+pub struct LiteralRefinementCtor {
     /// Resolved identity of the smart constructor — the ONLY key a call
     /// site is matched against. See the module-level invariant.
     pub fn_id: FnId,
@@ -102,17 +133,24 @@ pub struct ListRefinementCtor {
     pub type_name: String,
     /// The record's single carrier field (`"values"`).
     pub carrier_field: String,
+    /// What that field holds.
+    pub carrier: LiteralCarrier,
     /// Bare source name of the smart constructor (`"fromList"`). Carried
     /// for diagnostics only; it is never a lookup key.
     pub constructor_fn: String,
     /// Exact carrier-projector functions in the refinement's owning module.
     /// Each has the structural body `fn p(x: T) -> List<Int> = x.<field>`.
+    /// Always empty for an `Int` carrier.
     pub projector_fns: Vec<FnId>,
-    /// Interval proven for EVERY element of the carrier list.
-    pub element_interval: Interval,
+    /// Interval the constructor's predicate proves: of EVERY element for a
+    /// `List<Int>` carrier, of the value itself for an `Int` carrier.
+    pub interval: Interval,
     /// Whether every executable construction of this nominal is gated by the
     /// smart constructor (or is independently proven safe). Only closed
-    /// refinements may seed runtime list provenance.
+    /// refinements may seed runtime list provenance. Always `false` for an
+    /// `Int` carrier: the literal discharge decides one written-out value
+    /// and needs nothing about the record's other construction sites, and
+    /// no pass reads provenance of an `Int` carrier.
     pub runtime_provenance: bool,
 }
 
@@ -120,23 +158,23 @@ pub struct ListRefinementCtor {
 /// addressed by the [`FnId`] name resolution assigns the callee.
 #[derive(Debug, Clone, Default)]
 pub struct LiteralRefinementTable {
-    ctors: Vec<ListRefinementCtor>,
+    ctors: Vec<LiteralRefinementCtor>,
 }
 
 impl LiteralRefinementTable {
     /// Recognize every dischargeable constructor across the entry file and
-    /// its dependency modules. Unrecognized predicate shapes, non-`List<Int>`
-    /// carriers, and open or non-`i64` intervals are all omitted — the table
-    /// is fail-closed, and an absent entry simply keeps the `Result` path.
+    /// its dependency modules. Unrecognized predicate shapes and carriers
+    /// other than `List<Int>` and `Int` are omitted — the table is
+    /// fail-closed, and an absent entry simply keeps the `Result` path.
     pub fn build(
         entry_items: &[TopLevel],
         dep_modules: &[ModuleInfo],
         symbols: &SymbolTable,
     ) -> Self {
-        // Cheap pre-filter: the rule can only ever fire for a
-        // single-field product whose carrier is `List<Int>`. Programs
-        // without one — the overwhelming majority — skip the pattern
-        // detection entirely.
+        // Cheap pre-filter: the rule can only ever fire for an opaque
+        // single-field product whose carrier is `List<Int>` or `Int`.
+        // Programs without one — the overwhelming majority — skip the
+        // pattern detection entirely.
         let has_candidate_carrier = entry_items
             .iter()
             .filter_map(|item| match item {
@@ -144,7 +182,10 @@ impl LiteralRefinementTable {
                 _ => None,
             })
             .chain(dep_modules.iter().flat_map(|m| m.type_defs.iter()))
-            .any(is_int_list_carrier_product);
+            .any(|td| {
+                crate::analysis::shape::refinement_carrier(td)
+                    .is_some_and(|(_, _, carrier)| literal_carrier(carrier).is_some())
+            });
         if !has_candidate_carrier {
             return Self::default();
         }
@@ -175,9 +216,9 @@ impl LiteralRefinementTable {
             else {
                 continue;
             };
-            if !is_int_list(&carrier_type) {
+            let Some(carrier) = literal_carrier(&carrier_type) else {
                 continue;
-            }
+            };
             let scope_all_fns: Vec<&FnDef> = match scope.as_deref() {
                 None => entry_all_fns.clone(),
                 Some(prefix) => dep_modules
@@ -200,14 +241,31 @@ impl LiteralRefinementTable {
                     crate::ir::hir::ResolvedStmt::Binding { value, .. } => value,
                 }
             };
-            let Some(element_interval) =
-                crate::codegen::proof_lower::packed_sequence::element_interval_from_predicate(
-                    &predicate,
-                    &param_name,
-                    &scope_fns,
-                    &resolve,
-                )
-            else {
+            let derived = match carrier {
+                LiteralCarrier::IntList => {
+                    crate::codegen::proof_lower::packed_sequence::element_interval_from_predicate(
+                        &predicate,
+                        &param_name,
+                        &scope_fns,
+                        &resolve,
+                    )
+                }
+                // The predicate itself, over the constructor's parameter:
+                // the reading `proof_lower::carrier_interval_table` gives
+                // the same predicate for the carrier's `i64` layout.
+                LiteralCarrier::Int => {
+                    let invariant = crate::ir::proof_ir::Predicate {
+                        free_vars: vec![(
+                            param_name.clone(),
+                            crate::ir::proof_ir::QuantifierType::Plain("Int".to_string()),
+                        )],
+                        expr: resolve(&predicate),
+                    };
+                    let (interval, known) = crate::ir::interval::interval_of_invariant(&invariant);
+                    known.then_some(interval)
+                }
+            };
+            let Some(interval) = derived else {
                 continue;
             };
             if !seen.insert((scope.clone(), type_name.clone())) {
@@ -225,6 +283,15 @@ impl LiteralRefinementTable {
                 .collect::<Vec<_>>();
             if constructor_defs.len() != 1
                 || !crate::codegen::common::is_pure_fn(constructor_defs[0])
+            {
+                continue;
+            }
+            // The interval engine reads the predicate as a statement about
+            // an integer, so the parameter it is stated over must be one.
+            if carrier == LiteralCarrier::Int
+                && !constructor_defs[0].params.first().is_some_and(|(_, ty)| {
+                    crate::types::parse_type_str(ty) == crate::ast::Type::Int
+                })
             {
                 continue;
             }
@@ -266,15 +333,16 @@ impl LiteralRefinementTable {
                     symbols.fn_id_of(&key)
                 })
                 .collect();
-            ctors.push(ListRefinementCtor {
+            ctors.push(LiteralRefinementCtor {
                 fn_id,
                 type_id,
                 scope,
                 type_name,
                 carrier_field,
+                carrier,
                 constructor_fn,
                 projector_fns,
-                element_interval,
+                interval,
                 runtime_provenance: false,
             });
         }
@@ -294,8 +362,15 @@ impl LiteralRefinementTable {
         // discharge independent: an in-range literal remains dischargeable
         // even when the surrounding module also constructs the record
         // unsafely, but runtime provenance must fail closed in that case.
+        //
+        // This is a fact about lists that reach the constructor at run
+        // time, so it is derived for `List<Int>` carriers only. The literal
+        // discharge of an `Int` carrier decides one written-out value
+        // against the predicate; another construction site cannot change
+        // that answer.
         for ctor in &mut ctors {
-            ctor.runtime_provenance = runtime_provenance_is_closed(ctor, entry_items, dep_modules);
+            ctor.runtime_provenance = ctor.carrier == LiteralCarrier::IntList
+                && runtime_provenance_is_closed(ctor, entry_items, dep_modules);
         }
 
         Self { ctors }
@@ -309,7 +384,7 @@ impl LiteralRefinementTable {
 
     /// Recognized constructors, including the identity-pinned runtime
     /// provenance metadata consumed by the MIR optimization pass.
-    pub fn iter(&self) -> impl Iterator<Item = &ListRefinementCtor> {
+    pub fn iter(&self) -> impl Iterator<Item = &LiteralRefinementCtor> {
         self.ctors.iter()
     }
 
@@ -322,16 +397,24 @@ impl LiteralRefinementTable {
     /// whole module exists to hold. Returns the constructor whose refined
     /// type the call now produces, or `None` to keep the declared
     /// `Result<T, E>` signature.
-    pub fn discharge(&self, callee: FnId, args: &[Spanned<Expr>]) -> Option<&ListRefinementCtor> {
+    pub fn discharge(
+        &self,
+        callee: FnId,
+        args: &[Spanned<Expr>],
+    ) -> Option<&LiteralRefinementCtor> {
         if args.len() != 1 {
             return None;
         }
         let ctor = self.ctors.iter().find(|c| c.fn_id == callee)?;
-        let elements = crate::ast::literal_int_list_elements(&args[0])?;
-        elements
-            .iter()
-            .all(|k| ctor.element_interval.contains_point(*k))
-            .then_some(ctor)
+        let admitted = match ctor.carrier {
+            LiteralCarrier::IntList => crate::ast::literal_int_list_elements(&args[0])?
+                .iter()
+                .all(|k| ctor.interval.contains_point(*k)),
+            LiteralCarrier::Int => ctor
+                .interval
+                .contains_point(crate::ast::single_negation_int_literal(&args[0])?),
+        };
+        admitted.then_some(ctor)
     }
 }
 
@@ -376,7 +459,7 @@ fn is_exact_carrier_projector(fd: &FnDef, type_name: &str, carrier_field: &str) 
 /// record, but its own module may still bypass the smart constructor. One such
 /// site invalidates runtime provenance for the whole nominal.
 fn runtime_provenance_is_closed(
-    ctor: &ListRefinementCtor,
+    ctor: &LiteralRefinementCtor,
     entry_items: &[TopLevel],
     dep_modules: &[ModuleInfo],
 ) -> bool {
@@ -407,10 +490,10 @@ fn runtime_provenance_is_closed(
                 let independently_safe = !is_update
                     && (crate::codegen::proof_lower::construct_arg_is_in_interval(
                         fields,
-                        ctor.element_interval,
+                        ctor.interval,
                     ) || crate::codegen::proof_lower::construct_arg_is_finalized_bytes(
                         fields,
-                        ctor.element_interval,
+                        ctor.interval,
                         byte_payloads,
                     ) || crate::codegen::proof_lower::construct_arg_preserves_list_refinement(
                         fields,
@@ -469,7 +552,7 @@ fn runtime_provenance_is_closed(
 }
 
 fn record_spelling_denotes_ctor(
-    ctor: &ListRefinementCtor,
+    ctor: &LiteralRefinementCtor,
     current_scope: Option<&str>,
     spelling: &str,
 ) -> bool {
@@ -614,19 +697,15 @@ fn walk(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>, out: &mut Vec<(usize, String
     }
 }
 
-fn is_int_list(annotation: &str) -> bool {
-    matches!(
-        crate::types::parse_type_str(annotation),
-        crate::ast::Type::List(inner) if *inner == crate::ast::Type::Int
-    )
-}
-
-fn is_int_list_carrier_product(td: &crate::ast::TypeDef) -> bool {
-    matches!(
-        td,
-        crate::ast::TypeDef::Product { fields, .. }
-            if fields.len() == 1 && is_int_list(&fields[0].1)
-    )
+/// The carrier a field annotation names, when the discharge covers it.
+fn literal_carrier(annotation: &str) -> Option<LiteralCarrier> {
+    match crate::types::parse_type_str(annotation) {
+        crate::ast::Type::Int => Some(LiteralCarrier::Int),
+        crate::ast::Type::List(inner) if *inner == crate::ast::Type::Int => {
+            Some(LiteralCarrier::IntList)
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -755,15 +834,16 @@ fn go() -> Int
             .expect("Octets type must be indexed");
         assert_eq!(
             symbols.literal_refinements().ctors,
-            vec![ListRefinementCtor {
+            vec![LiteralRefinementCtor {
                 fn_id,
                 type_id,
                 scope: Some("Octets".to_string()),
                 type_name: "Octets".to_string(),
                 carrier_field: "values".to_string(),
+                carrier: LiteralCarrier::IntList,
                 constructor_fn: "fromList".to_string(),
                 projector_fns: Vec::new(),
-                element_interval: Interval::between(0, 255),
+                interval: Interval::between(0, 255),
                 runtime_provenance: true,
             }]
         );
@@ -781,7 +861,7 @@ fn go() -> Int
             .iter()
             .find(|c| c.type_name == "Bytes")
             .expect("Bytes refinement");
-        assert_eq!(bytes.element_interval, Interval::between(0, 255));
+        assert_eq!(bytes.interval, Interval::between(0, 255));
         assert!(bytes.runtime_provenance);
         assert_eq!(
             bytes.projector_fns,
@@ -1029,5 +1109,187 @@ fn go() -> Int
             Some("Octets"),
             "Octets.fromList([700])"
         ));
+    }
+
+    // ── `Int` carriers ──────────────────────────────────────────────────
+
+    /// A one-field `Int` refinement whose constructor branches on `{check}`.
+    fn int_refinement(check: &str) -> String {
+        format!(
+            r#"
+module Natural
+    intent = "an Int refinement with no standard-library name in sight"
+    exposes [fromInt, toInt]
+    exposes opaque [Natural]
+    effects []
+
+record Natural
+    value: Int
+
+fn fromInt(n: Int) -> Result<Natural, String>
+    match {check}
+        true -> Result.Ok(Natural(value = n))
+        false -> Result.Err("out of range")
+
+fn toInt(n: Natural) -> Int
+    n.value
+"#
+        )
+    }
+
+    const INT_CONSUMER: &str = r#"
+module Consumer
+    intent = "calls the Int refinement's smart constructor"
+    depends [Natural]
+    exposes [go]
+    effects []
+
+limit = 5
+
+fn go() -> Int
+    1
+"#;
+
+    fn int_discharges(check: &str) -> impl Fn(&str) -> bool {
+        let symbols = symbols_for(INT_CONSUMER, &[("Natural", &int_refinement(check))]);
+        move |arg: &str| discharges_from(&symbols, None, &format!("Natural.fromInt({arg})"))
+    }
+
+    #[test]
+    fn derives_the_interval_of_an_int_carrier_from_its_own_predicate() {
+        let symbols = symbols_for(INT_CONSUMER, &[("Natural", &int_refinement("n >= 0"))]);
+        let ctors = &symbols.literal_refinements().ctors;
+        assert_eq!(ctors.len(), 1, "got: {ctors:?}");
+        let ctor = &ctors[0];
+        assert_eq!(ctor.carrier, LiteralCarrier::Int);
+        assert_eq!(ctor.type_name, "Natural");
+        assert_eq!(ctor.carrier_field, "value");
+        assert_eq!(ctor.constructor_fn, "fromInt");
+        // Open above: `n >= 0` proves no upper bound.
+        assert_eq!(ctor.interval, Interval::ge(0));
+        // Nothing reads provenance of an `Int` carrier, and its reader is
+        // not a list projector.
+        assert!(!ctor.runtime_provenance);
+        assert!(ctor.projector_fns.is_empty());
+    }
+
+    #[test]
+    fn discharges_only_a_written_out_literal_inside_an_open_interval() {
+        let discharges = int_discharges("n >= 0");
+        assert!(discharges("5"));
+        assert!(discharges("0"));
+        assert!(discharges("-0"));
+        assert!(discharges("9223372036854775807"));
+        // Parentheses are not in the syntax tree.
+        assert!(discharges("(5)"));
+        assert!(discharges("((5))"));
+        // Outside the DERIVED interval.
+        assert!(!discharges("-1"));
+        assert!(!discharges("(-1)"));
+        assert!(!discharges("-(1)"));
+        // Beyond i64 — the syntactic predicate declines BigInt outright,
+        // although the value is inside the open interval.
+        assert!(!discharges("9223372036854775808"));
+        assert!(!discharges("1208925819614629174706176"));
+        // Not one written-out literal.
+        assert!(!discharges("n"));
+        assert!(!discharges("limit"));
+        assert!(!discharges("2 + 3"));
+        assert!(!discharges("- -5"));
+        assert!(!discharges("Int.abs(5)"));
+        assert!(!discharges("[5]"));
+        assert!(!discharges("5.0"));
+    }
+
+    #[test]
+    fn an_int_literal_is_checked_against_both_ends_of_a_closed_interval() {
+        let discharges = int_discharges("Bool.and(n >= 0, n <= 100)");
+        assert!(discharges("0"));
+        assert!(discharges("100"));
+        assert!(!discharges("101"));
+        assert!(!discharges("-1"));
+        // Strict comparisons and a literal on the left read the same way.
+        let strict = int_discharges("Bool.and(0 < n, n < 10)");
+        assert!(strict("1"));
+        assert!(strict("9"));
+        assert!(!strict("0"));
+        assert!(!strict("10"));
+        // A negative range takes a literal with its one minus.
+        let negative = int_discharges("Bool.and(n >= -10, n <= -1)");
+        assert!(negative("-10"));
+        assert!(negative("-1"));
+        assert!(!negative("0"));
+        assert!(!negative("-11"));
+    }
+
+    #[test]
+    fn a_predicate_the_interval_engine_cannot_read_discharges_nothing() {
+        for check in [
+            "n != 0",
+            "Bool.or(n < 0, n > 10)",
+            "Bool.and(n >= 0, isEven(n))",
+            "n >= limit",
+            "n * 2 >= 0",
+            "Bool.not(n < 0)",
+        ] {
+            let source = format!(
+                "{}\nlimit = 0\n\nfn isEven(n: Int) -> Bool\n    n == n\n",
+                int_refinement(check)
+            );
+            let symbols = symbols_for(INT_CONSUMER, &[("Natural", &source)]);
+            assert!(
+                symbols.literal_refinements().is_empty(),
+                "`{check}` yields no interval, got: {:?}",
+                symbols.literal_refinements().ctors
+            );
+            assert!(!discharges_from(&symbols, None, "Natural.fromInt(5)"));
+        }
+    }
+
+    #[test]
+    fn an_int_record_that_is_not_opaque_or_not_an_int_discharges_nothing() {
+        let open = int_refinement("n >= 0").replace("    exposes opaque [Natural]\n", "");
+        let symbols = symbols_for(INT_CONSUMER, &[("Natural", &open)]);
+        assert!(symbols.literal_refinements().is_empty());
+        assert!(!discharges_from(&symbols, None, "Natural.fromInt(5)"));
+
+        // `Float` and `String` carriers are outside the rule.
+        let float = int_refinement("n >= 0.0")
+            .replace("value: Int", "value: Float")
+            .replace("n: Int", "n: Float");
+        let symbols = symbols_for(INT_CONSUMER, &[("Natural", &float)]);
+        assert!(symbols.literal_refinements().is_empty());
+        assert!(!discharges_from(&symbols, None, "Natural.fromInt(5.0)"));
+    }
+
+    #[test]
+    fn a_local_from_int_shadowing_the_constructor_keeps_its_own_identity() {
+        // The entry module declares its own `fromInt`. A bare call there
+        // means the local function; only the qualified spelling reaches the
+        // refinement's constructor.
+        let consumer = format!("{INT_CONSUMER}\nfn fromInt(n: Int) -> Int\n    n + 1\n");
+        let symbols = symbols_for(&consumer, &[("Natural", &int_refinement("n >= 0"))]);
+        assert!(!discharges_from(&symbols, None, "fromInt(5)"));
+        assert!(discharges_from(&symbols, None, "Natural.fromInt(5)"));
+        // Inside the owning module the bare spelling is the constructor.
+        assert!(discharges_from(&symbols, Some("Natural"), "fromInt(5)"));
+    }
+
+    #[test]
+    fn discharge_sites_reports_a_discharged_int_call() {
+        let entry = format!(
+            "{}\nfn five() -> Natural\n    fromInt(5)\n\nfn checked(n: Int) -> Result<Natural, String>\n    fromInt(n)\n",
+            int_refinement("n >= 0")
+        );
+        let symbols = symbols_for(&entry, &[]);
+        let items = {
+            let mut lexer = crate::lexer::Lexer::new(&entry);
+            crate::parser::Parser::new(lexer.tokenize().expect("lex"))
+                .parse()
+                .expect("parse")
+        };
+        let sites = discharge_sites(&symbols, None, &items);
+        assert_eq!(sites.len(), 1, "got: {sites:?}");
+        assert_eq!(sites[0].1, "fromInt");
     }
 }

@@ -29,10 +29,11 @@ fn fromInt(n: Int) -> Result<Natural, String>
         false -> Result.Err("Nat must be non-negative")
 
 verify fromInt
-    fromInt(0)   => Result.Ok(Natural(value = 0))
-    fromInt(7)   => Result.Ok(Natural(value = 7))
-    fromInt(-1)  => Result.Err("Nat must be non-negative")
-    fromInt(-99) => Result.Err("Nat must be non-negative")
+    fromInt(0)     => Natural(value = 0)
+    fromInt(7)     => Natural(value = 7)
+    fromInt(3 + 4) => Result.Ok(Natural(value = 7))
+    fromInt(-1)    => Result.Err("Nat must be non-negative")
+    fromInt(-99)   => Result.Err("Nat must be non-negative")
 
 fn value(n: Natural) -> Int
     ? "Unwrap a Nat back into its underlying Int. Always non-negative."

@@ -1,0 +1,89 @@
+module Ranges
+    intent =
+        "Literal calls to the smart constructor of an Int refinement, beside calls that keep the Result."
+        "A literal inside the interval the constructor checks gives the refined value directly."
+        "Natural is open above and Percent is closed, so the two take different layouts on wasm-gc."
+    exposes opaque [Natural, Percent]
+    effects [Console.print]
+
+record Natural
+    value: Int
+
+record Percent
+    value: Int
+
+fn natural(n: Int) -> Result<Natural, String>
+    ? "A Natural from a non-negative Int."
+    match n >= 0
+        true -> Result.Ok(Natural(value = n))
+        false -> Result.Err("negative")
+
+fn percent(n: Int) -> Result<Percent, String>
+    ? "A Percent from an Int between 0 and 100."
+    match Bool.and(n >= 0, n <= 100)
+        true -> Result.Ok(Percent(value = n))
+        false -> Result.Err("not a percent")
+
+fn double(n: Natural) -> Int
+    ? "Twice the value."
+    n.value + n.value
+
+fn left(p: Percent) -> Int
+    ? "What is missing to 100."
+    100 - p.value
+
+fn checkedDouble(n: Int) -> Int
+    ? "Twice a value that goes through the check at run time, or -1."
+    match natural(n)
+        Result.Ok(v) -> double(v)
+        Result.Err(_) -> 0 - 1
+
+fn checkedLeft(n: Int) -> String
+    ? "What is missing to 100 for a value checked at run time."
+    match percent(n)
+        Result.Ok(p) -> String.fromInt(left(p))
+        Result.Err(e) -> e
+
+fn sameAsFive(n: Int) -> String
+    ? "Whether a value checked at run time equals the literal one."
+    match natural(n)
+        Result.Ok(v) -> match v == natural(5)
+            true -> "same"
+            false -> "different"
+        Result.Err(e) -> e
+
+fn literalOutOfRange() -> String
+    ? "A literal outside the interval keeps the Result."
+    match percent(101)
+        Result.Ok(_) -> "unexpected"
+        Result.Err(e) -> e
+
+fn negativeLiteral() -> String
+    ? "A negative literal keeps the Result of a Natural."
+    match natural(-1)
+        Result.Ok(_) -> "unexpected"
+        Result.Err(e) -> e
+
+fn computed() -> Int
+    ? "Arithmetic is not a literal, so the Result stays."
+    match natural(2 + 3)
+        Result.Ok(v) -> double(v)
+        Result.Err(_) -> 0 - 1
+
+fn main() -> Unit
+    ? "Print each case on its own line."
+    ! [Console.print]
+    Console.print(String.fromInt(double(Ranges.natural(5))))
+    Console.print(String.fromInt(double(natural(0))))
+    Console.print(String.fromInt(double(natural(9223372036854775807))))
+    Console.print(String.fromInt(left(percent(100))))
+    Console.print(String.fromInt(left(Ranges.percent((30)))))
+    Console.print(String.fromInt(checkedDouble(7)))
+    Console.print(String.fromInt(checkedDouble(0 - 3)))
+    Console.print(checkedLeft(40))
+    Console.print(checkedLeft(101))
+    Console.print(sameAsFive(5))
+    Console.print(sameAsFive(6))
+    Console.print(literalOutOfRange())
+    Console.print(negativeLiteral())
+    Console.print(String.fromInt(computed()))

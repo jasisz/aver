@@ -2081,6 +2081,113 @@ fn literal_bytes_discharge_decides_the_same_for_every_callee_spelling() {
     assert_no_errors(src);
 }
 
+/// A module with an opaque `Natural` whose constructor checks `{check}`,
+/// a named constant, and one function `probe` with the given return type
+/// and body.
+fn int_refinement_program(check: &str, ret: &str, body: &str) -> String {
+    format!(
+        "module Local\n    intent = \"an Int refinement\"\n    exposes opaque [Natural]\n    effects []\n\nlimit = 5\n\nrecord Natural\n    value: Int\n\nfn fromInt(n: Int) -> Result<Natural, String>\n    ? \"probe\"\n    match {check}\n        true -> Result.Ok(Natural(value = n))\n        false -> Result.Err(\"out of range\")\n\nfn probe(n: Int) -> {ret}\n    ? \"probe\"\n    {body}\n"
+    )
+}
+
+/// The call types as `Natural`: it satisfies a `Natural` return and
+/// clashes with a `Result` one.
+fn assert_int_call_is_refined(check: &str, call: &str) {
+    assert_no_errors(&int_refinement_program(check, "Natural", call));
+    assert_error_containing(
+        &int_refinement_program(check, "Result<Natural, String>", call),
+        "body returns Natural but declared return type is Result<Natural, String>",
+    );
+}
+
+/// The call keeps `Result<Natural, String>`.
+fn assert_int_call_keeps_result(check: &str, call: &str) {
+    assert_no_errors(&int_refinement_program(
+        check,
+        "Result<Natural, String>",
+        call,
+    ));
+    assert_error_containing(
+        &int_refinement_program(check, "Natural", call),
+        "body returns Result<Natural, String> but declared return type is Natural",
+    );
+}
+
+#[test]
+fn literal_int_discharge_boundary_is_one_written_out_literal_in_the_interval() {
+    let open = "n >= 0";
+    // One literal inside the interval, with at most one minus. Parentheses
+    // are not part of the syntax tree; the callee spelling does not matter.
+    for call in [
+        "fromInt(5)",
+        "fromInt(0)",
+        "fromInt(-0)",
+        "fromInt((5))",
+        "Local.fromInt(5)",
+        "fromInt(9223372036854775807)",
+    ] {
+        assert_int_call_is_refined(open, call);
+    }
+    // Everything else keeps the `Result`: a parameter, a named constant,
+    // arithmetic, a literal outside the interval, one beyond `i64`, a
+    // double negation.
+    for call in [
+        "fromInt(n)",
+        "fromInt(limit)",
+        "fromInt(2 + 3)",
+        "fromInt(-1)",
+        "fromInt((-1))",
+        "fromInt(9223372036854775808)",
+        "fromInt(- -5)",
+        "fromInt(Int.abs(5))",
+    ] {
+        assert_int_call_keeps_result(open, call);
+    }
+
+    // A closed interval is checked at both ends.
+    let closed = "Bool.and(n >= 0, n <= 100)";
+    assert_int_call_is_refined(closed, "fromInt(0)");
+    assert_int_call_is_refined(closed, "fromInt(100)");
+    assert_int_call_keeps_result(closed, "fromInt(101)");
+    assert_int_call_keeps_result(closed, "fromInt(-1)");
+
+    // A predicate the interval engine does not read discharges nothing.
+    assert_int_call_keeps_result("n != 0", "fromInt(5)");
+    assert_int_call_keeps_result("Bool.or(n < 0, n > 10)", "fromInt(20)");
+    assert_int_call_keeps_result("n >= limit", "fromInt(7)");
+}
+
+#[test]
+fn a_local_from_int_shadows_the_refinement_constructor() {
+    // `Refinement.Natural.Natural` declares the recognized `fromInt`. The
+    // entry module declares its own, so a bare call means the local
+    // function and nothing is discharged; the qualified call still is.
+    let program = |ret: &str, call: &str| {
+        format!(
+            "module Prog\n    intent = \"a local fromInt\"\n    depends [Refinement.Natural.Natural]\n    effects []\n\nfn fromInt(n: Int) -> Result<Int, String>\n    ? \"probe\"\n    Result.Ok(n + 1)\n\nfn caller() -> {ret}\n    ? \"probe\"\n    {call}\n"
+        )
+    };
+    let base = concat!(env!("CARGO_MANIFEST_DIR"), "/examples");
+    let errs = |src: String| errors_with_base(&src, base);
+    assert!(
+        errs(program("Result<Int, String>", "fromInt(5)")).is_empty(),
+        "the local `fromInt` keeps its own `Result`"
+    );
+    assert!(
+        !errs(program("Int", "fromInt(5)")).is_empty(),
+        "the local `fromInt` must not be discharged"
+    );
+    let qualified = errs(program(
+        "Refinement.Natural.Natural.Natural",
+        "Refinement.Natural.Natural.fromInt(5)",
+    ));
+    assert!(
+        qualified.is_empty(),
+        "the dependency's constructor still discharges when named, got:\n  {}",
+        qualified.join("\n  ")
+    );
+}
+
 #[test]
 fn a_record_that_is_not_opaque_keeps_the_result_of_its_constructor() {
     // The same module without `exposes opaque [Octets]`. Any module may

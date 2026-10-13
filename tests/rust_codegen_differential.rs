@@ -1669,6 +1669,24 @@ fn main() -> Unit
     );
 }
 
+/// The same rule over an `Int` carrier, on the Rust backend: the program
+/// `cross_backend_stress` runs on the VM and wasm-gc.
+#[test]
+fn rust_literal_int_refinement_discharge_matches_vm() {
+    let src = include_str!("fixtures/literal_int_refinement.av");
+    let expected = include_str!("fixtures/literal_int_refinement.expected").trim();
+
+    let vm = run_vm_inline("literal_int_refinement_discharge", src).expect("vm run");
+    let rust = build_run_rust_inline("literal_int_refinement_discharge", src)
+        .expect("rust compile + cargo build + run");
+    assert_eq!(vm.trim(), expected, "VM literal-discharge contract changed");
+    assert_eq!(
+        rust.trim(),
+        expected,
+        "Rust literal-discharge contract diverged from VM"
+    );
+}
+
 /// A function whose Aver name is a Rust keyword, in MUTUAL tail recursion.
 /// The trampoline variant is the name capitalised, and capitalising the
 /// already-escaped `r#await` gave `R#await` — not an identifier, so the

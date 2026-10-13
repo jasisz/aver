@@ -164,7 +164,7 @@ fn doubled(c: IntRange) -> Int
 
 fn main() -> Unit
     ! [Console.print]
-    match fromInt(50)
+    match fromInt(50 + 0)
         Result.Ok(c)  -> Console.print("{toInt(c) + doubled(c)}")
         Result.Err(_) -> Console.print("err")
 "#;
@@ -204,9 +204,9 @@ fn show(label: String, r: Result<IntRange, String>) -> Unit
 
 fn main() -> Unit
     ! [Console.print]
-    show("0", fromInt(0))
-    show("100", fromInt(100))
-    show("50", fromInt(50))
+    show("0", fromInt(0 + 0))
+    show("100", fromInt(100 + 0))
+    show("50", fromInt(50 + 0))
     show("neg", fromInt(0 - 1))
 "#;
     let out = assert_vm_wasm_identical("carrier-edges", src);
@@ -1151,7 +1151,7 @@ fn dblStr(c: C) -> String
 
 fn main() -> Unit
     ! [Console.print]
-    match mk(5)
+    match mk(5 + 0)
         Result.Ok(c)  -> Console.print(dblStr(c))
         Result.Err(_) -> Console.print("err")
 "#;
@@ -1187,7 +1187,7 @@ fn show(c: C) -> String
 
 fn main() -> Unit
     ! [Console.print]
-    match mk(5)
+    match mk(5 + 0)
         Result.Ok(c)  -> Console.print(show(c))
         Result.Err(_) -> Console.print("err")
 "#;
@@ -1224,7 +1224,7 @@ fn store(c: C) -> Holder
 
 fn main() -> Unit
     ! [Console.print]
-    match mk(5)
+    match mk(5 + 0)
         Result.Ok(c)  -> Console.print("{store(c).n}")
         Result.Err(_) -> Console.print("err")
 "#;
@@ -1258,7 +1258,7 @@ fn build(c: C) -> Map<String, Int>
 
 fn main() -> Unit
     ! [Console.print]
-    match mk(5)
+    match mk(5 + 0)
         Result.Ok(c)  -> Console.print("{Option.withDefault(Map.get(build(c), "k"), 0)}")
         Result.Err(_) -> Console.print("err")
 "#;
@@ -1292,7 +1292,7 @@ fn build(c: C) -> Map<Int, String>
 
 fn main() -> Unit
     ! [Console.print]
-    match mk(5)
+    match mk(5 + 0)
         Result.Ok(c)  -> Console.print(Option.withDefault(Map.get(build(c), 10), "MISS"))
         Result.Err(_) -> Console.print("err")
 "#;
@@ -1330,7 +1330,7 @@ fn fst(t: Tuple<Int, String>) -> Int
 
 fn main() -> Unit
     ! [Console.print]
-    match mk(5)
+    match mk(5 + 0)
         Result.Ok(c)  -> Console.print("{fst(pair(c))}")
         Result.Err(_) -> Console.print("err")
 "#;
@@ -1364,7 +1364,7 @@ fn opt(c: C) -> Option<Int>
 
 fn main() -> Unit
     ! [Console.print]
-    match mk(5)
+    match mk(5 + 0)
         Result.Ok(c)  -> Console.print("{Option.withDefault(opt(c), 0)}")
         Result.Err(_) -> Console.print("err")
 "#;
@@ -1441,7 +1441,7 @@ fn combine(c: C) -> Int
 
 fn main() -> Unit
     ! [Console.print]
-    match mk(5)
+    match mk(5 + 0)
         Result.Ok(c)  -> Console.print("{combine(c)}")
         Result.Err(_) -> Console.print("err")
 "#;
@@ -1773,7 +1773,7 @@ fn use(c: IntRange) -> Int
 
 fn main() -> Unit
     ! [Console.print]
-    match fromInt(7)
+    match fromInt(7 + 0)
         Result.Ok(c)  -> Console.print("{use(c)}")
         Result.Err(_) -> Console.print("err")
 "#;
@@ -1821,7 +1821,7 @@ fn use(c: IntRange) -> Int
 
 fn main() -> Unit
     ! [Console.print]
-    match fromInt(7)
+    match fromInt(7 + 0)
         Result.Ok(c)  -> Console.print("{use(c)}")
         Result.Err(_) -> Console.print("err")
 "#;
@@ -1873,7 +1873,7 @@ fn use(c: IntRange) -> Int
 
 fn main() -> Unit
     ! [Console.print]
-    match fromInt(7)
+    match fromInt(7 + 0)
         Result.Ok(c)  -> Console.print("{use(c)}")
         Result.Err(_) -> Console.print("err")
 "#;
@@ -1942,7 +1942,7 @@ fn bigTainted() -> Int
     tInt(bareTainted(4000000000 * 4000000000))
 
 fn cleanVal() -> Int
-    cInt(unwrapC(fromClean(50)))
+    cInt(unwrapC(fromClean(50 + 0)))
 
 fn main() -> Unit
     ! [Console.print]
@@ -2022,7 +2022,7 @@ fn classify(c: C) -> Int
 
 fn main() -> Unit
     ! [Console.print]
-    match mk(50)
+    match mk(50 + 0)
         Result.Ok(c)  -> Console.print("{classify(c)}")
         Result.Err(_) -> Console.print("err")
 "#;
@@ -2066,7 +2066,7 @@ fn show(b: Bool) -> String
 
 fn main() -> Unit
     ! [Console.print]
-    match mk(50)
+    match mk(50 + 0)
         Result.Ok(c)  -> Console.print("{show(isHundred(c))}")
         Result.Err(_) -> Console.print("err")
 "#;
@@ -2158,7 +2158,7 @@ fn sumPair(c: C) -> Int
 
 fn main() -> Unit
     ! [Console.print]
-    match mk(5)
+    match mk(5 + 0)
         Result.Ok(c)  -> Console.print("{sumPair(c)}")
         Result.Err(_) -> Console.print("err")
 "#;

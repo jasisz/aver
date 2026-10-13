@@ -114,6 +114,26 @@ fn colliding_map_keys_stay_two_keys() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A literal call to the smart constructor of an `Int` refinement gives the
+/// refined value on wasip2 as on the VM (`cross_backend_stress` holds the VM
+/// and wasm-gc to the same expected output).
+#[test]
+fn literal_int_refinement_discharge_matches_expected() {
+    let dir = tempdir("litint");
+    let fixture = write_fixture(
+        &dir,
+        "ranges.av",
+        include_str!("fixtures/literal_int_refinement.av"),
+    );
+    let out = run_wasip2(&dir, &fixture, &[]);
+    assert_ok(&out, "ranges.av");
+    assert_eq!(
+        stdout(&out).trim(),
+        include_str!("fixtures/literal_int_refinement.expected").trim()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn roundtrip_100x() {
     let dir = tempdir("rt100");

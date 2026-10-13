@@ -2437,7 +2437,7 @@ fn doubled(c: IntRange) -> Int
     c.value + c.value
 
 fn main() -> Int
-    match fromInt(50)
+    match fromInt(50 + 0)
         Result.Ok(c)  -> toInt(c) + doubled(c)
         Result.Err(_) -> 0
 "#;
