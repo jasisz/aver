@@ -5,7 +5,8 @@ module RefinedSum
         "constructor is nullary. The refined record emits as a Subtype with"
         "no Inhabited instance, so the certificate model must seed the sum's"
         "Inhabited witness from the nullary constructor."
-    exposes [Natural, Payload, fromInt, bump]
+    exposes [Payload, fromInt, bump]
+    exposes opaque [Natural]
 
 record Natural
   value: Int

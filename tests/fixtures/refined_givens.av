@@ -1,0 +1,100 @@
+module RefinedGivens
+    intent =
+        "Laws about a given of a refined type, and laws that cite them."
+        "A Natural holds a non-negative Int: its smart constructor checks it,"
+        "and the type is opaque, so no other module can write the record."
+        "A law about a Natural assumes the check, and a law that cites it has"
+        "to show it of the value it puts for the given. The false laws below"
+        "put a record the constructor would refuse, and must stay open."
+    exposes [fromInt, isNonNegative, atMost, holds, same]
+    exposes opaque [Natural]
+
+record Natural
+    value: Int
+
+fn fromInt(n: Int) -> Result<Natural, String>
+    ? "A Natural from a non-negative Int."
+    match n >= 0
+        true -> Result.Ok(Natural(value = n))
+        false -> Result.Err("negative")
+
+verify fromInt
+    fromInt(3) => Result.Ok(Natural(value = 3))
+
+fn isNonNegative(n: Natural) -> Bool
+    ? "Whether the value is at least zero: true of every Natural."
+    n.value >= 0
+
+verify isNonNegative
+    isNonNegative(Natural(value = 1)) => true
+
+verify isNonNegative law always
+    given n: Natural = [Natural(value = 0), Natural(value = 7)]
+    isNonNegative(n) => true
+
+fn atMost(n: Natural, cap: Int) -> Bool
+    ? "Whether the value is between zero and cap."
+    Bool.and(n.value >= 0, n.value <= cap)
+
+verify atMost
+    atMost(Natural(value = 1), 2) => true
+
+verify atMost law underCap
+    given n: Natural = [Natural(value = 0), Natural(value = 7)]
+    given cap: Int = [7, 9]
+    when n.value <= cap
+    atMost(n, cap) => true
+
+verify atMost law underCapBecause
+    given n: Natural = [Natural(value = 0), Natural(value = 7)]
+    given cap: Int = [7, 9]
+    when n.value <= cap
+    because isNonNegative(n)
+    atMost(n, cap) => true
+
+fn holds(x: Int) -> Bool
+    ? "Whether a record holding x is non-negative."
+    isNonNegative(Natural(value = x))
+
+verify holds
+    holds(1) => true
+
+verify holds law ofNonNegative
+    given x: Int = [0, 1]
+    when x >= 0
+    using [isNonNegative.always]
+    isNonNegative(Natural(value = x)) => true
+
+verify holds law ofMinusOne
+    given x: Int = [0, 1]
+    using [isNonNegative.always]
+    isNonNegative(Natural(value = -1)) => true
+
+verify holds law ofAnyInt
+    given x: Int = [0, 1]
+    using [isNonNegative.always]
+    isNonNegative(Natural(value = x)) => true
+
+verify holds law underCapOfNonNegative
+    given x: Int = [0, 1]
+    when Bool.and(x >= 0, x <= 5)
+    using [atMost.underCap]
+    atMost(Natural(value = x), 5) => true
+
+verify holds law underCapOfAnyInt
+    given x: Int = [0, 1]
+    when x <= 5
+    using [atMost.underCap]
+    atMost(Natural(value = x), 5) => true
+
+fn same(n: Natural) -> Natural
+    ? "The Natural itself."
+    n
+
+verify same
+    same(Natural(value = 1)) => Natural(value = 1)
+
+verify same law staysNonNegative
+    given n: Natural = [Natural(value = 0), Natural(value = 7)]
+    using [isNonNegative.always]
+    isNonNegative(same(n)) => true

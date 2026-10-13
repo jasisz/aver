@@ -37,6 +37,7 @@ fn script(lhs: super::Term, rhs: super::Term, proof: Proof) -> Script {
             lists: Vec::new(),
             ints: Vec::new(),
             premise: None,
+            refined: Vec::new(),
             lhs,
             rhs,
         },

@@ -385,6 +385,7 @@ fn a_record_carrying_a_refined_type_derives_no_inhabited() {
     let mut ctx = ctx_from_source(
         r#"
 module Carrier
+    exposes opaque [Natural]
     effects []
 
 record Natural
@@ -2926,6 +2927,7 @@ fn proof_mode_when_stronger_than_refinement_invariant_stays_in_theorem() {
     // only fires when they match.
     let src = "module Stronger\n\
              \x20   intent = \"t\"\n\
+             \x20   exposes opaque [Natural]\n\
              \n\
              record Natural\n\
              \x20   value: Int\n\
@@ -2979,6 +2981,7 @@ fn proof_mode_when_compound_equivalent_to_compound_invariant_drops_cleanly() {
     // The fix flattens BOTH sides; this test pins that.
     let src = "module IR\n\
              \x20   intent = \"t\"\n\
+             \x20   exposes opaque [IntRange]\n\
              \n\
              record IntRange\n\
              \x20   value: Int\n\
@@ -3028,6 +3031,7 @@ fn proof_mode_when_equivalent_to_refinement_invariant_drops_cleanly() {
     // (which Lean type-mismatches against the Subtype carrier).
     let src = "module Equiv\n\
              \x20   intent = \"t\"\n\
+             \x20   exposes opaque [Natural]\n\
              \n\
              record Natural\n\
              \x20   value: Int\n\
@@ -3075,6 +3079,7 @@ fn proof_mode_refinement_lift_escapes_reserved_type_binder() {
     // type reference.
     let src = "module Lift\n\
              \x20   intent = \"t\"\n\
+             \x20   exposes opaque [Type]\n\
              \n\
              record Type\n\
              \x20   value: Int\n\
@@ -4128,6 +4133,7 @@ fn inhabited_witness_skips_constructor_with_refined_argument() {
         r#"
 module RefinedSum
     intent = "t"
+    exposes opaque [Natural]
 
 record Natural
     value: Int
@@ -5872,6 +5878,7 @@ verify identity law openAfterPlan
             lists: Vec::new(),
             ints: Vec::new(),
             premise: None,
+            refined: Vec::new(),
             lhs: lhs.clone(),
             rhs: lhs.clone(),
         },

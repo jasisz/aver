@@ -446,9 +446,23 @@ impl<'a> Env<'a> {
         })
     }
 
-    /// Record that law `key`, at `subst`, matched but the conjuncts `open`
-    /// of its `when` found no proof: an argument the law's author can add.
-    pub(crate) fn note_open_premise(&mut self, key: &str, subst: &[(String, Term)], open: &[Term]) {
+    /// Record that law `law`, at `subst`, matched but the conjuncts `open`
+    /// of what it assumes found no proof: an argument the law's author can
+    /// add.
+    pub(crate) fn note_open_premise(
+        &mut self,
+        law: &crate::ir::proof_steps::LawRef,
+        subst: &[(String, Term)],
+        open: &[Term],
+    ) {
+        let key = &law.key;
+        // A law with a given of a refined type also assumes what that type
+        // holds of the value put for the given.
+        let what = if law.refined.is_empty() {
+            "its `when`"
+        } else {
+            "what it assumes (its `when`, and what the refined types of its givens hold)"
+        };
         let names = self.inputs.symbol_table;
         let show = |t: &Term| crate::ir::proof_steps::show::term(t, names);
         let at = subst
@@ -462,7 +476,7 @@ impl<'a> Env<'a> {
             .collect::<Vec<_>>()
             .join(" and ");
         let note = format!(
-            "missing argument: law {key} at ({at}) applies but its `when` needs {needs}, which no hypothesis, linear step or computation gives; state it in a `because` line or cite a law that does"
+            "missing argument: law {key} at ({at}) applies but {what} needs {needs}, which no hypothesis, linear step or computation gives; state it in a `because` line or cite a law that does"
         );
         self.note(note);
     }

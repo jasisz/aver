@@ -2,6 +2,8 @@ module Min
     intent =
         "Laws whose given ranges over a refinement record, with and without when."
         "The module is called Min, a name core Lean already declares."
+    exposes [fromInt, keep]
+    exposes opaque [Natural]
 
 record Natural
     v: Int

@@ -496,7 +496,7 @@ fn prove_with(
         },
         _ => Vec::new(),
     };
-    let ob = super::obligation(inputs, t);
+    let ob = super::obligation(inputs, ir, t).map_err(|why| format!("plan {path}: {why}"))?;
     let goal = goal(inputs, &ob, laws);
     let script_text = crate::ir::proof_steps::sexpr::script(&goal, inputs.symbol_table)
         .map_err(|why| format!("plan {path}: the goal cannot be written as step data: {why}"))?;
@@ -867,6 +867,7 @@ impl Question<'_, '_> {
                 Sx::List(xs) if matches!(xs.as_slice(), [Sx::Atom(n)] if n == "none") => None,
                 p => Some(self.reader.term(p)?),
             },
+            refined: Vec::new(),
             lhs: self.reader.term(lhs)?,
             rhs: self.reader.term(rhs)?,
         };

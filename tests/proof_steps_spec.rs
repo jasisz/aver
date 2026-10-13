@@ -6090,6 +6090,187 @@ fn a_local_spelled_like_a_module_binding_is_not_read_as_the_binding() {
     }
 }
 
+/// A value of a refined type satisfies what its smart constructor checks:
+/// the type is listed under `exposes opaque`, so only its own module can
+/// write the record. A step term may still write it with any value. A
+/// script therefore states what the type holds of each given of a refined
+/// type as a premise: the law's own proof may use it, and a law that cites
+/// it has to prove it of the value it puts for the given. The laws of the
+/// fixture that cite at a record the constructor would refuse stay open,
+/// and no script is written for them; the true ones close.
+#[test]
+fn a_law_about_a_refined_given_is_cited_only_at_a_value_its_type_admits() {
+    let (mut closed, open, scripts) = closed_and_open(
+        &repo_root().join("tests/fixtures"),
+        "refined_givens.av",
+        "refined-givens",
+    );
+    // The obligations of the `because` chain are listed under their law.
+    closed.retain(|law| !law.starts_with(' '));
+    assert_eq!(
+        closed,
+        [
+            "atMost.underCap",
+            "atMost.underCapBecause",
+            "holds.ofNonNegative",
+            "holds.underCapOfNonNegative",
+            "isNonNegative.always",
+            "same.staysNonNegative"
+        ]
+    );
+    assert_eq!(
+        open,
+        [
+            "holds.ofAnyInt",
+            "holds.ofMinusOne",
+            "holds.underCapOfAnyInt"
+        ]
+    );
+    for law in &open {
+        assert!(
+            !scripts.iter().any(|(key, _)| key == law),
+            "a script was written for {law}"
+        );
+    }
+    let script = |law: &str| -> &str {
+        &scripts
+            .iter()
+            .find(|(key, _)| key == law)
+            .unwrap_or_else(|| panic!("a script for {law}"))
+            .1
+    };
+    // The law's own script assumes what `Natural` holds of `n`, and proves
+    // the claim from it.
+    let holds = "(op >= (get (v n) value) (i 0))";
+    let always = script("isNonNegative.always");
+    for expected in [
+        format!(
+            "(obligation isNonNegative.always ((n (named Natural))) {holds} (call isNonNegative (v n)) (b true))"
+        ),
+        format!("(have refined1 {holds} (hyp when) "),
+    ] {
+        assert!(always.contains(&expected), "missing `{expected}`\n{always}");
+    }
+    // With a `when` of its own, the line about the given comes first.
+    let under_cap = script("atMost.underCap");
+    let expected = format!(
+        "(obligation atMost.underCap ((n (named Natural)) (cap int)) (bi Bool.and {holds} (op <= (get (v n) value) (v cap))) "
+    );
+    assert!(
+        under_cap.contains(&expected),
+        "missing `{expected}`\n{under_cap}"
+    );
+    // A citing script states the cited law with that premise.
+    let cited = format!(
+        "(law isNonNegative.always ((n (named Natural))) {holds} (call isNonNegative (v n)) (b true))"
+    );
+    let citing = script("holds.ofNonNegative");
+    assert!(citing.contains(&cited), "missing `{cited}`\n{citing}");
+    // The kernel holds a citation to it: the law at `Natural(value = -1)`,
+    // with no proof of the premise, and with a computation that it holds.
+    let minus_one = "(rec Natural (value (neg (i 1))))";
+    let at_minus_one = |law: &str, premise: &str| {
+        format!(
+            "(steps 14\n (obligation holds.ofMinusOne ((x int)) (none) (call isNonNegative {minus_one}) (b true))\n (defs)\n (consts)\n (sums)\n (recs\n  (rec Natural eq (value int)))\n (sigs\n  (isNonNegative ((named Natural)) bool))\n (laws\n  {law})\n (proof (law isNonNegative.always ((n {minus_one})){premise})))\n"
+        )
+    };
+    let computed = format!(" (compute (op >= (get {minus_one} value) (i 0)) (b true))");
+    for premise in ["", computed.as_str()] {
+        let verdict = aver::proof_kernel::verdict(&at_minus_one(&cited, premise));
+        assert!(verdict.is_err(), "premise `{premise}`: {verdict:?}");
+    }
+    // Stated without the premise, as it was before, the same citation is
+    // accepted: the premise is what keeps the false law open.
+    let unstated = "(law isNonNegative.always ((n (named Natural))) (none) (call isNonNegative (v n)) (b true))";
+    assert_eq!(
+        aver::proof_kernel::verdict(&at_minus_one(unstated, "")),
+        Ok("holds.ofMinusOne".to_string())
+    );
+}
+
+/// A record with a validating constructor that is not listed under
+/// `exposes opaque` is an ordinary record: any module may write
+/// `Natural(value = -1)`, so the constructor's check holds of no given. A
+/// law about such a given is about every record: the false one stays open,
+/// no script gets a premise the law did not write, and Lean states the
+/// type as a plain structure.
+#[test]
+fn a_record_any_module_may_construct_is_not_a_refined_type() {
+    let fixtures = repo_root().join("tests/fixtures");
+    let (closed, open, scripts) =
+        closed_and_open(&fixtures, "refined_givens_open.av", "refined-givens-open");
+    assert_eq!(closed, ["isNonNegative.whenChecked", "same.isItself"]);
+    assert_eq!(open, ["isNonNegative.always"]);
+    let obligations: Vec<&str> = scripts
+        .iter()
+        .map(|(_, script)| script.lines().nth(1).unwrap().trim())
+        .collect();
+    assert_eq!(
+        obligations,
+        [
+            "(obligation isNonNegative.whenChecked ((n (named Natural))) (op >= (get (v n) value) (i 0)) (call isNonNegative (v n)) (b true))",
+            "(obligation same.isItself ((n (named Natural))) (none) (call same (v n)) (v n))"
+        ]
+    );
+    let out = scratch("refined-givens-open-lean");
+    let result = aver_in(
+        &fixtures,
+        &[
+            "proof",
+            "refined_givens_open.av",
+            "-o",
+            out.to_str().unwrap(),
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let lean = fs::read_to_string(out.join("RefinedGivensOpen.lean")).unwrap();
+    assert!(lean.contains("structure Natural where"), "{lean}");
+    assert!(!lean.contains("abbrev Natural"), "{lean}");
+    // Nothing here reads a type that carries a proof, so every script
+    // reaches Lean as a step term.
+    assert_eq!(unrendered_step_files(&out), Vec::<String>::new());
+    let _ = fs::remove_dir_all(out);
+}
+
+/// Lean states a given of a refined type by a type that carries the proof
+/// of what the type holds, so the premise a step script writes for it is
+/// not a hypothesis of the theorem: the theorem has the law's own `when`
+/// and nothing else. A step proof that reads the premise, or the inside of
+/// a refined record, is not handed to Lean as a term (which is why the
+/// fixture is not among those every script of which reaches Lean). The
+/// export needs no Lean.
+#[test]
+fn lean_states_a_refined_given_by_its_type_and_not_by_a_premise() {
+    let out = scratch("refined-givens-lean");
+    let result = aver_in(
+        &repo_root().join("tests/fixtures"),
+        &["proof", "refined_givens.av", "-o", out.to_str().unwrap()],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let lean = fs::read_to_string(out.join("RefinedGivens.lean")).unwrap();
+    for expected in [
+        "abbrev Natural := { n : Int // (n >= 0) }",
+        "theorem isNonNegative_law_always : ∀ (n : Natural), isNonNegative n = true := by",
+        "theorem atMost_law_underCap : ∀ (n : Natural) (cap : Int), (n.val <= cap) = true -> atMost n cap = true := by",
+        "theorem same_law_staysNonNegative : ∀ (n : Natural), isNonNegative (same n) = true := by",
+    ] {
+        assert!(lean.contains(expected), "missing `{expected}`\n{lean}");
+    }
+    assert_eq!(
+        unrendered_step_files(&out),
+        [
+            "atMost.underCap",
+            "atMost.underCapBecause.because1",
+            "atMost.underCapBecause.implication",
+            "holds.ofNonNegative",
+            "holds.underCapOfNonNegative",
+            "isNonNegative.always",
+            "same.staysNonNegative"
+        ]
+    );
+    let _ = fs::remove_dir_all(out);
+}
+
 /// The same in a module another one imports: its parameter `n` is not its
 /// binding `n`, in its own laws and in a law of the importing module that
 /// reaches the function.

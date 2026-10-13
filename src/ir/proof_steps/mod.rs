@@ -93,8 +93,13 @@ pub struct LawRef {
     /// The type of each given, by name; a given without one is written
     /// as a hole (a builtin fact's list given, which holds anything).
     pub types: Vec<(String, crate::ast::Type)>,
-    /// The law's `when`, as one Bool term that must equal `true`.
+    /// What the law assumes, as one Bool term that must equal `true`: a
+    /// line for each given of a refined type, stating what the type holds
+    /// of it, then the law's `when`, joined with `Bool.and`.
     pub premise: Option<Term>,
+    /// The leading lines of `premise` that are about the givens of refined
+    /// types ([`own_when`]), in order.
+    pub refined: Vec<Term>,
     pub lhs: Term,
     pub rhs: Term,
     /// For a builtin fact ([`facts`]), its own script: the checkers check
@@ -524,6 +529,44 @@ pub fn unequal(on: &Term, k: &Term) -> Eqn {
     )
 }
 
+/// A `premise` without its `refined` leading lines: the law's own `when`.
+/// A value of a refined type satisfies what its type holds (the smart
+/// constructor checked it), but a step term may write the record with any
+/// value in its field, so a script states it as a premise: a hypothesis of
+/// the law's own proof, and something a citation proves of the value it
+/// puts for the given. Lean states such a given by a type that carries the
+/// proof, so its theorem has only the `when`.
+pub fn own_when<'a>(premise: &'a Option<Term>, refined: &[Term]) -> Option<&'a Term> {
+    let mut at = premise.as_ref()?;
+    for (k, line) in refined.iter().enumerate() {
+        // The last refined line, with no `when` after it.
+        if k + 1 == refined.len() && at == line {
+            return None;
+        }
+        match &at.node {
+            crate::ir::hir::ResolvedExpr::Call(_, args) if args.len() == 2 && args[0] == *line => {
+                at = &args[1]
+            }
+            _ => return Some(at),
+        }
+    }
+    Some(at)
+}
+
+impl LawRef {
+    /// The law's own `when` ([`own_when`]).
+    pub fn when(&self) -> Option<&Term> {
+        own_when(&self.premise, &self.refined)
+    }
+}
+
+impl Obligation {
+    /// The law's own `when` ([`own_when`]).
+    pub fn when(&self) -> Option<&Term> {
+        own_when(&self.premise, &self.refined)
+    }
+}
+
 /// The obligation a step script closes: a law's claim under its givens.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Obligation {
@@ -541,7 +584,12 @@ pub struct Obligation {
     /// The givens of type Int: what a [`Proof::Induct`] along a function
     /// that counts an Int toward zero may induct on.
     pub ints: Vec<String>,
+    /// What the claim assumes, as [`LawRef::premise`] states it. An
+    /// obligation of a `because` chain also assumes the reasons before it,
+    /// between the lines about the givens and the `when`.
     pub premise: Option<Term>,
+    /// As [`LawRef::refined`].
+    pub refined: Vec<Term>,
     pub lhs: Term,
     pub rhs: Term,
 }

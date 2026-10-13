@@ -1373,12 +1373,16 @@ impl Renderer<'_> {
                     s.push_str(&self.expr(v));
                 }
                 let cited = self.script.law(law);
+                // The theorem of a law with givens of refined types takes
+                // the proof of the law's own `when` alone.
+                let premise = match cited {
+                    Some(l) if !l.refined.is_empty() => own_when_proof(premise.as_deref(), l)?,
+                    _ => premise.as_deref(),
+                };
                 if let Some(p) = premise {
                     let p = self.proof(p, hyps)?;
                     // A bare comparison as `when` is a Prop in the theorem.
-                    let prop = cited
-                        .and_then(|l| l.premise.as_ref())
-                        .is_some_and(is_prop_comparison);
+                    let prop = cited.and_then(|l| l.when()).is_some_and(is_prop_comparison);
                     s.push(' ');
                     if prop {
                         s.push_str(&format!(
@@ -2429,6 +2433,73 @@ fn touches_refinement(t: &Term, ctx: &CodegenContext) -> bool {
         .any(|c| touches_refinement(c, ctx))
 }
 
+/// The proof of cited law `l`'s own `when` inside `premise`, the proof of
+/// everything a script has the law assume: first a line for each given of
+/// a refined type, which the law's Lean theorem states by the given's type
+/// instead. The producers put the conjunction together one level at a
+/// time (`Bool.and(a, b)` is `Bool.and(true, b)`, which is `b`, which is
+/// `true`), so the rest is the last step of each level.
+fn own_when_proof<'p>(
+    premise: Option<&'p Proof>,
+    l: &crate::ir::proof_steps::LawRef,
+) -> Result<Option<&'p Proof>, String> {
+    let other = || format!("what {} assumes is not proved line by line", l.key);
+    let mut at = premise.ok_or_else(other)?;
+    for k in 0..l.refined.len() {
+        if k + 1 == l.refined.len() && l.when().is_none() {
+            return Ok(None);
+        }
+        match at {
+            Proof::Trans { terms, steps }
+                if terms.len() == 4
+                    && steps.len() == 3
+                    && matches!(
+                        steps[1],
+                        Proof::Rule {
+                            rule: WallRule::AndTrueL,
+                            ..
+                        }
+                    ) =>
+            {
+                at = &steps[2]
+            }
+            _ => return Err(other()),
+        }
+    }
+    Ok(Some(at))
+}
+
+/// `script` as its law's Lean theorem states the claim: under the law's
+/// own `when` alone. A script also assumes what the refined type of each
+/// given holds of it, and its proof cuts the `when` out of that premise
+/// first; the theorem states those givens by types that carry the proof.
+/// A proof that reads such a line is not rendered (the law keeps its
+/// tactics), nor is one a plan wrote, which reads the premise as a whole.
+fn under_own_when(script: &Script) -> Result<Script, String> {
+    let ob = &script.obligation;
+    if script.plan.is_some() {
+        return Err("a plan proved the law under what its givens' refined types hold".into());
+    }
+    let when = ob.when().cloned();
+    let mut proof = &script.proof;
+    if let Proof::Have {
+        name, fact, body, ..
+    } = proof
+    {
+        if name.starts_with("refined") {
+            return Err("the proof reads what the refined type of a given holds".into());
+        }
+        if name == "when" && Some(fact) == when.as_ref() {
+            proof = body;
+        }
+    }
+    let mut part = script.clone();
+    part.obligation.premise = when;
+    part.obligation.refined = Vec::new();
+    part.proof = proof.clone();
+    Ok(part)
+}
+
 /// Render `script` as a term for its law's theorem, after `intro` of the
 /// givens (and `h_when`).
 pub(crate) fn render(script: &Script, ctx: &CodegenContext) -> Result<Rendered, String> {
@@ -2555,6 +2626,10 @@ pub(crate) fn render_obligation(
             guard = Some(fact.clone());
         } else if name.starts_with("h_reason") {
             earlier.push((name.clone(), fact.clone()));
+        } else if name.starts_with("refined") {
+            // What the refined type of a given holds of it, which the
+            // theorem states by the given's type.
+            return Err("the proof reads what the refined type of a given holds".into());
         } else {
             break;
         }
@@ -2562,7 +2637,7 @@ pub(crate) fn render_obligation(
         at = body;
     }
     if !stripped {
-        guard = script.obligation.premise.clone();
+        guard = script.obligation.when().cloned();
     }
     if earlier.len() != index {
         return Err(format!(
@@ -2572,6 +2647,7 @@ pub(crate) fn render_obligation(
     }
     let mut part = script.clone();
     part.obligation.premise = guard;
+    part.obligation.refined = Vec::new();
     part.proof = at.clone();
     render_with(&part, &earlier, ctx)
 }
@@ -2583,6 +2659,13 @@ fn render_with(
     introduced: &[(String, Term)],
     ctx: &CodegenContext,
 ) -> Result<Rendered, String> {
+    let own;
+    let script = if script.obligation.refined.is_empty() {
+        script
+    } else {
+        own = under_own_when(script)?;
+        &own
+    };
     // Every term of the proof comes from these, by unfolding, rewriting
     // and computing; the Lean model of a refined record is a `Subtype`,
     // which the step terms do not spell, so such a law keeps its tactics.
@@ -2596,7 +2679,7 @@ fn render_with(
     sources.extend(script.consts.iter().map(|c| &c.value));
     for l in &script.laws {
         sources.extend([&l.lhs, &l.rhs]);
-        sources.extend(l.premise.iter());
+        sources.extend(l.when());
     }
     if sources.into_iter().any(|t| touches_refinement(t, ctx)) {
         return Err("the proof reads the inside of a refined record".into());

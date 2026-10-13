@@ -803,6 +803,8 @@ From outside the module:
 - `Discount(percent = 50.0)` is a **compile error** (opaque: cannot construct)
 - `d.percent` is a **compile error** (opaque: cannot access fields)
 
+An opaque record with one field and a constructor of this shape (a `match` on a Bool check, `Result.Ok` of the record when it holds, `Result.Err` otherwise) is a refined type for `aver proof`: the check holds of every value, because no other module can write the record, so a law may rely on it of a `given d: Discount` (see [Refinement records](lean.md#refinement-records-refinement-via-opaque)). `exposes opaque` is what makes that true. The same record without it is an ordinary record: any module may write `Discount(percent = 150.0)`, a law with `given d: Discount` is about every such record, and what the constructor checks has to be written as a `when` line where a law needs it. A record in a file with no `exposes opaque` line, an entry file included, is never refined.
+
 With `--module-root examples`:
 
 - `depends [Data.Fibonacci]` → `examples/data/fibonacci.av`, call as `Data.Fibonacci.fn(...)`

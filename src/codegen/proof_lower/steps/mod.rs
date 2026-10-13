@@ -74,16 +74,18 @@ fn law_key(inputs: &ProofLowerInputs, t: &LawTheorem) -> String {
     }
 }
 
-fn law_ref(inputs: &ProofLowerInputs, t: &LawTheorem) -> LawRef {
-    LawRef {
+fn law_ref(inputs: &ProofLowerInputs, ir: &ProofIR, t: &LawTheorem) -> Result<LawRef, String> {
+    let (premise, refined) = assumed(inputs, ir, t)?;
+    Ok(LawRef {
         key: law_key(inputs, t),
         givens: t.quantifiers.iter().map(|q| q.name.clone()).collect(),
         types: finite::given_types(inputs, t),
-        premise: premise_of(inputs, t),
+        premise,
+        refined,
         lhs: law_term(inputs, t, &t.claim_lhs),
         rhs: law_term(inputs, t, &t.claim_rhs),
         fact: None,
-    }
+    })
 }
 
 /// A term of law `t`, with its module's binding reads spelled as every
@@ -95,12 +97,70 @@ fn law_term(inputs: &ProofLowerInputs, t: &LawTheorem, term: &Term) -> Term {
     env::qualify_bindings(&canon(term), inputs, scope, &givens)
 }
 
-fn premise_of(inputs: &ProofLowerInputs, t: &LawTheorem) -> Option<Term> {
+fn premise_of(inputs: &ProofLowerInputs, t: &LawTheorem) -> Result<Option<Term>, String> {
     match t.premises.as_slice() {
-        [] => None,
-        [p] => Some(law_term(inputs, t, &p.expr)),
-        _ => None,
+        [] => Ok(None),
+        [p] => Ok(Some(law_term(inputs, t, &p.expr))),
+        _ => Err("more than one premise".into()),
     }
+}
+
+/// What the refined type of each given of law `t` holds of it, in the
+/// order of the givens: the check of the type's smart constructor, read at
+/// the given's field (`n.value >= 0` for `n: Natural`). The source is the
+/// one the Lean export states the type from (`ProofIR::refined_types`), so
+/// a given has a line here exactly when Lean gives it a type that carries
+/// the proof. A given that only holds a refined value somewhere inside (in
+/// a list, an `Option`, a field of another record) has no line.
+fn refinements(
+    inputs: &ProofLowerInputs,
+    ir: &ProofIR,
+    t: &LawTheorem,
+) -> Result<Vec<Term>, String> {
+    use crate::ir::proof_steps::term;
+    let mut out = Vec::new();
+    for (given, ty) in finite::given_types(inputs, t) {
+        let crate::ast::Type::Named { id: Some(id), .. } = &ty else {
+            continue;
+        };
+        let Some(decl) = ir.refined_types.get(id) else {
+            continue;
+        };
+        let scope = inputs.symbol_table.type_entry(*id).key.scope_str();
+        let holds = env::qualify_bindings(
+            &canon(&decl.invariant.expr),
+            inputs,
+            scope,
+            std::slice::from_ref(&decl.predicate_param),
+        );
+        let of = term::var(&given);
+        of.set_ty(ty.clone());
+        let read =
+            crate::ast::Spanned::bare(ResolvedExpr::Attr(Box::new(of), decl.carrier_field.clone()));
+        read.set_ty(finite::qualify(
+            inputs,
+            &crate::types::parse_type_str(&decl.carrier_type),
+            scope,
+        ));
+        let line = term::subst(&holds, &[(decl.predicate_param.clone(), read)])
+            .map_err(|why| format!("what {} holds of `{given}`: {why}", decl.name))?;
+        out.push(canon(&line));
+    }
+    Ok(out)
+}
+
+/// What law `t` assumes, as its scripts state it: a line per given of a
+/// refined type ([`refinements`]), then its `when`, joined with `Bool.and`;
+/// and those leading lines.
+fn assumed(
+    inputs: &ProofLowerInputs,
+    ir: &ProofIR,
+    t: &LawTheorem,
+) -> Result<(Option<Term>, Vec<Term>), String> {
+    let refined = refinements(inputs, ir, t)?;
+    let mut items = refined.clone();
+    items.extend(premise_of(inputs, t)?);
+    Ok((conjoin(&items).map(|(whole, _)| whole), refined))
 }
 
 /// The laws a `using` list names, resolved against the citing law's
@@ -132,7 +192,9 @@ fn cited(
         ir.law_theorems
             .iter()
             .filter(|c| names.iter().any(|n| names_law(inputs, t, c, n)))
-            .map(|c| law_ref(inputs, c)),
+            .map(|c| law_ref(inputs, ir, c))
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?,
     );
     Some(out)
 }
@@ -218,18 +280,24 @@ fn citable_from(inputs: &ProofLowerInputs, ir: &ProofIR, t: &LawTheorem, c: &Law
     true
 }
 
-fn obligation(inputs: &ProofLowerInputs, t: &LawTheorem) -> Obligation {
-    Obligation {
+fn obligation(
+    inputs: &ProofLowerInputs,
+    ir: &ProofIR,
+    t: &LawTheorem,
+) -> Result<Obligation, String> {
+    let (premise, refined) = assumed(inputs, ir, t)?;
+    Ok(Obligation {
         key: law_key(inputs, t),
         givens: t.quantifiers.iter().map(|q| q.name.clone()).collect(),
         types: finite::given_types(inputs, t),
         finite: finite::finite_givens(inputs, t),
         lists: finite::list_givens(t),
         ints: finite::int_givens(t),
-        premise: premise_of(inputs, t),
+        premise,
+        refined,
         lhs: law_term(inputs, t, &t.claim_lhs),
         rhs: law_term(inputs, t, &t.claim_rhs),
-    }
+    })
 }
 
 fn algebra(env: &mut Env, t: &LawTheorem, ob: &Obligation) -> Result<Proof, String> {
@@ -760,6 +828,34 @@ fn conjoin(items: &[Term]) -> Option<(Term, Vec<Proof>)> {
     Some((whole, proofs))
 }
 
+/// `body`, proved under the named hypotheses `assumes`, as the proof of a
+/// script whose premise states them all as one term (`when`): each is cut
+/// out of that premise first, under its own name, so `when` names the
+/// law's own `when` again. A line about a given of a refined type
+/// (`refined<k>`) is cut out only where `body` reads it. A premise that is
+/// the `when` alone needs no cut.
+fn assuming(assumes: &[(String, Term)], body: Proof) -> (Option<Term>, Proof) {
+    let items: Vec<Term> = assumes.iter().map(|(_, fact)| fact.clone()).collect();
+    let Some((whole, from)) = conjoin(&items) else {
+        return (None, body);
+    };
+    let mut proof = body;
+    if !matches!(assumes, [(name, _)] if name == "when") {
+        for ((name, fact), p) in assumes.iter().zip(from).rev() {
+            if name.starts_with("refined") && !uses_hyp(&proof, name) {
+                continue;
+            }
+            proof = Proof::Have {
+                name: name.clone(),
+                fact: fact.clone(),
+                proof: Box::new(p),
+                body: Box::new(proof),
+            };
+        }
+    }
+    (Some(whole), proof)
+}
+
 fn merge_into(script: &mut Script, part: &Part) {
     for d in &part.defs {
         if !script.defs.iter().any(|x| x.fn_id == d.fn_id) {
@@ -837,10 +933,24 @@ fn produce_as(
         advice: Vec::new(),
         obligations: Vec::new(),
     };
-    if t.premises.len() > 1 {
-        return refuse("more than one premise".into());
-    }
-    let ob = obligation(inputs, t);
+    // What the law states: its claim under everything it assumes.
+    let stated = match obligation(inputs, ir, t) {
+        Ok(ob) => ob,
+        Err(why) => return refuse(why),
+    };
+    // What its givens' refined types hold, each a hypothesis of its own,
+    // and the claim under the law's own `when`: what the producers prove.
+    let refined: Vec<(String, Term)> = stated
+        .refined
+        .iter()
+        .enumerate()
+        .map(|(k, line)| (format!("refined{}", k + 1), line.clone()))
+        .collect();
+    let ob = Obligation {
+        premise: stated.when().cloned(),
+        refined: Vec::new(),
+        ..stated.clone()
+    };
     let using = match &t.using {
         Some(names) if !names.is_empty() => match cited(inputs, ir, t, names) {
             Some(laws) => Some(laws),
@@ -890,8 +1000,13 @@ fn produce_as(
         }
     };
     let known_of = |cuts: &[Cut]| -> Vec<(String, Eqn)> {
-        cuts.iter()
-            .map(|c| (c.name.clone(), chain::eqn_true(&c.fact)))
+        refined
+            .iter()
+            .map(|(name, line)| (name.clone(), chain::eqn_true(line)))
+            .chain(
+                cuts.iter()
+                    .map(|c| (c.name.clone(), chain::eqn_true(&c.fact))),
+            )
             .collect()
     };
     let reasons: Vec<Term> = t.reasons.iter().map(|r| law_term(inputs, t, r)).collect();
@@ -993,34 +1108,21 @@ fn produce_as(
                 format!("{key}.implication")
             };
             let script = part.as_ref().map_err(Clone::clone).and_then(|part| {
-                // What it assumes, in the order its Lean theorem introduces
-                // them: the earlier reasons, then the guard.
-                let mut names: Vec<String> =
-                    (0..i.min(n)).map(|k| format!("h_reason{k}")).collect();
-                let mut items: Vec<Term> = reasons[..i.min(n)].to_vec();
+                // What it assumes: what the givens' refined types hold,
+                // then, in the order its Lean theorem introduces them, the
+                // earlier reasons and the guard.
+                let mut assumes: Vec<(String, Term)> = refined.clone();
+                assumes.extend(
+                    reasons[..i.min(n)]
+                        .iter()
+                        .enumerate()
+                        .map(|(k, r)| (format!("h_reason{k}"), r.clone())),
+                );
                 if let Some(h) = &ob.premise {
-                    names.push("when".into());
-                    items.push(h.clone());
+                    assumes.push(("when".into(), h.clone()));
                 }
                 let view = under_cuts(&cuts[..*scope], part.proof.clone(), false);
-                let (premise, proof) = match conjoin(&items) {
-                    None => (None, view),
-                    Some((whole, from)) => {
-                        let mut proof = view;
-                        if !(names.len() == 1 && names[0] == "when") {
-                            for (name, (fact, p)) in names.iter().zip(items.iter().zip(from)).rev()
-                            {
-                                proof = Proof::Have {
-                                    name: name.clone(),
-                                    fact: fact.clone(),
-                                    proof: Box::new(p),
-                                    body: Box::new(proof),
-                                };
-                            }
-                        }
-                        (Some(whole), proof)
-                    }
-                };
+                let (premise, proof) = assuming(&assumes, view);
                 let (lhs, rhs) = if i < n {
                     (
                         reasons[i].clone(),
@@ -1033,6 +1135,7 @@ fn produce_as(
                     obligation: Obligation {
                         key: ob_key.clone(),
                         premise,
+                        refined: stated.refined.clone(),
                         lhs,
                         rhs,
                         ..ob.clone()
@@ -1069,10 +1172,14 @@ fn produce_as(
         .iter()
         .map(|(p, _)| p.as_ref().expect("all closed"))
         .collect();
-    let proof = under_cuts(&cuts, parts[n].proof.clone(), true);
+    let mut assumes = refined.clone();
+    if let Some(h) = &ob.premise {
+        assumes.push(("when".into(), h.clone()));
+    }
+    let (_, proof) = assuming(&assumes, under_cuts(&cuts, parts[n].proof.clone(), true));
     let advice = parts[n].advice.clone();
     let mut script = Script {
-        obligation: ob,
+        obligation: stated,
         defs: Vec::new(),
         consts: Vec::new(),
         laws: Vec::new(),
@@ -1099,7 +1206,7 @@ fn earlier_laws(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize) -> Vec<LawRef
     ir.law_theorems[..i]
         .iter()
         .filter(|c| citable_from(inputs, ir, t, c))
-        .map(|c| law_ref(inputs, c))
+        .filter_map(|c| law_ref(inputs, ir, c).ok())
         .filter(|l| rewrite::loops(l).is_none())
         .collect()
 }
@@ -1120,7 +1227,7 @@ fn auto_pool(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize) -> Vec<LawRef> {
     let pool: Vec<LawRef> = ir.law_theorems[..i]
         .iter()
         .filter(|c| c.steps.is_some() && citable_from(inputs, ir, t, c))
-        .map(|c| law_ref(inputs, c))
+        .filter_map(|c| law_ref(inputs, ir, c).ok())
         .filter(|l| rewrite::loops(l).is_none())
         .collect();
     let undoes = |a: &LawRef, b: &LawRef| {

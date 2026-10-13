@@ -1721,6 +1721,7 @@ fn linear_arithmetic_pinned_with_lifted_for_refinement_law() {
     // invariant) and emits the unfold + simp tactic directly.
     let src = "module M\n\
          \x20   intent = \"t\"\n\
+         \x20   exposes opaque [Natural]\n\
          \n\
          record Natural\n\
          \x20   value: Int\n\
