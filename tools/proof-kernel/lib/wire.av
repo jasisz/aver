@@ -4,52 +4,76 @@ module Wire
         "(the grammar at the top of src/ir/proof_steps/sexpr.rs, with a placeholder proof) and the plan's proof"
         "leaves in the same grammar. The compiler reads the proof back and hands the whole script to the kernel."
         "Not trusted: a goal read wrongly or a proof written wrongly only makes the script fail to check."
-    exposes [goal, proofText, termText, answer, spaced, listElems]
-    depends [Kernel.Term, Kernel.Proof, Kernel.Sexp, Kernel.Decode]
+    exposes [goal, goalOf, withGiven, withGivens, tyText, proofText, termText, answer, spaced]
+    depends [Kernel.Term, Kernel.Proof, Kernel.Sexp, Kernel.Decode, Kernel.Types]
     effects []
 
 fn goal(text: String) -> Result<Goal, String>
-    ? "The goal a step script states, its proof left out. The compiler wraps the script as (goal (elems (LIST TYPE)…) SCRIPT) to say what each list given holds; a bare script holds no such word. A goal the compiler poses has no hypotheses: the law's `when` stays its premise."
-    match Kernel.Sexp.readAll(text)?
-        Sexp.Node([Sexp.Atom("goal"), Sexp.Node([Sexp.Atom("elems"), ..es]), s]) -> goalOf(Kernel.Decode.script(s)?, listElems(es)?)
-        s -> goalOf(Kernel.Decode.script(s)?, [])
+    ? "The goal a step script states, its proof left out. A goal the compiler poses has no hypotheses: the law's `when` stays its premise."
+    Result.Ok(goalOf(Kernel.Decode.script(Kernel.Sexp.readAll(text)?)?))
 
 verify goal
-    goal("(steps 13 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (laws) (proof (refl (i 1))))") => Result.Ok(Goal(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [], hyps = [], listElems = []))
-    goal("(goal (elems (xs (tbool)) (ys (tlist (tint)))) (steps 13 (obligation k ((xs (tlist)) (ys (tlist))) (none) (i 1) (i 1)) (defs) (consts) (sums) (laws) (proof (refl (i 1)))))") => Result.Ok(Goal(obligation = Law(key = "k", givens = ["xs", "ys"], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = ["xs", "ys"], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [], hyps = [], listElems = [ListElem(list = "xs", elem = Ty.TyFin(Fin.FBool)), ListElem(list = "ys", elem = Ty.TyList(Ty.TyInt))]))
+    goal("(steps 14 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))") => Result.Ok(Goal(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], recs = [], laws = [], facts = [], hyps = []))
+    goal("(steps 14 (obligation k ((xs (list bool)) (n int) (b bool) (z str)) (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))") => Result.Ok(Goal(obligation = Law(key = "k", givens = [Kernel.Term.typed("xs", Ty.TyList(Ty.TyBool)), Kernel.Term.typed("n", Ty.TyInt), Kernel.Term.typed("b", Ty.TyBool), Kernel.Term.typed("z", Ty.TyStr)], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [Given(name = "b", fin = Fin.FBool)], lists = ["xs"], ints = ["n"], defs = [], consts = [], sums = [], recs = [], laws = [], facts = [], hyps = []))
     goal("(a") => Result.Err("unexpected end of data")
 
-fn goalOf(s: Script, elems: List<ListElem>) -> Result<Goal, String>
-    ? "The goal of a read script: everything but its proof, no hypotheses yet."
-    Result.Ok(Goal(obligation = s.obligation, finite = s.finite, lists = s.lists, ints = s.ints, defs = s.defs, consts = s.consts, sums = s.sums, laws = s.laws, facts = s.facts, hyps = [], listElems = elems))
+fn goalOf(s: Script) -> Goal
+    ? "The goal of a read script: everything but its proof, no hypotheses yet, each given listed by what its type is."
+    withGivens(Goal(obligation = Law.update(s.obligation, givens = []), finite = [], lists = [], ints = [], defs = s.defs, consts = s.consts, sums = s.sums, recs = s.recs, laws = s.laws, facts = s.facts, hyps = []), s.obligation.givens)
 
 verify goalOf
-    goalOf(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [], proof = Proof.PRefl(Term.TUnit)), []) => Result.Ok(Goal(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], laws = [], facts = [], hyps = [], listElems = []))
+    goalOf(Script(obligation = Law(key = "k", givens = [Kernel.Term.typed("n", Ty.TyInt)], premise = [], lhs = Term.TUnit, rhs = Term.TUnit), defs = [], consts = [], sums = [], recs = [], sigs = [], laws = [], facts = [], proof = Proof.PRefl(Term.TUnit))).ints => ["n"]
 
-fn listElems(es: List<Sexp>) -> Result<List<ListElem>, String>
-    ? "(LIST TYPE)…: what each list given holds."
-    match es
-        [] -> Result.Ok([])
-        [Sexp.Node([Sexp.Atom(n), t]), ..rest] -> Result.Ok(List.prepend(ListElem(list = n, elem = elemTy(t)?), listElems(rest)?))
-        _ -> Result.Err("malformed list element type")
+fn withGivens(g0: Goal, gs: List<TypedVar>) -> Goal
+    ? "The goal with these givens after its own, in order."
+    match gs
+        [] -> g0
+        [g, ..rest] -> withGivens(withGiven(g0, g), rest)
 
-verify listElems
-    listElems([]) => Result.Ok([])
-    listElems([Sexp.Atom("xs")]) => Result.Err("malformed list element type")
+verify withGivens
+    withGivens(goalOf(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit), defs = [], consts = [], sums = [], recs = [], sigs = [], laws = [], facts = [], proof = Proof.PRefl(Term.TUnit))), [Kernel.Term.typed("xs", Ty.TyList(Ty.TyInt))]).lists => ["xs"]
 
-fn elemTy(s: Sexp) -> Result<Ty, String>
-    ? "An element type: (tint), (tlist TYPE), (tother), or a finite type in the kernel's grammar."
-    match s
-        Sexp.Node([Sexp.Atom("tint")]) -> Result.Ok(Ty.TyInt)
-        Sexp.Node([Sexp.Atom("tother")]) -> Result.Ok(Ty.TyOther)
-        Sexp.Node([Sexp.Atom("tlist"), t]) -> Result.Ok(Ty.TyList(elemTy(t)?))
-        _ -> Result.Ok(Ty.TyFin(Kernel.Decode.fin(s)?))
+fn withGiven(g0: Goal, g: TypedVar) -> Goal
+    ? "The goal with one more given, also listed among its list, Int or finite givens when its type is one of those: the views a plan reads to choose a split."
+    base = Goal.update(g0, obligation = Law.update(g0.obligation, givens = List.concat(g0.obligation.givens, [g])))
+    match (g.ty, Kernel.Types.finOf(g.ty, TyEnv(vars = [], defs = [], consts = [], sums = g0.sums, recs = g0.recs, sigs = []), []))
+        (Ty.TyList(e), _) -> Goal.update(base, lists = List.concat(base.lists, [g.name]))
+        (Ty.TyInt, _) -> Goal.update(base, ints = List.concat(base.ints, [g.name]))
+        (_, Option.Some(f)) -> Goal.update(base, finite = List.concat(base.finite, [Given(name = g.name, fin = f)]))
+        _ -> base
 
-verify elemTy
-    elemTy(Sexp.Node([Sexp.Atom("tint")])) => Result.Ok(Ty.TyInt)
-    elemTy(Sexp.Node([Sexp.Atom("tlist"), Sexp.Node([Sexp.Atom("tother")])])) => Result.Ok(Ty.TyList(Ty.TyOther))
-    elemTy(Sexp.Node([Sexp.Atom("tbool")])) => Result.Ok(Ty.TyFin(Fin.FBool))
-    elemTy(Sexp.Node([Sexp.Atom("tx")])) => Result.Err("malformed finite type")
+verify withGiven
+    withGiven(goalOf(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit), defs = [], consts = [], sums = [], recs = [], sigs = [], laws = [], facts = [], proof = Proof.PRefl(Term.TUnit))), Kernel.Term.typed("b", Ty.TyBool)).finite => [Given(name = "b", fin = Fin.FBool)]
+
+fn tyText(t: Ty) -> String
+    ? "A type in the step grammar; a type the grammar cannot state is _."
+    match t
+        Ty.TyInt -> "int"
+        Ty.TyBool -> "bool"
+        Ty.TyStr -> "str"
+        Ty.TyFloat -> "float"
+        Ty.TyUnit -> "unit"
+        Ty.TyList(a) -> "(list {tyText(a)})"
+        Ty.TyOption(a) -> "(option {tyText(a)})"
+        Ty.TyVector(a) -> "(vector {tyText(a)})"
+        Ty.TyResult(a, b) -> "(result {tyText(a)} {tyText(b)})"
+        Ty.TyMap(a, b) -> "(map {tyText(a)} {tyText(b)})"
+        Ty.TyTuple(xs) -> headed("tuple", tyTexts(xs))
+        Ty.TyNamed(n) -> "(named {n})"
+        _ -> "_"
+
+verify tyText
+    tyText(Ty.TyList(Ty.TyNamed("Shape"))) => "(list (named Shape))"
+    tyText(Ty.TyTuple([Ty.TyInt, Ty.TyAny])) => "(tuple int _)"
+
+fn tyTexts(ts: List<Ty>) -> List<String>
+    ? "Each type in the step grammar."
+    match ts
+        [] -> []
+        [t, ..rest] -> List.prepend(tyText(t), tyTexts(rest))
+
+verify tyTexts
+    tyTexts([]) => []
 
 fn answer(r: Result<Proof, String>) -> String
     ? "What the compiler reads back from a plan: `proof` and the proof, or `refused` and the plan's reason, each on the line after the word."

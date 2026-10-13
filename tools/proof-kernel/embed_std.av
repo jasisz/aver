@@ -17,7 +17,7 @@ fn run(plan: String, text: String) -> String
 
 verify run
     run("cases", "(a") => "goal\nunexpected end of data"
-    run("cases", "(steps 13 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (laws) (proof (refl (i 1))))") => "refused\nno given of finite type"
+    run("cases", "(steps 14 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))") => "refused\nno given of finite type"
 
 fn byName(plan: String, g: Goal) -> Result<Proof, String>
     ? "The standard plan a `by Kernel.Std.<plan>` line names; every plan Kernel.Std's `plans [...]` line lists has an arm."
@@ -33,4 +33,4 @@ fn script(goal: String, tactic: String, answers: String) -> String
     Kernel.Std.script(goal, tactic, answers)
 
 verify script
-    script("(steps 13 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (laws) (proof (refl (i 1))))", "(first)", "(answers)") => "refused\nFirst: none closes: "
+    script("(steps 14 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))", "(first)", "(answers)") => "refused\nFirst: none closes: "

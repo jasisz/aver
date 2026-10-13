@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 
 use crate::codegen::proof_lower::ProofLowerInputs;
-use crate::ir::hir::{ResolvedCallee, ResolvedCtor, ResolvedExpr, ResolvedPattern};
+use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
 use crate::ir::identity::FnId;
 use crate::ir::proof_steps::term::{self, Term};
 use crate::ir::proof_steps::{Const, Def, LawRef, Obligation, PlanUse, Proof, Script};
@@ -218,30 +218,6 @@ fn std_hash() -> String {
         .collect()
 }
 
-/// The text a plan reads its goal from: the step script wrapped with what
-/// each list given holds, `(goal (elems (LIST TYPE)…) SCRIPT)`, which
-/// `Kernel.Wire.goal` reads into `Goal.listElems`.
-fn goal_text(
-    script: &str,
-    elems: &[(String, super::finite::ElemType)],
-    names: &dyn crate::ir::proof_steps::sexpr::Names,
-) -> String {
-    use super::finite::ElemType;
-    fn ty(e: &ElemType, names: &dyn crate::ir::proof_steps::sexpr::Names) -> String {
-        match e {
-            ElemType::Fin(f) => crate::ir::proof_steps::sexpr::finite(f, names),
-            ElemType::Int => "(tint)".to_string(),
-            ElemType::List(inner) => format!("(tlist {})", ty(inner, names)),
-            ElemType::Other => "(tother)".to_string(),
-        }
-    }
-    let listed: Vec<String> = elems
-        .iter()
-        .map(|(n, e)| format!(" ({n} {})", ty(e, names)))
-        .collect();
-    format!("(goal (elems{})\n{script})", listed.concat())
-}
-
 /// The functions `t` calls.
 fn calls(t: &Term, out: &mut Vec<FnId>) {
     match &t.node {
@@ -251,26 +227,6 @@ fn calls(t: &Term, out: &mut Vec<FnId>) {
     }
     let _ = term::map_children(t, &mut |c| {
         calls(c, out);
-        Ok(c.clone())
-    });
-}
-
-/// The constructors `t`'s patterns and constructions name.
-fn ctors(t: &Term, out: &mut Vec<ResolvedCtor>) {
-    fn in_pattern(p: &ResolvedPattern, out: &mut Vec<ResolvedCtor>) {
-        match p {
-            ResolvedPattern::Ctor(c, _) => out.push(c.clone()),
-            ResolvedPattern::Tuple(ps) => ps.iter().for_each(|q| in_pattern(q, out)),
-            _ => {}
-        }
-    }
-    match &t.node {
-        ResolvedExpr::Ctor(c, _) => out.push(c.clone()),
-        ResolvedExpr::Match { arms, .. } => arms.iter().for_each(|a| in_pattern(&a.pattern, out)),
-        _ => {}
-    }
-    let _ = term::map_children(t, &mut |c| {
-        ctors(c, out);
         Ok(c.clone())
     });
 }
@@ -310,38 +266,18 @@ fn goal(inputs: &ProofLowerInputs, ob: &Obligation, laws: Vec<LawRef>) -> Script
         .filter(|n| !ob.givens.contains(n))
         .filter_map(|n| env.constant(n))
         .collect();
-    let mut seen = Vec::new();
-    for t in &terms {
-        ctors(t, &mut seen);
-    }
-    let mut sums: Vec<Vec<(ResolvedCtor, usize)>> = Vec::new();
-    for c in seen {
-        if let ResolvedCtor::User { type_id, .. } = &c
-            && inputs
-                .symbol_table
-                .type_entry_if_present(*type_id)
-                .is_some_and(|e| e.is_product)
-        {
-            continue;
-        }
-        let Some(variants) = super::split::variants_of(inputs, &c, None) else {
-            continue;
-        };
-        let sum: Vec<(ResolvedCtor, usize)> =
-            variants.into_iter().map(|(c, f)| (c, f.len())).collect();
-        if !sums.contains(&sum) {
-            sums.push(sum);
-        }
-    }
-    Script {
+    let mut script = Script {
         obligation: ob.clone(),
         defs,
         consts,
         laws,
-        sums,
+        decls: Default::default(),
+        sigs: Vec::new(),
         proof: Proof::Refl(ob.lhs.clone()),
         plan: None,
-    }
+    };
+    super::decls::declare_types(inputs, &mut script);
+    script
 }
 
 /// The definitions a proof names, and every definition of the goal those
@@ -564,11 +500,7 @@ fn prove_with(
     let goal = goal(inputs, &ob, laws);
     let script_text = crate::ir::proof_steps::sexpr::script(&goal, inputs.symbol_table)
         .map_err(|why| format!("plan {path}: the goal cannot be written as step data: {why}"))?;
-    let text = goal_text(
-        &script_text,
-        &super::finite::list_elem_types(inputs, t),
-        inputs.symbol_table,
-    );
+    let text = script_text;
     let limit = step_limit(inputs.proof_command);
     let runner = if module == STD_MODULE {
         None
@@ -636,12 +568,13 @@ fn prove_with(
     })?;
     let goal = extra.into_goal(goal);
     let defs = needed_defs(&goal, &proof);
-    let script = Script {
+    let mut script = Script {
         defs,
         proof,
         plan: Some(use_.clone()),
         ..goal
     };
+    super::decls::declare_types(inputs, &mut script);
     if script.proof.size() > super::MAX_PROOF_NODES {
         return Err(format!(
             "plan {path} ({}): {} steps is more than a backend should elaborate",
@@ -778,7 +711,6 @@ struct Extra {
     defs: Vec<Def>,
     consts: Vec<Const>,
     laws: Vec<LawRef>,
-    sums: Vec<Vec<(ResolvedCtor, usize)>>,
 }
 
 impl Extra {
@@ -798,11 +730,6 @@ impl Extra {
                 self.laws.push(l.clone());
             }
         }
-        for sum in &part.sums {
-            if !self.sums.contains(sum) {
-                self.sums.push(sum.clone());
-            }
-        }
     }
 
     /// The goal with what the automatic steps used added.
@@ -820,11 +747,6 @@ impl Extra {
         for l in self.laws {
             if !goal.laws.iter().any(|x| x.key == l.key) {
                 goal.laws.push(l);
-            }
-        }
-        for sum in self.sums {
-            if !goal.sums.contains(&sum) {
-                goal.sums.push(sum);
             }
         }
         goal
@@ -905,7 +827,6 @@ impl Question<'_, '_> {
         let [
             Sx::Atom(tag),
             Sx::List(givens),
-            Sx::List(_elems),
             Sx::List(from),
             Sx::List(hyps),
             premise,
@@ -938,6 +859,7 @@ impl Question<'_, '_> {
         let mut ob = Obligation {
             key: base.key.clone(),
             givens: Vec::new(),
+            types: Vec::new(),
             finite: Vec::new(),
             lists: Vec::new(),
             ints: Vec::new(),
@@ -948,25 +870,30 @@ impl Question<'_, '_> {
             lhs: self.reader.term(lhs)?,
             rhs: self.reader.term(rhs)?,
         };
+        // Each given is `(NAME TYPE)`; its type as the compiler holds it
+        // is the reader's, and the shape written says what the producers
+        // may do with it.
         for g in givens {
-            match g {
-                Sx::Atom(name) => ob.givens.push(name.clone()),
-                Sx::List(xs) => {
-                    let [Sx::Atom(name), Sx::List(ty)] = xs.as_slice() else {
-                        return Err(malformed());
-                    };
-                    ob.givens.push(name.clone());
-                    match ty.as_slice() {
-                        [Sx::Atom(t)] if t == "tlist" => ob.lists.push(name.clone()),
-                        [Sx::Atom(t)] if t == "tint" => ob.ints.push(name.clone()),
-                        _ => {
-                            if let Some(f) = base.finite.iter().find(|(n, _)| n == name) {
-                                ob.finite.push(f.clone());
-                            }
-                        }
+            let Sx::List(xs) = g else {
+                return Err(malformed());
+            };
+            let [Sx::Atom(name), ty] = xs.as_slice() else {
+                return Err(malformed());
+            };
+            ob.givens.push(name.clone());
+            if let Some(t) = self.reader.var_type(name) {
+                ob.types.push((name.clone(), t));
+            }
+            match ty {
+                Sx::List(t) if matches!(t.first(), Some(Sx::Atom(h)) if h == "list") => {
+                    ob.lists.push(name.clone())
+                }
+                Sx::Atom(t) if t == "int" => ob.ints.push(name.clone()),
+                _ => {
+                    if let Some(f) = base.finite.iter().find(|(n, _)| n == name) {
+                        ob.finite.push(f.clone());
                     }
                 }
-                Sx::Text(_) => return Err(malformed()),
             }
         }
         let mut known = Vec::new();

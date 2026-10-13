@@ -1788,7 +1788,11 @@ pub fn letBindings(
     {
         crate::proof_std::aver_generated::kernel::lib::bindLets(
             d.lets.clone(),
-            crate::proof_std::aver_generated::kernel::lib::zipBind(&d.params, args).reverse(),
+            crate::proof_std::aver_generated::kernel::lib::zipBind(
+                &crate::proof_std::aver_generated::kernel::proof::givenNames(&d.params),
+                args,
+            )
+            .reverse(),
         )
     } else {
         Err(aver_rt::AverStr::from({
@@ -2310,7 +2314,10 @@ pub fn taken(
         ));
     aver_rt::AverList::concat(
         &aver_rt::AverList::concat(
-            &aver_rt::AverList::concat(&ob.givens, &vars),
+            &aver_rt::AverList::concat(
+                &crate::proof_std::aver_generated::kernel::proof::givenNames(&ob.givens),
+                &vars,
+            ),
             &aver_rt::AverList::concat(
                 &aver_rt::AverList::concat(
                     &crate::proof_std::aver_generated::kernel::lib::whenLabel(goal),
@@ -2353,24 +2360,31 @@ pub fn constNames(
     aver_list_match!(cs.clone(), [] => aver_rt::AverList::empty(), [c, rest] => aver_rt::AverList::prepend(c.name, &crate::proof_std::aver_generated::kernel::lib::constNames(&rest)))
 }
 
-/// A goal for law with nothing else in it: no definitions, laws, hypotheses or givens of special type. For a plan's examples, so they keep reading the same when Goal gains a field.
+/// A goal for law with nothing else in it: no definitions, laws or hypotheses, its givens listed by what their types are. For a plan's examples, so they keep reading the same when Goal gains a field.
+#[inline(always)]
 pub fn goalFor(
     law @ _: &crate::proof_std::aver_generated::kernel::proof::Law,
 ) -> crate::proof_std::aver_generated::kernel::proof::Goal {
     crate::proof_std::cancel_checkpoint();
-    crate::proof_std::aver_generated::kernel::proof::Goal {
-        obligation: law.clone(),
-        finite: aver_rt::AverList::empty(),
-        lists: aver_rt::AverList::empty(),
-        ints: aver_rt::AverList::empty(),
-        defs: aver_rt::AverList::empty(),
-        consts: aver_rt::AverList::empty(),
-        sums: aver_rt::AverList::empty(),
-        laws: aver_rt::AverList::empty(),
-        facts: aver_rt::AverList::empty(),
-        hyps: aver_rt::AverList::empty(),
-        listElems: aver_rt::AverList::empty(),
-    }
+    crate::proof_std::aver_generated::kernel::wire::withGivens(
+        crate::proof_std::aver_generated::kernel::proof::Goal {
+            obligation: crate::proof_std::aver_generated::kernel::proof::Law {
+                givens: aver_rt::AverList::empty(),
+                ..law.clone()
+            },
+            finite: aver_rt::AverList::empty(),
+            lists: aver_rt::AverList::empty(),
+            ints: aver_rt::AverList::empty(),
+            defs: aver_rt::AverList::empty(),
+            consts: aver_rt::AverList::empty(),
+            sums: aver_rt::AverList::empty(),
+            recs: aver_rt::AverList::empty(),
+            laws: aver_rt::AverList::empty(),
+            facts: aver_rt::AverList::empty(),
+            hyps: aver_rt::AverList::empty(),
+        },
+        law.givens.clone(),
+    )
 }
 
 /// The goal step data states, its proof left out: how the compiler hands a plan its goal.

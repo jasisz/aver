@@ -297,10 +297,11 @@ impl<'a> Env<'a> {
         let binding = crate::codegen::proof_lower::module_bindings_of(self.inputs, scope)
             .into_iter()
             .find(|b| b.name == short)?;
-        binding.declared_type().ok()?;
+        let ty = binding.declared_type().ok()?;
         let value = canon(&self.inputs.resolve_expr(&binding.value, scope));
         Some(Const {
             name: name.to_string(),
+            ty: super::finite::qualify(self.inputs, &ty, scope),
             value: qualify_bindings(&value, self.inputs, scope),
         })
     }
@@ -423,7 +424,18 @@ impl<'a> Env<'a> {
             fn_id: id,
             name,
             params: fd.params.iter().map(|(n, _)| n.clone()).collect(),
-            returns_bool: fd.return_type == "Bool",
+            param_types: fd
+                .params
+                .iter()
+                .map(|(_, t)| {
+                    super::finite::qualify(self.inputs, &crate::types::parse_type_str(t), scope)
+                })
+                .collect(),
+            ret: super::finite::qualify(
+                self.inputs,
+                &crate::types::parse_type_str(&fd.return_type),
+                scope,
+            ),
             lets,
             body,
         })

@@ -1,0 +1,9 @@
+(steps 14
+ (obligation k () (none) (op + (s "a") (s "b")) (op + (s "b") (s "a")))
+ (defs)
+ (consts)
+ (sums)
+ (recs)
+ (sigs)
+ (laws)
+ (proof (rule int.add_comm ((a (s "a")) (b (s "b"))))))

@@ -157,6 +157,7 @@ fn kernel_computes(t: &Term, value: &Term) -> Result<String, String> {
         obligation: Obligation {
             key: "k".into(),
             givens: Vec::new(),
+            types: Vec::new(),
             finite: Vec::new(),
             lists: Vec::new(),
             ints: Vec::new(),
@@ -167,7 +168,8 @@ fn kernel_computes(t: &Term, value: &Term) -> Result<String, String> {
         defs: Vec::new(),
         consts: Vec::new(),
         laws: Vec::new(),
-        sums: Vec::new(),
+        decls: Default::default(),
+        sigs: Vec::new(),
         plan: None,
         proof: Proof::Compute {
             lhs: t.clone(),

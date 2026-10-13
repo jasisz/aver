@@ -102,15 +102,15 @@ verify helperCalls
 
 fn helperBody(h: Def, xs: List<Term>, f: String, bound: List<String>, ds: List<Def>, fuel: Int) -> Result<List<Call>, String>
     ? "A helper called with every argument: each call of f in its body, its local bindings substituted in order, read at xs. No local binding may call f: a call there would run whatever the body does with it."
-    match (List.len(h.params) == List.len(xs), letCalls(h.lets, f, ds, fuel - 1)? == 0)
+    match (List.len(Kernel.Proof.givenNames(h.params)) == List.len(xs), letCalls(h.lets, f, ds, fuel - 1)? == 0)
         (false, _) -> Result.Err("{h.name} takes {List.len(h.params)} arguments")
         (_, false) -> Result.Err("{f} recurses from a local binding of {h.name}")
         _ -> readAt(selfCalls(Kernel.Subst.subst(h.body, letsInlined(h.lets, [])?)?, f, [], ds, fuel - 1)?, h, xs, bound)
 
 verify helperBody
     helperBody(orOn(Term.TCall("any", [Term.TVar("rest")])), [Term.TVar("h")], "any", [], [], 1) => Result.Err("orOn takes 2 arguments")
-    helperBody(Def(name = "g", returnsBool = false, params = [], lets = [Kernel.Term.bind("y", Term.TCall("f", []))], body = Term.TInt(1)), [], "f", [], [], 1) => Result.Err("f recurses from a local binding of g")
-    helperBody(Def(name = "g", returnsBool = false, params = ["r"], lets = [Kernel.Term.bind("y", Term.TBi("List.drop", [Term.TVar("r"), Term.TInt(2)]))], body = Term.TCall("f", [Term.TVar("y")])), [Term.TVar("t")], "f", [], [], 1) => Result.Ok([Call(args = [Term.TBi("List.drop", [Term.TVar("t"), Term.TInt(2)])], inner = [])])
+    helperBody(Def(name = "g", params = [], ret = Ty.TyAny, lets = [Kernel.Term.bind("y", Term.TCall("f", []))], body = Term.TInt(1)), [], "f", [], [], 1) => Result.Err("f recurses from a local binding of g")
+    helperBody(Def(name = "g", params = [Kernel.Term.typed("r", Ty.TyAny)], ret = Ty.TyAny, lets = [Kernel.Term.bind("y", Term.TBi("List.drop", [Term.TVar("r"), Term.TInt(2)]))], body = Term.TCall("f", [Term.TVar("y")])), [Term.TVar("t")], "f", [], [], 1) => Result.Ok([Call(args = [Term.TBi("List.drop", [Term.TVar("t"), Term.TInt(2)])], inner = [])])
 
 fn letsInlined(lets: List<Binding>, done: List<Binding>) -> Result<List<Binding>, String>
     ? "Each local binding, in order, bound to its value with the bindings before it substituted; the latest name comes first."
@@ -133,8 +133,8 @@ verify readAt
 fn readOne(c: Call, h: Def, xs: List<Term>, bound: List<String>) -> Result<Call, String>
     ? "One call of f in h's body at the arguments h is called with: h's parameters that no arm of h rebinds around it replaced, refusing a capture. It may read nothing else of h's scope. The names bound around the call of h come before those h binds around it."
     used = Kernel.Subst.freeVarsAll(c.args)
-    bs = Kernel.Subst.unbind(paramsAt(h.params, xs), c.inner)
-    unread(Kernel.Subst.without(used, List.concat(h.params, c.inner)), h.name)?
+    bs = Kernel.Subst.unbind(paramsAt(Kernel.Proof.givenNames(h.params), xs), c.inner)
+    unread(Kernel.Subst.without(used, List.concat(Kernel.Proof.givenNames(h.params), c.inner)), h.name)?
     Kernel.Subst.capture(bs, used, c.inner)?
     Result.Ok(Call(args = Kernel.Subst.substAll(c.args, bs)?, inner = List.concat(bound, c.inner)))
 
@@ -195,7 +195,7 @@ fn calls(t: Term, d: Def, ds: List<Def>) -> Result<List<Call>, String>
     selfCalls(t, d.name, [], ds, List.len(ds))
 
 verify calls
-    calls(Term.TCall("f", []), Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TUnit), []) => Result.Ok([Call(args = [], inner = [])])
+    calls(Term.TCall("f", []), Def(name = "f", params = [], ret = Ty.TyAny, lets = [], body = Term.TUnit), []) => Result.Ok([Call(args = [], inner = [])])
 
 fn recursion(d: Def, ds: List<Def>) -> Result<Option<Recursion>, String>
     ? "None when d does not call itself, directly or through other definitions of ds that call back into it. Otherwise what the gate checked, which opening d and an induction along it both read: the place of the parameter d recurses on, the comparison its match splits on when it counts that Int toward zero (none when it matches the value itself), and each arm with its recursive calls, every one of them checked to descend. A refusal when one does not."
@@ -204,13 +204,13 @@ fn recursion(d: Def, ds: List<Def>) -> Result<Option<Recursion>, String>
         _ -> Result.Ok(Option.Some(recursive(d, ds)?))
 
 verify recursion
-    recursion(Def(name = "f", returnsBool = false, params = ["x"], lets = [], body = Term.TVar("x")), []) => Result.Ok(Option.None)
-    recursion(Def(name = "f", returnsBool = false, params = ["x"], lets = [], body = Term.TMatch(Term.TVar("x"), [Arm(pattern = Pat.PNil, body = Term.TInt(0)), Arm(pattern = Pat.PCons("h", "t"), body = Term.TCall("f", [Term.TVar("t")]))])), []) => Result.Ok(Option.Some(Recursion(at = 0, guard = Option.None, arms = [ArmCalls(arm = Arm(pattern = Pat.PNil, body = Term.TInt(0)), calls = []), ArmCalls(arm = Arm(pattern = Pat.PCons("h", "t"), body = Term.TCall("f", [Term.TVar("t")])), calls = [Call(args = [Term.TVar("t")], inner = [])])])))
-    recursion(Def(name = "f", returnsBool = false, params = ["x"], lets = [], body = Term.TMatch(Term.TVar("x"), [Arm(pattern = Pat.PCons("h", "t"), body = Term.TCall("f", [Term.TVar("x")]))])), []) => Result.Err("f recurses on something that is not a part of the value it matches")
-    recursion(Def(name = "f", returnsBool = false, params = ["x"], lets = [], body = Term.TCall("f", [Term.TVar("x")])), []) => Result.Err("f recurses outside a match on a parameter")
-    recursion(Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TMatch(Term.TOp("<=", Term.TVar("n"), Term.TInt(0)), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TInt(1)), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TCall("f", [Term.TOp("-", Term.TVar("n"), Term.TInt(1))]))])), []) => Result.Ok(Option.Some(Recursion(at = 0, guard = Option.Some(Term.TOp("<=", Term.TVar("n"), Term.TInt(0))), arms = [ArmCalls(arm = Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TInt(1)), calls = []), ArmCalls(arm = Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TCall("f", [Term.TOp("-", Term.TVar("n"), Term.TInt(1))])), calls = [Call(args = [Term.TOp("-", Term.TVar("n"), Term.TInt(1))], inner = [])])])))
-    recursion(Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TMatch(Term.TOp("<=", Term.TVar("n"), Term.TInt(1)), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TInt(1)), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TCall("f", [Term.TOp("-", Term.TVar("n"), Term.TInt(1))]))])), []) => Result.Err("f recurses outside a match on a parameter")
-    recursion(Def(name = "f", returnsBool = false, params = [], lets = [Kernel.Term.bind("y", Term.TInt(1))], body = Term.TCall("f", [])), []) => Result.Err("f recurses from a local binding")
+    recursion(Def(name = "f", params = [Kernel.Term.typed("x", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TVar("x")), []) => Result.Ok(Option.None)
+    recursion(Def(name = "f", params = [Kernel.Term.typed("x", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TMatch(Term.TVar("x"), [Arm(pattern = Pat.PNil, body = Term.TInt(0)), Arm(pattern = Pat.PCons("h", "t"), body = Term.TCall("f", [Term.TVar("t")]))])), []) => Result.Ok(Option.Some(Recursion(at = 0, guard = Option.None, arms = [ArmCalls(arm = Arm(pattern = Pat.PNil, body = Term.TInt(0)), calls = []), ArmCalls(arm = Arm(pattern = Pat.PCons("h", "t"), body = Term.TCall("f", [Term.TVar("t")])), calls = [Call(args = [Term.TVar("t")], inner = [])])])))
+    recursion(Def(name = "f", params = [Kernel.Term.typed("x", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TMatch(Term.TVar("x"), [Arm(pattern = Pat.PCons("h", "t"), body = Term.TCall("f", [Term.TVar("x")]))])), []) => Result.Err("f recurses on something that is not a part of the value it matches")
+    recursion(Def(name = "f", params = [Kernel.Term.typed("x", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TCall("f", [Term.TVar("x")])), []) => Result.Err("f recurses outside a match on a parameter")
+    recursion(Def(name = "f", params = [Kernel.Term.typed("n", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TMatch(Term.TOp("<=", Term.TVar("n"), Term.TInt(0)), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TInt(1)), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TCall("f", [Term.TOp("-", Term.TVar("n"), Term.TInt(1))]))])), []) => Result.Ok(Option.Some(Recursion(at = 0, guard = Option.Some(Term.TOp("<=", Term.TVar("n"), Term.TInt(0))), arms = [ArmCalls(arm = Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TInt(1)), calls = []), ArmCalls(arm = Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TCall("f", [Term.TOp("-", Term.TVar("n"), Term.TInt(1))])), calls = [Call(args = [Term.TOp("-", Term.TVar("n"), Term.TInt(1))], inner = [])])])))
+    recursion(Def(name = "f", params = [Kernel.Term.typed("n", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TMatch(Term.TOp("<=", Term.TVar("n"), Term.TInt(1)), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TInt(1)), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TCall("f", [Term.TOp("-", Term.TVar("n"), Term.TInt(1))]))])), []) => Result.Err("f recurses outside a match on a parameter")
+    recursion(Def(name = "f", params = [], ret = Ty.TyAny, lets = [Kernel.Term.bind("y", Term.TInt(1))], body = Term.TCall("f", [])), []) => Result.Err("f recurses from a local binding")
     recursion(listAny(), [listAny(), orOn(Term.TCall("any", [Term.TVar("rest")]))]) => Result.Ok(Option.Some(Recursion(at = 0, guard = Option.None, arms = [ArmCalls(arm = Arm(pattern = Pat.PNil, body = Term.TBool(false)), calls = []), ArmCalls(arm = Arm(pattern = Pat.PCons("h", "t"), body = Term.TCall("orOn", [Term.TVar("h"), Term.TVar("t")])), calls = [Call(args = [Term.TVar("t")], inner = [])])])))
     recursion(listAny(), [listAny(), orOn(Term.TCall("any", [Term.TList([Term.TVar("first")])]))]) => Result.Err("any recurses on something that is not a part of the value it matches")
     recursion(listAny(), [listAny(), orOn(Term.TMatch(Term.TVar("first"), [Arm(pattern = Pat.PVar("t"), body = Term.TCall("any", [Term.TVar("t")]))]))]) => Result.Err("any recurses on something that is not a part of the value it matches")
@@ -227,14 +227,14 @@ verify recursion
 fn recursive(d: Def, ds: List<Def>) -> Result<Recursion, String>
     ? "The gate for a definition that does call itself: no local bindings, and a body that matches a parameter or compares one with zero."
     match (d.lets, d.body)
-        ([], Term.TMatch(Term.TVar(p), arms)) -> onParts(d, ds, indexOf(d.params, p, 0), arms)
-        ([], Term.TMatch(Term.TOp(op, Term.TVar(p), Term.TInt(0)), arms)) -> towardZero(d, ds, Term.TOp(op, Term.TVar(p), Term.TInt(0)), p, indexOf(d.params, p, 0), arms)
+        ([], Term.TMatch(Term.TVar(p), arms)) -> onParts(d, ds, indexOf(Kernel.Proof.givenNames(d.params), p, 0), arms)
+        ([], Term.TMatch(Term.TOp(op, Term.TVar(p), Term.TInt(0)), arms)) -> towardZero(d, ds, Term.TOp(op, Term.TVar(p), Term.TInt(0)), p, indexOf(Kernel.Proof.givenNames(d.params), p, 0), arms)
         ([], _) -> Result.Err("{d.name} recurses outside a match on a parameter")
         _ -> Result.Err("{d.name} recurses from a local binding")
 
 verify recursive
-    recursive(Def(name = "f", returnsBool = false, params = ["x"], lets = [], body = Term.TMatch(Term.TVar("y"), [])), []) => Result.Err("f recurses on a match whose subject is not a parameter")
-    recursive(Def(name = "f", returnsBool = false, params = ["x"], lets = [], body = Term.TMatch(Term.TOp("<=", Term.TVar("y"), Term.TInt(0)), [])), []) => Result.Err("f recurses on a match whose subject is not a parameter")
+    recursive(Def(name = "f", params = [Kernel.Term.typed("x", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TMatch(Term.TVar("y"), [])), []) => Result.Err("f recurses on a match whose subject is not a parameter")
+    recursive(Def(name = "f", params = [Kernel.Term.typed("x", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TMatch(Term.TOp("<=", Term.TVar("y"), Term.TInt(0)), [])), []) => Result.Err("f recurses on a match whose subject is not a parameter")
 
 fn onParts(d: Def, ds: List<Def>, j: Int, arms: List<Arm>) -> Result<Recursion, String>
     ? "Every recursive call passes, at place j, a name its arm's pattern binds and no inner arm rebinds, or List.drop of one: a value smaller than the one matched."
@@ -245,7 +245,7 @@ fn onParts(d: Def, ds: List<Def>, j: Int, arms: List<Arm>) -> Result<Recursion, 
             false -> Result.Err("{d.name} recurses on something that is not a part of the value it matches")
 
 verify onParts
-    onParts(Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TUnit), [], 0 - 1, []) => Result.Err("f recurses on a match whose subject is not a parameter")
+    onParts(Def(name = "f", params = [], ret = Ty.TyAny, lets = [], body = Term.TUnit), [], 0 - 1, []) => Result.Err("f recurses on a match whose subject is not a parameter")
 
 fn armCalls(arms: List<Arm>, d: Def, ds: List<Def>) -> Result<List<ArmCalls>, String>
     ? "Each arm with the recursive calls in it, as selfCalls lists them."
@@ -254,7 +254,7 @@ fn armCalls(arms: List<Arm>, d: Def, ds: List<Def>) -> Result<List<ArmCalls>, St
         [a, ..rest] -> Result.Ok(List.prepend(ArmCalls(arm = a, calls = calls(a.body, d, ds)?), armCalls(rest, d, ds)?))
 
 verify armCalls
-    armCalls([Arm(pattern = Pat.PWild, body = Term.TCall("f", []))], Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TUnit), []) => Result.Ok([ArmCalls(arm = Arm(pattern = Pat.PWild, body = Term.TCall("f", [])), calls = [Call(args = [], inner = [])])])
+    armCalls([Arm(pattern = Pat.PWild, body = Term.TCall("f", []))], Def(name = "f", params = [], ret = Ty.TyAny, lets = [], body = Term.TUnit), []) => Result.Ok([ArmCalls(arm = Arm(pattern = Pat.PWild, body = Term.TCall("f", [])), calls = [Call(args = [], inner = [])])])
 
 fn towardZero(d: Def, ds: List<Def>, guard: Term, p: String, j: Int, arms: List<Arm>) -> Result<Recursion, String>
     ? "match p <= 0 or match p > 0, one arm per truth value: the arm where the comparison says p is at most 0 makes no recursive call, and every call in the other passes p - 1 or p / k at p's place, for a literal k of at least 2, p not rebound around it. Where p > 0 both are at least 0 and below p, so the recursion stops for every Int."
@@ -266,12 +266,12 @@ fn towardZero(d: Def, ds: List<Def>, guard: Term, p: String, j: Int, arms: List<
         _ -> Result.Err("{d.name} does not count {p} down to zero")
 
 verify towardZero
-    towardZero(Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TUnit), [], Term.TOp(">", Term.TVar("n"), Term.TInt(0)), "n", 0, [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TOp("+", Term.TCall("f", [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(2)])]), Term.TCall("f", [Term.TOp("-", Term.TVar("n"), Term.TInt(1))]))), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(0))]) => Result.Ok(Recursion(at = 0, guard = Option.Some(Term.TOp(">", Term.TVar("n"), Term.TInt(0))), arms = [ArmCalls(arm = Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TOp("+", Term.TCall("f", [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(2)])]), Term.TCall("f", [Term.TOp("-", Term.TVar("n"), Term.TInt(1))]))), calls = [Call(args = [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(2)])], inner = []), Call(args = [Term.TOp("-", Term.TVar("n"), Term.TInt(1))], inner = [])]), ArmCalls(arm = Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(0)), calls = [])]))
-    towardZero(Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TUnit), [], Term.TOp(">", Term.TVar("n"), Term.TInt(0)), "n", 0, [Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TCall("f", [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(2)])])), Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TInt(0))]) => Result.Err("f does not count n down to zero")
-    towardZero(Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TUnit), [], Term.TOp("<=", Term.TVar("n"), Term.TInt(0)), "n", 0, [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TCall("f", [Term.TOp("-", Term.TVar("n"), Term.TInt(1))])), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(1))]) => Result.Err("f does not count n down to zero")
-    towardZero(Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TUnit), [], Term.TOp(">=", Term.TVar("n"), Term.TInt(0)), "n", 0, [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TCall("f", [Term.TOp("-", Term.TVar("n"), Term.TInt(1))])), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(1))]) => Result.Err("f does not count n down to zero")
-    towardZero(Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TUnit), [], Term.TOp("<=", Term.TVar("n"), Term.TInt(0)), "n", 0, [Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TCall("f", [Term.TOp("-", Term.TVar("n"), Term.TInt(1))])), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(1))]) => Result.Err("f does not count n down to zero")
-    towardZero(Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TUnit), [], Term.TOp("<=", Term.TVar("n"), Term.TInt(0)), "n", 0 - 1, []) => Result.Err("f recurses on a match whose subject is not a parameter")
+    towardZero(Def(name = "f", params = [Kernel.Term.typed("n", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TUnit), [], Term.TOp(">", Term.TVar("n"), Term.TInt(0)), "n", 0, [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TOp("+", Term.TCall("f", [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(2)])]), Term.TCall("f", [Term.TOp("-", Term.TVar("n"), Term.TInt(1))]))), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(0))]) => Result.Ok(Recursion(at = 0, guard = Option.Some(Term.TOp(">", Term.TVar("n"), Term.TInt(0))), arms = [ArmCalls(arm = Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TOp("+", Term.TCall("f", [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(2)])]), Term.TCall("f", [Term.TOp("-", Term.TVar("n"), Term.TInt(1))]))), calls = [Call(args = [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(2)])], inner = []), Call(args = [Term.TOp("-", Term.TVar("n"), Term.TInt(1))], inner = [])]), ArmCalls(arm = Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(0)), calls = [])]))
+    towardZero(Def(name = "f", params = [Kernel.Term.typed("n", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TUnit), [], Term.TOp(">", Term.TVar("n"), Term.TInt(0)), "n", 0, [Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TCall("f", [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(2)])])), Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TInt(0))]) => Result.Err("f does not count n down to zero")
+    towardZero(Def(name = "f", params = [Kernel.Term.typed("n", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TUnit), [], Term.TOp("<=", Term.TVar("n"), Term.TInt(0)), "n", 0, [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TCall("f", [Term.TOp("-", Term.TVar("n"), Term.TInt(1))])), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(1))]) => Result.Err("f does not count n down to zero")
+    towardZero(Def(name = "f", params = [Kernel.Term.typed("n", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TUnit), [], Term.TOp(">=", Term.TVar("n"), Term.TInt(0)), "n", 0, [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TCall("f", [Term.TOp("-", Term.TVar("n"), Term.TInt(1))])), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(1))]) => Result.Err("f does not count n down to zero")
+    towardZero(Def(name = "f", params = [Kernel.Term.typed("n", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TUnit), [], Term.TOp("<=", Term.TVar("n"), Term.TInt(0)), "n", 0, [Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TCall("f", [Term.TOp("-", Term.TVar("n"), Term.TInt(1))])), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(1))]) => Result.Err("f does not count n down to zero")
+    towardZero(Def(name = "f", params = [Kernel.Term.typed("n", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TUnit), [], Term.TOp("<=", Term.TVar("n"), Term.TInt(0)), "n", 0 - 1, []) => Result.Err("f recurses on a match whose subject is not a parameter")
 
 fn stopsAt(guard: Term) -> Option<Bool>
     ? "The value of the comparison where p is at most 0: true for p <= 0, false for p > 0; none for any other comparison."
@@ -303,8 +303,8 @@ fn armDescends(a: Arm, stop: Bool, d: Def, ds: List<Def>, p: String, j: Int) -> 
         false -> Result.Ok(callsDescend(calls(a.body, d, ds)?, p, j, List.len(d.params)))
 
 verify armDescends
-    armDescends(Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TCall("f", [Term.TInt(0)])), true, Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TUnit), [], "n", 0) => Result.Ok(false)
-    armDescends(Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TMatch(Term.TVar("x"), [Arm(pattern = Pat.PVar("n"), body = Term.TCall("f", [Term.TOp("-", Term.TVar("n"), Term.TInt(1))]))])), true, Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TUnit), [], "n", 0) => Result.Ok(false)
+    armDescends(Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TCall("f", [Term.TInt(0)])), true, Def(name = "f", params = [Kernel.Term.typed("n", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TUnit), [], "n", 0) => Result.Ok(false)
+    armDescends(Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TMatch(Term.TVar("x"), [Arm(pattern = Pat.PVar("n"), body = Term.TCall("f", [Term.TOp("-", Term.TVar("n"), Term.TInt(1))]))])), true, Def(name = "f", params = [Kernel.Term.typed("n", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TUnit), [], "n", 0) => Result.Ok(false)
 
 fn callsDescend(cs: List<Call>, p: String, j: Int, n: Int) -> Bool
     ? "Each call has every argument and passes p - 1 or p / k at place j, p not rebound around it."
@@ -346,9 +346,9 @@ fn openGate(d: Def, ds: List<Def>) -> Result<Unit, String>
             false -> Result.Err(why)
 
 verify openGate
-    openGate(Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TMatch(Term.TOp(">", Term.TVar("n"), Term.TInt(0)), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TCall("f", [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(256)])])), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(0))])), []) => Result.Ok(Unit)
-    openGate(Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TMatch(Term.TOp(">", Term.TVar("n"), Term.TInt(0)), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TCall("f", [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(1)])])), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(0))])), []) => Result.Err("f does not count n down to zero")
-    openGate(Def(name = "f", returnsBool = false, params = ["n"], lets = [], body = Term.TCall("f", [Term.TVar("n")])), []) => Result.Err("f recurses outside a match on a parameter")
+    openGate(Def(name = "f", params = [Kernel.Term.typed("n", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TMatch(Term.TOp(">", Term.TVar("n"), Term.TInt(0)), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TCall("f", [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(256)])])), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(0))])), []) => Result.Ok(Unit)
+    openGate(Def(name = "f", params = [Kernel.Term.typed("n", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TMatch(Term.TOp(">", Term.TVar("n"), Term.TInt(0)), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TCall("f", [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(1)])])), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(0))])), []) => Result.Err("f does not count n down to zero")
+    openGate(Def(name = "f", params = [Kernel.Term.typed("n", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TCall("f", [Term.TVar("n")])), []) => Result.Err("f recurses outside a match on a parameter")
     openGate(orOn(Term.TCall("any", [Term.TVar("rest")])), [listAny(), orOn(Term.TCall("any", [Term.TVar("rest")]))]) => Result.Ok(Unit)
     openGate(orOn(Term.TCall("any", [Term.TList([Term.TVar("first")])])), [listAny(), orOn(Term.TCall("any", [Term.TList([Term.TVar("first")])]))]) => Result.Err("orOn does not count first down to zero")
 
@@ -384,38 +384,38 @@ verify descendsThrough
 
 fn listAny() -> Def
     ? "A fixture for the tests: any(xs) matches a list and calls orOn on its head and tail."
-    Def(name = "any", returnsBool = true, params = ["xs"], lets = [], body = Term.TMatch(Term.TVar("xs"), [Arm(pattern = Pat.PNil, body = Term.TBool(false)), Arm(pattern = Pat.PCons("h", "t"), body = Term.TCall("orOn", [Term.TVar("h"), Term.TVar("t")]))]))
+    Def(name = "any", params = [Kernel.Term.typed("xs", Ty.TyAny)], ret = Ty.TyBool, lets = [], body = Term.TMatch(Term.TVar("xs"), [Arm(pattern = Pat.PNil, body = Term.TBool(false)), Arm(pattern = Pat.PCons("h", "t"), body = Term.TCall("orOn", [Term.TVar("h"), Term.TVar("t")]))]))
 
 verify listAny
     listAny().name => "any"
 
 fn walks() -> Def
     ? "A fixture for the tests: walk(xs) matches a list and hands its head and tail to skip."
-    Def(name = "walk", returnsBool = false, params = ["xs"], lets = [], body = Term.TMatch(Term.TVar("xs"), [Arm(pattern = Pat.PNil, body = Term.TInt(0)), Arm(pattern = Pat.PCons("h", "t"), body = Term.TCall("skip", [Term.TVar("h"), Term.TVar("t")]))]))
+    Def(name = "walk", params = [Kernel.Term.typed("xs", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TMatch(Term.TVar("xs"), [Arm(pattern = Pat.PNil, body = Term.TInt(0)), Arm(pattern = Pat.PCons("h", "t"), body = Term.TCall("skip", [Term.TVar("h"), Term.TVar("t")]))]))
 
 verify walks
     walks().name => "walk"
 
 fn skipping(lets: List<Binding>, body: Term) -> Def
     ? "A fixture for the tests: skip(n, rest) with these local bindings and this body."
-    Def(name = "skip", returnsBool = false, params = ["n", "rest"], lets = lets, body = body)
+    Def(name = "skip", params = [Kernel.Term.typed("n", Ty.TyAny), Kernel.Term.typed("rest", Ty.TyAny)], ret = Ty.TyAny, lets = lets, body = body)
 
 verify skipping
-    skipping([], Term.TUnit).params => ["n", "rest"]
+    Kernel.Proof.givenNames(skipping([], Term.TUnit).params) => ["n", "rest"]
 
 fn dropsBy(next: Term) -> Def
     ? "A fixture for the tests: f(xs, k) matches a list and calls itself on next in its cell arm."
-    Def(name = "f", returnsBool = false, params = ["xs", "k"], lets = [], body = Term.TMatch(Term.TVar("xs"), [Arm(pattern = Pat.PNil, body = Term.TInt(0)), Arm(pattern = Pat.PCons("h", "t"), body = Term.TCall("f", [next, Term.TVar("k")]))]))
+    Def(name = "f", params = [Kernel.Term.typed("xs", Ty.TyAny), Kernel.Term.typed("k", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TMatch(Term.TVar("xs"), [Arm(pattern = Pat.PNil, body = Term.TInt(0)), Arm(pattern = Pat.PCons("h", "t"), body = Term.TCall("f", [next, Term.TVar("k")]))]))
 
 verify dropsBy
-    dropsBy(Term.TUnit).params => ["xs", "k"]
+    Kernel.Proof.givenNames(dropsBy(Term.TUnit).params) => ["xs", "k"]
 
 fn orOn(back: Term) -> Def
     ? "A fixture for the tests: orOn(first, rest) is true when first is not 0, and back otherwise."
-    Def(name = "orOn", returnsBool = true, params = ["first", "rest"], lets = [], body = Term.TMatch(Term.TOp("!=", Term.TVar("first"), Term.TInt(0)), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TBool(true)), Arm(pattern = Pat.PLit(Term.TBool(false)), body = back)]))
+    Def(name = "orOn", params = [Kernel.Term.typed("first", Ty.TyAny), Kernel.Term.typed("rest", Ty.TyAny)], ret = Ty.TyBool, lets = [], body = Term.TMatch(Term.TOp("!=", Term.TVar("first"), Term.TInt(0)), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TBool(true)), Arm(pattern = Pat.PLit(Term.TBool(false)), body = back)]))
 
 verify orOn
-    orOn(Term.TUnit).params => ["first", "rest"]
+    Kernel.Proof.givenNames(orOn(Term.TUnit).params) => ["first", "rest"]
 
 fn armsShrink(arms: List<Arm>, d: Def, ds: List<Def>, j: Int) -> Result<Bool, String>
     ? "Every arm passes, at place j of each recursive call, a name its pattern binds and no inner arm rebinds."
@@ -482,8 +482,8 @@ fn refuseMutualRecursion(ds: List<Def>) -> Result<Unit, String>
         _ -> eachNotMutual(ds, ds)
 
 verify refuseMutualRecursion
-    refuseMutualRecursion([Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TCall("g", [])), Def(name = "g", returnsBool = false, params = [], lets = [], body = Term.TCall("f", []))]) => Result.Err("f is part of a mutual recursion")
-    refuseMutualRecursion([Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TCall("f", [])), Def(name = "g", returnsBool = false, params = [], lets = [], body = Term.TCall("f", []))]) => Result.Ok(Unit)
+    refuseMutualRecursion([Def(name = "f", params = [], ret = Ty.TyAny, lets = [], body = Term.TCall("g", [])), Def(name = "g", params = [], ret = Ty.TyAny, lets = [], body = Term.TCall("f", []))]) => Result.Err("f is part of a mutual recursion")
+    refuseMutualRecursion([Def(name = "f", params = [], ret = Ty.TyAny, lets = [], body = Term.TCall("f", [])), Def(name = "g", params = [], ret = Ty.TyAny, lets = [], body = Term.TCall("f", []))]) => Result.Ok(Unit)
     refuseMutualRecursion([listAny(), orOn(Term.TCall("any", [Term.TVar("rest")]))]) => Result.Ok(Unit)
     refuseMutualRecursion([listAny(), orOn(Term.TCall("orOn", [Term.TVar("first"), Term.TCall("any", [Term.TVar("rest")])]))]) => Result.Err("any is part of a mutual recursion")
 
@@ -522,14 +522,14 @@ fn calleesOf(name: String, todo: List<Def>, ds: List<Def>) -> List<String>
 
 verify calleesOf
     calleesOf("f", [], []) => []
-    calleesOf("g", [Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TUnit), Def(name = "g", returnsBool = false, params = [], lets = [], body = Term.TCall("f", []))], [Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TUnit), Def(name = "g", returnsBool = false, params = [], lets = [], body = Term.TCall("f", []))]) => ["f"]
+    calleesOf("g", [Def(name = "f", params = [], ret = Ty.TyAny, lets = [], body = Term.TUnit), Def(name = "g", params = [], ret = Ty.TyAny, lets = [], body = Term.TCall("f", []))], [Def(name = "f", params = [], ret = Ty.TyAny, lets = [], body = Term.TUnit), Def(name = "g", params = [], ret = Ty.TyAny, lets = [], body = Term.TCall("f", []))]) => ["f"]
 
 fn callees(d: Def, ds: List<Def>) -> List<String>
     ? "The other definitions of the script d calls."
     onlyDefs(List.concat(namesCalled(d.body), letNames(d.lets)), ds, d.name)
 
 verify callees
-    callees(Def(name = "f", returnsBool = false, params = [], lets = [], body = Term.TCall("f", [])), []) => []
+    callees(Def(name = "f", params = [], ret = Ty.TyAny, lets = [], body = Term.TCall("f", [])), []) => []
 
 fn letNames(ls: List<Binding>) -> List<String>
     ? "Functions the local bindings call."

@@ -36,6 +36,22 @@ pub enum Sort {
     Int,
 }
 
+/// The type a fact's given is written with: a list, map or vector of
+/// anything (a type variable, written as a hole), an Int, or anything.
+fn sort_type(s: Sort) -> crate::ast::Type {
+    use crate::ast::Type;
+    let var = |n: &str| Type::Var(n.to_string());
+    match s {
+        Sort::List => Type::List(Box::new(var("T"))),
+        Sort::Map => Type::Map(Box::new(var("K")), Box::new(var("V"))),
+        Sort::Key => var("K"),
+        Sort::Value => var("V"),
+        Sort::Vector => Type::Vector(Box::new(var("T"))),
+        Sort::Elem => var("T"),
+        Sort::Int => Type::Int,
+    }
+}
+
 /// One fact: its key in `using`, its Lean theorem name, what each given
 /// ranges over, and its script.
 #[derive(Debug, Clone, PartialEq)]
@@ -53,6 +69,7 @@ impl Fact {
         LawRef {
             key: self.key.to_string(),
             givens: ob.givens.clone(),
+            types: ob.types.clone(),
             premise: ob.premise.clone(),
             lhs: ob.lhs.clone(),
             rhs: ob.rhs.clone(),
@@ -264,6 +281,10 @@ fn by_list_induction(
             obligation: Obligation {
                 key: key.to_string(),
                 givens: givens.clone(),
+                types: givens
+                    .iter()
+                    .map(|g| (g.clone(), sort_type(Sort::List)))
+                    .collect(),
                 finite: Vec::new(),
                 lists: givens,
                 ints: Vec::new(),
@@ -274,7 +295,8 @@ fn by_list_induction(
             defs: Vec::new(),
             consts: Vec::new(),
             laws: uses.iter().map(Fact::law_ref).collect(),
-            sums: Vec::new(),
+            decls: Default::default(),
+            sigs: Vec::new(),
             plan: None,
             proof: Proof::InductList {
                 var: "a".into(),
@@ -1255,6 +1277,10 @@ fn map_fact(
             obligation: Obligation {
                 key: key.to_string(),
                 givens: givens.iter().map(|g| g.to_string()).collect(),
+                types: givens
+                    .iter()
+                    .map(|g| (g.to_string(), sort_type(sort(g))))
+                    .collect(),
                 finite: Vec::new(),
                 lists: Vec::new(),
                 ints: Vec::new(),
@@ -1265,7 +1291,8 @@ fn map_fact(
             defs: Vec::new(),
             consts: Vec::new(),
             laws: Vec::new(),
-            sums: Vec::new(),
+            decls: Default::default(),
+            sigs: Vec::new(),
             plan: None,
             proof,
         },
@@ -1371,6 +1398,10 @@ fn vector_fact(
             obligation: Obligation {
                 key: key.to_string(),
                 givens,
+                types: sorts
+                    .iter()
+                    .map(|(g, s)| (g.to_string(), sort_type(*s)))
+                    .collect(),
                 finite: Vec::new(),
                 lists: sorts
                     .iter()
@@ -1385,7 +1416,8 @@ fn vector_fact(
             defs: Vec::new(),
             consts: Vec::new(),
             laws: uses.iter().map(Fact::law_ref).collect(),
-            sums: Vec::new(),
+            decls: Default::default(),
+            sigs: Vec::new(),
             plan: None,
             proof,
         },

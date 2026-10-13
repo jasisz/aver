@@ -6,11 +6,33 @@ use super::sexpr::{BuiltinsOnly, script as serialise};
 use super::term::{self, var};
 use super::{Const, Eqn, Obligation, Proof, Script, WallRule};
 
+/// A script for `lhs = rhs`: the givens are `a`, `b` and every variable
+/// the claim names, each an Int (a list of them when it is named `xs` or
+/// `ys`) unless a test says otherwise.
 fn script(lhs: super::Term, rhs: super::Term, proof: Proof) -> Script {
+    let mut givens: Vec<String> = vec!["a".into(), "b".into()];
+    let mut free = Vec::new();
+    term::free_vars(&lhs, &mut free);
+    term::free_vars(&rhs, &mut free);
+    for n in free {
+        if !givens.contains(&n) {
+            givens.push(n);
+        }
+    }
     Script {
         obligation: Obligation {
             key: "f.law".into(),
-            givens: vec!["a".into(), "b".into()],
+            types: givens
+                .iter()
+                .map(|g| {
+                    let ty = match g.as_str() {
+                        "xs" | "ys" => crate::ast::Type::List(Box::new(crate::ast::Type::Int)),
+                        _ => crate::ast::Type::Int,
+                    };
+                    (g.clone(), ty)
+                })
+                .collect(),
+            givens,
             finite: Vec::new(),
             lists: Vec::new(),
             ints: Vec::new(),
@@ -21,10 +43,33 @@ fn script(lhs: super::Term, rhs: super::Term, proof: Proof) -> Script {
         defs: Vec::new(),
         consts: Vec::new(),
         laws: Vec::new(),
-        sums: Vec::new(),
+        decls: Default::default(),
+        sigs: Vec::new(),
         plan: None,
         proof,
     }
+}
+
+/// `ty` with Int for each type variable: one type a builtin fact holds at.
+fn ground(ty: &crate::ast::Type) -> crate::ast::Type {
+    use crate::ast::Type;
+    let g = |t: &Type| Box::new(ground(t));
+    match ty {
+        Type::Var(_) => Type::Int,
+        Type::List(a) => Type::List(g(a)),
+        Type::Option(a) => Type::Option(g(a)),
+        Type::Vector(a) => Type::Vector(g(a)),
+        Type::Map(k, v) => Type::Map(g(k), g(v)),
+        other => other.clone(),
+    }
+}
+
+/// `s` with every given of type `ty`.
+fn typed(mut s: Script, ty: crate::ast::Type) -> Script {
+    for (_, t) in &mut s.obligation.types {
+        *t = ty.clone();
+    }
+    s
 }
 
 /// The kernel written in Aver on a script: the one checker of step proofs.
@@ -157,16 +202,51 @@ fn the_kernel_checks_every_wall_rule() {
         let mut s = script(concl.lhs.clone(), concl.rhs.clone(), step);
         s.obligation.givens = rule.binders().iter().map(|b| b.to_string()).collect();
         s.obligation.premise = premise;
-        assert_eq!(kernel(&s), Ok(()), "{}", rule.id());
+        // The rule holds at some types of its binders; the kernel names
+        // them, so the test looks for the first typing it accepts.
+        use crate::ast::Type;
+        let int = || Box::new(Type::Int);
+        let kinds = [
+            Type::Int,
+            Type::Bool,
+            Type::List(int()),
+            Type::Map(int(), int()),
+            Type::Vector(int()),
+        ];
+        let n = s.obligation.givens.len();
+        let typings = (0..kinds.len().pow(n as u32)).map(|mut k| {
+            let mut types = Vec::new();
+            for g in &s.obligation.givens {
+                types.push((g.clone(), kinds[k % kinds.len()].clone()));
+                k /= kinds.len();
+            }
+            types
+        });
+        let mut found = None;
+        for types in typings {
+            let mut t = s.clone();
+            t.obligation.types = types;
+            if kernel(&t).is_ok() {
+                found = Some(t);
+                break;
+            }
+        }
+        let Some(mut s) = found else {
+            panic!(
+                "{}: no typing of its binders is accepted: {:?}",
+                rule.id(),
+                kernel(&s)
+            );
+        };
         s.obligation.rhs = term::builtin("List.reverse", vec![concl.rhs.clone()], None);
         assert!(kernel(&s).is_err(), "{}", rule.id());
     }
 }
 
 /// A true `a == b` between Floats does not make `a` and `b` the same value
-/// (`0.0 == -0.0`, and `String.fromFloat` tells them apart), so the
-/// equality rule refuses it: Float `==` is spelled `==.`, also inside a
-/// list, while between Ints it rewrites.
+/// (`0.0 == -0.0`), so the equality rule refuses a Float and a list of
+/// them: its binders take only a type whose `==` is equality. Between Ints
+/// it rewrites.
 #[test]
 fn a_float_equality_does_not_rewrite() {
     use crate::ast::Type;
@@ -181,7 +261,7 @@ fn a_float_equality_does_not_rewrite() {
         (Type::List(Box::new(Type::Float)), false),
     ] {
         let (a, b) = (typed_var("a", ty.clone()), typed_var("b", ty.clone()));
-        let show = |x: super::Term| term::builtin("String.fromFloat", vec![x], None);
+        let show = |x: super::Term| term::builtin("List.prepend", vec![x, term::nil()], None);
         let step = Proof::Congr {
             ctx: show(term::hole()),
             inner: Box::new(Proof::Rule {
@@ -190,7 +270,7 @@ fn a_float_equality_does_not_rewrite() {
                 premises: vec![Proof::Hyp("when".into())],
             }),
         };
-        let mut s = script(show(a.clone()), show(b.clone()), step);
+        let mut s = typed(script(show(a.clone()), show(b.clone()), step), ty.clone());
         s.obligation.premise = Some(term::binop(BinOp::Eq, a, b));
         assert_eq!(kernel(&s).is_ok(), accepted, "{ty:?}: {:?}", kernel(&s));
     }
@@ -220,7 +300,12 @@ fn a_split_is_on_a_bool() {
         fn_id: FnId(0),
         name: "__fn_0".into(),
         params: vec!["x".into()],
-        returns_bool,
+        param_types: vec![crate::ast::Type::Int],
+        ret: if returns_bool {
+            crate::ast::Type::Bool
+        } else {
+            crate::ast::Type::Int
+        },
         lets: Vec::new(),
         body: term::boolean(true),
     };
@@ -293,11 +378,11 @@ fn the_kernel_inducts_on_a_list_given_and_refuses_mutations() {
         var("xs"),
         proof(base(), "h", "t"),
     );
+    let ints = crate::ast::Type::List(Box::new(crate::ast::Type::Int));
     good.obligation.givens = vec!["xs".into()];
-    good.obligation.lists = vec!["xs".into()];
+    good.obligation.types = vec![("xs".into(), ints)];
     assert_eq!(kernel(&good), Ok(()));
-    let mut untyped = good.clone();
-    untyped.obligation.lists.clear();
+    let untyped = typed(good.clone(), crate::ast::Type::Int);
     let mut ih_in_base = good.clone();
     ih_in_base.proof = proof(Proof::Hyp("ih".into()), "h", "t");
     let mut same_names = good.clone();
@@ -336,6 +421,11 @@ fn every_builtin_fact_checks_and_a_misstated_citation_is_refused() {
         };
         let mut citing = script(ob.lhs.clone(), ob.rhs.clone(), cite);
         citing.obligation.givens = ob.givens.clone();
+        citing.obligation.types = ob
+            .types
+            .iter()
+            .map(|(g, t)| (g.clone(), ground(t)))
+            .collect();
         citing.obligation.premise = ob.premise.clone();
         citing.laws.push(fact.law_ref());
         assert_eq!(kernel(&citing), Ok(()), "{}", fact.key);
@@ -687,6 +777,7 @@ fn a_binding_unfolds_to_the_value_the_script_carries() {
     );
     s.consts.push(Const {
         name: "Lib.base".into(),
+        ty: crate::ast::Type::Invalid,
         value: forty.clone(),
     });
     assert_eq!(kernel(&s), Ok(()));
@@ -704,7 +795,8 @@ fn a_definition_opens_its_local_bindings_in_order() {
         fn_id: crate::ir::identity::FnId(0),
         name: "f".into(),
         params: vec!["x".into()],
-        returns_bool: false,
+        param_types: Vec::new(),
+        ret: crate::ast::Type::Invalid,
         lets: vec![
             ("y".into(), add(var("x"), var("x"))),
             ("z".into(), add(var("y"), var("x"))),
@@ -738,14 +830,14 @@ fn an_enum_split_needs_one_case_per_value_of_a_finite_given() {
         split(vec![case(false), case(true)]),
     );
     s.obligation.givens = vec!["b".into()];
-    s.obligation.finite = vec![("b".into(), super::Finite::Bool)];
+    s.obligation.types = vec![("b".into(), crate::ast::Type::Bool)];
     assert!(kernel(&s).is_ok());
     s.proof = split(vec![case(false)]);
     assert!(kernel(&s).is_err());
     s.proof = split(vec![case(true), case(false)]);
     assert!(kernel(&s).is_err());
     s.proof = split(vec![case(false), case(true)]);
-    s.obligation.finite.clear();
+    s.obligation.types = vec![("b".into(), crate::ast::Type::Int)];
     assert!(kernel(&s).is_err());
 }
 
@@ -787,7 +879,8 @@ fn a_recursive_definition_opens_only_when_it_recurses_on_a_part_of_its_match() {
         fn_id: FnId(7),
         name: "f".into(),
         params: vec!["xs".into()],
-        returns_bool: false,
+        param_types: Vec::new(),
+        ret: crate::ast::Type::Invalid,
         lets: Vec::new(),
         body: Spanned::bare(ResolvedExpr::Match {
             subject: Box::new(var("xs")),
@@ -845,7 +938,8 @@ fn a_recursion_through_a_helper_is_checked_as_if_the_helper_stood_in_the_arm() {
         fn_id: FnId(1),
         name: "f".into(),
         params: vec!["xs".into()],
-        returns_bool: false,
+        param_types: Vec::new(),
+        ret: crate::ast::Type::Invalid,
         lets: Vec::new(),
         body: Spanned::bare(ResolvedExpr::Match {
             subject: Box::new(var("xs")),
@@ -863,7 +957,8 @@ fn a_recursion_through_a_helper_is_checked_as_if_the_helper_stood_in_the_arm() {
         fn_id: FnId(2),
         name: "g".into(),
         params: vec!["first".into(), "rest".into()],
-        returns_bool: false,
+        param_types: Vec::new(),
+        ret: crate::ast::Type::Invalid,
         lets: Vec::new(),
         body: back,
     };
@@ -1121,7 +1216,7 @@ const CONSTRUCTORS: [&str; 23] = [
 #[test]
 fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
     use crate::ast::Literal;
-    use crate::ir::hir::{ResolvedCallee, ResolvedCtor};
+    use crate::ir::hir::ResolvedCallee;
     use crate::ir::identity::FnId;
     let (a, b) = (|| var("a"), || var("b"));
     let i = |n: i64| term::int(&n.into());
@@ -1148,7 +1243,8 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
         fn_id: f,
         name: "__fn_3".into(),
         params: vec!["x".into()],
-        returns_bool: false,
+        param_types: Vec::new(),
+        ret: crate::ast::Type::Invalid,
         lets: Vec::new(),
         body: add(var("x"), var("x")),
     };
@@ -1176,7 +1272,8 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
         fn_id: g,
         name: "__fn_4".into(),
         params: vec!["xs".into()],
-        returns_bool: false,
+        param_types: Vec::new(),
+        ret: crate::ast::Type::Invalid,
         lets: Vec::new(),
         body: Spanned::bare(ResolvedExpr::Match {
             subject: Box::new(var("xs")),
@@ -1264,13 +1361,19 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
         "x".into(),
     ));
     let proj = |claim: super::Term| {
-        script(
+        let mut s = script(
             record.clone(),
             claim,
             Proof::Proj {
                 term: record.clone(),
             },
-        )
+        );
+        s.decls.recs = vec![super::RecDecl {
+            name: "P".into(),
+            eq: true,
+            fields: vec![("x".into(), crate::ast::Type::Int)],
+        }];
+        s
     };
 
     let lit = term::list(vec![a(), b()]);
@@ -1286,6 +1389,7 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
         );
         s.consts.push(Const {
             name: "Lib.base".into(),
+            ty: crate::ast::Type::Invalid,
             value: i(40),
         });
         s
@@ -1307,6 +1411,11 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
             },
         );
         s.obligation.givens = ob.givens.clone();
+        s.obligation.types = ob
+            .types
+            .iter()
+            .map(|(g, t)| (g.clone(), ground(t)))
+            .collect();
         s.obligation.premise = ob.premise.clone();
         s.laws.push(fact.law_ref());
         if misstate {
@@ -1363,7 +1472,7 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
             },
         );
         s.obligation.givens = vec!["c".into()];
-        s.obligation.finite = vec![("c".into(), super::Finite::Bool)];
+        s.obligation.types = vec![("c".into(), crate::ast::Type::Bool)];
         s
     };
 
@@ -1665,7 +1774,8 @@ mod toward_zero {
             fn_id: F,
             name: "__fn_9".into(),
             params: params.iter().map(|p| p.to_string()).collect(),
-            returns_bool: false,
+            param_types: Vec::new(),
+            ret: crate::ast::Type::Invalid,
             lets: Vec::new(),
             body: Spanned::bare(ResolvedExpr::Match {
                 subject: Box::new(subject),
@@ -1720,7 +1830,12 @@ mod toward_zero {
             .chain(more_givens.iter().copied())
             .map(String::from)
             .collect();
-        s.obligation.ints = vec!["n".into()];
+        s.obligation.types = s
+            .obligation
+            .givens
+            .iter()
+            .map(|g| (g.clone(), crate::ast::Type::Int))
+            .collect();
         s.defs.push(d);
         s
     }
@@ -1897,8 +2012,9 @@ fn an_induction_toward_zero_has_no_hypothesis_outside_the_comparison() {
         &holds(Proof::Hyp("g".into())),
         "the case proves a different equation",
     );
-    // Not an Int.
+    // Not known to be an Int.
     let mut untyped = trivially(d(), &["ih"], refl(), refl());
+    untyped.obligation.types.clear();
     untyped.obligation.ints.clear();
     refused(&untyped, "n is not a given of type Int");
     // The comparison's hypothesis has one name.
@@ -2112,11 +2228,13 @@ fn a_split_on_a_constructor_covers_the_type_with_fresh_names() {
         body: Box::new(body),
         binding_slots: std::sync::OnceLock::new(),
     };
-    let def = |arms: Vec<ResolvedMatchArm>| Def {
+    use crate::ast::Type;
+    let def = |of: &Type, arms: Vec<ResolvedMatchArm>| Def {
         fn_id: FnId(0),
         name: "__fn_0".into(),
         params: vec!["x".into()],
-        returns_bool: false,
+        param_types: vec![of.clone()],
+        ret: Type::Int,
         lets: Vec::new(),
         body: Spanned::bare(ResolvedExpr::Match {
             subject: Box::new(var("x")),
@@ -2165,21 +2283,38 @@ fn a_split_on_a_constructor_covers_the_type_with_fresh_names() {
         binders: vec![h.into(), "t1".into()],
         proof: case(2, vec![h, "t1"], &one),
     };
-    let list = def(vec![
-        arm(ResolvedPattern::EmptyList, zero.clone()),
-        arm(ResolvedPattern::Cons("h".into(), "t".into()), one.clone()),
-    ]);
+    let ints = Type::List(Box::new(Type::Int));
+    let c = Type::Named {
+        id: None,
+        name: "C".into(),
+    };
+    let list = def(
+        &ints,
+        vec![
+            arm(ResolvedPattern::EmptyList, zero.clone()),
+            arm(ResolvedPattern::Cons("h".into(), "t".into()), one.clone()),
+        ],
+    );
     // `C.A` and `C.B(n)`, as the program declares the sum.
     let ctor = |k: u32, name: &str| ResolvedCtor::User {
         ctor_id: CtorId(k),
         type_id: TypeId(0),
         name: name.into(),
     };
-    let declared = vec![vec![(ctor(0, "C.A"), 0), (ctor(1, "C.B"), 1)]];
+    let declared = super::SumDecl {
+        name: "C".into(),
+        eq: true,
+        ctors: vec![
+            (ctor(0, "C.A"), Vec::new()),
+            (ctor(1, "C.B"), vec![Type::Int]),
+        ],
+    };
+    // The givens have the type the definition's parameter has.
     let run = |proof: Proof, d: Def| {
-        let mut s = script(ge(call.clone()), term::boolean(true), proof);
+        let of = d.param_types[0].clone();
+        let mut s = typed(script(ge(call.clone()), term::boolean(true), proof), of);
         s.defs = vec![d];
-        s.sums = declared.clone();
+        s.decls.sums = vec![declared.clone()];
         kernel(&s)
     };
     assert_eq!(
@@ -2208,16 +2343,19 @@ fn a_split_on_a_constructor_covers_the_type_with_fresh_names() {
     );
 
     // A sum: `C.A` and `C.B(n)`.
-    let sum = def(vec![
-        arm(
-            ResolvedPattern::Ctor(ctor(0, "C.A"), Vec::new()),
-            zero.clone(),
-        ),
-        arm(
-            ResolvedPattern::Ctor(ctor(1, "C.B"), vec!["n".into()]),
-            one.clone(),
-        ),
-    ]);
+    let sum = def(
+        &c,
+        vec![
+            arm(
+                ResolvedPattern::Ctor(ctor(0, "C.A"), Vec::new()),
+                zero.clone(),
+            ),
+            arm(
+                ResolvedPattern::Ctor(ctor(1, "C.B"), vec!["n".into()]),
+                one.clone(),
+            ),
+        ],
+    );
     let a = SplitCase {
         ctor: SplitCtor::Ctor(ctor(0, "C.A")),
         binders: Vec::new(),
@@ -2239,13 +2377,16 @@ fn a_split_on_a_constructor_covers_the_type_with_fresh_names() {
     // Behind a catch-all arm, `f(x) = match x { C.A -> 0, _ -> 1 }`: the
     // split covers every constructor the program declares, not only the
     // ones an arm names, and not a sum the program does not declare.
-    let behind = def(vec![
-        arm(
-            ResolvedPattern::Ctor(ctor(0, "C.A"), Vec::new()),
-            zero.clone(),
-        ),
-        arm(ResolvedPattern::Wildcard, one.clone()),
-    ]);
+    let behind = def(
+        &c,
+        vec![
+            arm(
+                ResolvedPattern::Ctor(ctor(0, "C.A"), Vec::new()),
+                zero.clone(),
+            ),
+            arm(ResolvedPattern::Wildcard, one.clone()),
+        ],
+    );
     let b_value = Spanned::bare(ResolvedExpr::Ctor(ctor(1, "C.B"), vec![var("n1")]));
     let b_other = SplitCase {
         proof: case(2, vec![], &one),
@@ -2276,33 +2417,33 @@ fn a_split_on_a_constructor_covers_the_type_with_fresh_names() {
         run(split(var("a"), vec![a.clone()]), behind.clone()).is_err(),
         "only the constructor an arm names"
     );
-    let mut undeclared = script(
-        ge(call.clone()),
-        term::boolean(true),
-        split(var("a"), vec![a.clone(), b_other.clone()]),
+    let mut undeclared = typed(
+        script(
+            ge(call.clone()),
+            term::boolean(true),
+            split(var("a"), vec![a.clone(), b_other.clone()]),
+        ),
+        c.clone(),
     );
     undeclared.defs = vec![behind.clone()];
     assert!(
         kernel(&undeclared).is_err(),
         "a sum the program does not declare"
     );
-    let mut twice = undeclared.clone();
-    twice.sums = vec![declared[0].clone(), vec![(ctor(0, "C.A"), 0)]];
-    assert!(
-        kernel(&twice).is_err(),
-        "a constructor declared in two sums"
-    );
     let about_own = |c: SplitCase| SplitCase {
         proof: Proof::Refl(var("n1")),
         ..c
     };
-    let mut s = script(
-        var("n1"),
-        var("n1"),
-        split(var("a"), vec![about_own(a), about_own(b)]),
+    let mut s = typed(
+        script(
+            var("n1"),
+            var("n1"),
+            split(var("a"), vec![about_own(a), about_own(b)]),
+        ),
+        c.clone(),
     );
     s.defs = vec![sum];
-    s.sums = declared.clone();
+    s.decls.sums = vec![declared.clone()];
     assert!(kernel(&s).is_err(), "a case about its own names");
 }
 
@@ -2366,11 +2507,13 @@ fn list_split(both: bool) -> Script {
             cases,
         },
     );
+    let mut s = typed(s, crate::ast::Type::List(Box::new(crate::ast::Type::Int)));
     s.defs = vec![Def {
         fn_id: FnId(0),
         name: "__fn_0".into(),
         params: vec!["x".into()],
-        returns_bool: false,
+        param_types: vec![crate::ast::Type::List(Box::new(crate::ast::Type::Int))],
+        ret: crate::ast::Type::Int,
         lets: Vec::new(),
         body: Spanned::bare(ResolvedExpr::Match {
             subject: Box::new(var("x")),
@@ -2408,7 +2551,8 @@ fn a_split_on_literal_arms_has_one_case_per_arm() {
         fn_id: FnId(0),
         name: "__fn_0".into(),
         params: vec!["x".into()],
-        returns_bool: false,
+        param_types: Vec::new(),
+        ret: crate::ast::Type::Invalid,
         lets: Vec::new(),
         body: Spanned::bare(ResolvedExpr::Match {
             subject: Box::new(var("x")),
@@ -2558,7 +2702,11 @@ fn a_wildcard_field_takes_its_place_among_the_binders() {
         fn_id: FnId(0),
         name: "__fn_0".into(),
         params: vec!["x".into()],
-        returns_bool: false,
+        param_types: vec![crate::ast::Type::Named {
+            id: None,
+            name: "C".into(),
+        }],
+        ret: crate::ast::Type::Int,
         lets: Vec::new(),
         body: Spanned::bare(ResolvedExpr::Match {
             subject: Box::new(var("x")),
@@ -2589,6 +2737,17 @@ fn a_wildcard_field_takes_its_place_among_the_binders() {
     let run = |rhs: super::Term| {
         let mut s = script(call.clone(), rhs, unfold.clone());
         s.defs = vec![g.clone()];
+        s.decls.sums = vec![super::SumDecl {
+            name: "C".into(),
+            eq: true,
+            ctors: vec![
+                (ctor(0, "C.A"), Vec::new()),
+                (
+                    ctor(1, "C.B"),
+                    vec![crate::ast::Type::Int, crate::ast::Type::Int],
+                ),
+            ],
+        }];
         kernel(&s)
     };
     assert_eq!(run(var("b")), Ok(()));

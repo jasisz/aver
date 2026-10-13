@@ -3,6 +3,154 @@ use crate::proof_std::*;
 use ::aver_rt::aver_list_match;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Ty {
+    TyInt,
+    TyBool,
+    TyStr,
+    TyFloat,
+    TyUnit,
+    TyList(std::sync::Arc<Ty>),
+    TyOption(std::sync::Arc<Ty>),
+    TyResult(std::sync::Arc<Ty>, std::sync::Arc<Ty>),
+    TyMap(std::sync::Arc<Ty>, std::sync::Arc<Ty>),
+    TyVector(std::sync::Arc<Ty>),
+    TyTuple(aver_rt::AverList<Ty>),
+    TyNamed(AverStr),
+    TyAny,
+    TyVar(AverStr, bool),
+}
+
+impl Ty {
+    fn aver_key_rank(&self) -> usize {
+        match self {
+            Ty::TyAny => 0,
+            Ty::TyBool => 1,
+            Ty::TyFloat => 2,
+            Ty::TyInt => 3,
+            Ty::TyList(..) => 4,
+            Ty::TyMap(..) => 5,
+            Ty::TyNamed(..) => 6,
+            Ty::TyOption(..) => 7,
+            Ty::TyResult(..) => 8,
+            Ty::TyStr => 9,
+            Ty::TyTuple(..) => 10,
+            Ty::TyUnit => 11,
+            Ty::TyVar(..) => 12,
+            Ty::TyVector(..) => 13,
+        }
+    }
+}
+
+impl PartialOrd for Ty {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Ty {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let rank = self.aver_key_rank().cmp(&other.aver_key_rank());
+        if rank != std::cmp::Ordering::Equal {
+            return rank;
+        }
+        match (self, other) {
+            (Ty::TyList(a0), Ty::TyList(b0)) => std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0)),
+            (Ty::TyMap(a0, a1), Ty::TyMap(b0, b1)) => std::cmp::Ordering::Equal
+                .then_with(|| a0.cmp(b0))
+                .then_with(|| a1.cmp(b1)),
+            (Ty::TyNamed(a0), Ty::TyNamed(b0)) => {
+                std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
+            }
+            (Ty::TyOption(a0), Ty::TyOption(b0)) => {
+                std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
+            }
+            (Ty::TyResult(a0, a1), Ty::TyResult(b0, b1)) => std::cmp::Ordering::Equal
+                .then_with(|| a0.cmp(b0))
+                .then_with(|| a1.cmp(b1)),
+            (Ty::TyTuple(a0), Ty::TyTuple(b0)) => {
+                std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
+            }
+            (Ty::TyVar(a0, a1), Ty::TyVar(b0, b1)) => std::cmp::Ordering::Equal
+                .then_with(|| a0.cmp(b0))
+                .then_with(|| a1.cmp(b1)),
+            (Ty::TyVector(a0), Ty::TyVector(b0)) => {
+                std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
+            }
+            _ => std::cmp::Ordering::Equal,
+        }
+    }
+}
+
+impl aver_rt::AverDisplay for Ty {
+    fn aver_display(&self) -> String {
+        match self {
+            Ty::TyInt => "TyInt".to_string(),
+            Ty::TyBool => "TyBool".to_string(),
+            Ty::TyStr => "TyStr".to_string(),
+            Ty::TyFloat => "TyFloat".to_string(),
+            Ty::TyUnit => "TyUnit".to_string(),
+            Ty::TyList(f0) => format!("TyList({})", f0.aver_display_inner()),
+            Ty::TyOption(f0) => format!("TyOption({})", f0.aver_display_inner()),
+            Ty::TyResult(f0, f1) => format!(
+                "TyResult({})",
+                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+            ),
+            Ty::TyMap(f0, f1) => format!(
+                "TyMap({})",
+                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+            ),
+            Ty::TyVector(f0) => format!("TyVector({})", f0.aver_display_inner()),
+            Ty::TyTuple(f0) => format!("TyTuple({})", f0.aver_display_inner()),
+            Ty::TyNamed(f0) => format!("TyNamed({})", f0.aver_display_inner()),
+            Ty::TyAny => "TyAny".to_string(),
+            Ty::TyVar(f0, f1) => format!(
+                "TyVar({})",
+                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+            ),
+        }
+    }
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct TypedVar {
+    pub name: AverStr,
+    pub ty: Ty,
+}
+
+impl PartialOrd for TypedVar {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for TypedVar {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        std::cmp::Ordering::Equal
+            .then_with(|| self.name.cmp(&other.name))
+            .then_with(|| self.ty.cmp(&other.ty))
+    }
+}
+
+impl aver_rt::AverDisplay for TypedVar {
+    fn aver_display(&self) -> String {
+        format!(
+            "TypedVar({})",
+            vec![
+                format!("name: {}", self.name.aver_display_inner()),
+                format!("ty: {}", self.ty.aver_display_inner())
+            ]
+            .join(", ")
+        )
+    }
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Term {
     TInt(aver_rt::AverInt),
     TBool(bool),
@@ -504,5 +652,14 @@ pub fn bind(name @ _: AverStr, value @ _: &Term) -> Binding {
     crate::proof_std::aver_generated::kernel::term::Binding {
         name: name,
         value: value.clone(),
+    }
+}
+
+/// A variable with its type.
+pub fn typed(name @ _: AverStr, ty @ _: &Ty) -> TypedVar {
+    crate::proof_std::cancel_checkpoint();
+    crate::proof_std::aver_generated::kernel::term::TypedVar {
+        name: name,
+        ty: ty.clone(),
     }
 }

@@ -5867,6 +5867,7 @@ verify identity law openAfterPlan
         obligation: crate::ir::proof_steps::Obligation {
             key: "identity.closedByPlan".into(),
             givens: vec!["n".into()],
+            types: Vec::new(),
             finite: Vec::new(),
             lists: Vec::new(),
             ints: Vec::new(),
@@ -5877,7 +5878,8 @@ verify identity law openAfterPlan
         defs: Vec::new(),
         consts: Vec::new(),
         laws: Vec::new(),
-        sums: Vec::new(),
+        decls: Default::default(),
+        sigs: Vec::new(),
         proof: crate::ir::proof_steps::Proof::Refl(lhs),
         plan: Some(crate::ir::proof_steps::PlanUse {
             name: "Plans.Same.same".into(),

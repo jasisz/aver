@@ -1,0 +1,9 @@
+(steps 14
+ (obligation k ((n int)) (none) (v n) (b true))
+ (defs)
+ (consts)
+ (sums)
+ (recs)
+ (sigs)
+ (laws)
+ (proof (enum n (v n) (b true) (refl (b false)) (refl (b true)))))

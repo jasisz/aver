@@ -1,0 +1,11 @@
+(steps 14
+ (obligation k () (none) (call plusZero (s "a")) (s "a"))
+ (defs
+  (def plusZero ((x int)) int () (op + (v x) (i 0))))
+ (consts)
+ (sums)
+ (recs)
+ (sigs)
+ (laws
+  (law plusZero.isSame ((x int)) (none) (call plusZero (v x)) (v x)))
+ (proof (law plusZero.isSame ((x (s "a"))))))

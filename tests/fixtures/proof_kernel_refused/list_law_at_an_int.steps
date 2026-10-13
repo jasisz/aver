@@ -1,0 +1,11 @@
+(steps 14
+ (obligation k ((n int)) (none) (call keep (v n)) (v n))
+ (defs
+  (def keep ((xs (list int))) (list int) () (bi List.concat (v xs) (list))))
+ (consts)
+ (sums)
+ (recs)
+ (sigs)
+ (laws
+  (law keep.isSame ((xs (list int))) (none) (call keep (v xs)) (v xs)))
+ (proof (law keep.isSame ((xs (v n))))))

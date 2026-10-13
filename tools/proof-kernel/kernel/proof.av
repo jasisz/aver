@@ -8,7 +8,7 @@ module Proof
         "Each step names its rule and writes out every instance; see src/ir/proof_steps/mod.rs."
         "A linear step's cuts each divide a weighted sum of the rows before it by a divisor, its"
         "constant rounded down, which holds because every atom is an integer."
-    exposes [Proof, Cut, Case, SplitCase, More, IhAt, Def, Const, Variant, Law, Fact, Script, Goal, Hyp, Given, ListElem, Ty, premiseOf]
+    exposes [Proof, Cut, Case, SplitCase, More, IhAt, Def, Const, Variant, Sum, Rec, FnSig, Law, Fact, Script, Goal, Given, Hyp, premiseOf, givenNames, findDef, variantNames]
     depends [Kernel.Term]
     effects []
 
@@ -64,46 +64,60 @@ record IhAt
 
 record Def
     name: String
-    returnsBool: Bool
-    params: List<String>
+    params: List<TypedVar>
+    ret: Ty
     lets: List<Binding>
     body: Term
 
 record Const
     name: String
+    ty: Ty
     value: Term
 
 record Variant
     name: String
-    arity: Int
+    fields: List<Ty>
+
+record Sum
+    name: String
+    eq: Bool
+    variants: List<Variant>
+
+record Rec
+    name: String
+    eq: Bool
+    fields: List<TypedVar>
+
+record FnSig
+    name: String
+    params: List<Ty>
+    ret: Ty
 
 record Law
     key: String
-    givens: List<String>
+    givens: List<TypedVar>
     premise: List<Term>
     lhs: Term
     rhs: Term
 
 record Fact
     law: Law
-    lists: List<String>
+    proof: Proof
+
+record Script
+    obligation: Law
+    defs: List<Def>
+    consts: List<Const>
+    sums: List<Sum>
+    recs: List<Rec>
+    sigs: List<FnSig>
+    laws: List<Law>
+    facts: List<Fact>
     proof: Proof
 
 record Given
     name: String
     fin: Fin
-
-record Script
-    obligation: Law
-    finite: List<Given>
-    lists: List<String>
-    ints: List<String>
-    defs: List<Def>
-    consts: List<Const>
-    sums: List<List<Variant>>
-    laws: List<Law>
-    facts: List<Fact>
-    proof: Proof
 
 record Goal
     obligation: Law
@@ -112,21 +126,11 @@ record Goal
     ints: List<String>
     defs: List<Def>
     consts: List<Const>
-    sums: List<List<Variant>>
+    sums: List<Sum>
+    recs: List<Rec>
     laws: List<Law>
     facts: List<Fact>
     hyps: List<Hyp>
-    listElems: List<ListElem>
-
-record ListElem
-    list: String
-    elem: Ty
-
-type Ty
-    TyFin(Fin)
-    TyInt
-    TyList(Ty)
-    TyOther
 
 record Hyp
     name: String
@@ -140,3 +144,32 @@ fn premiseOf(law: Law) -> Option<Term>
 
 verify premiseOf
     premiseOf(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))) => Option.None
+
+fn givenNames(gs: List<TypedVar>) -> List<String>
+    ? "The names of typed variables, in order."
+    match gs
+        [] -> []
+        [g, ..rest] -> List.prepend(g.name, givenNames(rest))
+
+verify givenNames
+    givenNames([Kernel.Term.typed("n", Ty.TyInt)]) => ["n"]
+
+fn findDef(name: String, ds: List<Def>) -> Option<Def>
+    ? "A definition by name."
+    match ds
+        [] -> Option.None
+        [d, ..rest] -> match d.name == name
+            true -> Option.Some(d)
+            false -> findDef(name, rest)
+
+verify findDef
+    findDef("f", []) => Option.None
+
+fn variantNames(vs: List<Variant>) -> List<String>
+    ? "The constructors of a sum, in order."
+    match vs
+        [] -> []
+        [v, ..rest] -> List.prepend(v.name, variantNames(rest))
+
+verify variantNames
+    variantNames([Variant(name = "C.A", fields = [])]) => ["C.A"]

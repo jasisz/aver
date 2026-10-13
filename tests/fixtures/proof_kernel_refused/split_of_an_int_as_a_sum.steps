@@ -1,0 +1,11 @@
+(steps 14
+ (obligation k () (none) (i 0) (i 1))
+ (defs
+  (def pick ((x (named One))) int () (match (v x) (arm (pc One.Only) (i 7)))))
+ (consts)
+ (sums
+  (sum One (One.Only)))
+ (recs)
+ (sigs)
+ (laws)
+ (proof (split pick ((i 0)) (i 0) h0 (case One.Only () (split pick ((i 1)) (i 1) h1 (case One.Only () (trans ((i 0) (ctor One.Only) (i 1)) (hyp h0) (symm (hyp h1)))))))))

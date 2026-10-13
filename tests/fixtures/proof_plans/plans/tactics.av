@@ -53,7 +53,7 @@ fn octet(goal: Goal) -> Result<Tactic, String>
 
 verify octet
     octet(Kernel.Lib.goalFor(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)))) => Result.Err("no Int given to split on")
-    octet(Goal.update(Kernel.Lib.goalFor(Law(key = "k", givens = ["c"], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))), ints = ["c"])) => Result.Ok(Tactic.SplitBool(isOctet("c"), Tactic.Auto, Tactic.Auto))
+    octet(Kernel.Lib.goalFor(Law(key = "k", givens = [Kernel.Term.typed("c", Ty.TyInt)], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)))) => Result.Ok(Tactic.SplitBool(isOctet("c"), Tactic.Auto, Tactic.Auto))
 
 fn bytesByInduction(goal: Goal) -> Result<Tactic, String>
     ? "Induction on bytes and nothing else: shows where a script stops."

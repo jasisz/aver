@@ -1,0 +1,9 @@
+(steps 14
+ (obligation k ((x float)) (none) (op == (v x) (v x)) (b true))
+ (defs)
+ (consts)
+ (sums)
+ (recs)
+ (sigs)
+ (laws)
+ (proof (rule bool.beq.refl ((a (v x))))))

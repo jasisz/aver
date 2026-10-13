@@ -294,6 +294,11 @@ pub(super) enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Print the proof kernel's table of builtin signatures
+    /// (`tools/proof-kernel/kernel/builtins.av`), generated from the type
+    /// checker
+    #[command(hide = true)]
+    KernelBuiltins,
     /// List the builtin facts a law may cite in `using`, each with its
     /// statement written as an Aver law
     Facts {

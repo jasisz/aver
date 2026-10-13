@@ -148,7 +148,9 @@ fn parse_one(cs: &[char], at: &mut usize) -> Result<Sx, String> {
 pub struct Reader {
     fns: HashMap<String, FnId>,
     ctors: HashMap<String, ResolvedCtor>,
-    records: HashMap<String, Option<crate::ir::identity::TypeId>>,
+    /// A record type by the name the data writes it with: its identity and
+    /// the name the program's own literals carry.
+    records: HashMap<String, (Option<crate::ir::identity::TypeId>, String)>,
     builtins: HashMap<String, ResolvedCallee>,
     var_types: std::cell::RefCell<HashMap<String, Type>>,
     call_types: HashMap<String, Type>,
@@ -173,8 +175,8 @@ impl Reader {
             r.fns.insert(d.name.clone(), d.fn_id);
             r.def_bodies.insert(d.name.clone(), d.body.clone());
         }
-        for sum in &goal.sums {
-            for (c, _) in sum {
+        for sum in &goal.decls.sums {
+            for (c, _) in &sum.ctors {
                 r.ctors.insert(names.ctor_name(c), c.clone());
             }
         }
@@ -243,7 +245,10 @@ impl Reader {
             | ResolvedExpr::RecordUpdate {
                 type_id, type_name, ..
             } => {
-                self.records.insert(type_name.clone(), *type_id);
+                self.records.insert(
+                    super::sexpr::record_name(*type_id, type_name, names),
+                    (*type_id, type_name.clone()),
+                );
             }
             ResolvedExpr::Match { arms, .. } => {
                 for arm in arms {
@@ -498,18 +503,18 @@ impl Reader {
             }
             "tuple" => Spanned::bare(ResolvedExpr::Tuple(self.terms(args)?)),
             "rec" => {
-                let ty = self.atom(one(0)?)?;
+                let (type_id, type_name) = self.record(self.atom(one(0)?)?)?;
                 Spanned::bare(ResolvedExpr::RecordCreate {
-                    type_id: self.record(ty)?,
-                    type_name: ty.to_string(),
+                    type_id,
+                    type_name,
                     fields: self.fields(&args[1..])?,
                 })
             }
             "upd" => {
-                let ty = self.atom(one(0)?)?;
+                let (type_id, type_name) = self.record(self.atom(one(0)?)?)?;
                 Spanned::bare(ResolvedExpr::RecordUpdate {
-                    type_id: self.record(ty)?,
-                    type_name: ty.to_string(),
+                    type_id,
+                    type_name,
                     base: Box::new(self.term(one(1)?)?),
                     updates: self.fields(&args[2..])?,
                 })
@@ -518,10 +523,10 @@ impl Reader {
         })
     }
 
-    fn record(&self, ty: &str) -> Result<Option<crate::ir::identity::TypeId>, String> {
+    fn record(&self, ty: &str) -> Result<(Option<crate::ir::identity::TypeId>, String), String> {
         self.records
             .get(ty)
-            .copied()
+            .cloned()
             .ok_or_else(|| format!("the goal has no record type {ty}"))
     }
 
@@ -910,15 +915,11 @@ fn builtin_type(name: &str, args: &[Term]) -> Option<Type> {
     }
 }
 
-/// An operator by the symbol the step printer writes for it, typed so it
-/// prints back as the same symbol.
+/// An operator by the symbol the step printer writes for it. One symbol
+/// serves Int, Float and texts; the result of an arithmetic one takes the
+/// type its operands are known to have.
 fn operator(sym: &str, a: Term, b: Term) -> Result<Term, String> {
-    let (plain, typed) = match sym.strip_suffix('.') {
-        Some(p) => (p, Some(Type::Float)),
-        None if sym == "++" => ("+", Some(Type::Str)),
-        None => (sym, None),
-    };
-    let op = match plain {
+    let op = match sym {
         "+" => BinOp::Add,
         "-" => BinOp::Sub,
         "*" => BinOp::Mul,
@@ -931,14 +932,11 @@ fn operator(sym: &str, a: Term, b: Term) -> Result<Term, String> {
         ">=" => BinOp::Gte,
         _ => return Err(format!("unknown operator {sym}")),
     };
-    if let Some(ty) = &typed
-        && a.ty().is_none()
-    {
-        a.set_ty(ty.clone());
-    }
+    let operand = a.ty().or(b.ty()).cloned();
     let t = term::binop(op, a, b);
-    if let Some(ty) = typed
+    if let Some(ty) = operand
         && matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div)
+        && t.ty().is_none()
     {
         t.set_ty(ty);
     }
