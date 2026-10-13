@@ -43,8 +43,6 @@ verify mul
     mul(Positive(value = 1), Positive(value = 7)) => Result.Ok(Positive(value = 7))
 
 verify mul law commutative
-    given a: Int = [1, 2, 7, 12]
-    given b: Int = [1, 2, 7, 12]
-    when a > 0
-    when b > 0
-    mul(Positive(value = a), Positive(value = b)) => mul(Positive(value = b), Positive(value = a))
+    given a: Positive = [Positive(value = 1), Positive(value = 2), Positive(value = 7), Positive(value = 12)]
+    given b: Positive = [Positive(value = 1), Positive(value = 2), Positive(value = 7), Positive(value = 12)]
+    mul(a, b) => mul(b, a)

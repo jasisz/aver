@@ -90,18 +90,6 @@ fn recognize_transparent_chain_shape(
     if law.givens.is_empty() || law.givens.iter().any(|g| g.type_name.trim() != "Int") {
         return None;
     }
-    if law.givens.iter().any(|g| {
-        crate::codegen::common::refinement_lift_for_given(
-            &g.name,
-            &g.type_name,
-            &law.lhs,
-            &law.rhs,
-            ctx,
-        )
-        .is_some()
-    }) {
-        return None;
-    }
     if !matches!(&law.rhs.node, Expr::Literal(Literal::Bool(true))) {
         return None;
     }

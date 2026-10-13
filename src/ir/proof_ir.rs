@@ -467,13 +467,9 @@ pub struct LawTheorem {
     pub fn_id: FnId,
     pub law_name: String,
     pub quantifiers: Vec<Quantifier>,
-    /// Premises in order. Already includes `when` if it carries
-    /// information beyond the refinement invariants (the lowerer
-    /// performs the bijective syntactic equivalence check).
+    /// Premises in order: the law's `when`, if it has one.
     pub premises: Vec<Predicate>,
-    /// LHS = RHS claim. Wrapper-stripped, lifted-var-aware (bare
-    /// idents for arg positions, `.val` projections inside
-    /// comparator BinOps if the lowerer determined this is needed).
+    /// LHS = RHS claim, as the law states it.
     pub claim_lhs: Spanned<crate::ir::hir::ResolvedExpr>,
     pub claim_rhs: Spanned<crate::ir::hir::ResolvedExpr>,
     pub strategy: ProofStrategy,
@@ -751,14 +747,13 @@ pub enum ProofStrategy {
         /// conservative `(n ≥ 0)` default when `wrapper_return`
         /// forces case-splitting.
         smart_guard: Option<SmartGuard>,
-        /// `true` when at least one law given is lifted to a
-        /// refinement type (`given a: Int` used as `Refined(value
-        /// = a)` in the law body). The Subtype/subset lift carries
-        /// the invariant in the type, so the by_cases case-split
-        /// that `wrapper_return` would otherwise force is
-        /// unnecessary — backends emit a plain unfold + simp
-        /// against arithmetic lemmas.
-        lifted: bool,
+        /// `true` when at least one law given is of a refined type
+        /// over `Int` (`given a: Natural`). The type carries the
+        /// invariant, so the by_cases case-split that
+        /// `wrapper_return` would otherwise force is unnecessary —
+        /// backends emit a plain unfold + simp against arithmetic
+        /// lemmas.
+        refined_given: bool,
     },
     /// Structural induction on a recursive ADT parameter.
     Induction { param: String },

@@ -2855,7 +2855,7 @@ fn classify_law_strategy(
             unfold_fns: plan.unfold_fns,
             wrapper_return: plan.wrapper_return,
             smart_guard: plan.smart_guard,
-            lifted: plan.lifted,
+            refined_given: plan.refined_given,
         };
     }
     // Ground constant-fold over fixed ADT/enum constructors — the

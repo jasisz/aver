@@ -6,6 +6,27 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Migration
 
+- **`aver proof` states a law over `given a: Int` about every `Int`; a law about a refined type says `given a: Natural`.** The Lean export used to look for `Natural(value = a)` in a law over `given a: Int` and restate the law over `a : Natural`. It did so with or without a `when a >= 0`, so a law with no `when` was proved for the non-negative `a` only while its text, and `aver verify`, spoke of every `Int`. The given now keeps its type: the theorem is `∀ (a : Int), ...`, and the record is written with a proof Lean has to find there, which it cannot take from the law's `when`. Write a law about the values of the type over the type. Before:
+
+  ```aver
+  verify add law commutative
+      given a: Int = [0, 1, 7, 100]
+      given b: Int = [0, 1, 7, 100]
+      when a >= 0
+      when b >= 0
+      add(Natural(value = a), Natural(value = b)) => add(Natural(value = b), Natural(value = a))
+  ```
+
+  After:
+
+  ```aver
+  verify add law commutative
+      given a: Natural = [Natural(value = 0), Natural(value = 1), Natural(value = 7), Natural(value = 100)]
+      given b: Natural = [Natural(value = 0), Natural(value = 1), Natural(value = 7), Natural(value = 100)]
+      add(a, b) => add(b, a)
+  ```
+
+  Lean gets the same theorem, `∀ (a : Natural) (b : Natural), add a b = add b a`, with the same proof. Outside the module that declares the record the samples are `Natural.fromInt(7)`. A law left in the old form is no longer proved for every input by Lean.
 - **A literal call to a validating constructor keeps its `Result` unless the record is opaque.** `Octets.fromList([1, 2])` typed as `Octets` for any one-field `List<Int>` record whose constructor checks every element, whether or not the module listed the record under `exposes opaque`. It now does so only for an opaque record, the rule `aver proof` already uses for a refined type: a record other modules may construct directly carries no invariant, so its constructor is an ordinary function and the call is `Result<Octets, String>` again. The wasm-gc and Rust backends follow the same rule for the compact representations they derive from the constructor's check of a one-field record (an `Int` field stored as a native `i64`, a `List<Int>` field stored as a byte array): a record that is not opaque keeps the general representation. What a program computes does not change; the type of the literal call and the generated layout do. To keep the earlier behaviour, add `exposes opaque [Octets]` to the module and read the field through functions of that module. `Bytes` and every refined type in the examples and projects of this repository were already opaque.
 - **A literal call to the validating constructor of an `Int` refinement is the refined value.** For an opaque one-field record over `Int` whose constructor checks the field against integer literals (`n >= 0`, `Bool.and(n >= 0, n <= 100)`), a call with one integer literal inside that interval can no longer fail, so `Natural.fromInt(5)` has type `Natural` instead of `Result<Natural, String>`, as `Bytes.fromList([0, 10, 255])` already does. Code that unwraps such a call has to drop the unwrapping: `match Natural.fromInt(5)` with `Result.Ok` and `Result.Err` arms is now an error, `Natural.fromInt(5)?` no longer applies, and a `verify` case `fromInt(7) => Result.Ok(Natural(value = 7))` fails until its right side is `Natural(value = 7)`. A literal outside the interval (`Natural.fromInt(-1)`), a literal beyond `i64`, an identifier, a named constant and any computed argument (`Natural.fromInt(2 + 3)`) keep the `Result`. So does every call when the check is not a comparison with integer literals. `Float` and `String` refinements are unchanged. All backends agree; `--self-host` refuses a program with a discharged call, as it does for lists. See [Literal smart-constructor discharge](docs/language.md).
 - **`aver proof` states every law for every input, in one `lake build`.** A `when`-law whose speculative proof does not close is declined (`declined_claims`, `--declined-budget`) instead of being restated over its samples; `aver verify` still checks those. `bounded_laws` leaves `--check-json`, and a 0.30 `--gate` baseline with `bounded` laws fails with a message to re-record it.

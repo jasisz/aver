@@ -371,11 +371,10 @@ pub(super) struct SimpOmegaPlan {
     pub(super) unfold_fns: Vec<String>,
     pub(super) wrapper_return: bool,
     pub(super) smart_guard: Option<crate::ir::SmartGuard>,
-    /// `true` when at least one law given is used as a refinement
-    /// carrier in the law body (e.g. `given a: Int` used as
-    /// `Natural(value = a)`). Subtype/subset lift carries the
-    /// invariant in the type, so wrapper case-split is unnecessary.
-    pub(super) lifted: bool,
+    /// `true` when at least one law given is of a refined type over
+    /// `Int` (`given a: Natural`). The type carries the invariant, so
+    /// the wrapper case-split is unnecessary.
+    pub(super) refined_given: bool,
 }
 
 pub(super) fn detect_simp_omega_unfold(
@@ -387,29 +386,30 @@ pub(super) fn detect_simp_omega_unfold(
     use std::collections::BTreeSet;
 
     let outer_fd = inputs.find_fn_def_by_call_name(fn_name)?;
-    // All law givens Int.
-    if law.givens.is_empty() || law.givens.iter().any(|g| g.type_name != "Int") {
+    // Every law given is `Int` or a refined type over `Int`
+    // (`given a: Natural`). With a refined given the outer fn may take
+    // the refined type (`fn add(a: Natural, b: Natural)`) and unfold
+    // through the smart constructor to Int arithmetic, so the outer-Int
+    // rejection is skipped for such a law.
+    let refined_over_int = |type_name: &str| {
+        crate::codegen::common::resolve_refined_type_in_with_key(
+            refined_types,
+            inputs.symbol_table,
+            inputs.dep_modules,
+            type_name,
+        )
+        .is_some_and(|(_, decl)| decl.carrier_type == "Int")
+    };
+    if law.givens.is_empty()
+        || law
+            .givens
+            .iter()
+            .any(|g| g.type_name != "Int" && !refined_over_int(&g.type_name))
+    {
         return None;
     }
-    // Detect refinement lifts — when any given is used as a
-    // `Refined(value = given)` carrier in the law body, the outer
-    // fn may legitimately take the refined type (`fn add(a:
-    // Natural, b: Natural)`) and unfold through the smart
-    // constructor to Int arithmetic. Skip the outer-Int rejection
-    // for lifted laws.
-    let symbols = inputs.symbol_table;
-    let lifted = law.givens.iter().any(|g| {
-        refinement_lift_for_given_ir(
-            &g.name,
-            &law.lhs,
-            &law.rhs,
-            refined_types,
-            symbols,
-            inputs.dep_modules,
-        )
-        .is_some()
-    });
-    if !lifted && outer_fd.params.iter().any(|(_, t)| t != "Int") {
+    let refined_given = law.givens.iter().any(|g| g.type_name != "Int");
+    if !refined_given && outer_fd.params.iter().any(|(_, t)| t != "Int") {
         return None;
     }
 
@@ -479,9 +479,9 @@ pub(super) fn detect_simp_omega_unfold(
             return None;
         }
         // Int-only check for the outer law fn — but skip when the
-        // law is refinement-lifted (outer fn takes the refined
+        // law has a refined given (outer fn takes the refined
         // type, body unfolds through the smart constructor).
-        if fd.name == fn_name && !lifted && fd.params.iter().any(|(_, t)| t != "Int") {
+        if fd.name == fn_name && !refined_given && fd.params.iter().any(|(_, t)| t != "Int") {
             return None;
         }
         let ret = fd.return_type.as_str();
@@ -502,7 +502,7 @@ pub(super) fn detect_simp_omega_unfold(
     // Scope guards, each load-bearing:
     // - `literal * var` stays linear and IN scope (see
     //   `expr_has_var_product`) — nothing currently closing regresses;
-    // - refinement-lifted laws keep the pin: their arm renders plain
+    // - laws with a refined given keep the pin: their arm renders plain
     //   `simp [Int.add_comm, Int.mul_comm]` (no omega), which closes
     //   the commutativity-shaped product laws the refinement corpus
     //   pins (e.g. Natural.mul commutative);
@@ -511,7 +511,7 @@ pub(super) fn detect_simp_omega_unfold(
     //   chain cannot consume a `when` premise), routing to the
     //   guarded-domain fallback, so the pin is never rendered as a
     //   failing tactic.
-    if !(lifted || (wrapper_return && law.when.is_some())) {
+    if !(refined_given || (wrapper_return && law.when.is_some())) {
         let mut nonlinear = expr_has_var_product(&law.lhs) || expr_has_var_product(&law.rhs);
         if let Some(when_expr) = &law.when {
             nonlinear = nonlinear || expr_has_var_product(when_expr);
@@ -551,11 +551,19 @@ pub(super) fn detect_simp_omega_unfold(
     }
 
     let smart_guard = extract_smart_constructor_guard(&fn_names, inputs);
+    // A refined given is taken only where the law's functions rebuild a
+    // refined value through its smart constructor (`add` over `Natural`
+    // returning `fromInt(a.value + b.value)`): the unfold + simp this plan
+    // renders discharges the constructor's check. Any other law over a
+    // refined given keeps the route it had.
+    if refined_given && smart_guard.is_none() {
+        return None;
+    }
 
     Some(SimpOmegaPlan {
         unfold_fns: ordered,
         wrapper_return,
         smart_guard,
-        lifted,
+        refined_given,
     })
 }

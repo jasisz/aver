@@ -152,27 +152,6 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
     {
         return false;
     }
-    // Fail closed on refinement-lifted givens. A `@Nat>=0`-style refined given
-    // takes a DIFFERENT statement path: the `conditional_universal` gate requires
-    // `lifted_vars.is_empty()` (verify.rs), so a lifted law's universal statement
-    // carries the domain through the lifted quantifier / extra premises — which the
-    // keystone's fixed `intro <givens> h_when` proof shape does not match (the intro
-    // count would disagree with the statement's binders). Mirroring that gate here
-    // keeps the recognizer's contract symmetric across EVERY call site (statement
-    // and emit), so a lifted law can never trigger a keystone proof out of step with
-    // its statement. (No corpus law hits this today; this is a fail-closed guard.)
-    if law.givens.iter().any(|g| {
-        crate::codegen::common::refinement_lift_for_given(
-            &g.name,
-            &g.type_name,
-            &law.lhs,
-            &law.rhs,
-            ctx,
-        )
-        .is_some()
-    }) {
-        return false;
-    }
     // This rung earns its keep over the (when-gated-off) plain simp / grind
     // rungs in two ways, both decided by Lean:
     //   * a citable POOL — an earlier law whose subject fn is in this law's

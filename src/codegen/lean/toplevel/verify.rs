@@ -822,39 +822,6 @@ fn emit_verify_law_block(
         crate::codegen::common::OracleInjectionMode::LemmaBindingProjected,
         &ctx.capabilities,
     );
-    // Refinement quantifier lift: when a given Int variable shows up
-    // in the law body wrapped in a refinement-record constructor
-    // (`Natural(value = a)`, `Positive(value = a)`, …), lift the
-    // quantifier from the carrier type to the refined type so the
-    // theorem statement reads `∀ (a : Natural), …` instead of
-    // `∀ (a : Int), … Natural(value = a) …`. Strip the wrapper
-    // constructor in the body templates so they read as
-    // `add a b`, not `add (Natural(value = a)) (Natural(value = b))`.
-    // The smart-constructor predicate ceases to be a per-case proof
-    // obligation — it's already carried by the type.
-    let mut lifted_vars: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
-    for given in &law.givens {
-        if let Some(refined) = crate::codegen::common::refinement_lift_for_given(
-            &given.name,
-            &given.type_name,
-            &law_lhs,
-            &law_rhs,
-            ctx,
-        ) {
-            lifted_vars.insert(given.name.clone(), refined.to_string());
-        }
-    }
-    let law_lhs = if lifted_vars.is_empty() {
-        law_lhs
-    } else {
-        crate::codegen::common::strip_refinement_wrappers(&law_lhs, &lifted_vars, ctx)
-    };
-    let law_rhs = if lifted_vars.is_empty() {
-        law_rhs
-    } else {
-        crate::codegen::common::strip_refinement_wrappers(&law_rhs, &lifted_vars, ctx)
-    };
     // A law body carrying `?` states an `Except` action on the left and is
     // compared against `Except.ok` of the expected value — see
     // `emit_statement_lhs`. The universal theorem, `_checked_domain` and every
@@ -876,16 +843,8 @@ fn emit_verify_law_block(
             crate::codegen::common::OracleInjectionMode::LemmaBindingProjected,
             &ctx.capabilities,
         );
-        // Refinement lift: bare references to lifted-given idents
-        // inside `when`'s comparator BinOps need `.val` projection
-        // because the quantifier is now over the Subtype carrier,
-        // not the underlying Int. Without this `when a >= 10` over
-        // `a : Natural` emits as `a >= 10` and fails to synthesize
-        // `LE Natural` / `OfNat Natural 10` in Lean.
-        let val_projected =
-            crate::codegen::common::project_lifted_idents_to_val(&oracle_projected, &lifted_vars);
         operand(&emit_expr(
-            &resolve_rewrite_output(&val_projected, ctx, None),
+            &resolve_rewrite_output(&oracle_projected, ctx, None),
             ctx,
         ))
     });
@@ -931,16 +890,7 @@ fn emit_verify_law_block(
             // `∀ rng : BranchPath → Int → ... → Int`. Other effect
             // kinds (Output, unclassified) keep the plain function
             // signature.
-            // Refinement lift: quant param `a` lifts from `Int` to
-            // the wrapping refinement record (`Natural`, `Positive`,
-            // …) when the law body used `Natural(value = a)` etc.
-            // See `refinement_lift_for_given` for the detection.
-            let type_text = if let Some(refined) = lifted_vars.get(&given.name) {
-                // `lifted_vars` values are the IR's canonical Aver keys
-                // (`Natural`, `M.Type`) — spell them as Lean type text so a
-                // reserved-token segment carries the trailing-quote guard.
-                crate::codegen::lean::types::lean_named_type_name(refined)
-            } else if let Some(subtype) = oracle_subtype_for(&given.type_name) {
+            let type_text = if let Some(subtype) = oracle_subtype_for(&given.type_name) {
                 subtype.to_string()
             } else {
                 match crate::types::checker::effect_classification::oracle_signature_with_registry(
@@ -1119,13 +1069,7 @@ fn emit_verify_law_block(
         name: law.name.clone(),
         givens: law.givens.clone(),
         when: law.when.clone(),
-        because: law
-            .because
-            .iter()
-            .map(|reason| {
-                crate::codegen::common::project_lifted_idents_to_val(reason, &lifted_vars)
-            })
-            .collect(),
+        because: law.because.clone(),
         using: law.using.clone(),
         induction: law.induction.clone(),
         by_plan: law.by_plan.clone(),
@@ -1142,15 +1086,11 @@ fn emit_verify_law_block(
     // generic conditional induction) or to no arm at all is an ATTEMPT (see
     // `LAW_CLASS_ATTEMPT`): if Lean refuses it, `aver proof --check` declines
     // the law as not proved for every input, and its samples stay with
-    // `aver verify`. A law whose givens are all refinement-lifted carries its
-    // premises in the quantifier types and is a claim as before.
-    let all_lifted =
-        !lifted_vars.is_empty() && law.givens.iter().all(|g| lifted_vars.contains_key(&g.name));
+    // `aver verify`.
     // A `when`-law with a `by` line has its plan's steps and no arm behind
     // them, so it is an attempt like any law handed to no arm: a law its
     // plan did not close is declined.
     let attempt = law.when.is_some()
-        && !all_lifted
         && !guided
         && (by_plan
             || !super::law_auto::when_law_is_claim(vb, &law_for_auto_proof, ctx, cert_model));
@@ -1182,14 +1122,7 @@ fn emit_verify_law_block(
             ctx,
             &theorem_base,
         ));
-        let prop = law_theorem_prop(
-            law,
-            ctx,
-            &lhs_template,
-            &rhs_template,
-            when_template.as_deref(),
-            &lifted_vars,
-        );
+        let prop = law_theorem_prop(&lhs_template, &rhs_template, when_template.as_deref());
         // The marker carries a THIRD field: the `fn.law` identity label
         // (`format!("{fn}.{law}")`). The file-level audit reads it to key the
         // per-law proof manifest on the stable, edit-robust identity instead
@@ -1254,11 +1187,13 @@ fn emit_verify_law_block(
             cert_model,
             attempt
                 || (law.when.is_none()
-                    && lifted_vars.is_empty()
                     && matches!(
                         pinned_law_strategy,
                         None | Some(crate::ir::ProofStrategy::BackendDispatch)
-                            | Some(crate::ir::ProofStrategy::LinearArithmetic { .. })
+                            | Some(crate::ir::ProofStrategy::LinearArithmetic {
+                                refined_given: false,
+                                ..
+                            })
                     )),
         ) {
             if cert_model {
@@ -1369,15 +1304,6 @@ fn emit_verify_law_block(
         return (lines.join("\n"), case_index_start + vb.cases.len());
     }
 
-    // Skip checked_domain emission for refinement-lifted laws: the
-    // universal theorem already quantifies over the refined type
-    // (`∀ a b : Natural`), which strictly entails any
-    // sample-domain conjunction over the same body. Keeping
-    // checked_domain would emit a 25+ conjunct of `add ⟨v, by …⟩`
-    // calls that Lean has to run `native_decide` against, which
-    // for compound predicates (`Bool.and(n ≥ 0, n ≤ 100)`) blows
-    // through `maxHeartbeats`. The per-case `sample_N` theorems
-    // below still get emitted as a granular cross-check.
     // A block with a declined case gets no `_checked_domain` theorem at all.
     // The conjunction is one claim over every case, so a single unanswered
     // case would carry the source RHS into it and make the whole conjunct a
@@ -1385,7 +1311,7 @@ fn emit_verify_law_block(
     // `_sample_N` theorems below.
     let has_declined_case = (0..vb.cases.len())
         .any(|idx| super::sample_literal::decline_reason(vb, ctx, idx).is_some());
-    if !vb.cases.is_empty() && lifted_vars.is_empty() && !has_declined_case {
+    if !vb.cases.is_empty() && !has_declined_case {
         let domain_theorem_name = format!("{}_checked_domain", theorem_base);
         let domain_conjuncts: Vec<String> = vb
             .cases
@@ -1416,9 +1342,7 @@ fn emit_verify_law_block(
                 );
                 let (left_str, propagates_error) = emit_statement_lhs(&left_rw, ctx);
                 // Model-vs-ground-truth: same literalization as the per-case
-                // `_sample_N` theorems below (see the comment there); this
-                // arm is reached only for non-refinement-lifted laws, where
-                // the carrier-typed VM literal matches the statement type.
+                // `_sample_N` theorems below (see the comment there).
                 let (right_str, right_propagates) = emit_statement_rhs(
                     &right_rw,
                     super::sample_literal::ground_truth_rhs(vb, ctx, idx),
@@ -1587,20 +1511,13 @@ fn emit_verify_law_block(
         // the model, vacuously provable when fuel exhaustion collapses both
         // to `default`. With a ground-truth entry it becomes
         // `impl(sample) = <value the program computed>`, which is exactly the
-        // claim the sample is meant to pin. Refinement-lifted laws are
-        // excluded: their statements quantify over the refined subtype, and a
-        // carrier-typed literal would not elaborate — they keep the source
-        // spec side (the `--check` panic gate still covers them). Misses
+        // claim the sample is meant to pin. Misses
         // (failed/skipped at `aver verify`, Float-carrying values — decimal
         // repr isn't bit-exact — or non-round-tripping shapes) fall back to
         // the source spec side.
         let (right_str, right_propagates) = emit_statement_rhs(
             &right_rw,
-            if lifted_vars.is_empty() {
-                super::sample_literal::ground_truth_rhs(vb, ctx, idx)
-            } else {
-                None
-            },
+            super::sample_literal::ground_truth_rhs(vb, ctx, idx),
             ctx,
         );
         let (left_str, right_str) =
@@ -1649,9 +1566,8 @@ fn emit_verify_law_block(
 /// name + lhs/rhs template computation EXACTLY (so the referenced name and the
 /// orientation-analysis text match the actually-emitted theorem). `None` for
 /// shapes that aren't a clean equational rewrite rule: trace-projection LHS
-/// (no theorem emitted), a `when` premise (a conditional equation, not a plain
-/// rewrite), or a refinement-lifted given (the statement quantifies over a
-/// subtype — not a useful rewrite over the carrier). The name is the SAME
+/// (no theorem emitted) or a `when` premise (a conditional equation, not a plain
+/// rewrite). The name is the SAME
 /// `<fn>_eq_<spec>` / `<fn>_law_<name>` the block emits, so a later law's
 /// `simp [<name>]` resolves against the earlier theorem already in scope.
 /// The Lean theorem name `emit_verify_law_block` gives this law's universal
@@ -1836,22 +1752,6 @@ pub(crate) fn law_as_lemma_statement(
         crate::codegen::common::OracleInjectionMode::LemmaBindingProjected,
         &ctx.capabilities,
     );
-    // A refinement-lifted given would change the quantifier type (the theorem
-    // reads `∀ a : Natural, …`); such a statement isn't a plain rewrite rule
-    // over the carrier, so decline rather than mis-orient it.
-    for given in &law.givens {
-        if crate::codegen::common::refinement_lift_for_given(
-            &given.name,
-            &given.type_name,
-            &law_lhs,
-            &law_rhs,
-            ctx,
-        )
-        .is_some()
-        {
-            return None;
-        }
-    }
     // A law body carrying `?` states an `Except` action compared against
     // `Except.ok` (see `emit_statement_lhs`), not an equation between the
     // values the source mentions — so it is not a rewrite rule over those
@@ -1894,28 +1794,14 @@ fn sample_indices(total: usize) -> Vec<usize> {
 /// conditional law, `lhs = rhs` otherwise. A law is always stated for every
 /// input; its sample domain never enters the statement.
 pub(in crate::codegen::lean) fn law_theorem_prop(
-    law: &VerifyLaw,
-    ctx: &CodegenContext,
     lhs_template: &str,
     rhs_template: &str,
     when_template: Option<&str>,
-    lifted_vars: &std::collections::HashMap<String, String>,
 ) -> String {
     let conclusion = format!("{lhs_template} = {rhs_template}");
-    // `when` drop is only sound when the predicate is syntactically
-    // equivalent (via commutator-relaxed compare) to the conjunction
-    // of lifted givens' refinement invariants — otherwise stronger /
-    // orthogonal user predicates would be silently lost from the
-    // emitted theorem (e.g. `when a >= 10` over `a : Natural` whose
-    // invariant is `a.val >= 0`).
-    let when_redundant_with_lifts = law.when.as_ref().is_some_and(|w| {
-        crate::codegen::common::when_is_redundant_with_refinement_lifts(w, lifted_vars, ctx)
-    });
     match when_template {
-        Some(when_expr) if !when_redundant_with_lifts => {
-            format!("{when_expr} = true -> {conclusion}")
-        }
-        _ => conclusion,
+        Some(when_expr) => format!("{when_expr} = true -> {conclusion}"),
+        None => conclusion,
     }
 }
 

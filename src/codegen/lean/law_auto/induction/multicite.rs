@@ -428,21 +428,6 @@ fn plan(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Option<Multi
     let Expr::FnCall(_, _) = &law.lhs.node else {
         return None;
     };
-    // Fail closed on refinement-lifted givens (mirrors the keystone gate): the
-    // lifted statement path takes a different quantifier shape than `intro
-    // <givens> h_when`.
-    if law.givens.iter().any(|g| {
-        crate::codegen::common::refinement_lift_for_given(
-            &g.name,
-            &g.type_name,
-            &law.lhs,
-            &law.rhs,
-            ctx,
-        )
-        .is_some()
-    }) {
-        return None;
-    }
     let when = law.when.as_ref()?;
     let mut leaves = Vec::new();
     let mut wc = 0usize;
