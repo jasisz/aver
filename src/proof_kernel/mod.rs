@@ -29,9 +29,13 @@ pub mod aver_generated;
 
 /// The kernel's verdict on one serialised step script
 /// (`crate::ir::proof_steps::sexpr`): the key of the law it proves, or the
-/// refusal of its first wrong step (`step <path>: <reason>`).
+/// refusal of its first wrong step (`step <path>: <reason>`). The check
+/// runs on its own stack (`crate::proof_stack`); a kernel that stops with
+/// an internal error refuses the script.
 pub fn verdict(script: &str) -> Result<String, String> {
-    aver_generated::entry::verdict(AverStr::from(script))
-        .map(|key| key.to_string())
-        .map_err(|why| why.to_string())
+    crate::proof_stack::run("the proof kernel", || {
+        aver_generated::entry::verdict(AverStr::from(script))
+            .map(|key| key.to_string())
+            .map_err(|why| why.to_string())
+    })?
 }
