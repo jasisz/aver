@@ -464,9 +464,12 @@ impl Env<'_> {
                 // The claim is evaluated again only where a new form can
                 // change what it stopped at: the form stands there, or it is
                 // an equality whose left side does.
+                let swap = self.swap_equalities;
                 let meets = |f: &Evaluated| {
                     let reads = match &f.fact.node {
-                        ResolvedExpr::BinOp(BinOp::Eq, a, _) if f.said => Some(canon(a)),
+                        ResolvedExpr::BinOp(BinOp::Eq, a, k) if f.said => {
+                            Some(super::eval::oriented(a, k, swap).0)
+                        }
                         _ => None,
                     };
                     stopped.iter().any(|t| {

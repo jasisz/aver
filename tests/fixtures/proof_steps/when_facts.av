@@ -1,0 +1,125 @@
+module WhenFacts
+    intent =
+        "Laws whose cited laws need facts a `when` gives only once it is read:"
+        "a line of a recursive predicate at a list cell, a given only a cited law's `when` names,"
+        "and an equality stated with the variable on its right. Each has a false law of the"
+        "same shape, which must stay open."
+    exposes [octets, low, lowAll, count, clampLow]
+    effects []
+
+fn octets(xs: List<Int>) -> Bool
+    ? "Every item is an octet."
+    match xs
+        [] -> true
+        [h, ..t] -> Bool.and(Bool.and(h >= 0, h < 256), octets(t))
+
+verify octets
+    octets([1, 2]) => true
+    octets([256]) => false
+
+fn low(x: Int) -> Int
+    ? "The low octet."
+    Int.mod(x, 256)
+
+verify low
+    low(257) => 1
+
+verify low law keepsAnOctet
+    given x: Int = [0, 1, 255]
+    when Bool.and(x >= 0, x < 256)
+    using []
+    low(x) => x
+
+fn lowAll(xs: List<Int>) -> List<Int>
+    ? "The low octet of each item."
+    match xs
+        [] -> []
+        [h, ..t] -> List.prepend(low(h), lowAll(t))
+
+verify lowAll
+    lowAll([257, 1]) => [1, 1]
+
+verify lowAll law keepsOctets
+    given xs: List<Int> = [[], [0], [1, 255]]
+    given k: Int = [1, 2]
+    when Bool.and(octets(xs), k > 0)
+    using [low.keepsAnOctet]
+    lowAll(xs) => xs
+
+verify lowAll law keepsShortOctets
+    given xs: List<Int> = [[], [0], [1, 255]]
+    when Bool.and(octets(xs), List.len(xs) <= 8)
+    using [low.keepsAnOctet]
+    lowAll(xs) => xs
+
+verify lowAll law keepsAnything
+    given xs: List<Int> = [[], [0], [1, 255]]
+    given k: Int = [1, 2]
+    when Bool.and(octets(List.drop(xs, 1)), k > 0)
+    using [low.keepsAnOctet]
+    lowAll(xs) => xs
+
+fn count(xs: List<Int>) -> Int
+    ? "How many items."
+    match xs
+        [] -> 0
+        [h, ..t] -> 1 + count(t)
+
+verify count
+    count([1, 2]) => 2
+
+verify count law nonNegative
+    given xs: List<Int> = [[], [1]]
+    count(xs) >= 0 holds
+
+verify count law namedNonNegative
+    given xs: List<Int> = [[], [1]]
+    given n: Int = [0, 1]
+    when n == count(xs)
+    using [count.nonNegative]
+    n >= 0 holds
+
+fn clampLow(n: Int) -> Int
+    ? "n, or zero below zero."
+    match n >= 0
+        true -> n
+        false -> 0
+
+verify clampLow
+    clampLow(-1) => 0
+
+verify clampLow law keepsNatural
+    given n: Int = [0, 3]
+    when n >= 0
+    using []
+    clampLow(n) => n
+
+verify clampLow law keepsACount
+    given ys: List<Int> = [[], [1]]
+    given k: Int = [0, 1]
+    when k == count(ys)
+    using [count.namedNonNegative, clampLow.keepsNatural]
+    clampLow(k) => k
+
+verify clampLow law keepsAShiftedCount
+    given ys: List<Int> = [[], [1]]
+    given k: Int = [0, 1]
+    when k + 1 == count(ys)
+    using [count.namedNonNegative, clampLow.keepsNatural]
+    clampLow(k) => k
+
+verify clampLow law takesTheFirstPart
+    given a: List<Int> = [[], [1], [1, 2]]
+    given b: List<Int> = [[], [9]]
+    given n: Int = [0, 1, 2]
+    when List.len(a) == n
+    using [List.take.ofConcat]
+    List.take(List.concat(a, b), n) => a
+
+verify clampLow law takesTheWrongPart
+    given a: List<Int> = [[]]
+    given b: List<Int> = [[], [9]]
+    given n: Int = [0]
+    when List.len(b) == n
+    using [List.take.ofConcat]
+    List.take(List.concat(a, b), n) => a

@@ -5454,6 +5454,52 @@ fn both_kernels_read_a_hypothesis_as_evaluated_and_refuse_a_wrong_evaluation() {
     let _ = fs::remove_dir_all(export);
 }
 
+/// Laws of `when_facts.av` whose cited laws need what a `when` gives once
+/// it is read: a line of a recursive predicate at a list cell, a carried
+/// comparison evaluated at the case's pattern, a given only a cited law's
+/// `when` names, bound from the hypothesis that `when` line matches, and an
+/// equality with its variable on the right. Each has a false law of the
+/// same shape that stays open.
+#[test]
+fn a_cited_when_is_met_by_what_the_hypotheses_state() {
+    let out = scratch("when-facts");
+    let (result, summary) = aver_backend_json("when_facts.av", &out, None);
+    let _ = fs::remove_dir_all(&out);
+    for law in [
+        "lowAll.keepsOctets",
+        "lowAll.keepsShortOctets",
+        "clampLow.keepsACount",
+        "clampLow.takesTheFirstPart",
+    ] {
+        assert_eq!(
+            summary["closed_by"][law],
+            "steps",
+            "{law}: {}",
+            format_output(&result)
+        );
+    }
+    for law in [
+        "lowAll.keepsAnything",
+        "clampLow.keepsAShiftedCount",
+        "clampLow.takesTheWrongPart",
+    ] {
+        assert_eq!(summary["closed_by"][law], "open", "{law}: {summary}");
+    }
+    let export = scratch("when-facts-export");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("when_facts.av", &export).into_iter().collect();
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in [
+        "lowAll.keepsOctets",
+        "lowAll.keepsShortOctets",
+        "clampLow.keepsACount",
+        "clampLow.takesTheFirstPart",
+    ] {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.to_string()));
+    }
+    let _ = fs::remove_dir_all(export);
+}
+
 /// Every law the evaluated hypotheses close, in the fixtures and in the
 /// corpus, with the file it is in and the root its modules resolve from.
 const EVALUATED_HYPOTHESIS_ROOM: [(&str, &str, &[&str]); 10] = [

@@ -666,16 +666,49 @@ fn prove_part(
         let mut met_halving = false;
         // The first pass's refusals, kept once the second pass runs.
         let mut opened: Option<Vec<String>> = None;
+        // And once more with each equality whose right side alone is a
+        // variable read right to left, when the law's `when` states one:
+        // `List.len(a) == n` may be needed as `n == List.len(a)`.
+        let reversible = env.hyps.iter().any(|(_, e)| {
+            crate::ir::proof_steps::term::bool_value(&e.rhs) == Some(true)
+                && matches!(&e.lhs.node, ResolvedExpr::BinOp(crate::ast::BinOp::Eq, x, y)
+                    if matches!(y.node, ResolvedExpr::Ident(_))
+                        && !matches!(x.node, ResolvedExpr::Ident(_)))
+        });
+        let mut written: Option<String> = None;
         // Open lines of cited `when`s the citations attempt met.
         let mut pending_whens: Vec<Term> = Vec::new();
-        for attempt in 0..8 {
-            if attempt == 4 {
-                if !met_halving {
-                    break;
-                }
+        for attempt in 0..12 {
+            if attempt == 4 && met_halving {
                 opened = Some(std::mem::take(&mut refusals));
             }
-            env.open_halving = attempt < 4;
+            if attempt == 4 && !met_halving {
+                // No second pass: straight to the third.
+                if !reversible {
+                    break;
+                }
+                continue;
+            }
+            if attempt > 4 && attempt < 8 && !met_halving {
+                continue;
+            }
+            if attempt == 8 {
+                if !reversible {
+                    break;
+                }
+                let first = match opened.take() {
+                    Some(first) => format!(
+                        "{}; with the call that divides down to zero kept whole: {}",
+                        first.join("; "),
+                        refusals.join("; ")
+                    ),
+                    None => refusals.join("; "),
+                };
+                refusals.clear();
+                written = Some(first);
+            }
+            env.open_halving = !(4..8).contains(&attempt);
+            env.swap_equalities = attempt >= 8;
             let attempt = attempt % 4;
             let outcome = match attempt {
                 0 => match using {
@@ -755,13 +788,17 @@ fn prove_part(
         } else {
             format!("; split on a cited `when`: {}", tried.join("; "))
         };
-        found.ok_or_else(|| match &opened {
-            Some(first) => format!(
+        found.ok_or_else(|| match (&written, &opened) {
+            (Some(first), _) => format!(
+                "{first}; with each equality read toward its variable: {}{tried}",
+                refusals.join("; ")
+            ),
+            (None, Some(first)) => format!(
                 "{}; with the call that divides down to zero kept whole: {}{tried}",
                 first.join("; "),
                 refusals.join("; ")
             ),
-            None => format!("{}{tried}", refusals.join("; ")),
+            (None, None) => format!("{}{tried}", refusals.join("; ")),
         })?
     };
     // The kernel types a call it splits on by its definition, so a

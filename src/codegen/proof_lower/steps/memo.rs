@@ -143,8 +143,9 @@ pub(crate) fn key(
     proving_cited_when: bool,
     discharging: bool,
     wide_linear: bool,
+    swap_equalities: bool,
 ) -> String {
     format!(
-        "{t:?}\u{1}{hyps:?}\u{1}{open_halving}\u{1}{proving_cited_when}\u{1}{discharging}\u{1}{wide_linear}"
+        "{t:?}\u{1}{hyps:?}\u{1}{open_halving}\u{1}{proving_cited_when}\u{1}{discharging}\u{1}{wide_linear}\u{1}{swap_equalities}"
     )
 }

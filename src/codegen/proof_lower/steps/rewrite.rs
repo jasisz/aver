@@ -165,7 +165,7 @@ impl Env<'_> {
             }
         }
         // A fact inside a hypothesis that calls a predicate.
-        if let Some(proof) = self.view_for(&t) {
+        if let Some(proof) = self.view_for(&t, true) {
             return Some(proof);
         }
         // `0 <= e && e < n`: a range fact.
@@ -400,6 +400,49 @@ impl Env<'_> {
         })
     }
 
+    /// Every given of `law` bound, in order, from `found`, the bindings
+    /// matching one of its sides gave. A given only the law's `when` names
+    /// (`n` in `when n == count(xs)` for `n >= 0 holds` matched at `k >= 0`
+    /// binds `xs` no more) is bound where a line of that `when`, with what
+    /// is bound already, matches a true hypothesis in scope as it stands;
+    /// the first such hypothesis, innermost first, is taken. The `when` is
+    /// then proved at the instance as any is, so a hypothesis only proposes
+    /// the instance and never stands in for the proof.
+    pub(crate) fn bound_by_when(
+        &self,
+        law: &LawRef,
+        found: Vec<(String, Term)>,
+    ) -> Option<Vec<(String, Term)>> {
+        if let Some(subst) = ordered(&law.givens, found.clone()) {
+            return Some(subst);
+        }
+        let when = law.premise.as_ref()?;
+        let mut lines = Vec::new();
+        super::split_and(when, Proof::Hyp(String::new()), &mut lines);
+        let mut found = found;
+        for (line, _) in &lines {
+            let mut free = Vec::new();
+            term::free_vars(line, &mut free);
+            if !free
+                .iter()
+                .any(|v| law.givens.contains(v) && !found.iter().any(|(k, _)| k == v))
+            {
+                continue;
+            }
+            for (_, e) in self.hyps.iter().rev() {
+                if term::bool_value(&e.rhs) != Some(true) {
+                    continue;
+                }
+                let mut more = found.clone();
+                if matches(line, &canon(&e.lhs), &law.givens, &mut more) {
+                    found = more;
+                    break;
+                }
+            }
+        }
+        ordered(&law.givens, found)
+    }
+
     pub(crate) fn try_equation(&mut self, eq: &Equation, t: &Term) -> Option<(Proof, Term)> {
         match eq {
             Equation::Law(law) => {
@@ -414,7 +457,7 @@ impl Env<'_> {
                         return None;
                     }
                 }
-                let subst = ordered(&law.givens, found)?;
+                let subst = self.bound_by_when(law, found)?;
                 let bridge = match celled {
                     false => None,
                     true => {
@@ -859,7 +902,7 @@ impl Env<'_> {
                     if !matches(anchor, target, &law.givens, &mut found) {
                         continue;
                     }
-                    let Some(subst) = ordered(&law.givens, found) else {
+                    let Some(subst) = self.bound_by_when(&law, found) else {
                         continue;
                     };
                     let (Ok(il), Ok(ir)) = (term::subst(pl, &subst), term::subst(pr, &subst))

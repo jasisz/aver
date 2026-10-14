@@ -80,6 +80,11 @@ pub(crate) struct Env<'a> {
     pub open_halving: bool,
     /// Whether such a definition was opened.
     pub met_halving: std::cell::Cell<bool>,
+    /// Whether a stated equality with a variable on its right only is
+    /// read right to left, the variable replaced by what it equals
+    /// ([`super::eval::oriented`]); an attempt that failed reading each as
+    /// written is tried again so when the law's own `when` states one.
+    pub swap_equalities: bool,
     /// The obligation's givens, which a fresh name must avoid.
     pub givens: Vec<String>,
     /// The givens of a finite type, which a split into every value covers.
@@ -169,6 +174,7 @@ impl<'a> Env<'a> {
             barren: Vec::new(),
             proving_cited_when: false,
             open_halving: true,
+            swap_equalities: false,
             met_halving: std::cell::Cell::new(false),
             givens: Vec::new(),
             finite: Vec::new(),

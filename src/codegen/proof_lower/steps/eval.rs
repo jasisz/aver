@@ -179,6 +179,21 @@ pub(super) fn select_arm(
 
 /// `chain` with a last [`Proof::Cell`] step when its value is a list
 /// literal an arm reads as a cell.
+/// A stated equality `x == y` as the rewrite evaluation reads it: the
+/// term it replaces, the term it puts in its place, and whether that is
+/// right to left. As written, the left side by the right one; with `swap`
+/// (`Env::swap_equalities`), a variable that stands on the right only is
+/// replaced by what it equals (`List.len(a) == n` read as
+/// `n == List.len(a)`).
+pub(super) fn oriented(x: &Term, y: &Term, swap: bool) -> (Term, Term, bool) {
+    let var = |t: &Term| matches!(t.node, ResolvedExpr::Ident(_));
+    if swap && var(y) && !var(x) {
+        (canon(y), canon(x), true)
+    } else {
+        (canon(x), canon(y), false)
+    }
+}
+
 fn with_cell(mut chain: Chain, cell: bool) -> Chain {
     if cell {
         let list = chain.cur().clone();
@@ -661,7 +676,7 @@ fn is_bool_value(t: &Term) -> bool {
 }
 
 /// The most head steps evaluating one hypothesis may take.
-const HYPOTHESIS_FUEL: usize = 100;
+pub(super) const HYPOTHESIS_FUEL: usize = 100;
 
 /// The most steps evaluating one hypothesis to its normal form (its parts
 /// too) may take, see [`Env::normal_fact`].
@@ -726,6 +741,7 @@ impl Env<'_> {
             self.proving_cited_when,
             self.discharging,
             self.wide_linear,
+            self.swap_equalities,
         );
         let kept = memo
             .borrow()
@@ -869,7 +885,12 @@ impl Env<'_> {
         if let Some(proof) = self.conjunct_of_hyp(cur) {
             return Ok(Some(Step::Progress(Box::new((proof, term::boolean(true))))));
         }
-        if let Some(proof) = self.view_for(cur) {
+        // A predicate call is also read off the arm of a predicate
+        // hypothesis its subject selects (`valid(t)` off
+        // `valid(List.prepend(h, t))`); any other term only off a body that
+        // is not a `match`.
+        let arms = matches!(cur.node, ResolvedExpr::Call(ResolvedCallee::Fn(_), _));
+        if let Some(proof) = self.view_for(cur, arms) {
             return Ok(Some(Step::Progress(Box::new((proof, term::boolean(true))))));
         }
         if let Some(step) = self.cited_int_equality(cur) {
@@ -1188,33 +1209,49 @@ impl Env<'_> {
     /// from both sides (`k` one of the literals a hypothesis compares it
     /// with). A stated `k` that is not a literal is taken only when no left
     /// side of a stated equality occurs in it, so a rewrite never feeds
-    /// another.
+    /// another. An equality read from right to left ([`oriented`]) gives
+    /// `a = k` by symmetry.
     fn equal_by_hypothesis(&mut self, cur: &Term) -> Option<Step> {
         if term::int_value(cur).is_some() {
             return None;
         }
         let t = canon(cur);
         let stated_lhs = self.stated_equalities();
-        let candidates: Vec<(String, Term, Term)> = self
+        let candidates: Vec<(String, Term, Term, bool)> = self
             .hyps
             .iter()
             .rev()
             .filter(|(_, e)| term::bool_value(&e.rhs) == Some(true))
             .filter_map(|(n, e)| match &e.lhs.node {
-                ResolvedExpr::BinOp(BinOp::Eq, a, k) => Some((n.clone(), canon(a), canon(k))),
+                ResolvedExpr::BinOp(BinOp::Eq, x, y) => {
+                    let (a, k, swapped) = oriented(x, y, self.swap_equalities);
+                    Some((n.clone(), a, k, swapped))
+                }
                 _ => None,
             })
-            .filter(|(_, a, k)| {
+            .filter(|(_, a, k, _)| {
                 term::int_value(k).is_some()
                     || ((is_int(a) && is_int(k) || self.beq_is_equality(a))
                         && !stated_lhs.iter().any(|l| occurs(l, k)))
             })
             .collect();
-        for (n, a, k) in candidates {
-            let rule = |a: Term| Proof::Rule {
-                rule: WallRule::EqOfBeq,
-                subst: vec![("a".into(), a), ("b".into(), k.clone())],
-                premises: vec![Proof::Hyp(n.clone())],
+        for (n, a, k, swapped) in candidates {
+            let rule = |a: Term| {
+                let (x, y) = if swapped {
+                    (k.clone(), a)
+                } else {
+                    (a, k.clone())
+                };
+                let beq = Proof::Rule {
+                    rule: WallRule::EqOfBeq,
+                    subst: vec![("a".into(), x), ("b".into(), y)],
+                    premises: vec![Proof::Hyp(n.clone())],
+                };
+                if swapped {
+                    Proof::Symm(Box::new(beq))
+                } else {
+                    beq
+                }
             };
             if a == t {
                 return Some(Step::Progress(Box::new((rule(a), k))));
@@ -1473,7 +1510,9 @@ impl Env<'_> {
             .iter()
             .filter(|(_, e)| term::bool_value(&e.rhs) == Some(true))
             .filter_map(|(_, e)| match &e.lhs.node {
-                ResolvedExpr::BinOp(BinOp::Eq, a, _) => Some(canon(a)),
+                ResolvedExpr::BinOp(BinOp::Eq, x, y) => {
+                    Some(oriented(x, y, self.swap_equalities).0)
+                }
                 _ => None,
             })
             .collect()
@@ -2343,11 +2382,18 @@ impl Env<'_> {
 
     /// The facts a hypothesis that calls a predicate states once the
     /// predicate is opened, each with its proof: the body, from the
-    /// definition's whole-body equation and the hypothesis, then the body's
-    /// `Bool.and` lines. Only a predicate that does not recurse, one level,
+    /// definition's equation and the hypothesis, then the body's `Bool.and`
+    /// lines. A body that is not a `match` opens for a predicate that does
+    /// not recurse; with `arms`, for proving a premise or a comparison, a
+    /// `match` opens too, recursive or not, where its subject is already a
+    /// value that selects one arm (`valid(List.prepend(h, t))` is the cell
+    /// arm of `valid`, the recursive call in it left as a line). One level,
     /// and only where a step reads it; the definition opened is marked used
     /// by the caller that takes a view.
-    pub(crate) fn opened_views(&mut self) -> Vec<(Term, Proof, crate::ir::identity::FnId)> {
+    pub(crate) fn opened_views(
+        &mut self,
+        arms: bool,
+    ) -> Vec<(Term, Proof, crate::ir::identity::FnId)> {
         let mut out = Vec::new();
         for (name, e) in self.hyps.clone() {
             if term::bool_value(&e.rhs) != Some(true) {
@@ -2356,35 +2402,12 @@ impl Env<'_> {
             let ResolvedExpr::Call(ResolvedCallee::Fn(id), args) = &e.lhs.node else {
                 continue;
             };
-            if self.inputs.recursive_fns.contains(id) {
-                continue;
-            }
-            let Some(def) = self.def(*id) else {
+            let Some((body, unfold)) = self.predicate_opened(*id, args, arms) else {
                 continue;
             };
-            if matches!(def.body.node, ResolvedExpr::Match { .. }) {
-                continue;
-            }
-            let args: Vec<Term> = args.iter().map(canon).collect();
-            let Ok(outer) = def.outer(&args) else {
-                continue;
-            };
-            let Ok(body) = term::subst(&def.body, &outer) else {
-                continue;
-            };
-            let body = canon(&body);
             let from = Proof::Trans {
                 terms: vec![body.clone(), canon(&e.lhs), term::boolean(true)],
-                steps: vec![
-                    Proof::Symm(Box::new(Proof::Unfold {
-                        fn_id: *id,
-                        arm: 0,
-                        args,
-                        binders: Vec::new(),
-                        premise: None,
-                    })),
-                    Proof::Hyp(name.clone()),
-                ],
+                steps: vec![Proof::Symm(Box::new(unfold)), Proof::Hyp(name.clone())],
             };
             let mut lines = Vec::new();
             super::split_and(&body, from.clone(), &mut lines);
@@ -2396,10 +2419,64 @@ impl Env<'_> {
         out
     }
 
+    /// The body of the call `id(args)` opened one level for a view
+    /// ([`Self::opened_views`]), with the equation that opens it: the whole
+    /// body of a definition that is not a `match` and does not recurse, or
+    /// the arm of a `match` whose subject at `args` is a value selecting
+    /// it.
+    fn predicate_opened(
+        &mut self,
+        id: crate::ir::identity::FnId,
+        args: &[Term],
+        arms: bool,
+    ) -> Option<(Term, Proof)> {
+        let def = self.def(id)?;
+        let args: Vec<Term> = args.iter().map(canon).collect();
+        let outer = def.outer(&args).ok()?;
+        let ResolvedExpr::Match { subject, .. } = &def.body.node else {
+            if self.inputs.recursive_fns.contains(&id) {
+                return None;
+            }
+            let body = canon(&term::subst(&def.body, &outer).ok()?);
+            let unfold = Proof::Unfold {
+                fn_id: id,
+                arm: 0,
+                args,
+                binders: Vec::new(),
+                premise: None,
+            };
+            return Some((body, unfold));
+        };
+        if !arms {
+            return None;
+        }
+        let ResolvedExpr::Match { arms, .. } = &def.body.node else {
+            return None;
+        };
+        let s = canon(&term::subst(subject, &outer).ok()?);
+        let (k, binders, cell) = select_arm(arms, &s, &self.hyps)?;
+        let (_, premise) = with_cell(Chain::new(&s), cell).finish();
+        let unfold = Proof::Unfold {
+            fn_id: id,
+            arm: k,
+            args,
+            binders,
+            premise: Some(Box::new(premise)),
+        };
+        let script = self.scratch_script();
+        let body = crate::ir::proof_steps::claim::claim(&unfold, &script, &self.hyps)
+            .ok()?
+            .rhs;
+        Some((canon(&body), unfold))
+    }
+
     /// A view of a predicate hypothesis that is exactly `t`, with its proof.
-    pub(crate) fn view_for(&mut self, t: &Term) -> Option<Proof> {
+    pub(crate) fn view_for(&mut self, t: &Term, arms: bool) -> Option<Proof> {
         let t = canon(t);
-        let (_, proof, id) = self.opened_views().into_iter().find(|(f, _, _)| *f == t)?;
+        let (_, proof, id) = self
+            .opened_views(arms)
+            .into_iter()
+            .find(|(f, _, _)| *f == t)?;
         self.mark_used(id);
         Some(proof)
     }
@@ -2555,7 +2632,7 @@ impl Env<'_> {
             .collect();
         let plain = known.len();
         let views: Vec<(Term, Proof, crate::ir::identity::FnId)> = self
-            .opened_views()
+            .opened_views(true)
             .into_iter()
             .filter(|(f, _, _)| linear::as_nonneg(f, true, &mut Vec::new()).is_some())
             .collect();
@@ -2802,7 +2879,7 @@ impl Env<'_> {
         &mut self,
         goal: &Term,
     ) -> Vec<(Term, Proof, crate::ir::proof_steps::LawRef)> {
-        use super::rewrite::{matches, ordered};
+        use super::rewrite::matches;
         use crate::ir::proof_steps::linear;
         let mut goal_atoms = Vec::new();
         let Some(goal_poly) = linear::as_nonneg(goal, true, &mut goal_atoms) else {
@@ -2860,7 +2937,7 @@ impl Env<'_> {
                 {
                     continue;
                 }
-                let Some(subst) = ordered(&law.givens, found) else {
+                let Some(subst) = self.bound_by_when(&law, found) else {
                     continue;
                 };
                 let Ok(lhs) = term::subst(&law.lhs, &subst) else {
@@ -3453,7 +3530,7 @@ impl Env<'_> {
             .map(|(n, e)| (canon(&e.lhs), Proof::Hyp(n.clone()), None))
             .collect();
         found.extend(
-            self.opened_views()
+            self.opened_views(false)
                 .into_iter()
                 .map(|(f, p, id)| (f, p, Some(id))),
         );

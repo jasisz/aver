@@ -429,10 +429,38 @@ impl Env<'_> {
                 let here = [(v.clone(), case.value.clone())];
                 self.hyps = kept.clone();
                 self.hyps.extend(case.guard.clone());
+                // A carried comparison is also cut in as evaluated at the
+                // case's pattern, so linear arithmetic reads its parts as
+                // the case has them (`List.len(List.prepend(h, t)) <= 8` as
+                // `List.len(t) + 1 <= 8`), evaluated before it is in scope
+                // so it does not answer for itself.
+                let mut read: Vec<(String, Term, Proof)> = Vec::new();
+                let mut at_case = Vec::new();
                 for (name, e) in &carried {
                     let at = Eqn::new(term::subst(&e.lhs, &here)?, term::subst(&e.rhs, &here)?);
-                    self.hyps.push((name.clone(), at));
+                    if let Some((fact, proof)) = self.carried_read(name, &at) {
+                        read.push((self.fresh_hyp(), fact, proof));
+                    }
+                    at_case.push((name.clone(), at));
                 }
+                self.hyps.extend(at_case);
+                for (name, fact, _) in &read {
+                    self.hyps
+                        .push((name.clone(), Eqn::new(fact.clone(), term::boolean(true))));
+                }
+                let cut_read = |p: Proof| {
+                    read.iter().rev().fold(p, |body, (name, fact, proof)| {
+                        if !super::uses_hyp(&body, name) {
+                            return body;
+                        }
+                        Proof::Have {
+                            name: name.clone(),
+                            fact: fact.clone(),
+                            proof: Box::new(proof.clone()),
+                            body: Box::new(body),
+                        }
+                    })
+                };
                 // A call's hypothesis is taken where every carried one is
                 // proved at its arguments; the case may do without it.
                 let mut ihs = Vec::new();
@@ -443,7 +471,7 @@ impl Env<'_> {
                     for (_, c) in &carried {
                         let at = (term::subst(&c.lhs, tau)?, term::subst(&c.rhs, tau)?);
                         match self.prove_by_evaluation(&at.0, &at.1, depth) {
-                            Ok(p) => proofs.push(p),
+                            Ok(p) => proofs.push(cut_read(p)),
                             Err(_) => break,
                         }
                     }
@@ -535,7 +563,7 @@ impl Env<'_> {
                         for (_, c) in &carried {
                             let at = (term::subst(&c.lhs, &inst)?, term::subst(&c.rhs, &inst)?);
                             match self.prove_by_evaluation(&at.0, &at.1, depth) {
-                                Ok(p) => proofs.push(p),
+                                Ok(p) => proofs.push(cut_read(p)),
                                 Err(_) => break,
                             }
                         }
@@ -563,7 +591,7 @@ impl Env<'_> {
                     ihs,
                     carry,
                     more,
-                    proof,
+                    proof: cut_read(proof),
                 });
             }
             Ok(cases)
@@ -583,6 +611,43 @@ impl Env<'_> {
 }
 
 impl Env<'_> {
+    /// `at`, the carried hypothesis `name` at a case's pattern, evaluated
+    /// when it is a true comparison evaluation takes a step on and does not
+    /// decide: the form it reaches and the proof that the form is true.
+    fn carried_read(&mut self, name: &str, at: &Eqn) -> Option<(Term, Proof)> {
+        let lhs = canon(&at.lhs);
+        if term::bool_value(&at.rhs) != Some(true)
+            || !matches!(
+                lhs.node,
+                ResolvedExpr::BinOp(
+                    crate::ast::BinOp::Lt
+                        | crate::ast::BinOp::Lte
+                        | crate::ast::BinOp::Gt
+                        | crate::ast::BinOp::Gte,
+                    ..
+                )
+            )
+        {
+            return None;
+        }
+        let fuel = self.fuel;
+        let cap = fuel.min(super::eval::HYPOTHESIS_FUEL);
+        self.fuel = cap;
+        let ev = self.whnf(&lhs);
+        self.fuel = fuel - (cap - self.fuel);
+        let ev = ev.ok()?;
+        if ev.chain.is_empty() || term::bool_value(ev.chain.cur()).is_some() {
+            return None;
+        }
+        let (to, chain) = ev.chain.finish();
+        let to = canon(&to);
+        let proof = Proof::Trans {
+            terms: vec![to.clone(), lhs, term::boolean(true)],
+            steps: vec![Proof::Symm(Box::new(chain)), Proof::Hyp(name.to_string())],
+        };
+        Some((to, proof))
+    }
+
     /// Induction along each of `lines` in turn, the givens `f` recurses
     /// on: the first under which steps close every case, with its proof.
     /// Where none does, the facts that would rewrite where its cases
