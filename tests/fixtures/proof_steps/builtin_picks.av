@@ -1,8 +1,8 @@
 module BuiltinPicks
     intent =
-        "Int.min, Int.max, Int.abs and List.contains read by their rules in proof steps."
+        "Int.min, Int.max, Int.abs and List.contains read by their rules in proof steps, and != read in either order."
         "The laws under smallerIsFirst, dropsHead and holdsItself are false and must stay open."
-    exposes [smaller, larger, distance, has, smallerIsFirst, dropsHead, holdsItself]
+    exposes [smaller, larger, distance, has, differs, smallerIsFirst, dropsHead, holdsItself]
     effects []
 
 fn smaller(a: Int, b: Int) -> Int
@@ -103,6 +103,68 @@ verify has law literalHoldsNothingLarger
     given y: Int = 4..6
     when y > 3
     List.contains([1, 2, 3], y) => false
+
+verify has law findsItsHead
+    given t: List<Int> = [[], [1], [2, 1]]
+    given x: Int = -3..3
+    List.contains(List.prepend(x, t), x) => true
+
+verify has law findsAnEqualHead
+    given t: List<Int> = [[], [1], [2, 1]]
+    given h: Int = -3..3
+    given y: Int = -3..3
+    when h == y
+    List.contains(List.prepend(h, t), y) => true
+
+verify has law findsPastADifferentHead
+    given t: List<Int> = [[], [1], [2, 1]]
+    given h: Int = -3..3
+    given y: Int = -3..3
+    when h != y
+    List.contains(List.prepend(h, List.prepend(y, t)), y) => true
+
+verify has law literalHoldsAnOpenHead
+    given y: Int = -3..3
+    List.contains([y, 7], y) => true
+
+verify has law ofConcat
+    given a: List<Int> = [[], [1], [2, 1]]
+    given b: List<Int> = [[], [1], [3]]
+    given y: Int = -3..3
+    induction a
+    List.contains(List.concat(a, b), y) => Bool.or(List.contains(a, y), List.contains(b, y))
+
+verify has law ofReverse
+    given a: List<Int> = [[], [1], [2, 1]]
+    given y: Int = -3..3
+    induction a
+    using [has.ofConcat]
+    List.contains(List.reverse(a), y) => List.contains(a, y)
+
+fn differs(a: Int, b: Int) -> Bool
+    ? "Whether a and b differ."
+    a != b
+
+verify differs
+    differs(1, 2) => true
+    differs(2, 2) => false
+
+verify differs law commutes
+    given a: Int = -3..3
+    given b: Int = -3..3
+    differs(a, b) => differs(b, a)
+
+verify differs law swappedWhen
+    given a: Int = -3..3
+    given b: Int = -3..3
+    when a != b
+    b != a => true
+
+verify differs law swappedEquality
+    given a: Int = -3..3
+    given b: Int = -3..3
+    when a != b
+    b == a => false
 
 fn smallerIsFirst(a: Int, b: Int) -> Int
     ? "Carries the false law that the smaller of two is the first."

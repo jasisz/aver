@@ -6,7 +6,7 @@ module Rules
         "any one type ?t for the list, map and vector shapes, and a type whose == is equality where a"
         "rule reads == at that type: the types Lean's statement of the same rule holds at."
         "The list rules are the constructor equations of the list builtins, with Aver's truncation of a count."
-        "Int.min, Int.max and Int.abs are read by the comparison that picks their value; List.contains on [] and past an element that is not the one looked for."
+        "Int.min, Int.max and Int.abs are read by the comparison that picks their value; List.contains on [], on an element in front that is the one looked for and past one that is not."
         "The map rules read Map.get, Map.has and Map.len on the empty map and on Map.set(m, k, v)."
         "The vector rules read a vector as the list it holds, and Vector.get and Vector.len after a write or a literal-size Vector.new."
         "The bits rules read complement, a shift left and a mask of low bits or of one bit as Int arithmetic."
@@ -375,7 +375,7 @@ verify picked
     picked([bo("a")], v("a"), true, Term.TUnit, Term.TUnit) => Option.Some(Schema(binders = [bo("a")], premises = [is(v("a"), true)], concl = eq(Term.TUnit, Term.TUnit)))
 
 fn pickSchema(id: String) -> Option<Schema>
-    ? "Int.min and Int.max by a <= b, Int.abs by a < 0; List.contains on [] and past an element in front that the value looked for is not. No rule says the element in front is found: it would make a y == x a script derives into what the builtin returns, and x == x is taken as true of every term, also of one that is not equal to itself; no rule makes an equality false of every term."
+    ? "Int.min and Int.max by a <= b, Int.abs by a < 0; List.contains on [], on an element in front that the value looked for is (found) and past one it is not, by y == x as the builtin compares. Both read == only at a type whose == is equality, where x == x is true of every value."
     le = Term.TOp("<=", v("a"), v("b"))
     neg = Term.TOp("<", v("a"), Term.TInt(0))
     min = Term.TBi("Int.min", [v("a"), v("b")])
@@ -390,6 +390,7 @@ fn pickSchema(id: String) -> Option<Schema>
         "int.abs.neg" -> picked([i("a")], neg, true, abs, Term.TOp("-", Term.TInt(0), v("a")))
         "int.abs.nonneg" -> picked([i("a")], neg, false, abs, v("a"))
         "list.contains.nil" -> plain([any("y")], lb("contains", [Term.TList([]), v("y")]), Term.TBool(false))
+        "list.contains.cons_found" -> picked([same("x"), lt("a"), same("y")], Term.TOp("==", v("y"), v("x")), true, lb("contains", [cons(v("x"), v("a")), v("y")]), Term.TBool(true))
         "list.contains.cons_other" -> picked([same("x"), lt("a"), same("y")], Term.TOp("==", v("y"), v("x")), false, lb("contains", [cons(v("x"), v("a")), v("y")]), found)
         _ -> Option.None
 
@@ -402,6 +403,7 @@ verify pickSchema
     pickSchema("int.abs.nonneg") => Option.Some(Schema(binders = [i("a")], premises = [is(Term.TOp("<", v("a"), Term.TInt(0)), false)], concl = eq(Term.TBi("Int.abs", [v("a")]), v("a"))))
     pickSchema("list.contains.nil") => plain([any("y")], Term.TBi("List.contains", [Term.TList([]), v("y")]), Term.TBool(false))
     pickSchema("list.contains.cons_other") => Option.Some(Schema(binders = [same("x"), lt("a"), same("y")], premises = [is(Term.TOp("==", v("y"), v("x")), false)], concl = eq(Term.TBi("List.contains", [Term.TBi("List.prepend", [v("x"), v("a")]), v("y")]), Term.TBi("List.contains", [v("a"), v("y")]))))
+    pickSchema("list.contains.cons_found") => Option.Some(Schema(binders = [same("x"), lt("a"), same("y")], premises = [is(Term.TOp("==", v("y"), v("x")), true)], concl = eq(Term.TBi("List.contains", [Term.TBi("List.prepend", [v("x"), v("a")]), v("y")]), Term.TBool(true))))
     pickSchema("list.contains.cons") => Option.None
     pickSchema("int.min") => Option.None
     pickSchema("list.contains") => Option.None

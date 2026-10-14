@@ -1404,8 +1404,15 @@ impl Env<'_> {
 
     /// `(a Q b) = w` by a complement rule from `(a P b) = v`: a hypothesis
     /// states it, or, for `P` an Int equality, the two orders decide it
-    /// (`b != b` is false by `b == b`).
+    /// (`b != b` is false by `b == b`), or a hypothesis about `b` and `a`
+    /// does through `bool.beq.symm` (`b != a` is true where `a != b` is).
     fn complement(&mut self, cur: &Term) -> Option<Step> {
+        self.complement_in(cur, true)
+    }
+
+    /// [`Env::complement`]; `swap` also reads an equality from what the
+    /// hypotheses state about its sides the other way round, one level.
+    fn complement_in(&mut self, cur: &Term, swap: bool) -> Option<Step> {
         let ResolvedExpr::BinOp(op, a, b) = &cur.node else {
             return None;
         };
@@ -1421,7 +1428,10 @@ impl Env<'_> {
                 Some((name, value)) if term::bool_value(&value) == Some(v) => Proof::Hyp(name),
                 _ if p == BinOp::Eq => match self.decide_linearly(&premise) {
                     Some((proof, value)) if term::bool_value(&value) == Some(v) => proof,
-                    _ => continue,
+                    _ => match self.eq_swapped(&premise, swap) {
+                        Some((proof, value)) if value == v => proof,
+                        _ => continue,
+                    },
                 },
                 _ => continue,
             };
@@ -1434,7 +1444,46 @@ impl Env<'_> {
                 term::boolean(w),
             ))));
         }
+        if *op == BinOp::Eq
+            && let Some((proof, value)) = self.eq_swapped(cur, swap)
+        {
+            return Some(Step::Progress(Box::new((proof, term::boolean(value)))));
+        }
         None
+    }
+
+    /// `(a == b) = v` from `(b == a) = v`, which a hypothesis states or a
+    /// complement rule reads from one about `b != a`, by `bool.beq.symm`;
+    /// only with `swap`, so the complement it asks does not swap back.
+    fn eq_swapped(&mut self, cur: &Term, swap: bool) -> Option<(Proof, bool)> {
+        let ResolvedExpr::BinOp(BinOp::Eq, a, b) = &cur.node else {
+            return None;
+        };
+        let (a, b) = (canon(a), canon(b));
+        if !swap || a == b || !self.beq_is_equality(&a) {
+            return None;
+        }
+        let swapped = canon(&term::binop(BinOp::Eq, b.clone(), a.clone()));
+        let (inner, value) = match self.hyp_for(&swapped) {
+            Some((name, value)) => (Proof::Hyp(name), value),
+            None => match self.complement_in(&swapped, false)? {
+                Step::Progress(done) => *done,
+                _ => return None,
+            },
+        };
+        let v = term::bool_value(&value)?;
+        let proof = Proof::Trans {
+            terms: vec![canon(cur), swapped, value],
+            steps: vec![
+                Proof::Rule {
+                    rule: WallRule::BeqSymm,
+                    subst: vec![("a".into(), a), ("b".into(), b)],
+                    premises: Vec::new(),
+                },
+                inner,
+            ],
+        };
+        Some((proof, v))
     }
 
     /// An Int comparison decided as it stands, before a stated equality
@@ -2112,10 +2161,10 @@ impl Env<'_> {
                 v,
             )))));
         }
-        // `List.contains` compares with `==`. Its rule past an element in
-        // front needs `(y == x) = false`, which is decided, also from the
-        // comparison written the other way round, only for an element
-        // type whose `==` is equality (no Float inside); the element type
+        // `List.contains` compares with `==`. Its rules on an element in
+        // front need `(y == x)` decided, also from the comparison written
+        // the other way round, and only for an element type whose `==` is
+        // equality (no Float inside); the element type
         // is the list's, or the looked-for value's where the list has
         // none.
         let is_contains = name == "List.contains" && args.len() == 2;
@@ -2178,44 +2227,41 @@ impl Env<'_> {
                 (WallRule::ContainsNil, bind(&["y"], vec![args[1].clone()]))
             }
             ("List.contains", 2, Some((x, a))) if contains => {
-                // Past the element in front where the value looked for is
-                // decided to be another, as `y == x` or, by
-                // `bool.beq.symm`, as `x == y` (the order the VM compares
-                // in); undecided, that is where the prover splits. No rule
-                // finds the element in front.
+                // The element in front is the value looked for, or the rest
+                // decides, as `y == x` decides, or, by `bool.beq.symm`,
+                // `x == y` (the order the VM compares in); undecided, that
+                // is where the prover splits.
                 let y = args[1].clone();
                 let asked = term::binop(BinOp::Eq, y.clone(), x.clone());
                 let ev = self.whnf(&asked)?;
-                let premise = match term::bool_value(ev.chain.cur()) {
-                    Some(false) => ev.chain.finish().1,
-                    Some(true) => return Ok(None),
+                let (found, premise) = match term::bool_value(ev.chain.cur()) {
+                    Some(v) => (v, ev.chain.finish().1),
                     None => {
                         let swapped = term::binop(BinOp::Eq, x.clone(), y.clone());
                         let ev = self.whnf(&swapped)?;
-                        match term::bool_value(ev.chain.cur()) {
-                            Some(false) => Proof::Trans {
-                                terms: vec![canon(&asked), canon(&swapped), term::boolean(false)],
-                                steps: vec![
-                                    Proof::Rule {
-                                        rule: WallRule::BeqSymm,
-                                        subst: vec![
-                                            ("a".into(), y.clone()),
-                                            ("b".into(), x.clone()),
-                                        ],
-                                        premises: Vec::new(),
-                                    },
-                                    ev.chain.finish().1,
-                                ],
-                            },
-                            Some(true) => return Ok(None),
-                            None => {
-                                let on = ev.blocked.unwrap_or_else(|| canon(&swapped));
-                                return Ok(Some(Step::Blocked(on)));
-                            }
-                        }
+                        let Some(v) = term::bool_value(ev.chain.cur()) else {
+                            let on = ev.blocked.unwrap_or_else(|| canon(&swapped));
+                            return Ok(Some(Step::Blocked(on)));
+                        };
+                        let proof = Proof::Trans {
+                            terms: vec![canon(&asked), canon(&swapped), term::boolean(v)],
+                            steps: vec![
+                                Proof::Rule {
+                                    rule: WallRule::BeqSymm,
+                                    subst: vec![("a".into(), y.clone()), ("b".into(), x.clone())],
+                                    premises: Vec::new(),
+                                },
+                                ev.chain.finish().1,
+                            ],
+                        };
+                        (v, proof)
                     }
                 };
-                let rule = WallRule::ContainsConsOther;
+                let rule = if found {
+                    WallRule::ContainsConsFound
+                } else {
+                    WallRule::ContainsConsOther
+                };
                 let subst = bind(&["x", "a", "y"], vec![x, a, y]);
                 let (_, concl) = rule.instantiate(&subst).expect("rule binders");
                 return Ok(Some(Step::Progress(Box::new((
