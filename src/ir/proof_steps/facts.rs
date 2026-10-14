@@ -1310,6 +1310,7 @@ fn by_contains_induction(
         eq,
         Proof::InductList {
             var: "a".into(),
+            carried: Vec::new(),
             lhs,
             rhs,
             nil: Box::new(nil),
