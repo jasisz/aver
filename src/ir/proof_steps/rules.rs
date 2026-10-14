@@ -100,14 +100,12 @@ pub enum WallRule {
     ReverseNil,
     ReverseCons,
     // `List.contains` on `[]`, and on `List.prepend(x, a)` where the value
-    // looked for is not the element in front (`(y == x) = false`): then
-    // the rest decides. There is no rule for the case where it is: a rule
-    // stating it would turn any `y == x` a script derives into what the
-    // builtin returns, and the kernel takes `x == x` as true of every
-    // term, which a Float is not (`0.0 / 0.0`). No rule makes an equality
-    // false of every term, so the premise comes from what the law states,
-    // from computing on values, or from Int arithmetic.
+    // looked for is the element in front (`(y == x) = true`: found) or is
+    // not (`(y == x) = false`: the rest decides). Both bind `x` and `y` at
+    // a type whose `==` is equality, the only types the kernel takes
+    // `x == x` as true at; a Float is not equal to itself (`0.0 / 0.0`).
     ContainsNil,
+    ContainsConsFound,
     ContainsConsOther,
     // The Map builtins on the empty map and on `Map.set(m, k, v)`: a read
     // at the key just set, at another key (`k != k2`), and the size after a
@@ -139,7 +137,7 @@ pub enum WallRule {
 }
 
 impl WallRule {
-    pub const ALL: [WallRule; 86] = [
+    pub const ALL: [WallRule; 87] = [
         WallRule::AndTrueL,
         WallRule::AndFalseL,
         WallRule::AndTrueR,
@@ -205,6 +203,7 @@ impl WallRule {
         WallRule::ReverseNil,
         WallRule::ReverseCons,
         WallRule::ContainsNil,
+        WallRule::ContainsConsFound,
         WallRule::ContainsConsOther,
         WallRule::MapGetEmpty,
         WallRule::MapGetSetSame,
@@ -296,6 +295,7 @@ impl WallRule {
             WallRule::ReverseNil => "list.reverse.nil",
             WallRule::ReverseCons => "list.reverse.cons",
             WallRule::ContainsNil => "list.contains.nil",
+            WallRule::ContainsConsFound => "list.contains.cons_found",
             WallRule::ContainsConsOther => "list.contains.cons_other",
             WallRule::MapGetEmpty => "map.get.empty",
             WallRule::MapGetSetSame => "map.get.set_same",
@@ -345,7 +345,7 @@ impl WallRule {
             WallRule::DivRange => &["a", "k", "m", "n"],
             WallRule::BitsNot | WallRule::AbsNeg | WallRule::AbsNonneg => &["a"],
             WallRule::ContainsNil => &["y"],
-            WallRule::ContainsConsOther => &["x", "a", "y"],
+            WallRule::ContainsConsFound | WallRule::ContainsConsOther => &["x", "a", "y"],
             WallRule::BitsShl => &["a", "n", "k"],
             WallRule::BitsAndLow => &["a", "m", "k", "n"],
             WallRule::BitsAndBit => &["a", "k", "n"],
@@ -684,6 +684,10 @@ impl WallRule {
                 ),
             ),
             WallRule::ContainsNil => (vec![], is(contains(nil(), var("y")), false)),
+            WallRule::ContainsConsFound => (
+                vec![is(cmp(BinOp::Eq, var("y"), x()), true)],
+                is(contains(cons(x(), a()), var("y")), true),
+            ),
             WallRule::ContainsConsOther => (
                 vec![is(cmp(BinOp::Eq, var("y"), x()), false)],
                 Eqn::new(contains(cons(x(), a()), var("y")), contains(a(), var("y"))),

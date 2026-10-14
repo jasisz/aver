@@ -4365,12 +4365,21 @@ fn lean_checks_the_vector_rules_and_refuses_a_mutation() {
     let _ = fs::remove_dir_all(out);
 }
 
-const PICK_LAWS: [&str; 13] = [
+const PICK_LAWS: [&str; 22] = [
+    "differs.commutes",
+    "differs.swappedEquality",
+    "differs.swappedWhen",
     "distance.absNonNegative",
     "distance.absOfLiteral",
     "distance.asAbs",
     "has.emptyHoldsNothing",
+    "has.findsAnEqualHead",
+    "has.findsItsHead",
+    "has.findsPastADifferentHead",
+    "has.literalHoldsAnOpenHead",
     "has.literalHoldsNothingLarger",
+    "has.ofConcat",
+    "has.ofReverse",
     "has.skipsADifferentHead",
     "has.skipsAnother",
     "larger.asMax",
@@ -4396,8 +4405,8 @@ const PICK_FALSE_LAWS: [&str; 5] = [
 /// A script for the false law that a list of one element always holds it,
 /// with nothing saying what the element is. It reads the element in front as
 /// found, through a rule `list.contains.cons` and `x == x`; for a Float
-/// (`0.0 / 0.0`) the VM answers otherwise. No rule finds the element in
-/// front, and `x == x` is true only of a type whose `==` is equality, so
+/// (`0.0 / 0.0`) the VM answers otherwise. The rule that finds the element
+/// in front, like `x == x`, holds only at a type whose `==` is equality, so
 /// both kernels refuse it.
 const CONTAINS_FINDS_ITSELF: &str = "(steps 14
   (obligation containsFloat.alwaysFindsSelf ((x float)) (none)
@@ -4418,9 +4427,10 @@ const CONTAINS_FINDS_ITSELF: &str = "(steps 14
 
 /// `Int.min`, `Int.max` and `Int.abs` are read by the comparison that picks
 /// their value, and `List.contains` on `[]` and past an element in front
-/// that the value looked for is not, each by a wall rule; a false law about
-/// them gets no step proof, and both kernels refuse a rule taken for
-/// another, and any script that reads the element in front as found.
+/// that the value looked for is or is not, each by a wall rule; a false law
+/// about them gets no step proof, and both kernels refuse a rule taken for
+/// another, and any script that reads the element in front of a list of
+/// Float as found.
 #[test]
 fn both_kernels_read_min_max_abs_and_contains_by_their_rules_and_refuse_mutations() {
     let out = scratch("picks");
@@ -4441,6 +4451,7 @@ fn both_kernels_read_min_max_abs_and_contains_by_their_rules_and_refuse_mutation
         "int.abs.neg",
         "int.abs.nonneg",
         "list.contains.nil",
+        "list.contains.cons_found",
         "list.contains.cons_other",
     ] {
         assert!(
@@ -4527,6 +4538,21 @@ fn both_kernels_read_min_max_abs_and_contains_by_their_rules_and_refuse_mutation
             CONTAINS_FINDS_ITSELF.replace(
                 "(rule list.contains.cons ((x (v x)) (a (list)) (y (v x))))",
                 "(rule list.contains.cons_other ((x (v x)) (a (list)) (y (v x))) (rule bool.beq.refl ((a (v x)))))",
+            ),
+        ),
+        (
+            "the element in front of a list of Float read as found by its rule",
+            format!(
+                "{}(proof (rule list.contains.cons_found ((x (v x)) (a (list)) (y (v x))) (rule bool.beq.refl ((a (v x)))))))\n",
+                &CONTAINS_FINDS_ITSELF[..CONTAINS_FINDS_ITSELF.find("(proof").unwrap()]
+            ),
+        ),
+        (
+            "an element in front that is not the one looked for read as found",
+            swap(
+                "has.skipsADifferentHead",
+                "(rule list.contains.cons_other",
+                "(rule list.contains.cons_found",
             ),
         ),
     ] {

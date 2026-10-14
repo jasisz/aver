@@ -197,6 +197,9 @@ theorem list_reverse_nil {α : Type} : ([] : List α).reverse = [] := rfl
 theorem list_reverse_cons {α : Type} (x : α) (a : List α) : (x :: a).reverse = (a.reverse ++ [x]) :=
   List.reverse_cons
 theorem list_contains_nil {α : Type} [BEq α] (y : α) : ([] : List α).contains y = false := rfl
+theorem list_contains_cons_found {α : Type} [BEq α] (x : α) (a : List α) (y : α)
+    (h : (y == x) = true) : (x :: a).contains y = true := by
+  rw [List.contains_cons, h]; rfl
 theorem list_contains_cons_other {α : Type} [BEq α] (x : α) (a : List α) (y : α)
     (h : (y == x) = false) : (x :: a).contains y = a.contains y := by
   rw [List.contains_cons, h]; rfl
@@ -421,6 +424,7 @@ fn lemma(rule: WallRule) -> &'static str {
         WallRule::ReverseNil => "AverSteps.list_reverse_nil",
         WallRule::ReverseCons => "AverSteps.list_reverse_cons",
         WallRule::ContainsNil => "AverSteps.list_contains_nil",
+        WallRule::ContainsConsFound => "AverSteps.list_contains_cons_found",
         WallRule::ContainsConsOther => "AverSteps.list_contains_cons_other",
         // The Map rules sit with the map model they read.
         WallRule::MapGetEmpty => "AverMap.step_get_empty",

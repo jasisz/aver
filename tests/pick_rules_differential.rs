@@ -11,8 +11,8 @@
 //! `List.contains` is also run on lists of Float, with `0.0 / 0.0`, which is
 //! not equal to itself: the VM and wasm-gc must skip an element in front
 //! wherever `y == x` is false there too, and must not find `0.0 / 0.0` in a
-//! list that holds it, which is why no rule reads the element in front as
-//! found. A Float is outside the step format, so these samples are written
+//! list that holds it, which is why the rules on an element in front bind
+//! it only at a type whose `==` is equality. A Float is outside the step format, so these samples are written
 //! as source, with the comparison computed here as IEEE 754 does.
 
 #[path = "support/aver_cmd.rs"]
@@ -136,9 +136,9 @@ fn float(v: f64) -> String {
     }
 }
 
-/// `List.contains` on lists of Float: both sides of `list.contains.nil` and
-/// of `list.contains.cons_other` at every sample where `y == x` is false,
-/// and the value of `List.contains(List.prepend(x, []), x)`, which is false
+/// `List.contains` on lists of Float: both sides of `list.contains.nil`, of
+/// `list.contains.cons_found` at every sample where `y == x` is true and of
+/// `list.contains.cons_other` where it is false, and the value of `List.contains(List.prepend(x, []), x)`, which is false
 /// for `0.0 / 0.0`.
 fn float_program() -> String {
     let values = [0.0, 1.5, -2.0, f64::NAN];
@@ -154,10 +154,8 @@ fn float_program() -> String {
         lhs.push(format!("List.contains([], {})", float(y)));
         rhs.push("false".to_string());
         for x in values {
-            // The premise of `list.contains.cons_other`, `(y == x) = false`.
-            if y == x {
-                continue;
-            }
+            // `(y == x)` as IEEE 754 computes it decides between
+            // `list.contains.cons_found` and `list.contains.cons_other`.
             for a in rests {
                 lhs.push(format!(
                     "List.contains(List.prepend({}, {}), {})",
@@ -165,7 +163,11 @@ fn float_program() -> String {
                     list(a),
                     float(y)
                 ));
-                rhs.push(format!("List.contains({}, {})", list(a), float(y)));
+                rhs.push(if y == x {
+                    "true".to_string()
+                } else {
+                    format!("List.contains({}, {})", list(a), float(y))
+                });
             }
         }
     }
@@ -212,7 +214,7 @@ fn aver_in(dir: &Path, args: &[&str]) -> Output {
 
 #[test]
 fn every_rule_is_sampled() {
-    assert_eq!(rules().len(), 8);
+    assert_eq!(rules().len(), 9);
     let src = program();
     for rule in rules() {
         assert!(src.contains(&format!("// {}\n", rule.id())), "{src}");
