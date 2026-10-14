@@ -84,10 +84,11 @@ fn schemas() -> Vec<Schema> {
         })
         .collect();
     // Map facts are tested with the Map rules, on maps the kernel cannot
-    // evaluate.
+    // evaluate; the `List.contains` facts follow from its rules, which
+    // `pick_rules_differential` runs.
     for f in facts::all()
         .into_iter()
-        .filter(|f| f.key.starts_with("List."))
+        .filter(|f| f.key.starts_with("List.") && !f.key.starts_with("List.contains."))
     {
         let ob = &f.script.obligation;
         out.push(Schema {

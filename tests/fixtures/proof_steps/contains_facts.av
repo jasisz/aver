@@ -1,0 +1,61 @@
+module ContainsFacts
+    intent =
+        "Laws that the List.contains facts close, cited and uncited, over Int and record elements."
+        "The law over Floats must stay open: the facts hold only where == is equality."
+    exposes [Tx, has, hasTx, hasFloat]
+    effects []
+
+record Tx
+    id: Int
+    amount: Int
+
+fn has(xs: List<Int>, y: Int) -> Bool
+    ? "Whether y is in xs."
+    List.contains(xs, y)
+
+verify has
+    has([1, 2], 2) => true
+
+verify has law keptByConcat
+    given a: List<Int> = [[], [1], [2, 1]]
+    given b: List<Int> = [[], [1], [3]]
+    given y: Int = -3..3
+    when List.contains(a, y)
+    List.contains(List.concat(a, b), y) => true
+
+verify has law reversedFront
+    given a: List<Int> = [[], [1], [2, 1]]
+    given y: Int = -3..3
+    List.contains(List.reverse(List.prepend(y, a)), y) => true
+
+verify has law readsThroughReverse
+    given a: List<Int> = [[], [1], [2, 1]]
+    given y: Int = -3..3
+    using [List.contains.ofReverse]
+    List.contains(List.reverse(a), y) => List.contains(a, y)
+
+fn hasTx(xs: List<Tx>, t: Tx) -> Bool
+    ? "Whether the transaction t is in xs."
+    List.contains(xs, t)
+
+verify hasTx
+    hasTx([Tx(id = 1, amount = 5)], Tx(id = 1, amount = 5)) => true
+
+verify hasTx law eitherBatch
+    given a: List<Tx> = [[], [Tx(id = 1, amount = 5)]]
+    given b: List<Tx> = [[], [Tx(id = 2, amount = 7)]]
+    given t: Tx = [Tx(id = 1, amount = 5), Tx(id = 2, amount = 7)]
+    using [List.contains.ofConcat]
+    List.contains(List.concat(a, b), t) => Bool.or(List.contains(a, t), List.contains(b, t))
+
+fn hasFloat(xs: List<Float>, y: Float) -> Bool
+    ? "Whether y is in xs, for Floats."
+    List.contains(xs, y)
+
+verify hasFloat
+    hasFloat([1.0], 1.0) => true
+
+verify hasFloat law readsThroughReverse
+    given a: List<Float> = [[], [1.0], [2.0, 1.0]]
+    given y: Float = [1.0, 2.0]
+    List.contains(List.reverse(a), y) => List.contains(a, y)

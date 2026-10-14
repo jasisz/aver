@@ -400,6 +400,55 @@ impl Env<'_> {
         })
     }
 
+    /// Whether a builtin fact may be instantiated at `subst`: where its
+    /// givens hold the type variable whose `==` must be equality
+    /// ([`crate::ir::proof_steps::facts::KEY_TYPE_VAR`]), the terms there
+    /// state that type and it is one whose `==` is equality. The kernel
+    /// refuses the fact at any other type (a list of Float), so the steps
+    /// do not write it there.
+    fn equality_types_fit(&self, law: &LawRef, subst: &[(String, Term)]) -> bool {
+        use crate::ast::Type;
+        fn bound(expected: &Type, actual: &Type, out: &mut Vec<Type>) {
+            match (expected, actual) {
+                (Type::Var(n), _) if n == crate::ir::proof_steps::facts::KEY_TYPE_VAR => {
+                    out.push(actual.clone())
+                }
+                (Type::List(e), Type::List(a))
+                | (Type::Option(e), Type::Option(a))
+                | (Type::Vector(e), Type::Vector(a)) => bound(e, a, out),
+                (Type::Map(ek, ev), Type::Map(ak, av)) => {
+                    bound(ek, ak, out);
+                    bound(ev, av, out);
+                }
+                _ => {}
+            }
+        }
+        fn mentions(t: &Type) -> bool {
+            match t {
+                Type::Var(n) => n == crate::ir::proof_steps::facts::KEY_TYPE_VAR,
+                Type::List(e) | Type::Option(e) | Type::Vector(e) => mentions(e),
+                Type::Map(k, v) => mentions(k) || mentions(v),
+                _ => false,
+            }
+        }
+        let mut stated = Vec::new();
+        let mut needed = false;
+        for (g, ty) in &law.types {
+            if !mentions(ty) {
+                continue;
+            }
+            needed = true;
+            if let Some(actual) = subst.iter().find(|(n, _)| n == g).and_then(|(_, v)| v.ty()) {
+                bound(ty, actual, &mut stated);
+            }
+        }
+        !needed
+            || (!stated.is_empty()
+                && stated
+                    .iter()
+                    .all(|t| self.inputs.symbol_table.beq_is_equality(t)))
+    }
+
     pub(crate) fn try_equation(&mut self, eq: &Equation, t: &Term) -> Option<(Proof, Term)> {
         match eq {
             Equation::Law(law) => {
@@ -415,6 +464,9 @@ impl Env<'_> {
                     }
                 }
                 let subst = ordered(&law.givens, found)?;
+                if law.fact.is_some() && !self.equality_types_fit(law, &subst) {
+                    return None;
+                }
                 let bridge = match celled {
                     false => None,
                     true => {
