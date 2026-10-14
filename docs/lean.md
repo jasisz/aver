@@ -457,6 +457,8 @@ For example, `Bytes(values: List<Int>)` may carry an `allInRange(values)` invari
 
 `exposes opaque` is part of the shape. Without it any module may write `Natural(value = -1)`, so the predicate holds of no value of the type: the record is then emitted as a plain `structure`, a law with `given n: Natural` is stated about every record, and a step script adds no premise for it. This applies to an entry file too: one with no `exposes opaque` line has no refined types. Before 0.31 the constructor's shape alone was enough, and a law could be reported closed that fails for a record another module writes directly.
 
+Inside the module, every direct write of the record is a `⟨v, proof⟩` in the export, so a pure function that writes `Natural(value = n.value - 1)` makes `lake build` fail. A function with effects is not exported, so nothing would check its writes: `aver check` refuses a direct write of a refined record there, and such a function calls a pure function or the constructor instead.
+
 Refinement records work the same way whether the type is declared in the entry file or in a dependent module. `aver proof natural.av` and `aver proof natural_app.av --module-root examples` both emit the same Subtype shape.
 
 A `when` clause of a law over a refined given is a premise of the theorem like any other: `when n.value <= cap` over `given n: Natural` is the antecedent `(n.val <= cap) = true -> ...`. What the type itself holds is not written as a `when`; the type carries it.

@@ -161,4 +161,38 @@ impl TypeChecker {
         // create/update returned `Type::named(...)` with `id: None`).
         self.canonicalize_named(Type::named(type_name.to_string()))
     }
+
+    /// A refined record holds its invariant only if every direct write in
+    /// its module keeps it. The proof export checks that of pure functions
+    /// only; a function with effects is not exported, so it has to get the
+    /// record from a pure function or from the smart constructor.
+    pub(in super::super) fn reject_refined_write_with_effects(
+        &mut self,
+        line: usize,
+        type_name: &str,
+    ) {
+        // Outside its module the write is already refused as opaque.
+        if !self.current_fn_effectful
+            || self
+                .opaque_types
+                .contains(self.canonical_type_name(type_name).as_str())
+        {
+            return;
+        }
+        let Some(constructor) = self
+            .resolve_type_id(type_name)
+            .and_then(|id| self.symbol_table.refinement_constructor(id))
+            .map(str::to_string)
+        else {
+            return;
+        };
+        self.error_at_node(
+            line,
+            format!(
+                "A function with effects cannot build '{type_name}' directly: what '{constructor}' \
+                 checks is proved only where a pure function builds it. Build it in a pure \
+                 function and call that, or call '{constructor}'"
+            ),
+        );
+    }
 }

@@ -32,6 +32,28 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 - **`aver proof` states every law for every input, in one `lake build`.** A `when`-law whose speculative proof does not close is declined (`declined_claims`, `--declined-budget`) instead of being restated over its samples; `aver verify` still checks those. `bounded_laws` leaves `--check-json`, and a 0.30 `--gate` baseline with `bounded` laws fails with a message to re-record it.
 - **`Kernel.Proof.Goal` has one more field, `hyps` (the hypotheses in scope), and its givens carry their types.** `goal.obligation.givens` is now a list of `TypedVar` (a `name` and its type `ty`, such as `Ty.TyList(Ty.TyInt)`), and so are a definition's parameters; a plan that needs the names reads `Kernel.Proof.givenNames(...)`. `goal.lists`, `goal.ints` and `goal.finite` still list the givens that are lists, Ints and of a finite type. A plan that builds a `Goal` with all its fields, or a `Law` with bare names as givens, as `verify` examples do, no longer type-checks, and its laws stay open until it is updated: write each given with its type (`Kernel.Term.typed("xs", Ty.TyList(Ty.TyInt))`) and build the example goal with `Kernel.Lib.goalFor(law)`, which fills the three lists from the types, and `Goal.update(...)` for the fields it needs.
 - **A `verify` case whose two sides have different types is a type error.** `one() => "one"` for `fn one() -> Int` passed `aver check` with `✓ types` and only failed later in `aver verify` as a mismatched case. `aver check`, `aver verify` and every other command that type-checks now stop at the case: ``Verify block 'one' case #1: the two sides of `=>` have incompatible types (Int vs String)``. The sides must be types `==` could compare, the rule a law's sides already followed. A case this rejects was already failing in `aver verify`; the usual one is a literal call to a validating constructor of an opaque record, which is the record itself and not a `Result`, so write `fromList([1, 2]) => Bytes(values = [1, 2])` without `Result.Ok(...)`.
+- **A function with effects builds a refined record through a pure function or the constructor.** In the module of an opaque record with a validating constructor (`Natural` with `fromInt`), a function with effects could write `Natural(value = -1)` or `Natural.update(n, value = -1)`. `aver proof` checks that each direct write of a refined record keeps what the constructor checks, but only in pure functions, because a function with effects is not exported to Lean. So a law over `given n: Natural` could be reported proved while `aver run` handed such a function's `Natural` to it and got `false`. `aver check` now refuses a direct write of a refined record in a function with effects and says what to do. Before:
+
+  ```aver
+  fn loud(n: Natural) -> Natural
+      ! [Console.print]
+      Console.print("x")
+      Natural(value = n.value - 1)
+  ```
+
+  After:
+
+  ```aver
+  fn pred(n: Natural) -> Natural
+      Natural(value = n.value - 1)
+
+  fn loud(n: Natural) -> Natural
+      ! [Console.print]
+      Console.print("x")
+      pred(n)
+  ```
+
+  Lean now sees `pred`, and refuses it, since `n.value - 1` can be negative. Pure functions write the record as before, and a record that is not opaque or has no validating constructor is not affected. No example, project or standard library module needed a change.
 
 ### Added
 

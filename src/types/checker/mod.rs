@@ -850,6 +850,10 @@ struct TypeChecker {
     /// generated: its name is in the `__` namespace, which user source cannot
     /// declare. Only such a function may call an internal operation.
     current_fn_generated: bool,
+    /// Whether the function currently being checked declares effects. Such a
+    /// function is not part of the proof export, so it may not write a refined
+    /// record directly (see `infer_record_create_expr`).
+    current_fn_effectful: bool,
     /// Operations a standard capability declares but does not expose, such
     /// as the generated loop's marks around its wait. Their signatures are
     /// registered so the code the compiler generates can call them; a call
@@ -944,6 +948,7 @@ impl TypeChecker {
             current_fn_ret: None,
             current_fn_line: None,
             current_fn_generated: false,
+            current_fn_effectful: false,
             internal_operations: HashSet::new(),
             opaque_types: HashSet::new(),
             builtin_type_names: HashSet::new(),

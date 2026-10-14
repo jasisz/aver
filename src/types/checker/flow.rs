@@ -405,6 +405,7 @@ impl TypeChecker {
 
             let declared_ret = sig.ret.clone();
             let declared_effects = sig.effects.clone();
+            self.current_fn_effectful = !declared_effects.is_empty();
 
             self.current_fn_ret = Some(declared_ret.clone());
 
@@ -452,6 +453,7 @@ impl TypeChecker {
             self.current_fn_line = None;
         }
         self.current_fn_generated = false;
+        self.current_fn_effectful = false;
     }
 
     pub(super) fn check_top_level_stmts(&mut self, items: &[TopLevel]) {
