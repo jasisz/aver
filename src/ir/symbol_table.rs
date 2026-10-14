@@ -176,6 +176,9 @@ pub struct SymbolTable {
     /// Recognized literal-dischargeable smart constructors — see
     /// [`SymbolTable::literal_refinements`].
     literal_refinements: crate::analysis::literal_refinement::LiteralRefinementTable,
+    /// Records that are refined types: opaque, with a recognized smart
+    /// constructor. See [`SymbolTable::refinement_constructor`].
+    refinement_types: HashMap<TypeId, String>,
     /// Every field annotation of a declared type, across its variants, as
     /// written; read by [`SymbolTable::may_hold_float`].
     type_fields: HashMap<TypeId, Vec<String>>,
@@ -525,7 +528,47 @@ impl SymbolTable {
                 &table,
             );
 
+        let has_carrier = entry_items
+            .iter()
+            .filter_map(|item| match item {
+                TopLevel::TypeDef(td) => Some(td),
+                _ => None,
+            })
+            .chain(dep_modules.iter().flat_map(|m| m.type_defs.iter()))
+            .any(|td| crate::analysis::shape::refinement_carrier(td).is_some());
+        if has_carrier {
+            for pattern in crate::analysis::shape::detect_module_patterns(entry_items, dep_modules)
+            {
+                if let crate::analysis::shape::ModulePattern::RefinementSmartConstructor {
+                    scope,
+                    type_name,
+                    constructor_fn,
+                    ..
+                } = pattern
+                {
+                    let key = match scope.as_deref() {
+                        Some(prefix) => TypeKey::in_module(prefix, &type_name),
+                        None => TypeKey::entry(&type_name),
+                    };
+                    if let Some(id) = table.type_id_of(&key) {
+                        table.refinement_types.insert(id, constructor_fn);
+                    }
+                }
+            }
+        }
+
         table
+    }
+
+    /// Whether the record is a refined type: listed under `exposes opaque`
+    /// with a validating smart constructor, the same recognizer the proof
+    /// export reads (`analysis::shape::detect_module_patterns`). Its
+    /// invariant holds of every value only if every direct construction in
+    /// its module keeps it, so the checker allows those constructions only
+    /// in pure functions, which the proof export checks.
+    /// Returns the smart constructor's name.
+    pub fn refinement_constructor(&self, id: TypeId) -> Option<&str> {
+        self.refinement_types.get(&id).map(String::as_str)
     }
 
     pub fn capability_operation(&self, canonical_name: &str) -> Option<CapabilityOperationInfo> {

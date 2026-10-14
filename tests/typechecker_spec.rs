@@ -2265,6 +2265,79 @@ fn int_refinement_program(check: &str, ret: &str, body: &str) -> String {
     )
 }
 
+/// A module declaring `record Natural` (opaque or not, with or without the
+/// checking constructor `fromInt`), a pure `succ` that writes it, and
+/// `probe` with effects and the given body.
+fn natural_with_effectful_probe(opaque: bool, checked: bool, body: &str) -> String {
+    let exposes = if opaque {
+        "    exposes opaque [Natural]\n"
+    } else {
+        ""
+    };
+    let constructor = if checked {
+        "fn fromInt(n: Int) -> Result<Natural, String>\n    ? \"probe\"\n    match n >= 0\n        true -> Result.Ok(Natural(value = n))\n        false -> Result.Err(\"negative\")\n\n"
+    } else {
+        ""
+    };
+    format!(
+        "module Local\n    intent = \"a refinement and a function with effects\"\n{exposes}    effects [Console.print]\n\nrecord Natural\n    value: Int\n\n{constructor}fn succ(n: Natural) -> Natural\n    ? \"probe\"\n    Natural(value = n.value + 1)\n\nfn probe(n: Natural) -> Natural\n    ? \"probe\"\n    ! [Console.print]\n    Console.print(\"x\")\n    {body}\n"
+    )
+}
+
+#[test]
+fn a_function_with_effects_does_not_write_a_refined_record_directly() {
+    // The proof export checks that each direct write of a refined record
+    // keeps its invariant, but only in pure functions: a function with
+    // effects is not exported. So such a function gets the record from a
+    // pure function or from the constructor.
+    for body in [
+        "Natural(value = -1)",
+        "Natural.update(n, value = -1)",
+        "Natural(value = n.value - 1)",
+    ] {
+        assert_error_containing(
+            &natural_with_effectful_probe(true, true, body),
+            "A function with effects cannot build 'Natural' directly",
+        );
+    }
+    for body in [
+        "succ(n)",
+        "n",
+        "match fromInt(n.value - 1)\n        Result.Ok(m) -> m\n        Result.Err(_) -> n",
+        "fromInt(3)",
+    ] {
+        assert_no_errors(&natural_with_effectful_probe(true, true, body));
+    }
+    // Not a refined type: the record is not opaque, or it has no checking
+    // constructor. Nothing is assumed of its values, so any function may
+    // write it.
+    for (opaque, checked) in [(false, true), (true, false)] {
+        assert_no_errors(&natural_with_effectful_probe(
+            opaque,
+            checked,
+            "Natural(value = -1)",
+        ));
+    }
+}
+
+#[test]
+fn a_dependency_function_with_effects_does_not_write_its_refined_record() {
+    let root = temp_module_root("effectful_refined_write");
+    std::fs::write(
+        root.join("Local.av"),
+        natural_with_effectful_probe(true, true, "Natural(value = -1)"),
+    )
+    .expect("write Local.av failed");
+    let src = "module App\n    depends [Local]\n    intent = \"uses the module\"\n\nfn main() -> Unit\n    ? \"probe\"\n    ! [Console.print]\n    Console.print(\"x\")\n";
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("A function with effects cannot build 'Natural' directly")),
+        "expected the effectful write in the dependency to be refused, got: {errs:?}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// The call types as `Natural`: it satisfies a `Natural` return and
 /// clashes with a `Result` one.
 fn assert_int_call_is_refined(check: &str, call: &str) {

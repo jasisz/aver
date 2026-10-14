@@ -809,6 +809,8 @@ From outside the module:
 
 An opaque record with one field and a constructor of this shape (a `match` on a Bool check, `Result.Ok` of the record when it holds, `Result.Err` otherwise) is a refined type for `aver proof`: the check holds of every value, because no other module can write the record, so a law may rely on it of a `given d: Discount` (see [Refinement records](lean.md#refinement-records-refinement-via-opaque)). `exposes opaque` is what makes that true. The same record without it is an ordinary record: any module may write `Discount(percent = 150.0)`, a law with `given d: Discount` is about every such record, and what the constructor checks has to be written as a `when` line where a law needs it. A record in a file with no `exposes opaque` line, an entry file included, is never refined. The compiler reads the same rule everywhere it uses the constructor's check: the literal smart-constructor discharge (`Bytes.fromList([0, 10, 255]) : Bytes`) and the compact representations the wasm-gc and Rust backends derive from the check apply to an opaque record only.
 
+Inside its module, a refined record is written directly (`Discount(percent = p)`, `Discount.update(d, percent = p)`) only in a pure function. A function with effects gets the record from a pure function or from the constructor; writing it there is a compile error. `aver proof` checks that every direct write keeps what the constructor checks, and it sees pure functions only.
+
 With `--module-root examples`:
 
 - `depends [Data.Fibonacci]` → `examples/data/fibonacci.av`, call as `Data.Fibonacci.fn(...)`

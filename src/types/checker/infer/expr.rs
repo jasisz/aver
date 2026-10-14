@@ -1852,6 +1852,7 @@ impl TypeChecker {
             }
 
             Expr::RecordCreate { type_name, fields } => {
+                self.reject_refined_write_with_effects(expr.line, type_name);
                 self.infer_record_create_expr(type_name, fields)
             }
 
@@ -1859,7 +1860,10 @@ impl TypeChecker {
                 type_name,
                 base,
                 updates,
-            } => self.infer_record_update_expr(type_name, base, updates),
+            } => {
+                self.reject_refined_write_with_effects(expr.line, type_name);
+                self.infer_record_update_expr(type_name, base, updates)
+            }
 
             Expr::TailCall(boxed) => {
                 let TailCallData { target, args, .. } = boxed.as_ref();
