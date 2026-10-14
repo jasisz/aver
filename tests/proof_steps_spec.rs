@@ -4138,6 +4138,129 @@ fn a_cited_map_fact_is_checked_with_its_when_and_refused_when_mutated() {
     let _ = fs::remove_dir_all(out);
 }
 
+const CONTAINS_FACT_LAWS: [&str; 4] = [
+    "has.keptByConcat",
+    "has.readsThroughReverse",
+    "has.reversedFront",
+    "hasTx.eitherBatch",
+];
+
+/// The `List.contains` facts close laws over Int and record elements,
+/// cited or where evaluation stops, and are checked with the law; the
+/// kernel refuses one proved by the rule for another element or stated at
+/// a list of Float, and the steps do not use them over Floats.
+#[test]
+fn the_contains_facts_close_laws_where_equality_is_equality_and_nowhere_else() {
+    let out = scratch("contains-facts");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("contains_facts.av", &out)
+            .into_iter()
+            .collect();
+    assert_eq!(
+        files.keys().cloned().collect::<Vec<_>>(),
+        CONTAINS_FACT_LAWS
+    );
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        let text = read(law);
+        assert!(text.contains("\n  (fact List.contains."), "{text}");
+        assert_eq!(aver::proof_kernel::verdict(&text), Ok(law.clone()));
+    }
+    let swap = |law: &str, from: &str, to: &str| {
+        let text = read(law);
+        assert!(text.contains(from), "{law}: {text}");
+        text.replacen(from, to, 1)
+    };
+    for (kind, text) in [
+        (
+            "the element in front found where it is another",
+            swap(
+                "has.keptByConcat",
+                "(rule list.contains.cons_other",
+                "(rule list.contains.cons_found",
+            ),
+        ),
+        (
+            "a fact stated at a list of Float",
+            swap(
+                "has.readsThroughReverse",
+                "((a (list (var K eq))) (y (var K eq)))",
+                "((a (list float)) (y float))",
+            ),
+        ),
+    ] {
+        let refused = aver::proof_kernel::verdict(&text);
+        assert!(refused.is_err(), "{kind}: {refused:?}\n{text}");
+    }
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "contains_facts.av",
+            "--backend",
+            "aver",
+            "--check-json",
+        ],
+    );
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap_or_else(|| panic!("{}", format_output(&result))),
+    )
+    .unwrap();
+    for law in CONTAINS_FACT_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    assert_eq!(
+        summary["closed_by"]["hasFloat.readsThroughReverse"], "open",
+        "{summary}"
+    );
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_states_each_contains_fact_once_for_every_type_with_a_beq() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("contains-facts-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "contains_facts.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "1",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in CONTAINS_FACT_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let common = fs::read_to_string(out.join("AverCommon.lean")).unwrap();
+    for theorem in [
+        "theorem AverFacts.list_contains_ofConcat {α : Type} [BEq α] (a : List α) (b : List α) (y : α) :",
+        "theorem AverFacts.list_contains_ofReverse {α : Type} [BEq α] (a : List α) (y : α) :",
+    ] {
+        assert_eq!(common.matches(theorem).count(), 1, "{common}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
 #[test]
 fn a_key_order_fact_about_maps_is_not_a_builtin_fact() {
     let dir = scratch("map-key-order");

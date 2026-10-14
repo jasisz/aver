@@ -2258,8 +2258,16 @@ pub(crate) fn render_cited_facts(body: &str, ctx: &CodegenContext) -> Result<Str
             .sorts
             .iter()
             .any(|(_, s)| matches!(s, Sort::Map | Sort::Key | Sort::Value));
+        // A list `List.contains` reads compares with the element type's
+        // `==`, which is all its rules need in Lean.
+        let compared = fact
+            .sorts
+            .iter()
+            .any(|(_, s)| matches!(s, Sort::EqList | Sort::EqElem));
         let types = if over_maps {
             "{α β : Type} [DecidableEq α] [AverKeyOrder α] [BEq α] [LawfulBEq α]".to_string()
+        } else if compared {
+            "{α : Type} [BEq α]".to_string()
         } else {
             "{α : Type}".to_string()
         };
@@ -2268,9 +2276,9 @@ pub(crate) fn render_cited_facts(body: &str, ctx: &CodegenContext) -> Result<Str
             .iter()
             .map(|(g, s)| {
                 let ty = match s {
-                    Sort::List => "List α",
+                    Sort::List | Sort::EqList => "List α",
                     Sort::Map => "List (α × β)",
-                    Sort::Key | Sort::Elem => "α",
+                    Sort::Key | Sort::Elem | Sort::EqElem => "α",
                     Sort::Value => "β",
                     Sort::Vector => "Array α",
                     Sort::Int => "Int",
