@@ -1,0 +1,51 @@
+module BecauseHint
+    intent =
+        "Laws whose `because` line the steps cannot prove. One closes without it by its own"
+        "induction, and is hinted to drop it. One needs its reason, and one closes without it only"
+        "by citing a law that is open itself; neither is hinted anything."
+    exposes [total, twice, square]
+    effects []
+
+fn total(xs: List<Int>) -> Int
+    ? "The sum of the items."
+    match xs
+        [] -> 0
+        [h, ..t] -> h + total(t)
+
+verify total
+    total([7, 8]) => 15
+
+verify total law ofJoined
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given ys: List<Int> = [[], [3]]
+    because total(xs) * total(xs) >= 0
+    total(List.concat(xs, ys)) => total(xs) + total(ys)
+
+fn twice(x: Int) -> Int
+    ? "The number added to itself."
+    x + x
+
+verify twice
+    twice(3) => 6
+
+verify twice law squareNonNegative
+    given x: Int = [-2, 0, 3]
+    because x * x >= 0
+    twice(x) * twice(x) >= 0 => true
+
+fn square(x: Int) -> Int
+    ? "The number times itself."
+    x * x
+
+verify square
+    square(3) => 9
+
+verify square law nonNegative
+    given x: Int = [-2, 0, 3]
+    square(x) >= 0 => true
+
+verify square law stillNonNegative
+    given x: Int = [-2, 0, 3]
+    because x * x * x * x >= 0
+    using [square.nonNegative]
+    square(x) >= 0 => true

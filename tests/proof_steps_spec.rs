@@ -5741,6 +5741,71 @@ fn a_wrapper_over_an_accumulator_is_hinted_the_law_that_closes_it() {
     assert_eq!(summary["closed_by"]["total.isFirst"], "open", "{summary}");
 }
 
+/// A law whose `because` line the steps cannot prove, and that closes by
+/// its own induction without it, is hinted to drop the line; pasted, the
+/// law closes. A law that needs its reason is hinted nothing, and neither
+/// is one that closes without it only by citing a law that is open.
+#[test]
+fn a_because_line_the_law_closes_without_is_hinted_away() {
+    let out = scratch("because-hint");
+    let (result, summary) = aver_backend_json("because_hint.av", &out, None);
+    let _ = fs::remove_dir_all(&out);
+    let open = [
+        "total.ofJoined",
+        "twice.squareNonNegative",
+        "square.nonNegative",
+        "square.stillNonNegative",
+    ];
+    for law in open {
+        assert_eq!(
+            summary["closed_by"][law],
+            "open",
+            "{law}: {}",
+            format_output(&result)
+        );
+    }
+    assert_eq!(
+        summary["steps_hints"],
+        serde_json::json!({
+            "total.ofJoined":
+                ["steps close this law without its `because` line; remove it"]
+        }),
+        "{summary}"
+    );
+    // The hint, pasted.
+    let source = fs::read_to_string(repo_root().join(FIXTURES).join("because_hint.av")).unwrap();
+    let line = "    because total(xs) * total(xs) >= 0\n";
+    assert!(source.contains(line));
+    let dir = scratch("because-hint-applied");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("because_hint.av"), source.replace(line, "")).unwrap();
+    let applied_out = dir.join("out");
+    let applied = aver_in(
+        &dir,
+        &[
+            "proof",
+            "because_hint.av",
+            "--backend",
+            "aver",
+            "-o",
+            applied_out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "99",
+        ],
+    );
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&applied.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap_or_else(|| panic!("{}", format_output(&applied))),
+    )
+    .unwrap();
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(summary["closed_by"]["total.ofJoined"], "steps", "{summary}");
+}
+
 /// The law of `cited_when_split.av` that closes only by a split on a line
 /// of a cited law's `when` that stays open where the law matches.
 const CITED_WHEN_SPLIT_LAW: &str = "smallSize.oneDigitRange";

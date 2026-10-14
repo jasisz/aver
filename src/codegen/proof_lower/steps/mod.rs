@@ -1314,6 +1314,75 @@ const MAX_HINT_ROUNDS: usize = 3;
 /// this is not hinted.
 const HINT_FUEL: usize = env::FUEL / 8;
 
+/// The hint for law `i`, which the steps left open with its `because`
+/// lines: remove them, when the steps close the same law without them.
+/// A `because` line only says how to argue the claim, never what it
+/// states, so the law without it is the same law. Its reasons can lead the
+/// steps where they stop (an induction along a reason's own function that
+/// runs out of fuel) while the claim goes by its own induction. The law
+/// without them is tried as it would be once its text says so: on a short
+/// budget first ([`BECAUSE_HINT_FUEL`]), then on the law's own, with the
+/// earlier laws of the automatic pass when it has no `using` line. It is
+/// tried only when a reason is open, and hinted only when every law its
+/// proof cites is closed too.
+fn because_hint(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize) -> Option<String> {
+    let t = &ir.law_theorems[i];
+    if t.reasons.is_empty() || t.by_plan.is_some() {
+        return None;
+    }
+    // When every reason closed, the claim stopped with all of them in
+    // scope: without them it has less to go on, not more.
+    let reason_open = t
+        .obligation_steps
+        .iter()
+        .any(|o| o.script.is_none() && !o.key.ends_with(".implication"));
+    if !reason_open {
+        return None;
+    }
+    let bare = LawTheorem {
+        reasons: Vec::new(),
+        reason_inductions: Vec::new(),
+        ..t.clone()
+    };
+    let pool = if bare.using.is_none() {
+        auto_pool(inputs, ir, i)
+    } else {
+        Vec::new()
+    };
+    // Closed, and every law the proof cites closed too: a law citing an
+    // open law stays open.
+    let earlier = &ir.law_theorems[..i];
+    let closed = |script: Script| {
+        script
+            .laws
+            .iter()
+            .filter(|l| l.fact.is_none())
+            .all(|l| closed_by_steps(inputs, earlier, &l.key))
+    };
+    let closes = |fuel: usize| {
+        produce_as(inputs, ir, i, &bare, &[], fuel, &mut Vec::new())
+            .law
+            .is_ok_and(closed)
+            || (!pool.is_empty()
+                && produce_as(inputs, ir, i, &bare, &pool, fuel, &mut Vec::new())
+                    .law
+                    .is_ok_and(closed))
+    };
+    if !closes(BECAUSE_HINT_FUEL) || !closes(env::FUEL) {
+        return None;
+    }
+    Some(if t.reasons.len() == 1 {
+        "steps close this law without its `because` line; remove it".to_string()
+    } else {
+        "steps close this law without its `because` lines; remove them".to_string()
+    })
+}
+
+/// What the first try of a law without its `because` lines may spend: a
+/// quarter of [`env::FUEL`]. The claim's own induction is a whole proof,
+/// not one rewrite, and an eighth leaves some that close unhinted.
+const BECAUSE_HINT_FUEL: usize = env::FUEL / 4;
+
 /// Most laws one hint adds to a `using` line.
 const MAX_HINT_LAWS: usize = 8;
 
@@ -1509,6 +1578,16 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                 // Then, for a wrapper that starts an accumulator at a
                 // constant, the law about the recursion that closes it.
                 from_plans.extend(accumulator::hint(inputs, ir, i));
+                // Then, for a law with `because` lines, the same law
+                // without them, when the steps close that.
+                let started = std::time::Instant::now();
+                let without = because_hint(inputs, ir, i);
+                if debug && !ir.law_theorems[i].reasons.is_empty() {
+                    let key = law_key(inputs, &ir.law_theorems[i]);
+                    let ms = started.elapsed().as_millis();
+                    eprintln!("steps: {key}: because hint in {ms} ms: {without:?}");
+                }
+                from_plans.extend(without);
                 // Then the `using` line the steps close it with.
                 let started = std::time::Instant::now();
                 let line = using_hint(inputs, ir, i, hints);
