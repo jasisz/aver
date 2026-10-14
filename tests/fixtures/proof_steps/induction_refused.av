@@ -23,11 +23,21 @@ verify double law isTwiceTheLength
     given xs: List<Int> = [[], [1]]
     double(xs) >= len(xs) => true
 
-// A `when` that mentions the list rules out induction on the list itself,
-// so, citing nothing, the refusal names the function that does recurse.
+// A `when` that mentions the list is carried by the induction on the list
+// itself: it holds in each case, and the tail's hypothesis is taken once it
+// is proved at the tail.
 
 verify double law isTwiceTheLengthWhenShort
     given xs: List<Int> = [[], [1]]
     when len(xs) < 3
     using []
     double(xs) >= len(xs) => true
+
+// The same shape, false at []: it stays open, and the refusal names the
+// function that does recurse.
+
+verify double law isMoreThanTheLengthWhenShort
+    given xs: List<Int> = [[], [1]]
+    when len(xs) < 3
+    using []
+    double(xs) > len(xs) => true

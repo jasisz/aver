@@ -1602,6 +1602,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
             v,
             l,
             r,
+            carried,
             n,
             h,
             t,
@@ -1630,29 +1631,29 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                                             let mut __b = {
                                                                                 let mut __b = {
                                                                                     let mut __b = {
-                                                                                        let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(171)).to_usize().unwrap_or(0));
-                                                                                        __b.push_str(&AverStr::from("(listinduct "));
+                                                                                        let mut __b = {
+                                                                                            let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(187)).to_usize().unwrap_or(0));
+                                                                                            __b.push_str(&AverStr::from("(listinduct "));
+                                                                                            __b
+                                                                                        };
+                                                                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v))));
                                                                                         __b
                                                                                     };
-                                                                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v))));
+                                                                                    __b.push_str(&AverStr::from(" "));
                                                                                     __b
                                                                                 };
-                                                                                __b.push_str(
-                                                                                    &AverStr::from(
-                                                                                        " ",
-                                                                                    ),
-                                                                                );
+                                                                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(&l)))));
                                                                                 __b
                                                                             };
-                                                                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(&l)))));
+                                                                            __b.push_str(
+                                                                                &AverStr::from(" "),
+                                                                            );
                                                                             __b
                                                                         };
-                                                                        __b.push_str(
-                                                                            &AverStr::from(" "),
-                                                                        );
+                                                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(&r)))));
                                                                         __b
                                                                     };
-                                                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(&r)))));
+                                                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::carryText(&carried)))));
                                                                     __b
                                                                 };
                                                                 __b.push_str(&AverStr::from(" "));

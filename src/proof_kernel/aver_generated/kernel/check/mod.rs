@@ -260,6 +260,7 @@ fn __mutual_tco_trampoline_1(
                         v,
                         l,
                         r,
+                        carry,
                         n,
                         h,
                         t,
@@ -275,6 +276,7 @@ fn __mutual_tco_trampoline_1(
                                 lhs: l,
                                 rhs: r,
                             },
+                            &carry,
                             n,
                             h,
                             t,
@@ -5380,10 +5382,11 @@ pub fn caseProves(
     }
 }
 
-/// Induction on a given of list type, for every value of the names in general: the claim at [], and at List.prepend(h, t) under one hypothesis per entry of ihs, the claim at t and that entry's values of general.
+/// Induction on a given of list type, for every value of the names in general: the claim at [], and at List.prepend(h, t) under one hypothesis per entry of ihs, the claim at t and that entry's values of general. The hypotheses named in carry hold in each case; an entry's hypothesis holds once they are proved at its values. Any other hypothesis that mentions v or what it generalises is out of scope.
 pub fn listInduct(
     v @ _: AverStr,
     claim @ _: &crate::proof_kernel::aver_generated::kernel::term::Eqn,
+    carry @ _: &aver_rt::AverList<AverStr>,
     mut n @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
     h @ _: AverStr,
     t @ _: AverStr,
@@ -5394,15 +5397,16 @@ pub fn listInduct(
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
+    let carried @ _ = crate::proof_kernel::aver_generated::kernel::check::namedHyps(
+        carry,
+        &env.hyps,
+        path.clone(),
+    )?;
     match (
         crate::proof_kernel::aver_generated::kernel::check::listVar(v.clone(), env),
-        crate::proof_kernel::aver_generated::kernel::check::hypsMention(
-            &env.hyps,
-            &aver_rt::AverList::prepend(v.clone(), &general.clone()),
-        ),
         general.contains(&v),
     ) {
-        (None, _, _) => crate::proof_kernel::aver_generated::kernel::check::refuse(
+        (None, _) => crate::proof_kernel::aver_generated::kernel::check::refuse(
             path,
             aver_rt::AverStr::from({
                 let mut __b = {
@@ -5416,25 +5420,7 @@ pub fn listInduct(
                 __b
             }),
         ),
-        (_, true, _) => crate::proof_kernel::aver_generated::kernel::check::refuse(
-            path,
-            aver_rt::AverStr::from({
-                let mut __b = {
-                    let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(
-                            (aver_rt::AverInt::from_i64(70)).to_usize().unwrap_or(0),
-                        );
-                        __b.push_str(&AverStr::from("a hypothesis in scope mentions "));
-                        __b
-                    };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v))));
-                    __b
-                };
-                __b.push_str(&AverStr::from(" or what it generalises"));
-                __b
-            }),
-        ),
-        (_, _, true) => crate::proof_kernel::aver_generated::kernel::check::refuse(
+        (_, true) => crate::proof_kernel::aver_generated::kernel::check::refuse(
             path,
             aver_rt::AverStr::from({
                 let mut __b = {
@@ -5448,7 +5434,7 @@ pub fn listInduct(
                 __b
             }),
         ),
-        (Some(e), _, _) => {
+        (Some(e), false) => {
             if crate::proof_kernel::aver_generated::kernel::check::freshAll(
                 &aver_rt::AverList::from_vec(vec![h.clone(), t.clone()]),
                 &crate::proof_kernel::aver_generated::kernel::check::takenNames(
@@ -5459,7 +5445,27 @@ pub fn listInduct(
                 &aver_rt::AverList::empty(),
             ) {
                 crate::proof_kernel::aver_generated::kernel::check::listCases(
-                    v, &e, claim, n, h, t, general, ihs, c, env, path,
+                    v.clone(),
+                    &e,
+                    claim,
+                    &carried.clone(),
+                    n,
+                    h,
+                    t,
+                    general,
+                    ihs,
+                    c,
+                    &crate::proof_kernel::aver_generated::kernel::check::withHyps(
+                        env,
+                        &aver_rt::AverList::concat(
+                            &carried,
+                            &crate::proof_kernel::aver_generated::kernel::check::notMentioningAny(
+                                env.hyps.clone(),
+                                aver_rt::AverList::prepend(v, &general.clone()),
+                            ),
+                        ),
+                    ),
+                    path,
                 )
             } else {
                 crate::proof_kernel::aver_generated::kernel::check::refuse(
@@ -5496,11 +5502,12 @@ pub fn typedAll(
     aver_list_match!(ns.clone(), [] => aver_rt::AverList::empty(), [n, rest] => aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::term::typed(n, t), &crate::proof_kernel::aver_generated::kernel::check::typedAll(&rest, t)))
 }
 
-/// The empty-list case, then the cell case under the claim at the tail, the head and the tail typed by what the list holds.
+/// The empty-list case, then the cell case; each under the hypotheses in scope at its value of v, the head and the tail typed by what the list holds, and the cell case under one hypothesis per entry of ihs once the carried ones are proved there. A split is these cases with no entry.
 pub fn listCases(
     v @ _: AverStr,
     e @ _: &crate::proof_kernel::aver_generated::kernel::term::Ty,
     claim @ _: &crate::proof_kernel::aver_generated::kernel::term::Eqn,
+    carried @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
     mut n @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
     h @ _: AverStr,
     t @ _: AverStr,
@@ -5511,21 +5518,29 @@ pub fn listCases(
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
+    let atNil @ _ = aver_rt::AverList::from_vec(vec![
+        crate::proof_kernel::aver_generated::kernel::term::bind(
+            v.clone(),
+            &crate::proof_kernel::aver_generated::kernel::term::Term::TList(
+                aver_rt::AverList::empty(),
+            ),
+        ),
+    ]);
     crate::proof_kernel::aver_generated::kernel::check::caseProves(
         n,
         &crate::proof_kernel::aver_generated::kernel::check::instantiate(
             claim,
-            &aver_rt::AverList::from_vec(vec![
-                crate::proof_kernel::aver_generated::kernel::term::bind(
-                    v.clone(),
-                    &crate::proof_kernel::aver_generated::kernel::term::Term::TList(
-                        aver_rt::AverList::empty(),
-                    ),
-                ),
-            ]),
+            &atNil,
             path.clone(),
         )?,
-        env.clone(),
+        crate::proof_kernel::aver_generated::kernel::check::withHyps(
+            env,
+            &crate::proof_kernel::aver_generated::kernel::check::hypsAt(
+                &env.hyps,
+                &atNil,
+                path.clone(),
+            )?,
+        ),
         aver_rt::AverStr::from({
             let mut __b = {
                 let mut __b = aver_rt::Buffer::with_capacity(
@@ -5538,29 +5553,36 @@ pub fn listCases(
             __b
         }),
     )?;
-    let goal @ _ = crate::proof_kernel::aver_generated::kernel::check::instantiate(
-        claim,
-        &aver_rt::AverList::from_vec(vec![
-            crate::proof_kernel::aver_generated::kernel::term::bind(
-                v.clone(),
-                &crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
-                    AverStr::from("List.prepend"),
-                    aver_rt::AverList::from_vec(vec![
-                        crate::proof_kernel::aver_generated::kernel::term::Term::TVar(h.clone()),
-                        crate::proof_kernel::aver_generated::kernel::term::Term::TVar(t.clone()),
-                    ]),
-                ),
+    let atCell @ _ = aver_rt::AverList::from_vec(vec![
+        crate::proof_kernel::aver_generated::kernel::term::bind(
+            v.clone(),
+            &crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
+                AverStr::from("List.prepend"),
+                aver_rt::AverList::from_vec(vec![
+                    crate::proof_kernel::aver_generated::kernel::term::Term::TVar(h.clone()),
+                    crate::proof_kernel::aver_generated::kernel::term::Term::TVar(t.clone()),
+                ]),
             ),
-        ]),
-        path.clone(),
-    )?;
+        ),
+    ]);
     let inCell @ _ = crate::proof_kernel::aver_generated::kernel::check::withVars(
-        env,
+        &crate::proof_kernel::aver_generated::kernel::check::withHyps(
+            env,
+            &crate::proof_kernel::aver_generated::kernel::check::hypsAt(
+                &env.hyps,
+                &atCell,
+                path.clone(),
+            )?,
+        ),
         &crate::proof_kernel::aver_generated::kernel::check::cellVars(h, t.clone(), e),
     );
     crate::proof_kernel::aver_generated::kernel::check::caseProves(
         c,
-        &goal,
+        &crate::proof_kernel::aver_generated::kernel::check::instantiate(
+            claim,
+            &atCell,
+            path.clone(),
+        )?,
         crate::proof_kernel::aver_generated::kernel::check::withHyps(
             &inCell.clone(),
             &aver_rt::AverList::concat(
@@ -5570,11 +5592,11 @@ pub fn listCases(
                     general,
                     ihs,
                     claim,
-                    &aver_rt::AverList::empty(),
+                    carried,
                     &inCell,
                     path.clone(),
                 )?,
-                &env.hyps.clone(),
+                &inCell.hyps.clone(),
             ),
         ),
         aver_rt::AverStr::from({
@@ -5640,103 +5662,21 @@ pub fn splitList(
             path,
             AverStr::from("the names are not fresh"),
         ),
-        (Some(e), true) => crate::proof_kernel::aver_generated::kernel::check::splitListCases(
-            v, &e, claim, n, h, t, c, env, path,
+        (Some(e), true) => crate::proof_kernel::aver_generated::kernel::check::listCases(
+            v,
+            &e,
+            claim,
+            &aver_rt::AverList::empty(),
+            n,
+            h,
+            t,
+            &aver_rt::AverList::empty(),
+            &aver_rt::AverList::empty(),
+            c,
+            env,
+            path,
         ),
     }
-}
-
-/// The empty-list case, then the cell case; each under the hypotheses in scope at its value of v, the head and the tail typed by what the list holds.
-pub fn splitListCases(
-    v @ _: AverStr,
-    e @ _: &crate::proof_kernel::aver_generated::kernel::term::Ty,
-    claim @ _: &crate::proof_kernel::aver_generated::kernel::term::Eqn,
-    mut n @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
-    h @ _: AverStr,
-    t @ _: AverStr,
-    mut c @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
-    env @ _: &Env,
-    path @ _: AverStr,
-) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
-    crate::proof_kernel::cancel_checkpoint();
-    let atNil @ _ = aver_rt::AverList::from_vec(vec![
-        crate::proof_kernel::aver_generated::kernel::term::bind(
-            v.clone(),
-            &crate::proof_kernel::aver_generated::kernel::term::Term::TList(
-                aver_rt::AverList::empty(),
-            ),
-        ),
-    ]);
-    crate::proof_kernel::aver_generated::kernel::check::caseProves(
-        n,
-        &crate::proof_kernel::aver_generated::kernel::check::instantiate(
-            claim,
-            &atNil,
-            path.clone(),
-        )?,
-        crate::proof_kernel::aver_generated::kernel::check::withHyps(
-            env,
-            &crate::proof_kernel::aver_generated::kernel::check::hypsAt(
-                &env.hyps,
-                &atNil,
-                path.clone(),
-            )?,
-        ),
-        aver_rt::AverStr::from({
-            let mut __b = {
-                let mut __b = aver_rt::Buffer::with_capacity(
-                    (aver_rt::AverInt::from_i64(20)).to_usize().unwrap_or(0),
-                );
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
-                __b
-            };
-            __b.push_str(&AverStr::from("/nil"));
-            __b
-        }),
-    )?;
-    let atCell @ _ = aver_rt::AverList::from_vec(vec![
-        crate::proof_kernel::aver_generated::kernel::term::bind(
-            v,
-            &crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
-                AverStr::from("List.prepend"),
-                aver_rt::AverList::from_vec(vec![
-                    crate::proof_kernel::aver_generated::kernel::term::Term::TVar(h.clone()),
-                    crate::proof_kernel::aver_generated::kernel::term::Term::TVar(t.clone()),
-                ]),
-            ),
-        ),
-    ]);
-    crate::proof_kernel::aver_generated::kernel::check::caseProves(
-        c,
-        &crate::proof_kernel::aver_generated::kernel::check::instantiate(
-            claim,
-            &atCell,
-            path.clone(),
-        )?,
-        crate::proof_kernel::aver_generated::kernel::check::withVars(
-            &crate::proof_kernel::aver_generated::kernel::check::withHyps(
-                env,
-                &crate::proof_kernel::aver_generated::kernel::check::hypsAt(
-                    &env.hyps,
-                    &atCell,
-                    path.clone(),
-                )?,
-            ),
-            &crate::proof_kernel::aver_generated::kernel::check::cellVars(h, t, e),
-        ),
-        aver_rt::AverStr::from({
-            let mut __b = {
-                let mut __b = aver_rt::Buffer::with_capacity(
-                    (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
-                );
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
-                __b
-            };
-            __b.push_str(&AverStr::from("/cons"));
-            __b
-        }),
-    )?;
-    Ok(claim.clone())
 }
 
 /// The names of the hypotheses in scope.

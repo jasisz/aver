@@ -295,11 +295,16 @@ pub enum Proof {
     /// the claim `lhs = rhs` at `var = []`, and `cons` proves it at
     /// `var = List.prepend(head, tail)` under one hypothesis per entry of
     /// `ihs`, the claim at `var = tail` and at that entry's values of
-    /// `general` (an entry carries no proofs). The other givens stay fixed.
+    /// `general`. The other givens stay fixed. The hypotheses named in
+    /// `carried` stay in scope in both cases at the case's value of `var`,
+    /// and an entry's hypothesis holds once they are proved at its values
+    /// (an entry's `carry`); any other hypothesis that mentions `var` or a
+    /// given in `general` is out of scope.
     InductList {
         var: String,
         lhs: Term,
         rhs: Term,
+        carried: Vec<String>,
         nil: Box<Proof>,
         head: String,
         tail: String,

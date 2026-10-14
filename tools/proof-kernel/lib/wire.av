@@ -254,7 +254,7 @@ fn proofText(p: Proof) -> String
         Proof.PEnum(v, l, r, cs) -> headed("enum {v} {termText(l)} {termText(r)}", proofTexts(cs))
         Proof.PAbsurd(q, l, r) -> "(absurd {proofText(q)} {termText(l)} {termText(r)})"
         Proof.PInduct(f, xs, l, r, carried, cs) -> headed("induct {f} ({spaced(termTexts(xs))}) {termText(l)} {termText(r)}{carryText(carried)}", inductCaseTexts(cs))
-        Proof.PListInduct(v, l, r, n, h, t, general, ihs, c) -> "(listinduct {v} {termText(l)} {termText(r)} {proofText(n)} ({h} {t}) ({spaced(general)}) ({spaced(ihAtTexts(ihs))}) {proofText(c)})"
+        Proof.PListInduct(v, l, r, carried, n, h, t, general, ihs, c) -> "(listinduct {v} {termText(l)} {termText(r)}{carryText(carried)} {proofText(n)} ({h} {t}) ({spaced(general)}) ({spaced(ihAtTexts(ihs))}) {proofText(c)})"
         Proof.PListCases(v, l, r, n, h, t, c) -> "(listcases {v} {termText(l)} {termText(r)} {proofText(n)} ({h} {t}) {proofText(c)})"
         Proof.PRing(l, r) ->"(ring {termText(l)} {termText(r)})"
         Proof.PLinear(g, v, hs, ws, cs) -> "(linear {termText(g)} {v} ({spaced(hs)}) ({spaced(intTexts(ws))}){cutTexts(cs)})"

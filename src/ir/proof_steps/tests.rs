@@ -327,8 +327,11 @@ fn a_split_is_on_a_bool() {
 
 /// `List.concat(xs, []) = xs` by induction on `xs`, a given of list type:
 /// the kernel accepts it, and refuses it when `xs` is not declared a list,
-/// when the hypothesis is used in the empty-list case, when the cell's two
-/// names are the same, and when a hypothesis in scope mentions `xs`.
+/// when the hypothesis is used in the empty-list case, and when the cell's
+/// two names are the same. A `when` that mentions `xs` is out of scope
+/// unless it is carried, and a carried one must be proved at the tail
+/// before the hypothesis holds: the kernel refuses the hypothesis without
+/// that proof, or with the `when` at the cell as its proof.
 #[test]
 fn the_kernel_inducts_on_a_list_given_and_refuses_mutations() {
     let concat = |a: super::Term, b: super::Term| term::builtin("List.concat", vec![a, b], None);
@@ -340,6 +343,7 @@ fn the_kernel_inducts_on_a_list_given_and_refuses_mutations() {
     };
     let proof = |nil: Proof, head: &str, tail: &str| Proof::InductList {
         var: "xs".into(),
+        carried: Vec::new(),
         lhs: concat(var("xs"), term::nil()),
         rhs: var("xs"),
         nil: Box::new(nil),
@@ -390,11 +394,27 @@ fn the_kernel_inducts_on_a_list_given_and_refuses_mutations() {
     same_names.proof = proof(base(), "t", "t");
     let mut when_mentions = good.clone();
     when_mentions.obligation.premise = Some(term::binop(BinOp::Eq, var("xs"), var("xs")));
+    assert_eq!(kernel(&when_mentions), Ok(()));
+    let carrying = |carry: Vec<Proof>| {
+        let mut s = when_mentions.clone();
+        if let Proof::InductList { carried, ihs, .. } = &mut s.proof {
+            *carried = vec!["when".into()];
+            ihs[0].carry = carry;
+        }
+        s
+    };
     for (kind, s) in [
         ("not a list", untyped),
         ("hypothesis in the base case", ih_in_base),
         ("one name twice", same_names),
-        ("a when on the list", when_mentions),
+        (
+            "a carried when not proved at the tail",
+            carrying(Vec::new()),
+        ),
+        (
+            "a carried when proved by itself at the cell",
+            carrying(vec![Proof::Hyp("when".into())]),
+        ),
     ] {
         assert!(kernel(&s).is_err(), "{kind}: the kernel accepted");
     }
@@ -1484,6 +1504,7 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
             var("xs"),
             Proof::InductList {
                 var: "xs".into(),
+                carried: Vec::new(),
                 lhs: concat(var("xs"), term::nil()),
                 rhs: var("xs"),
                 nil: Box::new(nil),

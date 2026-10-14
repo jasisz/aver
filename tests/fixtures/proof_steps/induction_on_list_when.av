@@ -1,0 +1,79 @@
+module InductionOnListWhen
+    intent = "Induction on a list given under a `when` about the list: the `when` holds in each case, and the tail's hypothesis is taken once it is proved at the tail."
+    exposes [sum, total, allPos, len]
+    effects []
+
+fn total(xs: List<Int>) -> Int
+    ? "The sum under another name, so the claims call `sum` only on a joined list."
+    match xs
+        [] -> 0
+        [h, ..t] -> h + total(t)
+
+verify total
+    total([1, 2]) => 3
+
+fn sum(xs: List<Int>) -> Int
+    ? "Sum, recursing on the list."
+    match xs
+        [] -> 0
+        [h, ..t] -> h + sum(t)
+
+verify sum
+    sum([1, 2]) => 3
+
+fn allPos(xs: List<Int>) -> Bool
+    ? "Every element is positive."
+    match xs
+        [] -> true
+        [h, ..t] -> Bool.and(h > 0, allPos(t))
+
+verify allPos
+    allPos([1, 2]) => true
+
+fn len(xs: List<Int>) -> Int
+    ? "Length."
+    match xs
+        [] -> 0
+        [h, ..t] -> 1 + len(t)
+
+verify len
+    len([1]) => 1
+
+// The `when` at the tail follows from the `when` at the cell by reading
+// its second conjunct.
+
+verify sum law ofOneMoreWhenPositive
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given y: Int = [0, 5]
+    when allPos(xs)
+    using []
+    induction xs
+    sum(List.concat(xs, [y])) => total(xs) + y
+
+// The `when` at the tail follows from the `when` at the cell by linear
+// arithmetic. Without the line, steps try the list and hint the line.
+
+verify sum law ofOneMoreWhenShort
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given y: Int = [0, 5]
+    when len(xs) < 100
+    using []
+    sum(List.concat(xs, [y])) => total(xs) + y
+
+// The same shapes, false: they stay open.
+
+verify sum law offByOneWhenPositive
+    given xs: List<Int> = [[], [1]]
+    given y: Int = [0, 5]
+    when allPos(xs)
+    using []
+    induction xs
+    sum(List.concat(xs, [y])) => total(xs) + y + 1
+
+verify sum law exceedsWhenPositive
+    given xs: List<Int> = [[], [1]]
+    given y: Int = [0, 5]
+    when allPos(xs)
+    using []
+    induction xs
+    sum(List.concat(xs, [y])) > total(xs) => true

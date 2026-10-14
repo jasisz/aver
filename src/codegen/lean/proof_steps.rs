@@ -1632,11 +1632,14 @@ impl Renderer<'_> {
                 }
             }
             // `List.rec` with the claim, for every value of the generalised
-            // givens, as its motive: the empty-list case, then the cell case
-            // over the head, the tail and the claim at the tail, applied at
-            // each hypothesis's values.
+            // givens and under the carried hypotheses, as its motive: the
+            // empty-list case, then the cell case over the head, the tail and
+            // the claim at the tail, applied at each hypothesis's values and
+            // to the proofs of the carried hypotheses there. The recursor is
+            // applied to the carried hypotheses as they stand outside.
             Proof::InductList {
                 var,
+                carried,
                 nil,
                 head,
                 tail,
@@ -1648,6 +1651,34 @@ impl Renderer<'_> {
             } => {
                 let lean = super::syntax::aver_name_to_lean;
                 let gs: Vec<String> = general.iter().map(|g| lean(g)).collect();
+                let varying: Vec<&String> = std::iter::once(var).chain(general).collect();
+                let mentions = |e: &Eqn| {
+                    let mut fv = Vec::new();
+                    term::free_vars(&e.lhs, &mut fv);
+                    term::free_vars(&e.rhs, &mut fv);
+                    fv.iter().any(|n| varying.contains(&n))
+                };
+                let mut held: Vec<(String, Eqn)> = Vec::new();
+                for name in carried {
+                    let (_, e) = hyps
+                        .iter()
+                        .rev()
+                        .find(|(h, _)| h == name)
+                        .ok_or_else(|| format!("listinduct: {name} is not in scope"))?;
+                    held.push((name.clone(), e.clone()));
+                }
+                let kept: Hyps = hyps.iter().filter(|(_, e)| !mentions(e)).cloned().collect();
+                let at_case = |x: &Term| -> Result<Hyps, String> {
+                    let m = [(var.clone(), x.clone())];
+                    let mut scope = kept.clone();
+                    for (n, e) in &held {
+                        scope.push((
+                            n.clone(),
+                            Eqn::new(term::subst(&e.lhs, &m)?, term::subst(&e.rhs, &m)?),
+                        ));
+                    }
+                    Ok(scope)
+                };
                 let mut stated = Vec::new();
                 for ih in ihs {
                     let mut at = vec![(var.clone(), term::var(tail))];
@@ -1655,39 +1686,66 @@ impl Renderer<'_> {
                     let e = Eqn::new(term::subst(lhs, &at)?, term::subst(rhs, &at)?);
                     stated.push((ih.name.clone(), e));
                 }
-                let mut scope = hyps.clone();
-                scope.extend(stated.iter().cloned());
-                let base = self.proof(nil, hyps)?;
-                let step = self.proof(cons, &scope)?;
+                let outer: Vec<String> = carried
+                    .iter()
+                    .map(|n| self.proof(&Proof::Hyp(n.clone()), hyps))
+                    .collect::<Result<_, _>>()?;
+                let hs: Vec<String> = carried.iter().map(|n| self.hyp_name(n)).collect();
                 let all = format!("steps_all_{}", lean(tail));
-                let mut haves = String::new();
-                for (ih, (name, e)) in ihs.iter().zip(&stated) {
-                    let mut app = all.clone();
-                    for t in &ih.at {
-                        app.push_str(&format!(" ({})", self.expr(t)));
+                let cell =
+                    term::builtin("List.prepend", vec![term::var(head), term::var(tail)], None);
+                let saved = self.prop_hyps.clone();
+                self.prop_hyps.retain(|h| {
+                    !carried.contains(h)
+                        && h != head
+                        && h != tail
+                        && !ihs.iter().any(|ih| &ih.name == h)
+                });
+                let rendered = (|| -> Result<(String, String, String), String> {
+                    let base = self.proof(nil, &at_case(&term::nil())?)?;
+                    let in_cell = at_case(&cell)?;
+                    let mut haves = String::new();
+                    for (ih, (name, e)) in ihs.iter().zip(&stated) {
+                        let mut app = all.clone();
+                        for t in &ih.at {
+                            app.push_str(&format!(" ({})", self.expr(t)));
+                        }
+                        for p in &ih.carry {
+                            app.push_str(&format!(" {}", self.proof(p, &in_cell)?));
+                        }
+                        haves.push_str(&format!(
+                            "have {} : {} := ({app}); ",
+                            self.hyp_name(name),
+                            self.eqn(e)
+                        ));
                     }
-                    haves.push_str(&format!(
-                        "have {} : {} := ({app}); ",
-                        self.hyp_name(name),
-                        self.eqn(e)
-                    ));
+                    let mut scope = in_cell;
+                    scope.extend(stated.iter().cloned());
+                    let step = self.proof(cons, &scope)?;
+                    Ok((base, haves, step))
+                })();
+                self.prop_hyps = saved;
+                let (base, haves, step) = rendered?;
+                let mut motive = String::new();
+                if !gs.is_empty() {
+                    motive.push_str(&format!("∀ {}, ", gs.join(" ")));
                 }
-                let quantified = if gs.is_empty() {
+                for (_, e) in &held {
+                    motive.push_str(&format!("{} → ", self.eqn(e)));
+                }
+                motive.push_str(&self.eqn(&eq));
+                let bound: Vec<String> = gs.iter().chain(&hs).cloned().collect();
+                let bound = if bound.is_empty() {
                     String::new()
                 } else {
-                    format!("∀ {}, ", gs.join(" "))
-                };
-                let bound = if gs.is_empty() {
-                    String::new()
-                } else {
-                    format!("fun {} => ", gs.join(" "))
+                    format!("fun {} => ", bound.join(" "))
                 };
                 format!(
-                    "(List.rec (motive := fun {v} => {quantified}{}) ({bound}{base}) (fun {} {} {all} => {bound}{haves}{step}) {v}{})",
-                    self.eqn(&eq),
+                    "(List.rec (motive := fun {v} => {motive}) ({bound}{base}) (fun {} {} {all} => {bound}{haves}{step}) {v}{}{})",
                     lean(head),
                     lean(tail),
                     gs.iter().map(|g| format!(" {g}")).collect::<String>(),
+                    outer.iter().map(|p| format!(" {p}")).collect::<String>(),
                     v = lean(var),
                 )
             }

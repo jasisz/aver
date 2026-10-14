@@ -539,13 +539,23 @@ verify ringProof
     ringProof([]) => Result.Err("malformed ring")
 
 fn listInductProof(args: List<Sexp>) -> Result<Proof, String>
-    ? "(listinduct NAME TERM TERM PROOF (HEAD TAIL) (GENERAL…) ((IH (TERM…) ())…) PROOF)"
+    ? "(listinduct NAME TERM TERM [(carry NAME…)] PROOF (HEAD TAIL) (GENERAL…) ((IH (TERM…) (PROOF…))…) PROOF)"
     match args
-        [Sexp.Atom(v), l, r, n, Sexp.Node([Sexp.Atom(h), Sexp.Atom(t)]), gs, hs, c] -> Result.Ok(Proof.PListInduct(v, term(l)?, term(r)?, proof(n)?, h, t, atoms(items(gs)?)?, ihAts(items(hs)?)?, proof(c)?))
+        [Sexp.Atom(v), l, r, ..rest] -> listInductWith(v, term(l)?, term(r)?, carried(rest)?)
         _ -> Result.Err("malformed listinduct")
 
 verify listInductProof
     listInductProof([]) => Result.Err("malformed listinduct")
+
+fn listInductWith(v: String, l: Term, r: Term, rest: Tuple<List<String>, List<Sexp>>) -> Result<Proof, String>
+    ? "The list induction, once the carried names are split off its cases."
+    match rest
+        (ns, [n, Sexp.Node([Sexp.Atom(h), Sexp.Atom(t)]), gs, hs, c]) -> Result.Ok(Proof.PListInduct(v, l, r, ns, proof(n)?, h, t, atoms(items(gs)?)?, ihAts(items(hs)?)?, proof(c)?))
+        _ -> Result.Err("malformed listinduct")
+
+verify listInductWith
+    listInductWith("xs", Term.TUnit, Term.TUnit, (["k"], [])) => Result.Err("malformed listinduct")
+    listInductWith("xs", Term.TUnit, Term.TUnit, (["k"], [Sexp.Node([Sexp.Atom("hyp"), Sexp.Atom("k")]), Sexp.Node([Sexp.Atom("h"), Sexp.Atom("t")]), Sexp.Node([]), Sexp.Node([]), Sexp.Node([Sexp.Atom("hyp"), Sexp.Atom("k")])])) => Result.Ok(Proof.PListInduct("xs", Term.TUnit, Term.TUnit, ["k"], Proof.PHyp("k"), "h", "t", [], [], Proof.PHyp("k")))
 
 fn listCasesProof(args: List<Sexp>) -> Result<Proof, String>
     ? "(listcases NAME TERM TERM PROOF (HEAD TAIL) PROOF)"

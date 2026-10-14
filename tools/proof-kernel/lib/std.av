@@ -512,7 +512,7 @@ fn listCases(n: Node, v: String, h: String, tl: String, nil: Tactic, cons: Tacti
     nilProof = within(Node.update(down(n, "nil"), goal = nilGoal), nil, answers)?
     consProof = within(Node.update(down(n, "cons"), goal = consGoal, from = cells), cons, answers)?
     match induct
-        true -> Result.Ok(Proof.PListInduct(v, ob.lhs, ob.rhs, nilProof, h, tl, [], [IhAt(name = ih, at = [], carry = [])], consProof))
+        true -> Result.Ok(Proof.PListInduct(v, ob.lhs, ob.rhs, [], nilProof, h, tl, [], [IhAt(name = ih, at = [], carry = [])], consProof))
         false -> Result.Ok(Proof.PListCases(v, ob.lhs, ob.rhs, nilProof, h, tl, consProof))
 
 verify listCases
