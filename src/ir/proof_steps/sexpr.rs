@@ -44,7 +44,7 @@
 //!          | (have NAME TERM PROOF PROOF)
 //!          | (enum NAME TERM TERM PROOF…) | (absurd PROOF TERM TERM)
 //!          | (induct FN (TERM…) TERM TERM [(carry NAME…)] (case (NAME…) (IH…) ((INT NAME (TERM…) (PROOF…))…) PROOF)…)
-//!          | (listinduct NAME TERM TERM PROOF (NAME NAME) (NAME…) ((NAME (TERM…) ())…) PROOF)
+//!          | (listinduct NAME TERM TERM [(carry NAME…)] PROOF (NAME NAME) (NAME…) ((NAME (TERM…) (PROOF…))…) PROOF)
 //!          | (listcases NAME TERM TERM PROOF (NAME NAME) PROOF)
 //!          | (intinduct NAME TERM TERM NAME PROOF (NAME…) (NAME…) ((NAME (TERM…) (PROOF…))…) PROOF)
 //!          | (ring TERM TERM) | (linear TERM BOOL (NAME…) (INT…))
@@ -627,6 +627,7 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
             var,
             lhs,
             rhs,
+            carried,
             nil,
             head,
             tail,
@@ -634,9 +635,14 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
             ihs,
             cons,
         } => format!(
-            "(listinduct {var} {} {} {} ({head} {tail}) ({}) ({}) {})",
+            "(listinduct {var} {} {}{} {} ({head} {tail}) ({}) ({}) {})",
             term(lhs, names)?,
             term(rhs, names)?,
+            if carried.is_empty() {
+                String::new()
+            } else {
+                format!(" (carry {})", carried.join(" "))
+            },
             proof(nil, names)?,
             general.join(" "),
             ih_ats(ihs, names)?,

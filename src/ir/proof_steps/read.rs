@@ -359,6 +359,23 @@ impl Reader {
         self.terms(self.items(s)?)
     }
 
+    /// The names after `carry`, when the first form is `(carry NAME…)`,
+    /// and the forms after it.
+    fn carried<'s>(&self, rest: &'s [Sx]) -> Result<(Vec<String>, &'s [Sx]), String> {
+        match rest.split_first() {
+            Some((first, more)) => match self.tagged(first) {
+                Ok(("carry", ns)) => Ok((
+                    ns.iter()
+                        .map(|n| self.atom(n).map(str::to_string))
+                        .collect::<Result<Vec<_>, _>>()?,
+                    more,
+                )),
+                _ => Ok((Vec::new(), rest)),
+            },
+            None => Ok((Vec::new(), rest)),
+        }
+    }
+
     fn names(&self, s: &Sx) -> Result<Vec<String>, String> {
         self.items(s)?
             .iter()
@@ -690,18 +707,7 @@ impl Reader {
                 rhs: self.term(r)?,
             },
             ("induct", [Sx::Atom(f), xs, l, r, rest @ ..]) => {
-                let (carried, cases) = match rest.split_first() {
-                    Some((first, more)) => match self.tagged(first) {
-                        Ok(("carry", ns)) => (
-                            ns.iter()
-                                .map(|n| self.atom(n).map(str::to_string))
-                                .collect::<Result<Vec<_>, _>>()?,
-                            more,
-                        ),
-                        _ => (Vec::new(), rest),
-                    },
-                    None => (Vec::new(), rest),
-                };
+                let (carried, cases) = self.carried(rest)?;
                 Proof::Induct {
                     fn_id: self.fn_id(f)?,
                     args: self.term_list(xs)?,
@@ -714,7 +720,10 @@ impl Reader {
                         .collect::<Result<_, _>>()?,
                 }
             }
-            ("listinduct", [Sx::Atom(v), l, r, n, ht, gs, hs, c]) => {
+            ("listinduct", [Sx::Atom(v), l, r, rest @ ..]) => {
+                let (carried, [n, ht, gs, hs, c]) = self.carried(rest)? else {
+                    return Err(bad());
+                };
                 let (head, tail) = match self.items(ht)? {
                     [Sx::Atom(h), Sx::Atom(t)] => (h.clone(), t.clone()),
                     _ => return Err(bad()),
@@ -723,6 +732,7 @@ impl Reader {
                     var: v.clone(),
                     lhs: self.term(l)?,
                     rhs: self.term(r)?,
+                    carried,
                     nil: Box::new(self.proof(n)?),
                     head,
                     tail,

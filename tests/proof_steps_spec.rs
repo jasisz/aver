@@ -703,7 +703,7 @@ fn both_kernels_split_a_list_given_into_its_two_cases_and_refuse_mutations() {
     // The tail `t` of the first split no longer occurs in the claim, but it
     // stays a list variable: a later split may not name an element `t`,
     // which a split on `t` would then take for a list.
-    let reused = "(steps 14\n (obligation k ((xs (list int))) (none) (b true) (b true))\n (defs)\n (consts)\n (sums)\n (recs)\n (sigs)\n (laws)\n (proof (listcases xs (b true) (b true) (refl (b true)) (h t) (listcases xs (b true) (b true) (refl (b true)) (t u) (refl (b true))))))\n";
+    let reused = "(steps 15\n (obligation k ((xs (list int))) (none) (b true) (b true))\n (defs)\n (consts)\n (sums)\n (recs)\n (sigs)\n (laws)\n (proof (listcases xs (b true) (b true) (refl (b true)) (h t) (listcases xs (b true) (b true) (refl (b true)) (t u) (refl (b true))))))\n";
     let refused = aver::proof_kernel::verdict(reused);
     assert!(
         refused
@@ -1047,15 +1047,16 @@ fn induction_follows_only_the_function_the_law_is_about() {
         "{}",
         format_output(&result)
     );
-    // Where a `when` mentions the list, that induction is ruled out, and
-    // the refusal names the function that does recurse.
+    // A `when` that mentions the list is carried by that induction; the
+    // false law of the same shape stays open, and its refusal names the
+    // function that does recurse.
     assert!(
-        text.contains("double does not recurse but len does"),
+        text.contains("double.isTwiceTheLengthWhenShort: closed by steps\n    hint: steps closed it by trying each given in turn; add `induction xs` to go straight to it"),
         "{}",
         format_output(&result)
     );
     assert!(
-        text.contains("induction on xs: a hypothesis in scope mentions xs"),
+        text.contains("double does not recurse but len does"),
         "{}",
         format_output(&result)
     );
@@ -1295,6 +1296,168 @@ fn induction_on_a_list_given_the_function_does_not_recurse_on() {
     assert!(law.contains("(listinduct xs "), "{law}");
     let mutated = law.replacen("(listinduct xs ", "(listinduct y ", 1);
     assert!(aver::proof_kernel::verdict(&mutated).is_err(), "{mutated}");
+    let _ = fs::remove_dir_all(out);
+}
+
+const LIST_WHEN_LAWS: [&str; 2] = ["sum.ofOneMoreWhenPositive", "sum.ofOneMoreWhenShort"];
+
+/// Induction on a list given under a `when` about the list: the `when` is
+/// carried, so it holds in each case at the case's value of the list, and
+/// the cell case takes the tail's hypothesis once the `when` is proved at
+/// the tail. False laws of the same shape stay open. Both kernels accept
+/// the scripts, and the kernel written in Aver and the replayer refuse a
+/// hypothesis taken without proving the `when` at the tail, one taken on
+/// the `when` at the cell instead, and the `when` left uncarried.
+#[test]
+fn both_kernels_induct_on_a_list_under_a_carried_when_and_refuse_mutations() {
+    let out = scratch("list-when");
+    let (result, summary) = aver_backend_json("induction_on_list_when.av", &out, None);
+    assert_eq!(summary["steps_rejected"], serde_json::json!([]));
+    for law in LIST_WHEN_LAWS {
+        assert_eq!(
+            summary["closed_by"][law],
+            "steps",
+            "{law}: {}",
+            format_output(&result)
+        );
+    }
+    for law in ["sum.offByOneWhenPositive", "sum.exceedsWhenPositive"] {
+        assert_eq!(summary["closed_by"][law], "open", "{law}: {summary}");
+    }
+    assert_eq!(
+        summary["steps_hints"]["sum.ofOneMoreWhenShort"],
+        serde_json::json!([
+            "steps closed it by trying each given in turn; add `induction xs` to go straight to it"
+        ]),
+        "{summary}"
+    );
+    let _ = fs::remove_dir_all(&out);
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("induction_on_list_when.av", &out)
+            .into_iter()
+            .collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), LIST_WHEN_LAWS);
+    for (law, path) in &files {
+        let text = fs::read_to_string(path).unwrap();
+        assert_eq!(aver::proof_kernel::verdict(&text), Ok(law.clone()));
+        assert!(text.contains("(listinduct xs "), "{text}");
+        assert!(text.contains(" (carry when) "), "{text}");
+        // (IH () (PROOF…)): the hypothesis at the tail with the proof of
+        // the carried `when` there.
+        let ih_open = text.find("((ih").expect("a hypothesis at the tail") + 1;
+        let (proofs_from, proofs_to) = sub_forms(&text, ih_open)[1];
+        for (kind, mutant) in [
+            (
+                "the `when` not carried",
+                text.replacen(" (carry when)", "", 1),
+            ),
+            (
+                "the hypothesis without the proof of the `when` at the tail",
+                format!("{}(){}", &text[..proofs_from], &text[proofs_to..]),
+            ),
+            (
+                "the hypothesis on the `when` at the cell",
+                format!("{}((hyp when)){}", &text[..proofs_from], &text[proofs_to..]),
+            ),
+        ] {
+            let refused = aver::proof_kernel::verdict(&mutant);
+            assert!(
+                refused
+                    .as_ref()
+                    .is_err_and(|why| why.starts_with("step proof")),
+                "{law}, {kind}: {refused:?}\n{mutant}"
+            );
+            let path = out.join("mutant.steps");
+            fs::write(&path, &mutant).unwrap();
+            let result = replay(std::slice::from_ref(&path));
+            assert!(
+                !result.status.success(),
+                "{law}, {kind}: {}",
+                format_output(&result)
+            );
+        }
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_inducts_on_a_list_under_a_carried_when_and_refuses_mutations() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("list-when-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "induction_on_list_when.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "99",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in LIST_WHEN_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    for law in ["sum.offByOneWhenPositive", "sum.exceedsWhenPositive"] {
+        assert_eq!(summary["closed_by"][law], "open", "{law}: {summary}");
+    }
+    let lean = fs::read_to_string(out.join("InductionOnListWhen.lean")).unwrap();
+    let law = "sum.ofOneMoreWhenPositive";
+    let line = exact_line(
+        &lean,
+        "__aver_reason_sum_law_ofOneMoreWhenPositive_implication",
+    )
+    .to_string();
+    // The recursor's motive is the claim under the carried `when`, and the
+    // recursor is applied to the `when` itself at the end.
+    let carried = " xs (show (allPos xs : Bool) = (true : Bool) from h_when))";
+    assert!(
+        line.contains("List.rec (motive := fun xs => (allPos xs : Bool) = (true : Bool) → ")
+            && line.contains(carried),
+        "{line}"
+    );
+    let unapplied = line.replacen(carried, " xs)", 1);
+    assert!(
+        lean_refuses(
+            &out,
+            "InductionOnListWhen.lean",
+            &lean.replacen(&line, &unapplied, 1),
+            law
+        ),
+        "the `when` left unapplied: Lean must refuse the step term"
+    );
+    // The tail's hypothesis applied to the `when` at the cell instead of
+    // its proof at the tail.
+    let ih_open = line
+        .find("(steps_all_xsTail ")
+        .unwrap_or_else(|| panic!("{line}"));
+    let at_cell = format!(
+        "{}(steps_all_xsTail h_when){}",
+        &line[..ih_open],
+        &line[closing(&line, ih_open) + 1..]
+    );
+    assert!(
+        lean_refuses(
+            &out,
+            "InductionOnListWhen.lean",
+            &lean.replacen(&line, &at_cell, 1),
+            law
+        ),
+        "the hypothesis on the `when` at the cell: Lean must refuse the step term"
+    );
     let _ = fs::remove_dir_all(out);
 }
 
@@ -3059,7 +3222,7 @@ fn joining_texts_is_never_read_as_int_arithmetic() {
     // made by hand.
     let script = |ty: &str| {
         format!(
-            "(steps 14 (obligation k ((a {ty}) (b {ty})) (none) (op + (v a) (v b)) (op + (v b) (v a))) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (ring (op + (v a) (v b)) (op + (v b) (v a)))))"
+            "(steps 15 (obligation k ((a {ty}) (b {ty})) (none) (op + (v a) (v b)) (op + (v b) (v a))) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (ring (op + (v a) (v b)) (op + (v b) (v a)))))"
         )
     };
     assert_eq!(
@@ -4531,7 +4694,7 @@ const PICK_FALSE_LAWS: [&str; 5] = [
 /// (`0.0 / 0.0`) the VM answers otherwise. The rule that finds the element
 /// in front, like `x == x`, holds only at a type whose `==` is equality, so
 /// both kernels refuse it.
-const CONTAINS_FINDS_ITSELF: &str = "(steps 14
+const CONTAINS_FINDS_ITSELF: &str = "(steps 15
   (obligation containsFloat.alwaysFindsSelf ((x float)) (none)
     (bi List.contains (bi List.prepend (v x) (list)) (v x))
     (b true))
@@ -6385,7 +6548,7 @@ fn a_law_about_a_refined_given_is_cited_only_at_a_value_its_type_admits() {
     let minus_one = "(rec Natural (value (neg (i 1))))";
     let at_minus_one = |law: &str, premise: &str| {
         format!(
-            "(steps 14\n (obligation holds.ofMinusOne ((x int)) (none) (call isNonNegative {minus_one}) (b true))\n (defs)\n (consts)\n (sums)\n (recs\n  (rec Natural eq (value int)))\n (sigs\n  (isNonNegative ((named Natural)) bool))\n (laws\n  {law})\n (proof (law isNonNegative.always ((n {minus_one})){premise})))\n"
+            "(steps 15\n (obligation holds.ofMinusOne ((x int)) (none) (call isNonNegative {minus_one}) (b true))\n (defs)\n (consts)\n (sums)\n (recs\n  (rec Natural eq (value int)))\n (sigs\n  (isNonNegative ((named Natural)) bool))\n (laws\n  {law})\n (proof (law isNonNegative.always ((n {minus_one})){premise})))\n"
         )
     };
     let computed = format!(" (compute (op >= (get {minus_one} value) (i 0)) (b true))");

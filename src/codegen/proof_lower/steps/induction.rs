@@ -196,7 +196,9 @@ impl Env<'_> {
     /// Structural induction on the list given `v`, apart from any
     /// function's recursion: the claim at `[]`, and at a cell under the
     /// claim at its tail as a hypothesis, each case closed by evaluation.
-    /// No hypothesis in scope may mention `v`.
+    /// The hypotheses that mention `v` are carried: each holds at the
+    /// case's value of `v`, and the cell case takes the hypothesis where
+    /// evaluation proves every carried one at the tail.
     fn prove_by_list_induction(
         &mut self,
         v: &str,
@@ -209,59 +211,91 @@ impl Env<'_> {
             term::free_vars(&e.rhs, &mut fv);
             fv.iter().any(|n| n == v)
         };
-        if self.hyps.iter().any(|(_, e)| mentions_v(e)) {
-            return Err(format!("a hypothesis in scope mentions {v}"));
-        }
         let mut taken = ob.givens.clone();
         term::free_vars(&ob.lhs, &mut taken);
         term::free_vars(&ob.rhs, &mut taken);
-        for (n, e) in &self.hyps {
+        // Each name once, as it stands innermost.
+        let mut carried: Vec<(String, Eqn)> = Vec::new();
+        for (i, (n, e)) in self.hyps.iter().enumerate() {
             taken.push(n.clone());
             term::free_vars(&e.lhs, &mut taken);
             term::free_vars(&e.rhs, &mut taken);
+            let shadowed = self.hyps[i + 1..].iter().any(|(m, _)| m == n);
+            if !shadowed && mentions_v(e) {
+                carried.push((n.clone(), e.clone()));
+            }
         }
+        let kept: Vec<(String, Eqn)> = self
+            .hyps
+            .iter()
+            .filter(|(_, e)| !mentions_v(e))
+            .cloned()
+            .collect();
         let h = fresh(&format!("{v}Head"), &taken);
         taken.push(h.clone());
         let t = fresh(&format!("{v}Tail"), &taken);
-        let at = |x: Term| -> Result<Eqn, String> {
-            let m = [(v.to_string(), x)];
-            Ok(Eqn::new(
-                term::subst(&ob.lhs, &m)?,
-                term::subst(&ob.rhs, &m)?,
-            ))
+        let at_eqn = |e: &Eqn, x: &Term| -> Result<Eqn, String> {
+            let m = [(v.to_string(), x.clone())];
+            Ok(Eqn::new(term::subst(&e.lhs, &m)?, term::subst(&e.rhs, &m)?))
+        };
+        let claim = Eqn::new(ob.lhs.clone(), ob.rhs.clone());
+        let in_case = |x: &Term| -> Result<Vec<(String, Eqn)>, String> {
+            let mut hs = kept.clone();
+            for (n, e) in &carried {
+                hs.push((n.clone(), at_eqn(e, x)?));
+            }
+            Ok(hs)
         };
         let nil_term = canon(&crate::ast::Spanned::bare(ResolvedExpr::List(Vec::new())));
         let tail = term::var(&t);
         let cell = term::builtin("List.prepend", vec![term::var(&h), tail.clone()], None);
-        let nil_goal = at(nil_term)?;
         let saved = self.hyps.clone();
-        let nil = self.prove_by_evaluation(&nil_goal.lhs, &nil_goal.rhs, depth);
-        self.hyps = saved.clone();
-        let nil = nil?;
-        let ih_eq = at(tail)?;
-        if self.rewrites_forever(&ih_eq) {
-            return Err("the hypothesis would rewrite forever".into());
-        }
-        self.next_ih += 1;
-        let ih = format!("ih{}", self.next_ih);
-        self.hyps.push((ih.clone(), ih_eq));
-        let goal = at(cell)?;
-        let cons = self.prove_by_evaluation(&goal.lhs, &goal.rhs, depth);
+        let result = (|| -> Result<(Proof, Vec<IhAt>, Proof), String> {
+            let nil_goal = at_eqn(&claim, &nil_term)?;
+            self.hyps = in_case(&nil_term)?;
+            let nil = self.prove_by_evaluation(&nil_goal.lhs, &nil_goal.rhs, depth)?;
+            let ih_eq = at_eqn(&claim, &tail)?;
+            self.hyps = in_case(&cell)?;
+            if self.rewrites_forever(&ih_eq) {
+                return Err("the hypothesis would rewrite forever".into());
+            }
+            // The hypothesis is taken where every carried one is proved at
+            // the tail; the case may do without it.
+            let mut proofs = Vec::new();
+            for (_, c) in &carried {
+                let at = at_eqn(c, &tail)?;
+                match self.prove_by_evaluation(&at.lhs, &at.rhs, depth) {
+                    Ok(p) => proofs.push(p),
+                    Err(_) => break,
+                }
+            }
+            let mut ihs = Vec::new();
+            if proofs.len() == carried.len() {
+                self.next_ih += 1;
+                let ih = format!("ih{}", self.next_ih);
+                self.hyps.push((ih.clone(), ih_eq));
+                ihs.push(IhAt {
+                    name: ih,
+                    at: Vec::new(),
+                    carry: proofs,
+                });
+            }
+            let goal = at_eqn(&claim, &cell)?;
+            let cons = self.prove_by_evaluation(&goal.lhs, &goal.rhs, depth)?;
+            Ok((nil, ihs, cons))
+        })();
         self.hyps = saved;
-        let cons = cons?;
+        let (nil, ihs, cons) = result?;
         Ok(Proof::InductList {
             var: v.to_string(),
             lhs: canon(&ob.lhs),
             rhs: canon(&ob.rhs),
+            carried: carried.into_iter().map(|(n, _)| n).collect(),
             nil: Box::new(nil),
             head: h,
             tail: t,
             general: Vec::new(),
-            ihs: vec![crate::ir::proof_steps::IhAt {
-                name: ih,
-                at: Vec::new(),
-                carry: Vec::new(),
-            }],
+            ihs,
             cons: Box::new(cons),
         })
     }

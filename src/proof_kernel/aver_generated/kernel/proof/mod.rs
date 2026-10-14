@@ -87,6 +87,7 @@ pub enum Proof {
         AverStr,
         crate::proof_kernel::aver_generated::kernel::term::Term,
         crate::proof_kernel::aver_generated::kernel::term::Term,
+        aver_rt::AverList<AverStr>,
         std::sync::Arc<Proof>,
         AverStr,
         AverStr,
@@ -237,8 +238,8 @@ impl Ord for Proof {
                 .then_with(|| a5.cmp(b5))
                 .then_with(|| a6.cmp(b6)),
             (
-                Proof::PListInduct(a0, a1, a2, a3, a4, a5, a6, a7, a8),
-                Proof::PListInduct(b0, b1, b2, b3, b4, b5, b6, b7, b8),
+                Proof::PListInduct(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9),
+                Proof::PListInduct(b0, b1, b2, b3, b4, b5, b6, b7, b8, b9),
             ) => std::cmp::Ordering::Equal
                 .then_with(|| a0.cmp(b0))
                 .then_with(|| a1.cmp(b1))
@@ -248,7 +249,8 @@ impl Ord for Proof {
                 .then_with(|| a5.cmp(b5))
                 .then_with(|| a6.cmp(b6))
                 .then_with(|| a7.cmp(b7))
-                .then_with(|| a8.cmp(b8)),
+                .then_with(|| a8.cmp(b8))
+                .then_with(|| a9.cmp(b9)),
             (Proof::PProj(a0), Proof::PProj(b0)) => {
                 std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
             }
@@ -411,7 +413,7 @@ impl aver_rt::AverDisplay for Proof {
                 ]
                 .join(", ")
             ),
-            Proof::PListInduct(f0, f1, f2, f3, f4, f5, f6, f7, f8) => format!(
+            Proof::PListInduct(f0, f1, f2, f3, f4, f5, f6, f7, f8, f9) => format!(
                 "PListInduct({})",
                 vec![
                     f0.aver_display_inner(),
@@ -422,7 +424,8 @@ impl aver_rt::AverDisplay for Proof {
                     f5.aver_display_inner(),
                     f6.aver_display_inner(),
                     f7.aver_display_inner(),
-                    f8.aver_display_inner()
+                    f8.aver_display_inner(),
+                    f9.aver_display_inner()
                 ]
                 .join(", ")
             ),

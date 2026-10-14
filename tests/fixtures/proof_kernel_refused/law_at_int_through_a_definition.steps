@@ -1,4 +1,4 @@
-(steps 14
+(steps 15
  (obligation zero.isOne ((n int)) (none) (call zero (v n)) (i 1))
  (defs
   (def zero ((n int)) int () (i 0))

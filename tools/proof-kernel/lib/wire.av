@@ -13,8 +13,8 @@ fn goal(text: String) -> Result<Goal, String>
     Result.Ok(goalOf(Kernel.Decode.script(Kernel.Sexp.readAll(text)?)?))
 
 verify goal
-    goal("(steps 14 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))") => Result.Ok(Goal(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], recs = [], laws = [], facts = [], hyps = []))
-    goal("(steps 14 (obligation k ((xs (list bool)) (n int) (b bool) (z str)) (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))") => Result.Ok(Goal(obligation = Law(key = "k", givens = [Kernel.Term.typed("xs", Ty.TyList(Ty.TyBool)), Kernel.Term.typed("n", Ty.TyInt), Kernel.Term.typed("b", Ty.TyBool), Kernel.Term.typed("z", Ty.TyStr)], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [Given(name = "b", fin = Fin.FBool)], lists = ["xs"], ints = ["n"], defs = [], consts = [], sums = [], recs = [], laws = [], facts = [], hyps = []))
+    goal("(steps 15 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))") => Result.Ok(Goal(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], recs = [], laws = [], facts = [], hyps = []))
+    goal("(steps 15 (obligation k ((xs (list bool)) (n int) (b bool) (z str)) (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))") => Result.Ok(Goal(obligation = Law(key = "k", givens = [Kernel.Term.typed("xs", Ty.TyList(Ty.TyBool)), Kernel.Term.typed("n", Ty.TyInt), Kernel.Term.typed("b", Ty.TyBool), Kernel.Term.typed("z", Ty.TyStr)], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [Given(name = "b", fin = Fin.FBool)], lists = ["xs"], ints = ["n"], defs = [], consts = [], sums = [], recs = [], laws = [], facts = [], hyps = []))
     goal("(a") => Result.Err("unexpected end of data")
 
 fn goalOf(s: Script) -> Goal
@@ -254,7 +254,7 @@ fn proofText(p: Proof) -> String
         Proof.PEnum(v, l, r, cs) -> headed("enum {v} {termText(l)} {termText(r)}", proofTexts(cs))
         Proof.PAbsurd(q, l, r) -> "(absurd {proofText(q)} {termText(l)} {termText(r)})"
         Proof.PInduct(f, xs, l, r, carried, cs) -> headed("induct {f} ({spaced(termTexts(xs))}) {termText(l)} {termText(r)}{carryText(carried)}", inductCaseTexts(cs))
-        Proof.PListInduct(v, l, r, n, h, t, general, ihs, c) -> "(listinduct {v} {termText(l)} {termText(r)} {proofText(n)} ({h} {t}) ({spaced(general)}) ({spaced(ihAtTexts(ihs))}) {proofText(c)})"
+        Proof.PListInduct(v, l, r, carried, n, h, t, general, ihs, c) -> "(listinduct {v} {termText(l)} {termText(r)}{carryText(carried)} {proofText(n)} ({h} {t}) ({spaced(general)}) ({spaced(ihAtTexts(ihs))}) {proofText(c)})"
         Proof.PListCases(v, l, r, n, h, t, c) -> "(listcases {v} {termText(l)} {termText(r)} {proofText(n)} ({h} {t}) {proofText(c)})"
         Proof.PRing(l, r) ->"(ring {termText(l)} {termText(r)})"
         Proof.PLinear(g, v, hs, ws, cs) -> "(linear {termText(g)} {v} ({spaced(hs)}) ({spaced(intTexts(ws))}){cutTexts(cs)})"

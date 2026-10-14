@@ -321,6 +321,7 @@ fn by_list_induction(
             plan: None,
             proof: Proof::InductList {
                 var: "a".into(),
+                carried: Vec::new(),
                 lhs,
                 rhs,
                 nil: Box::new(nil),
@@ -549,6 +550,7 @@ fn at_zero(
     let (x, t) = (|| var("x2"), || var("t2"));
     Proof::InductList {
         var: l.to_string(),
+        carried: Vec::new(),
         lhs: f(var(l), zero()),
         rhs: want(var(l)),
         nil: Box::new(rule(nil_rule, vec![("n", zero())])),
@@ -826,6 +828,7 @@ fn take_non_positive() -> Fact {
         (take(l(), n()), term::nil()),
         Proof::InductList {
             var: "l".into(),
+            carried: Vec::new(),
             lhs: take(l(), n()),
             rhs: term::nil(),
             nil: Box::new(rule(WallRule::TakeNil, vec![("n", n())])),
@@ -857,6 +860,7 @@ fn drop_non_positive() -> Fact {
         (drop(l(), n()), l()),
         Proof::InductList {
             var: "l".into(),
+            carried: Vec::new(),
             lhs: drop(l(), n()),
             rhs: l(),
             nil: Box::new(rule(WallRule::DropNil, vec![("n", n())])),
@@ -960,6 +964,7 @@ fn concat_take_drop() -> Fact {
         (split(l(), n()), l()),
         Proof::InductList {
             var: "l".into(),
+            carried: Vec::new(),
             lhs: split(l(), n()),
             rhs: l(),
             nil: Box::new(base),
@@ -1056,6 +1061,7 @@ fn len_of_drop_at_most() -> Fact {
         (at_most(l(), n()), term::boolean(true)),
         Proof::InductList {
             var: "l".into(),
+            carried: Vec::new(),
             lhs: at_most(l(), n()),
             rhs: term::boolean(true),
             nil: Box::new(base),
@@ -1304,6 +1310,7 @@ fn by_contains_induction(
         eq,
         Proof::InductList {
             var: "a".into(),
+            carried: Vec::new(),
             lhs,
             rhs,
             nil: Box::new(nil),

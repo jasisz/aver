@@ -1,4 +1,4 @@
-(steps 14
+(steps 15
  (obligation holeCommutes () (none)
   (op + (match (i 0)) (i 1))
   (op + (i 1) (match (i 0))))

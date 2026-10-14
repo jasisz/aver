@@ -1780,6 +1780,7 @@ pub fn listCases(
                 v,
                 ob.lhs,
                 ob.rhs,
+                aver_rt::AverList::empty(),
                 std::sync::Arc::new(nilProof),
                 h,
                 tl,

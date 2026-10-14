@@ -403,10 +403,17 @@ fn needed_defs(goal: &Script, proof: &Proof) -> Vec<Def> {
                 lhs,
                 rhs,
                 nil,
+                ihs,
                 cons,
                 ..
+            } => {
+                terms.push(lhs);
+                terms.push(rhs);
+                named(nil, out);
+                named(cons, out);
+                ihs.iter().for_each(|ih| all(&ih.carry, out));
             }
-            | Proof::ListCases {
+            Proof::ListCases {
                 lhs,
                 rhs,
                 nil,

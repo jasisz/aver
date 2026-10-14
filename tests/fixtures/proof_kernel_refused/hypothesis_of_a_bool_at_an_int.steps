@@ -1,4 +1,4 @@
-(steps 14
+(steps 15
  (obligation allListsEmpty ((xs (list int)) (b bool)) (none) (bi Bool.and (bi Bool.or (op == (v b) (b true)) (op == (v b) (b false))) (op == (bi List.len (v xs)) (i 0))) (b true))
  (defs)
  (consts)

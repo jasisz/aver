@@ -1,4 +1,4 @@
-(steps 14
+(steps 15
  (obligation k ((xs (list int))) (none) (call plusZero (v xs)) (v xs))
  (defs
   (def plusZero ((x int)) int () (op + (v x) (i 0))))

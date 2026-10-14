@@ -512,7 +512,7 @@ fn listCases(n: Node, v: String, h: String, tl: String, nil: Tactic, cons: Tacti
     nilProof = within(Node.update(down(n, "nil"), goal = nilGoal), nil, answers)?
     consProof = within(Node.update(down(n, "cons"), goal = consGoal, from = cells), cons, answers)?
     match induct
-        true -> Result.Ok(Proof.PListInduct(v, ob.lhs, ob.rhs, nilProof, h, tl, [], [IhAt(name = ih, at = [], carry = [])], consProof))
+        true -> Result.Ok(Proof.PListInduct(v, ob.lhs, ob.rhs, [], nilProof, h, tl, [], [IhAt(name = ih, at = [], carry = [])], consProof))
         false -> Result.Ok(Proof.PListCases(v, ob.lhs, ob.rhs, nilProof, h, tl, consProof))
 
 verify listCases
@@ -801,9 +801,9 @@ fn script(goalText: String, scriptText: String, answersText: String) -> String
         Result.Ok((g, t, as)) -> outcome(runScript(g, t, as))
 
 verify script
-    script("(steps 14 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))", "(auto)", "(answers)") => "ask\nauto\n(sub () (from) (hyps) (none) (i 1) (i 1))"
-    script("(steps 14 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))", "(auto)", "(answers (a \"auto\\n(sub () (from) (hyps) (none) (i 1) (i 1))\" (closed 0)))") => "proof\n(hyp #0)"
-    script("(steps 14 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))", "(cases (auto))", "(answers)") => "refused\nCases: no given of finite type"
+    script("(steps 15 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))", "(auto)", "(answers)") => "ask\nauto\n(sub () (from) (hyps) (none) (i 1) (i 1))"
+    script("(steps 15 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))", "(auto)", "(answers (a \"auto\\n(sub () (from) (hyps) (none) (i 1) (i 1))\" (closed 0)))") => "proof\n(hyp #0)"
+    script("(steps 15 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))", "(cases (auto))", "(answers)") => "refused\nCases: no given of finite type"
     script("(a", "(auto)", "(answers)") => "goal\nunexpected end of data"
 
 fn readScriptInput(goalText: String, scriptText: String, answersText: String) -> Result<Tuple<Goal, Tactic, List<Answer>>, String>
