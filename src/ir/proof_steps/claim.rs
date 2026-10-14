@@ -210,14 +210,30 @@ pub fn claim(p: &Proof, script: &Script, hyps: &Hyps) -> Result<Eqn, String> {
             let ResolvedExpr::Attr(obj, field) = &t.node else {
                 return Err("proj: not a field access".into());
             };
-            let ResolvedExpr::RecordCreate { fields, .. } = &obj.node else {
-                return Err("proj: not a record literal".into());
-            };
-            let value = fields
-                .iter()
-                .find(|(n, _)| n == field)
-                .ok_or_else(|| "proj: no such field".to_string())?;
-            Ok(Eqn::new(canon(t), canon(&value.1)))
+            match &obj.node {
+                ResolvedExpr::RecordCreate { fields, .. } => {
+                    let value = fields
+                        .iter()
+                        .find(|(n, _)| n == field)
+                        .ok_or_else(|| "proj: no such field".to_string())?;
+                    Ok(Eqn::new(canon(t), canon(&value.1)))
+                }
+                // A field of an update is the value written to it, or the
+                // base's field where the update does not write it.
+                ResolvedExpr::RecordUpdate { base, updates, .. } => {
+                    let value = match updates.iter().find(|(n, _)| n == field) {
+                        Some((_, v)) => canon(v),
+                        None => {
+                            // The read keeps its type.
+                            let mut read = t.clone();
+                            read.node = ResolvedExpr::Attr(base.clone(), field.clone());
+                            canon(&read)
+                        }
+                    };
+                    Ok(Eqn::new(canon(t), value))
+                }
+                _ => Err("proj: not a record literal or an update".into()),
+            }
         }
         Proof::Hyp(name) => hyps
             .iter()

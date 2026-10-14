@@ -501,7 +501,9 @@ pub fn case(
 ) -> Result<Case, String> {
     let j = rec.at;
     let names = term::pattern_binders(&arm.pattern);
-    let wanted = if rec.guard.is_some() { 1 } else { names.len() };
+    // One name per part of the pattern, a wildcard part as well.
+    let parts = term::pattern_parts(&arm.pattern);
+    let wanted = if rec.guard.is_some() { 1 } else { parts.len() };
     if binders.len() != wanted {
         return Err("wrong number of names".into());
     }
@@ -513,7 +515,13 @@ pub fn case(
         .collect();
     let (value, guard) = match &rec.guard {
         None => {
-            map.extend(names.iter().cloned().zip(ys.iter().cloned()));
+            map.extend(
+                parts
+                    .iter()
+                    .cloned()
+                    .zip(ys.iter().cloned())
+                    .filter(|(n, _)| n != "_"),
+            );
             (super::claim::pattern_term(&arm.pattern, &ys)?, None)
         }
         Some(g) => {
@@ -602,18 +610,19 @@ pub fn ih_sources(
     binders: &[String],
 ) -> Result<Vec<(usize, Vec<Term>)>, String> {
     let names = term::pattern_binders(&arm.pattern);
+    let parts = term::pattern_parts(&arm.pattern);
     let ys: Vec<Term> = binders.iter().map(|b| term::var(b)).collect();
     let mut map: Vec<(String, Term)> = def
         .outer(args)?
         .into_iter()
         .filter(|(n, _)| !names.contains(n))
         .collect();
-    map.extend(names.iter().cloned().zip(ys));
+    map.extend(parts.iter().cloned().zip(ys).filter(|(n, _)| n != "_"));
     self_calls(&arm.body, def.fn_id, ds)?
         .iter()
         .map(|(call, _)| {
             let part = match call.get(j).map(|a| &a.node) {
-                Some(ResolvedExpr::Ident(b)) => names.iter().position(|n| n == b),
+                Some(ResolvedExpr::Ident(b)) if b != "_" => parts.iter().position(|n| n == b),
                 _ => None,
             }
             .ok_or("a recursive call does not pass a part of the matched value")?;

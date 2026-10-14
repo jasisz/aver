@@ -1,0 +1,164 @@
+module DefaultsAndUpdates
+    intent =
+        "Laws that close by reading Option.withDefault and Result.withDefault on a constructor, a field of a record update, and an induction along a function whose pattern has a wildcard part."
+        "The laws under wrongDefault and wrongField, and lenA.lengthIsItsSquare, are false and must stay open."
+    exposes [Point, Chain, orZero, okOrZero, pick, setX, lenA, lenB, depthA, depthB, wrongDefault, wrongField]
+    effects []
+
+record Point
+    x: Int
+    y: Int
+
+type Chain
+    End
+    Link(Int, Chain)
+
+fn orZero(o: Option<Int>) -> Int
+    ? "The value an option holds, or zero."
+    Option.withDefault(o, 0)
+
+verify orZero
+    orZero(Option.None) => 0
+    orZero(Option.Some(3)) => 3
+
+verify orZero law noneIsZero
+    given n: Int = -3..3
+    orZero(Option.None) + n => n
+
+verify orZero law someIsItsValue
+    given n: Int = -3..3
+    orZero(Option.Some(n)) => n
+
+fn okOrZero(r: Result<Int, String>) -> Int
+    ? "The value a result holds, or zero."
+    Result.withDefault(r, 0)
+
+verify okOrZero
+    okOrZero(Result.Ok(2)) => 2
+    okOrZero(Result.Err("no")) => 0
+
+verify okOrZero law okIsItsValue
+    given n: Int = -3..3
+    okOrZero(Result.Ok(n)) => n
+
+verify okOrZero law errIsZero
+    given e: String = ["", "no"]
+    okOrZero(Result.Err(e)) => 0
+
+fn pick(n: Int) -> Option<Int>
+    ? "n when it is positive."
+    match n > 0
+        true -> Option.Some(n)
+        false -> Option.None
+
+verify pick
+    pick(1) => Option.Some(1)
+    pick(0) => Option.None
+
+verify pick law positiveDefault
+    given n: Int = -3..3
+    when n > 0
+    Option.withDefault(pick(n), 0) => n
+
+fn setX(p: Point, v: Int) -> Point
+    ? "p with x set to v."
+    Point.update(p, x = v)
+
+verify setX
+    setX(Point(x = 1, y = 2), 3) => Point(x = 3, y = 2)
+
+verify setX law keepsY
+    given p: Point = [Point(x = 1, y = 2), Point(x = 0, y = 0)]
+    given v: Int = -1..1
+    setX(p, v).y => p.y
+
+verify setX law writesX
+    given p: Point = [Point(x = 1, y = 2), Point(x = 0, y = 0)]
+    given v: Int = -1..1
+    setX(p, v).x => v
+
+verify setX law readsThroughTwoUpdates
+    given p: Point = [Point(x = 1, y = 2), Point(x = 0, y = 0)]
+    given v: Int = -1..1
+    given w: Int = -1..1
+    Point.update(setX(p, v), y = w).x + Point.update(setX(p, v), y = w).y => v + w
+
+fn lenA(xs: List<Int>) -> Int
+    ? "The length, counting the element in front first."
+    match xs
+        [] -> 0
+        [_, ..t] -> 1 + lenA(t)
+
+verify lenA
+    lenA([4, 5]) => 2
+
+verify lenA law sameAsLenB
+    given xs: List<Int> = [[], [7], [1, 2, 3]]
+    lenA(xs) => lenB(xs)
+
+verify lenA law lengthIsItsSquare
+    given xs: List<Int> = [[], [7]]
+    lenA(xs) => lenB(xs) * lenB(xs)
+
+fn lenB(xs: List<Int>) -> Int
+    ? "The length, counting the element in front last."
+    match xs
+        [] -> 0
+        [_, ..t] -> lenB(t) + 1
+
+verify lenB
+    lenB([4, 5]) => 2
+
+fn depthA(c: Chain) -> Int
+    ? "How many links, counting the first one first."
+    match c
+        Chain.End -> 0
+        Chain.Link(_, rest) -> 1 + depthA(rest)
+
+verify depthA
+    depthA(Chain.Link(1, Chain.End)) => 1
+
+verify depthA law sameAsDepthB
+    given c: Chain = [Chain.End, Chain.Link(1, Chain.End), Chain.Link(2, Chain.Link(1, Chain.End))]
+    depthA(c) => depthB(c)
+
+fn depthB(c: Chain) -> Int
+    ? "How many links, counting the first one last."
+    match c
+        Chain.End -> 0
+        Chain.Link(_, rest) -> depthB(rest) + 1
+
+verify depthB
+    depthB(Chain.Link(1, Chain.End)) => 1
+
+fn wrongDefault(n: Int) -> Int
+    ? "Carries the false laws that a Some is read as the default and an Ok as the default."
+    n
+
+verify wrongDefault
+    wrongDefault(1) => 1
+
+verify wrongDefault law someIsTheDefault
+    given n: Int = 0..0
+    orZero(Option.Some(n)) => 0
+
+verify wrongDefault law okIsTheDefault
+    given n: Int = 0..0
+    okOrZero(Result.Ok(n)) => 0
+
+fn wrongField(p: Point) -> Point
+    ? "Carries the false laws that an update writes the other field, and leaves the field it writes."
+    p
+
+verify wrongField
+    wrongField(Point(x = 1, y = 2)) => Point(x = 1, y = 2)
+
+verify wrongField law writesY
+    given p: Point = [Point(x = 1, y = 1)]
+    given v: Int = 1..1
+    setX(p, v).y => v
+
+verify wrongField law keepsX
+    given p: Point = [Point(x = 1, y = 1)]
+    given v: Int = 1..1
+    setX(p, v).x => p.x

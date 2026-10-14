@@ -136,7 +136,9 @@ fn __mutual_tco_trampoline_1(
                         );
                     }
                     crate::proof_kernel::aver_generated::kernel::proof::Proof::PProj(t) => {
-                        return crate::proof_kernel::aver_generated::kernel::check::proj(t, path);
+                        return crate::proof_kernel::aver_generated::kernel::check::proj(
+                            t, &env, path,
+                        );
                     }
                     crate::proof_kernel::aver_generated::kernel::proof::Proof::PCell(t) => {
                         return crate::proof_kernel::aver_generated::kernel::check::cell(&t, path);
@@ -1769,9 +1771,10 @@ pub fn plugBoth(
     }
 }
 
-/// A record literal's field.
+/// A record literal's field; a field of an update, which is the value written to it, or the base's field when the update does not write it.
 pub fn proj(
     mut t @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
+    env @ _: &Env,
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
@@ -1782,16 +1785,69 @@ pub fn proj(
                 crate::proof_kernel::aver_generated::kernel::term::Term::TRec(ty, fs) => {
                     crate::proof_kernel::aver_generated::kernel::check::projField(t, fs, f, path)
                 }
+                crate::proof_kernel::aver_generated::kernel::term::Term::TUpd(ty, base, fs) => {
+                    let base = (*base).clone();
+                    crate::proof_kernel::aver_generated::kernel::check::projUpdate(
+                        &t,
+                        &crate::proof_kernel::aver_generated::kernel::check::typeOf(&t, env, path),
+                        &base,
+                        &fs,
+                        f,
+                    )
+                }
                 _ => crate::proof_kernel::aver_generated::kernel::check::refuse(
                     path,
-                    AverStr::from("a projection must read a field of a record literal"),
+                    AverStr::from(
+                        "a projection must read a field of a record literal or of an update",
+                    ),
                 ),
             }
         }
         _ => crate::proof_kernel::aver_generated::kernel::check::refuse(
             path,
-            AverStr::from("a projection must read a field of a record literal"),
+            AverStr::from("a projection must read a field of a record literal or of an update"),
         ),
+    }
+}
+
+/// Once the read has a type, so the base is of the updated record and f one of its fields: the value written to f, or the base's f.
+pub fn projUpdate(
+    t @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    ty @ _: &Result<crate::proof_kernel::aver_generated::kernel::term::Ty, AverStr>,
+    base @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    fs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Field>,
+    f @ _: AverStr,
+) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    ty.clone()?;
+    match crate::proof_kernel::aver_generated::kernel::check::findField(fs.clone(), f.clone()) {
+        Some(x @ _) => Ok(crate::proof_kernel::aver_generated::kernel::term::Eqn {
+            lhs: t.clone(),
+            rhs: x,
+        }),
+        None => Ok(crate::proof_kernel::aver_generated::kernel::term::Eqn {
+            lhs: t.clone(),
+            rhs: crate::proof_kernel::aver_generated::kernel::term::Term::TGet(
+                std::sync::Arc::new(base.clone()),
+                f,
+            ),
+        }),
+    }
+}
+
+/// The value the first field named f holds.
+#[inline(always)]
+pub fn findField(
+    mut fs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Field>,
+    mut f @ _: AverStr,
+) -> Option<crate::proof_kernel::aver_generated::kernel::term::Term> {
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        aver_list_match!(fs, [] => { return None; }, [x, rest] => { if (x.name == f) { return Some(x.value); } else { {
+            let __tco0 = rest;
+            fs = __tco0;
+            continue;
+        } } })
     }
 }
 
@@ -4596,7 +4652,7 @@ pub fn inductCase(
     }
 }
 
-/// How many names a case introduces: one per pattern variable, or one hypothesis in a count toward zero.
+/// How many names a case introduces: one per part of the pattern, a wildcard part as well, or one hypothesis in a count toward zero.
 #[inline(always)]
 pub fn caseNames(
     r @ _: &crate::proof_kernel::aver_generated::kernel::induct::Recursion,
@@ -4605,7 +4661,7 @@ pub fn caseNames(
     crate::proof_kernel::cancel_checkpoint();
     match r.guard.clone() {
         None => aver_rt::AverInt::from_i64(
-            crate::proof_kernel::aver_generated::kernel::subst::patNames(&a.pattern).len() as i64,
+            crate::proof_kernel::aver_generated::kernel::check::patFields(&a.pattern).len() as i64,
         ),
         Some(g @ _) => aver_rt::AverInt::from_i64(1),
     }
@@ -4644,7 +4700,7 @@ pub fn freshAll(
     before @ _: &aver_rt::AverList<AverStr>,
 ) -> bool {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(bs.clone(), [] => true, [b, rest] => ((!((taken.contains(&b) || crate::proof_kernel::aver_generated::kernel::proof::givenNames(&env.vars).contains(&b)) || (crate::proof_kernel::aver_generated::kernel::check::isConst(b.clone(), &env.consts) || before.contains(&b)))) && crate::proof_kernel::aver_generated::kernel::check::freshAll(&rest, taken, env, &aver_rt::AverList::prepend(b, &before.clone()))))
+    aver_list_match!(bs.clone(), [] => true, [b, rest] => ((!(((taken.contains(&b) || (&*b == "_")) || crate::proof_kernel::aver_generated::kernel::proof::givenNames(&env.vars).contains(&b)) || (crate::proof_kernel::aver_generated::kernel::check::isConst(b.clone(), &env.consts) || before.contains(&b)))) && crate::proof_kernel::aver_generated::kernel::check::freshAll(&rest, taken, env, &aver_rt::AverList::prepend(b, &before.clone()))))
 }
 
 /// Whether n names a module-level binding.
@@ -4683,7 +4739,13 @@ pub fn inductCaseNamed(
     crate::proof_kernel::cancel_checkpoint();
     let names @ _ = crate::proof_kernel::aver_generated::kernel::subst::patNames(&a.arm.pattern);
     let rename @ _ = aver_rt::AverList::concat(
-        &crate::proof_kernel::aver_generated::kernel::check::zipBind(&names, ys),
+        &crate::proof_kernel::aver_generated::kernel::check::withoutNames(
+            crate::proof_kernel::aver_generated::kernel::check::zipBind(
+                &crate::proof_kernel::aver_generated::kernel::check::patFields(&a.arm.pattern),
+                ys,
+            ),
+            aver_rt::AverList::from_vec(vec![AverStr::from("_")]),
+        ),
         &crate::proof_kernel::aver_generated::kernel::check::withoutNames(
             crate::proof_kernel::aver_generated::kernel::check::zipBind(
                 &crate::proof_kernel::aver_generated::kernel::types::paramsOf(d),
@@ -4823,23 +4885,57 @@ pub fn caseVarsOf(
     crate::proof_kernel::cancel_checkpoint();
     match guard.clone() {
         Some(g @ _) => Ok(aver_rt::AverList::empty()),
-        None => Ok(
-            crate::proof_kernel::aver_generated::kernel::types::namedVars(
-                binders,
-                &crate::proof_kernel::aver_generated::kernel::types::typesOfVars(
-                    &crate::proof_kernel::aver_generated::kernel::check::patTypes(
-                        p,
-                        &crate::proof_kernel::aver_generated::kernel::check::typeOf(
-                            &crate::proof_kernel::aver_generated::kernel::term::Term::TVar(v),
-                            env,
-                            path.clone(),
-                        )?,
-                        env,
-                        path,
-                    )?,
-                ),
-            ),
+        None => crate::proof_kernel::aver_generated::kernel::check::patTypes(
+            &crate::proof_kernel::aver_generated::kernel::check::namedParts(p, binders),
+            &crate::proof_kernel::aver_generated::kernel::check::typeOf(
+                &crate::proof_kernel::aver_generated::kernel::term::Term::TVar(v),
+                env,
+                path.clone(),
+            )?,
+            env,
+            path,
         ),
+    }
+}
+
+/// The pattern with its parts, a wildcard part as well, taking these names in order.
+pub fn namedParts(
+    p @ _: &crate::proof_kernel::aver_generated::kernel::term::Pat,
+    names @ _: &aver_rt::AverList<AverStr>,
+) -> crate::proof_kernel::aver_generated::kernel::term::Pat {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let (__pat0, __pat1) = (p.clone(), names.clone());
+        match __pat0 {
+            crate::proof_kernel::aver_generated::kernel::term::Pat::PCons(h, t) => {
+                let __list_subject = __pat1;
+                if let Some((x, __pat2)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                    {
+                        let __list_subject = __pat2;
+                        if let Some((y, __pat3)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                            {
+                                let __list_subject = __pat3;
+                                if __list_subject.is_empty() {
+                                    crate::proof_kernel::aver_generated::kernel::term::Pat::PCons(
+                                        x, y,
+                                    )
+                                } else {
+                                    p.clone()
+                                }
+                            }
+                        } else {
+                            p.clone()
+                        }
+                    }
+                } else {
+                    p.clone()
+                }
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Pat::PCtor(c, ns) => {
+                crate::proof_kernel::aver_generated::kernel::term::Pat::PCtor(c, names.clone())
+            }
+            _ => p.clone(),
+        }
     }
 }
 
@@ -5474,6 +5570,37 @@ pub fn listInduct(
                 )
             }
         }
+    }
+}
+
+/// The environment with a record R of two Int fields a and b declared.
+pub fn withRec(env @ _: &Env) -> Env {
+    crate::proof_kernel::cancel_checkpoint();
+    crate::proof_kernel::aver_generated::kernel::check::Env {
+        defs: env.defs.clone(),
+        consts: env.consts.clone(),
+        laws: env.laws.clone(),
+        hyps: env.hyps.clone(),
+        vars: env.vars.clone(),
+        sums: env.sums.clone(),
+        recs: aver_rt::AverList::prepend(
+            crate::proof_kernel::aver_generated::kernel::proof::Rec {
+                name: AverStr::from("R"),
+                eq: true,
+                fields: aver_rt::AverList::from_vec(vec![
+                    crate::proof_kernel::aver_generated::kernel::term::typed(
+                        AverStr::from("a"),
+                        &crate::proof_kernel::aver_generated::kernel::term::Ty::TyInt,
+                    ),
+                    crate::proof_kernel::aver_generated::kernel::term::typed(
+                        AverStr::from("b"),
+                        &crate::proof_kernel::aver_generated::kernel::term::Ty::TyInt,
+                    ),
+                ]),
+            },
+            &env.recs.clone(),
+        ),
+        sigs: env.sigs.clone(),
     }
 }
 
