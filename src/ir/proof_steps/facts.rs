@@ -1283,6 +1283,7 @@ fn contains_cell(x: Term, a: Term, y: Term, h: &str, found: bool) -> Proof {
 /// A fact about `List.contains` proved by induction on the list `a`, the
 /// cell case split on whether its element in front is `y` (hypothesis
 /// `h_eq`): `found` proves it where it is, `other` where it is not.
+#[allow(clippy::too_many_arguments)]
 fn by_contains_induction(
     key: &'static str,
     lean: &'static str,
