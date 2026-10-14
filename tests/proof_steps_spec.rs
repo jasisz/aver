@@ -703,7 +703,7 @@ fn both_kernels_split_a_list_given_into_its_two_cases_and_refuse_mutations() {
     // The tail `t` of the first split no longer occurs in the claim, but it
     // stays a list variable: a later split may not name an element `t`,
     // which a split on `t` would then take for a list.
-    let reused = "(steps 14\n (obligation k ((xs (list int))) (none) (b true) (b true))\n (defs)\n (consts)\n (sums)\n (recs)\n (sigs)\n (laws)\n (proof (listcases xs (b true) (b true) (refl (b true)) (h t) (listcases xs (b true) (b true) (refl (b true)) (t u) (refl (b true))))))\n";
+    let reused = "(steps 15\n (obligation k ((xs (list int))) (none) (b true) (b true))\n (defs)\n (consts)\n (sums)\n (recs)\n (sigs)\n (laws)\n (proof (listcases xs (b true) (b true) (refl (b true)) (h t) (listcases xs (b true) (b true) (refl (b true)) (t u) (refl (b true))))))\n";
     let refused = aver::proof_kernel::verdict(reused);
     assert!(
         refused
@@ -3222,7 +3222,7 @@ fn joining_texts_is_never_read_as_int_arithmetic() {
     // made by hand.
     let script = |ty: &str| {
         format!(
-            "(steps 14 (obligation k ((a {ty}) (b {ty})) (none) (op + (v a) (v b)) (op + (v b) (v a))) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (ring (op + (v a) (v b)) (op + (v b) (v a)))))"
+            "(steps 15 (obligation k ((a {ty}) (b {ty})) (none) (op + (v a) (v b)) (op + (v b) (v a))) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (ring (op + (v a) (v b)) (op + (v b) (v a)))))"
         )
     };
     assert_eq!(
@@ -4694,7 +4694,7 @@ const PICK_FALSE_LAWS: [&str; 5] = [
 /// (`0.0 / 0.0`) the VM answers otherwise. The rule that finds the element
 /// in front, like `x == x`, holds only at a type whose `==` is equality, so
 /// both kernels refuse it.
-const CONTAINS_FINDS_ITSELF: &str = "(steps 14
+const CONTAINS_FINDS_ITSELF: &str = "(steps 15
   (obligation containsFloat.alwaysFindsSelf ((x float)) (none)
     (bi List.contains (bi List.prepend (v x) (list)) (v x))
     (b true))
@@ -6548,7 +6548,7 @@ fn a_law_about_a_refined_given_is_cited_only_at_a_value_its_type_admits() {
     let minus_one = "(rec Natural (value (neg (i 1))))";
     let at_minus_one = |law: &str, premise: &str| {
         format!(
-            "(steps 14\n (obligation holds.ofMinusOne ((x int)) (none) (call isNonNegative {minus_one}) (b true))\n (defs)\n (consts)\n (sums)\n (recs\n  (rec Natural eq (value int)))\n (sigs\n  (isNonNegative ((named Natural)) bool))\n (laws\n  {law})\n (proof (law isNonNegative.always ((n {minus_one})){premise})))\n"
+            "(steps 15\n (obligation holds.ofMinusOne ((x int)) (none) (call isNonNegative {minus_one}) (b true))\n (defs)\n (consts)\n (sums)\n (recs\n  (rec Natural eq (value int)))\n (sigs\n  (isNonNegative ((named Natural)) bool))\n (laws\n  {law})\n (proof (law isNonNegative.always ((n {minus_one})){premise})))\n"
         )
     };
     let computed = format!(" (compute (op >= (get {minus_one} value) (i 0)) (b true))");

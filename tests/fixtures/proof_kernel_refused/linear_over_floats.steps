@@ -1,4 +1,4 @@
-(steps 14
+(steps 15
  (obligation k ((a float) (b float) (c float)) (bi Bool.and (op < (v a) (v b)) (op < (v b) (v c))) (op < (v a) (v c)) (b true))
  (defs)
  (consts)

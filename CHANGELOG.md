@@ -32,7 +32,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 | `Shape.Rect(_)` for a two-field variant, `Option.Some()` | list every field, or write the bare `Shape.Rect` |
 | code `aver check` could not type, accepted silently | an error with the line |
 | `Kernel.Proof.Goal` without `hyps`, givens as bare names | givens are `TypedVar`; names through `Kernel.Proof.givenNames` |
-| step scripts in `proof_steps/` | format 14, with types |
+| step scripts in `proof_steps/` | format 15, with types |
 
 A 0.30 `--gate` baseline with `bounded` laws has to be recorded again.
 

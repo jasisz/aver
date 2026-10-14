@@ -626,7 +626,7 @@ fn a_standard_plan_closes_a_law_like_a_project_plan() {
 /// kernel refuses the script, while it accepts the proof as written.
 #[test]
 fn the_kernel_refuses_a_wrong_proof_from_a_standard_plan() {
-    let goal = "(steps 14\n (obligation next.comesBackAfterThree ((l (named Light))) (none) (call next (call next (call next (v l)))) (v l))\n (defs\n  (def next ((l (named Light))) (named Light) () (match (v l) (arm (pc Light.Red) (ctor Light.Green)) (arm (pc Light.Green) (ctor Light.Amber)) (arm (pc Light.Amber) (ctor Light.Red)))))\n (consts)\n (sums\n  (sum Light eq (Light.Red) (Light.Amber) (Light.Green)))\n (recs)\n (sigs)\n (laws)\n (proof (refl (v l))))";
+    let goal = "(steps 15\n (obligation next.comesBackAfterThree ((l (named Light))) (none) (call next (call next (call next (v l)))) (v l))\n (defs\n  (def next ((l (named Light))) (named Light) () (match (v l) (arm (pc Light.Red) (ctor Light.Green)) (arm (pc Light.Green) (ctor Light.Amber)) (arm (pc Light.Amber) (ctor Light.Red)))))\n (consts)\n (sums\n  (sum Light eq (Light.Red) (Light.Amber) (Light.Green)))\n (recs)\n (sigs)\n (laws)\n (proof (refl (v l))))";
     let answer = aver::proof_std::run("cases", goal).unwrap();
     let proof = answer
         .strip_prefix("proof\n")
@@ -725,7 +725,7 @@ fn a_plan_may_return_a_script_whose_auto_nodes_the_automatic_steps_close() {
 /// `#N` the compiler fills in, and says where it stops.
 #[test]
 fn the_standard_library_runs_a_script_by_asking_for_its_auto_nodes() {
-    let goal = "(steps 14 (obligation k ((xs (list int))) (none) (v xs) (v xs)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (v xs))))";
+    let goal = "(steps 15 (obligation k ((xs (list int))) (none) (v xs) (v xs)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (v xs))))";
     let script = "(split xs h t (auto) (auto))";
     let first = aver::proof_std::run_script(goal, script, "(answers)").unwrap();
     assert_eq!(

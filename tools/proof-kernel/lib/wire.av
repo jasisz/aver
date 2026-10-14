@@ -13,8 +13,8 @@ fn goal(text: String) -> Result<Goal, String>
     Result.Ok(goalOf(Kernel.Decode.script(Kernel.Sexp.readAll(text)?)?))
 
 verify goal
-    goal("(steps 14 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))") => Result.Ok(Goal(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], recs = [], laws = [], facts = [], hyps = []))
-    goal("(steps 14 (obligation k ((xs (list bool)) (n int) (b bool) (z str)) (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))") => Result.Ok(Goal(obligation = Law(key = "k", givens = [Kernel.Term.typed("xs", Ty.TyList(Ty.TyBool)), Kernel.Term.typed("n", Ty.TyInt), Kernel.Term.typed("b", Ty.TyBool), Kernel.Term.typed("z", Ty.TyStr)], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [Given(name = "b", fin = Fin.FBool)], lists = ["xs"], ints = ["n"], defs = [], consts = [], sums = [], recs = [], laws = [], facts = [], hyps = []))
+    goal("(steps 15 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))") => Result.Ok(Goal(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], ints = [], defs = [], consts = [], sums = [], recs = [], laws = [], facts = [], hyps = []))
+    goal("(steps 15 (obligation k ((xs (list bool)) (n int) (b bool) (z str)) (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))") => Result.Ok(Goal(obligation = Law(key = "k", givens = [Kernel.Term.typed("xs", Ty.TyList(Ty.TyBool)), Kernel.Term.typed("n", Ty.TyInt), Kernel.Term.typed("b", Ty.TyBool), Kernel.Term.typed("z", Ty.TyStr)], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [Given(name = "b", fin = Fin.FBool)], lists = ["xs"], ints = ["n"], defs = [], consts = [], sums = [], recs = [], laws = [], facts = [], hyps = []))
     goal("(a") => Result.Err("unexpected end of data")
 
 fn goalOf(s: Script) -> Goal

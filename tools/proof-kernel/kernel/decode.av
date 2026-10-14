@@ -868,9 +868,9 @@ verify sigs
     sigs([Sexp.Node([Sexp.Atom("f"), Sexp.Node([Sexp.Atom("int")]), Sexp.Atom("bool")])]) => Result.Ok([FnSig(name = "f", params = [Ty.TyInt], ret = Ty.TyBool)])
 
 fn script(s: Sexp) -> Result<Script, String>
-    ? "(steps 14 (obligation …) (defs …) (consts …) (sums …) (recs …) (sigs …) (laws …) (proof …)); version 14 only."
+    ? "(steps 15 (obligation …) (defs …) (consts …) (sums …) (recs …) (sigs …) (laws …) (proof …)); version 15 only."
     match s
-        Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("14"), o, Sexp.Node([Sexp.Atom("defs"), ..ds]), Sexp.Node([Sexp.Atom("consts"), ..cs]), Sexp.Node([Sexp.Atom("sums"), ..ss]), Sexp.Node([Sexp.Atom("recs"), ..rs]), Sexp.Node([Sexp.Atom("sigs"), ..gs]), Sexp.Node([Sexp.Atom("laws"), ..ls]), Sexp.Node([Sexp.Atom("proof"), p])]) -> scriptOf(law(o, "obligation")?, defs(ds)?, consts(cs)?, sums(ss)?, recs(rs)?, sigs(gs)?, laws(ls)?, proof(p)?)
+        Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("15"), o, Sexp.Node([Sexp.Atom("defs"), ..ds]), Sexp.Node([Sexp.Atom("consts"), ..cs]), Sexp.Node([Sexp.Atom("sums"), ..ss]), Sexp.Node([Sexp.Atom("recs"), ..rs]), Sexp.Node([Sexp.Atom("sigs"), ..gs]), Sexp.Node([Sexp.Atom("laws"), ..ls]), Sexp.Node([Sexp.Atom("proof"), p])]) -> scriptOf(law(o, "obligation")?, defs(ds)?, consts(cs)?, sums(ss)?, recs(rs)?, sigs(gs)?, laws(ls)?, proof(p)?)
         Sexp.Node([Sexp.Atom("steps"), Sexp.Atom(v), ..rest]) -> Result.Err("unsupported step format version {v}")
         _ -> Result.Err("not a step script")
 
