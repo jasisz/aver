@@ -2151,6 +2151,14 @@ impl Renderer<'_> {
         } else {
             format!("∀{binders}, {statement}")
         };
+        // The local bindings of the body are `have`s in Lean, which the
+        // premise of an arm about a subject that reads one cannot rewrite
+        // under: they are substituted first.
+        let tactic = if arm == 0 || def.lets.is_empty() {
+            tactic
+        } else {
+            format!("(try dsimp only); {tactic}")
+        };
         // Only the left side is opened: the right side of an arm of a
         // recursive function calls the function again. `conv` may close the
         // goal itself, hence `all_goals`.
