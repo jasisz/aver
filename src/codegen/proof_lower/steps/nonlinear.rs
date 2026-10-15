@@ -31,7 +31,7 @@ const FACTOR: &str = "h_factor";
 #[derive(Clone)]
 pub(super) enum Source {
     Hyp(String),
-    Fact(Proof),
+    Fact(Box<Proof>),
 }
 
 /// Whether one of the rows multiplies two atoms.
@@ -84,7 +84,7 @@ fn factor_proof(e: &Eqn, p: &Term, source: &Source) -> Option<Proof> {
     let weights = linear::certificate(&rows)?;
     let (name, wrap) = match source {
         Source::Hyp(n) => (n.clone(), None),
-        Source::Fact(proof) => (FACTOR.to_string(), Some(proof.clone())),
+        Source::Fact(proof) => (FACTOR.to_string(), Some(proof.as_ref().clone())),
     };
     let step = Proof::Linear {
         goal,

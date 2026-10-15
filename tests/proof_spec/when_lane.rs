@@ -21,9 +21,10 @@ use super::*;
 ///     polynomial ring identity `nrNewErrNum ≍ nrOldErrSq`
 ///     (`s⁴ - d·(x·(2s² - dx)) = (s² - dx)²`).
 ///
-/// Only `mulLeTrans` (`a·c ≤ m`, a `prod ≤ var` transitivity needing a
-/// `≤`-chain witness this step does not synthesize) is declined — not a
-/// sorry. axioms stay within {propext, Classical.choice, Quot.sound}.
+/// `mulLeTrans` (`a·c ≤ m`, a `prod ≤ var` transitivity) closes by proof
+/// steps: linear arithmetic reads `(b - a)·c ≥ 0` (`int.mul_nonneg`) next to
+/// `b·c ≤ m`. Nothing is declined. axioms stay within {propext,
+/// Classical.choice, Quot.sound}.
 #[test]
 fn proof_nonlinear_nonneg_laws_close_via_generic_primitive() {
     if !lean_required::lake_available() {
@@ -36,7 +37,7 @@ fn proof_nonlinear_nonneg_laws_close_via_generic_primitive() {
         &output_dir,
         0,
         &[],
-        &["--declined-budget", "1"],
+        &["--declined-budget", "0"],
     );
     assert_eq!(
         summary["sorries"].as_u64(),
@@ -48,8 +49,8 @@ fn proof_nonlinear_nonneg_laws_close_via_generic_primitive() {
         format_output(&run)
     );
     assert_eq!(
-        summary["declined_claims"][0]["claim"].as_str(),
-        Some("mulLeTrans.guarded"),
+        summary["closed_by"]["mulLeTrans.guarded"].as_str(),
+        Some("steps"),
         "{}",
         format_output(&run)
     );

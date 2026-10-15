@@ -3042,9 +3042,9 @@ impl Env<'_> {
                     let source = if k < plain {
                         Source::Hyp(n.clone())
                     } else if k >= modded && extra[k - modded].2.is_none() {
-                        Source::Fact(extra[k - modded].1.clone())
+                        Source::Fact(Box::new(extra[k - modded].1.clone()))
                     } else if k >= cited && k < modded {
-                        Source::Fact(remainders[k - cited].1.clone())
+                        Source::Fact(Box::new(remainders[k - cited].1.clone()))
                     } else {
                         continue;
                     };
