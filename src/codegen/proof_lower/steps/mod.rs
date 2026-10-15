@@ -767,11 +767,35 @@ fn prove_part(
                 }
             }
         }
-        let tried = if tried.is_empty() {
+        let mut tried = if tried.is_empty() {
             String::new()
         } else {
             format!("; split on a cited `when`: {}", tried.join("; "))
         };
+        // Last, an induction along another function of the claim, on half
+        // of one attempt's fuel.
+        if found.is_none()
+            && let Some((f, named)) = induct_on
+        {
+            let mut other_env = fresh();
+            other_env.fuel /= 2;
+            match other_env.prove_along_others(f, named, ob, SPLIT_DEPTH) {
+                Ok(proof) => {
+                    env = other_env;
+                    found = Some(proof);
+                }
+                Err(why) if !why.is_empty() => {
+                    for h in other_env.hints.drain(..) {
+                        if !hints.laws.contains(&h) {
+                            hints.laws.push(h);
+                        }
+                    }
+                    tried.push_str("; ");
+                    tried.push_str(&why);
+                }
+                Err(_) => {}
+            }
+        }
         found.ok_or_else(|| match &opened {
             Some(first) => format!(
                 "{}; with the call that divides down to zero kept whole: {}{tried}",

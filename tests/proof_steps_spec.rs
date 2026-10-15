@@ -1083,6 +1083,74 @@ fn induction_follows_only_the_function_the_law_is_about() {
 }
 
 #[test]
+fn induction_goes_along_another_function_and_on_a_list_for_every_count() {
+    let out = scratch("induct-others");
+    let (result, summary) = aver_backend_json("induction_along_others.av", &out, None);
+    let closed = &summary["closed_by"];
+    // `lt` recurses where the claim passes no given; `add` recurses on `i`.
+    assert_eq!(closed["lt.belowSuccessorOfSum"], "steps", "{summary}");
+    assert_eq!(closed["lt.belowSuccessorOfSumNamed"], "steps", "{summary}");
+    // The induction on `xs` holds for every `n`, so the cell case takes the
+    // claim at the tail with `n - 1`.
+    assert_eq!(closed["taken.takeTwice"], "steps", "{summary}");
+    // False laws of the same shapes stay open.
+    for law in ["lt.belowSum", "taken.takeTwiceFurther"] {
+        assert_eq!(closed[law], "open", "{law}: {}", format_output(&result));
+    }
+    let text = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "induction_along_others.av",
+            "--backend",
+            "aver",
+            "-o",
+            out.to_str().unwrap(),
+        ],
+    );
+    let text = String::from_utf8_lossy(&text.stdout);
+    assert!(
+        text.contains("lt.belowSuccessorOfSum: closed by steps\n    hint: steps closed it by following the recursion of add; add `induction i` to go straight to it"),
+        "{text}"
+    );
+    assert!(
+        text.contains("lt.belowSuccessorOfSumNamed: closed by steps\n"),
+        "{text}"
+    );
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("induction_along_others.av", &out)
+            .into_iter()
+            .collect();
+    let law = fs::read_to_string(&files["taken.takeTwice"]).unwrap();
+    assert_eq!(
+        aver::proof_kernel::verdict(&law),
+        Ok("taken.takeTwice".to_string())
+    );
+    let ih = "((op - (v n) (i 1))) ())";
+    assert!(
+        law.contains(ih) && law.contains("(xsHead xsTail) (n) ("),
+        "{law}"
+    );
+    for (kind, mutated) in [
+        (
+            "the claim at the tail at another count",
+            law.replace(ih, "((op - (v n) (i 2))) ())"),
+        ),
+        (
+            "values for a given the induction does not generalise",
+            law.replace("(xsHead xsTail) (n) (", "(xsHead xsTail) () ("),
+        ),
+    ] {
+        assert_ne!(mutated, law, "{kind}");
+        assert!(
+            aver::proof_kernel::verdict(&mutated).is_err(),
+            "{kind}: the kernel accepted it"
+        );
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
 fn a_recursion_through_a_helper_is_read_as_if_the_helper_stood_in_its_place() {
     let out = scratch("induct-helper");
     let (result, summary) = aver_backend_json("induction_helper.av", &out, None);

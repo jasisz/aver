@@ -3085,7 +3085,11 @@ impl Env<'_> {
     /// [`Self::normalize`] going on from `chain`, an evaluation of a term
     /// to its head under the hypotheses in scope, so it is not evaluated
     /// again.
-    fn normalize_below(&mut self, mut chain: Chain, depth: usize) -> Result<Chain, String> {
+    pub(crate) fn normalize_below(
+        &mut self,
+        mut chain: Chain,
+        depth: usize,
+    ) -> Result<Chain, String> {
         if depth == 0 {
             return Ok(chain);
         }

@@ -1208,7 +1208,7 @@
   ]
  },
  "proof-corpus/tip/isaplanner/prop_08.av": {
-  "tactic": [
+  "steps": [
    "minus.minusPlusCancel"
   ]
  },
@@ -1248,7 +1248,7 @@
   ]
  },
  "proof-corpus/tip/isaplanner/prop_18.av": {
-  "tactic": [
+  "steps": [
    "lt.ltSuccAdd"
   ]
  },
