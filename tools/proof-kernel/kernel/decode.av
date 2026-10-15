@@ -498,13 +498,16 @@ verify enumProof
     enumProof([Sexp.Atom("b"), Sexp.Node([Sexp.Atom("v"), Sexp.Atom("b")]), Sexp.Node([Sexp.Atom("v"), Sexp.Atom("b")])]) => Result.Ok(Proof.PEnum("b", Term.TVar("b"), Term.TVar("b"), []))
 
 fn linearProof(args: List<Sexp>) -> Result<Proof, String>
-    ? "(linear TERM BOOL (NAME…) (INT…) (cut INT (INT…))…)"
+    ? "(linear TERM BOOL (NAME…) (INT…) (cut INT (INT…))…); BOOL is true or false."
     match args
-        [g, Sexp.Atom(v), hs, ws, ..cs] -> Result.Ok(Proof.PLinear(term(g)?, v == "true", atoms(items(hs)?)?, ints(items(ws)?)?, cuts(cs)?))
+        [g, Sexp.Atom("true"), hs, ws, ..cs] -> Result.Ok(Proof.PLinear(term(g)?, true, atoms(items(hs)?)?, ints(items(ws)?)?, cuts(cs)?))
+        [g, Sexp.Atom("false"), hs, ws, ..cs] -> Result.Ok(Proof.PLinear(term(g)?, false, atoms(items(hs)?)?, ints(items(ws)?)?, cuts(cs)?))
         _ -> Result.Err("malformed linear")
 
 verify linearProof
     linearProof([]) => Result.Err("malformed linear")
+    linearProof([Sexp.Node([Sexp.Atom("v"), Sexp.Atom("g")]), Sexp.Atom("yes"), Sexp.Node([]), Sexp.Node([Sexp.Atom("1")])]) => Result.Err("malformed linear")
+    linearProof([Sexp.Node([Sexp.Atom("v"), Sexp.Atom("g")]), Sexp.Atom("false"), Sexp.Node([]), Sexp.Node([Sexp.Atom("1")])]) => Result.Ok(Proof.PLinear(Term.TVar("g"), false, [], [1], []))
     linearProof([Sexp.Node([Sexp.Atom("v"), Sexp.Atom("g")]), Sexp.Atom("true"), Sexp.Node([]), Sexp.Node([Sexp.Atom("1")]), Sexp.Node([Sexp.Atom("cut"), Sexp.Atom("2"), Sexp.Node([Sexp.Atom("1")])])]) => Result.Ok(Proof.PLinear(Term.TVar("g"), true, [], [1], [Cut(divisor = 2, weights = [1])]))
     linearProof([Sexp.Node([Sexp.Atom("v"), Sexp.Atom("g")]), Sexp.Atom("true"), Sexp.Node([]), Sexp.Node([Sexp.Atom("1")]), Sexp.Node([Sexp.Atom("cut"), Sexp.Atom("2")])]) => Result.Err("malformed cut")
 
@@ -868,9 +871,9 @@ verify sigs
     sigs([Sexp.Node([Sexp.Atom("f"), Sexp.Node([Sexp.Atom("int")]), Sexp.Atom("bool")])]) => Result.Ok([FnSig(name = "f", params = [Ty.TyInt], ret = Ty.TyBool)])
 
 fn script(s: Sexp) -> Result<Script, String>
-    ? "(steps 15 (obligation …) (defs …) (consts …) (sums …) (recs …) (sigs …) (laws …) (proof …)); version 15 only."
+    ? "(steps 16 (obligation …) (defs …) (consts …) (sums …) (recs …) (sigs …) (laws …) (proof …)); version 16 only."
     match s
-        Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("15"), o, Sexp.Node([Sexp.Atom("defs"), ..ds]), Sexp.Node([Sexp.Atom("consts"), ..cs]), Sexp.Node([Sexp.Atom("sums"), ..ss]), Sexp.Node([Sexp.Atom("recs"), ..rs]), Sexp.Node([Sexp.Atom("sigs"), ..gs]), Sexp.Node([Sexp.Atom("laws"), ..ls]), Sexp.Node([Sexp.Atom("proof"), p])]) -> scriptOf(law(o, "obligation")?, defs(ds)?, consts(cs)?, sums(ss)?, recs(rs)?, sigs(gs)?, laws(ls)?, proof(p)?)
+        Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("16"), o, Sexp.Node([Sexp.Atom("defs"), ..ds]), Sexp.Node([Sexp.Atom("consts"), ..cs]), Sexp.Node([Sexp.Atom("sums"), ..ss]), Sexp.Node([Sexp.Atom("recs"), ..rs]), Sexp.Node([Sexp.Atom("sigs"), ..gs]), Sexp.Node([Sexp.Atom("laws"), ..ls]), Sexp.Node([Sexp.Atom("proof"), p])]) -> scriptOf(law(o, "obligation")?, defs(ds)?, consts(cs)?, sums(ss)?, recs(rs)?, sigs(gs)?, laws(ls)?, proof(p)?)
         Sexp.Node([Sexp.Atom("steps"), Sexp.Atom(v), ..rest]) -> Result.Err("unsupported step format version {v}")
         _ -> Result.Err("not a step script")
 

@@ -16,8 +16,8 @@ fn reprinted(text: String) -> String
             Result.Ok(s) -> Reprint.script(s)
 
 verify reprinted
-    reprinted("; by P sha256:00\n(steps 15 (obligation k () (none) (i 1) (i 1))\n (defs)\n (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))") => "(steps 15 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))"
-    reprinted("(steps 15") => "unreadable: unexpected end of data"
+    reprinted("; by P sha256:00\n(steps 16 (obligation k () (none) (i 1) (i 1))\n (defs)\n (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))") => "(steps 16 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))"
+    reprinted("(steps 16") => "unreadable: unexpected end of data"
 
 fn printFiles(paths: List<String>) -> Unit
     ? "Each file's name, then its reprint."

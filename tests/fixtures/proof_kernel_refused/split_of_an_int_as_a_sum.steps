@@ -1,4 +1,4 @@
-(steps 15
+(steps 16
  (obligation k () (none) (i 0) (i 1))
  (defs
   (def pick ((x (named One))) int () (match (v x) (arm (pc One.Only) (i 7)))))

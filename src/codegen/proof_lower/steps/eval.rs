@@ -43,21 +43,51 @@ fn holds(t: &Term, part: &Term) -> bool {
     canon(t) == *part || term::children(t).into_iter().any(|c| holds(c, part))
 }
 
-/// Complement rules: `(a P b) = v` decides `(a Q b) = w`.
-const COMPLEMENTS: [(BinOp, bool, BinOp, bool, WallRule); 12] = [
-    (BinOp::Gt, false, BinOp::Lte, true, WallRule::LeOfNotGt),
-    (BinOp::Gt, true, BinOp::Lte, false, WallRule::LeFalseOfGt),
-    (BinOp::Lt, false, BinOp::Gte, true, WallRule::GeOfNotLt),
-    (BinOp::Lt, true, BinOp::Gte, false, WallRule::GeFalseOfLt),
-    (BinOp::Gte, false, BinOp::Lt, true, WallRule::LtOfNotGe),
-    (BinOp::Gte, true, BinOp::Lt, false, WallRule::LtFalseOfGe),
-    (BinOp::Lte, false, BinOp::Gt, true, WallRule::GtOfNotLe),
-    (BinOp::Lte, true, BinOp::Gt, false, WallRule::GtFalseOfLe),
-    (BinOp::Neq, false, BinOp::Eq, true, WallRule::EqOfNotNe),
-    (BinOp::Neq, true, BinOp::Eq, false, WallRule::EqFalseOfNe),
-    (BinOp::Eq, false, BinOp::Neq, true, WallRule::NeOfNotEq),
-    (BinOp::Eq, true, BinOp::Neq, false, WallRule::NeFalseOfEq),
+/// Complements: `(a P b) = v` decides `(a Q b) = w`.
+const COMPLEMENTS: [(BinOp, bool, BinOp, bool); 12] = [
+    (BinOp::Gt, false, BinOp::Lte, true),
+    (BinOp::Gt, true, BinOp::Lte, false),
+    (BinOp::Lt, false, BinOp::Gte, true),
+    (BinOp::Lt, true, BinOp::Gte, false),
+    (BinOp::Gte, false, BinOp::Lt, true),
+    (BinOp::Gte, true, BinOp::Lt, false),
+    (BinOp::Lte, false, BinOp::Gt, true),
+    (BinOp::Lte, true, BinOp::Gt, false),
+    (BinOp::Neq, false, BinOp::Eq, true),
+    (BinOp::Neq, true, BinOp::Eq, false),
+    (BinOp::Eq, false, BinOp::Neq, true),
+    (BinOp::Eq, true, BinOp::Neq, false),
 ];
+
+/// `(a != b) = !v` from `eq : (a == b) = v`: `a != b` is
+/// `Bool.not(a == b)` (`int.ne.def`), which is `Bool.not(v)`, computed.
+pub(crate) fn ne_of_eq(a: &Term, b: &Term, eq: Proof, v: bool) -> Proof {
+    let beq = canon(&term::binop(BinOp::Eq, a.clone(), b.clone()));
+    let not_v = canon(&term::bool_not(term::boolean(v)));
+    Proof::Trans {
+        terms: vec![
+            canon(&term::binop(BinOp::Neq, a.clone(), b.clone())),
+            canon(&term::bool_not(beq)),
+            not_v.clone(),
+            term::boolean(!v),
+        ],
+        steps: vec![
+            Proof::Rule {
+                rule: WallRule::NeDef,
+                subst: vec![("a".into(), a.clone()), ("b".into(), b.clone())],
+                premises: Vec::new(),
+            },
+            Proof::Congr {
+                ctx: term::bool_not(term::hole()),
+                inner: Box::new(eq),
+            },
+            Proof::Compute {
+                lhs: not_v,
+                rhs: term::boolean(!v),
+            },
+        ],
+    }
+}
 
 fn is_int(t: &Term) -> bool {
     matches!(t.ty(), Some(crate::ast::Type::Int)) || term::int_value(t).is_some()
@@ -1459,10 +1489,12 @@ impl Env<'_> {
         })
     }
 
-    /// `(a Q b) = w` by a complement rule from `(a P b) = v`: a hypothesis
+    /// `(a Q b) = w` from its complement `(a P b) = v`: a hypothesis
     /// states it, or, for `P` an Int equality, the two orders decide it
     /// (`b != b` is false by `b == b`), or a hypothesis about `b` and `a`
     /// does through `bool.beq.symm` (`b != a` is true where `a != b` is).
+    /// Between two orders the step is linear; `!=` is read as the negation
+    /// of `==` ([`ne_of_eq`], [`Env::eq_of_ne`]).
     fn complement(&mut self, cur: &Term) -> Option<Step> {
         self.complement_in(cur, true)
     }
@@ -1476,7 +1508,7 @@ impl Env<'_> {
         if !is_int(a) {
             return None;
         }
-        for (p, v, q, w, rule) in COMPLEMENTS {
+        for (p, v, q, w) in COMPLEMENTS {
             if q != *op {
                 continue;
             }
@@ -1492,14 +1524,28 @@ impl Env<'_> {
                 },
                 _ => continue,
             };
-            return Some(Step::Progress(Box::new((
-                Proof::Rule {
-                    rule,
-                    subst: vec![("a".into(), (**a).clone()), ("b".into(), (**b).clone())],
-                    premises: vec![proof],
-                },
-                term::boolean(w),
-            ))));
+            let step = match (p, proof) {
+                (BinOp::Eq, proof) => ne_of_eq(a, b, proof, v),
+                (BinOp::Neq, proof) => self.eq_of_ne(a, b, proof, v),
+                (_, Proof::Hyp(name)) => {
+                    let stated = self
+                        .hyps
+                        .iter()
+                        .rev()
+                        .find(|(n, _)| *n == name)
+                        .map(|(_, e)| e.lhs.clone())?;
+                    match crate::ir::proof_steps::linear::from_hyps(
+                        &canon(cur),
+                        w,
+                        &[(name, stated, v)],
+                    ) {
+                        Some(step) => step,
+                        None => continue,
+                    }
+                }
+                _ => continue,
+            };
+            return Some(Step::Progress(Box::new((step, term::boolean(w)))));
         }
         if *op == BinOp::Eq
             && let Some((proof, value)) = self.eq_swapped(cur, swap)
@@ -1507,6 +1553,43 @@ impl Env<'_> {
             return Some(Step::Progress(Box::new((proof, term::boolean(value)))));
         }
         None
+    }
+
+    /// `(a == b) = !v` from `ne : (a != b) = v`, by cases on `a == b`: in
+    /// the case where it is `!v`, that is the case's hypothesis; in the
+    /// other, `a != b` is `Bool.not(v)` by [`ne_of_eq`], so `!v` equals
+    /// `v` by `ne` and the case cannot happen.
+    fn eq_of_ne(&mut self, a: &Term, b: &Term, ne: Proof, v: bool) -> Proof {
+        let on = canon(&term::binop(BinOp::Eq, a.clone(), b.clone()));
+        let hyp = self.fresh_hyp();
+        let goal = term::boolean(!v);
+        let impossible = Proof::Absurd {
+            contradiction: Box::new(Proof::Trans {
+                terms: vec![
+                    term::boolean(!v),
+                    canon(&term::binop(BinOp::Neq, a.clone(), b.clone())),
+                    term::boolean(v),
+                ],
+                steps: vec![
+                    Proof::Symm(Box::new(ne_of_eq(a, b, Proof::Hyp(hyp.clone()), v))),
+                    ne,
+                ],
+            }),
+            lhs: on.clone(),
+            rhs: goal.clone(),
+        };
+        let holds = Proof::Hyp(hyp.clone());
+        let (if_true, if_false) = if v {
+            (impossible, holds)
+        } else {
+            (holds, impossible)
+        };
+        Proof::Cases {
+            on,
+            hyp,
+            if_true: Box::new(if_true),
+            if_false: Box::new(if_false),
+        }
     }
 
     /// `(a == b) = v` from `(b == a) = v`, which a hypothesis states or a
@@ -1734,8 +1817,13 @@ impl Env<'_> {
                     Err(b) => b,
                 };
                 match term::bool_value(&args[0]) {
-                    Some(true) => Ok(self.rule_step(WallRule::NotTrue, vec![])),
-                    Some(false) => Ok(self.rule_step(WallRule::NotFalse, vec![])),
+                    Some(v) => Ok(Step::Progress(Box::new((
+                        Proof::Compute {
+                            lhs: canon(cur),
+                            rhs: term::boolean(!v),
+                        },
+                        term::boolean(!v),
+                    )))),
                     None => self.settle(cur, blocked),
                 }
             }
@@ -2545,9 +2633,21 @@ impl Env<'_> {
                 WallRule::ConcatCons,
                 bind(&["x", "a", "b"], vec![x, a, args[1].clone()]),
             ),
-            ("List.len", 1, None) => (WallRule::LenNil, Vec::new()),
+            // `List.len([])` and `List.reverse([])` are closed: compute.
+            ("List.len" | "List.reverse", 1, None) => {
+                let value = match name.as_str() {
+                    "List.len" => term::int(&0.into()),
+                    _ => term::nil(),
+                };
+                return Ok(Some(Step::Progress(Box::new((
+                    Proof::Compute {
+                        lhs: canon(cur),
+                        rhs: value.clone(),
+                    },
+                    value,
+                )))));
+            }
             ("List.len", 1, Some((x, a))) => (WallRule::LenCons, bind(&["x", "a"], vec![x, a])),
-            ("List.reverse", 1, None) => (WallRule::ReverseNil, Vec::new()),
             ("List.reverse", 1, Some((x, a))) => {
                 (WallRule::ReverseCons, bind(&["x", "a"], vec![x, a]))
             }
@@ -3884,11 +3984,7 @@ impl Env<'_> {
             {
                 let other = match op {
                     BinOp::Eq => equal,
-                    _ => Proof::Rule {
-                        rule: WallRule::NeFalseOfEq,
-                        subst: vec![("a".into(), canon(x)), ("b".into(), canon(y))],
-                        premises: vec![equal],
-                    },
+                    _ => ne_of_eq(&canon(x), &canon(y), equal, true),
                 };
                 return Some(Proof::Trans {
                     terms: vec![term::boolean(!said), canon(&e.lhs), term::boolean(said)],

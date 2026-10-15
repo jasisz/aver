@@ -1,4 +1,4 @@
-(steps 15
+(steps 16
  (obligation k ((x float)) (none) (op == (v x) (v x)) (b true))
  (defs)
  (consts)

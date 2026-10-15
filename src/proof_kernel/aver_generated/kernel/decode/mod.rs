@@ -1579,7 +1579,7 @@ pub fn enumProof(
     }
 }
 
-/// (linear TERM BOOL (NAME…) (INT…) (cut INT (INT…))…)
+/// (linear TERM BOOL (NAME…) (INT…) (cut INT (INT…))…); BOOL is true or false.
 pub fn linearProof(
     args @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::sexp::Sexp>,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::proof::Proof, AverStr> {
@@ -1591,22 +1591,52 @@ pub fn linearProof(
                 let __list_subject = __pat0;
                 if let Some((__pat1, __pat2)) = aver_rt::list_uncons_cloned(&__list_subject) {
                     match __pat1 {
-                        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(v) => {
-                            let __list_subject = __pat2;
-                            if let Some((hs, __pat3)) = aver_rt::list_uncons_cloned(&__list_subject)
-                            {
+                        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(__pat3) => {
+                            let __dispatch_subject = __pat3;
+                            if &*__dispatch_subject == "true" {
                                 {
-                                    let __list_subject = __pat3;
-                                    if let Some((ws, cs)) =
+                                    let __list_subject = __pat2;
+                                    if let Some((hs, __pat4)) =
                                         aver_rt::list_uncons_cloned(&__list_subject)
                                     {
-                                        Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PLinear(crate::proof_kernel::aver_generated::kernel::decode::term(&g)?, (&*v == "true"), crate::proof_kernel::aver_generated::kernel::decode::atoms(&crate::proof_kernel::aver_generated::kernel::decode::items(&hs)?)?, crate::proof_kernel::aver_generated::kernel::decode::ints(&crate::proof_kernel::aver_generated::kernel::decode::items(&ws)?)?, crate::proof_kernel::aver_generated::kernel::decode::cuts(&cs)?))
+                                        {
+                                            let __list_subject = __pat4;
+                                            if let Some((ws, cs)) =
+                                                aver_rt::list_uncons_cloned(&__list_subject)
+                                            {
+                                                Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PLinear(crate::proof_kernel::aver_generated::kernel::decode::term(&g)?, true, crate::proof_kernel::aver_generated::kernel::decode::atoms(&crate::proof_kernel::aver_generated::kernel::decode::items(&hs)?)?, crate::proof_kernel::aver_generated::kernel::decode::ints(&crate::proof_kernel::aver_generated::kernel::decode::items(&ws)?)?, crate::proof_kernel::aver_generated::kernel::decode::cuts(&cs)?))
+                                            } else {
+                                                Err(AverStr::from("malformed linear"))
+                                            }
+                                        }
                                     } else {
                                         Err(AverStr::from("malformed linear"))
                                     }
                                 }
                             } else {
-                                Err(AverStr::from("malformed linear"))
+                                if &*__dispatch_subject == "false" {
+                                    {
+                                        let __list_subject = __pat2;
+                                        if let Some((hs, __pat5)) =
+                                            aver_rt::list_uncons_cloned(&__list_subject)
+                                        {
+                                            {
+                                                let __list_subject = __pat5;
+                                                if let Some((ws, cs)) =
+                                                    aver_rt::list_uncons_cloned(&__list_subject)
+                                                {
+                                                    Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PLinear(crate::proof_kernel::aver_generated::kernel::decode::term(&g)?, false, crate::proof_kernel::aver_generated::kernel::decode::atoms(&crate::proof_kernel::aver_generated::kernel::decode::items(&hs)?)?, crate::proof_kernel::aver_generated::kernel::decode::ints(&crate::proof_kernel::aver_generated::kernel::decode::items(&ws)?)?, crate::proof_kernel::aver_generated::kernel::decode::cuts(&cs)?))
+                                                } else {
+                                                    Err(AverStr::from("malformed linear"))
+                                                }
+                                            }
+                                        } else {
+                                            Err(AverStr::from("malformed linear"))
+                                        }
+                                    }
+                                } else {
+                                    Err(AverStr::from("malformed linear"))
+                                }
                             }
                         }
                         _ => Err(AverStr::from("malformed linear")),
@@ -3080,7 +3110,7 @@ pub fn sigs(
     } })
 }
 
-/// (steps 15 (obligation …) (defs …) (consts …) (sums …) (recs …) (sigs …) (laws …) (proof …)); version 15 only.
+/// (steps 16 (obligation …) (defs …) (consts …) (sums …) (recs …) (sigs …) (laws …) (proof …)); version 16 only.
 pub fn script(
     s @ _: &crate::proof_kernel::aver_generated::kernel::sexp::Sexp,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::proof::Script, AverStr> {
@@ -3100,7 +3130,7 @@ pub fn script(
                                     match __pat4 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(v) => {
             match &*v.clone() {
-        "15" => {
+        "16" => {
             { let __list_subject = rest; if let Some((o, __pat5)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat5; if let Some((__pat6, __pat7)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat6 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat8) => {
             { let __list_subject = __pat8; if let Some((__pat9, ds)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat9 {

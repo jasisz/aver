@@ -305,45 +305,36 @@ fn obligation(
     })
 }
 
+/// A commutative, associative or identity-element law of an Int
+/// operation: both sides unfolded once, then one `ring` step between them.
 fn algebra(env: &mut Env, t: &LawTheorem, ob: &Obligation) -> Result<Proof, String> {
-    let (op, closers): (_, &[WallRule]) = match &t.strategy {
-        ProofStrategy::Commutative { op } => (*op, &[WallRule::AddComm, WallRule::MulComm]),
-        ProofStrategy::Associative { op } => (*op, &[WallRule::AddAssoc, WallRule::MulAssoc]),
-        ProofStrategy::IdentityElement { op } => (
-            *op,
-            &[
-                WallRule::AddZero,
-                WallRule::ZeroAdd,
-                WallRule::MulOne,
-                WallRule::OneMul,
-                WallRule::SubZero,
-            ],
-        ),
-        _ => return Err("not an algebraic strategy".into()),
-    };
-    let _ = op;
+    if !matches!(
+        t.strategy,
+        ProofStrategy::Commutative { .. }
+            | ProofStrategy::Associative { .. }
+            | ProofStrategy::IdentityElement { .. }
+    ) {
+        return Err("not an algebraic strategy".into());
+    }
     let unfold = [Equation::Unfold(t.fn_id)];
-    let left = env.rewrite(&ob.lhs, &unfold)?;
+    let mut left = env.rewrite(&ob.lhs, &unfold)?;
     let right = env.rewrite(&ob.rhs, &unfold)?;
     if left.cur() == right.cur() {
         return Ok(chain::meet(left, right));
     }
-    let closers: Vec<Equation> = closers.iter().copied().map(Equation::Wall).collect();
-    for (from, to, flip) in [(&left, &right, false), (&right, &left, true)] {
-        let mut extended = from.clone();
-        let Some((step, next)) = env.apply_at_root(&closers, from.cur()) else {
-            continue;
-        };
-        extended.push(step, next);
-        if canon(extended.cur()) == canon(to.cur()) {
-            return Ok(if flip {
-                chain::meet(to.clone(), extended)
-            } else {
-                chain::meet(extended, to.clone())
-            });
-        }
+    let int = |x: &Term| matches!(x.ty(), Some(crate::ast::Type::Int));
+    let (l, r) = (canon(left.cur()), canon(right.cur()));
+    if !(int(&l) && int(&r) && crate::ir::proof_steps::ring::same_polynomial(&l, &r)) {
+        return Err("the unfolded sides are not the same Int polynomial".into());
     }
-    Err("no ring rule closes the unfolded sides".into())
+    left.push(
+        Proof::Ring {
+            lhs: l,
+            rhs: r.clone(),
+        },
+        r,
+    );
+    Ok(chain::meet(left, right))
 }
 
 fn citations(env: &mut Env, laws: Vec<LawRef>, ob: &Obligation) -> Result<Proof, String> {

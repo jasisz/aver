@@ -7,6 +7,7 @@ module Rules
         "rule reads == at that type: the types Lean's statement of the same rule holds at."
         "The list rules are the constructor equations of the list builtins, with Aver's truncation of a count."
         "A product of two nonnegative Ints is nonnegative: the one rule that multiplies two comparisons."
+        "What compute, ring or linear show is not a rule. The Bool.and and Bool.or rules follow from a split and compute too; they stay because proofs apply them over ten thousand times and each would grow by a split, as HOL Light keeps TRANS."
         "Int.min, Int.max and Int.abs are read by the comparison that picks their value; List.contains on [], on an element in front that is the one looked for and past one that is not."
         "The map rules read Map.get, Map.has and Map.len on the empty map and on Map.set(m, k, v)."
         "The vector rules read a vector as the list it holds, and Vector.get and Vector.len after a write or a literal-size Vector.new."
@@ -130,39 +131,27 @@ fn schema(id: String) -> Option<Schema>
         "bool.or.false_l" -> plain([bo("b")], conn("Bool.or", Term.TBool(false), v("b")), v("b"))
         "bool.or.true_r" -> plain([bo("a")], conn("Bool.or", v("a"), Term.TBool(true)), Term.TBool(true))
         "bool.or.false_r" -> plain([bo("a")], conn("Bool.or", v("a"), Term.TBool(false)), v("a"))
-        "bool.not.true" -> plain([], Term.TBi("Bool.not", [Term.TBool(true)]), Term.TBool(false))
-        "bool.not.false" -> plain([], Term.TBi("Bool.not", [Term.TBool(false)]), Term.TBool(true))
         "bool.and.elim_l" -> Option.Some(Schema(binders = [bo("a"), bo("b")], premises = [is(conn("Bool.and", v("a"), v("b")), true)], concl = is(v("a"), true)))
         "bool.and.elim_r" -> Option.Some(Schema(binders = [bo("a"), bo("b")], premises = [is(conn("Bool.and", v("a"), v("b")), true)], concl = is(v("b"), true)))
         _ -> comparisonSchema(id)
 
 verify schema
     schema("simp") => Option.None
-    schema("bool.not.true") => Option.Some(Schema(binders = [], premises = [], concl = eq(Term.TBi("Bool.not", [Term.TBool(true)]), Term.TBool(false))))
+    schema("bool.not.true") => Option.None
+    schema("bool.and.true_l") => plain([bo("b")], conn("Bool.and", Term.TBool(true), v("b")), v("b"))
 
 fn complement(p: String, pv: Bool, q: String, qv: Bool, binders: List<TypedVar>) -> Option<Schema>
-    ? "A decided comparison decides its complement."
+    ? "A decided comparison decides another of the same two terms."
     Option.Some(Schema(binders = binders, premises = [is(Term.TOp(p, v("a"), v("b")), pv)], concl = is(Term.TOp(q, v("a"), v("b")), qv)))
 
 verify complement
-    complement(">", false, "<=", true, [i("a"), i("b")]) => Option.Some(Schema(binders = [i("a"), i("b")], premises = [is(Term.TOp(">", v("a"), v("b")), false)], concl = is(Term.TOp("<=", v("a"), v("b")), true)))
+    complement("<", true, "==", false, [i("a"), i("b")]) => Option.Some(Schema(binders = [i("a"), i("b")], premises = [is(Term.TOp("<", v("a"), v("b")), true)], concl = is(Term.TOp("==", v("a"), v("b")), false)))
 
 fn comparisonSchema(id: String) -> Option<Schema>
-    ? "The comparison complement rules on Int, and == as equality, as reflexive and as symmetric where the type's == is equality, and the product of two nonnegative Ints."
+    ? "!= on Int as the negation of ==, an Int equality decided by the two orders, == as equality, as reflexive and as symmetric where the type's == is equality, and the product of two nonnegative Ints. A comparison decided by its complement (a > b false gives a <= b true) is a linear step, not a rule."
     ints = [i("a"), i("b")]
     match id
-        "int.le.of_not_gt" -> complement(">", false, "<=", true, ints)
-        "int.le.false_of_gt" -> complement(">", true, "<=", false, ints)
-        "int.ge.of_not_lt" -> complement("<", false, ">=", true, ints)
-        "int.ge.false_of_lt" -> complement("<", true, ">=", false, ints)
-        "int.lt.of_not_ge" -> complement(">=", false, "<", true, ints)
-        "int.lt.false_of_ge" -> complement(">=", true, "<", false, ints)
-        "int.gt.of_not_le" -> complement("<=", false, ">", true, ints)
-        "int.gt.false_of_le" -> complement("<=", true, ">", false, ints)
-        "int.eq.of_not_ne" -> complement("!=", false, "==", true, ints)
-        "int.eq.false_of_ne" -> complement("!=", true, "==", false, ints)
-        "int.ne.of_not_eq" -> complement("==", false, "!=", true, ints)
-        "int.ne.false_of_eq" -> complement("==", true, "!=", false, ints)
+        "int.ne.def" -> plain(ints, Term.TOp("!=", v("a"), v("b")), Term.TBi("Bool.not", [Term.TOp("==", v("a"), v("b"))]))
         "int.eq.of_le_ge" -> Option.Some(Schema(binders = ints, premises = [is(Term.TOp("<=", v("a"), v("b")), true), is(Term.TOp(">=", v("a"), v("b")), true)], concl = is(Term.TOp("==", v("a"), v("b")), true)))
         "int.mul_nonneg" -> Option.Some(Schema(binders = ints, premises = [is(Term.TOp("<=", Term.TInt(0), v("a")), true), is(Term.TOp("<=", Term.TInt(0), v("b")), true)], concl = is(Term.TOp("<=", Term.TInt(0), Term.TOp("*", v("a"), v("b"))), true)))
         "int.eq.false_of_lt" -> complement("<", true, "==", false, ints)
@@ -170,29 +159,14 @@ fn comparisonSchema(id: String) -> Option<Schema>
         "int.eq.of_beq" -> Option.Some(Schema(binders = [same("a"), same("b")], premises = [is(Term.TOp("==", v("a"), v("b")), true)], concl = eq(v("a"), v("b"))))
         "bool.beq.refl" -> plain([same("a")], Term.TOp("==", v("a"), v("a")), Term.TBool(true))
         "bool.beq.symm" -> plain([same("a"), same("b")], Term.TOp("==", v("a"), v("b")), Term.TOp("==", v("b"), v("a")))
-        _ -> ringSchema(id)
+        _ -> divisionSchema(id)
 
 verify comparisonSchema
     comparisonSchema("nope") => Option.None
+    comparisonSchema("int.le.of_not_gt") => Option.None
+    comparisonSchema("int.ne.def") => plain([i("a"), i("b")], Term.TOp("!=", v("a"), v("b")), Term.TBi("Bool.not", [Term.TOp("==", v("a"), v("b"))]))
     comparisonSchema("int.mul_nonneg") => Option.Some(Schema(binders = [i("a"), i("b")], premises = [is(Term.TOp("<=", Term.TInt(0), v("a")), true), is(Term.TOp("<=", Term.TInt(0), v("b")), true)], concl = is(Term.TOp("<=", Term.TInt(0), Term.TOp("*", v("a"), v("b"))), true)))
     comparisonSchema("int.eq.of_beq") => Option.Some(Schema(binders = [same("a"), same("b")], premises = [is(Term.TOp("==", v("a"), v("b")), true)], concl = eq(v("a"), v("b"))))
-
-fn ringSchema(id: String) -> Option<Schema>
-    ? "Ring laws of Int."
-    match id
-        "int.add_comm" -> plain([i("a"), i("b")], Term.TOp("+", v("a"), v("b")), Term.TOp("+", v("b"), v("a")))
-        "int.mul_comm" -> plain([i("a"), i("b")], Term.TOp("*", v("a"), v("b")), Term.TOp("*", v("b"), v("a")))
-        "int.add_assoc" -> plain([i("a"), i("b"), i("c")], Term.TOp("+", Term.TOp("+", v("a"), v("b")), v("c")), Term.TOp("+", v("a"), Term.TOp("+", v("b"), v("c"))))
-        "int.mul_assoc" -> plain([i("a"), i("b"), i("c")], Term.TOp("*", Term.TOp("*", v("a"), v("b")), v("c")), Term.TOp("*", v("a"), Term.TOp("*", v("b"), v("c"))))
-        "int.add_zero" -> plain([i("a")], Term.TOp("+", v("a"), Term.TInt(0)), v("a"))
-        "int.zero_add" -> plain([i("a")], Term.TOp("+", Term.TInt(0), v("a")), v("a"))
-        "int.mul_one" -> plain([i("a")], Term.TOp("*", v("a"), Term.TInt(1)), v("a"))
-        "int.one_mul" -> plain([i("a")], Term.TOp("*", Term.TInt(1), v("a")), v("a"))
-        "int.sub_zero" -> plain([i("a")], Term.TOp("-", v("a"), Term.TInt(0)), v("a"))
-        _ -> divisionSchema(id)
-
-verify ringSchema
-    ringSchema("int.add_zero") => plain([i("a")], Term.TOp("+", v("a"), Term.TInt(0)), v("a"))
 
 fn divE(a: Term, k: Term) -> Term
     ? "Euclidean division by a literal, as the compiler writes it."
@@ -281,7 +255,7 @@ verify counted
     counted([i("n")], false, Term.TUnit, Term.TUnit) => Option.Some(Schema(binders = [i("n")], premises = [is(Term.TOp("<=", v("n"), Term.TInt(0)), true)], concl = eq(Term.TUnit, Term.TUnit)))
 
 fn listSchema(id: String) -> Option<Schema>
-    ? "Each list builtin on the empty list and on an element in front of a list."
+    ? "Each list builtin on an element in front of a list, and on the empty list where it has another argument; List.len([]) and List.reverse([]) are closed, so compute shows them."
     xa = cons(v("x"), v("a"))
     nil = Term.TList([])
     less = Term.TOp("-", v("n"), Term.TInt(1))
@@ -289,7 +263,6 @@ fn listSchema(id: String) -> Option<Schema>
     match id
         "list.concat.nil" -> plain([lt("b")], lb("concat", [nil, v("b")]), v("b"))
         "list.concat.cons" -> plain([any("x"), lt("a"), lt("b")], lb("concat", [xa, v("b")]), cons(v("x"), lb("concat", [v("a"), v("b")])))
-        "list.len.nil" -> plain([], lb("len", [nil]), Term.TInt(0))
         "list.len.cons" -> plain([any("x"), lt("a")], lb("len", [xa]), Term.TOp("+", lb("len", [v("a")]), Term.TInt(1)))
         "list.take.nil" -> plain([i("n")], lb("take", [nil, v("n")]), nil)
         "list.take.cons_le" -> counted(xan, false, lb("take", [xa, v("n")]), nil)
@@ -297,12 +270,12 @@ fn listSchema(id: String) -> Option<Schema>
         "list.drop.nil" -> plain([i("n")], lb("drop", [nil, v("n")]), nil)
         "list.drop.cons_le" -> counted(xan, false, lb("drop", [xa, v("n")]), xa)
         "list.drop.cons_gt" -> counted(xan, true, lb("drop", [xa, v("n")]), lb("drop", [v("a"), less]))
-        "list.reverse.nil" -> plain([], lb("reverse", [nil]), nil)
         "list.reverse.cons" -> plain([any("x"), lt("a")], lb("reverse", [xa]), lb("concat", [lb("reverse", [v("a")]), cons(v("x"), nil)]))
         _ -> mapSchema(id)
 
 verify listSchema
-    listSchema("list.len.nil") => plain([], Term.TBi("List.len", [Term.TList([])]), Term.TInt(0))
+    listSchema("list.len.nil") => Option.None
+    listSchema("list.len.cons") => plain([any("x"), lt("a")], Term.TBi("List.len", [Term.TBi("List.prepend", [v("x"), v("a")])]), Term.TOp("+", Term.TBi("List.len", [v("a")]), Term.TInt(1)))
     listSchema("list.len") => Option.None
 
 fn mb(name: String, args: List<Term>) -> Term

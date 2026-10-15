@@ -304,21 +304,13 @@ pub fn schema(id @ _: AverStr) -> Option<Schema> {
                                     if &*__dispatch_subject == "bool.or.false_r" {
                                         crate::proof_kernel::aver_generated::kernel::rules::plain(&aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::bo(AverStr::from("a"))]), &crate::proof_kernel::aver_generated::kernel::rules::conn(AverStr::from("Bool.or"), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")), &crate::proof_kernel::aver_generated::kernel::term::Term::TBool(false)), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")))
                                     } else {
-                                        if &*__dispatch_subject == "bool.not.true" {
-                                            crate::proof_kernel::aver_generated::kernel::rules::plain(&aver_rt::AverList::empty(), &crate::proof_kernel::aver_generated::kernel::term::Term::TBi(AverStr::from("Bool.not"), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::Term::TBool(true)])), &crate::proof_kernel::aver_generated::kernel::term::Term::TBool(false))
+                                        if &*__dispatch_subject == "bool.and.elim_l" {
+                                            Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::bo(AverStr::from("a")), crate::proof_kernel::aver_generated::kernel::rules::bo(AverStr::from("b"))]), premises: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::rules::conn(AverStr::from("Bool.and"), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b"))), true)]), concl: crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")), true) })
                                         } else {
-                                            if &*__dispatch_subject == "bool.not.false" {
-                                                crate::proof_kernel::aver_generated::kernel::rules::plain(&aver_rt::AverList::empty(), &crate::proof_kernel::aver_generated::kernel::term::Term::TBi(AverStr::from("Bool.not"), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::Term::TBool(false)])), &crate::proof_kernel::aver_generated::kernel::term::Term::TBool(true))
+                                            if &*__dispatch_subject == "bool.and.elim_r" {
+                                                Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::bo(AverStr::from("a")), crate::proof_kernel::aver_generated::kernel::rules::bo(AverStr::from("b"))]), premises: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::rules::conn(AverStr::from("Bool.and"), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b"))), true)]), concl: crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b")), true) })
                                             } else {
-                                                if &*__dispatch_subject == "bool.and.elim_l" {
-                                                    Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::bo(AverStr::from("a")), crate::proof_kernel::aver_generated::kernel::rules::bo(AverStr::from("b"))]), premises: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::rules::conn(AverStr::from("Bool.and"), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b"))), true)]), concl: crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")), true) })
-                                                } else {
-                                                    if &*__dispatch_subject == "bool.and.elim_r" {
-                                                        Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::bo(AverStr::from("a")), crate::proof_kernel::aver_generated::kernel::rules::bo(AverStr::from("b"))]), premises: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::rules::conn(AverStr::from("Bool.and"), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b"))), true)]), concl: crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b")), true) })
-                                                    } else {
-                                                        crate::proof_kernel::aver_generated::kernel::rules::comparisonSchema(id)
-                                                    }
-                                                }
+                                                crate::proof_kernel::aver_generated::kernel::rules::comparisonSchema(id)
                                             }
                                         }
                                     }
@@ -332,7 +324,7 @@ pub fn schema(id @ _: AverStr) -> Option<Schema> {
     }
 }
 
-/// A decided comparison decides its complement.
+/// A decided comparison decides another of the same two terms.
 pub fn complement(
     p @ _: AverStr,
     pv @ _: bool,
@@ -372,7 +364,7 @@ pub fn complement(
     })
 }
 
-/// The comparison complement rules on Int, and == as equality, as reflexive and as symmetric where the type's == is equality, and the product of two nonnegative Ints.
+/// != on Int as the negation of ==, an Int equality decided by the two orders, == as equality, as reflexive and as symmetric where the type's == is equality, and the product of two nonnegative Ints. A comparison decided by its complement (a > b false gives a <= b true) is a linear step, not a rule.
 pub fn comparisonSchema(id @ _: AverStr) -> Option<Schema> {
     crate::proof_kernel::cancel_checkpoint();
     let ints @ _ = aver_rt::AverList::from_vec(vec![
@@ -381,150 +373,11 @@ pub fn comparisonSchema(id @ _: AverStr) -> Option<Schema> {
     ]);
     {
         let __dispatch_subject = id.clone();
-        if &*__dispatch_subject == "int.le.of_not_gt" {
-            crate::proof_kernel::aver_generated::kernel::rules::complement(
-                AverStr::from(">"),
-                false,
-                AverStr::from("<="),
-                true,
-                &ints,
-            )
-        } else {
-            if &*__dispatch_subject == "int.le.false_of_gt" {
-                crate::proof_kernel::aver_generated::kernel::rules::complement(
-                    AverStr::from(">"),
-                    true,
-                    AverStr::from("<="),
-                    false,
-                    &ints,
-                )
-            } else {
-                if &*__dispatch_subject == "int.ge.of_not_lt" {
-                    crate::proof_kernel::aver_generated::kernel::rules::complement(
-                        AverStr::from("<"),
-                        false,
-                        AverStr::from(">="),
-                        true,
-                        &ints,
-                    )
-                } else {
-                    if &*__dispatch_subject == "int.ge.false_of_lt" {
-                        crate::proof_kernel::aver_generated::kernel::rules::complement(
-                            AverStr::from("<"),
-                            true,
-                            AverStr::from(">="),
-                            false,
-                            &ints,
-                        )
-                    } else {
-                        if &*__dispatch_subject == "int.lt.of_not_ge" {
-                            crate::proof_kernel::aver_generated::kernel::rules::complement(
-                                AverStr::from(">="),
-                                false,
-                                AverStr::from("<"),
-                                true,
-                                &ints,
-                            )
-                        } else {
-                            if &*__dispatch_subject == "int.lt.false_of_ge" {
-                                crate::proof_kernel::aver_generated::kernel::rules::complement(
-                                    AverStr::from(">="),
-                                    true,
-                                    AverStr::from("<"),
-                                    false,
-                                    &ints,
-                                )
-                            } else {
-                                if &*__dispatch_subject == "int.gt.of_not_le" {
-                                    crate::proof_kernel::aver_generated::kernel::rules::complement(
-                                        AverStr::from("<="),
-                                        false,
-                                        AverStr::from(">"),
-                                        true,
-                                        &ints,
-                                    )
-                                } else {
-                                    if &*__dispatch_subject == "int.gt.false_of_le" {
-                                        crate::proof_kernel::aver_generated::kernel::rules::complement(AverStr::from("<="), true, AverStr::from(">"), false, &ints)
-                                    } else {
-                                        if &*__dispatch_subject == "int.eq.of_not_ne" {
-                                            crate::proof_kernel::aver_generated::kernel::rules::complement(AverStr::from("!="), false, AverStr::from("=="), true, &ints)
-                                        } else {
-                                            if &*__dispatch_subject == "int.eq.false_of_ne" {
-                                                crate::proof_kernel::aver_generated::kernel::rules::complement(AverStr::from("!="), true, AverStr::from("=="), false, &ints)
-                                            } else {
-                                                if &*__dispatch_subject == "int.ne.of_not_eq" {
-                                                    crate::proof_kernel::aver_generated::kernel::rules::complement(AverStr::from("=="), false, AverStr::from("!="), true, &ints)
-                                                } else {
-                                                    if &*__dispatch_subject == "int.ne.false_of_eq"
-                                                    {
-                                                        crate::proof_kernel::aver_generated::kernel::rules::complement(AverStr::from("=="), true, AverStr::from("!="), false, &ints)
-                                                    } else {
-                                                        if &*__dispatch_subject == "int.eq.of_le_ge"
-                                                        {
-                                                            Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: ints, premises: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("<="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b")))), true), crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from(">="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b")))), true)]), concl: crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("=="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b")))), true) })
-                                                        } else {
-                                                            if &*__dispatch_subject
-                                                                == "int.mul_nonneg"
-                                                            {
-                                                                Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: ints, premises: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("<="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::term::Term::TInt(aver_rt::AverInt::from_i64(0))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")))), true), crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("<="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::term::Term::TInt(aver_rt::AverInt::from_i64(0))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b")))), true)]), concl: crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("<="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::term::Term::TInt(aver_rt::AverInt::from_i64(0))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("*"), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b")))))), true) })
-                                                            } else {
-                                                                if &*__dispatch_subject
-                                                                    == "int.eq.false_of_lt"
-                                                                {
-                                                                    crate::proof_kernel::aver_generated::kernel::rules::complement(AverStr::from("<"), true, AverStr::from("=="), false, &ints)
-                                                                } else {
-                                                                    if &*__dispatch_subject
-                                                                        == "int.eq.false_of_gt"
-                                                                    {
-                                                                        crate::proof_kernel::aver_generated::kernel::rules::complement(AverStr::from(">"), true, AverStr::from("=="), false, &ints)
-                                                                    } else {
-                                                                        if &*__dispatch_subject
-                                                                            == "int.eq.of_beq"
-                                                                        {
-                                                                            Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::same(AverStr::from("a")), crate::proof_kernel::aver_generated::kernel::rules::same(AverStr::from("b"))]), premises: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("=="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b")))), true)]), concl: crate::proof_kernel::aver_generated::kernel::rules::eq(&crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b"))) })
-                                                                        } else {
-                                                                            if &*__dispatch_subject
-                                                                                == "bool.beq.refl"
-                                                                            {
-                                                                                crate::proof_kernel::aver_generated::kernel::rules::plain(&aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::same(AverStr::from("a"))]), &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("=="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")))), &crate::proof_kernel::aver_generated::kernel::term::Term::TBool(true))
-                                                                            } else {
-                                                                                if &*__dispatch_subject == "bool.beq.symm" { crate::proof_kernel::aver_generated::kernel::rules::plain(&aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::same(AverStr::from("a")), crate::proof_kernel::aver_generated::kernel::rules::same(AverStr::from("b"))]), &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("=="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b")))), &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("=="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))))) } else { crate::proof_kernel::aver_generated::kernel::rules::ringSchema(id) }
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Ring laws of Int.
-#[inline(always)]
-pub fn ringSchema(id @ _: AverStr) -> Option<Schema> {
-    crate::proof_kernel::cancel_checkpoint();
-    {
-        let __dispatch_subject = id.clone();
-        if &*__dispatch_subject == "int.add_comm" {
+        if &*__dispatch_subject == "int.ne.def" {
             crate::proof_kernel::aver_generated::kernel::rules::plain(
-                &aver_rt::AverList::from_vec(vec![
-                    crate::proof_kernel::aver_generated::kernel::rules::i(AverStr::from("a")),
-                    crate::proof_kernel::aver_generated::kernel::rules::i(AverStr::from("b")),
-                ]),
+                &ints,
                 &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
-                    AverStr::from("+"),
+                    AverStr::from("!="),
                     std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(
                         AverStr::from("a"),
                     )),
@@ -532,182 +385,112 @@ pub fn ringSchema(id @ _: AverStr) -> Option<Schema> {
                         AverStr::from("b"),
                     )),
                 ),
-                &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
-                    AverStr::from("+"),
-                    std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(
-                        AverStr::from("b"),
-                    )),
-                    std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(
-                        AverStr::from("a"),
-                    )),
-                ),
-            )
-        } else {
-            if &*__dispatch_subject == "int.mul_comm" {
-                crate::proof_kernel::aver_generated::kernel::rules::plain(
-                    &aver_rt::AverList::from_vec(vec![
-                        crate::proof_kernel::aver_generated::kernel::rules::i(AverStr::from("a")),
-                        crate::proof_kernel::aver_generated::kernel::rules::i(AverStr::from("b")),
-                    ]),
-                    &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
-                        AverStr::from("*"),
-                        std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(
-                            AverStr::from("a"),
-                        )),
-                        std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(
-                            AverStr::from("b"),
-                        )),
-                    ),
-                    &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
-                        AverStr::from("*"),
-                        std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(
-                            AverStr::from("b"),
-                        )),
-                        std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(
-                            AverStr::from("a"),
-                        )),
-                    ),
-                )
-            } else {
-                if &*__dispatch_subject == "int.add_assoc" {
-                    crate::proof_kernel::aver_generated::kernel::rules::plain(
-                        &aver_rt::AverList::from_vec(vec![
-                            crate::proof_kernel::aver_generated::kernel::rules::i(AverStr::from(
-                                "a",
-                            )),
-                            crate::proof_kernel::aver_generated::kernel::rules::i(AverStr::from(
-                                "b",
-                            )),
-                            crate::proof_kernel::aver_generated::kernel::rules::i(AverStr::from(
-                                "c",
-                            )),
-                        ]),
-                        &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
-                            AverStr::from("+"),
-                            std::sync::Arc::new(
-                                crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
-                                    AverStr::from("+"),
-                                    std::sync::Arc::new(
-                                        crate::proof_kernel::aver_generated::kernel::rules::v(
-                                            AverStr::from("a"),
-                                        ),
-                                    ),
-                                    std::sync::Arc::new(
-                                        crate::proof_kernel::aver_generated::kernel::rules::v(
-                                            AverStr::from("b"),
-                                        ),
-                                    ),
-                                ),
-                            ),
-                            std::sync::Arc::new(
-                                crate::proof_kernel::aver_generated::kernel::rules::v(
-                                    AverStr::from("c"),
-                                ),
-                            ),
-                        ),
-                        &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
-                            AverStr::from("+"),
+                &crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
+                    AverStr::from("Bool.not"),
+                    aver_rt::AverList::from_vec(vec![
+                        crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
+                            AverStr::from("=="),
                             std::sync::Arc::new(
                                 crate::proof_kernel::aver_generated::kernel::rules::v(
                                     AverStr::from("a"),
                                 ),
                             ),
                             std::sync::Arc::new(
-                                crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
-                                    AverStr::from("+"),
-                                    std::sync::Arc::new(
-                                        crate::proof_kernel::aver_generated::kernel::rules::v(
-                                            AverStr::from("b"),
-                                        ),
-                                    ),
-                                    std::sync::Arc::new(
-                                        crate::proof_kernel::aver_generated::kernel::rules::v(
-                                            AverStr::from("c"),
-                                        ),
-                                    ),
-                                ),
-                            ),
-                        ),
-                    )
-                } else {
-                    if &*__dispatch_subject == "int.mul_assoc" {
-                        crate::proof_kernel::aver_generated::kernel::rules::plain(
-                            &aver_rt::AverList::from_vec(vec![
-                                crate::proof_kernel::aver_generated::kernel::rules::i(
-                                    AverStr::from("a"),
-                                ),
-                                crate::proof_kernel::aver_generated::kernel::rules::i(
+                                crate::proof_kernel::aver_generated::kernel::rules::v(
                                     AverStr::from("b"),
                                 ),
-                                crate::proof_kernel::aver_generated::kernel::rules::i(
-                                    AverStr::from("c"),
-                                ),
-                            ]),
-                            &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
-                                AverStr::from("*"),
-                                std::sync::Arc::new(
-                                    crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
-                                        AverStr::from("*"),
-                                        std::sync::Arc::new(
-                                            crate::proof_kernel::aver_generated::kernel::rules::v(
-                                                AverStr::from("a"),
-                                            ),
-                                        ),
-                                        std::sync::Arc::new(
-                                            crate::proof_kernel::aver_generated::kernel::rules::v(
-                                                AverStr::from("b"),
-                                            ),
-                                        ),
-                                    ),
-                                ),
-                                std::sync::Arc::new(
-                                    crate::proof_kernel::aver_generated::kernel::rules::v(
-                                        AverStr::from("c"),
-                                    ),
-                                ),
                             ),
+                        ),
+                    ]),
+                ),
+            )
+        } else {
+            if &*__dispatch_subject == "int.eq.of_le_ge" {
+                Some(crate::proof_kernel::aver_generated::kernel::rules::Schema {
+                    binders: ints,
+                    premises: aver_rt::AverList::from_vec(vec![
+                        crate::proof_kernel::aver_generated::kernel::rules::is(
                             &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
-                                AverStr::from("*"),
+                                AverStr::from("<="),
                                 std::sync::Arc::new(
                                     crate::proof_kernel::aver_generated::kernel::rules::v(
                                         AverStr::from("a"),
                                     ),
                                 ),
                                 std::sync::Arc::new(
-                                    crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
-                                        AverStr::from("*"),
-                                        std::sync::Arc::new(
-                                            crate::proof_kernel::aver_generated::kernel::rules::v(
-                                                AverStr::from("b"),
-                                            ),
-                                        ),
-                                        std::sync::Arc::new(
-                                            crate::proof_kernel::aver_generated::kernel::rules::v(
-                                                AverStr::from("c"),
-                                            ),
-                                        ),
+                                    crate::proof_kernel::aver_generated::kernel::rules::v(
+                                        AverStr::from("b"),
                                     ),
                                 ),
                             ),
+                            true,
+                        ),
+                        crate::proof_kernel::aver_generated::kernel::rules::is(
+                            &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
+                                AverStr::from(">="),
+                                std::sync::Arc::new(
+                                    crate::proof_kernel::aver_generated::kernel::rules::v(
+                                        AverStr::from("a"),
+                                    ),
+                                ),
+                                std::sync::Arc::new(
+                                    crate::proof_kernel::aver_generated::kernel::rules::v(
+                                        AverStr::from("b"),
+                                    ),
+                                ),
+                            ),
+                            true,
+                        ),
+                    ]),
+                    concl: crate::proof_kernel::aver_generated::kernel::rules::is(
+                        &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
+                            AverStr::from("=="),
+                            std::sync::Arc::new(
+                                crate::proof_kernel::aver_generated::kernel::rules::v(
+                                    AverStr::from("a"),
+                                ),
+                            ),
+                            std::sync::Arc::new(
+                                crate::proof_kernel::aver_generated::kernel::rules::v(
+                                    AverStr::from("b"),
+                                ),
+                            ),
+                        ),
+                        true,
+                    ),
+                })
+            } else {
+                if &*__dispatch_subject == "int.mul_nonneg" {
+                    Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: ints, premises: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("<="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::term::Term::TInt(aver_rt::AverInt::from_i64(0))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")))), true), crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("<="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::term::Term::TInt(aver_rt::AverInt::from_i64(0))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b")))), true)]), concl: crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("<="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::term::Term::TInt(aver_rt::AverInt::from_i64(0))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("*"), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b")))))), true) })
+                } else {
+                    if &*__dispatch_subject == "int.eq.false_of_lt" {
+                        crate::proof_kernel::aver_generated::kernel::rules::complement(
+                            AverStr::from("<"),
+                            true,
+                            AverStr::from("=="),
+                            false,
+                            &ints,
                         )
                     } else {
-                        if &*__dispatch_subject == "int.add_zero" {
-                            crate::proof_kernel::aver_generated::kernel::rules::plain(&aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::i(AverStr::from("a"))]), &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("+"), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::term::Term::TInt(aver_rt::AverInt::from_i64(0)))), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")))
+                        if &*__dispatch_subject == "int.eq.false_of_gt" {
+                            crate::proof_kernel::aver_generated::kernel::rules::complement(
+                                AverStr::from(">"),
+                                true,
+                                AverStr::from("=="),
+                                false,
+                                &ints,
+                            )
                         } else {
-                            if &*__dispatch_subject == "int.zero_add" {
-                                crate::proof_kernel::aver_generated::kernel::rules::plain(&aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::i(AverStr::from("a"))]), &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("+"), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::term::Term::TInt(aver_rt::AverInt::from_i64(0))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")))), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")))
+                            if &*__dispatch_subject == "int.eq.of_beq" {
+                                Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::same(AverStr::from("a")), crate::proof_kernel::aver_generated::kernel::rules::same(AverStr::from("b"))]), premises: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::is(&crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("=="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b")))), true)]), concl: crate::proof_kernel::aver_generated::kernel::rules::eq(&crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b"))) })
                             } else {
-                                if &*__dispatch_subject == "int.mul_one" {
-                                    crate::proof_kernel::aver_generated::kernel::rules::plain(&aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::i(AverStr::from("a"))]), &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("*"), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::term::Term::TInt(aver_rt::AverInt::from_i64(1)))), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")))
+                                if &*__dispatch_subject == "bool.beq.refl" {
+                                    crate::proof_kernel::aver_generated::kernel::rules::plain(&aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::same(AverStr::from("a"))]), &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("=="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")))), &crate::proof_kernel::aver_generated::kernel::term::Term::TBool(true))
                                 } else {
-                                    if &*__dispatch_subject == "int.one_mul" {
-                                        crate::proof_kernel::aver_generated::kernel::rules::plain(&aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::i(AverStr::from("a"))]), &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("*"), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::term::Term::TInt(aver_rt::AverInt::from_i64(1))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")))), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")))
+                                    if &*__dispatch_subject == "bool.beq.symm" {
+                                        crate::proof_kernel::aver_generated::kernel::rules::plain(&aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::same(AverStr::from("a")), crate::proof_kernel::aver_generated::kernel::rules::same(AverStr::from("b"))]), &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("=="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b")))), &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("=="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("b"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")))))
                                     } else {
-                                        if &*__dispatch_subject == "int.sub_zero" {
-                                            crate::proof_kernel::aver_generated::kernel::rules::plain(&aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::i(AverStr::from("a"))]), &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("-"), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::term::Term::TInt(aver_rt::AverInt::from_i64(0)))), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")))
-                                        } else {
-                                            crate::proof_kernel::aver_generated::kernel::rules::divisionSchema(id)
-                                        }
+                                        crate::proof_kernel::aver_generated::kernel::rules::divisionSchema(id)
                                     }
                                 }
                             }
@@ -1119,7 +902,7 @@ pub fn counted(
     })
 }
 
-/// Each list builtin on the empty list and on an element in front of a list.
+/// Each list builtin on an element in front of a list, and on the empty list where it has another argument; List.len([]) and List.reverse([]) are closed, so compute shows them.
 pub fn listSchema(id @ _: AverStr) -> Option<Schema> {
     crate::proof_kernel::cancel_checkpoint();
     let xa @ _ = crate::proof_kernel::aver_generated::kernel::rules::cons(
@@ -1193,63 +976,67 @@ pub fn listSchema(id @ _: AverStr) -> Option<Schema> {
                     ),
                 )
             } else {
-                if &*__dispatch_subject == "list.len.nil" {
+                if &*__dispatch_subject == "list.len.cons" {
                     crate::proof_kernel::aver_generated::kernel::rules::plain(
-                        &aver_rt::AverList::empty(),
+                        &aver_rt::AverList::from_vec(vec![
+                            crate::proof_kernel::aver_generated::kernel::rules::any(AverStr::from(
+                                "x",
+                            )),
+                            crate::proof_kernel::aver_generated::kernel::rules::lt(AverStr::from(
+                                "a",
+                            )),
+                        ]),
                         &crate::proof_kernel::aver_generated::kernel::rules::lb(
                             AverStr::from("len"),
-                            &aver_rt::AverList::from_vec(vec![nil]),
+                            &aver_rt::AverList::from_vec(vec![xa]),
                         ),
-                        &crate::proof_kernel::aver_generated::kernel::term::Term::TInt(
-                            aver_rt::AverInt::from_i64(0),
+                        &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
+                            AverStr::from("+"),
+                            std::sync::Arc::new(
+                                crate::proof_kernel::aver_generated::kernel::rules::lb(
+                                    AverStr::from("len"),
+                                    &aver_rt::AverList::from_vec(vec![
+                                        crate::proof_kernel::aver_generated::kernel::rules::v(
+                                            AverStr::from("a"),
+                                        ),
+                                    ]),
+                                ),
+                            ),
+                            std::sync::Arc::new(
+                                crate::proof_kernel::aver_generated::kernel::term::Term::TInt(
+                                    aver_rt::AverInt::from_i64(1),
+                                ),
+                            ),
                         ),
                     )
                 } else {
-                    if &*__dispatch_subject == "list.len.cons" {
+                    if &*__dispatch_subject == "list.take.nil" {
                         crate::proof_kernel::aver_generated::kernel::rules::plain(
                             &aver_rt::AverList::from_vec(vec![
-                                crate::proof_kernel::aver_generated::kernel::rules::any(
-                                    AverStr::from("x"),
-                                ),
-                                crate::proof_kernel::aver_generated::kernel::rules::lt(
-                                    AverStr::from("a"),
+                                crate::proof_kernel::aver_generated::kernel::rules::i(
+                                    AverStr::from("n"),
                                 ),
                             ]),
                             &crate::proof_kernel::aver_generated::kernel::rules::lb(
-                                AverStr::from("len"),
-                                &aver_rt::AverList::from_vec(vec![xa]),
-                            ),
-                            &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
-                                AverStr::from("+"),
-                                std::sync::Arc::new(
-                                    crate::proof_kernel::aver_generated::kernel::rules::lb(
-                                        AverStr::from("len"),
-                                        &aver_rt::AverList::from_vec(vec![
-                                            crate::proof_kernel::aver_generated::kernel::rules::v(
-                                                AverStr::from("a"),
-                                            ),
-                                        ]),
-                                    ),
-                                ),
-                                std::sync::Arc::new(
-                                    crate::proof_kernel::aver_generated::kernel::term::Term::TInt(
-                                        aver_rt::AverInt::from_i64(1),
-                                    ),
-                                ),
-                            ),
-                        )
-                    } else {
-                        if &*__dispatch_subject == "list.take.nil" {
-                            crate::proof_kernel::aver_generated::kernel::rules::plain(
+                                AverStr::from("take"),
                                 &aver_rt::AverList::from_vec(vec![
-                                    crate::proof_kernel::aver_generated::kernel::rules::i(
+                                    nil.clone(),
+                                    crate::proof_kernel::aver_generated::kernel::rules::v(
                                         AverStr::from("n"),
                                     ),
                                 ]),
+                            ),
+                            &nil,
+                        )
+                    } else {
+                        if &*__dispatch_subject == "list.take.cons_le" {
+                            crate::proof_kernel::aver_generated::kernel::rules::counted(
+                                &xan,
+                                false,
                                 &crate::proof_kernel::aver_generated::kernel::rules::lb(
                                     AverStr::from("take"),
                                     &aver_rt::AverList::from_vec(vec![
-                                        nil.clone(),
+                                        xa,
                                         crate::proof_kernel::aver_generated::kernel::rules::v(
                                             AverStr::from("n"),
                                         ),
@@ -1258,43 +1045,22 @@ pub fn listSchema(id @ _: AverStr) -> Option<Schema> {
                                 &nil,
                             )
                         } else {
-                            if &*__dispatch_subject == "list.take.cons_le" {
-                                crate::proof_kernel::aver_generated::kernel::rules::counted(
-                                    &xan,
-                                    false,
-                                    &crate::proof_kernel::aver_generated::kernel::rules::lb(
-                                        AverStr::from("take"),
-                                        &aver_rt::AverList::from_vec(vec![
-                                            xa,
-                                            crate::proof_kernel::aver_generated::kernel::rules::v(
-                                                AverStr::from("n"),
-                                            ),
-                                        ]),
-                                    ),
-                                    &nil,
-                                )
+                            if &*__dispatch_subject == "list.take.cons_gt" {
+                                crate::proof_kernel::aver_generated::kernel::rules::counted(&xan, true, &crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("take"), &aver_rt::AverList::from_vec(vec![xa, crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("n"))])), &crate::proof_kernel::aver_generated::kernel::rules::cons(&crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("x")), &crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("take"), &aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")), less]))))
                             } else {
-                                if &*__dispatch_subject == "list.take.cons_gt" {
-                                    crate::proof_kernel::aver_generated::kernel::rules::counted(&xan, true, &crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("take"), &aver_rt::AverList::from_vec(vec![xa, crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("n"))])), &crate::proof_kernel::aver_generated::kernel::rules::cons(&crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("x")), &crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("take"), &aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")), less]))))
+                                if &*__dispatch_subject == "list.drop.nil" {
+                                    crate::proof_kernel::aver_generated::kernel::rules::plain(&aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::i(AverStr::from("n"))]), &crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("drop"), &aver_rt::AverList::from_vec(vec![nil.clone(), crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("n"))])), &nil)
                                 } else {
-                                    if &*__dispatch_subject == "list.drop.nil" {
-                                        crate::proof_kernel::aver_generated::kernel::rules::plain(&aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::i(AverStr::from("n"))]), &crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("drop"), &aver_rt::AverList::from_vec(vec![nil.clone(), crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("n"))])), &nil)
+                                    if &*__dispatch_subject == "list.drop.cons_le" {
+                                        crate::proof_kernel::aver_generated::kernel::rules::counted(&xan, false, &crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("drop"), &aver_rt::AverList::from_vec(vec![xa.clone(), crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("n"))])), &xa)
                                     } else {
-                                        if &*__dispatch_subject == "list.drop.cons_le" {
-                                            crate::proof_kernel::aver_generated::kernel::rules::counted(&xan, false, &crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("drop"), &aver_rt::AverList::from_vec(vec![xa.clone(), crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("n"))])), &xa)
+                                        if &*__dispatch_subject == "list.drop.cons_gt" {
+                                            crate::proof_kernel::aver_generated::kernel::rules::counted(&xan, true, &crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("drop"), &aver_rt::AverList::from_vec(vec![xa, crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("n"))])), &crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("drop"), &aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")), less])))
                                         } else {
-                                            if &*__dispatch_subject == "list.drop.cons_gt" {
-                                                crate::proof_kernel::aver_generated::kernel::rules::counted(&xan, true, &crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("drop"), &aver_rt::AverList::from_vec(vec![xa, crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("n"))])), &crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("drop"), &aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a")), less])))
+                                            if &*__dispatch_subject == "list.reverse.cons" {
+                                                crate::proof_kernel::aver_generated::kernel::rules::plain(&aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::any(AverStr::from("x")), crate::proof_kernel::aver_generated::kernel::rules::lt(AverStr::from("a"))]), &crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("reverse"), &aver_rt::AverList::from_vec(vec![xa])), &crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("concat"), &aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("reverse"), &aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))])), crate::proof_kernel::aver_generated::kernel::rules::cons(&crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("x")), &nil)])))
                                             } else {
-                                                if &*__dispatch_subject == "list.reverse.nil" {
-                                                    crate::proof_kernel::aver_generated::kernel::rules::plain(&aver_rt::AverList::empty(), &crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("reverse"), &aver_rt::AverList::from_vec(vec![nil.clone()])), &nil)
-                                                } else {
-                                                    if &*__dispatch_subject == "list.reverse.cons" {
-                                                        crate::proof_kernel::aver_generated::kernel::rules::plain(&aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::any(AverStr::from("x")), crate::proof_kernel::aver_generated::kernel::rules::lt(AverStr::from("a"))]), &crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("reverse"), &aver_rt::AverList::from_vec(vec![xa])), &crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("concat"), &aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("reverse"), &aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))])), crate::proof_kernel::aver_generated::kernel::rules::cons(&crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("x")), &nil)])))
-                                                    } else {
-                                                        crate::proof_kernel::aver_generated::kernel::rules::mapSchema(id)
-                                                    }
-                                                }
+                                                crate::proof_kernel::aver_generated::kernel::rules::mapSchema(id)
                                             }
                                         }
                                     }

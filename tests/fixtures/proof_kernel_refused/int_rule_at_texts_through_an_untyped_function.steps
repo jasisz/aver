@@ -1,7 +1,7 @@
-(steps 15
- (obligation stringCommutes () (none)
-  (op + (s "a") (s "b"))
-  (op + (s "b") (s "a")))
+(steps 16
+ (obligation stringDiffers () (none)
+  (op != (s "a") (s "b"))
+  (bi Bool.not (op == (s "a") (s "b"))))
  (defs
   (def f ((x _)) _ () (v x)))
  (consts)
@@ -11,14 +11,14 @@
  (laws)
  (proof
   (trans
-   ((op + (s "a") (s "b"))
-    (op + (call f (s "a")) (s "b"))
-    (op + (call f (s "a")) (call f (s "b")))
-    (op + (call f (s "b")) (call f (s "a")))
-    (op + (s "b") (call f (s "a")))
-    (op + (s "b") (s "a")))
-   (symm (congr (op + (hole) (s "b")) (unfold f 0 ((s "a")) ())))
-   (symm (congr (op + (call f (s "a")) (hole)) (unfold f 0 ((s "b")) ())))
-   (rule int.add_comm ((a (call f (s "a"))) (b (call f (s "b")))))
-   (congr (op + (hole) (call f (s "a"))) (unfold f 0 ((s "b")) ()))
-   (congr (op + (s "b") (hole)) (unfold f 0 ((s "a")) ())))))
+   ((op != (s "a") (s "b"))
+    (op != (call f (s "a")) (s "b"))
+    (op != (call f (s "a")) (call f (s "b")))
+    (bi Bool.not (op == (call f (s "a")) (call f (s "b"))))
+    (bi Bool.not (op == (s "a") (call f (s "b"))))
+    (bi Bool.not (op == (s "a") (s "b"))))
+   (symm (congr (op != (hole) (s "b")) (unfold f 0 ((s "a")) ())))
+   (symm (congr (op != (call f (s "a")) (hole)) (unfold f 0 ((s "b")) ())))
+   (rule int.ne.def ((a (call f (s "a"))) (b (call f (s "b")))))
+   (congr (bi Bool.not (op == (hole) (call f (s "b")))) (unfold f 0 ((s "a")) ()))
+   (congr (bi Bool.not (op == (s "a") (hole))) (unfold f 0 ((s "b")) ())))))
