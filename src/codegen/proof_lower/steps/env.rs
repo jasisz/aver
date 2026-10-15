@@ -51,6 +51,10 @@ pub(crate) struct Env<'a> {
     /// does (see `super::auto_pool`).
     pub auto_laws: Vec<LawRef>,
     pub hyps: Vec<(String, Eqn)>,
+    /// Inside a case of a split on a countdown's guard (see
+    /// `Env::countdown_guard`): another countdown splits there only on a
+    /// guard linear arithmetic decides, so one case closes at once.
+    pub countdown_split: bool,
     pub fuel: usize,
     /// Fuel for evaluating hypotheses to their normal form
     /// ([`Env::normal_fact`]), apart from `fuel`, so stating hypotheses
@@ -193,6 +197,7 @@ impl<'a> Env<'a> {
             hint_laws: Vec::new(),
             auto_laws: Vec::new(),
             hyps: Vec::new(),
+            countdown_split: false,
             fuel: FUEL,
             normal_fuel: 2000,
             next_hyp: 0,

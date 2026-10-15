@@ -1,0 +1,56 @@
+module OpenOrders
+    intent =
+        "Two sides that differ only in the order of a Bool.or or a Bool.and, and a countdown stopped"
+        "at a guard nothing in scope decides: steps split on a Bool, as a because line would, and"
+        "each case evaluates."
+    exposes [inserted, nth]
+    effects []
+
+fn inserted(value: Int, sorted: List<Int>, passed: List<Int>) -> List<Int>
+    ? "Walk past the smaller values, carrying them reversed, then splice."
+    match sorted
+        [] -> List.reverse(List.prepend(value, passed))
+        [head, ..tail] -> insertedAt(value, head, tail, passed)
+
+verify inserted law keepsEveryValue
+    given value: Int = [0, 2, 9]
+    given sorted: List<Int> = [[], [1, 3], [2]]
+    given passed: List<Int> = [[], [1]]
+    given x: Int = [0, 1, 2, 3, 9]
+    using [List.contains.ofConcat, List.contains.ofReverse]
+    List.contains(inserted(value, sorted, passed), x) => Bool.or(value == x, Bool.or(List.contains(sorted, x), List.contains(passed, x)))
+
+verify inserted law bothInFront
+    given a: List<Int> = [[], [1], [1, 2]]
+    given b: List<Int> = [[], [2]]
+    given x: Int = [1, 2]
+    Bool.and(List.contains(a, x), List.contains(b, x)) => Bool.and(List.contains(b, x), List.contains(a, x))
+
+fn insertedAt(value: Int, head: Int, tail: List<Int>, passed: List<Int>) -> List<Int>
+    ? "Before the head if it is no larger, else further along."
+    match value <= head
+        true -> List.concat(List.reverse(passed), List.prepend(value, List.prepend(head, tail)))
+        false -> inserted(value, tail, List.prepend(head, passed))
+
+fn nth(values: List<Int>, index: Int) -> Int
+    ? "The value at an index, or zero past the end."
+    match values
+        [] -> 0
+        [head, ..tail] -> nthFrom(head, tail, index)
+
+fn nthFrom(head: Int, tail: List<Int>, index: Int) -> Int
+    ? "This one at index zero, otherwise onwards."
+    match index <= 0
+        true -> head
+        false -> nth(tail, index - 1)
+
+verify nthFrom law firstOrZero
+    given head: Int = [0, 7]
+    given index: Int = [-1, 0, 1, 2]
+    List.contains([head, 0], nthFrom(head, [], index)) => true
+
+verify nthFrom law repeatedHead
+    given head: Int = [7]
+    given index: Int = [-1, 0, 1]
+    when index <= 1
+    nthFrom(head, [head], index) => head

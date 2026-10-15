@@ -1,0 +1,43 @@
+module OpenOrdersRefused
+    intent =
+        "Laws of the same shapes that hold on their samples but not for every value: none may close"
+        "by steps. A Bool.or is not a Bool.and the other way round, and a countdown past the end of"
+        "its list gives zero."
+    exposes [nth]
+    effects []
+
+fn nth(values: List<Int>, index: Int) -> Int
+    ? "The value at an index, or zero past the end."
+    match values
+        [] -> 0
+        [head, ..tail] -> nthFrom(head, tail, index)
+
+verify nth law orIsAnd
+    given a: List<Int> = [[1, 2]]
+    given b: List<Int> = [[2, 1]]
+    given x: Int = [1, 2]
+    Bool.or(List.contains(a, x), List.contains(b, x)) => Bool.and(List.contains(b, x), List.contains(a, x))
+
+verify nth law swapsTheValue
+    given a: List<Int> = [[], [1]]
+    given b: List<Int> = [[], [1]]
+    given x: Int = [1]
+    given y: Int = [1]
+    Bool.or(List.contains(a, x), List.contains(b, y)) => Bool.or(List.contains(b, x), List.contains(a, y))
+
+fn nthFrom(head: Int, tail: List<Int>, index: Int) -> Int
+    ? "This one at index zero, otherwise onwards."
+    match index <= 0
+        true -> head
+        false -> nth(tail, index - 1)
+
+verify nthFrom law pastTheRepeat
+    given head: Int = [7]
+    given index: Int = [-1, 0, 1]
+    when index <= 2
+    nthFrom(head, [head], index) => head
+
+verify nthFrom law firstOrHead
+    given head: Int = [0]
+    given index: Int = [-1, 0, 1, 2]
+    List.contains([head], nthFrom(head, [], index)) => true

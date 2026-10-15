@@ -43,6 +43,44 @@ fn holds(t: &Term, part: &Term) -> bool {
     canon(t) == *part || term::children(t).into_iter().any(|c| holds(c, part))
 }
 
+/// The left argument `a` where `l` holds `Bool.or(a, b)` (or `Bool.and`)
+/// at a position where `r` holds it with the arguments the other way
+/// round, the two terms alike everywhere else on the way there.
+fn swapped_connective(l: &Term, r: &Term) -> Option<Term> {
+    fn walk(l: &Term, r: &Term) -> Option<Term> {
+        if l == r {
+            return None;
+        }
+        if let (
+            ResolvedExpr::Call(ResolvedCallee::Builtin(f), xs),
+            ResolvedExpr::Call(ResolvedCallee::Builtin(g), ys),
+        ) = (&l.node, &r.node)
+            && f == g
+            && matches!(f.as_str(), "Bool.or" | "Bool.and")
+            && xs.len() == 2
+            && ys.len() == 2
+            && xs[0] == ys[1]
+            && xs[1] == ys[0]
+        {
+            return Some(xs[0].clone());
+        }
+        let (cl, cr) = (term::children(l), term::children(r));
+        if cl.is_empty() || cl.len() != cr.len() {
+            return None;
+        }
+        // The same head: `l` with the children of `r` is `r`.
+        let mut same = l.clone();
+        for (i, c) in cr.iter().enumerate() {
+            same = term::with_child(&same, i, (*c).clone());
+        }
+        if same != *r {
+            return None;
+        }
+        cl.into_iter().zip(cr).find_map(|(a, b)| walk(a, b))
+    }
+    walk(&canon(l), &canon(r))
+}
+
 /// Complements: `(a P b) = v` decides `(a Q b) = w`.
 const COMPLEMENTS: [(BinOp, bool, BinOp, bool); 12] = [
     (BinOp::Gt, false, BinOp::Lte, true),
@@ -1763,8 +1801,10 @@ impl Env<'_> {
                             crate::ir::proof_steps::claim::claim(&unfold, &script, &self.hyps)?;
                         Ok(Step::Progress(Box::new((unfold, eq.rhs))))
                     }
-                    // Splitting on a countdown's guard would unroll the
-                    // recursion one more level in every branch.
+                    // Splitting on a countdown's guard here would unroll
+                    // the recursion one more level in every branch; it is
+                    // split on only where nothing else closes the case
+                    // (see `countdown_guard`).
                     None if countdown => self.settle(cur, None),
                     None => {
                         let g = ev.blocked.or_else(|| {
@@ -3768,6 +3808,21 @@ impl Env<'_> {
         if let Some(proof) = self.meet_by_rewriting(&nl, &nr)? {
             return Ok(Ok(proof));
         }
+        // Two sides that differ in the order of a `Bool.or` or a `Bool.and`
+        // (`Bool.or(a, b)` and `Bool.or(b, a)`), or a side stopped at a
+        // countdown whose guard is an open Int comparison: split on that
+        // Bool, as a `because` line stating it either way would. With `a`
+        // decided both connectives compute to one term, and the countdown
+        // opens at the arm its guard selects. The sides are compared at
+        // one position, never rewritten, so this is no search; a split
+        // that does not close is undone.
+        if depth > 0
+            && let Some(proof) = self.split_on_open_order(nl.cur(), nr.cur(), depth)
+        {
+            let rc = nr.cur().clone();
+            nl.push(proof, rc);
+            return Ok(Ok(meet(nl, nr)));
+        }
         // Nothing closed the case as its hypotheses are stated: evaluate
         // them the way the claim was, and the claim again under them.
         if let Some(proof) =
@@ -3904,6 +3959,105 @@ impl Env<'_> {
                 b,
             ) if (is_int(a) || is_int(b)) && self.hyp_for(t).is_none() => Some(canon(t)),
             _ => None,
+        }
+    }
+
+    /// [`Env::nothing_to_split`]'s last split: on `a` where the sides
+    /// differ in the order of a connective, else on an open countdown
+    /// guard in a side, or in a hypothesis where the sides are `true` and
+    /// `false` (inside such a split, only on one linear arithmetic
+    /// decides).
+    fn split_on_open_order(&mut self, l: &Term, r: &Term, depth: usize) -> Option<Proof> {
+        if let Some(a) = swapped_connective(l, r)
+            && let Some(proof) = self.split_or_undo(&a, l, r, depth)
+        {
+            return Some(proof);
+        }
+        // A hypothesis is looked at only once the sides are two different
+        // Bools: what is left is to show the case cannot happen.
+        let hyps: Vec<Term> = if is_bool_value(l) && is_bool_value(r) {
+            self.hyps.iter().map(|(_, e)| e.lhs.clone()).collect()
+        } else {
+            Vec::new()
+        };
+        let g = [l, r]
+            .into_iter()
+            .chain(hyps.iter())
+            .find_map(|t| self.countdown_guard(t))?;
+        if self.countdown_split && self.decide_linearly(&g).is_none() {
+            return None;
+        }
+        let outer = std::mem::replace(&mut self.countdown_split, true);
+        let proof = self.split_or_undo(&g, l, r, depth);
+        self.countdown_split = outer;
+        proof
+    }
+
+    /// The guard of the first call in `t` of a countdown (a function
+    /// recursing on an Int towards a `match` on a comparison, `match n <= 0`,
+    /// not a division down to zero) that evaluation left closed because
+    /// nothing in scope decides it.
+    fn countdown_guard(&mut self, t: &Term) -> Option<Term> {
+        if let ResolvedExpr::Call(ResolvedCallee::Fn(id), args) = &t.node
+            && let Some(def) = self.def(*id)
+            && let ResolvedExpr::Match { subject, .. } = &def.body.node
+            && self.counts_down(&def) == (true, false)
+            && let Ok(outer) = def.outer(args)
+            && let Ok(s) = term::subst(subject, &outer)
+            && let s = canon(&s)
+            && let ResolvedExpr::BinOp(
+                BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte | BinOp::Eq | BinOp::Neq,
+                a,
+                b,
+            ) = &s.node
+            && (is_int(a) || is_int(b))
+            && term::eval_closed(&s).is_none()
+            && self.hyp_for(&s).is_none()
+            && self.complement(&s).is_none()
+        {
+            return Some(s);
+        }
+        // A call that is a part of an Int term (`pow2(n) * k`, a quotient)
+        // stays closed: linear arithmetic reads it as an atom, and opening
+        // it trades a call the facts in scope talk about for one they do
+        // not.
+        if is_int(t) && !matches!(t.node, ResolvedExpr::Call(ResolvedCallee::Fn(_), _)) {
+            return None;
+        }
+        term::children(t)
+            .into_iter()
+            .find_map(|c| self.countdown_guard(c))
+    }
+
+    /// `lc = rc` by cases on `g`, each branch evaluated on from `lc` and
+    /// `rc`; `None`, with the fuel, the cited laws and the hypothesis
+    /// names as they were, where a branch does not close.
+    fn split_or_undo(&mut self, g: &Term, lc: &Term, rc: &Term, depth: usize) -> Option<Proof> {
+        if depth == 0 || is_bool_value(g) || self.hyp_for(g).is_some() {
+            return None;
+        }
+        let (fuel, laws, named) = (self.fuel, self.laws.clone(), self.next_hyp_count());
+        let hyp = self.fresh_hyp();
+        let branch = |env: &mut Self, v: bool| -> Result<Proof, String> {
+            env.hyps
+                .push((hyp.clone(), Eqn::new(canon(g), term::boolean(v))));
+            let out = env.prove_by_evaluation(lc, rc, depth - 1);
+            env.hyps.pop();
+            out
+        };
+        match branch(self, true).and_then(|t| Ok((t, branch(self, false)?))) {
+            Ok((if_true, if_false)) => Some(Proof::Cases {
+                on: canon(g),
+                hyp,
+                if_true: Box::new(if_true),
+                if_false: Box::new(if_false),
+            }),
+            Err(_) => {
+                self.fuel = fuel;
+                self.laws = laws;
+                self.rewind_hyp_count(named);
+                None
+            }
         }
     }
 

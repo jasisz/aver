@@ -329,6 +329,7 @@
  },
  "projects/k5_fdiv/domain/awaymodel.av": {
   "obligations": [
+   "normalizedValue.carryPreservesValue.because1",
    "transferredValue.sameRawValue.because1"
   ],
   "steps": [
@@ -492,6 +493,7 @@
    "sameAway.normalizedModel.because2",
    "sameSticky.normalizedModel.because2",
    "sameTruncation.normalizedModel.because2",
+   "singleBitHalf.normalizedModel.because1",
    "singleBitHalf.normalizedModel.because10",
    "singleBitHalf.normalizedModel.because11",
    "singleBitHalf.normalizedModel.because12",
@@ -537,6 +539,7 @@
    "absoluteValue.normalizedMagnitude.because2",
    "absoluteValue.normalizedMagnitude.because3",
    "absoluteValue.normalizedMagnitude.because4",
+   "modelWindow.normalizedMagnitude.because1",
    "modelWindow.normalizedMagnitude.because3",
    "modelWindow.normalizedMagnitude.because4",
    "modelWindow.normalizedMagnitude.because5",
@@ -673,6 +676,7 @@
  "projects/k5_fdiv/domain/stickyscale.av": {
   "obligations": [
    "coarsen.dropsStickyBit.because1",
+   "coarsen.dropsStickyBit.because2",
    "coarsen.dropsStickyBit.because3"
   ],
   "tactic": [
