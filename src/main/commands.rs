@@ -12276,13 +12276,14 @@ pub(super) fn load_compile_deps_prepared(
         .iter()
         .map(|module| (module.dep_name.clone(), module.source.clone()))
         .collect();
-    let mut modules = Vec::with_capacity(program.dependencies().len());
-    for module in program.dependencies() {
-        let loaded = program
-            .loaded_dependencies_for(module)
-            .unwrap_or_else(|error| fail(error.to_string()));
+    // Each dependency is prepared against the program alone, never against
+    // another one's preparation, so they are prepared side by side; what
+    // they report is read in the program's order, so the first broken
+    // module is still the one named.
+    use rayon::prelude::*;
+    let prepare = |module: &aver::source::ProgramModule| {
+        let loaded = program.loaded_dependencies_for(module)?;
         let mut module_items = module.items.clone();
-
         let neutral_policy = aver::ir::NeutralAllocPolicy;
         let dep_typecheck_mode = if lowering.self_host {
             aver::ir::TypecheckMode::WithCheckedLoadedSelfHost(&loaded)
@@ -12305,6 +12306,21 @@ pub(super) fn load_compile_deps_prepared(
                 ..Default::default()
             },
         );
+        Ok::<_, LoadError>((module_items, pipeline_result))
+    };
+    // The checks recurse over the module's syntax: each worker gets the
+    // stack the main thread has, and more.
+    let prepared: Vec<_> = match rayon::ThreadPoolBuilder::new()
+        .stack_size(64 * 1024 * 1024)
+        .build()
+    {
+        Ok(pool) => pool.install(|| program.dependencies().par_iter().map(prepare).collect()),
+        Err(_) => program.dependencies().iter().map(prepare).collect(),
+    };
+    let mut modules = Vec::with_capacity(program.dependencies().len());
+    for (module, prepared) in program.dependencies().iter().zip(prepared) {
+        let (module_items, pipeline_result) =
+            prepared.unwrap_or_else(|error| fail(error.to_string()));
         if let Some(tc) = pipeline_result.typecheck.as_ref()
             && !tc.errors.is_empty()
         {
