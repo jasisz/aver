@@ -1,0 +1,75 @@
+module InductionAlongOthers
+    intent = "Induction along another recursive function of the claim than the law's own, and induction on a list for every value of another given."
+    exposes [lt, add, taken]
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn lt(x: Nat, y: Nat) -> Bool
+    ? "Strictly less, recursing on the second argument."
+    match y
+        Nat.Z -> false
+        Nat.S(z) -> match x
+            Nat.Z -> true
+            Nat.S(x2) -> lt(x2, z)
+
+verify lt
+    lt(Nat.Z, Nat.S(Nat.Z)) => true
+
+fn add(x: Nat, y: Nat) -> Nat
+    ? "Sum, recursing on the first argument."
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(add(z, y))
+
+verify add
+    add(Nat.Z, Nat.Z) => Nat.Z
+
+// `lt` recurses on its second argument, which the claim never passes a
+// given; `add` recurses on `i`, and an induction along it closes the law.
+
+verify lt law belowSuccessorOfSum
+    given i: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given m: Nat = [Nat.Z, Nat.S(Nat.Z)]
+    lt(i, Nat.S(add(i, m))) => true
+
+// With the line, the induction goes along `add` straight away.
+
+verify lt law belowSuccessorOfSumNamed
+    given i: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given m: Nat = [Nat.Z, Nat.S(Nat.Z)]
+    induction i
+    lt(i, Nat.S(add(i, m))) => true
+
+// The same shape, false at m = Z: it stays open.
+
+verify lt law belowSum
+    given i: Nat = [Nat.Z, Nat.S(Nat.Z)]
+    given m: Nat = [Nat.Z, Nat.S(Nat.Z)]
+    lt(i, add(i, m)) => true
+
+fn taken(xs: List<Int>, n: Int) -> List<Int>
+    ? "The first n elements."
+    List.take(xs, n)
+
+verify taken
+    taken([1, 2], 1) => [1]
+
+// The cell case above zero stops at the claim at the tail with n - 1: the
+// induction on xs holds for every n, so that is a hypothesis too.
+
+verify taken law takeTwice
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    given n: Int = [-1, 0, 1, 2, 5]
+    induction xs
+    List.take(List.take(xs, n), n) => List.take(xs, n)
+
+// The same shape, false at xs = [1, 2] and n = 1: it stays open.
+
+verify taken law takeTwiceFurther
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    given n: Int = [-1, 0, 1, 2, 5]
+    induction xs
+    List.take(List.take(xs, n), n + 1) => List.take(xs, n + 1)

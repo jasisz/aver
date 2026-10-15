@@ -1,5 +1,5 @@
 module InductionRefused
-    intent = "A law about a function that does not recurse: steps do not induct along another one, only on a list given itself."
+    intent = "A law about a function that does not recurse: steps induct on a list given itself before they follow another function's recursion."
     exposes [len, double]
     effects []
 

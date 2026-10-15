@@ -6,8 +6,9 @@
 //! `f` with one hypothesis per recursive call (see
 //! [`crate::ir::proof_steps::induct`]) and closes each case by evaluation,
 //! where those hypotheses and the cited laws rewrite what evaluation stops
-//! at. It never picks another function to follow: when the law's own
-//! function does not recurse, it says so and names the ones that do.
+//! at. Only once that has not closed does it follow another function the
+//! claim passes a given where it recurses, at most two of them, and it
+//! hints the `induction` line that goes straight to the one that closed.
 
 use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
 use crate::ir::identity::FnId;
@@ -59,6 +60,15 @@ fn recursive_in_claim(env: &mut Env, ob: &Obligation) -> Vec<String> {
         .collect()
 }
 
+/// Most functions other than the law's own an induction follows, after
+/// the one the law's own leads to has not closed
+/// ([`Env::prove_by_induction`]).
+const MAX_OTHER_FUNCTIONS: usize = 2;
+
+/// Most sets of values of the generalised givens an induction on a list
+/// states the claim at the tail at ([`Env::claims_at_tail`]).
+const MAX_GENERAL_VALUES: usize = 3;
+
 fn fresh(base: &str, taken: &[String]) -> String {
     if !taken.iter().any(|t| t == base) {
         return base.to_string();
@@ -80,6 +90,100 @@ impl Env<'_> {
     /// recursion walks ([`Self::walked_by_recursion`]), is tried in turn,
     /// and the one that closes is hinted as the line to add.
     pub(crate) fn prove_by_induction(
+        &mut self,
+        f: FnId,
+        named: Option<&str>,
+        ob: &Obligation,
+        depth: usize,
+    ) -> Result<Proof, String> {
+        self.prove_by_induction_of(f, named, ob, depth)
+    }
+
+    /// Induction along each other function the claim passes a given (the
+    /// named one, under a line) where it recurses
+    /// ([`Self::others_to_follow`]): the last attempt on a law about `f`,
+    /// once every other has not closed it. One that closes is hinted as the
+    /// `induction` line that goes straight to it.
+    pub(crate) fn prove_along_others(
+        &mut self,
+        f: FnId,
+        named: Option<&str>,
+        ob: &Obligation,
+        depth: usize,
+    ) -> Result<Proof, String> {
+        let (hyps, open_premises, fuel) =
+            (self.hyps.clone(), self.open_premises.clone(), self.fuel);
+        let before = self.hints.len();
+        let mut tried = Vec::new();
+        for g in self.others_to_follow(f, named, ob) {
+            match self.induction_along(g, named, ob, depth) {
+                Ok(proof) => {
+                    self.hints.truncate(before);
+                    self.open_premises = open_premises;
+                    if named.is_none()
+                        && let Proof::Induct { args, .. } = &proof
+                        && let Some(v) = self.varied_given(g, args, ob)
+                        && !self.recurses_on(f, &v, ob)
+                    {
+                        use crate::ir::proof_steps::sexpr::Names;
+                        let g_name = self.inputs.symbol_table.fn_name(g);
+                        self.advice.push(format!(
+                            "steps closed it by following the recursion of {g_name}; add `induction {v}` to go straight to it"
+                        ));
+                    }
+                    return Ok(proof);
+                }
+                Err(m) => tried.push(m),
+            }
+            self.hyps = hyps.clone();
+            self.fuel = fuel;
+        }
+        self.open_premises = open_premises;
+        Err(tried.join("; "))
+    }
+
+    /// The recursive functions other than `f` the claim passes a given
+    /// where they recurse (the given `named` names, if any), in the order
+    /// they stand, at most [`MAX_OTHER_FUNCTIONS`]: once the induction
+    /// `f` leads to has not closed, an induction along one of them may.
+    fn others_to_follow(&mut self, f: FnId, named: Option<&str>, ob: &Obligation) -> Vec<FnId> {
+        let mut ids: Vec<FnId> = Vec::new();
+        fn collect(t: &Term, out: &mut Vec<FnId>) {
+            if let ResolvedExpr::Call(ResolvedCallee::Fn(g), _) = &t.node
+                && !out.contains(g)
+            {
+                out.push(*g);
+            }
+            for c in term::children(t) {
+                collect(c, out);
+            }
+        }
+        collect(&ob.lhs, &mut ids);
+        collect(&ob.rhs, &mut ids);
+        ids.into_iter()
+            .filter(|g| *g != f)
+            .filter(|g| match named {
+                Some(n) => self.recurses_on(*g, n, ob),
+                None => ob.givens.iter().any(|n| self.recurses_on(*g, n, ob)),
+            })
+            .take(MAX_OTHER_FUNCTIONS)
+            .collect()
+    }
+
+    /// The given an induction along `g` at `args` follows.
+    fn varied_given(&mut self, g: FnId, args: &[Term], ob: &Obligation) -> Option<String> {
+        let ds = self.reachable_defs(g);
+        let Some(Ok(Some(rec))) = self.def(g).map(|d| induct::recursion(&d, &ds)) else {
+            return None;
+        };
+        induct::varied(args, rec.at, &ob.givens)
+            .ok()
+            .map(|(v, _)| v)
+    }
+
+    /// Induction along `f` or on a list given (see
+    /// [`Self::prove_by_induction`]).
+    fn prove_by_induction_of(
         &mut self,
         f: FnId,
         named: Option<&str>,
@@ -198,18 +302,218 @@ impl Env<'_> {
     /// claim at its tail as a hypothesis, each case closed by evaluation.
     /// The hypotheses that mention `v` are carried: each holds at the
     /// case's value of `v`, and the cell case takes the hypothesis where
-    /// evaluation proves every carried one at the tail.
+    /// evaluation proves every carried one at the tail. When the cell case
+    /// does not close so, and evaluating it shows the claim at the tail
+    /// with other values of other givens ([`Self::claims_at_tail`]), it is
+    /// tried again with those givens generalised: the induction proves the
+    /// claim for every value of them, so the cell case takes the claim at
+    /// the tail at each value found, the hypotheses that mention them
+    /// carried as well.
     fn prove_by_list_induction(
         &mut self,
         v: &str,
         ob: &Obligation,
         depth: usize,
     ) -> Result<Proof, String> {
+        let plain = self.list_induction_over(v, &[], &[], ob, depth);
+        let Err(why) = plain else {
+            return plain;
+        };
+        let (general, at) = self.claims_at_tail(v, ob);
+        if general.is_empty() {
+            return Err(why);
+        }
+        let (hyps, fuel) = (self.hyps.clone(), self.fuel);
+        match self.list_induction_over(v, &general, &at, ob, depth) {
+            Ok(proof) => Ok(proof),
+            Err(m) => {
+                self.hyps = hyps;
+                self.fuel = fuel;
+                Err(format!("{why}; for every {}: {m}", general.join(", ")))
+            }
+        }
+    }
+
+    /// The claim at the tail of a cell of `v` with other values of other
+    /// givens, where evaluating the cell case shows it: the givens those
+    /// values are for, and each set of values, at most
+    /// [`MAX_GENERAL_VALUES`]. A value mentions only the givens and the
+    /// cell's head and tail; evaluation splits on at most two Bools it
+    /// stops at, so a value the claim reaches under a comparison is found
+    /// too.
+    fn claims_at_tail(&mut self, v: &str, ob: &Obligation) -> (Vec<String>, Vec<Vec<Term>>) {
+        let others: Vec<String> = {
+            let mut fv = Vec::new();
+            term::free_vars(&ob.lhs, &mut fv);
+            term::free_vars(&ob.rhs, &mut fv);
+            ob.givens
+                .iter()
+                .filter(|g| *g != v && fv.contains(g))
+                .cloned()
+                .collect()
+        };
+        if others.is_empty() {
+            return (Vec::new(), Vec::new());
+        }
+        let mut taken = ob.givens.clone();
+        term::free_vars(&ob.lhs, &mut taken);
+        term::free_vars(&ob.rhs, &mut taken);
+        let h = fresh(&format!("{v}Head"), &taken);
+        taken.push(h.clone());
+        let t = fresh(&format!("{v}Tail"), &taken);
+        let cell = term::builtin("List.prepend", vec![term::var(&h), term::var(&t)], None);
+        let at_cell = [(v.to_string(), cell)];
+        let at_tail = [(v.to_string(), term::var(&t))];
+        let (Ok(l), Ok(r), Ok(pl), Ok(pr)) = (
+            term::subst(&ob.lhs, &at_cell),
+            term::subst(&ob.rhs, &at_cell),
+            term::subst(&ob.lhs, &at_tail),
+            term::subst(&ob.rhs, &at_tail),
+        ) else {
+            return (Vec::new(), Vec::new());
+        };
+        let (hyps, fuel, dry) = (self.hyps.clone(), self.fuel, self.ran_dry);
+        let mut forms = Vec::new();
+        self.hyps.retain(|(_, e)| {
+            let mut fv = Vec::new();
+            term::free_vars(&e.lhs, &mut fv);
+            term::free_vars(&e.rhs, &mut fv);
+            !fv.iter().any(|n| n == v)
+        });
+        for side in [&l, &r] {
+            self.forms_under_splits(side, 2, &mut forms);
+        }
+        self.hyps = hyps;
+        self.fuel = fuel;
+        self.ran_dry = dry;
+        let mut scope: Vec<String> = ob.givens.clone();
+        scope.push(h);
+        scope.push(t.clone());
+        let mut found: Vec<Vec<(String, Term)>> = Vec::new();
+        fn parts<'t>(t: &'t Term, out: &mut Vec<&'t Term>) {
+            out.push(t);
+            for c in term::children(t) {
+                parts(c, out);
+            }
+        }
+        // A side of the claim the tail stands in: a bare given would match
+        // anything.
+        let pats: Vec<&Term> = [&pl, &pr]
+            .into_iter()
+            .filter(|p| {
+                let mut fv = Vec::new();
+                term::free_vars(p, &mut fv);
+                fv.contains(&t) && !matches!(&p.node, ResolvedExpr::Ident(_))
+            })
+            .collect();
+        // A value of the given's type, with no `match` in it.
+        let fits = |g: &str, x: &Term| {
+            let typed = match (ob.types.iter().find(|(n, _)| n == g), x.ty()) {
+                (Some((_, want)), Some(have)) => want == have,
+                (_, None) => term::int_value(x).is_none() || ob.ints.iter().any(|n| n == g),
+                _ => true,
+            };
+            typed && !holds_match(x)
+        };
+        for form in &forms {
+            let mut all = Vec::new();
+            parts(form, &mut all);
+            for sub in all {
+                for pat in &pats {
+                    let mut m = Vec::new();
+                    if !super::rewrite::matches(pat, sub, &others, &mut m) {
+                        continue;
+                    }
+                    let mut fv = Vec::new();
+                    for (_, x) in &m {
+                        term::free_vars(x, &mut fv);
+                    }
+                    let own = m
+                        .iter()
+                        .all(|(g, x)| matches!(&x.node, ResolvedExpr::Ident(n) if n == g));
+                    if own
+                        || fv.iter().any(|n| !scope.contains(n))
+                        || !m.iter().all(|(g, x)| fits(g, x))
+                        || found.contains(&m)
+                    {
+                        continue;
+                    }
+                    found.push(m);
+                }
+            }
+        }
+        found.truncate(MAX_GENERAL_VALUES);
+        let general: Vec<String> = others
+            .into_iter()
+            .filter(|g| {
+                found.iter().any(|m| {
+                    m.iter().any(|(n, x)| {
+                        n == g && !matches!(&x.node, ResolvedExpr::Ident(k) if k == g)
+                    })
+                })
+            })
+            .collect();
+        let at = found
+            .iter()
+            .map(|m| {
+                general
+                    .iter()
+                    .map(|g| {
+                        m.iter()
+                            .find(|(n, _)| n == g)
+                            .map_or_else(|| term::var(g), |(_, x)| canon(x))
+                    })
+                    .collect()
+            })
+            .collect();
+        (general, at)
+    }
+
+    /// What `t` evaluates to under the hypotheses in scope, and, where it
+    /// stops at an undecided Bool, what it evaluates to under each value of
+    /// it, at most `splits` deep.
+    fn forms_under_splits(&mut self, t: &Term, splits: usize, out: &mut Vec<Term>) {
+        let Ok(ev) = self.whnf(t) else {
+            return;
+        };
+        let blocked = ev.blocked.clone();
+        if let Ok(chain) = self.normalize_below(ev.chain, 8) {
+            out.push(canon(chain.cur()));
+        }
+        let Some(g) = blocked.map(|g| canon(&g)) else {
+            return;
+        };
+        if splits == 0 || term::bool_value(&g).is_some() || self.hyp_for(&g).is_some() {
+            return;
+        }
+        for b in [true, false] {
+            let name = self.fresh_hyp();
+            self.hyps
+                .push((name, Eqn::new(g.clone(), term::boolean(b))));
+            self.forms_under_splits(t, splits - 1, out);
+            self.hyps.pop();
+        }
+    }
+
+    /// Induction on the list given `v` for every value of the givens in
+    /// `general`, the cell case under the claim at the tail at those
+    /// givens as they stand and at each set of values in `at`.
+    fn list_induction_over(
+        &mut self,
+        v: &str,
+        general: &[String],
+        at: &[Vec<Term>],
+        ob: &Obligation,
+        depth: usize,
+    ) -> Result<Proof, String> {
+        let varying: Vec<&str> = std::iter::once(v)
+            .chain(general.iter().map(String::as_str))
+            .collect();
         let mentions_v = |e: &Eqn| {
             let mut fv = Vec::new();
             term::free_vars(&e.lhs, &mut fv);
             term::free_vars(&e.rhs, &mut fv);
-            fv.iter().any(|n| n == v)
+            fv.iter().any(|n| varying.contains(&n.as_str()))
         };
         let mut taken = ob.givens.clone();
         term::free_vars(&ob.lhs, &mut taken);
@@ -234,53 +538,69 @@ impl Env<'_> {
         let h = fresh(&format!("{v}Head"), &taken);
         taken.push(h.clone());
         let t = fresh(&format!("{v}Tail"), &taken);
-        let at_eqn = |e: &Eqn, x: &Term| -> Result<Eqn, String> {
-            let m = [(v.to_string(), x.clone())];
-            Ok(Eqn::new(term::subst(&e.lhs, &m)?, term::subst(&e.rhs, &m)?))
+        let at_eqn = |e: &Eqn, m: &[(String, Term)]| -> Result<Eqn, String> {
+            Ok(Eqn::new(term::subst(&e.lhs, m)?, term::subst(&e.rhs, m)?))
         };
         let claim = Eqn::new(ob.lhs.clone(), ob.rhs.clone());
         let in_case = |x: &Term| -> Result<Vec<(String, Eqn)>, String> {
             let mut hs = kept.clone();
             for (n, e) in &carried {
-                hs.push((n.clone(), at_eqn(e, x)?));
+                hs.push((n.clone(), at_eqn(e, &[(v.to_string(), x.clone())])?));
             }
             Ok(hs)
         };
         let nil_term = canon(&crate::ast::Spanned::bare(ResolvedExpr::List(Vec::new())));
         let tail = term::var(&t);
         let cell = term::builtin("List.prepend", vec![term::var(&h), tail.clone()], None);
+        // The claim at the tail at the givens as they stand, then at each
+        // set of values found.
+        let own: Vec<Term> = general.iter().map(|g| term::var(g)).collect();
+        let values: Vec<&Vec<Term>> = std::iter::once(&own).chain(at).collect();
         let saved = self.hyps.clone();
         let result = (|| -> Result<(Proof, Vec<IhAt>, Proof), String> {
-            let nil_goal = at_eqn(&claim, &nil_term)?;
+            let nil_goal = at_eqn(&claim, &[(v.to_string(), nil_term.clone())])?;
             self.hyps = in_case(&nil_term)?;
             let nil = self.prove_by_evaluation(&nil_goal.lhs, &nil_goal.rhs, depth)?;
-            let ih_eq = at_eqn(&claim, &tail)?;
             self.hyps = in_case(&cell)?;
-            if self.rewrites_forever(&ih_eq) {
-                return Err("the hypothesis would rewrite forever".into());
-            }
-            // The hypothesis is taken where every carried one is proved at
-            // the tail; the case may do without it.
-            let mut proofs = Vec::new();
-            for (_, c) in &carried {
-                let at = at_eqn(c, &tail)?;
-                match self.prove_by_evaluation(&at.lhs, &at.rhs, depth) {
-                    Ok(p) => proofs.push(p),
-                    Err(_) => break,
+            let scope = self.hyps.clone();
+            // Each hypothesis is taken where every carried one is proved
+            // there; the case may do without it.
+            let mut ihs = Vec::new();
+            let mut stated = Vec::new();
+            for xs in values {
+                let mut m = vec![(v.to_string(), tail.clone())];
+                m.extend(general.iter().cloned().zip(xs.iter().cloned()));
+                let ih_eq = at_eqn(&claim, &m)?;
+                self.hyps = scope.clone();
+                if self.rewrites_forever(&ih_eq) {
+                    continue;
+                }
+                let mut proofs = Vec::new();
+                for (_, c) in &carried {
+                    let at = at_eqn(c, &m)?;
+                    match self.prove_by_evaluation(&at.lhs, &at.rhs, depth) {
+                        Ok(p) => proofs.push(p),
+                        Err(_) => break,
+                    }
+                }
+                if proofs.len() == carried.len() {
+                    self.next_ih += 1;
+                    let ih = format!("ih{}", self.next_ih);
+                    stated.push((ih.clone(), ih_eq));
+                    ihs.push(IhAt {
+                        name: ih,
+                        at: if general.is_empty() {
+                            Vec::new()
+                        } else {
+                            xs.clone()
+                        },
+                        carry: proofs,
+                    });
                 }
             }
-            let mut ihs = Vec::new();
-            if proofs.len() == carried.len() {
-                self.next_ih += 1;
-                let ih = format!("ih{}", self.next_ih);
-                self.hyps.push((ih.clone(), ih_eq));
-                ihs.push(IhAt {
-                    name: ih,
-                    at: Vec::new(),
-                    carry: proofs,
-                });
-            }
-            let goal = at_eqn(&claim, &cell)?;
+            self.hyps = scope;
+            self.hyps.extend(stated);
+            let goal = at_eqn(&claim, &[(v.to_string(), cell.clone())])?;
             let cons = self.prove_by_evaluation(&goal.lhs, &goal.rhs, depth)?;
             Ok((nil, ihs, cons))
         })();
@@ -294,7 +614,7 @@ impl Env<'_> {
             nil: Box::new(nil),
             head: h,
             tail: t,
-            general: Vec::new(),
+            general: general.to_vec(),
             ihs,
             cons: Box::new(cons),
         })
@@ -646,6 +966,11 @@ impl Env<'_> {
         self.open_premises = open_premises;
         None
     }
+}
+
+/// Whether `t` holds a `match`.
+fn holds_match(t: &Term) -> bool {
+    matches!(t.node, ResolvedExpr::Match { .. }) || term::children(t).into_iter().any(holds_match)
 }
 
 /// Whether `part` occurs in `t`.
