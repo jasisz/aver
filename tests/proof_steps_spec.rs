@@ -2409,6 +2409,153 @@ fn lean_closes_divisions_inside_a_term_by_their_steps() {
     let _ = fs::remove_dir_all(out);
 }
 
+const PRODUCT_LAWS: [&str; 3] = [
+    "area.nonnegative",
+    "bothPositive.positive",
+    "scaledBelow.nonnegativeScale",
+];
+
+/// Comparisons about products settled by linear arithmetic once the
+/// product of two nonnegative comparisons in scope is read as nonnegative
+/// (`int.mul_nonneg`): both kernels accept the steps and refuse a factor
+/// that is not shown nonnegative, a product read with its factors swapped
+/// for ones the comparisons do not give, and a product read as strictly
+/// positive. Laws that hold on their samples only (one factor of unknown
+/// sign, factors of opposite signs, a product of nonnegatives read as
+/// positive) do not close.
+#[test]
+fn both_kernels_read_products_of_nonnegatives_and_refuse_mutations() {
+    let out = scratch("products");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("products.av", &out).into_iter().collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), PRODUCT_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let scaled = read("scaledBelow.nonnegativeScale");
+    let positive = read("bothPositive.positive");
+    let rule = "(rule int.mul_nonneg ((a (op - (v b) (v a))) (b (v c)))";
+    assert!(scaled.contains(rule), "{scaled}");
+    let factor = "(linear (op <= (i 0) (op - (v b) (v a))) true (when1) (1 1))";
+    assert!(scaled.contains(factor), "{scaled}");
+    let product = "(have h_steps1 (op <= (i 0) (op * (op - (v b) (v a)) (v c)))";
+    assert!(scaled.contains(product), "{scaled}");
+    let mutants = [
+        // A factor the comparison in scope does not make nonnegative.
+        (
+            &scaled,
+            scaled.replacen(
+                factor,
+                "(linear (op <= (i 0) (op - (v a) (v b))) true (when1) (1 1))",
+                1,
+            ),
+        ),
+        // The product of a negative factor: the rule's premise is not the
+        // comparison its proof ends at.
+        (
+            &scaled,
+            scaled
+                .replacen(
+                    rule,
+                    "(rule int.mul_nonneg ((a (op - (v a) (v b))) (b (v c)))",
+                    1,
+                )
+                .replacen(
+                    product,
+                    "(have h_steps1 (op <= (i 0) (op * (op - (v a) (v b)) (v c)))",
+                    1,
+                ),
+        ),
+        // A product of nonnegatives read as positive.
+        (
+            &scaled,
+            scaled.replacen(
+                product,
+                "(have h_steps1 (op < (i 0) (op * (op - (v b) (v a)) (v c)))",
+                1,
+            ),
+        ),
+        (
+            &positive,
+            positive.replacen("(op <= (i 0) (op * ", "(op < (i 0) (op * ", 1),
+        ),
+    ];
+    for (i, (source, mutant)) in mutants.iter().enumerate() {
+        assert_ne!(mutant, *source, "mutant {i} changed nothing");
+        let verdict = aver::proof_kernel::verdict(mutant);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "mutant {i}: {verdict:?}\n{mutant}"
+        );
+        let path = out.join(format!("mutant{i}.steps"));
+        fs::write(&path, mutant).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(!result.status.success(), "{}", format_output(&result));
+    }
+    let refused = scratch("products-refused");
+    assert!(export_steps("products_refused.av", &refused).is_empty());
+    let _ = fs::remove_dir_all(out);
+    let _ = fs::remove_dir_all(refused);
+}
+
+/// Lean closes the same laws by their steps, the product by
+/// `AverSteps.mul_nonneg`, and refuses a factor weakened past what its
+/// comparison gives and a product of nonnegatives read as positive.
+#[test]
+fn lean_closes_products_by_their_steps_and_refuses_mutated_ones() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("products-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "products.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "0",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let lean = fs::read_to_string(out.join("Products.lean")).unwrap();
+    let law = "bothPositive.positive";
+    assert!(
+        !lean_refuses(&out, "Products.lean", &lean, law),
+        "the emitted step term must close the law"
+    );
+    let line = exact_line(&lean, "bothPositive_law_positive").to_string();
+    assert!(
+        line.contains("AverSteps.mul_nonneg ((a - 1)) ((b - 1))"),
+        "{line}"
+    );
+    let mutants = [
+        ("a factor weakened", line.replace("(a - 1)", "(a - 2)")),
+        (
+            "a product read as positive",
+            line.replace(
+                "(0 : Int) <= ((a - 1) * (b - 1))",
+                "(0 : Int) < ((a - 1) * (b - 1))",
+            ),
+        ),
+    ];
+    for (kind, mutated) in mutants {
+        assert_ne!(mutated, line, "{kind}: changed nothing");
+        let text = lean.replacen(&line, &mutated, 1);
+        assert!(
+            lean_refuses(&out, "Products.lean", &text, law),
+            "{kind}: Lean must refuse the mutated step term"
+        );
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
 const DROPPING_LAWS: [&str; 4] = [
     "pairsLeft.cellStep",
     "pairsLeft.nonNegative",

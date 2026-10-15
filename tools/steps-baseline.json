@@ -112,9 +112,7 @@
  "examples/formal/int_abs_laws.av": {
   "steps": [
    "magnitude.idempotent",
-   "magnitude.nonNegative"
-  ],
-  "tactic": [
+   "magnitude.nonNegative",
    "scaledMagnitude.multiplicative"
   ]
  },
@@ -360,14 +358,14 @@
  },
  "projects/k5_fdiv/domain/estimate.av": {
   "steps": [
-   "nrNewErrNum.nrErrorSquares"
-  ],
-  "tactic": [
    "mulLeMonoRight.guarded",
    "mulLeTrans.guarded",
    "mulNonneg.guarded",
+   "nrNewErrNum.nrErrorSquares",
+   "sqMono.guarded"
+  ],
+  "tactic": [
    "nrContraction.guarded",
-   "sqMono.guarded",
    "sqNonneg.universal",
    "tripleNonneg.guarded"
   ]
@@ -586,11 +584,11 @@
  "projects/k5_fdiv/domain/remainder.av": {
   "steps": [
    "awayDigitOvershoot.guarded",
+   "oppositeSignSumBounded.guarded",
    "remainderBound_8_2_3.lemma_8_2_3"
   ],
   "tactic": [
    "digitSeparation_8_2_1.firstImplication",
-   "oppositeSignSumBounded.guarded",
    "reciprocalMagnitudeBound_8_2_4.reciprocalMagnitudeComposition",
    "signsDifferent_8_2_2.branchNonpositive",
    "signsDifferent_8_2_2.branchPositive"
@@ -632,6 +630,7 @@
  },
  "projects/k5_fdiv/domain/roundscale.av": {
   "obligations": [
+   "cancelProduct.positiveFactor.because1",
    "ceilingFromWindow.euclideanWindow.implication",
    "remainderQuotient.smallRemainder.implication",
    "scaledCeiling.positiveScale.because1",

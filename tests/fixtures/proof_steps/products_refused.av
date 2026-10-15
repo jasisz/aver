@@ -1,0 +1,34 @@
+module ProductsRefused
+    intent =
+        "Laws about the sign of a product that hold on their samples but not for every Int: none may"
+        "close by steps. One factor may be negative, or the product of two nonnegatives may be zero."
+    exposes [area, positiveArea]
+    effects []
+
+fn area(a: Int, b: Int) -> Int
+    ? "a times b."
+    a * b
+
+verify area law oneFactorKnown
+    given a: Int = [0, 1, 4]
+    given b: Int = [0, 2, 7]
+    when a >= 0
+    area(a, b) >= 0 => true
+
+verify area law oppositeSigns
+    given a: Int = [0, -1]
+    given b: Int = [0, 2]
+    when a <= 0
+    when b >= 0
+    area(a, b) >= 0 => true
+
+fn positiveArea(a: Int, b: Int) -> Bool
+    ? "Whether a times b is positive."
+    a * b > 0
+
+verify positiveArea law fromNonnegative
+    given a: Int = [1, 3]
+    given b: Int = [1, 5]
+    when a >= 0
+    when b >= 0
+    positiveArea(a, b) => true

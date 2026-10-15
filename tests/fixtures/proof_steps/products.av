@@ -1,0 +1,41 @@
+module Products
+    intent =
+        "Comparisons about products of two Int terms that linear arithmetic settles once a product"
+        "of two nonnegative comparisons in scope is read as nonnegative: the sign of a product,"
+        "multiplying both sides of an order, and a strict order multiplied out."
+    exposes [area, scaledBelow, bothPositive]
+    effects []
+
+fn area(a: Int, b: Int) -> Int
+    ? "a times b."
+    a * b
+
+verify area law nonnegative
+    given a: Int = [0, 1, 4]
+    given b: Int = [0, 2, 7]
+    when a >= 0
+    when b >= 0
+    area(a, b) >= 0 => true
+
+fn scaledBelow(a: Int, b: Int, c: Int) -> Bool
+    ? "Whether a times c is at most b times c."
+    a * c <= b * c
+
+verify scaledBelow law nonnegativeScale
+    given a: Int = [-2, 0, 1]
+    given b: Int = [0, 2, 3]
+    given c: Int = [0, 1, 4]
+    when a <= b
+    when 0 <= c
+    scaledBelow(a, b, c) => true
+
+fn bothPositive(a: Int, b: Int) -> Bool
+    ? "Whether a times b is positive."
+    a * b > 0
+
+verify bothPositive law positive
+    given a: Int = [1, 3]
+    given b: Int = [1, 5]
+    when a > 0
+    when b > 0
+    bothPositive(a, b) => true

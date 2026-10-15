@@ -60,7 +60,10 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
-    timeout-minutes: 30
+    # Shard 1 of a pull request also checks under Lean every law the steps
+    # baseline gains; for laws in a large project that takes as long as the
+    # tests themselves.
+    timeout-minutes: ${{ (matrix.shard == 1 && github.event_name == 'pull_request') && 50 || 30 }}
     env:
       # Lean is installed on these runners, so a Lean-backed test that finds
       # no `lake` or `lean` fails instead of skipping (tests/support/lean_required.rs).

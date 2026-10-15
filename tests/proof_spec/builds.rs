@@ -105,14 +105,16 @@ fn proof_export_failsoft_sos_probe_b2_degrades_to_sorry_when_lake_is_available()
     // The divergence source was the anonymous `_ ∧ _` conjunction split, now
     // narrowed to the named `h_when` guard, so the `mul_le_mul` arm no longer
     // feeds spurious metavariable products; the goal falls through to a counted
-    // `sorry` instead of aborting `lake build`. NOTE: the whnf-timeout class is
+    // `sorry` instead of aborting `lake build`; both laws now close by proof
+    // steps (the product of the two premises, `int.mul_nonneg`), so the
+    // budget is zero. NOTE: the whnf-timeout class is
     // NOT catchable at tactic level (a tactic-level `maxHeartbeats` cap is
     // inert — see prelude.rs); this test passes because the divergence source
     // is gone, not because the arm is bounded.
     assert_proof_builds_with_sorry_budget(
         "tests/fixtures/failsoft_sos_probe_b2.av",
         "aver-proof-failsoft-sos-b2",
-        1,
+        0,
     );
 }
 

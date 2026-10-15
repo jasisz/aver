@@ -47,6 +47,8 @@ pub enum WallRule {
     EqOfLeGe,
     EqFalseOfLt,
     EqFalseOfGt,
+    // The product of two nonnegative Ints is nonnegative.
+    MulNonneg,
     // A true Int equality lets one side stand for the other.
     EqOfBeq,
     // Equality (not on a value that may hold a Float) is reflexive.
@@ -144,7 +146,7 @@ pub enum WallRule {
 }
 
 impl WallRule {
-    pub const ALL: [WallRule; 91] = [
+    pub const ALL: [WallRule; 92] = [
         WallRule::AndTrueL,
         WallRule::AndFalseL,
         WallRule::AndTrueR,
@@ -172,6 +174,7 @@ impl WallRule {
         WallRule::EqOfLeGe,
         WallRule::EqFalseOfLt,
         WallRule::EqFalseOfGt,
+        WallRule::MulNonneg,
         WallRule::EqOfBeq,
         WallRule::BeqRefl,
         WallRule::BeqSymm,
@@ -266,6 +269,7 @@ impl WallRule {
             WallRule::NeOfNotEq => "int.ne.of_not_eq",
             WallRule::NeFalseOfEq => "int.ne.false_of_eq",
             WallRule::EqOfLeGe => "int.eq.of_le_ge",
+            WallRule::MulNonneg => "int.mul_nonneg",
             WallRule::EqFalseOfLt => "int.eq.false_of_lt",
             WallRule::EqFalseOfGt => "int.eq.false_of_gt",
             WallRule::EqOfBeq => "int.eq.of_beq",
@@ -508,6 +512,13 @@ impl WallRule {
             ),
             WallRule::EqFalseOfLt => compl(BinOp::Lt, true, BinOp::Eq, false),
             WallRule::EqFalseOfGt => compl(BinOp::Gt, true, BinOp::Eq, false),
+            WallRule::MulNonneg => (
+                vec![
+                    is(cmp(BinOp::Lte, i(0), a()), true),
+                    is(cmp(BinOp::Lte, i(0), b()), true),
+                ],
+                is(cmp(BinOp::Lte, i(0), binop(BinOp::Mul, a(), b())), true),
+            ),
             WallRule::EqOfBeq => (vec![is(cmp(BinOp::Eq, a(), b()), true)], Eqn::new(a(), b())),
             WallRule::BeqRefl => (vec![], is(cmp(BinOp::Eq, a(), a()), true)),
             WallRule::BeqSymm => (
