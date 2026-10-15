@@ -1,0 +1,35 @@
+module LemmaHint
+    intent =
+        "Laws the steps leave open for want of a lemma about `plus`. One is hinted the two lemmas"
+        "they stop at, which close it once added. One cites an open law, and one is false; neither"
+        "is hinted anything."
+    exposes [plus]
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn plus(x: Nat, y: Nat) -> Nat
+    ? "Peano addition, recursing on the first argument."
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(plus(z, y))
+
+verify plus
+    plus(Nat.S(Nat.Z), Nat.Z) => Nat.S(Nat.Z)
+
+verify plus law commutes
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    plus(x, y) => plus(y, x)
+
+verify plus law commutesBack
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    using [plus.commutes]
+    plus(plus(x, y), Nat.Z) => plus(y, x)
+
+verify plus law overshoots
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    plus(Nat.S(x), Nat.S(Nat.Z)) => Nat.S(Nat.S(Nat.S(x)))

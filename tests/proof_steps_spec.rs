@@ -6092,6 +6092,89 @@ fn a_because_line_the_law_closes_without_is_hinted_away() {
     assert_eq!(summary["closed_by"]["total.ofJoined"], "steps", "{summary}");
 }
 
+/// A law the steps leave open for want of two lemmas about `plus` is hinted
+/// both, stated from where the steps stop; pasted as the hint writes them,
+/// the lemmas and the law close by steps. A law citing an open law and a
+/// false law, whose only candidate fails on samples, get no hint.
+#[test]
+fn a_missing_lemma_stated_where_the_steps_stop_is_hinted() {
+    let out = scratch("lemma-hint");
+    let (result, summary) = aver_backend_json("lemma_hint.av", &out, None);
+    let _ = fs::remove_dir_all(&out);
+    for law in ["plus.commutes", "plus.commutesBack", "plus.overshoots"] {
+        assert_eq!(
+            summary["closed_by"][law],
+            "open",
+            "{law}: {}",
+            format_output(&result)
+        );
+    }
+    let hints = summary["steps_hints"].as_object().expect("hints");
+    assert_eq!(
+        hints.keys().collect::<Vec<_>>(),
+        ["plus.commutes"],
+        "{summary}"
+    );
+    let hint = hints["plus.commutes"][0].as_str().unwrap();
+    assert!(
+        hint.contains("        plus(y, Nat.Z) => y\n")
+            && hint.contains("        plus(y, Nat.S(z)) => Nat.S(plus(y, z))\n"),
+        "{hint}"
+    );
+    // The hint, pasted: the laws before the law, the line into it.
+    let (laws, line) = hint
+        .split_once(":\n\n")
+        .and_then(|(_, rest)| rest.split_once("    and this line to `plus.commutes`:\n\n"))
+        .expect("the hint's parts");
+    let laws: String = laws
+        .lines()
+        .map(|l| format!("{}\n", l.strip_prefix("    ").unwrap_or(l)))
+        .collect();
+    let line = format!("    {}\n", line.trim());
+    let source = fs::read_to_string(repo_root().join(FIXTURES).join("lemma_hint.av")).unwrap();
+    let law = "verify plus law commutes\n";
+    let claim = "    plus(x, y) => plus(y, x)\n";
+    assert!(source.contains(law) && source.contains(claim));
+    let pasted = source.replacen(law, &format!("{laws}{law}"), 1).replacen(
+        claim,
+        &format!("{line}{claim}"),
+        1,
+    );
+    let dir = scratch("lemma-hint-applied");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("lemma_hint.av"), &pasted).unwrap();
+    let applied_out = dir.join("out");
+    let applied = aver_in(
+        &dir,
+        &[
+            "proof",
+            "lemma_hint.av",
+            "--backend",
+            "aver",
+            "-o",
+            applied_out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "99",
+        ],
+    );
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&applied.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap_or_else(|| panic!("{}", format_output(&applied))),
+    )
+    .unwrap();
+    let _ = fs::remove_dir_all(&dir);
+    for law in ["plus.commutesLemma", "plus.commutesLemma2", "plus.commutes"] {
+        assert_eq!(
+            summary["closed_by"][law], "steps",
+            "{law}: {pasted}\n{summary}"
+        );
+    }
+}
+
 /// The law of `cited_when_split.av` that closes only by a split on a line
 /// of a cited law's `when` that stays open where the law matches.
 const CITED_WHEN_SPLIT_LAW: &str = "smallSize.oneDigitRange";
