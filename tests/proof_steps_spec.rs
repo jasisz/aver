@@ -2233,6 +2233,93 @@ fn lean_closes_cited_orders_under_a_proved_when_by_their_steps() {
     let _ = fs::remove_dir_all(out);
 }
 
+/// Export a fixture to Lean with `--check-json` and return its summary, or
+/// `None` when `lake` is not available.
+fn lean_summary(fixture: &str, name: &str) -> Option<serde_json::Value> {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return None;
+    }
+    let out = scratch(name);
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            fixture,
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    let _ = fs::remove_dir_all(out);
+    Some(summary)
+}
+
+/// The Lean file a fixture's proof export writes for its module.
+fn exported_lean(fixture: &str, module: &str, name: &str) -> String {
+    let out = scratch(name);
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &["proof", fixture, "-o", out.to_str().unwrap()],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let lean = fs::read_to_string(out.join(format!("{module}.lean"))).unwrap();
+    let _ = fs::remove_dir_all(out);
+    lean
+}
+
+/// A law under a `when` with no `using` or `because` line that its steps
+/// close is a theorem a later law cites: the citing law has the fact, and
+/// Lean closes both by their steps.
+#[test]
+fn a_when_law_its_steps_close_is_cited_without_a_using_line() {
+    let lean = exported_lean("cited_bare_when.av", "CitedBareWhen", "cited-bare-when");
+    assert!(
+        lean.contains("have _fact0 := sign_law_positiveIsOne"),
+        "{lean}"
+    );
+    assert!(
+        !lean.contains("dependency has no available theorem"),
+        "{lean}"
+    );
+    let Some(summary) = lean_summary("cited_bare_when.av", "cited-bare-when-lean") else {
+        return;
+    };
+    for law in ["sign.positiveIsOne", "doubledSign.positiveIsTwo"] {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    assert_eq!(summary["sorries"], 0, "{summary}");
+}
+
+/// A rule over `[]` writes its `[]` with no type; in Lean it is the list
+/// it stands for, so the steps of a law about `List.take([], n)` and
+/// `List.drop([], n)` check.
+#[test]
+fn an_empty_list_a_rule_writes_keeps_its_element_type_in_lean() {
+    let lean = exported_lean("take_of_empty.av", "TakeOfEmpty", "take-of-empty");
+    assert!(!lean.contains("List Unit"), "{lean}");
+    let Some(summary) = lean_summary("take_of_empty.av", "take-of-empty-lean") else {
+        return;
+    };
+    for law in ["takenCount.ofEmpty", "droppedCount.ofEmpty"] {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    assert_eq!(
+        summary["steps_rejected"],
+        serde_json::json!([]),
+        "{summary}"
+    );
+}
+
 const HALVING_LAWS: [&str; 9] = [
     "digits.accumulatorAppends",
     "digits.exponentAbove",

@@ -1,0 +1,26 @@
+module TakeOfEmpty
+    intent = "Steps that rewrite inside a list built from nothing: the empty list keeps the element type of the list it stands for."
+    exposes [takenCount, droppedCount]
+    effects []
+
+fn takenCount(xs: List<Int>, n: Int) -> Int
+    ? "How many elements the first n of xs has."
+    List.len(List.take(xs, n))
+
+verify takenCount
+    takenCount([1, 2], 1) => 1
+
+verify takenCount law ofEmpty
+    given n: Int = [0, 1, 3]
+    takenCount([], n) => 0
+
+fn droppedCount(xs: List<Int>, n: Int) -> Int
+    ? "How many elements are left after dropping n of xs."
+    List.len(List.drop(xs, n))
+
+verify droppedCount
+    droppedCount([1, 2], 1) => 1
+
+verify droppedCount law ofEmpty
+    given n: Int = [0, 1, 3]
+    droppedCount([], n) => 0

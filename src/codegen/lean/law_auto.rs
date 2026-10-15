@@ -454,6 +454,16 @@ fn steps_intro(law: &VerifyLaw) -> Vec<String> {
     extend_intro_names_with_premises(law, &givens)
 }
 
+/// Whether the law has a step proof that renders in Lean: one the Aver
+/// kernel accepted, which leads the law's theorem.
+pub(in crate::codegen::lean) fn has_rendered_steps(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> bool {
+    rendered_steps(vb, law, ctx).is_some()
+}
+
 /// The law's step proof with `sorry` behind it and nothing else:
 /// `first | steps | (trace; sorry)`, or `None` when the law has no step proof
 /// that renders. What a law with a `by` line is proved with, and what the

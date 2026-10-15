@@ -20,6 +20,7 @@ mod prelude;
 mod proof_steps;
 pub(crate) mod recurrence;
 mod sample_literal;
+mod step_types;
 mod string_case;
 mod syntax;
 pub mod tactic_ir;

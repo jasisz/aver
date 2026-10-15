@@ -1,0 +1,32 @@
+module CitedBareWhen
+    intent = "A law under a `when` that its steps close with no `using` or `because` line is cited by a later law."
+    exposes [sign, doubledSign]
+    effects []
+
+fn sign(n: Int) -> Int
+    ? "One above zero, zero at or below it."
+    match n <= 0
+        true -> 0
+        false -> 1
+
+verify sign
+    sign(0) => 0
+    sign(4) => 1
+
+verify sign law positiveIsOne
+    given n: Int = [1, 2, 5]
+    when n >= 1
+    sign(n) => 1
+
+fn doubledSign(n: Int) -> Int
+    ? "The sign counted twice."
+    sign(n) + sign(n)
+
+verify doubledSign
+    doubledSign(3) => 2
+
+verify doubledSign law positiveIsTwo
+    given n: Int = [1, 2, 5]
+    when n >= 1
+    using [sign.positiveIsOne]
+    doubledSign(n) => 2
