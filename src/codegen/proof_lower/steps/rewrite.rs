@@ -64,7 +64,7 @@ pub(crate) fn matches(
         && vars.contains(n)
     {
         if let Some((_, bound)) = out.iter().find(|(k, _)| k == n) {
-            return canon(bound) == canon(t);
+            return term::canon_eq(bound, t);
         }
         out.push((n.clone(), canon(t)));
         return true;
@@ -154,7 +154,7 @@ impl Env<'_> {
                 && args.len() == 2
             {
                 for (i, rule) in [(0, WallRule::AndElimL), (1, WallRule::AndElimR)] {
-                    if canon(&args[i]) == t {
+                    if *term::canon_ref(&args[i]) == t {
                         return Some(Proof::Rule {
                             rule,
                             subst: vec![
@@ -178,7 +178,7 @@ impl Env<'_> {
             && let ResolvedExpr::BinOp(BinOp::Lte, z, e) = &args[0].node
             && term::int_value(z) == Some(0.into())
             && let ResolvedExpr::BinOp(BinOp::Lt, e2, n) = &args[1].node
-            && canon(e) == canon(e2)
+            && term::canon_eq(e, e2)
             && let Some(n) = term::int_value(n)
             && let Some(p) = self.range(e, &n, 0)
         {
@@ -475,7 +475,7 @@ impl Env<'_> {
                     true => {
                         let instance = canon(&term::subst(&law.lhs, &subst).ok()?);
                         let (bridge, cells) = super::eval::as_cells(&instance)?;
-                        if cells != canon(t) {
+                        if cells != *term::canon_ref(t) {
                             return None;
                         }
                         Some((instance, bridge))
@@ -788,7 +788,7 @@ pub(crate) fn pick_rewrite<'t>(results: impl Iterator<Item = &'t Term>) -> Optio
 
 /// Whether `part` occurs in `t`.
 fn holds_term(t: &Term, part: &Term) -> bool {
-    canon(t) == *part || term::children(t).into_iter().any(|c| holds_term(c, part))
+    *term::canon_ref(t) == *part || term::children(t).into_iter().any(|c| holds_term(c, part))
 }
 
 fn is_int_term(t: &Term) -> bool {

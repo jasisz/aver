@@ -2831,3 +2831,58 @@ fn a_wildcard_field_takes_its_place_among_the_binders() {
     assert_eq!(run(var("b")), Ok(()));
     assert!(run(var("a")).is_err(), "the wildcard's field");
 }
+
+/// A variable as the resolver leaves it: a slot, which `canon` reads as
+/// the name.
+fn slot(name: &str) -> super::Term {
+    Spanned::bare(ResolvedExpr::Resolved {
+        slot: 0,
+        name: name.into(),
+        last_use: false.into(),
+    })
+}
+
+#[test]
+fn reading_a_term_canonically_builds_nothing_where_it_is_canonical() {
+    let plain = term::binop(BinOp::Add, var("a"), var("b"));
+    let slotted = term::binop(BinOp::Add, slot("a"), var("b"));
+    assert!(term::is_canon(&plain));
+    assert!(!term::is_canon(&slotted));
+    assert!(matches!(
+        term::canon_ref(&plain),
+        std::borrow::Cow::Borrowed(_)
+    ));
+    assert_eq!(*term::canon_ref(&slotted), plain);
+    assert!(term::canon_eq(&plain, &slotted));
+    assert!(!term::canon_eq(
+        &plain,
+        &term::binop(BinOp::Add, var("b"), var("a"))
+    ));
+}
+
+#[test]
+fn exact_equality_reads_the_types_and_lines_structural_equality_ignores() {
+    let a = term::binop(BinOp::Add, var("a"), var("b"));
+    let int_a = var("a");
+    int_a.set_ty(crate::ast::Type::Int);
+    let typed = term::binop(BinOp::Add, int_a, var("b"));
+    assert_eq!(a, typed);
+    assert!(term::exact_eq(&a, &a.clone()));
+    assert!(!term::exact_eq(&a, &typed));
+    let mut moved = a.clone();
+    moved.line = 7;
+    assert!(!term::exact_eq(&a, &moved));
+}
+
+#[test]
+fn a_substitution_keeps_the_outermost_part_unless_it_is_a_variable() {
+    let sum = term::binop(BinOp::Add, var("a"), var("b"));
+    let product = term::binop(BinOp::Mul, var("a"), var("b"));
+    assert!(term::may_become(
+        &sum,
+        &term::binop(BinOp::Add, var("x"), var("y"))
+    ));
+    assert!(!term::may_become(&sum, &product));
+    assert!(term::may_become(&var("a"), &product));
+    assert!(!term::may_become(&sum, &var("a")));
+}

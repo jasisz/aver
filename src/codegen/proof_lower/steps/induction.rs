@@ -878,7 +878,7 @@ impl Env<'_> {
                         let Some(k) = case
                             .at
                             .iter()
-                            .position(|tau| canon(&tau[0].1) == canon(&call[j]))
+                            .position(|tau| term::canon_eq(&tau[0].1, &call[j]))
                         else {
                             continue;
                         };
@@ -988,7 +988,7 @@ fn holds_match(t: &Term) -> bool {
 
 /// Whether `part` occurs in `t`.
 fn holds_term(t: &Term, part: &Term) -> bool {
-    canon(t) == *part || term::children(t).into_iter().any(|c| holds_term(c, part))
+    *term::canon_ref(t) == *part || term::children(t).into_iter().any(|c| holds_term(c, part))
 }
 
 impl Env<'_> {

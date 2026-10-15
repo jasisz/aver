@@ -261,7 +261,7 @@ fn infer_types(env: &Env, t: &Term, expected: Option<Type>, out: &mut Vec<(Strin
 
 /// Every occurrence of `part` in `t` replaced by `with`.
 fn replace(t: &Term, part: &Term, with: &Term) -> Term {
-    if canon(t) == *part {
+    if *term::canon_ref(t) == *part {
         return with.clone();
     }
     term::map_children(t, &mut |c| Ok(replace(c, part, with))).expect("replace is total")
@@ -335,7 +335,7 @@ fn from_stop(stop: &Stop, out: &mut Vec<(Term, Term)>) {
         }
         let (xs, ys) = (term::children(&a), term::children(&b));
         let differing: Vec<usize> = (0..xs.len())
-            .filter(|k| canon(xs[*k]) != canon(ys[*k]))
+            .filter(|k| !term::canon_eq(xs[*k], ys[*k]))
             .collect();
         let [k] = differing.as_slice() else {
             break;
@@ -359,7 +359,7 @@ fn generalized(lhs: &Term, rhs: &Term, taken: &[String]) -> Vec<(Term, Term)> {
     let mut out = Vec::new();
     for p in parts {
         let p = canon(p);
-        if p == canon(lhs) || is_var(&p).is_some() || term::bool_value(&p).is_some() {
+        if p == *term::canon_ref(lhs) || is_var(&p).is_some() || term::bool_value(&p).is_some() {
             continue;
         }
         if seen.contains(&p) {
@@ -368,7 +368,7 @@ fn generalized(lhs: &Term, rhs: &Term, taken: &[String]) -> Vec<(Term, Term)> {
         seen.push(p.clone());
         let mut inside = Vec::new();
         subterms(rhs, &mut inside);
-        if !inside.iter().any(|q| canon(q) == p) {
+        if !inside.iter().any(|q| *term::canon_ref(q) == p) {
             continue;
         }
         let Some(ty) = p.ty().cloned() else {
@@ -400,7 +400,7 @@ fn fresh_name(base: &str, taken: &[String]) -> String {
 /// the names a step term gives a module's binding or a hole. The names the
 /// induction gave its cases (`x2_c0`) are written as a law would name them.
 fn candidate(env: &Env, lhs: &Term, rhs: &Term, avoid: &[String]) -> Option<Candidate> {
-    if !is_call(lhs) || canon(lhs) == canon(rhs) {
+    if !is_call(lhs) || term::canon_eq(lhs, rhs) {
         return None;
     }
     let size = |t: &Term| {

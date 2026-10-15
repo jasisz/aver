@@ -79,6 +79,27 @@ fn law_key(inputs: &ProofLowerInputs, t: &LawTheorem) -> String {
     }
 }
 
+/// Whether `text` is [`law_key`] of `t`, without writing the key out.
+fn is_law_key(inputs: &ProofLowerInputs, t: &LawTheorem, text: &str) -> bool {
+    let key = &inputs.symbol_table.fn_entry(t.fn_id).key;
+    match key.scope_str() {
+        Some(scope) => parts_eq(&[scope, ".", &key.name, ".", &t.law_name], text),
+        None => parts_eq(&[&key.name, ".", &t.law_name], text),
+    }
+}
+
+/// Whether the text `parts` written one after the other is `text`.
+fn parts_eq(parts: &[&str], text: &str) -> bool {
+    let mut rest = text;
+    for part in parts {
+        let Some(after) = rest.strip_prefix(part) else {
+            return false;
+        };
+        rest = after;
+    }
+    rest.is_empty()
+}
+
 fn law_ref(inputs: &ProofLowerInputs, ir: &ProofIR, t: &LawTheorem) -> Result<LawRef, String> {
     let (premise, refined) = assumed(inputs, ir, t)?;
     Ok(LawRef {
@@ -228,9 +249,9 @@ fn names_law(inputs: &ProofLowerInputs, t: &LawTheorem, c: &LawTheorem, name: &s
     let own = &inputs.symbol_table.fn_entry(t.fn_id).key.scope;
     let key = &inputs.symbol_table.fn_entry(c.fn_id).key;
     if key.scope == *own {
-        name == format!("{}.{}", key.name, c.law_name) || name == law_key(inputs, c)
+        parts_eq(&[&key.name, ".", &c.law_name], name) || is_law_key(inputs, c, name)
     } else {
-        key.scope.is_some() && name == law_key(inputs, c)
+        key.scope.is_some() && is_law_key(inputs, c, name)
     }
 }
 
@@ -277,7 +298,11 @@ fn citable_from(inputs: &ProofLowerInputs, ir: &ProofIR, t: &LawTheorem, c: &Law
         if seen.contains(&next) {
             continue;
         }
-        if let Some(d) = ir.law_theorems.iter().find(|d| law_key(inputs, d) == next) {
+        if let Some(d) = ir
+            .law_theorems
+            .iter()
+            .find(|d| is_law_key(inputs, d, &next))
+        {
             pending.extend(cited_keys(inputs, ir, d));
         }
         seen.push(next);
@@ -1431,7 +1456,7 @@ fn closed_by_steps(inputs: &ProofLowerInputs, laws: &[LawTheorem], key: &str) ->
         }
         let Some(script) = laws
             .iter()
-            .find(|c| law_key(inputs, c) == next)
+            .find(|c| is_law_key(inputs, c, &next))
             .and_then(|c| c.steps.as_ref())
         else {
             return false;
@@ -1477,7 +1502,7 @@ fn using_hint(
     let name = |key: &String| -> String {
         earlier
             .iter()
-            .find(|c| law_key(inputs, c) == *key)
+            .find(|c| is_law_key(inputs, c, key))
             .map(|c| (&inputs.symbol_table.fn_entry(c.fn_id).key, &c.law_name))
             .filter(|(k, _)| k.scope == *own)
             .map_or_else(|| key.clone(), |(k, law)| format!("{}.{law}", k.name))

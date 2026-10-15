@@ -133,6 +133,28 @@ impl Memo {
     }
 }
 
+/// A hash of the `Debug` text of `parts`, written one after the other, as
+/// hashing that text as one `String` gives (`write` of its bytes, then the
+/// `0xff` a `str` ends with), without building the text: the "seen before"
+/// sets of an attempt compare hypotheses this way.
+pub(crate) fn debug_hash(parts: &[&dyn std::fmt::Debug]) -> u64 {
+    use std::fmt::Write as _;
+    use std::hash::Hasher;
+    struct Feed(std::collections::hash_map::DefaultHasher);
+    impl std::fmt::Write for Feed {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+            self.0.write(s.as_bytes());
+            Ok(())
+        }
+    }
+    let mut feed = Feed(std::collections::hash_map::DefaultHasher::new());
+    for part in parts {
+        let _ = write!(feed, "{part:?}");
+    }
+    feed.0.write_u8(0xff);
+    feed.0.finish()
+}
+
 /// Everything an evaluation of `t` reads that can change within one
 /// obligation. `Debug` writes each part with its type and line, which
 /// structural equality of terms ignores.

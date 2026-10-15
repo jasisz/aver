@@ -76,11 +76,11 @@ pub fn poly(t: &Term, atoms: &mut Vec<Term>) -> Poly {
         }
         ResolvedExpr::Neg(a) if int_op => scale(poly(a, atoms), &BigInt::from(-1)),
         _ => {
-            let c = canon(t);
-            let i = match atoms.iter().position(|x| *x == c) {
+            let c = term::canon_ref(t);
+            let i = match atoms.iter().position(|x| *x == *c) {
                 Some(i) => i,
                 None => {
-                    atoms.push(c);
+                    atoms.push(canon(t));
                     atoms.len() - 1
                 }
             };
