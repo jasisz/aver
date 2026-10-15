@@ -1373,7 +1373,7 @@
   ]
  },
  "proof-corpus/tip/isaplanner/prop_51.av": {
-  "tactic": [
+  "steps": [
    "butlast.butlastAppendSingleton"
   ]
  },
