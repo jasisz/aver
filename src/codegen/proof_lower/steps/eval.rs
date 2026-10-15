@@ -3029,6 +3029,44 @@ impl Env<'_> {
                 settle_over_integers(&facts)
             }
         };
+        // Only where those leave a goal about a product of two terms open:
+        // the products of pairs of the comparisons (see [`nonlinear`]). A
+        // goal without one is not helped by them, wherever else products
+        // stand.
+        let settled = match settled {
+            Some(settled) => Some(settled),
+            None if super::nonlinear::has_product(&facts[..1]) => {
+                use super::nonlinear::Source;
+                let mut comparisons = Vec::new();
+                for (k, (n, e)) in known.iter().enumerate() {
+                    let source = if k < plain {
+                        Source::Hyp(n.clone())
+                    } else if k >= modded && extra[k - modded].2.is_none() {
+                        Source::Fact(extra[k - modded].1.clone())
+                    } else if k >= cited && k < modded {
+                        Source::Fact(remainders[k - cited].1.clone())
+                    } else {
+                        continue;
+                    };
+                    comparisons.push((e.clone(), source));
+                }
+                let products = super::nonlinear::products(&facts[0], &atoms, &comparisons);
+                if products.is_empty() {
+                    None
+                } else {
+                    for (f, p) in products {
+                        facts.push(linear::as_nonneg(&f, true, &mut atoms)?);
+                        known.push((
+                            format!("h_more{}", extra.len()),
+                            Eqn::new(f.clone(), term::boolean(true)),
+                        ));
+                        extra.push((f, p, None));
+                    }
+                    settle_rationally(&facts).or_else(|| settle_over_integers(&facts))
+                }
+            }
+            None => None,
+        };
         let (used, weights, rounded) = settled?;
         // Only the hypotheses the certificate uses are named.
         let mut hyps = Vec::new();

@@ -6,6 +6,7 @@ module Rules
         "any one type ?t for the list, map and vector shapes, and a type whose == is equality where a"
         "rule reads == at that type: the types Lean's statement of the same rule holds at."
         "The list rules are the constructor equations of the list builtins, with Aver's truncation of a count."
+        "A product of two nonnegative Ints is nonnegative: the one rule that multiplies two comparisons."
         "Int.min, Int.max and Int.abs are read by the comparison that picks their value; List.contains on [], on an element in front that is the one looked for and past one that is not."
         "The map rules read Map.get, Map.has and Map.len on the empty map and on Map.set(m, k, v)."
         "The vector rules read a vector as the list it holds, and Vector.get and Vector.len after a write or a literal-size Vector.new."
@@ -147,7 +148,7 @@ verify complement
     complement(">", false, "<=", true, [i("a"), i("b")]) => Option.Some(Schema(binders = [i("a"), i("b")], premises = [is(Term.TOp(">", v("a"), v("b")), false)], concl = is(Term.TOp("<=", v("a"), v("b")), true)))
 
 fn comparisonSchema(id: String) -> Option<Schema>
-    ? "The comparison complement rules on Int, and == as equality, as reflexive and as symmetric where the type's == is equality."
+    ? "The comparison complement rules on Int, and == as equality, as reflexive and as symmetric where the type's == is equality, and the product of two nonnegative Ints."
     ints = [i("a"), i("b")]
     match id
         "int.le.of_not_gt" -> complement(">", false, "<=", true, ints)
@@ -163,6 +164,7 @@ fn comparisonSchema(id: String) -> Option<Schema>
         "int.ne.of_not_eq" -> complement("==", false, "!=", true, ints)
         "int.ne.false_of_eq" -> complement("==", true, "!=", false, ints)
         "int.eq.of_le_ge" -> Option.Some(Schema(binders = ints, premises = [is(Term.TOp("<=", v("a"), v("b")), true), is(Term.TOp(">=", v("a"), v("b")), true)], concl = is(Term.TOp("==", v("a"), v("b")), true)))
+        "int.mul_nonneg" -> Option.Some(Schema(binders = ints, premises = [is(Term.TOp("<=", Term.TInt(0), v("a")), true), is(Term.TOp("<=", Term.TInt(0), v("b")), true)], concl = is(Term.TOp("<=", Term.TInt(0), Term.TOp("*", v("a"), v("b"))), true)))
         "int.eq.false_of_lt" -> complement("<", true, "==", false, ints)
         "int.eq.false_of_gt" -> complement(">", true, "==", false, ints)
         "int.eq.of_beq" -> Option.Some(Schema(binders = [same("a"), same("b")], premises = [is(Term.TOp("==", v("a"), v("b")), true)], concl = eq(v("a"), v("b"))))
@@ -172,6 +174,7 @@ fn comparisonSchema(id: String) -> Option<Schema>
 
 verify comparisonSchema
     comparisonSchema("nope") => Option.None
+    comparisonSchema("int.mul_nonneg") => Option.Some(Schema(binders = [i("a"), i("b")], premises = [is(Term.TOp("<=", Term.TInt(0), v("a")), true), is(Term.TOp("<=", Term.TInt(0), v("b")), true)], concl = is(Term.TOp("<=", Term.TInt(0), Term.TOp("*", v("a"), v("b"))), true)))
     comparisonSchema("int.eq.of_beq") => Option.Some(Schema(binders = [same("a"), same("b")], premises = [is(Term.TOp("==", v("a"), v("b")), true)], concl = eq(v("a"), v("b"))))
 
 fn ringSchema(id: String) -> Option<Schema>

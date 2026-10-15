@@ -52,6 +52,7 @@ mod hypotheses;
 mod induction;
 mod lemma;
 mod memo;
+mod nonlinear;
 mod rewrite;
 mod split;
 

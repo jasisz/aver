@@ -1,5 +1,5 @@
-//! The rules of the proof steps for `Int.min`, `Int.max`, `Int.abs` and
-//! `List.contains` against every place that runs those builtins: each rule
+//! The rules of the proof steps for `Int.min`, `Int.max`, `Int.abs`, the
+//! sign of a product (`int.mul_nonneg`) and `List.contains` against every place that runs those builtins: each rule
 //! is instantiated at sample values (negative, zero, equal and unequal
 //! arguments; the empty list, a list that holds the element in front, further
 //! back, twice, and not at all) and both sides are run on the VM, on wasm-gc
@@ -44,9 +44,15 @@ fn rules() -> Vec<WallRule> {
         .iter()
         .copied()
         .filter(|r| {
-            ["int.min.", "int.max.", "int.abs.", "list.contains."]
-                .iter()
-                .any(|p| r.id().starts_with(p))
+            [
+                "int.min.",
+                "int.max.",
+                "int.abs.",
+                "int.mul_nonneg",
+                "list.contains.",
+            ]
+            .iter()
+            .any(|p| r.id().starts_with(p))
         })
         .collect()
 }
@@ -90,7 +96,7 @@ fn aver(t: &Term) -> String {
 /// one sample.
 fn program() -> String {
     let mut src = String::from(
-        "module PickSamples\n    intent = \"Every sampled instance of the rules for Int.min, Int.max, Int.abs and List.contains.\"\n    exposes [ints, bools]\n    effects []\n\nfn ints(xs: List<Int>) -> List<Int>\n    ? \"Anchor for Int-valued instances.\"\n    xs\n\nfn bools(xs: List<Bool>) -> List<Bool>\n    ? \"Anchor for Bool-valued instances.\"\n    xs\n",
+        "module PickSamples\n    intent = \"Every sampled instance of the rules for Int.min, Int.max, Int.abs, the sign of a product and List.contains.\"\n    exposes [ints, bools]\n    effects []\n\nfn ints(xs: List<Int>) -> List<Int>\n    ? \"Anchor for Int-valued instances.\"\n    xs\n\nfn bools(xs: List<Bool>) -> List<Bool>\n    ? \"Anchor for Bool-valued instances.\"\n    xs\n",
     );
     for (n, rule) in rules().into_iter().enumerate() {
         let (premises, concl) = rule.schema();
@@ -112,7 +118,7 @@ fn program() -> String {
             "{}: too few samples satisfy the premise",
             rule.id()
         );
-        let anchor = if rule.id().starts_with("list.") {
+        let anchor = if rule.id().starts_with("list.") || term::bool_value(&concl.rhs).is_some() {
             "bools"
         } else {
             "ints"
@@ -214,7 +220,7 @@ fn aver_in(dir: &Path, args: &[&str]) -> Output {
 
 #[test]
 fn every_rule_is_sampled() {
-    assert_eq!(rules().len(), 9);
+    assert_eq!(rules().len(), 10);
     let src = program();
     for rule in rules() {
         assert!(src.contains(&format!("// {}\n", rule.id())), "{src}");

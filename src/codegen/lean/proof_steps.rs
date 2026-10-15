@@ -78,6 +78,9 @@ theorem ne_false_of_eq (a b : Int) (h : (a == b) = true) : (a != b) = false := b
 theorem eq_of_le_ge (a b : Int) (h1 : decide (a <= b) = true) (h2 : decide (a >= b) = true) :
     (a == b) = true :=
   beq_iff_eq.mpr (Int.le_antisymm (of_decide_eq_true h1) (of_decide_eq_true h2))
+theorem mul_nonneg (a b : Int) (h1 : decide (0 <= a) = true) (h2 : decide (0 <= b) = true) :
+    decide (0 <= a * b) = true :=
+  decide_eq_true (Int.mul_nonneg (of_decide_eq_true h1) (of_decide_eq_true h2))
 theorem eq_false_of_lt (a b : Int) (h : decide (a < b) = true) : (a == b) = false :=
   beq_eq_false_iff_ne.mpr (Int.ne_of_lt (of_decide_eq_true h))
 theorem eq_false_of_gt (a b : Int) (h : decide (a > b) = true) : (a == b) = false :=
@@ -384,6 +387,7 @@ fn lemma(rule: WallRule) -> &'static str {
         WallRule::NeOfNotEq => "AverSteps.ne_of_not_eq",
         WallRule::NeFalseOfEq => "AverSteps.ne_false_of_eq",
         WallRule::EqOfLeGe => "AverSteps.eq_of_le_ge",
+        WallRule::MulNonneg => "AverSteps.mul_nonneg",
         WallRule::EqFalseOfLt => "AverSteps.eq_false_of_lt",
         WallRule::EqFalseOfGt => "AverSteps.eq_false_of_gt",
         WallRule::EqOfBeq => "AverSteps.eq_of_beq",
