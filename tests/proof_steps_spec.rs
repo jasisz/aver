@@ -4587,6 +4587,134 @@ fn lean_states_each_contains_fact_once_for_every_type_with_a_beq() {
     let _ = fs::remove_dir_all(out);
 }
 
+const NONEMPTY_LAWS: [&str; 9] = [
+    "drained.aCellNeedsACount",
+    "init.ofSnoc",
+    "last.ofSnoc",
+    "one.cellIsNeverEmptied",
+    "one.cellIsNotEmpty",
+    "one.emptyIsNotACell",
+    "one.emptyIsNotASnoc",
+    "one.snocIsNotEmpty",
+    "one.txCellIsNotEmpty",
+];
+
+const NONEMPTY_OPEN_LAWS: [&str; 4] = [
+    "isEmptyFloat.never",
+    "last.falseOfConcat",
+    "one.falseConcatIsNotEmpty",
+    "one.falseDropIsNotEmpty",
+];
+
+/// A list with a cell in it is not `[]`: the builtin facts say so by its
+/// length, for every element type whose `==` is equality, cited, where
+/// evaluation stops and where a hypothesis says otherwise; and a `match`
+/// that waits on a list builtin over a list variable reads that variable
+/// as `[]` and as a cell. The laws true on their samples only stay open,
+/// so does the one over Floats, and both kernels refuse a fact stated at
+/// Float, a drop read past a count it does not pass, and a split of a
+/// variable that is not a list.
+#[test]
+fn a_cell_is_not_empty_and_a_match_on_a_list_builtin_splits_its_list() {
+    let out = scratch("nonempty-facts");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("nonempty_facts.av", &out)
+            .into_iter()
+            .collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), NONEMPTY_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    let mut all = String::new();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+        all.push_str(&read(law));
+    }
+    for used in [
+        "(fact List.prepend.notEmpty ",
+        "(fact List.prepend.notEmptySwapped ",
+        "(fact List.concat.notEmpty ",
+        "(fact List.concat.notEmptySwapped ",
+        "(listcases xsTail ",
+    ] {
+        assert!(all.contains(used), "{used} is not used");
+    }
+    let swap = |law: &str, from: &str, to: &str| {
+        let text = read(law);
+        assert!(text.contains(from), "{law}: {text}");
+        text.replacen(from, to, 1)
+    };
+    for (kind, text) in [
+        (
+            "a fact stated at a list of Float",
+            swap(
+                "one.cellIsNotEmpty",
+                "((x (var K eq)) (t (list (var K eq))))",
+                "((x float) (t (list float)))",
+            ),
+        ),
+        (
+            "a drop read past a count it does not pass",
+            swap(
+                "one.cellIsNeverEmptied",
+                "(rule list.drop.cons_le",
+                "(rule list.drop.cons_gt",
+            ),
+        ),
+        (
+            "a split of a variable that is not a list",
+            swap("last.ofSnoc", "(listcases xsTail ", "(listcases x "),
+        ),
+    ] {
+        let refused = aver::proof_kernel::verdict(&text);
+        assert!(refused.is_err(), "{kind}: {refused:?}\n{text}");
+        let path = out.join("mutant.steps");
+        fs::write(&path, &text).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(
+            !result.status.success(),
+            "{kind}: {}",
+            format_output(&result)
+        );
+    }
+    let summary = steps_summary("nonempty_facts.av", &["--backend", "aver", "--check-json"]);
+    for law in NONEMPTY_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    for law in NONEMPTY_OPEN_LAWS {
+        assert_eq!(summary["closed_by"][law], "open", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_checks_the_nonempty_facts_and_the_list_splits() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("nonempty-facts-lean");
+    let summary = steps_summary(
+        "nonempty_facts.av",
+        &[
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "100",
+        ],
+    );
+    for law in NONEMPTY_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let common = fs::read_to_string(out.join("AverCommon.lean")).unwrap();
+    for theorem in [
+        "theorem AverFacts.list_prepend_notEmpty {α : Type} [BEq α] [LawfulBEq α] (x : α) (t : List α) :",
+        "theorem AverFacts.list_concat_notEmpty {α : Type} [BEq α] [LawfulBEq α] (a : List α) (x : α) (b : List α) :",
+    ] {
+        assert_eq!(common.matches(theorem).count(), 1, "{common}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
 #[test]
 fn a_key_order_fact_about_maps_is_not_a_builtin_fact() {
     let dir = scratch("map-key-order");

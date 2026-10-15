@@ -526,3 +526,141 @@ impl Env<'_> {
         out
     }
 }
+
+/// The list variable a `match` in `t` stops at through a list builtin
+/// that reads it from its front: the subject `List.concat(v, [x])` or
+/// `List.reverse(v)` waits for `v` to be `[]` or a cell. Only a variable
+/// of list type outside `taken`, and only where the arms read a list.
+fn list_var_under_match(t: &Term, taken: &[String]) -> Option<Term> {
+    fn blocked_on(s: &Term) -> Option<&Term> {
+        match &s.node {
+            ResolvedExpr::Call(ResolvedCallee::Builtin(b), args)
+                if matches!(
+                    b.as_str(),
+                    "List.concat" | "List.reverse" | "List.take" | "List.drop"
+                ) && !args.is_empty() =>
+            {
+                let first = &args[0];
+                if matches!(first.node, ResolvedExpr::Ident(_)) {
+                    Some(first)
+                } else {
+                    blocked_on(first)
+                }
+            }
+            _ => None,
+        }
+    }
+    if let ResolvedExpr::Match { subject, arms } = &t.node {
+        let reads_list = arms.iter().any(|a| {
+            matches!(
+                a.pattern,
+                ResolvedPattern::EmptyList | ResolvedPattern::Cons(..)
+            )
+        });
+        if reads_list
+            && let Some(v) = blocked_on(&canon(subject))
+            && let ResolvedExpr::Ident(n) = &v.node
+            && matches!(v.ty(), Some(Type::List(_)))
+            && !taken.contains(n)
+        {
+            return Some(v.clone());
+        }
+    }
+    term::children(t)
+        .into_iter()
+        .find_map(|c| list_var_under_match(c, taken))
+}
+
+impl Env<'_> {
+    /// Where evaluation stops at a `match` whose subject a list builtin
+    /// reads from a list variable `v` (see [`list_var_under_match`]), that
+    /// variable in each of the two cases a list is, `[]` and a cell of
+    /// fresh names, in the claim and in the hypotheses: the builtin then
+    /// steps, and the `match` picks its arm. Nothing is guessed: the two
+    /// cases are every list. A cell's names are not split again.
+    pub(crate) fn split_list_var_under_match(
+        &mut self,
+        stopped: &[&Term],
+        lhs: &Term,
+        rhs: &Term,
+        depth: usize,
+    ) -> Option<Proof> {
+        let v = stopped
+            .iter()
+            .find_map(|t| list_var_under_match(t, &self.split_binders))?;
+        let ResolvedExpr::Ident(var) = &v.node else {
+            return None;
+        };
+        let Some(Type::List(elem)) = v.ty().cloned() else {
+            return None;
+        };
+        let mut taken = self.givens.clone();
+        for t in [lhs, rhs] {
+            term::free_vars(t, &mut taken);
+        }
+        for (n, e) in &self.hyps {
+            taken.push(n.clone());
+            term::free_vars(&e.lhs, &mut taken);
+            term::free_vars(&e.rhs, &mut taken);
+        }
+        taken.extend(self.split_binders.iter().cloned());
+        let fresh = |base: &str, taken: &[String]| {
+            (0..)
+                .map(|k| format!("{base}_l{k}"))
+                .find(|c| !taken.contains(c))
+                .expect("an unused name")
+        };
+        let head = fresh(&format!("{var}Head"), &taken);
+        taken.push(head.clone());
+        let tail = fresh(&format!("{var}Tail"), &taken);
+        let (h, t) = (term::var(&head), term::var(&tail));
+        h.set_ty((*elem).clone());
+        t.set_ty(Type::List(elem.clone()));
+        let nil = canon(&term::nil());
+        nil.set_ty(Type::List(elem.clone()));
+        let cell = term::builtin("List.prepend", vec![h, t], Some(Type::List(elem.clone())));
+        let case = |env: &mut Self, value: &Term| -> Result<Proof, String> {
+            let at = [(var.clone(), value.clone())];
+            let saved = env.hyps.clone();
+            let scoped: Result<Vec<(String, Eqn)>, String> = saved
+                .iter()
+                .map(|(n, e)| {
+                    Ok((
+                        n.clone(),
+                        Eqn::new(term::subst(&e.lhs, &at)?, term::subst(&e.rhs, &at)?),
+                    ))
+                })
+                .collect();
+            env.hyps = scoped?;
+            let marks = env.split_binders.len();
+            env.split_binders.extend([head.clone(), tail.clone()]);
+            let out = (|| {
+                let l = term::subst(lhs, &at)?;
+                let r = term::subst(rhs, &at)?;
+                env.prove_by_evaluation(&l, &r, depth - 1)
+            })();
+            env.split_binders.truncate(marks);
+            env.hyps = saved;
+            out
+        };
+        // A case that does not close leaves the script as it was, for what
+        // the caller tries next.
+        let marks = (self.laws.len(), self.used.len(), self.used_consts.len());
+        let proofs = case(self, &nil).and_then(|nil| Ok((nil, case(self, &cell)?)));
+        let Ok((nil_proof, cons_proof)) = proofs else {
+            self.laws.truncate(marks.0);
+            self.used.truncate(marks.1);
+            self.used_consts.truncate(marks.2);
+            return None;
+        };
+        Some(Proof::ListCases {
+            var: var.clone(),
+            lhs: canon(lhs),
+            rhs: canon(rhs),
+            nil: Box::new(nil_proof),
+            head,
+            tail,
+            cons: Box::new(cons_proof),
+        })
+    }
+}

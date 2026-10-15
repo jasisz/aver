@@ -3544,6 +3544,13 @@ impl Env<'_> {
             if let Some(st) = found {
                 return self.split_on(st, lhs, rhs, depth).map(Ok);
             }
+            // A `match` stopped at a list builtin over a list variable: that
+            // variable as `[]` and as a cell.
+            if let Some(proof) =
+                self.split_list_var_under_match(&[nl.cur(), nr.cur()], lhs, rhs, depth)
+            {
+                return Ok(Ok(proof));
+            }
         }
         // An Int comparison in scope whose sides call a definition that
         // chooses by a `match`: each call evaluated, split on what its

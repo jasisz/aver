@@ -1,0 +1,129 @@
+module NonemptyFacts
+    intent =
+        "Laws that read a list with a cell in it as not empty, by the builtin facts and by a split of the list a match waits on."
+        "The laws marked false hold on their samples only and must stay open; so must the law over Floats."
+    exposes [Tx, one, last, init, drained, isEmptyFloat]
+    effects []
+
+record Tx
+    id: Int
+    amount: Int
+
+fn one(x: Int) -> Int
+    ? "One, whatever x is."
+    1
+
+verify one
+    one(5) => 1
+
+verify one law cellIsNotEmpty
+    given h: Int = [0, 1]
+    given t: List<Int> = [[], [2]]
+    List.prepend(h, t) == [] => false
+
+verify one law emptyIsNotACell
+    given h: Int = [0, 1]
+    given t: List<Int> = [[], [2]]
+    [] == List.prepend(h, t) => false
+
+verify one law snocIsNotEmpty
+    given a: List<Int> = [[], [1]]
+    given x: Int = [0, 1]
+    List.concat(a, [x]) == [] => false
+
+verify one law emptyIsNotASnoc
+    given a: List<Int> = [[], [1]]
+    given x: Int = [0, 1]
+    given b: List<Int> = [[], [2]]
+    using [List.concat.notEmptySwapped]
+    [] == List.concat(a, List.prepend(x, b)) => false
+
+verify one law txCellIsNotEmpty
+    given tx: Tx = [Tx(id = 1, amount = 5)]
+    given rest: List<Tx> = [[], [Tx(id = 2, amount = 7)]]
+    List.prepend(tx, rest) == [] => false
+
+verify one law cellIsNeverEmptied
+    given h: Int = [0, 1]
+    given t: List<Int> = [[], [2]]
+    given n: Int = [-1, 0]
+    when Bool.and(n <= 0, List.drop(List.prepend(h, t), n) == [])
+    one(h) => 2
+
+verify one law falseConcatIsNotEmpty
+    given a: List<Int> = [[1]]
+    given b: List<Int> = [[], [2]]
+    List.concat(a, b) == [] => false
+
+verify one law falseDropIsNotEmpty
+    given h: Int = [0, 1]
+    given t: List<Int> = [[], [2]]
+    given n: Int = [-1, 0]
+    List.drop(List.prepend(h, t), n) == [] => false
+
+fn drained(bytes: List<Int>, count: Int) -> Bool
+    ? "Whether dropping count bytes leaves nothing."
+    List.drop(bytes, count) == []
+
+verify drained
+    drained([1], 1) => true
+    drained([1], 0) => false
+
+verify drained law aCellNeedsACount
+    given h: Int = [0, 1]
+    given t: List<Int> = [[], [2]]
+    given n: Int = [-1, 0, 1, 2]
+    when drained(List.prepend(h, t), n)
+    n > 0 => true
+
+fn last(xs: List<Int>) -> Int
+    ? "The last element, or zero for an empty list."
+    match xs
+        [] -> 0
+        [y, ..z] -> match z
+            [] -> y
+            [x2, ..x3] -> last(z)
+
+verify last
+    last([]) => 0
+    last([1, 2]) => 2
+
+verify last law ofSnoc
+    given xs: List<Int> = [[], [1], [2, 1]]
+    given x: Int = [0, 1, 2]
+    last(List.concat(xs, [x])) => x
+
+verify last law falseOfConcat
+    given xs: List<Int> = [[], [1], [2, 1]]
+    given x: Int = [0, 1, 2]
+    given ys: List<Int> = [[]]
+    last(List.concat(xs, List.prepend(x, ys))) => x
+
+fn init(xs: List<Int>) -> List<Int>
+    ? "Every element but the last."
+    match xs
+        [] -> []
+        [y, ..z] -> match z
+            [] -> []
+            [x2, ..x3] -> List.prepend(y, init(z))
+
+verify init
+    init([]) => []
+    init([1, 2, 3]) => [1, 2]
+
+verify init law ofSnoc
+    given xs: List<Int> = [[], [1], [2, 1]]
+    given x: Int = [0, 1, 2]
+    init(List.concat(xs, [x])) => xs
+
+fn isEmptyFloat(h: Float, t: List<Float>) -> Bool
+    ? "Whether a cell of Floats is empty."
+    List.prepend(h, t) == []
+
+verify isEmptyFloat
+    isEmptyFloat(1.0, []) => false
+
+verify isEmptyFloat law never
+    given h: Float = [1.0, 2.0]
+    given t: List<Float> = [[], [3.0]]
+    List.prepend(h, t) == [] => false

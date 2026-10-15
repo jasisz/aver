@@ -123,6 +123,42 @@ List.contains(List.reverse(a), y) => List.contains(a, y)
 
 Proved from `List.contains.ofConcat`.
 
+## `List.prepend.notEmpty`
+
+```aver
+given x, t
+List.prepend(x, t) == [] => false
+```
+
+Proved from `List.len.nonneg`.
+
+## `List.prepend.notEmptySwapped`
+
+```aver
+given x, t
+[] == List.prepend(x, t) => false
+```
+
+Proved from `List.prepend.notEmpty`.
+
+## `List.concat.notEmpty`
+
+```aver
+given a, x, b
+List.concat(a, List.prepend(x, b)) == [] => false
+```
+
+Proved from `List.len.ofConcat`, `List.len.nonneg`.
+
+## `List.concat.notEmptySwapped`
+
+```aver
+given a, x, b
+[] == List.concat(a, List.prepend(x, b)) => false
+```
+
+Proved from `List.concat.notEmpty`.
+
 ## `Map.get.afterSet`
 
 ```aver
