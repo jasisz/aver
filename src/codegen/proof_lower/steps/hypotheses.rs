@@ -112,10 +112,10 @@ impl Env<'_> {
             .iter()
             .map(|f| Equation::Law(Box::new(f.law_ref())))
             .collect();
-        eqs.push(Equation::Closed(
+        eqs.push(Equation::Closed(Box::new((
             canon(&len(term::nil())),
             term::int(&0.into()),
-        ));
+        ))));
         eqs.push(Equation::Wall(WallRule::LenCons));
         let mut cuts: Vec<(String, Term, Proof)> = Vec::new();
         for (name, e) in lists {

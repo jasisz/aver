@@ -97,7 +97,7 @@ pub(crate) enum Equation {
     Unfold(crate::ir::identity::FnId),
     /// `lhs = rhs` for two closed terms, which compute shows: a builtin
     /// on literals (`List.len([]) = 0`).
-    Closed(Term, Term),
+    Closed(Box<(Term, Term)>),
 }
 
 /// `t = true` for `t = Bool.and(a, b)`, from `pa : a = true` and
@@ -537,13 +537,13 @@ impl Env<'_> {
                     body,
                 ))
             }
-            Equation::Closed(lhs, rhs) => matches(lhs, t, &[], &mut Vec::new()).then(|| {
+            Equation::Closed(eq) => matches(&eq.0, t, &[], &mut Vec::new()).then(|| {
                 (
                     Proof::Compute {
                         lhs: canon(t),
-                        rhs: rhs.clone(),
+                        rhs: eq.1.clone(),
                     },
-                    rhs.clone(),
+                    eq.1.clone(),
                 )
             }),
             Equation::Wall(rule) => {
