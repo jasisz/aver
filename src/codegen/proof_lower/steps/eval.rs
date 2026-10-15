@@ -188,17 +188,30 @@ fn with_cell(mut chain: Chain, cell: bool) -> Chain {
     chain
 }
 
-/// What Euclidean division by a literal `k > 0` in `ts` gives linear
+/// `k > 0` for a literal `k`, by computation.
+pub(super) fn literal_positive(k: &Term) -> Option<Proof> {
+    term::int_value(k).filter(|v| *v > 0.into())?;
+    Some(Proof::Compute {
+        lhs: canon(&term::binop(BinOp::Gt, k.clone(), term::int(&0.into()))),
+        rhs: term::boolean(true),
+    })
+}
+
+/// What Euclidean division by a divisor `k > 0` in `ts` gives linear
 /// arithmetic, each fact with its proof: for each `a / k` or `a % k`, the
 /// two orders of `a / k * k + a % k = a` (`int.div_mod_recompose`), and
-/// `0 <= a % k` and `a % k < k` (`int.mod_range`). Also the quotients,
-/// each inside the ones that divide it again.
-fn division_facts(ts: &[&Term]) -> (Vec<(Term, Proof)>, Vec<Term>) {
+/// `0 <= a % k` and `a % k < k` (`int.mod_range`). `positive` proves
+/// `(k > 0) = true`; a divisor it does not is left out. Also the
+/// quotients, each inside the ones that divide it again.
+fn division_facts(
+    ts: &[&Term],
+    positive: &mut dyn FnMut(&Term) -> Option<Proof>,
+) -> (Vec<(Term, Proof)>, Vec<Term>) {
     use crate::ir::hir::BuiltinIntrinsic;
     fn walk(t: &Term, mods: &mut Vec<Term>, divs: &mut Vec<Term>) {
         if let ResolvedExpr::Call(ResolvedCallee::Intrinsic(op), args) = &t.node
             && args.len() == 2
-            && term::int_value(&args[1]).is_some_and(|k| k > 0.into())
+            && term::int_value(&args[1]).is_none_or(|k| k > 0.into())
         {
             let found = match op {
                 BuiltinIntrinsic::IntModEuclid => Some(&mut *mods),
@@ -232,16 +245,24 @@ fn division_facts(ts: &[&Term]) -> (Vec<(Term, Proof)>, Vec<Term>) {
             }
         }
     }
-    let positive = |k: &Term| Proof::Compute {
-        lhs: canon(&term::binop(BinOp::Gt, k.clone(), term::int(&0.into()))),
-        rhs: term::boolean(true),
-    };
     let mut out = Vec::new();
+    let mut shown: Vec<(Term, Option<Proof>)> = Vec::new();
+    let mut positive = |k: &Term| {
+        if let Some((_, p)) = shown.iter().find(|(t, _)| t == k) {
+            return p.clone();
+        }
+        let p = positive(k);
+        shown.push((k.clone(), p.clone()));
+        p
+    };
     for d in &divs {
         let ResolvedExpr::Call(_, args) = &d.node else {
             continue;
         };
         let (a, k) = (canon(&args[0]), canon(&args[1]));
+        let Some(k_positive) = positive(&k) else {
+            continue;
+        };
         let subst = vec![("a".to_string(), a.clone()), ("k".to_string(), k.clone())];
         let Some((_, concl)) = WallRule::DivModRecompose.instantiate(&subst) else {
             continue;
@@ -249,7 +270,7 @@ fn division_facts(ts: &[&Term]) -> (Vec<(Term, Proof)>, Vec<Term>) {
         let recompose = Proof::Rule {
             rule: WallRule::DivModRecompose,
             subst,
-            premises: vec![positive(&k)],
+            premises: vec![k_positive],
         };
         let whole = canon(&concl.lhs);
         for op in [BinOp::Lte, BinOp::Gte] {
@@ -283,10 +304,13 @@ fn division_facts(ts: &[&Term]) -> (Vec<(Term, Proof)>, Vec<Term>) {
             continue;
         };
         let (a, k) = (canon(&args[0]), canon(&args[1]));
+        let Some(k_positive) = positive(&k) else {
+            continue;
+        };
         let range = Proof::Rule {
             rule: WallRule::ModRange,
             subst: vec![("a".into(), a), ("k".into(), k.clone())],
-            premises: vec![positive(&k)],
+            premises: vec![k_positive],
         };
         let low = canon(&term::binop(BinOp::Lte, term::int(&0.into()), m.clone()));
         let high = canon(&term::binop(BinOp::Lt, m.clone(), k));
@@ -1814,6 +1838,9 @@ impl Env<'_> {
         if let Some(step) = self.default_step(cur) {
             return Ok(step);
         }
+        if let Some(step) = self.division_ok_step(cur) {
+            return Ok(Step::Progress(Box::new(step)));
+        }
         if let Some(step) = self.division_step(cur)? {
             return Ok(step);
         }
@@ -2039,7 +2066,7 @@ impl Env<'_> {
             }
         }
         let plain = names.len();
-        let (divisions, _) = division_facts(&[goal]);
+        let (divisions, _) = division_facts(&[goal], &mut literal_positive);
         for (f, _) in &divisions {
             facts.push(linear::as_nonneg(f, true, &mut atoms)?);
         }
@@ -2787,7 +2814,7 @@ impl Env<'_> {
 
     /// `goal = value` for an Int comparison `goal` that the decided
     /// comparisons in scope settle by linear arithmetic alone.
-    fn plain_linear(&self, goal: &Term, value: bool) -> Option<Proof> {
+    pub(super) fn plain_linear(&self, goal: &Term, value: bool) -> Option<Proof> {
         use crate::ir::proof_steps::linear;
         let mut atoms = Vec::new();
         let mut facts = vec![linear::as_nonneg(goal, !value, &mut atoms)?];
@@ -2957,7 +2984,8 @@ impl Env<'_> {
         let cited = known.len();
         let mut about: Vec<&Term> = vec![goal];
         about.extend(known.iter().map(|(_, e)| &e.lhs));
-        let (mut remainders, quotients) = division_facts(&about);
+        let (mut remainders, quotients) =
+            division_facts(&about, &mut |k: &Term| self.divisor_positive(k));
         remainders.extend(self.quotient_ranges(&quotients));
         remainders.extend(self.equalities_as_orders(false));
         for (i, (f, _)) in remainders.iter().enumerate() {
@@ -3010,7 +3038,8 @@ impl Env<'_> {
                 let before = extra.len();
                 let orders = self.equalities_as_orders(true);
                 let terms: Vec<&Term> = orders.iter().map(|(f, _)| f).collect();
-                let (mut more, quotients) = division_facts(&terms);
+                let (mut more, quotients) =
+                    division_facts(&terms, &mut |k: &Term| self.divisor_positive(k));
                 more.extend(self.quotient_ranges(&quotients));
                 for (f, p) in orders.into_iter().chain(more) {
                     if !known.iter().any(|(_, e)| e.lhs == f)
@@ -3035,9 +3064,18 @@ impl Env<'_> {
         // stand.
         let settled = match settled {
             Some(settled) => Some(settled),
-            None if super::nonlinear::has_product(&facts[..1]) => {
-                use super::nonlinear::Source;
-                let mut comparisons = Vec::new();
+            None if !super::nonlinear::wanted(&facts, &atoms).is_empty()
+                && !self
+                    .unsettled_products
+                    .contains(&self.product_key(goal, value, &known)) =>
+            {
+                use super::nonlinear::{OPPOSITE, Source};
+                // The opposite of the goal is a factor too, under a case
+                // split on the goal whose other case is the hypothesis.
+                let mut comparisons = vec![(
+                    Eqn::new(canon(goal), term::boolean(!value)),
+                    Source::Hyp(OPPOSITE.to_string()),
+                )];
                 for (k, (n, e)) in known.iter().enumerate() {
                     let source = if k < plain {
                         Source::Hyp(n.clone())
@@ -3050,10 +3088,12 @@ impl Env<'_> {
                     };
                     comparisons.push((e.clone(), source));
                 }
-                let products = super::nonlinear::products(&facts[0], &atoms, &comparisons);
+                let wanted = super::nonlinear::wanted(&facts, &atoms);
+                let products = super::nonlinear::products(&wanted, &atoms, &comparisons);
                 if products.is_empty() {
                     None
                 } else {
+                    let before_products = known.len();
                     for (f, p) in products {
                         facts.push(linear::as_nonneg(&f, true, &mut atoms)?);
                         known.push((
@@ -3062,7 +3102,15 @@ impl Env<'_> {
                         ));
                         extra.push((f, p, None));
                     }
-                    settle_rationally(&facts).or_else(|| settle_over_integers(&facts))
+                    let key = self.product_key(goal, value, &known[..before_products]);
+                    let r = settle_rationally(&facts).or_else(|| settle_over_integers(&facts));
+                    if r.is_none() {
+                        if self.unsettled_products.len() >= 256 {
+                            self.unsettled_products.remove(0);
+                        }
+                        self.unsettled_products.push(key);
+                    }
+                    r
                 }
             }
             None => None,
@@ -3102,6 +3150,9 @@ impl Env<'_> {
                 cuts.push((name, fact, proof));
             }
         }
+        let opposite = cuts
+            .iter()
+            .any(|(_, _, from)| super::uses_hyp(from, super::nonlinear::OPPOSITE));
         let mut proof = Proof::Linear {
             goal: canon(goal),
             value,
@@ -3115,6 +3166,20 @@ impl Env<'_> {
                 fact,
                 proof: Box::new(from),
                 body: Box::new(proof),
+            };
+        }
+        if opposite {
+            let holds = Proof::Hyp(super::nonlinear::OPPOSITE.to_string());
+            let (if_true, if_false) = if value {
+                (holds, proof)
+            } else {
+                (proof, holds)
+            };
+            proof = Proof::Cases {
+                on: canon(goal),
+                hyp: super::nonlinear::OPPOSITE.to_string(),
+                if_true: Box::new(if_true),
+                if_false: Box::new(if_false),
             };
         }
         Some(proof)

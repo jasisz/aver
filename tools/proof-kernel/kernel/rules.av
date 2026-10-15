@@ -216,14 +216,17 @@ verify range
     range(v("a"), v("m")) => conn("Bool.and", Term.TOp("<=", Term.TInt(0), v("a")), Term.TOp("<", v("a"), v("m")))
 
 fn divisionSchema(id: String) -> Option<Schema>
-    ? "Euclidean division by a positive divisor."
+    ? "Int.div and Int.mod by a divisor that is not 0 as the Euclidean quotient and remainder, and Euclidean division by a positive divisor."
     match id
+        "int.div.ok" -> Option.Some(Schema(binders = [i("a"), i("k")], premises = [is(Term.TOp("==", v("k"), Term.TInt(0)), false)], concl = eq(Term.TBi("Int.div", [v("a"), v("k")]), Term.TCtor("Result.Ok", [divE(v("a"), v("k"))]))))
+        "int.mod.ok" -> Option.Some(Schema(binders = [i("a"), i("k")], premises = [is(Term.TOp("==", v("k"), Term.TInt(0)), false)], concl = eq(Term.TBi("Int.mod", [v("a"), v("k")]), Term.TCtor("Result.Ok", [modE(v("a"), v("k"))]))))
         "int.div_mod_recompose" -> Option.Some(Schema(binders = [i("a"), i("k")], premises = [is(Term.TOp(">", v("k"), Term.TInt(0)), true)], concl = eq(Term.TOp("+", Term.TOp("*", divE(v("a"), v("k")), v("k")), modE(v("a"), v("k"))), v("a"))))
         "int.mod_range" -> Option.Some(Schema(binders = [i("a"), i("k")], premises = [is(Term.TOp(">", v("k"), Term.TInt(0)), true)], concl = is(range(modE(v("a"), v("k")), v("k")), true)))
         "int.div_range" -> Option.Some(Schema(binders = [i("a"), i("k"), i("m"), i("n")], premises = [is(range(v("a"), v("m")), true), is(conn("Bool.and", Term.TOp(">", v("k"), Term.TInt(0)), Term.TOp("==", v("m"), Term.TOp("*", v("n"), v("k")))), true)], concl = is(range(divE(v("a"), v("k")), v("n")), true)))
         _ -> bitsSchema(id)
 
 verify divisionSchema
+    divisionSchema("int.div.ok") => Option.Some(Schema(binders = [i("a"), i("k")], premises = [is(Term.TOp("==", v("k"), Term.TInt(0)), false)], concl = eq(Term.TBi("Int.div", [v("a"), v("k")]), Term.TCtor("Result.Ok", [divE(v("a"), v("k"))]))))
     divisionSchema("int.div_range") == Option.None => false
 
 fn shl(a: Term, n: Term) -> Term

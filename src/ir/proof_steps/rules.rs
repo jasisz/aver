@@ -65,6 +65,9 @@ pub enum WallRule {
     MulOne,
     OneMul,
     SubZero,
+    // `Int.div` and `Int.mod` by a divisor that is not 0.
+    DivOk,
+    ModOk,
     // Euclidean division by a positive divisor.
     DivModRecompose,
     DivRange,
@@ -146,7 +149,7 @@ pub enum WallRule {
 }
 
 impl WallRule {
-    pub const ALL: [WallRule; 92] = [
+    pub const ALL: [WallRule; 94] = [
         WallRule::AndTrueL,
         WallRule::AndFalseL,
         WallRule::AndTrueR,
@@ -187,6 +190,8 @@ impl WallRule {
         WallRule::MulOne,
         WallRule::OneMul,
         WallRule::SubZero,
+        WallRule::DivOk,
+        WallRule::ModOk,
         WallRule::DivModRecompose,
         WallRule::DivRange,
         WallRule::ModRange,
@@ -284,6 +289,8 @@ impl WallRule {
             WallRule::MulOne => "int.mul_one",
             WallRule::OneMul => "int.one_mul",
             WallRule::SubZero => "int.sub_zero",
+            WallRule::DivOk => "int.div.ok",
+            WallRule::ModOk => "int.mod.ok",
             WallRule::DivModRecompose => "int.div_mod_recompose",
             WallRule::DivRange => "int.div_range",
             WallRule::ModRange => "int.mod_range",
@@ -359,7 +366,9 @@ impl WallRule {
             | WallRule::OneMul
             | WallRule::SubZero => &["a"],
             WallRule::AddAssoc | WallRule::MulAssoc => &["a", "b", "c"],
-            WallRule::DivModRecompose | WallRule::ModRange => &["a", "k"],
+            WallRule::DivModRecompose | WallRule::ModRange | WallRule::DivOk | WallRule::ModOk => {
+                &["a", "k"]
+            }
             WallRule::BeqRefl => &["a"],
             WallRule::DivRange => &["a", "k", "m", "n"],
             WallRule::BitsNot | WallRule::AbsNeg | WallRule::AbsNonneg => &["a"],
@@ -552,6 +561,23 @@ impl WallRule {
             WallRule::MulOne => (vec![], Eqn::new(binop(BinOp::Mul, a(), i(1)), a())),
             WallRule::OneMul => (vec![], Eqn::new(binop(BinOp::Mul, i(1), a()), a())),
             WallRule::SubZero => (vec![], Eqn::new(binop(BinOp::Sub, a(), i(0)), a())),
+            WallRule::DivOk | WallRule::ModOk => {
+                let (name, value) = match self {
+                    WallRule::DivOk => ("Int.div", div(a(), var("k"))),
+                    _ => ("Int.mod", modu(a(), var("k"))),
+                };
+                let result = crate::ast::Type::Result(
+                    Box::new(crate::ast::Type::Int),
+                    Box::new(crate::ast::Type::Str),
+                );
+                (
+                    vec![is(cmp(BinOp::Eq, var("k"), i(0)), false)],
+                    Eqn::new(
+                        vb(name, vec![a(), var("k")], Some(result)),
+                        option(crate::ir::hir::BuiltinCtor::ResultOk, vec![value]),
+                    ),
+                )
+            }
             WallRule::DivModRecompose => (
                 vec![is(cmp(BinOp::Gt, var("k"), i(0)), true)],
                 Eqn::new(

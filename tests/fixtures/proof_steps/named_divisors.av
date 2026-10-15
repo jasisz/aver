@@ -1,0 +1,55 @@
+module NamedDivisors
+    intent =
+        "Int.div and Int.mod by a divisor that is a name, not a literal: once the comparisons in"
+        "scope or a cited law show the divisor is not 0, the call is the Euclidean quotient or"
+        "remainder, and where the divisor is positive linear arithmetic reads its window."
+    exposes [floorDiv, restBy, pow2]
+    effects []
+
+fn floorDiv(a: Int, d: Int) -> Int
+    ? "a divided by d, rounded down, or 0 for a divisor of 0."
+    Result.withDefault(Int.div(a, d), 0)
+
+fn restBy(a: Int, d: Int) -> Int
+    ? "a modulo d, or 0 for a divisor of 0."
+    Result.withDefault(Int.mod(a, d), 0)
+
+verify floorDiv law window
+    given a: Int = [-7, 0, 13]
+    given d: Int = [1, 2, 5]
+    when d > 0
+    d * floorDiv(a, d) <= a => true
+
+verify floorDiv law windowAbove
+    given a: Int = [-7, 0, 13]
+    given d: Int = [1, 2, 5]
+    when d > 0
+    a < d * (floorDiv(a, d) + 1) => true
+
+verify restBy law belowTheDivisor
+    given a: Int = [-7, 0, 13]
+    given d: Int = [1, 2, 5]
+    when d > 0
+    restBy(a, d) < d => true
+
+verify restBy law recomposes
+    given a: Int = [-7, 0, 13]
+    given d: Int = [1, 2, 5]
+    when d > 0
+    floorDiv(a, d) * d + restBy(a, d) == a => true
+
+fn pow2(n: Int) -> Int
+    ? "2 to the n, 1 below 1."
+    match n <= 0
+        true -> 1
+        false -> 2 * pow2(n - 1)
+
+verify pow2 law positive
+    given n: Int = [0, 1, 4]
+    pow2(n) >= 1 => true
+
+verify floorDiv law powerWindow
+    given a: Int = [13, 52, 96]
+    given n: Int = [0, 2, 3]
+    using [pow2.positive]
+    pow2(n) * floorDiv(a, pow2(n)) <= a => true

@@ -1,0 +1,32 @@
+module NamedDivisorsRefused
+    intent =
+        "Laws about division by a name that hold on their samples but not for every Int: none may"
+        "close by steps. A divisor of 0 gives the default, and a negative divisor has its window"
+        "the other way."
+    exposes [floorDiv, restBy]
+    effects []
+
+fn floorDiv(a: Int, d: Int) -> Int
+    ? "a divided by d, rounded down, or 0 for a divisor of 0."
+    Result.withDefault(Int.div(a, d), 0)
+
+fn restBy(a: Int, d: Int) -> Int
+    ? "a modulo d, or 0 for a divisor of 0."
+    Result.withDefault(Int.mod(a, d), 0)
+
+verify floorDiv law anyDivisor
+    given a: Int = [0, 13]
+    given d: Int = [1, 5]
+    d * floorDiv(a, d) <= a => true
+
+verify restBy law belowNonnegative
+    given a: Int = [0, 13]
+    given d: Int = [1, 5]
+    when d >= 0
+    restBy(a, d) < d => true
+
+verify floorDiv law negativeWindow
+    given a: Int = [-7, 13]
+    given d: Int = [-1, -2]
+    when d < 0
+    a < d * (floorDiv(a, d) + 1) => true

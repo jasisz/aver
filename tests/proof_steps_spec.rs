@@ -2202,8 +2202,7 @@ const REMAINDER_LAWS: [&str; 7] = [
 /// by a number that is not a divisor, a step without its cuts, a remainder
 /// by 0 or by a name, and a mask or shift read with the wrong power of two.
 /// Laws that hold on their samples only (a remainder by 32 below 31, a
-/// quotient of a negative number rounded toward zero, a divisor that is a
-/// name) do not close.
+/// quotient of a negative number rounded toward zero) do not close.
 #[test]
 fn both_kernels_read_remainders_over_the_integers_and_refuse_mutations() {
     let out = scratch("remainders");
@@ -2550,6 +2549,131 @@ fn lean_closes_products_by_their_steps_and_refuses_mutated_ones() {
         let text = lean.replacen(&line, &mutated, 1);
         assert!(
             lean_refuses(&out, "Products.lean", &text, law),
+            "{kind}: Lean must refuse the mutated step term"
+        );
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+const NAMED_DIVISOR_LAWS: [&str; 6] = [
+    "floorDiv.powerWindow",
+    "floorDiv.window",
+    "floorDiv.windowAbove",
+    "pow2.positive",
+    "restBy.belowTheDivisor",
+    "restBy.recomposes",
+];
+
+/// `Int.div` and `Int.mod` by a name: once linear arithmetic shows the
+/// divisor is not 0 (from a `when`, or from a cited `pow2(n) >= 1`), the
+/// call is `Result.Ok` of the Euclidean quotient or remainder
+/// (`int.div.ok`, `int.mod.ok`), and where the divisor is positive the
+/// window follows by the rules for a literal divisor. Both kernels accept
+/// the steps and refuse the rule at a divisor of 0, without its premise,
+/// and the remainder's rule written for the quotient. Laws that hold on
+/// their samples only (no fact about the divisor, a divisor that may be
+/// 0, a negative divisor) do not close.
+#[test]
+fn both_kernels_read_division_by_a_name_and_refuse_mutations() {
+    let out = scratch("named-divisors");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("named_divisors.av", &out)
+            .into_iter()
+            .filter(|(law, _)| !law.ends_with(".implication"))
+            .collect();
+    assert_eq!(
+        files.keys().cloned().collect::<Vec<_>>(),
+        NAMED_DIVISOR_LAWS
+    );
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let window = read("floorDiv.window");
+    let ok = "(rule int.div.ok ((a (v a)) (k (v d))) (rule int.eq.false_of_gt ((a (v d)) (b (i 0))) (linear (op > (v d) (i 0)) true (when) (1 1))))";
+    assert!(window.contains(ok), "{window}");
+    let mutants = [
+        // A divisor of 0.
+        window.replacen(
+            ok,
+            "(rule int.div.ok ((a (v a)) (k (i 0))) (rule int.eq.false_of_gt ((a (i 0)) (b (i 0))) (linear (op > (i 0) (i 0)) true (when) (1 1))))",
+            1,
+        ),
+        // The rule without its premise.
+        window.replacen(ok, "(rule int.div.ok ((a (v a)) (k (v d))))", 1),
+        // The remainder's rule where the quotient stands.
+        window.replacen("(rule int.div.ok ", "(rule int.mod.ok ", 1),
+    ];
+    for (i, mutant) in mutants.iter().enumerate() {
+        assert_ne!(*mutant, window, "mutant {i} changed nothing");
+        let verdict = aver::proof_kernel::verdict(mutant);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "mutant {i}: {verdict:?}\n{mutant}"
+        );
+        let path = out.join(format!("mutant{i}.steps"));
+        fs::write(&path, mutant).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(!result.status.success(), "{}", format_output(&result));
+    }
+    let refused = scratch("named-divisors-refused");
+    assert!(export_steps("named_divisors_refused.av", &refused).is_empty());
+    let _ = fs::remove_dir_all(out);
+    let _ = fs::remove_dir_all(refused);
+}
+
+/// Lean closes the same laws by their steps, `Int.div` by a name by
+/// `AverSteps.int_div_ok`, and refuses it at a divisor of 0 and the
+/// remainder's lemma where the quotient stands.
+#[test]
+fn lean_closes_division_by_a_name_and_refuses_mutated_ones() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("named-divisors-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "named_divisors.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "0",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let lean = fs::read_to_string(out.join("NamedDivisors.lean")).unwrap();
+    let law = "restBy.recomposes";
+    assert!(
+        !lean_refuses(&out, "NamedDivisors.lean", &lean, law),
+        "the emitted step term must close the law"
+    );
+    let line = exact_line(&lean, "restBy_law_recomposes").to_string();
+    assert!(line.contains("AverSteps.int_div_ok (a) (d)"), "{line}");
+    let mutants = [
+        (
+            "a divisor of 0",
+            line.replacen(
+                "AverSteps.int_div_ok (a) (d)",
+                "AverSteps.int_div_ok (a) ((0 : Int))",
+                1,
+            ),
+        ),
+        (
+            "the remainder's lemma",
+            line.replacen("AverSteps.int_div_ok", "AverSteps.int_mod_ok", 1),
+        ),
+    ];
+    for (kind, mutated) in mutants {
+        assert_ne!(mutated, line, "{kind}: changed nothing");
+        let text = lean.replacen(&line, &mutated, 1);
+        assert!(
+            lean_refuses(&out, "NamedDivisors.lean", &text, law),
             "{kind}: Lean must refuse the mutated step term"
         );
     }
