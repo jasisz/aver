@@ -101,6 +101,10 @@ pub struct ProofIR {
     /// and claim with all wrapper-strip / val-projection / drop-vs-
     /// keep decisions baked in, plus the pinned proof strategy.
     pub law_theorems: Vec<LawTheorem>,
+    /// The time the step producers took on all laws together, start to
+    /// end: less than the sum of [`LawTheorem::steps_timing`] where the
+    /// first tries ran side by side.
+    pub steps_elapsed: std::time::Duration,
     /// Recursive pure fns whose shape fell outside every recognised
     /// pattern. Surfaced as diagnostics ("recursive function 'foo'
     /// is outside proof subset (...)") and steers the consumer to

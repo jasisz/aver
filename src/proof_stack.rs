@@ -11,7 +11,7 @@
 /// It is address space, not memory: pages are committed only as the stack
 /// grows, so a shallow check costs what it touches.
 #[cfg(not(target_family = "wasm"))]
-const STACK_BYTES: usize = 256 * 1024 * 1024;
+pub(crate) const STACK_BYTES: usize = 256 * 1024 * 1024;
 
 /// Run `work` on a thread with [`STACK_BYTES`] of stack and return what it
 /// returns. A panic in `work`, or a thread that cannot be started, is an
