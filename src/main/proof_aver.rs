@@ -342,6 +342,7 @@ pub(super) fn run(
             timing_json(
                 &ctx.symbol_table,
                 &ctx.proof_ir.law_theorems,
+                ctx.proof_ir.steps_elapsed,
                 front,
                 &final_kernel,
             ),
@@ -418,16 +419,17 @@ pub(super) fn run(
 /// Where the run spent its time, per law and summed by phase: the front end
 /// (parsing, types, lowering), each producer phase, and the kernel, both its
 /// checks inside the producers and the final check of each script. The front
-/// end is the time to the lowered program less the producers' time in it.
+/// end is the time to the lowered program less the time from the producers'
+/// start to their end.
 fn timing_json(
     symbols: &aver::ir::SymbolTable,
     theorems: &[LawTheorem],
+    elapsed_in_producers: std::time::Duration,
     front: std::time::Duration,
     final_kernel: &BTreeMap<String, std::time::Duration>,
 ) -> serde_json::Value {
     let ms = |d: std::time::Duration| serde_json::Value::from(d.as_secs_f64() * 1000.0);
     let mut sums: BTreeMap<String, std::time::Duration> = BTreeMap::new();
-    let mut producers = std::time::Duration::ZERO;
     let mut laws = serde_json::Map::new();
     for t in theorems {
         let key = law_key(symbols, t);
@@ -444,7 +446,6 @@ fn timing_json(
         }
         let mut law = serde_json::Map::new();
         for (name, spent) in &phases {
-            producers += *spent;
             let phase = if matches!(*name, "produce" | "automatic") {
                 (*name).to_string()
             } else {
@@ -462,7 +463,10 @@ fn timing_json(
         law.insert("kernel_final_ms".into(), ms(last));
         laws.insert(key, law.into());
     }
-    sums.insert("frontend".into(), front.saturating_sub(producers));
+    sums.insert(
+        "frontend".into(),
+        front.saturating_sub(elapsed_in_producers),
+    );
     serde_json::json!({
         "phases_ms": sums.into_iter().map(|(k, d)| (k, ms(d))).collect::<serde_json::Map<_, _>>(),
         "laws": laws,

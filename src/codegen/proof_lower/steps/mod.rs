@@ -1564,19 +1564,105 @@ fn using_hint(
 }
 
 /// Fill `LawTheorem::steps` for every law a producer can prove.
+/// The first try of law `i`, made apart from the walk over the laws: what
+/// it produced, what its failed attempts found, the time it took and the
+/// kernel's share of it.
+struct FirstTry {
+    produced: Produced,
+    hints: Found,
+    spent: std::time::Duration,
+    kernel: (std::time::Duration, u64),
+}
+
+/// The first try of every law that names no plan. Each reads the program
+/// and the statements of the laws, never what another law's try found, so
+/// they run side by side, on as many threads as there are cores, each on
+/// the stack the proof code runs on ([`crate::proof_stack`]); what each
+/// finds is what it finds when the laws are tried one after another.
+#[cfg(not(target_family = "wasm"))]
+fn first_tries(inputs: &ProofLowerInputs, ir: &ProofIR) -> Vec<Option<FirstTry>> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let laws = ir.law_theorems.len();
+    let workers = std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .min(laws);
+    if workers <= 1 {
+        return (0..laws).map(|_| None).collect();
+    }
+    let next = AtomicUsize::new(0);
+    let tries: Vec<std::sync::Mutex<Option<FirstTry>>> =
+        (0..laws).map(|_| std::sync::Mutex::new(None)).collect();
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            let (next, tries) = (&next, &tries);
+            let started = std::thread::Builder::new()
+                .name("aver-steps".to_string())
+                .stack_size(crate::proof_stack::STACK_BYTES)
+                .spawn_scoped(scope, move || {
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        if i >= laws {
+                            break;
+                        }
+                        if ir.law_theorems[i].by_plan.is_some() {
+                            continue;
+                        }
+                        let mut hints = Found::default();
+                        let started = std::time::Instant::now();
+                        let kernel_before = crate::proof_kernel::spent();
+                        let produced = produce(inputs, ir, i, &[], &mut hints);
+                        let spent = started.elapsed();
+                        let kernel_after = crate::proof_kernel::spent();
+                        let kernel = (
+                            kernel_after.0 - kernel_before.0,
+                            kernel_after.1 - kernel_before.1,
+                        );
+                        if let Ok(mut slot) = tries[i].lock() {
+                            *slot = Some(FirstTry {
+                                produced,
+                                hints,
+                                spent,
+                                kernel,
+                            });
+                        }
+                    }
+                });
+            // A thread that cannot start leaves its laws to the walk.
+            drop(started);
+        }
+    });
+    tries
+        .into_iter()
+        .map(|slot| slot.into_inner().ok().flatten())
+        .collect()
+}
+
+/// A wasm build has no threads to start: every law is tried in the walk.
+#[cfg(target_family = "wasm")]
+fn first_tries(_inputs: &ProofLowerInputs, ir: &ProofIR) -> Vec<Option<FirstTry>> {
+    ir.law_theorems.iter().map(|_| None).collect()
+}
+
 pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
     let debug = std::env::var_os("AVER_STEPS_DEBUG").is_some();
     let mut plans = by_plan::Plans::default();
     // The plans of the modules `by` lines name, found when a law first
     // stays open.
     let mut named_plans = None;
+    let started = std::time::Instant::now();
+    let mut first = first_tries(inputs, ir).into_iter();
     for i in 0..ir.law_theorems.len() {
+        let tried = first.next().flatten();
         // The laws that match where an attempt stopped, by key, and where
         // the attempts stopped.
         let mut hints = Found::default();
         let mut timing = crate::ir::StepsTiming::default();
         let law_started = std::time::Instant::now();
         let kernel_before = crate::proof_kernel::spent();
+        // The kernel's time in this law's first try, where another thread
+        // made it.
+        let mut kernel_elsewhere = (std::time::Duration::ZERO, 0);
+        let mut tried_for = None;
         // A law that names its plan is proved by that plan alone.
         let mut produced = if ir.law_theorems[i].by_plan.is_some() {
             Produced {
@@ -1584,10 +1670,15 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                 advice: Vec::new(),
                 obligations: Vec::new(),
             }
+        } else if let Some(tried) = tried {
+            hints = tried.hints;
+            kernel_elsewhere = tried.kernel;
+            tried_for = Some(tried.spent);
+            tried.produced
         } else {
             produce(inputs, ir, i, &[], &mut hints)
         };
-        timing.produce = law_started.elapsed();
+        timing.produce = tried_for.unwrap_or_else(|| law_started.elapsed());
         // A law without a `using` line that stays open is tried once more
         // with the earlier laws the steps closed, where evaluation stops
         // (`using []` turns this off). What closes without them keeps its
@@ -1714,8 +1805,9 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             }
         }
         let (kernel, calls) = crate::proof_kernel::spent();
-        timing.kernel = kernel - kernel_before.0;
-        timing.kernel_calls = calls - kernel_before.1;
+        timing.kernel = kernel - kernel_before.0 + kernel_elsewhere.0;
+        timing.kernel_calls = calls - kernel_before.1 + kernel_elsewhere.1;
         ir.law_theorems[i].steps_timing = timing;
     }
+    ir.steps_elapsed = started.elapsed();
 }
