@@ -6607,6 +6607,98 @@ fn lean_closes_the_open_order_laws_by_their_steps() {
     let _ = fs::remove_dir_all(out);
 }
 
+/// The laws of `stated_empty.av`: a `when` says whether a list given is
+/// empty, and nothing else in scope reads the list.
+const STATED_EMPTY_LAWS: [&str; 3] = [
+    "firstOr.emptyOnTheLeft",
+    "firstOr.notEmptyHasALength",
+    "middle.withinAList",
+];
+
+/// Steps split the list into `[]` and a cell with the existing `listcases`
+/// step, the `when` is false in one case and the length of the cell reads
+/// in the other: both kernels accept the scripts and refuse them with the
+/// empty case read wrong. Laws of the same shapes that hold on their
+/// samples only stay open.
+#[test]
+fn both_kernels_split_a_list_a_hypothesis_calls_empty_and_refuse_a_wrong_case() {
+    let out = scratch("stated-empty");
+    let (result, summary) = aver_backend_json("stated_empty.av", &out, None);
+    let _ = fs::remove_dir_all(&out);
+    for law in STATED_EMPTY_LAWS {
+        assert_eq!(
+            summary["closed_by"][law],
+            "steps",
+            "{law}: {}",
+            format_output(&result)
+        );
+    }
+    let export = scratch("stated-empty-export");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("stated_empty.av", &export)
+            .into_iter()
+            .collect();
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for (i, law) in STATED_EMPTY_LAWS.into_iter().enumerate() {
+        let text = read(law);
+        assert_eq!(aver::proof_kernel::verdict(&text), Ok(law.to_string()));
+        assert!(text.contains("(listcases values "), "{law}: {text}");
+        // The empty case read as if the `when` held there.
+        let wrong = "(compute (op != (list) (list)) (b false))";
+        assert!(text.contains(wrong), "{law}: {text}");
+        let mutant = text.replacen(wrong, "(compute (op != (list) (list)) (b true))", 1);
+        let refused = aver::proof_kernel::verdict(&mutant);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "{law}: {refused:?}"
+        );
+        let path = export.join(format!("mutant{i}.steps"));
+        fs::write(&path, &mutant).unwrap();
+        let replayed = replay(std::slice::from_ref(&path));
+        assert!(!replayed.status.success(), "{}", format_output(&replayed));
+    }
+    let _ = fs::remove_dir_all(export);
+    let refused = scratch("stated-empty-refused");
+    assert!(export_steps("stated_empty_refused.av", &refused).is_empty());
+    let _ = fs::remove_dir_all(refused);
+}
+
+#[test]
+fn lean_closes_the_stated_empty_laws_by_their_steps() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("stated-empty-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "stated_empty.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "0",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in STATED_EMPTY_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
 /// The laws of `evaluated_hypotheses.av` that close only once the
 /// hypotheses of a case are evaluated the way its claim is: a `when` that
 /// evaluates to the claim, a line of an evaluated `when` that decides what
