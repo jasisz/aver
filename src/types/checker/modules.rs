@@ -630,8 +630,8 @@ impl TypeChecker {
 
     pub(super) fn has_namespace_prefix(&self, key: &str) -> bool {
         let prefix = format!("{}.", key);
-        // The canonical names of user functions, read in parts rather than
-        // written out one by one (see [`Self::all_fn_sigs`]).
+        // The canonical names of user functions (`Module.fn`), read in
+        // parts rather than written out one by one.
         self.fn_sigs.keys().any(|id| {
             let fn_key = &self.symbol_table.fn_entry(*id).key;
             match fn_key.scope_str() {
