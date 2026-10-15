@@ -368,6 +368,7 @@ pub(super) fn hint(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize) -> Option<
             steps_hints: Vec::new(),
             steps_auto_using: Vec::new(),
             obligation_steps: Vec::new(),
+            steps_timing: Default::default(),
             ..t.clone()
         };
         // The candidate as the steps would prove it standing before law

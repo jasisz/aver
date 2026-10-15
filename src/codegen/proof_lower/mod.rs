@@ -2582,6 +2582,7 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             steps_hints: Vec::new(),
             steps_auto_using: Vec::new(),
             obligation_steps: Vec::new(),
+            steps_timing: Default::default(),
         });
     }
     steps::populate_law_steps(inputs, ir);

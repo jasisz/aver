@@ -41,6 +41,7 @@ pub(super) fn run(
     sorry_budget: Option<usize>,
     check_json: bool,
 ) {
+    let front_started = std::time::Instant::now();
     let (ctx, _module_root) = super::build_codegen_context(
         file,
         project_name,
@@ -55,7 +56,11 @@ pub(super) fn run(
         true,
         true, // proof_command
     );
+    let front = front_started.elapsed();
     let started = std::time::Instant::now();
+    // The time of the kernel's check of each law's scripts, here, after the
+    // producers (whose own checks `LawTheorem::steps_timing` counts).
+    let mut final_kernel: BTreeMap<String, std::time::Duration> = BTreeMap::new();
     let steps_dir = std::path::Path::new(output_dir).join("proof_steps");
     let mut verdicts: BTreeMap<String, Verdict> = BTreeMap::new();
     // The obligations of `because` chains, apart from the laws: a law
@@ -89,6 +94,7 @@ pub(super) fn run(
         if !theorem.steps_hints.is_empty() {
             hints.insert(key.clone(), theorem.steps_hints.clone());
         }
+        let kernel_before = aver::proof_kernel::spent().0;
         let verdict = match &theorem.steps {
             None => Verdict::Open(theorem.steps_refusal.clone()),
             Some(script) => match aver::ir::proof_steps::sexpr::script(script, &ctx.symbol_table) {
@@ -112,7 +118,7 @@ pub(super) fn run(
                 }
             },
         };
-        verdicts.insert(key, verdict);
+        verdicts.insert(key.clone(), verdict);
         for ob in &theorem.obligation_steps {
             let verdict = match &ob.script {
                 None => Verdict::Open(ob.refusal.clone()),
@@ -156,6 +162,7 @@ pub(super) fn run(
                 );
             }
         }
+        final_kernel.insert(key, aver::proof_kernel::spent().0 - kernel_before);
     }
     // Credit composes: a law whose script cites a law this backend did not
     // close is not closed either (Lean gets the same from its axiom audit).
@@ -330,6 +337,15 @@ pub(super) fn run(
             "kernel_ms".into(),
             serde_json::Value::from(elapsed.as_secs_f64() * 1000.0),
         );
+        obj.insert(
+            "timing".into(),
+            timing_json(
+                &ctx.symbol_table,
+                &ctx.proof_ir.law_theorems,
+                front,
+                &final_kernel,
+            ),
+        );
         println!("{}", serde_json::Value::Object(obj));
     } else {
         for (key, verdict) in &verdicts {
@@ -397,6 +413,60 @@ pub(super) fn run(
     if checking && !passed {
         std::process::exit(1);
     }
+}
+
+/// Where the run spent its time, per law and summed by phase: the front end
+/// (parsing, types, lowering), each producer phase, and the kernel, both its
+/// checks inside the producers and the final check of each script. The front
+/// end is the time to the lowered program less the producers' time in it.
+fn timing_json(
+    symbols: &aver::ir::SymbolTable,
+    theorems: &[LawTheorem],
+    front: std::time::Duration,
+    final_kernel: &BTreeMap<String, std::time::Duration>,
+) -> serde_json::Value {
+    let ms = |d: std::time::Duration| serde_json::Value::from(d.as_secs_f64() * 1000.0);
+    let mut sums: BTreeMap<String, std::time::Duration> = BTreeMap::new();
+    let mut producers = std::time::Duration::ZERO;
+    let mut laws = serde_json::Map::new();
+    for t in theorems {
+        let key = law_key(symbols, t);
+        let timing = &t.steps_timing;
+        let last = final_kernel.get(&key).copied().unwrap_or_default();
+        let mut phases = vec![("produce", timing.produce), ("automatic", timing.automatic)];
+        let mut hints = serde_json::Map::new();
+        for (name, spent, found) in &timing.hints {
+            phases.push((*name, *spent));
+            hints.insert(
+                (*name).into(),
+                serde_json::json!({ "ms": ms(*spent), "found": found }),
+            );
+        }
+        let mut law = serde_json::Map::new();
+        for (name, spent) in &phases {
+            producers += *spent;
+            let phase = if matches!(*name, "produce" | "automatic") {
+                (*name).to_string()
+            } else {
+                format!("hint_{name}")
+            };
+            *sums.entry(phase).or_default() += *spent;
+        }
+        *sums.entry("kernel_in_producer".into()).or_default() += timing.kernel;
+        *sums.entry("kernel_final".into()).or_default() += last;
+        law.insert("produce_ms".into(), ms(timing.produce));
+        law.insert("automatic_ms".into(), ms(timing.automatic));
+        law.insert("hints".into(), hints.into());
+        law.insert("kernel_in_producer_ms".into(), ms(timing.kernel));
+        law.insert("kernel_calls".into(), timing.kernel_calls.into());
+        law.insert("kernel_final_ms".into(), ms(last));
+        laws.insert(key, law.into());
+    }
+    sums.insert("frontend".into(), front.saturating_sub(producers));
+    serde_json::json!({
+        "phases_ms": sums.into_iter().map(|(k, d)| (k, ms(d))).collect::<serde_json::Map<_, _>>(),
+        "laws": laws,
+    })
 }
 
 /// Every law left as [`Verdict::Steps`] cites only laws whose scripts check,
