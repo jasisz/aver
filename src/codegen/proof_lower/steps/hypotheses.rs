@@ -52,10 +52,7 @@ impl Env<'_> {
     /// as the module comment says; `None` when they do not, or when this
     /// attempt already read the same hypotheses.
     pub(crate) fn refute_case(&mut self, lhs: &Term, rhs: &Term) -> Option<Proof> {
-        use std::hash::{Hash, Hasher};
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        format!("{:?}", self.hyps).hash(&mut h);
-        let seen = h.finish();
+        let seen = super::memo::debug_hash(&[&self.hyps]);
         if self.refuted.contains(&seen) {
             return None;
         }
@@ -289,7 +286,7 @@ impl Env<'_> {
         // Without the hypotheses stating `t`, which would substitute one
         // side for the other.
         let saved = self.hyps.clone();
-        self.hyps.retain(|(_, h)| canon(&h.lhs) != *t);
+        self.hyps.retain(|(_, h)| *term::canon_ref(&h.lhs) != *t);
         let nl = self.on_refute_fuel(|env| env.normal_fact(&l));
         let nr = self.on_refute_fuel(|env| env.normal_fact(&r));
         self.hyps = saved;

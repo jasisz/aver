@@ -212,7 +212,7 @@ impl Env<'_> {
             // only give their own value back.
             let saved = self.hyps.clone();
             let lhs = term::canon(&e.lhs);
-            self.hyps.retain(|(_, h)| term::canon(&h.lhs) != lhs);
+            self.hyps.retain(|(_, h)| *term::canon_ref(&h.lhs) != lhs);
             let ev = self.whnf(&e.lhs);
             self.hyps = saved;
             let ev = ev?;

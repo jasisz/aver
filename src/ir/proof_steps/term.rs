@@ -170,6 +170,191 @@ pub fn canon(t: &Term) -> Term {
     retag(t, node)
 }
 
+/// Whether `t` is in canonical form already: no `Resolved` variable and no
+/// tail call in it, where [`canon`] rewrites nothing and gives a term equal
+/// to `t`. Visits every part [`map_children`] does.
+pub fn is_canon(t: &Term) -> bool {
+    match &t.node {
+        ResolvedExpr::Resolved { .. } | ResolvedExpr::TailCall { .. } => false,
+        ResolvedExpr::Literal(_) | ResolvedExpr::Ident(_) => true,
+        ResolvedExpr::Attr(o, _) | ResolvedExpr::Neg(o) | ResolvedExpr::ErrorProp(o) => is_canon(o),
+        ResolvedExpr::Call(_, xs)
+        | ResolvedExpr::Ctor(_, xs)
+        | ResolvedExpr::List(xs)
+        | ResolvedExpr::Tuple(xs)
+        | ResolvedExpr::IndependentProduct(xs, _) => xs.iter().all(is_canon),
+        ResolvedExpr::BinOp(_, l, r) => is_canon(l) && is_canon(r),
+        ResolvedExpr::Match { subject, arms } => {
+            is_canon(subject) && arms.iter().all(|arm| is_canon(&arm.body))
+        }
+        ResolvedExpr::InterpolatedStr(parts) => parts.iter().all(|p| match p {
+            ResolvedStrPart::Literal(_) => true,
+            ResolvedStrPart::Parsed(e) => is_canon(e),
+        }),
+        ResolvedExpr::MapLiteral(kvs) => kvs.iter().all(|(k, v)| is_canon(k) && is_canon(v)),
+        ResolvedExpr::RecordCreate { fields, .. } => fields.iter().all(|(_, v)| is_canon(v)),
+        ResolvedExpr::RecordUpdate { base, updates, .. } => {
+            is_canon(base) && updates.iter().all(|(_, v)| is_canon(v))
+        }
+    }
+}
+
+/// [`canon`] of `t` for reading: `t` itself where it is canonical already
+/// ([`is_canon`]), so comparing with it builds nothing.
+pub fn canon_ref(t: &Term) -> std::borrow::Cow<'_, Term> {
+    if is_canon(t) {
+        std::borrow::Cow::Borrowed(t)
+    } else {
+        std::borrow::Cow::Owned(canon(t))
+    }
+}
+
+/// Whether `canon(a) == canon(b)`, without building either where it is
+/// canonical already.
+pub fn canon_eq(a: &Term, b: &Term) -> bool {
+    *canon_ref(a) == *canon_ref(b)
+}
+
+/// Whether `a` and `b` are the same term part for part, with the type and
+/// source line of every part and the slots of every `match` arm: what
+/// their `Debug` text shows, which structural equality (`==`) partly
+/// ignores.
+pub fn exact_eq(a: &Term, b: &Term) -> bool {
+    let all = |xs: &[Term], ys: &[Term]| {
+        xs.len() == ys.len() && xs.iter().zip(ys).all(|(x, y)| exact_eq(x, y))
+    };
+    let named = |xs: &[(String, Term)], ys: &[(String, Term)]| {
+        xs.len() == ys.len()
+            && xs
+                .iter()
+                .zip(ys)
+                .all(|((n, x), (m, y))| n == m && exact_eq(x, y))
+    };
+    if a.line != b.line || a.ty() != b.ty() {
+        return false;
+    }
+    match (&a.node, &b.node) {
+        // A Float by its bits: `0.0 == -0.0` and `NaN != NaN`.
+        (ResolvedExpr::Literal(Literal::Float(x)), ResolvedExpr::Literal(Literal::Float(y))) => {
+            x.to_bits() == y.to_bits()
+        }
+        (ResolvedExpr::Literal(x), ResolvedExpr::Literal(y)) => x == y,
+        (ResolvedExpr::Ident(x), ResolvedExpr::Ident(y)) => x == y,
+        (
+            ResolvedExpr::Resolved {
+                slot: s1,
+                name: n1,
+                last_use: l1,
+            },
+            ResolvedExpr::Resolved {
+                slot: s2,
+                name: n2,
+                last_use: l2,
+            },
+        ) => s1 == s2 && n1 == n2 && l1.0 == l2.0,
+        (ResolvedExpr::Attr(x, f), ResolvedExpr::Attr(y, g)) => f == g && exact_eq(x, y),
+        (ResolvedExpr::Call(c, xs), ResolvedExpr::Call(d, ys)) => c == d && all(xs, ys),
+        (ResolvedExpr::BinOp(o, l1, r1), ResolvedExpr::BinOp(p, l2, r2)) => {
+            o == p && exact_eq(l1, l2) && exact_eq(r1, r2)
+        }
+        (ResolvedExpr::Neg(x), ResolvedExpr::Neg(y))
+        | (ResolvedExpr::ErrorProp(x), ResolvedExpr::ErrorProp(y)) => exact_eq(x, y),
+        (
+            ResolvedExpr::Match {
+                subject: x,
+                arms: xs,
+            },
+            ResolvedExpr::Match {
+                subject: y,
+                arms: ys,
+            },
+        ) => {
+            exact_eq(x, y)
+                && xs.len() == ys.len()
+                && xs.iter().zip(ys).all(|(p, q)| {
+                    format!("{:?}", p.pattern) == format!("{:?}", q.pattern)
+                        && p.binding_slots.get() == q.binding_slots.get()
+                        && exact_eq(&p.body, &q.body)
+                })
+        }
+        (ResolvedExpr::Ctor(c, xs), ResolvedExpr::Ctor(d, ys)) => c == d && all(xs, ys),
+        (ResolvedExpr::InterpolatedStr(xs), ResolvedExpr::InterpolatedStr(ys)) => {
+            xs.len() == ys.len()
+                && xs.iter().zip(ys).all(|(p, q)| match (p, q) {
+                    (ResolvedStrPart::Literal(x), ResolvedStrPart::Literal(y)) => x == y,
+                    (ResolvedStrPart::Parsed(x), ResolvedStrPart::Parsed(y)) => exact_eq(x, y),
+                    _ => false,
+                })
+        }
+        (ResolvedExpr::List(xs), ResolvedExpr::List(ys))
+        | (ResolvedExpr::Tuple(xs), ResolvedExpr::Tuple(ys)) => all(xs, ys),
+        (ResolvedExpr::MapLiteral(xs), ResolvedExpr::MapLiteral(ys)) => {
+            xs.len() == ys.len()
+                && xs
+                    .iter()
+                    .zip(ys)
+                    .all(|((k1, v1), (k2, v2))| exact_eq(k1, k2) && exact_eq(v1, v2))
+        }
+        (
+            ResolvedExpr::RecordCreate {
+                type_id: t1,
+                type_name: n1,
+                fields: f1,
+            },
+            ResolvedExpr::RecordCreate {
+                type_id: t2,
+                type_name: n2,
+                fields: f2,
+            },
+        ) => t1 == t2 && n1 == n2 && named(f1, f2),
+        (
+            ResolvedExpr::RecordUpdate {
+                type_id: t1,
+                type_name: n1,
+                base: b1,
+                updates: u1,
+            },
+            ResolvedExpr::RecordUpdate {
+                type_id: t2,
+                type_name: n2,
+                base: b2,
+                updates: u2,
+            },
+        ) => t1 == t2 && n1 == n2 && exact_eq(b1, b2) && named(u1, u2),
+        (
+            ResolvedExpr::TailCall {
+                target: t1,
+                args: a1,
+            },
+            ResolvedExpr::TailCall {
+                target: t2,
+                args: a2,
+            },
+        ) => t1 == t2 && all(a1, a2),
+        (ResolvedExpr::IndependentProduct(xs, u), ResolvedExpr::IndependentProduct(ys, v)) => {
+            u == v && all(xs, ys)
+        }
+        _ => false,
+    }
+}
+
+/// Whether `canon(subst(t, map))` may equal `want` for some `map`: a
+/// substitution keeps the outermost part of `t` (a tail call read as a
+/// call) unless it is a variable.
+pub fn may_become(t: &Term, want: &Term) -> bool {
+    use std::mem::discriminant;
+    match (&t.node, &want.node) {
+        (ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. }, _) => true,
+        (ResolvedExpr::TailCall { target, .. }, ResolvedExpr::Call(c, _)) => {
+            *c == ResolvedCallee::Fn(*target)
+        }
+        (ResolvedExpr::Call(c, _), ResolvedExpr::Call(d, _)) => c == d,
+        (ResolvedExpr::BinOp(o, _, _), ResolvedExpr::BinOp(p, _, _)) => o == p,
+        (ResolvedExpr::TailCall { .. }, _) => false,
+        (a, b) => discriminant(a) == discriminant(b),
+    }
+}
+
 /// Rebuild `t` with `f` applied to every direct child (match arm bodies
 /// included).
 pub fn map_children(

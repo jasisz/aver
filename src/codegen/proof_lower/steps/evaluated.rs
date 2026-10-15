@@ -105,7 +105,7 @@ fn is_value(t: &Term) -> bool {
 /// Whether `part` stands in `t` where evaluation reads it: `t` itself or a
 /// part of it, not inside the arms of a `match`.
 fn stands_in(part: &Term, t: &Term) -> bool {
-    canon(t) == *part || term::children(t).into_iter().any(|c| stands_in(part, c))
+    *term::canon_ref(t) == *part || term::children(t).into_iter().any(|c| stands_in(part, c))
 }
 
 /// What a try that failed may have written in an attempt, as it stood
@@ -237,11 +237,9 @@ impl Env<'_> {
                     steps: vec![Proof::Symm(Box::new(theirs)), from],
                 });
             }
-            let stated = self
-                .hyps
-                .iter()
-                .rev()
-                .find(|(_, e)| canon(&e.lhs) == part && term::bool_value(&e.rhs) == Some(said));
+            let stated = self.hyps.iter().rev().find(|(_, e)| {
+                *term::canon_ref(&e.lhs) == part && term::bool_value(&e.rhs) == Some(said)
+            });
             let (name, proof) = match stated {
                 Some((name, _)) => (name.clone(), None),
                 // Named apart from every form of this attempt, also those of
@@ -286,13 +284,10 @@ impl Env<'_> {
         stopped: &[&Term],
         depth: usize,
     ) -> Option<Proof> {
-        use std::hash::{Hash, Hasher};
         if self.hypotheses_as_stated || self.read_fuel == 0 || self.reading >= MAX_READINGS {
             return None;
         }
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        format!("{:?}{:?}{:?}", self.hyps, canon(lhs), canon(rhs)).hash(&mut h);
-        let seen = h.finish();
+        let seen = super::memo::debug_hash(&[&self.hyps, &canon(lhs), &canon(rhs)]);
         if self.read_seen.contains(&seen) {
             return None;
         }

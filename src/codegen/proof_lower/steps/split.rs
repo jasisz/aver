@@ -465,7 +465,7 @@ impl Env<'_> {
         value: &Term,
     ) -> Vec<(String, Term, bool, Proof, (Term, String))> {
         fn places(t: &Term, part: &Term, path: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
-            if canon(t) == *part {
+            if *term::canon_ref(t) == *part {
                 out.push(path.clone());
                 return;
             }

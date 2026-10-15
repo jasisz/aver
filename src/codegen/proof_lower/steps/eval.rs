@@ -40,7 +40,7 @@ pub(crate) const MAX_AUTO_CANDIDATES: usize = 4;
 
 /// Whether `part` occurs in `t`.
 fn holds(t: &Term, part: &Term) -> bool {
-    canon(t) == *part || term::children(t).into_iter().any(|c| holds(c, part))
+    *term::canon_ref(t) == *part || term::children(t).into_iter().any(|c| holds(c, part))
 }
 
 /// The left argument `a` where `l` holds `Bool.or(a, b)` (or `Bool.and`)
@@ -176,7 +176,7 @@ pub(super) fn ruled_out(p: &ResolvedPattern, v: &Term, hyps: &[(String, Eqn)]) -
     let want = crate::ir::proof_steps::unequal(&canon(v), &k);
     let lhs = canon(&want.lhs);
     hyps.iter()
-        .any(|(_, e)| canon(&e.lhs) == lhs && term::bool_value(&e.rhs) == Some(false))
+        .any(|(_, e)| *term::canon_ref(&e.lhs) == lhs && term::bool_value(&e.rhs) == Some(false))
 }
 
 /// The arm of a match whose pattern head the value `v` has, with the
@@ -271,6 +271,24 @@ pub(super) fn literal_positive(k: &Term) -> Option<Proof> {
 /// `0 <= a % k` and `a % k < k` (`int.mod_range`). `positive` proves
 /// `(k > 0) = true`; a divisor it does not is left out. Also the
 /// quotients, each inside the ones that divide it again.
+/// Whether `t` divides by a divisor that is not a literal, outside any
+/// `match`: where [`division_facts`] asks whether a divisor is positive
+/// beyond computing it.
+fn open_divisor(t: &Term) -> bool {
+    use crate::ir::hir::BuiltinIntrinsic;
+    if let ResolvedExpr::Call(ResolvedCallee::Intrinsic(op), args) = &t.node
+        && args.len() == 2
+        && matches!(
+            op,
+            BuiltinIntrinsic::IntModEuclid | BuiltinIntrinsic::IntDivEuclid
+        )
+        && term::int_value(&args[1]).is_none()
+    {
+        return true;
+    }
+    !matches!(t.node, ResolvedExpr::Match { .. }) && term::children(t).into_iter().any(open_divisor)
+}
+
 fn division_facts(
     ts: &[&Term],
     positive: &mut dyn FnMut(&Term) -> Option<Proof>,
@@ -287,7 +305,7 @@ fn division_facts(
                 _ => None,
             };
             if let Some(found) = found
-                && !found.contains(&canon(t))
+                && !found.contains(&*term::canon_ref(t))
             {
                 found.push(canon(t));
             }
@@ -591,7 +609,7 @@ fn upper_bound(t: &Term, value: bool, a: &Term) -> Option<num_bigint::BigInt> {
     let ResolvedExpr::BinOp(op, l, r) = &t.node else {
         return None;
     };
-    let (op, c) = match (canon(l) == *a, canon(r) == *a) {
+    let (op, c) = match (*term::canon_ref(l) == *a, *term::canon_ref(r) == *a) {
         (true, false) => (*op, term::int_value(r)?),
         (false, true) => {
             let flipped = match op {
@@ -691,6 +709,19 @@ fn every_literal_as_cells(t: &Term) -> Option<Chain> {
     (!chain.is_empty()).then_some(chain)
 }
 
+/// Whether `t` has, outside any `match`, a list literal with an element or
+/// a call without arguments: what [`as_cells`] and
+/// [`Env::fold_constants`] look for before they change anything.
+fn may_cell_or_fold(t: &Term) -> bool {
+    match &t.node {
+        ResolvedExpr::Match { .. } => false,
+        ResolvedExpr::List(xs) if !xs.is_empty() => true,
+        ResolvedExpr::Call(ResolvedCallee::Fn(_), args) if args.is_empty() => true,
+        ResolvedExpr::TailCall { args, .. } if args.is_empty() => true,
+        _ => term::children(t).into_iter().any(may_cell_or_fold),
+    }
+}
+
 /// `t = t'`, where `t'` writes every list literal of `t` with an open
 /// element as cells, one [`Proof::Cell`] step each; `None` when there is
 /// none.
@@ -723,7 +754,7 @@ pub(crate) fn as_cells(t: &Term) -> Option<(Proof, Term)> {
 /// first.
 fn align_calls(a: &Term, b: &Term) -> Vec<(Proof, Term)> {
     fn calls(t: &Term, out: &mut Vec<Term>) {
-        if matches!(t.node, ResolvedExpr::Call(..)) && !out.contains(&canon(t)) {
+        if matches!(t.node, ResolvedExpr::Call(..)) && !out.contains(&*term::canon_ref(t)) {
             out.push(canon(t));
         }
         for c in term::children(t) {
@@ -731,7 +762,7 @@ fn align_calls(a: &Term, b: &Term) -> Vec<(Proof, Term)> {
         }
     }
     fn paths(t: &Term, part: &Term, at: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
-        if canon(t) == *part {
+        if *term::canon_ref(t) == *part {
             out.push(at.clone());
             return;
         }
@@ -1023,6 +1054,12 @@ impl Env<'_> {
     fn hyp_as_cells(&mut self, cur: &Term) -> Option<Step> {
         let t = canon(cur);
         for (name, e) in self.hyps.clone().into_iter().rev() {
+            // Neither a list literal nor a call without arguments: writing
+            // it as cells and folding its constants changes nothing and
+            // looks up no definition.
+            if !may_cell_or_fold(&e.lhs) {
+                continue;
+            }
             let lhs = canon(&e.lhs);
             let mut chain = Chain::new(&lhs);
             if let Some((p, to)) = as_cells(&lhs) {
@@ -1081,7 +1118,7 @@ impl Env<'_> {
     pub(crate) fn fold_constants(&mut self, t: &Term) -> Option<(Proof, Term)> {
         let mut chain = Chain::new(&canon(t));
         for _ in 0..32 {
-            let Some((path, p, to)) = self.constant_call(&chain.cur().clone()) else {
+            let Some((path, p, to)) = self.constant_call(chain.cur()) else {
                 break;
             };
             chain.push_at(&path, p, &to);
@@ -1267,8 +1304,7 @@ impl Env<'_> {
             return Some((Vec::new(), proof, value));
         }
         for (i, c) in term::children(t).into_iter().enumerate() {
-            let c = c.clone();
-            if let Some((mut path, p, v)) = self.constant_call(&c) {
+            if let Some((mut path, p, v)) = self.constant_call(c) {
                 path.insert(0, i);
                 return Some((path, p, v));
             }
@@ -1319,22 +1355,26 @@ impl Env<'_> {
             return None;
         }
         let t = canon(cur);
-        let stated_lhs = self.stated_equalities();
-        let candidates: Vec<(String, Term, Term)> = self
-            .hyps
-            .iter()
-            .rev()
-            .filter(|(_, e)| term::bool_value(&e.rhs) == Some(true))
-            .filter_map(|(n, e)| match &e.lhs.node {
-                ResolvedExpr::BinOp(BinOp::Eq, a, k) => Some((n.clone(), canon(a), canon(k))),
-                _ => None,
-            })
-            .filter(|(_, a, k)| {
-                term::int_value(k).is_some()
-                    || ((is_int(a) && is_int(k) || self.beq_is_equality(a))
-                        && !stated_lhs.iter().any(|l| occurs(l, k)))
-            })
-            .collect();
+        let mut stated_lhs: Option<Vec<Term>> = None;
+        let mut candidates: Vec<(String, Term, Term)> = Vec::new();
+        for (n, e) in self.hyps.iter().rev() {
+            if term::bool_value(&e.rhs) != Some(true) {
+                continue;
+            }
+            let ResolvedExpr::BinOp(BinOp::Eq, a, k) = &e.lhs.node else {
+                continue;
+            };
+            let (a, k) = (canon(a), canon(k));
+            let keep = term::int_value(&k).is_some()
+                || ((is_int(&a) && is_int(&k) || self.beq_is_equality(&a))
+                    && !stated_lhs
+                        .get_or_insert_with(|| self.stated_equalities())
+                        .iter()
+                        .any(|l| occurs(l, &k)));
+            if keep {
+                candidates.push((n.clone(), a, k));
+            }
+        }
         for (n, a, k) in candidates {
             let rule = |a: Term| Proof::Rule {
                 rule: WallRule::EqOfBeq,
@@ -1350,7 +1390,7 @@ impl Env<'_> {
             if term::int_value(&k).is_some() {
                 continue;
             }
-            let Some((unfold, body)) = self.wrapper_unfold(&a) else {
+            let Some((unfold, body)) = self.wrapper_unfold_to(&a, Some(&t)) else {
                 continue;
             };
             if body != t {
@@ -1380,14 +1420,26 @@ impl Env<'_> {
     /// not a `match` and that does not recurse, with that body at `a`'s
     /// arguments; `None` otherwise.
     fn wrapper_unfold(&mut self, a: &Term) -> Option<(Proof, Term)> {
+        self.wrapper_unfold_to(a, None)
+    }
+
+    /// [`Self::wrapper_unfold`], or `None` early where the body cannot be
+    /// `want`: substituting the arguments keeps the body's outermost part
+    /// unless that part is a variable.
+    fn wrapper_unfold_to(&mut self, a: &Term, want: Option<&Term>) -> Option<(Proof, Term)> {
         let ResolvedExpr::Call(ResolvedCallee::Fn(id), args) = &a.node else {
             return None;
         };
         if self.inputs.recursive_fns.contains(id) {
             return None;
         }
-        let def = self.def(*id)?;
+        let def = self.def_ref(*id)?;
         if matches!(def.body.node, ResolvedExpr::Match { .. }) {
+            return None;
+        }
+        if let Some(want) = want
+            && !term::may_become(&def.body, want)
+        {
             return None;
         }
         let body = canon(&term::subst(&def.body, &def.outer(args).ok()?).ok()?);
@@ -1419,9 +1471,9 @@ impl Env<'_> {
                 continue;
             }
             for (side, other) in [(a, b), (b, a)] {
-                if canon(side) == *x
+                if *term::canon_ref(side) == *x
                     && term::int_value(other).is_some()
-                    && !literals.contains(&canon(other))
+                    && !literals.contains(&*term::canon_ref(other))
                 {
                     literals.push(canon(other));
                 }
@@ -1472,7 +1524,7 @@ impl Env<'_> {
             _ => false,
         };
         match found {
-            Some(g) if canon(&g) != canon(value) || kernel_bool => Some(g),
+            Some(g) if !term::canon_eq(&g, value) || kernel_bool => Some(g),
             _ if kernel_bool => Some(canon(value)),
             _ => Some(canon(&term::bool_and(value.clone(), term::boolean(true)))),
         }
@@ -1490,7 +1542,7 @@ impl Env<'_> {
                 && b == "Bool.and"
                 && args.len() == 2
                 && term::bool_value(&args[1]) == Some(true)
-                && canon(&args[0]) == t
+                && *term::canon_ref(&args[0]) == t
             {
                 let wrapped = canon(&e.lhs);
                 let value = term::boolean(v);
@@ -2082,7 +2134,7 @@ impl Env<'_> {
                 } else {
                     canon(&poly_term(&quot, &atoms))
                 };
-                if to == canon(cur) {
+                if to == *term::canon_ref(cur) {
                     break;
                 }
                 if let Some(step) = self.known(cur)? {
@@ -2327,7 +2379,7 @@ impl Env<'_> {
         let written = |t: &Term| -> Option<Vec<Term>> {
             let outer = builtin(t, "Option.withDefault", 2)?;
             let set = builtin(&outer[0], "Vector.set", 3)?;
-            (canon(&set[0]) == canon(&outer[1])).then_some(set)
+            (term::canon_eq(&set[0], &outer[1])).then_some(set)
         };
         let decided = |env: &mut Self, t: Term| -> Result<Option<(bool, Proof)>, String> {
             let ev = env.whnf(&t)?;
@@ -2385,7 +2437,7 @@ impl Env<'_> {
                         else {
                             return Ok(None);
                         };
-                        if canon(&set[1]) == canon(j) {
+                        if term::canon_eq(&set[1], j) {
                             (
                                 WallRule::VecGetSetSame,
                                 bind(&["v", "i", "x"], set),
@@ -2502,7 +2554,7 @@ impl Env<'_> {
             ("Map.len", 1, true, _) => (WallRule::MapLenEmpty, vec![], vec![]),
             ("Map.get" | "Map.has", 2, false, Some(p)) => {
                 let get = name == "Map.get";
-                if canon(&p[1]) == canon(&args[1]) {
+                if term::canon_eq(&p[1], &args[1]) {
                     let rule = if get {
                         WallRule::MapGetSetSame
                     } else {
@@ -2561,7 +2613,7 @@ impl Env<'_> {
     /// one of its conjuncts, taken apart by `bool.and.elim_l` and `_r`.
     fn conjunct_of_hyp(&self, t: &Term) -> Option<Proof> {
         fn find(t: &Term, part: &Term, proof: Proof) -> Option<Proof> {
-            if canon(part) == *t {
+            if *term::canon_ref(part) == *t {
                 return Some(proof);
             }
             let ResolvedExpr::Call(ResolvedCallee::Builtin(b), args) = &part.node else {
@@ -2607,7 +2659,7 @@ impl Env<'_> {
         if list_builtin
             && let Some(v) = term::eval_closed(cur)
             && matches!(v.node, ResolvedExpr::List(_))
-            && v != canon(cur)
+            && v != *term::canon_ref(cur)
         {
             return Ok(Some(Step::Progress(Box::new((
                 Proof::Compute {
@@ -2895,9 +2947,25 @@ impl Env<'_> {
     /// `Bool.and` lines. Only a predicate that does not recurse, one level,
     /// and only where a step reads it; the definition opened is marked used
     /// by the caller that takes a view.
-    pub(crate) fn opened_views(&mut self) -> Vec<(Term, Proof, crate::ir::identity::FnId)> {
+    pub(crate) fn opened_views(
+        &mut self,
+    ) -> std::rc::Rc<Vec<(Term, Proof, crate::ir::identity::FnId)>> {
+        // The views read only the hypotheses and the definitions, which
+        // stay the same for one environment: the last ones are given again
+        // for the same hypotheses, with the same lookups noted.
+        if let Some(memo) = &self.views_memo
+            && super::env::same_hyps(&memo.hyps, &self.hyps)
+        {
+            let (looked_up, views) = (memo.looked_up.clone(), std::rc::Rc::clone(&memo.views));
+            for id in looked_up {
+                self.traced(super::memo::Effect::Def(id));
+            }
+            return views;
+        }
         let mut out = Vec::new();
-        for (name, e) in self.hyps.clone() {
+        let mut looked_up = Vec::new();
+        let hyps = self.hyps.clone();
+        for (name, e) in hyps.iter().cloned() {
             if term::bool_value(&e.rhs) != Some(true) {
                 continue;
             }
@@ -2907,6 +2975,7 @@ impl Env<'_> {
             if self.inputs.recursive_fns.contains(id) {
                 continue;
             }
+            looked_up.push(*id);
             let Some(def) = self.def(*id) else {
                 continue;
             };
@@ -2941,13 +3010,21 @@ impl Env<'_> {
                 out.extend(lines.into_iter().map(|(f, p)| (f, p, *id)));
             }
         }
+        let out = std::rc::Rc::new(out);
+        self.views_memo = Some(Box::new(super::env::ViewsMemo {
+            hyps,
+            looked_up,
+            views: std::rc::Rc::clone(&out),
+        }));
         out
     }
 
     /// A view of a predicate hypothesis that is exactly `t`, with its proof.
     pub(crate) fn view_for(&mut self, t: &Term) -> Option<Proof> {
-        let t = canon(t);
-        let (_, proof, id) = self.opened_views().into_iter().find(|(f, _, _)| *f == t)?;
+        let t = term::canon_ref(t);
+        let views = self.opened_views();
+        let (_, proof, id) = views.iter().find(|(f, _, _)| *f == *t)?;
+        let (proof, id) = (proof.clone(), *id);
         self.mark_used(id);
         Some(proof)
     }
@@ -3104,8 +3181,9 @@ impl Env<'_> {
         let plain = known.len();
         let views: Vec<(Term, Proof, crate::ir::identity::FnId)> = self
             .opened_views()
-            .into_iter()
+            .iter()
             .filter(|(f, _, _)| linear::as_nonneg(f, true, &mut Vec::new()).is_some())
+            .cloned()
             .collect();
         for (i, (f, _, _)) in views.iter().enumerate() {
             known.push((
@@ -3114,6 +3192,16 @@ impl Env<'_> {
             ));
         }
         let viewed = known.len();
+        // A goal that is no comparison of Ints is settled by nothing below;
+        // what reading the facts does besides is showing a divisor that is
+        // not a literal positive, which may name a hypothesis, so only where
+        // there is none is the rest skipped.
+        if linear::as_nonneg(goal, !value, &mut Vec::new()).is_none()
+            && !open_divisor(goal)
+            && !known.iter().any(|(_, e)| open_divisor(&e.lhs))
+        {
+            return None;
+        }
         let instances = self.cited_comparisons(goal);
         for (i, (f, _, _)) in instances.iter().enumerate() {
             known.push((
@@ -3343,7 +3431,7 @@ impl Env<'_> {
             if let ResolvedExpr::Call(ResolvedCallee::Builtin(b), args) = &t.node
                 && b == "List.len"
                 && args.len() == 1
-                && !out.contains(&canon(&args[0]))
+                && !out.contains(&*term::canon_ref(&args[0]))
             {
                 out.push(canon(&args[0]));
             }
@@ -3351,7 +3439,7 @@ impl Env<'_> {
                 lengths(c, out);
             }
         }
-        let stated = |t: &Term| known.iter().any(|(_, e)| canon(&e.lhs) == *t);
+        let stated = |t: &Term| known.iter().any(|(_, e)| *term::canon_ref(&e.lhs) == *t);
         // The atoms the goal and the facts already read: a conjunct about
         // none of them cannot take part in a certificate.
         let mut about = Vec::new();
@@ -3556,7 +3644,7 @@ impl Env<'_> {
             && !matches!(def.body.node, ResolvedExpr::Match { .. })
             && let Ok(outer) = def.outer(args)
             && let Ok(body) = term::subst(&def.body, &outer)
-            && canon(&body) == *target
+            && *term::canon_ref(&body) == *target
         {
             return true;
         }
@@ -3672,7 +3760,7 @@ impl Env<'_> {
         // going on from where evaluating the sides stopped.
         let mut nl = self.normalize_below(l.chain.clone(), 8)?;
         let nr = self.normalize_below(r.chain.clone(), 8)?;
-        if canon(nl.cur()) == canon(nr.cur()) {
+        if term::canon_eq(nl.cur(), nr.cur()) {
             return Ok(Ok(meet(nl, nr)));
         }
         // A call on one side that a call on the other is once their Int
@@ -3779,7 +3867,7 @@ impl Env<'_> {
                 }
                 if matches!(e.lhs.node, ResolvedExpr::Call(ResolvedCallee::Fn(_), _))
                     && term::bool_value(&e.rhs).is_some()
-                    && !self.opened.contains(&canon(&e.lhs))
+                    && !self.opened.contains(&*term::canon_ref(&e.lhs))
                 {
                     found = self.stuck_subject(&e.lhs, true);
                 }
@@ -3924,7 +4012,7 @@ impl Env<'_> {
     /// gave (`[128]`) against the cell (`List.prepend(128, rest)`) the
     /// other side built.
     fn same_up_to_cells(&mut self, l: &Chain, r: &Chain) -> Option<Proof> {
-        if canon(l.cur()) == canon(r.cur()) {
+        if term::canon_eq(l.cur(), r.cur()) {
             return Some(meet(l.clone(), r.clone()));
         }
         let mut sides = [l.clone(), r.clone()];
@@ -3942,7 +4030,7 @@ impl Env<'_> {
                 side.push(proof, to);
             }
         }
-        if !celled || canon(sides[0].cur()) != canon(sides[1].cur()) {
+        if !celled || !term::canon_eq(sides[0].cur(), sides[1].cur()) {
             return None;
         }
         let [l, r] = sides;
@@ -4076,7 +4164,7 @@ impl Env<'_> {
     ) -> Result<Proof, String> {
         let l = self.whnf(lhs)?;
         let r = self.whnf(rhs)?;
-        if canon(l.chain.cur()) == canon(r.chain.cur()) {
+        if term::canon_eq(l.chain.cur(), r.chain.cur()) {
             return Ok(meet(l.chain, r.chain));
         }
         let g = match l.blocked.clone().or(r.blocked.clone()) {
@@ -4204,7 +4292,8 @@ impl Env<'_> {
             .collect();
         found.extend(
             self.opened_views()
-                .into_iter()
+                .iter()
+                .cloned()
                 .map(|(f, p, id)| (f, p, Some(id))),
         );
         for (fact, from, id) in found {
@@ -4337,7 +4426,9 @@ impl Env<'_> {
         depth: usize,
     ) -> Result<Option<Proof>, String> {
         let found = self.hyps.iter().rev().find_map(|(name, e)| {
-            if term::bool_value(&e.rhs) != Some(true) || self.opened.contains(&canon(&e.lhs)) {
+            if term::bool_value(&e.rhs) != Some(true)
+                || self.opened.contains(&*term::canon_ref(&e.lhs))
+            {
                 return None;
             }
             let ResolvedExpr::Call(ResolvedCallee::Fn(id), args) = &e.lhs.node else {
@@ -4545,7 +4636,7 @@ impl Env<'_> {
     pub(crate) fn normal_fact(&mut self, fact: &Term) -> Option<NormalFact> {
         let fact = canon(fact);
         let saved = self.hyps.clone();
-        self.hyps.retain(|(_, h)| canon(&h.lhs) != fact);
+        self.hyps.retain(|(_, h)| *term::canon_ref(&h.lhs) != fact);
         // What evaluation records on the way (definitions opened, laws
         // applied, hints) is taken back here and kept with the form, so a
         // form the proof does not read leaves the script as it was.

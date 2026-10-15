@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use crate::ast::Stmt;
 use crate::codegen::proof_lower::ProofLowerInputs;
 use crate::ir::identity::FnId;
-use crate::ir::proof_steps::term::{Term, canon};
+use crate::ir::proof_steps::term::{Term, canon, canon_ref};
 use crate::ir::proof_steps::{Const, Def, Eqn, LawRef, Proof};
 
 /// A divisor, the hypotheses in scope when it was read, and its proof of
@@ -51,6 +51,9 @@ pub(crate) struct Env<'a> {
     /// does (see `super::auto_pool`).
     pub auto_laws: Vec<LawRef>,
     pub hyps: Vec<(String, Eqn)>,
+    /// The last [`Env::opened_views`], with the hypotheses it read and the
+    /// definitions it looked up, in order.
+    pub(crate) views_memo: Option<Box<ViewsMemo>>,
     /// Inside a case of a split on a countdown's guard (see
     /// `Env::countdown_guard`): another countdown splits there only on a
     /// guard linear arithmetic decides, so one case closes at once.
@@ -164,6 +167,23 @@ pub(crate) struct Env<'a> {
     pub reading: usize,
 }
 
+/// What [`Env::opened_views`] gave for the hypotheses `hyps`.
+pub(crate) struct ViewsMemo {
+    pub hyps: Vec<(String, Eqn)>,
+    pub looked_up: Vec<FnId>,
+    pub views: std::rc::Rc<Vec<(Term, crate::ir::proof_steps::Proof, FnId)>>,
+}
+
+/// Whether two lists of hypotheses are the same, names and terms part for
+/// part ([`crate::ir::proof_steps::term::exact_eq`]).
+pub(crate) fn same_hyps(a: &[(String, Eqn)], b: &[(String, Eqn)]) -> bool {
+    use crate::ir::proof_steps::term::exact_eq;
+    a.len() == b.len()
+        && a.iter()
+            .zip(b)
+            .all(|((n, e), (m, f))| n == m && exact_eq(&e.lhs, &f.lhs) && exact_eq(&e.rhs, &f.rhs))
+}
+
 /// Where evaluation stopped: the two sides it could not bring together,
 /// and the hypotheses in scope there.
 #[derive(Clone)]
@@ -197,6 +217,7 @@ impl<'a> Env<'a> {
             hint_laws: Vec::new(),
             auto_laws: Vec::new(),
             hyps: Vec::new(),
+            views_memo: None,
             countdown_split: false,
             fuel: FUEL,
             normal_fuel: 2000,
@@ -238,7 +259,7 @@ impl<'a> Env<'a> {
     }
 
     /// Note a write for the evaluation being remembered, if any.
-    fn traced(&mut self, e: super::memo::Effect) {
+    pub(crate) fn traced(&mut self, e: super::memo::Effect) {
         if let Some(trace) = &mut self.trace {
             trace.push(e);
         }
@@ -290,6 +311,16 @@ impl<'a> Env<'a> {
         let built = self.build_def(id);
         self.defs.insert(id, built.clone());
         built
+    }
+
+    /// [`Self::def`] without the copy: the same lookup, read in place.
+    pub(crate) fn def_ref(&mut self, id: FnId) -> Option<&Def> {
+        self.traced(super::memo::Effect::Def(id));
+        if !self.defs.contains_key(&id) {
+            let built = self.build_def(id);
+            self.defs.insert(id, built);
+        }
+        self.defs.get(&id).and_then(Option::as_ref)
     }
 
     pub(crate) fn mark_used(&mut self, id: FnId) {
@@ -568,11 +599,11 @@ impl<'a> Env<'a> {
     }
 
     pub(crate) fn hyp_for(&self, t: &Term) -> Option<(String, Term)> {
-        let t = canon(t);
+        let t = canon_ref(t);
         self.hyps
             .iter()
             .rev()
-            .find(|(_, e)| canon(&e.lhs) == t)
+            .find(|(_, e)| *canon_ref(&e.lhs) == *t)
             .map(|(n, e)| (n.clone(), e.rhs.clone()))
     }
 }
