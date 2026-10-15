@@ -70,6 +70,9 @@ pub(super) fn run(
     // whose `using` line names what they cite.
     let mut automatic: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut pinned: Vec<String> = Vec::new();
+    // What each checked script stands on, read off the text the kernel
+    // checked; reported for the laws and obligations that close.
+    let mut trust: BTreeMap<String, aver::ir::proof_steps::trust::Trust> = BTreeMap::new();
     for theorem in &ctx.proof_ir.law_theorems {
         let key = law_key(&ctx.symbol_table, theorem);
         if theorem.steps.is_some() && !theorem.steps_auto_using.is_empty() {
@@ -95,7 +98,14 @@ pub(super) fn run(
                         let _ = std::fs::write(steps_dir.join(format!("{key}.steps")), &text);
                     }
                     match aver::proof_kernel::verdict(&text) {
-                        Ok(proved) if proved == key => Verdict::Steps,
+                        Ok(proved) if proved == key => {
+                            if check_json
+                                && let Ok(t) = aver::ir::proof_steps::trust::of_script(&text)
+                            {
+                                trust.insert(key.clone(), t);
+                            }
+                            Verdict::Steps
+                        }
                         Ok(other) => Verdict::Refused(format!("the script proves {other}")),
                         Err(why) => Verdict::Refused(why),
                     }
@@ -117,7 +127,15 @@ pub(super) fn run(
                                 );
                             }
                             match aver::proof_kernel::verdict(&text) {
-                                Ok(proved) if proved == ob.key => Verdict::Steps,
+                                Ok(proved) if proved == ob.key => {
+                                    if check_json
+                                        && let Ok(t) =
+                                            aver::ir::proof_steps::trust::of_script(&text)
+                                    {
+                                        trust.insert(ob.key.clone(), t);
+                                    }
+                                    Verdict::Steps
+                                }
                                 Ok(other) => Verdict::Refused(format!("the script proves {other}")),
                                 Err(why) => Verdict::Refused(why),
                             }
@@ -287,6 +305,17 @@ pub(super) fn run(
                         .collect(),
                 ),
             );
+        }
+        // What each closed law and obligation stands on: the wall rules,
+        // the kernel's own procedures and the laws and facts it cites.
+        let closed_trust: serde_json::Map<String, serde_json::Value> = verdicts
+            .iter()
+            .chain(&obligation_verdicts)
+            .filter(|(_, v)| matches!(v, Verdict::Steps))
+            .filter_map(|(k, _)| Some((k.clone(), trust.get(k)?.to_json())))
+            .collect();
+        if !closed_trust.is_empty() {
+            obj.insert("trust".into(), serde_json::Value::Object(closed_trust));
         }
         obj.insert("closed_with_pinned_using".into(), closed_pinned.into());
         obj.insert(

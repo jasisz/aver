@@ -1,0 +1,42 @@
+module RoundTrip
+    intent =
+        "The round-trip test's half in Aver: each step script as the kernel decodes it, written out again."
+        "Usage: aver run tools/proof-kernel/roundtrip.av --module-root tools/proof-kernel -- <script.steps>…"
+        "Prints, per script, `<file>` on one line and then what the kernel read, on one line;"
+        "tests/proof_steps_spec.rs compares that with the script the compiler wrote."
+    depends [Kernel.Sexp, Kernel.Decode, Reprint]
+    effects [Args.get, Console.print, Disk.readText]
+
+fn reprinted(text: String) -> String
+    ? "The script as the kernel decodes it, written out again, or why it could not be decoded."
+    match Kernel.Sexp.readAll(text)
+        Result.Err(e) -> "unreadable: {e}"
+        Result.Ok(sexp) -> match Kernel.Decode.script(sexp)
+            Result.Err(e) -> "undecodable: {e}"
+            Result.Ok(s) -> Reprint.script(s)
+
+verify reprinted
+    reprinted("; by P sha256:00\n(steps 15 (obligation k () (none) (i 1) (i 1))\n (defs)\n (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))") => "(steps 15 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))"
+    reprinted("(steps 15") => "unreadable: unexpected end of data"
+
+fn printFiles(paths: List<String>) -> Unit
+    ? "Each file's name, then its reprint."
+    ! [Console.print, Disk.readText]
+    match paths
+        [] -> Unit
+        [path, ..rest] -> printFile(path, rest)
+
+fn printFile(path: String, rest: List<String>) -> Unit
+    ? "One file's name and its reprint, then the rest."
+    ! [Console.print, Disk.readText]
+    Console.print(path)
+    line = match Disk.readText(path)
+        Result.Err(e) -> "unreadable: {e}"
+        Result.Ok(text) -> reprinted(text)
+    Console.print(line)
+    printFiles(rest)
+
+fn main() -> Unit
+    ? "Reprint the scripts named on the command line."
+    ! [Args.get, Console.print, Disk.readText]
+    printFiles(Args.get())

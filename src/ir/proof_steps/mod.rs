@@ -30,6 +30,7 @@ pub mod rules;
 pub mod sexpr;
 pub mod show;
 pub mod term;
+pub mod trust;
 
 pub use rules::WallRule;
 pub use term::Term;
