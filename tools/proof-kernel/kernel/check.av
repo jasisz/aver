@@ -109,7 +109,7 @@ fn conclude(p: Proof, env: Env, path: String) -> Result<Eqn, String>
         Proof.PUnfold(f, k, xs, ys, pre) -> unfold(f, k, xs, ys, pre, env, path)
         Proof.PConst(n) -> constant(n, env.consts, path)
         Proof.PArm(k, ys, t, q) -> armStep(k, ys, t, q, env, path)
-        Proof.PProj(t) -> proj(t, path)
+        Proof.PProj(t) -> proj(t, env, path)
         Proof.PCell(t) -> cell(t, path)
         Proof.PHyp(h) -> hyp(h, env.hyps, path)
         Proof.PRule(id, bs, ps) -> rule(id, bs, ps, env, path)
@@ -209,15 +209,42 @@ fn plugBoth(c: Term, e: Eqn, path: String) -> Result<Eqn, String>
 verify plugBoth
     plugBoth(Term.TNeg(Term.THole), Eqn(lhs = Term.TVar("a"), rhs = Term.TVar("b")), "p") => Result.Ok(Eqn(lhs = Term.TNeg(Term.TVar("a")), rhs = Term.TNeg(Term.TVar("b"))))
 
-fn proj(t: Term, path: String) -> Result<Eqn, String>
-    ? "A record literal's field."
+fn proj(t: Term, env: Env, path: String) -> Result<Eqn, String>
+    ? "A record literal's field; a field of an update, which is the value written to it, or the base's field when the update does not write it."
     match t
         Term.TGet(Term.TRec(ty, fs), f) -> projField(t, fs, f, path)
-        _ -> refuse(path, "a projection must read a field of a record literal")
+        Term.TGet(Term.TUpd(ty, base, fs), f) -> projUpdate(t, typeOf(t, env, path), base, fs, f)
+        _ -> refuse(path, "a projection must read a field of a record literal or of an update")
 
 verify proj
-    proj(Term.TGet(Term.TRec("R", [Field(name = "a", value = Term.TInt(3))]), "a"), "p") => Result.Ok(Eqn(lhs = Term.TGet(Term.TRec("R", [Field(name = "a", value = Term.TInt(3))]), "a"), rhs = Term.TInt(3)))
-    proj(Term.TGet(Term.TVar("r"), "a"), "p") => Result.Err("step p: a projection must read a field of a record literal")
+    proj(Term.TGet(Term.TRec("R", [Field(name = "a", value = Term.TInt(3))]), "a"), emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TGet(Term.TRec("R", [Field(name = "a", value = Term.TInt(3))]), "a"), rhs = Term.TInt(3)))
+    proj(Term.TGet(Term.TVar("r"), "a"), emptyEnv(), "p") => Result.Err("step p: a projection must read a field of a record literal or of an update")
+    proj(Term.TGet(Term.TUpd("R", Term.TVar("r"), [Field(name = "a", value = Term.TInt(3))]), "b"), withRec(withVars(emptyEnv(), [Kernel.Term.typed("r", Ty.TyNamed("R"))])), "p") => Result.Ok(Eqn(lhs = Term.TGet(Term.TUpd("R", Term.TVar("r"), [Field(name = "a", value = Term.TInt(3))]), "b"), rhs = Term.TGet(Term.TVar("r"), "b")))
+    proj(Term.TGet(Term.TUpd("R", Term.TVar("r"), [Field(name = "a", value = Term.TInt(3))]), "a"), withRec(withVars(emptyEnv(), [Kernel.Term.typed("r", Ty.TyNamed("R"))])), "p") => Result.Ok(Eqn(lhs = Term.TGet(Term.TUpd("R", Term.TVar("r"), [Field(name = "a", value = Term.TInt(3))]), "a"), rhs = Term.TInt(3)))
+    proj(Term.TGet(Term.TUpd("R", Term.TVar("r"), [Field(name = "a", value = Term.TInt(3))]), "c"), withRec(withVars(emptyEnv(), [Kernel.Term.typed("r", Ty.TyNamed("R"))])), "p") => Result.Err("step p: R has no field c")
+
+fn projUpdate(t: Term, ty: Result<Ty, String>, base: Term, fs: List<Field>, f: String) -> Result<Eqn, String>
+    ? "Once the read has a type, so the base is of the updated record and f one of its fields: the value written to f, or the base's f."
+    ty?
+    match findField(fs, f)
+        Option.Some(x) -> Result.Ok(Eqn(lhs = t, rhs = x))
+        Option.None -> Result.Ok(Eqn(lhs = t, rhs = Term.TGet(base, f)))
+
+verify projUpdate
+    projUpdate(Term.TUnit, Result.Err("no"), Term.TVar("r"), [], "a") => Result.Err("no")
+    projUpdate(Term.TUnit, Result.Ok(Ty.TyInt), Term.TVar("r"), [], "a") => Result.Ok(Eqn(lhs = Term.TUnit, rhs = Term.TGet(Term.TVar("r"), "a")))
+
+fn findField(fs: List<Field>, f: String) -> Option<Term>
+    ? "The value the first field named f holds."
+    match fs
+        [] -> Option.None
+        [x, ..rest] -> match x.name == f
+            true -> Option.Some(x.value)
+            false -> findField(rest, f)
+
+verify findField
+    findField([Field(name = "a", value = Term.TInt(1))], "a") => Option.Some(Term.TInt(1))
+    findField([Field(name = "a", value = Term.TInt(1))], "b") => Option.None
 
 fn cell(t: Term, path: String) -> Result<Eqn, String>
     ? "A list literal with an element is that element in front of the rest."
@@ -1286,13 +1313,14 @@ verify inductCase
     inductCase(Def(name = "f", params = [], ret = Ty.TyAny, lets = [], body = Term.TUnit), Recursion(at = 0, guard = Option.Some(Term.TOp("<=", Term.TVar("n"), Term.TInt(0))), arms = []), ArmCalls(arm = Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TUnit), calls = []), Case(binders = [], ihs = [], carry = [], more = [], proof = Proof.PRefl(Term.TUnit)), Kernel.Induct.Call(args = [], inner = []), Eqn(lhs = Term.TUnit, rhs = Term.TUnit), Varied(v = "x", general = []), [], [], emptyEnv(), "p") => Result.Err("step p: wrong number of names")
 
 fn caseNames(r: Recursion, a: Arm) -> Int
-    ? "How many names a case introduces: one per pattern variable, or one hypothesis in a count toward zero."
+    ? "How many names a case introduces: one per part of the pattern, a wildcard part as well, or one hypothesis in a count toward zero."
     match r.guard
-        Option.None -> List.len(Kernel.Subst.patNames(a.pattern))
+        Option.None -> List.len(patFields(a.pattern))
         Option.Some(g) -> 1
 
 verify caseNames
     caseNames(Recursion(at = 0, guard = Option.None, arms = []), Arm(pattern = Pat.PCons("h", "t"), body = Term.TUnit)) => 2
+    caseNames(Recursion(at = 0, guard = Option.None, arms = []), Arm(pattern = Pat.PCons("_", "t"), body = Term.TUnit)) => 2
     caseNames(Recursion(at = 0, guard = Option.Some(Term.TOp(">", Term.TVar("n"), Term.TInt(0))), arms = []), Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TUnit)) => 1
 
 fn refuseCase(path: String, why: String) -> Result<Unit, String>
@@ -1306,12 +1334,13 @@ fn freshAll(bs: List<String>, taken: List<String>, env: Env, before: List<String
     ? "No name is taken, a variable in scope (a given, or a name an earlier case introduced), a module-level binding, or repeated."
     match bs
         [] -> true
-        [b, ..rest] -> Bool.and(Bool.not(Bool.or(Bool.or(List.contains(taken, b), List.contains(Kernel.Proof.givenNames(env.vars), b)), Bool.or(isConst(b, env.consts), List.contains(before, b)))), freshAll(rest, taken, env, List.prepend(b, before)))
+        [b, ..rest] -> Bool.and(Bool.not(Bool.or(Bool.or(Bool.or(List.contains(taken, b), b == "_"), List.contains(Kernel.Proof.givenNames(env.vars), b)), Bool.or(isConst(b, env.consts), List.contains(before, b)))), freshAll(rest, taken, env, List.prepend(b, before)))
 
 verify freshAll
     freshAll(["t"], [], withVars(emptyEnv(), [Kernel.Term.typed("t", Ty.TyList(Ty.TyAny))]), []) => false
     freshAll(["y", "y"], [], emptyEnv(), []) => false
     freshAll(["y"], ["x"], emptyEnv(), []) => true
+    freshAll(["_"], [], emptyEnv(), []) => false
 
 fn isConst(n: String, cs: List<Const>) -> Bool
     ? "Whether n names a module-level binding."
@@ -1334,7 +1363,7 @@ verify namesToVars
 fn inductCaseNamed(d: Def, r: Recursion, a: ArmCalls, c: Case, ys: List<Term>, at: Call, claim: Eqn, vr: Varied, carried: List<Hyp>, env: Env, path: String) -> Result<Unit, String>
     ? "The goal, the carried hypotheses and in a count toward zero the arm's value of the comparison, then the hypotheses of the arm's recursive calls, those the gate checked to descend; the case's proof must prove the goal."
     names = Kernel.Subst.patNames(a.arm.pattern)
-    rename = List.concat(zipBind(names, ys), withoutNames(zipBind(Kernel.Types.paramsOf(d), at.args), names))
+    rename = List.concat(withoutNames(zipBind(patFields(a.arm.pattern), ys), ["_"]), withoutNames(zipBind(Kernel.Types.paramsOf(d), at.args), names))
     here = caseValue(r.guard, a.arm.pattern, vr.v, ys, path)?
     goal = instantiate(claim, here, path)?
     scope = withVars(withHyps(env, List.concat(caseGuard(r.guard, a.arm.pattern, c.binders, rename, path)?, List.concat(hypsAt(carried, here, path)?, env.hyps))), caseVarsOf(r.guard, a.arm.pattern, c.binders, vr.v, env, path)?)
@@ -1354,11 +1383,24 @@ fn caseVarsOf(guard: Option<Term>, p: Pat, binders: List<String>, v: String, env
     ? "The case's names with the types of the pattern's parts over the given inducted on; none in a count toward zero, whose one name is a hypothesis."
     match guard
         Option.Some(g) -> Result.Ok([])
-        Option.None -> Result.Ok(Kernel.Types.namedVars(binders, Kernel.Types.typesOfVars(patTypes(p, typeOf(Term.TVar(v), env, path)?, env, path)?)))
+        Option.None -> patTypes(namedParts(p, binders), typeOf(Term.TVar(v), env, path)?, env, path)
 
 verify caseVarsOf
     caseVarsOf(Option.None, Pat.PCons("h", "t"), ["a", "b"], "xs", listsEnv(["xs"]), "p") => Result.Ok([Kernel.Term.typed("a", Ty.TyAny), Kernel.Term.typed("b", Ty.TyList(Ty.TyAny))])
+    caseVarsOf(Option.None, Pat.PCons("_", "t"), ["a", "b"], "xs", listsEnv(["xs"]), "p") => Result.Ok([Kernel.Term.typed("a", Ty.TyAny), Kernel.Term.typed("b", Ty.TyList(Ty.TyAny))])
     caseVarsOf(Option.Some(Term.TBool(true)), Pat.PWild, ["g"], "n", intsEnv(["n"]), "p") => Result.Ok([])
+
+fn namedParts(p: Pat, names: List<String>) -> Pat
+    ? "The pattern with its parts, a wildcard part as well, taking these names in order."
+    match (p, names)
+        (Pat.PCons(h, t), [x, y]) -> Pat.PCons(x, y)
+        (Pat.PCtor(c, ns), _) -> Pat.PCtor(c, names)
+        _ -> p
+
+verify namedParts
+    namedParts(Pat.PCons("_", "t"), ["a", "b"]) => Pat.PCons("a", "b")
+    namedParts(Pat.PCtor("C.Pair", ["_", "x"]), ["a", "b"]) => Pat.PCtor("C.Pair", ["a", "b"])
+    namedParts(Pat.PNil, []) => Pat.PNil
 
 fn caseValue(guard: Option<Term>, p: Pat, v: String, ys: List<Term>, path: String) -> Result<List<Binding>, String>
     ? "Where the case puts the given inducted on: at the arm's pattern over the case's names; left as it is in a count toward zero."
@@ -1545,6 +1587,13 @@ verify listInduct
     listInduct("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), ["k"], Proof.PRefl(Term.TList([])), "h", "t", [], [], Proof.PRefl(Term.TUnit), listsEnv(["xs"]), "p") => Result.Err("step p: hypothesis k is not in scope")
     listInduct("xs", Eqn(lhs = Term.TOp("==", Term.TVar("xs"), Term.TList([])), rhs = Term.TBool(false)), [], Proof.PHyp("k"), "h", "t", [], [], Proof.PHyp("k"), withHyp(listsEnv(["xs"]), "k", Term.TOp("==", Term.TVar("xs"), Term.TList([])), false), "p") => Result.Err("step p/nil: hypothesis k is not in scope")
     listInduct("xs", Eqn(lhs = Term.TOp("==", Term.TVar("xs"), Term.TList([])), rhs = Term.TBool(false)), ["k"], Proof.PHyp("k"), "h", "t", [], [], Proof.PHyp("k"), withHyp(listsEnv(["xs"]), "k", Term.TOp("==", Term.TVar("xs"), Term.TList([])), false), "p") => Result.Ok(Eqn(lhs = Term.TOp("==", Term.TVar("xs"), Term.TList([])), rhs = Term.TBool(false)))
+
+fn withRec(env: Env) -> Env
+    ? "The environment with a record R of two Int fields a and b declared."
+    Env(defs = env.defs, consts = env.consts, laws = env.laws, hyps = env.hyps, vars = env.vars, sums = env.sums, recs = List.prepend(Rec(name = "R", eq = true, fields = [Kernel.Term.typed("a", Ty.TyInt), Kernel.Term.typed("b", Ty.TyInt)]), env.recs), sigs = env.sigs)
+
+verify withRec
+    List.len(withRec(emptyEnv()).recs) => 1
 
 fn listsEnv(ns: List<String>) -> Env
     ? "No definitions, laws or hypotheses, and these givens of list type."

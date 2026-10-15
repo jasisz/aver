@@ -9,6 +9,7 @@ module Rules
         "Int.min, Int.max and Int.abs are read by the comparison that picks their value; List.contains on [], on an element in front that is the one looked for and past one that is not."
         "The map rules read Map.get, Map.has and Map.len on the empty map and on Map.set(m, k, v)."
         "The vector rules read a vector as the list it holds, and Vector.get and Vector.len after a write or a literal-size Vector.new."
+        "Option.withDefault and Result.withDefault read the value a Some or an Ok holds, and the default for None or an Err."
         "The bits rules read complement, a shift left and a mask of low bits or of one bit as Int arithmetic."
     exposes [Schema, schema]
     depends [Kernel.Term]
@@ -392,7 +393,7 @@ fn pickSchema(id: String) -> Option<Schema>
         "list.contains.nil" -> plain([any("y")], lb("contains", [Term.TList([]), v("y")]), Term.TBool(false))
         "list.contains.cons_found" -> picked([same("x"), lt("a"), same("y")], Term.TOp("==", v("y"), v("x")), true, lb("contains", [cons(v("x"), v("a")), v("y")]), Term.TBool(true))
         "list.contains.cons_other" -> picked([same("x"), lt("a"), same("y")], Term.TOp("==", v("y"), v("x")), false, lb("contains", [cons(v("x"), v("a")), v("y")]), found)
-        _ -> Option.None
+        _ -> defaultSchema(id)
 
 verify pickSchema
     pickSchema("int.min.le") => Option.Some(Schema(binders = [i("a"), i("b")], premises = [is(Term.TOp("<=", v("a"), v("b")), true)], concl = eq(Term.TBi("Int.min", [v("a"), v("b")]), v("a"))))
@@ -407,3 +408,17 @@ verify pickSchema
     pickSchema("list.contains.cons") => Option.None
     pickSchema("int.min") => Option.None
     pickSchema("list.contains") => Option.None
+
+fn defaultSchema(id: String) -> Option<Schema>
+    ? "Option.withDefault and Result.withDefault on each constructor: the value a Some or an Ok holds, the default d for None or an Err."
+    err = Kernel.Term.typed("e", Ty.TyVar("e", false))
+    match id
+        "option.with_default.some" -> plain([any("x"), any("d")], Term.TBi("Option.withDefault", [Term.TCtor("Option.Some", [v("x")]), v("d")]), v("x"))
+        "option.with_default.none" -> plain([any("d")], Term.TBi("Option.withDefault", [Term.TCtor("Option.None", []), v("d")]), v("d"))
+        "result.with_default.ok" -> plain([any("x"), any("d")], Term.TBi("Result.withDefault", [Term.TCtor("Result.Ok", [v("x")]), v("d")]), v("x"))
+        "result.with_default.err" -> plain([err, any("d")], Term.TBi("Result.withDefault", [Term.TCtor("Result.Err", [v("e")]), v("d")]), v("d"))
+        _ -> Option.None
+
+verify defaultSchema
+    defaultSchema("option.with_default.none") => Option.Some(Schema(binders = [Kernel.Term.typed("d", Ty.TyVar("t", false))], premises = [], concl = eq(Term.TBi("Option.withDefault", [Term.TCtor("Option.None", []), v("d")]), v("d"))))
+    defaultSchema("option.with_default") => Option.None

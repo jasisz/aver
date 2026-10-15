@@ -6735,3 +6735,157 @@ fn a_local_of_an_imported_module_is_not_read_as_its_binding() {
         ]
     );
 }
+
+const DEFAULT_UPDATE_LAWS: [&str; 10] = [
+    "depthA.sameAsDepthB",
+    "lenA.sameAsLenB",
+    "okOrZero.errIsZero",
+    "okOrZero.okIsItsValue",
+    "orZero.noneIsZero",
+    "orZero.someIsItsValue",
+    "pick.positiveDefault",
+    "setX.keepsY",
+    "setX.readsThroughTwoUpdates",
+    "setX.writesX",
+];
+
+/// The false laws of the fixture: a `Some` or an `Ok` read as the default,
+/// an update read as writing the field it leaves and as leaving the field it
+/// writes, and a length taken as its own square.
+const DEFAULT_UPDATE_FALSE_LAWS: [&str; 5] = [
+    "lenA.lengthIsItsSquare",
+    "wrongDefault.okIsTheDefault",
+    "wrongDefault.someIsTheDefault",
+    "wrongField.keepsX",
+    "wrongField.writesY",
+];
+
+fn steps_summary(fixture: &str, extra: &[&str]) -> serde_json::Value {
+    let mut args = vec!["proof", fixture];
+    args.extend_from_slice(extra);
+    // The run fails while a law stays open; the summary says which.
+    let result = aver_in(&repo_root().join(FIXTURES), &args);
+    serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap_or_else(|| panic!("{}", format_output(&result))),
+    )
+    .unwrap()
+}
+
+/// `Option.withDefault` and `Result.withDefault` on a constructor, a field
+/// of a record update and an induction along a function whose pattern has a
+/// wildcard part each close laws by steps; the false laws of those shapes
+/// stay open, and both kernels refuse a rule taken for another, an update
+/// read as writing the field it leaves, and a case that names a wildcard
+/// part `_` or leaves it unnamed.
+#[test]
+fn defaults_update_fields_and_wildcard_parts_close_by_steps_and_refuse_mutations() {
+    let out = scratch("defaults-updates");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("defaults_and_updates.av", &out)
+            .into_iter()
+            .collect();
+    assert_eq!(
+        files.keys().cloned().collect::<Vec<_>>(),
+        DEFAULT_UPDATE_LAWS
+    );
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    let mut all = String::new();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+        all.push_str(&read(law));
+    }
+    for used in [
+        "(rule option.with_default.some ",
+        "(rule option.with_default.none ",
+        "(rule result.with_default.ok ",
+        "(rule result.with_default.err ",
+        "(proj (get (upd Point ",
+        "(arm (pcons _ t) ",
+    ] {
+        assert!(all.contains(used), "{used} is not used");
+    }
+    let swap = |law: &str, from: &str, to: &str| {
+        let text = read(law);
+        assert!(text.contains(from), "{law}: {text}");
+        text.replacen(from, to, 1)
+    };
+    for (kind, text) in [
+        (
+            "the default taken for the value a Some holds",
+            swap(
+                "orZero.someIsItsValue",
+                "(rule option.with_default.some",
+                "(rule option.with_default.none",
+            ),
+        ),
+        (
+            "the value taken for the default of an Err",
+            swap(
+                "okOrZero.errIsZero",
+                "(rule result.with_default.err",
+                "(rule result.with_default.ok",
+            ),
+        ),
+        (
+            "an update read as writing the field it leaves",
+            read("setX.keepsY").replace("(get (v p) y)", "(v v)"),
+        ),
+        (
+            "a wildcard part left unnamed",
+            swap("lenA.sameAsLenB", "(case (x t) ", "(case (t) "),
+        ),
+        (
+            "a wildcard part named _",
+            swap("lenA.sameAsLenB", "(case (x t) ", "(case (_ t) "),
+        ),
+    ] {
+        let refused = aver::proof_kernel::verdict(&text);
+        assert!(refused.is_err(), "{kind}: {refused:?}\n{text}");
+        let path = out.join("mutant.steps");
+        fs::write(&path, &text).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(
+            !result.status.success(),
+            "{kind}: {}",
+            format_output(&result)
+        );
+    }
+    let summary = steps_summary(
+        "defaults_and_updates.av",
+        &["--backend", "aver", "--check-json"],
+    );
+    for law in DEFAULT_UPDATE_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    for law in DEFAULT_UPDATE_FALSE_LAWS {
+        assert_eq!(summary["closed_by"][law], "open", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_checks_defaults_update_fields_and_wildcard_parts_by_steps() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("defaults-updates-lean");
+    let summary = steps_summary(
+        "defaults_and_updates.av",
+        &[
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "5",
+        ],
+    );
+    for law in DEFAULT_UPDATE_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}

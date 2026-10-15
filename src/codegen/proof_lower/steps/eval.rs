@@ -1540,7 +1540,12 @@ impl Env<'_> {
         }
         match &cur.node {
             ResolvedExpr::Attr(obj, _) => {
-                if matches!(obj.node, ResolvedExpr::RecordCreate { .. }) {
+                // A field of a record literal, or of an update: the value
+                // written to it, or the base's field.
+                if matches!(
+                    obj.node,
+                    ResolvedExpr::RecordCreate { .. } | ResolvedExpr::RecordUpdate { .. }
+                ) {
                     let ev = crate::ir::proof_steps::claim::claim(
                         &Proof::Proj { term: cur.clone() },
                         &empty_script(),
@@ -1771,6 +1776,9 @@ impl Env<'_> {
             return Ok(step);
         }
         if let Some(step) = bits_step(cur) {
+            return Ok(step);
+        }
+        if let Some(step) = self.default_step(cur) {
             return Ok(step);
         }
         if let Some(step) = self.pick_step(cur, &blocked)? {
@@ -2326,6 +2334,40 @@ impl Env<'_> {
             _ => return Ok(None),
         };
         Ok(Some(self.rule_step(rule, subst)))
+    }
+
+    /// `Option.withDefault` or `Result.withDefault` takes one step by its
+    /// rule once its first argument is a constructor: the value a `Some`
+    /// or an `Ok` holds, the default for `None` or an `Err`.
+    fn default_step(&self, cur: &Term) -> Option<Step> {
+        use crate::ir::hir::{BuiltinCtor, ResolvedCtor};
+        let ResolvedExpr::Call(ResolvedCallee::Builtin(name), args) = &cur.node else {
+            return None;
+        };
+        let [o, d] = args.as_slice() else {
+            return None;
+        };
+        let ResolvedExpr::Ctor(ResolvedCtor::Builtin(c), held) = &o.node else {
+            return None;
+        };
+        let d = ("d".to_string(), d.clone());
+        let (rule, subst) = match (name.as_str(), c, held.as_slice()) {
+            ("Option.withDefault", BuiltinCtor::OptionSome, [x]) => (
+                WallRule::OptionDefaultSome,
+                vec![("x".into(), x.clone()), d],
+            ),
+            ("Option.withDefault", BuiltinCtor::OptionNone, []) => {
+                (WallRule::OptionDefaultNone, vec![d])
+            }
+            ("Result.withDefault", BuiltinCtor::ResultOk, [x]) => {
+                (WallRule::ResultDefaultOk, vec![("x".into(), x.clone()), d])
+            }
+            ("Result.withDefault", BuiltinCtor::ResultErr, [e]) => {
+                (WallRule::ResultDefaultErr, vec![("e".into(), e.clone()), d])
+            }
+            _ => return None,
+        };
+        Some(self.rule_step(rule, subst))
     }
 
     fn rule_step(&self, rule: WallRule, subst: Vec<(String, Term)>) -> Step {

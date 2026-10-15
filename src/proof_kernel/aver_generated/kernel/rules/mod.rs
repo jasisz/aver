@@ -1759,7 +1759,7 @@ pub fn pickSchema(id @ _: AverStr) -> Option<Schema> {
         ]),
     );
     {
-        let __dispatch_subject = id;
+        let __dispatch_subject = id.clone();
         if &*__dispatch_subject == "int.min.le" {
             crate::proof_kernel::aver_generated::kernel::rules::picked(
                 &aver_rt::AverList::from_vec(vec![
@@ -1845,12 +1845,131 @@ pub fn pickSchema(id @ _: AverStr) -> Option<Schema> {
                                         if &*__dispatch_subject == "list.contains.cons_other" {
                                             crate::proof_kernel::aver_generated::kernel::rules::picked(&aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::same(AverStr::from("x")), crate::proof_kernel::aver_generated::kernel::rules::lt(AverStr::from("a")), crate::proof_kernel::aver_generated::kernel::rules::same(AverStr::from("y"))]), &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(AverStr::from("=="), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("y"))), std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("x")))), false, &crate::proof_kernel::aver_generated::kernel::rules::lb(AverStr::from("contains"), &aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::cons(&crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("x")), &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("a"))), crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("y"))])), &found)
                                         } else {
-                                            None
+                                            crate::proof_kernel::aver_generated::kernel::rules::defaultSchema(id)
                                         }
                                     }
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Option.withDefault and Result.withDefault on each constructor: the value a Some or an Ok holds, the default d for None or an Err.
+#[inline(always)]
+pub fn defaultSchema(id @ _: AverStr) -> Option<Schema> {
+    crate::proof_kernel::cancel_checkpoint();
+    let err @ _ = crate::proof_kernel::aver_generated::kernel::term::typed(
+        AverStr::from("e"),
+        &crate::proof_kernel::aver_generated::kernel::term::Ty::TyVar(AverStr::from("e"), false),
+    );
+    {
+        let __dispatch_subject = id;
+        if &*__dispatch_subject == "option.with_default.some" {
+            crate::proof_kernel::aver_generated::kernel::rules::plain(
+                &aver_rt::AverList::from_vec(vec![
+                    crate::proof_kernel::aver_generated::kernel::rules::any(AverStr::from("x")),
+                    crate::proof_kernel::aver_generated::kernel::rules::any(AverStr::from("d")),
+                ]),
+                &crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
+                    AverStr::from("Option.withDefault"),
+                    aver_rt::AverList::from_vec(vec![
+                        crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(
+                            AverStr::from("Option.Some"),
+                            aver_rt::AverList::from_vec(vec![
+                                crate::proof_kernel::aver_generated::kernel::rules::v(
+                                    AverStr::from("x"),
+                                ),
+                            ]),
+                        ),
+                        crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("d")),
+                    ]),
+                ),
+                &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("x")),
+            )
+        } else {
+            if &*__dispatch_subject == "option.with_default.none" {
+                crate::proof_kernel::aver_generated::kernel::rules::plain(
+                    &aver_rt::AverList::from_vec(vec![
+                        crate::proof_kernel::aver_generated::kernel::rules::any(AverStr::from("d")),
+                    ]),
+                    &crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
+                        AverStr::from("Option.withDefault"),
+                        aver_rt::AverList::from_vec(vec![
+                            crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(
+                                AverStr::from("Option.None"),
+                                aver_rt::AverList::empty(),
+                            ),
+                            crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from(
+                                "d",
+                            )),
+                        ]),
+                    ),
+                    &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("d")),
+                )
+            } else {
+                if &*__dispatch_subject == "result.with_default.ok" {
+                    crate::proof_kernel::aver_generated::kernel::rules::plain(
+                        &aver_rt::AverList::from_vec(vec![
+                            crate::proof_kernel::aver_generated::kernel::rules::any(AverStr::from(
+                                "x",
+                            )),
+                            crate::proof_kernel::aver_generated::kernel::rules::any(AverStr::from(
+                                "d",
+                            )),
+                        ]),
+                        &crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
+                            AverStr::from("Result.withDefault"),
+                            aver_rt::AverList::from_vec(vec![
+                                crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(
+                                    AverStr::from("Result.Ok"),
+                                    aver_rt::AverList::from_vec(vec![
+                                        crate::proof_kernel::aver_generated::kernel::rules::v(
+                                            AverStr::from("x"),
+                                        ),
+                                    ]),
+                                ),
+                                crate::proof_kernel::aver_generated::kernel::rules::v(
+                                    AverStr::from("d"),
+                                ),
+                            ]),
+                        ),
+                        &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from("x")),
+                    )
+                } else {
+                    if &*__dispatch_subject == "result.with_default.err" {
+                        crate::proof_kernel::aver_generated::kernel::rules::plain(
+                            &aver_rt::AverList::from_vec(vec![
+                                err,
+                                crate::proof_kernel::aver_generated::kernel::rules::any(
+                                    AverStr::from("d"),
+                                ),
+                            ]),
+                            &crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
+                                AverStr::from("Result.withDefault"),
+                                aver_rt::AverList::from_vec(vec![
+                                    crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(
+                                        AverStr::from("Result.Err"),
+                                        aver_rt::AverList::from_vec(vec![
+                                            crate::proof_kernel::aver_generated::kernel::rules::v(
+                                                AverStr::from("e"),
+                                            ),
+                                        ]),
+                                    ),
+                                    crate::proof_kernel::aver_generated::kernel::rules::v(
+                                        AverStr::from("d"),
+                                    ),
+                                ]),
+                            ),
+                            &crate::proof_kernel::aver_generated::kernel::rules::v(AverStr::from(
+                                "d",
+                            )),
+                        )
+                    } else {
+                        None
                     }
                 }
             }

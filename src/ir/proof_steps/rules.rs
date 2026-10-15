@@ -134,10 +134,17 @@ pub enum WallRule {
     VecLenSet,
     VecLenNew,
     VecGetNew,
+    // `Option.withDefault` and `Result.withDefault` on each constructor:
+    // the value a `Some` or an `Ok` holds, the default for `None` or an
+    // `Err`.
+    OptionDefaultSome,
+    OptionDefaultNone,
+    ResultDefaultOk,
+    ResultDefaultErr,
 }
 
 impl WallRule {
-    pub const ALL: [WallRule; 87] = [
+    pub const ALL: [WallRule; 91] = [
         WallRule::AndTrueL,
         WallRule::AndFalseL,
         WallRule::AndTrueR,
@@ -225,6 +232,10 @@ impl WallRule {
         WallRule::VecLenSet,
         WallRule::VecLenNew,
         WallRule::VecGetNew,
+        WallRule::OptionDefaultSome,
+        WallRule::OptionDefaultNone,
+        WallRule::ResultDefaultOk,
+        WallRule::ResultDefaultErr,
     ];
 
     /// Stable identifier, shared with the replayer.
@@ -317,6 +328,10 @@ impl WallRule {
             WallRule::VecLenSet => "vector.len.set",
             WallRule::VecLenNew => "vector.len.new",
             WallRule::VecGetNew => "vector.get.new",
+            WallRule::OptionDefaultSome => "option.with_default.some",
+            WallRule::OptionDefaultNone => "option.with_default.none",
+            WallRule::ResultDefaultOk => "result.with_default.ok",
+            WallRule::ResultDefaultErr => "result.with_default.err",
         }
     }
 
@@ -376,6 +391,9 @@ impl WallRule {
             WallRule::VecLenSet => &["v", "i", "x"],
             WallRule::VecLenNew => &["n", "x"],
             WallRule::VecGetNew => &["n", "x", "i"],
+            WallRule::OptionDefaultSome | WallRule::ResultDefaultOk => &["x", "d"],
+            WallRule::OptionDefaultNone => &["d"],
+            WallRule::ResultDefaultErr => &["e", "d"],
 
             _ => &["a", "b"],
         }
@@ -789,6 +807,48 @@ impl WallRule {
             WallRule::VecGetNew => (
                 vec![in_range(ii(), nn())],
                 Eqn::new(vget(made(), ii()), some(x())),
+            ),
+            WallRule::OptionDefaultSome => (
+                vec![],
+                Eqn::new(
+                    vb("Option.withDefault", vec![some(x()), var("d")], None),
+                    x(),
+                ),
+            ),
+            WallRule::OptionDefaultNone => (
+                vec![],
+                Eqn::new(
+                    vb("Option.withDefault", vec![none(), var("d")], None),
+                    var("d"),
+                ),
+            ),
+            WallRule::ResultDefaultOk => (
+                vec![],
+                Eqn::new(
+                    vb(
+                        "Result.withDefault",
+                        vec![
+                            option(crate::ir::hir::BuiltinCtor::ResultOk, vec![x()]),
+                            var("d"),
+                        ],
+                        None,
+                    ),
+                    x(),
+                ),
+            ),
+            WallRule::ResultDefaultErr => (
+                vec![],
+                Eqn::new(
+                    vb(
+                        "Result.withDefault",
+                        vec![
+                            option(crate::ir::hir::BuiltinCtor::ResultErr, vec![var("e")]),
+                            var("d"),
+                        ],
+                        None,
+                    ),
+                    var("d"),
+                ),
             ),
         }
     }

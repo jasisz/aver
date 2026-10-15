@@ -443,7 +443,10 @@ impl Env<'_> {
                 if rec.guard.is_some() {
                     binders.push(self.fresh_hyp());
                 } else {
-                    for name in term::pattern_binders(&arm.pattern) {
+                    // One name per part of the pattern, a wildcard part
+                    // as well.
+                    for part in term::pattern_parts(&arm.pattern) {
+                        let name = if part == "_" { "x".to_string() } else { part };
                         let b = fresh(&name, &taken);
                         taken.push(b.clone());
                         binders.push(b);
