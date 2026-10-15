@@ -1625,8 +1625,9 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
     // stays open.
     let mut named_plans = None;
     let started = std::time::Instant::now();
-    let mut first = first_tries(inputs, ir);
+    let mut first = first_tries(inputs, ir).into_iter();
     for i in 0..ir.law_theorems.len() {
+        let tried = first.next().flatten();
         // The laws that match where an attempt stopped, by key, and where
         // the attempts stopped.
         let mut hints = Found::default();
@@ -1644,7 +1645,7 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                 advice: Vec::new(),
                 obligations: Vec::new(),
             }
-        } else if let Some(tried) = first[i].take() {
+        } else if let Some(tried) = tried {
             hints = tried.hints;
             kernel_elsewhere = tried.kernel;
             tried_for = Some(tried.spent);
