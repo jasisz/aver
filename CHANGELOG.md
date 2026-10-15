@@ -16,6 +16,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 - **Refined types.** An opaque record with a validating constructor (`Natural` with `n >= 0`) is a refined type: a law over `given n: Natural` holds for the values the constructor admits, a law that cites it at another value has to show the check, and `Natural.fromInt(5)` with a literal in range is a `Natural`, not a `Result`.
 - **`aver facts`** lists the builtin facts proofs may use, each written as an Aver law.
 - **`List.contains` through `List.concat` and `List.reverse`**: the facts `List.contains.ofConcat` and `List.contains.ofReverse`, for elements whose `==` is equality.
+- **A list with a cell in it is not empty**: the facts `List.prepend.notEmpty` and `List.concat.notEmpty` (and with the sides of `==` swapped), for elements whose `==` is equality; a `match` on `List.concat(xs, [x])` splits `xs` into `[]` and a cell.
 - **Certificates** prove their law-claims with proof steps, as `aver proof` does.
 
 ### Migration

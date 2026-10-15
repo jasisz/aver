@@ -212,6 +212,110 @@ impl Env<'_> {
         None
     }
 
+    /// The Bool a builtin fact whose right side is one states `t` to be,
+    /// applied at `t` itself, with its proof and the fact
+    /// (`List.prepend.notEmpty`): one of the facts the producer rewrites
+    /// with, or one the law cites.
+    fn decided_by_a_fact(
+        &mut self,
+        t: &Term,
+    ) -> Option<(Term, Proof, crate::ir::proof_steps::LawRef)> {
+        if !matches!(t.node, ResolvedExpr::BinOp(BinOp::Eq, ..)) {
+            return None;
+        }
+        let deciding: Vec<crate::ir::proof_steps::LawRef> = self
+            .fact_rules
+            .iter()
+            .chain(self.cited_all.iter())
+            .filter(|l| l.fact.is_some() && term::bool_value(&l.rhs).is_some())
+            .cloned()
+            .collect();
+        for law in deciding {
+            let eq = Equation::Law(Box::new(law.clone()));
+            if let Some((proof, to)) = self.try_equation(&eq, t)
+                && term::bool_value(&to).is_some()
+            {
+                return Some((to, proof, law));
+            }
+        }
+        None
+    }
+
+    /// The Bool a builtin fact states the equality `t` to be once each of
+    /// its sides is in normal form, with the proof that `t` is it and what
+    /// that proof needs in the script: the normal forms and the fact.
+    #[allow(clippy::type_complexity)]
+    fn decided_by_parts(
+        &mut self,
+        t: &Term,
+    ) -> Option<(
+        Term,
+        Proof,
+        Vec<super::eval::NormalFact>,
+        crate::ir::proof_steps::LawRef,
+    )> {
+        let ResolvedExpr::BinOp(BinOp::Eq, l, r) = &t.node else {
+            return None;
+        };
+        let (l, r) = (canon(l), canon(r));
+        // Only where a deciding fact states this side as it stands, a
+        // closed term (`[]`), so no other equality pays for the normal
+        // forms.
+        let closed = |t: &Term| {
+            let mut fv = Vec::new();
+            term::free_vars(t, &mut fv);
+            fv.is_empty()
+        };
+        let fits = self
+            .fact_rules
+            .iter()
+            .chain(self.cited_all.iter())
+            .filter(|f| f.fact.is_some() && term::bool_value(&f.rhs).is_some())
+            .any(|f| match &f.lhs.node {
+                ResolvedExpr::BinOp(BinOp::Eq, a, b) => {
+                    let same = |p: &Term, t: &Term| {
+                        closed(p) && super::rewrite::matches(p, t, &[], &mut Vec::new())
+                    };
+                    same(a, &l) || same(b, &r)
+                }
+                _ => false,
+            });
+        if !fits {
+            return None;
+        }
+        // Without the hypotheses stating `t`, which would substitute one
+        // side for the other.
+        let saved = self.hyps.clone();
+        self.hyps.retain(|(_, h)| canon(&h.lhs) != *t);
+        let nl = self.on_refute_fuel(|env| env.normal_fact(&l));
+        let nr = self.on_refute_fuel(|env| env.normal_fact(&r));
+        self.hyps = saved;
+        let l2 = nl.as_ref().map_or(l.clone(), |n| n.to.clone());
+        let r2 = nr.as_ref().map_or(r.clone(), |n| n.to.clone());
+        let read = canon(&term::binop(BinOp::Eq, l2.clone(), r2.clone()));
+        let (value, decided, fact) = self.decided_by_a_fact(&read)?;
+        let mut terms = vec![t.clone()];
+        let mut steps = Vec::new();
+        if let Some(n) = &nl {
+            steps.push(Proof::Congr {
+                ctx: term::binop(BinOp::Eq, term::hole(), r.clone()),
+                inner: Box::new(n.proof.clone()),
+            });
+            terms.push(canon(&term::binop(BinOp::Eq, l2.clone(), r.clone())));
+        }
+        if let Some(n) = &nr {
+            steps.push(Proof::Congr {
+                ctx: term::binop(BinOp::Eq, l2.clone(), term::hole()),
+                inner: Box::new(n.proof.clone()),
+            });
+            terms.push(read.clone());
+        }
+        steps.push(decided);
+        terms.push(value.clone());
+        let needs = [nl, nr].into_iter().flatten().collect();
+        Some((value, Proof::Trans { terms, steps }, needs, fact))
+    }
+
     /// A proof of `b = !b` from a hypothesis whose normal form is the other
     /// Bool, or from two whose normal forms are one term stated with
     /// different values.
@@ -233,16 +337,36 @@ impl Env<'_> {
                     n.to.clone(),
                     Proof::Trans {
                         terms: vec![n.to.clone(), fact.clone(), term::boolean(said)],
-                        steps: vec![Proof::Symm(Box::new(n.proof.clone())), Proof::Hyp(name)],
+                        steps: vec![
+                            Proof::Symm(Box::new(n.proof.clone())),
+                            Proof::Hyp(name.clone()),
+                        ],
                     },
                 ),
-                None => (fact.clone(), Proof::Hyp(name)),
+                None => (fact.clone(), Proof::Hyp(name.clone())),
             };
             if term::bool_value(&to) == Some(!said) {
                 if let Some(n) = &found {
                     self.keep_needs(n);
                 }
                 return Some(from);
+            }
+            // An equality a builtin fact decides once its sides are read
+            // in normal form, the other Bool than stated:
+            // `List.drop(List.prepend(h, t), n) == []` under `n <= 0` is
+            // `List.prepend(h, t) == []`, which is `false`. The sides are
+            // read on their own, as the whole may read back the hypothesis.
+            if let Some((value, decided, needs, law)) = self.decided_by_parts(&fact)
+                && term::bool_value(&value) == Some(!said)
+            {
+                for n in &needs {
+                    self.keep_needs(n);
+                }
+                self.use_law(law);
+                return Some(Proof::Trans {
+                    terms: vec![value, fact.clone(), term::boolean(said)],
+                    steps: vec![Proof::Symm(Box::new(decided)), Proof::Hyp(name)],
+                });
             }
             if let Some((_, other, _, needs)) =
                 forms.iter().find(|(f, _, v, _)| *f == to && *v != said)

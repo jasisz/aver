@@ -1900,8 +1900,12 @@ impl Renderer<'_> {
                 let on_nil = self.proof(nil, &hyps_at(hyps, &[(var.clone(), term::nil())])?)?;
                 let on_cons = self.proof(cons, &hyps_at(hyps, &[(var.clone(), cell)])?)?;
                 let rest: String = dependent.iter().map(|d| format!(", {d}")).collect();
+                // Each alternative on a line of its own, at one column: Lean
+                // takes an alternative left of the first one as not this
+                // `match`'s, and a case that writes a `match` of its own
+                // ends on a later line, further left.
                 format!(
-                    "(match {}{rest} with | []{rest} => {on_nil} | {} :: {}{rest} => {on_cons})",
+                    "(match {}{rest} with\n    | []{rest} => {on_nil}\n    | {} :: {}{rest} => {on_cons})",
                     lean(var),
                     lean(head),
                     lean(tail)
@@ -2280,6 +2284,9 @@ pub(crate) fn render_cited_facts(body: &str, ctx: &CodegenContext) -> Result<Str
         }
     }
     let mut out = Vec::new();
+    // The facts whose proofs read `==` as equality, themselves or through a
+    // fact they cite: those need it lawful.
+    let mut lawful: Vec<&str> = Vec::new();
     for fact in &all {
         if !needed.iter().any(|k| k == fact.key) {
             continue;
@@ -2332,13 +2339,23 @@ pub(crate) fn render_cited_facts(body: &str, ctx: &CodegenContext) -> Result<Str
             .iter()
             .any(|(_, s)| matches!(s, Sort::Map | Sort::Key | Sort::Value));
         // A list `List.contains` reads compares with the element type's
-        // `==`, which is all its rules need in Lean.
+        // `==`, which is all its rules need in Lean; a proof that reads a
+        // true `==` as equality needs it lawful.
         let compared = fact
             .sorts
             .iter()
             .any(|(_, s)| matches!(s, Sort::EqList | Sort::EqElem));
+        let reads_equality = ["AverSteps.eq_of_beq", "AverSteps.beq_symm"]
+            .iter()
+            .any(|lemma| term.contains(lemma))
+            || script.laws.iter().any(|l| lawful.contains(&l.key.as_str()));
+        if reads_equality {
+            lawful.push(fact.key);
+        }
         let types = if over_maps {
             "{α β : Type} [DecidableEq α] [AverKeyOrder α] [BEq α] [LawfulBEq α]".to_string()
+        } else if compared && reads_equality {
+            "{α : Type} [BEq α] [LawfulBEq α]".to_string()
         } else if compared {
             "{α : Type} [BEq α]".to_string()
         } else {
@@ -2843,21 +2860,22 @@ fn from_statement(lhs: &Term, rhs: &Term, h: String) -> String {
 /// The step term proves the claim as an equation of Bools, every Int
 /// comparison read through `decide`. Lean states a comparison as a Prop, so
 /// a claim with a comparison on one side, or on both, is an equation of
-/// Props: carry the proof across.
+/// Props: carry the proof across, under a name no given of the law can
+/// have, so the step term inside still reads the givens.
 fn to_statement(ob: &crate::ir::proof_steps::Obligation, t: String) -> String {
     match (is_prop_comparison(&ob.lhs), is_prop_comparison(&ob.rhs)) {
         (false, false) => t,
         // `A = (R = true)` from `decide A = R`.
         (true, false) => format!(
-            "(propext ⟨fun h => ({t}).symm.trans (decide_eq_true h), fun h => of_decide_eq_true (({t}).trans h)⟩)"
+            "(propext ⟨fun __aver_side => ({t}).symm.trans (decide_eq_true __aver_side), fun __aver_side => of_decide_eq_true (({t}).trans __aver_side)⟩)"
         ),
         // `(L = true) = B` from `L = decide B`.
         (false, true) => format!(
-            "(propext ⟨fun h => of_decide_eq_true (({t}).symm.trans h), fun h => ({t}).trans (decide_eq_true h)⟩)"
+            "(propext ⟨fun __aver_side => of_decide_eq_true (({t}).symm.trans __aver_side), fun __aver_side => ({t}).trans (decide_eq_true __aver_side)⟩)"
         ),
         // `A = B` from `decide A = decide B`.
         (true, true) => format!(
-            "(propext ⟨fun h => of_decide_eq_true (({t}).symm.trans (decide_eq_true h)), fun h => of_decide_eq_true (({t}).trans (decide_eq_true h))⟩)"
+            "(propext ⟨fun __aver_side => of_decide_eq_true (({t}).symm.trans (decide_eq_true __aver_side)), fun __aver_side => of_decide_eq_true (({t}).trans (decide_eq_true __aver_side))⟩)"
         ),
     }
 }

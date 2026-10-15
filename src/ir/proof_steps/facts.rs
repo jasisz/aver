@@ -168,8 +168,9 @@ pub fn named(key: &str) -> Option<Fact> {
 /// `+` and the literals: a rewrite either drops part of the term
 /// (`List.concat(a, []) => a`), moves a higher builtin below a lower one
 /// (`List.reverse` below `List.concat`, `List.len` below `+`,
-/// `List.contains` below `Bool.or`), or reassociates `List.concat` to the
-/// right. The
+/// `List.contains` below `Bool.or`), reassociates `List.concat` to the
+/// right, or decides an equality to a Bool (`List.prepend(x, t) == []` is
+/// `false`). The
 /// list rules evaluation itself steps by decrease in the same order, so
 /// rewriting with these facts and those rules always reaches a normal form;
 /// the producer's fuel and its check that a rewrite never comes back to an
@@ -193,6 +194,10 @@ pub const NORMALIZING: &[&str] = &[
     "List.reverse.involutive",
     "List.contains.ofConcat",
     "List.contains.ofReverse",
+    "List.prepend.notEmpty",
+    "List.prepend.notEmptySwapped",
+    "List.concat.notEmpty",
+    "List.concat.notEmptySwapped",
 ];
 
 /// The facts of [`NORMALIZING`], in the order [`all`] lists them.
@@ -221,6 +226,10 @@ pub fn all() -> Vec<Fact> {
         reverse_involutive(),
         contains_of_concat(),
         contains_of_reverse(),
+        prepend_not_empty(),
+        prepend_not_empty_swapped(),
+        concat_not_empty(),
+        concat_not_empty_swapped(),
         map_get_after_set(),
         map_get_after_set_other(),
         map_has_after_set(),
@@ -1507,6 +1516,195 @@ fn contains_of_reverse() -> Fact {
         found,
         other,
         &[contains_of_concat()],
+    )
+}
+
+fn beq(a: Term, b: Term) -> Term {
+    binop(BinOp::Eq, a, b)
+}
+
+/// `(l == []) = false` for a list `l` whose length is `n` by `to_n`
+/// (`List.len(l) = n`) and `n > 0` by `positive` (`(n > 0) = true`): where
+/// `l == []` holds, `l` is `[]` (`int.eq.of_beq`, at a type whose `==` is
+/// equality), so `n > 0` is `List.len([]) > 0`, which is `false`.
+fn not_empty_by_length(l: Term, n: Term, to_n: Proof, positive: Proof) -> Proof {
+    let is_nil = || beq(l.clone(), term::nil());
+    let gt0 = |t: Term| binop(BinOp::Gt, t, zero());
+    let contradiction = trans(
+        vec![
+            term::boolean(true),
+            gt0(n.clone()),
+            gt0(len(l.clone())),
+            gt0(len(term::nil())),
+            gt0(zero()),
+            term::boolean(false),
+        ],
+        vec![
+            symm(positive),
+            congr(gt0(term::hole()), symm(to_n)),
+            congr(
+                gt0(len(term::hole())),
+                Proof::Rule {
+                    rule: WallRule::EqOfBeq,
+                    subst: vec![("a".into(), l.clone()), ("b".into(), term::nil())],
+                    premises: vec![Proof::Hyp("h_nil".into())],
+                },
+            ),
+            congr(gt0(term::hole()), rule(WallRule::LenNil, vec![])),
+            Proof::Compute {
+                lhs: gt0(zero()),
+                rhs: term::boolean(false),
+            },
+        ],
+    );
+    Proof::Cases {
+        on: is_nil(),
+        hyp: "h_nil".into(),
+        if_true: Box::new(Proof::Absurd {
+            contradiction: Box::new(contradiction),
+            lhs: is_nil(),
+            rhs: term::boolean(false),
+        }),
+        if_false: Box::new(Proof::Hyp("h_nil".into())),
+    }
+}
+
+/// `goal = true` for an Int comparison that follows linearly from
+/// `List.len(l) >= 0` for each list `l` of `lists`, each cut in from
+/// `List.len.nonneg`.
+fn linear_from_lengths(goal: Term, lists: &[Term]) -> Proof {
+    let nonneg = |l: &Term| binop(BinOp::Gte, len(l.clone()), zero());
+    let names: Vec<String> = (0..lists.len()).map(|i| format!("h_len{i}")).collect();
+    let hyps: Vec<(&str, Term, bool)> = names
+        .iter()
+        .zip(lists)
+        .map(|(n, l)| (n.as_str(), nonneg(l), true))
+        .collect();
+    let mut proof = linear_from(goal, &hyps);
+    for (name, l) in names.iter().zip(lists).rev() {
+        proof = Proof::Have {
+            name: name.clone(),
+            fact: nonneg(l),
+            proof: Box::new(cite(&len_nonneg(), vec![l.clone()])),
+            body: Box::new(proof),
+        };
+    }
+    proof
+}
+
+/// `(List.prepend(x, t) == []) = false`: a cell is not empty.
+fn prepend_not_empty() -> Fact {
+    let (x, t) = (|| var("x"), || var("t"));
+    let n = || add(len(t()), one());
+    vector_fact(
+        "List.prepend.notEmpty",
+        "list_prepend_notEmpty",
+        &[("x", Sort::EqElem), ("t", Sort::EqList)],
+        None,
+        (beq(cell(x(), t()), term::nil()), term::boolean(false)),
+        not_empty_by_length(
+            cell(x(), t()),
+            n(),
+            rule(WallRule::LenCons, vec![("x", x()), ("a", t())]),
+            linear_from_lengths(binop(BinOp::Gt, n(), zero()), &[t()]),
+        ),
+        &[len_nonneg()],
+    )
+}
+
+/// `([] == List.prepend(x, t)) = false`, by
+/// [`prepend_not_empty`] with the sides swapped.
+fn prepend_not_empty_swapped() -> Fact {
+    let (x, t) = (|| var("x"), || var("t"));
+    let fact = prepend_not_empty();
+    vector_fact(
+        "List.prepend.notEmptySwapped",
+        "list_prepend_notEmptySwapped",
+        &[("x", Sort::EqElem), ("t", Sort::EqList)],
+        None,
+        (beq(term::nil(), cell(x(), t())), term::boolean(false)),
+        trans(
+            vec![
+                beq(term::nil(), cell(x(), t())),
+                beq(cell(x(), t()), term::nil()),
+                term::boolean(false),
+            ],
+            vec![
+                rule(
+                    WallRule::BeqSymm,
+                    vec![("a", term::nil()), ("b", cell(x(), t()))],
+                ),
+                cite(&fact, vec![x(), t()]),
+            ],
+        ),
+        &[fact],
+    )
+}
+
+/// `(List.concat(a, List.prepend(x, b)) == []) = false`: a list with a
+/// cell at its end is not empty, by its length `List.len(a) +
+/// (List.len(b) + 1)`.
+fn concat_not_empty() -> Fact {
+    let (a, b, x) = (|| var("a"), || var("b"), || var("x"));
+    let joined = || concat(a(), cell(x(), b()));
+    let n = || add(len(a()), add(len(b()), one()));
+    vector_fact(
+        "List.concat.notEmpty",
+        "list_concat_notEmpty",
+        &[
+            ("a", Sort::EqList),
+            ("x", Sort::EqElem),
+            ("b", Sort::EqList),
+        ],
+        None,
+        (beq(joined(), term::nil()), term::boolean(false)),
+        not_empty_by_length(
+            joined(),
+            n(),
+            trans(
+                vec![len(joined()), add(len(a()), len(cell(x(), b()))), n()],
+                vec![
+                    cite(&len_of_concat(), vec![a(), cell(x(), b())]),
+                    congr(
+                        add(len(a()), term::hole()),
+                        rule(WallRule::LenCons, vec![("x", x()), ("a", b())]),
+                    ),
+                ],
+            ),
+            linear_from_lengths(binop(BinOp::Gt, n(), zero()), &[a(), b()]),
+        ),
+        &[len_of_concat(), len_nonneg()],
+    )
+}
+
+/// `([] == List.concat(a, List.prepend(x, b))) = false`, by
+/// [`concat_not_empty`] with the sides swapped.
+fn concat_not_empty_swapped() -> Fact {
+    let (a, b, x) = (|| var("a"), || var("b"), || var("x"));
+    let joined = || concat(a(), cell(x(), b()));
+    let fact = concat_not_empty();
+    vector_fact(
+        "List.concat.notEmptySwapped",
+        "list_concat_notEmptySwapped",
+        &[
+            ("a", Sort::EqList),
+            ("x", Sort::EqElem),
+            ("b", Sort::EqList),
+        ],
+        None,
+        (beq(term::nil(), joined()), term::boolean(false)),
+        trans(
+            vec![
+                beq(term::nil(), joined()),
+                beq(joined(), term::nil()),
+                term::boolean(false),
+            ],
+            vec![
+                rule(WallRule::BeqSymm, vec![("a", term::nil()), ("b", joined())]),
+                cite(&fact, vec![a(), x(), b()]),
+            ],
+        ),
+        &[fact],
     )
 }
 

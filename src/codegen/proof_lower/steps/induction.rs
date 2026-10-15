@@ -10,6 +10,7 @@
 //! claim passes a given where it recurses, at most two of them, and it
 //! hints the `induction` line that goes straight to the one that closed.
 
+use crate::ast::Type;
 use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
 use crate::ir::identity::FnId;
 use crate::ir::proof_steps::induct;
@@ -550,8 +551,20 @@ impl Env<'_> {
             Ok(hs)
         };
         let nil_term = canon(&crate::ast::Spanned::bare(ResolvedExpr::List(Vec::new())));
+        // The parts of the cell have the types the list's own gives them.
+        let list_ty = ob
+            .types
+            .iter()
+            .find(|(n, _)| n == v)
+            .map(|(_, ty)| ty.clone())
+            .filter(|ty| matches!(ty, Type::List(_)));
+        let head = term::var(&h);
         let tail = term::var(&t);
-        let cell = term::builtin("List.prepend", vec![term::var(&h), tail.clone()], None);
+        if let Some(Type::List(elem)) = &list_ty {
+            head.set_ty((**elem).clone());
+            tail.set_ty(Type::List(elem.clone()));
+        }
+        let cell = term::builtin("List.prepend", vec![head, tail.clone()], list_ty);
         // The claim at the tail at the givens as they stand, then at each
         // set of values found.
         let own: Vec<Term> = general.iter().map(|g| term::var(g)).collect();
