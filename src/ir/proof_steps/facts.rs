@@ -156,7 +156,7 @@ pub fn is_fact_name(name: &str) -> bool {
 }
 
 pub fn named(key: &str) -> Option<Fact> {
-    all().into_iter().find(|f| f.key == key)
+    BUILT.with(|all| all.iter().find(|f| f.key == key).cloned())
 }
 
 /// The facts the step producer rewrites with where evaluation stops,
@@ -202,14 +202,26 @@ pub const NORMALIZING: &[&str] = &[
 
 /// The facts of [`NORMALIZING`], in the order [`all`] lists them.
 pub fn normalizing() -> Vec<Fact> {
-    all()
-        .into_iter()
-        .filter(|f| NORMALIZING.contains(&f.key))
-        .collect()
+    BUILT.with(|all| {
+        all.iter()
+            .filter(|f| NORMALIZING.contains(&f.key))
+            .cloned()
+            .collect()
+    })
+}
+
+thread_local! {
+    /// Every fact, built once: a proof is a fixed term, and building one
+    /// solves its linear certificates again.
+    static BUILT: Vec<Fact> = build_all();
 }
 
 /// Every fact, each after the facts its proof cites.
 pub fn all() -> Vec<Fact> {
+    BUILT.with(|all| all.clone())
+}
+
+fn build_all() -> Vec<Fact> {
     vec![
         len_of_concat(),
         concat_assoc(),
