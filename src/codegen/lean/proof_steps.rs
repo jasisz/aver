@@ -1200,7 +1200,18 @@ impl Renderer<'_> {
     }
 
     fn proof(&mut self, p: &Proof, hyps: &Hyps) -> Result<String, String> {
-        let eq = self.concl(p, hyps)?;
+        self.proof_in(p, hyps, None)
+    }
+
+    /// `p` as a step term, its equation stated with the empty lists typed
+    /// after `expected`: the same equation as the step around it states it.
+    fn proof_in(
+        &mut self,
+        p: &Proof,
+        hyps: &Hyps,
+        expected: Option<&Eqn>,
+    ) -> Result<String, String> {
+        let eq = super::step_types::equation(&self.concl(p, hyps)?, expected);
         let body = match p {
             // A module-level binding is a Lean `def` with no parameters;
             // its value is its definitional unfolding.
@@ -1209,11 +1220,19 @@ impl Renderer<'_> {
             | Proof::Proj { .. }
             | Proof::Cell { .. }
             | Proof::UnfoldConst { .. } => "rfl".to_string(),
-            Proof::Symm(inner) => format!("Eq.symm {}", self.proof(inner, hyps)?),
-            Proof::Trans { steps, .. } => {
+            Proof::Symm(inner) => {
+                let flipped = Eqn::new(eq.rhs.clone(), eq.lhs.clone());
+                format!("Eq.symm {}", self.proof_in(inner, hyps, Some(&flipped))?)
+            }
+            Proof::Trans { terms, steps } => {
+                let terms = super::step_types::chain(terms, Some(&eq));
                 let mut parts = Vec::new();
-                for s in steps {
-                    parts.push(self.proof(s, hyps)?);
+                for (i, s) in steps.iter().enumerate() {
+                    let around = match (terms.get(i), terms.get(i + 1)) {
+                        (Some(a), Some(b)) => Some(Eqn::new(a.clone(), b.clone())),
+                        _ => None,
+                    };
+                    parts.push(self.proof_in(s, hyps, around.as_ref())?);
                 }
                 let mut acc = parts.pop().expect("trans has steps");
                 while let Some(prev) = parts.pop() {
@@ -1222,7 +1241,16 @@ impl Renderer<'_> {
                 acc
             }
             Proof::Congr { ctx, inner } => {
-                let inner_eq = self.concl(inner, hyps)?;
+                let around = match (
+                    super::step_types::at_hole(ctx, &eq.lhs),
+                    super::step_types::at_hole(ctx, &eq.rhs),
+                ) {
+                    (Some(a), Some(b)) => Some(Eqn::new(a, b)),
+                    _ => None,
+                };
+                let inner_eq =
+                    super::step_types::equation(&self.concl(inner, hyps)?, around.as_ref());
+                let ctx = &super::step_types::context(ctx, &eq.lhs);
                 let binder = match inner_eq
                     .lhs
                     .ty()
@@ -1234,7 +1262,7 @@ impl Renderer<'_> {
                 let body = self.expr(ctx);
                 format!(
                     "congrArg (fun {binder} => {body}) {}",
-                    self.proof(inner, hyps)?
+                    self.proof_in(inner, hyps, Some(&inner_eq))?
                 )
             }
             Proof::Unfold {

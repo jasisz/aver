@@ -1662,7 +1662,17 @@ pub(crate) fn law_as_lemma_statement(
             || super::law_auto::recognize_transparent_chain(vb, law, ctx)
             || super::law_auto::recognize_validated_wrapper(vb, law, ctx)
             || super::law_auto::recognize_universal_floor_law(vb, law, ctx)
-            || pinned_when_universal)
+            || pinned_when_universal
+            // A law a deterministic arm proves is emitted as a claim, so its
+            // theorem is there whatever the export model.
+            || super::law_auto::when_law_is_claim(vb, law, ctx, false)
+            // A law the Aver kernel closed by steps: the steps lead its
+            // theorem, which the export states in both models (the
+            // certificate model keeps exactly the attempts whose steps
+            // render, see `cert_steps_body`). Lean refusing the steps only
+            // leaves `sorry` behind them, and that propagates to every law
+            // that cites it.
+            || super::law_auto::has_rendered_steps(vb, law, ctx))
     {
         return None;
     }
