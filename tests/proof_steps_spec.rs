@@ -6511,6 +6511,102 @@ fn lean_closes_the_case_contradiction_laws_by_their_steps() {
     let _ = fs::remove_dir_all(out);
 }
 
+/// The laws of `open_orders.av`: sides that differ only in the order of a
+/// `Bool.or` or a `Bool.and`, and a countdown stopped at a guard nothing in
+/// scope decides, in a side or in a hypothesis.
+const OPEN_ORDER_LAWS: [&str; 4] = [
+    "inserted.bothInFront",
+    "inserted.keepsEveryValue",
+    "nthFrom.firstOrZero",
+    "nthFrom.repeatedHead",
+];
+
+/// Steps split on the left argument of the connective, or on the guard of
+/// the countdown, with the existing `cases` step, and each case evaluates:
+/// both kernels accept the scripts and refuse them with the two cases
+/// swapped. Laws of the same shapes that hold on their samples only stay
+/// open.
+#[test]
+fn both_kernels_split_on_an_open_order_and_refuse_swapped_cases() {
+    let out = scratch("open-orders");
+    let (result, summary) = aver_backend_json("open_orders.av", &out, None);
+    let _ = fs::remove_dir_all(&out);
+    for law in OPEN_ORDER_LAWS {
+        assert_eq!(
+            summary["closed_by"][law],
+            "steps",
+            "{law}: {}",
+            format_output(&result)
+        );
+    }
+    let export = scratch("open-orders-export");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("open_orders.av", &export)
+            .into_iter()
+            .collect();
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in OPEN_ORDER_LAWS {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.to_string()));
+    }
+    for (i, law) in ["inserted.bothInFront", "nthFrom.repeatedHead"]
+        .into_iter()
+        .enumerate()
+    {
+        let text = read(law);
+        let mutant = swap_first_cases(&text);
+        assert_ne!(mutant, text, "{law}: the mutant changed nothing");
+        let refused = aver::proof_kernel::verdict(&mutant);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "{law}: {refused:?}"
+        );
+        let path = export.join(format!("mutant{i}.steps"));
+        fs::write(&path, &mutant).unwrap();
+        let replayed = replay(std::slice::from_ref(&path));
+        assert!(!replayed.status.success(), "{}", format_output(&replayed));
+    }
+    let _ = fs::remove_dir_all(export);
+    let refused = scratch("open-orders-refused");
+    assert!(export_steps("open_orders_refused.av", &refused).is_empty());
+    let _ = fs::remove_dir_all(refused);
+}
+
+#[test]
+fn lean_closes_the_open_order_laws_by_their_steps() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("open-orders-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "open_orders.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "0",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in OPEN_ORDER_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
 /// The laws of `evaluated_hypotheses.av` that close only once the
 /// hypotheses of a case are evaluated the way its claim is: a `when` that
 /// evaluates to the claim, a line of an evaluated `when` that decides what
