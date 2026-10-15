@@ -1,9 +1,9 @@
-(steps 15
- (obligation k () (none) (op + (s "a") (s "b")) (op + (s "b") (s "a")))
+(steps 16
+ (obligation k () (none) (op != (s "a") (s "b")) (bi Bool.not (op == (s "a") (s "b"))))
  (defs)
  (consts)
  (sums)
  (recs)
  (sigs)
  (laws)
- (proof (rule int.add_comm ((a (s "a")) (b (s "b"))))))
+ (proof (rule int.ne.def ((a (s "a")) (b (s "b"))))))

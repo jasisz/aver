@@ -1,5 +1,6 @@
 //! The rules of the proof steps for `Int.min`, `Int.max`, `Int.abs`, the
-//! sign of a product (`int.mul_nonneg`) and `List.contains` against every place that runs those builtins: each rule
+//! sign of a product (`int.mul_nonneg`), `!=` as the negation of `==`
+//! (`int.ne.def`) and `List.contains` against every place that runs those builtins: each rule
 //! is instantiated at sample values (negative, zero, equal and unequal
 //! arguments; the empty list, a list that holds the element in front, further
 //! back, twice, and not at all) and both sides are run on the VM, on wasm-gc
@@ -49,6 +50,7 @@ fn rules() -> Vec<WallRule> {
                 "int.max.",
                 "int.abs.",
                 "int.mul_nonneg",
+                "int.ne.def",
                 "list.contains.",
             ]
             .iter()
@@ -96,7 +98,7 @@ fn aver(t: &Term) -> String {
 /// one sample.
 fn program() -> String {
     let mut src = String::from(
-        "module PickSamples\n    intent = \"Every sampled instance of the rules for Int.min, Int.max, Int.abs, the sign of a product and List.contains.\"\n    exposes [ints, bools]\n    effects []\n\nfn ints(xs: List<Int>) -> List<Int>\n    ? \"Anchor for Int-valued instances.\"\n    xs\n\nfn bools(xs: List<Bool>) -> List<Bool>\n    ? \"Anchor for Bool-valued instances.\"\n    xs\n",
+        "module PickSamples\n    intent = \"Every sampled instance of the rules for Int.min, Int.max, Int.abs, the sign of a product, != and List.contains.\"\n    exposes [ints, bools]\n    effects []\n\nfn ints(xs: List<Int>) -> List<Int>\n    ? \"Anchor for Int-valued instances.\"\n    xs\n\nfn bools(xs: List<Bool>) -> List<Bool>\n    ? \"Anchor for Bool-valued instances.\"\n    xs\n",
     );
     for (n, rule) in rules().into_iter().enumerate() {
         let (premises, concl) = rule.schema();
@@ -118,7 +120,10 @@ fn program() -> String {
             "{}: too few samples satisfy the premise",
             rule.id()
         );
-        let anchor = if rule.id().starts_with("list.") || term::bool_value(&concl.rhs).is_some() {
+        let anchor = if rule.id().starts_with("list.")
+            || rule == WallRule::NeDef
+            || term::bool_value(&concl.rhs).is_some()
+        {
             "bools"
         } else {
             "ints"
@@ -220,7 +225,7 @@ fn aver_in(dir: &Path, args: &[&str]) -> Output {
 
 #[test]
 fn every_rule_is_sampled() {
-    assert_eq!(rules().len(), 10);
+    assert_eq!(rules().len(), 11);
     let src = program();
     for rule in rules() {
         assert!(src.contains(&format!("// {}\n", rule.id())), "{src}");

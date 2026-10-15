@@ -38,7 +38,7 @@ pub use term::Term;
 use crate::ir::identity::FnId;
 
 /// Version of the step data. Bump on any change a replayer could observe.
-pub const FORMAT_VERSION: u32 = 15;
+pub const FORMAT_VERSION: u32 = 16;
 
 /// The types a script declares for the kernel's type checks: every sum
 /// (each constructor with its field types) and every record (each field

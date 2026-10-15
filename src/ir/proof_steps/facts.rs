@@ -285,6 +285,22 @@ fn rule(rule: WallRule, subst: Vec<(&str, Term)>) -> Proof {
     }
 }
 
+/// `List.len([]) = 0`, which compute shows.
+fn len_nil() -> Proof {
+    Proof::Compute {
+        lhs: len(term::nil()),
+        rhs: zero(),
+    }
+}
+
+/// `List.reverse([]) = []`, which compute shows.
+fn reverse_nil() -> Proof {
+    Proof::Compute {
+        lhs: reverse(term::nil()),
+        rhs: term::nil(),
+    }
+}
+
 fn symm(p: Proof) -> Proof {
     Proof::Symm(Box::new(p))
 }
@@ -376,11 +392,11 @@ fn len_of_concat() -> Fact {
                 len(term::hole()),
                 rule(WallRule::ConcatNil, vec![("b", b())]),
             ),
-            symm(rule(WallRule::ZeroAdd, vec![("a", len(b()))])),
-            congr(
-                add(term::hole(), len(b())),
-                symm(rule(WallRule::LenNil, vec![])),
-            ),
+            Proof::Ring {
+                lhs: len(b()),
+                rhs: add(zero(), len(b())),
+            },
+            congr(add(term::hole(), len(b())), symm(len_nil())),
         ],
     );
     let step = trans(
@@ -645,7 +661,7 @@ fn len_nonneg() -> Fact {
                 term::boolean(true),
             ],
             vec![
-                congr(nonneg(term::hole()), rule(WallRule::LenNil, vec![])),
+                congr(nonneg(term::hole()), len_nil()),
                 Proof::Compute {
                     lhs: nonneg(zero()),
                     rhs: term::boolean(true),
@@ -746,7 +762,7 @@ fn take_of_concat() -> Fact {
                 take(term::hole(), len(nil())),
                 rule(WallRule::ConcatNil, vec![("b", b())]),
             ),
-            congr(take(b(), term::hole()), rule(WallRule::LenNil, vec![])),
+            congr(take(b(), term::hole()), len_nil()),
             at_zero(
                 take,
                 "b",
@@ -784,7 +800,7 @@ fn drop_of_concat() -> Fact {
                 drop(term::hole(), len(nil())),
                 rule(WallRule::ConcatNil, vec![("b", b())]),
             ),
-            congr(drop(b(), term::hole()), rule(WallRule::LenNil, vec![])),
+            congr(drop(b(), term::hole()), len_nil()),
             at_zero(drop, "b", |l| l, WallRule::DropNil, WallRule::DropConsLe),
         ],
     );
@@ -803,19 +819,11 @@ fn drop_of_concat() -> Fact {
 /// `Proof::Linear` for `goal = true` from the hypotheses named, each
 /// with the comparison it states and its value.
 fn linear_from(goal: Term, hyps: &[(&str, Term, bool)]) -> Proof {
-    use super::linear;
-    let mut atoms = Vec::new();
-    let mut facts = vec![linear::as_nonneg(&goal, false, &mut atoms).expect("an Int comparison")];
-    for (_, t, v) in hyps {
-        facts.push(linear::as_nonneg(t, *v, &mut atoms).expect("an Int comparison"));
-    }
-    Proof::Linear {
-        goal,
-        value: true,
-        hyps: hyps.iter().map(|(n, _, _)| n.to_string()).collect(),
-        weights: linear::certificate(&facts).expect("the goal follows linearly"),
-        cuts: Vec::new(),
-    }
+    let hyps: Vec<(String, Term, bool)> = hyps
+        .iter()
+        .map(|(n, t, v)| (n.to_string(), t.clone(), *v))
+        .collect();
+    super::linear::from_hyps(&goal, true, &hyps).expect("the goal follows linearly")
 }
 
 /// A rule on a list cell at count `n` whose premise is the hypothesis
@@ -823,11 +831,10 @@ fn linear_from(goal: Term, hyps: &[(&str, Term, bool)]) -> Proof {
 /// `h : n <= 0 = false` (`positive` true).
 fn counted_cell(rule: WallRule, x: Term, t: Term, n: Term, h: &str, positive: bool) -> Proof {
     let premise = if positive {
-        Proof::Rule {
-            rule: WallRule::GtOfNotLe,
-            subst: vec![("a".into(), n.clone()), ("b".into(), zero())],
-            premises: vec![Proof::Hyp(h.to_string())],
-        }
+        linear_from(
+            binop(BinOp::Gt, n.clone(), zero()),
+            &[(h, binop(BinOp::Lte, n.clone(), zero()), false)],
+        )
     } else {
         Proof::Hyp(h.to_string())
     };
@@ -1029,14 +1036,8 @@ fn len_of_drop_at_most() -> Fact {
                 binop(BinOp::Lte, len(term::hole()), len(nil())),
                 rule(WallRule::DropNil, vec![("n", n())]),
             ),
-            congr(
-                binop(BinOp::Lte, term::hole(), len(nil())),
-                rule(WallRule::LenNil, vec![]),
-            ),
-            congr(
-                binop(BinOp::Lte, zero(), term::hole()),
-                rule(WallRule::LenNil, vec![]),
-            ),
+            congr(binop(BinOp::Lte, term::hole(), len(nil())), len_nil()),
+            congr(binop(BinOp::Lte, zero(), term::hole()), len_nil()),
             Proof::Compute {
                 lhs: binop(BinOp::Lte, zero(), zero()),
                 rhs: term::boolean(true),
@@ -1109,7 +1110,7 @@ fn len_of_drop_at_most() -> Fact {
 fn len_of_reverse() -> Fact {
     let (a, x, t) = (|| var("a"), || var("x"), || var("t"));
     let nil = term::nil;
-    let base = congr(len(term::hole()), rule(WallRule::ReverseNil, vec![]));
+    let base = congr(len(term::hole()), reverse_nil());
     let step = trans(
         vec![
             len(reverse(cell(x(), t()))),
@@ -1132,10 +1133,7 @@ fn len_of_reverse() -> Fact {
                 add(len(t()), term::hole()),
                 rule(WallRule::LenCons, vec![("x", x()), ("a", nil())]),
             ),
-            congr(
-                add(len(t()), add(term::hole(), one())),
-                rule(WallRule::LenNil, vec![]),
-            ),
+            congr(add(len(t()), add(term::hole(), one())), len_nil()),
             Proof::Ring {
                 lhs: add(len(t()), add(zero(), one())),
                 rhs: add(len(t()), one()),
@@ -1172,10 +1170,7 @@ fn reverse_of_concat() -> Fact {
                 rule(WallRule::ConcatNil, vec![("b", b())]),
             ),
             symm(cite(&concat_right_identity(), vec![reverse(b())])),
-            congr(
-                concat(reverse(b()), term::hole()),
-                symm(rule(WallRule::ReverseNil, vec![])),
-            ),
+            congr(concat(reverse(b()), term::hole()), symm(reverse_nil())),
         ],
     );
     let step = trans(
@@ -1228,10 +1223,7 @@ fn reverse_involutive() -> Fact {
     let nil = term::nil;
     let base = trans(
         vec![reverse(reverse(nil())), reverse(nil()), nil()],
-        vec![
-            congr(reverse(term::hole()), rule(WallRule::ReverseNil, vec![])),
-            rule(WallRule::ReverseNil, vec![]),
-        ],
+        vec![congr(reverse(term::hole()), reverse_nil()), reverse_nil()],
     );
     let step = trans(
         vec![
@@ -1261,7 +1253,7 @@ fn reverse_involutive() -> Fact {
             ),
             congr(
                 concat(concat(term::hole(), single(x())), t()),
-                rule(WallRule::ReverseNil, vec![]),
+                reverse_nil(),
             ),
             congr(
                 concat(term::hole(), t()),
@@ -1521,10 +1513,7 @@ fn contains_of_reverse() -> Fact {
         "list_contains_ofReverse",
         &[("a", Sort::EqList), ("y", Sort::EqElem)],
         (contains(reverse(a()), y()), contains(a(), y())),
-        congr(
-            contains(term::hole(), y()),
-            rule(WallRule::ReverseNil, vec![]),
-        ),
+        congr(contains(term::hole(), y()), reverse_nil()),
         found,
         other,
         &[contains_of_concat()],
@@ -1562,7 +1551,7 @@ fn not_empty_by_length(l: Term, n: Term, to_n: Proof, positive: Proof) -> Proof 
                     premises: vec![Proof::Hyp("h_nil".into())],
                 },
             ),
-            congr(gt0(term::hole()), rule(WallRule::LenNil, vec![])),
+            congr(gt0(term::hole()), len_nil()),
             Proof::Compute {
                 lhs: gt0(zero()),
                 rhs: term::boolean(false),

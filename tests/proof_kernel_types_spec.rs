@@ -86,7 +86,7 @@ const REFUSED: [(&str, &str, bool); 30] = [
     // arithmetic over Floats.
     (
         "int_rule_at_texts",
-        "rule int.add_comm: a := String is not Int",
+        "rule int.ne.def: a := String is not Int",
         true,
     ),
     ("ring_over_texts", "ring needs two Int terms", false),

@@ -1016,9 +1016,11 @@ fn rule(id: String, bs: List<Binding>, ps: List<Proof>, env: Env, path: String) 
             true -> ruleConclusion(bound(bs, s.binders, env, "rule {id}", path), s.premises, s.concl, bs, ps, env, path)
 
 verify rule
-    rule("int.add_comm", [Kernel.Term.bind("a", Term.TInt(1))], [], emptyEnv(), "p") => Result.Err("step p: rule int.add_comm binds a,b")
-    rule("int.add_comm", [Kernel.Term.bind("a", Term.TInt(1)), Kernel.Term.bind("b", Term.TInt(2))], [], emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TOp("+", Term.TInt(1), Term.TInt(2)), rhs = Term.TOp("+", Term.TInt(2), Term.TInt(1))))
-    rule("int.add_comm", [Kernel.Term.bind("a", Term.TStr("a")), Kernel.Term.bind("b", Term.TStr("b"))], [], emptyEnv(), "p") => Result.Err("step p: rule int.add_comm: a := String is not Int")
+    rule("int.ne.def", [Kernel.Term.bind("a", Term.TInt(1))], [], emptyEnv(), "p") => Result.Err("step p: rule int.ne.def binds a,b")
+    rule("int.ne.def", [Kernel.Term.bind("a", Term.TInt(1)), Kernel.Term.bind("b", Term.TInt(2))], [], emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TOp("!=", Term.TInt(1), Term.TInt(2)), rhs = Term.TBi("Bool.not", [Term.TOp("==", Term.TInt(1), Term.TInt(2))])))
+    rule("int.ne.def", [Kernel.Term.bind("a", Term.TStr("a")), Kernel.Term.bind("b", Term.TStr("b"))], [], emptyEnv(), "p") => Result.Err("step p: rule int.ne.def: a := String is not Int")
+    rule("int.ne.def", [Kernel.Term.bind("b", Term.TInt(1)), Kernel.Term.bind("a", Term.TInt(2))], [], emptyEnv(), "p") => Result.Err("step p: rule int.ne.def binds a,b")
+    rule("int.add_comm", [Kernel.Term.bind("a", Term.TInt(1)), Kernel.Term.bind("b", Term.TInt(2))], [], emptyEnv(), "p") => Result.Err("step p: unknown rule int.add_comm")
     rule("bool.beq.refl", [Kernel.Term.bind("a", Term.TVar("f"))], [], withVars(emptyEnv(), [Kernel.Term.typed("f", Ty.TyFloat)]), "p") => Result.Err("step p: rule bool.beq.refl: a := == on Float is not equality")
     rule("bool.beq.symm", [Kernel.Term.bind("a", Term.TVar("f")), Kernel.Term.bind("b", Term.TVar("f"))], [], withVars(emptyEnv(), [Kernel.Term.typed("f", Ty.TyFloat)]), "p") => Result.Err("step p: rule bool.beq.symm: a := == on Float is not equality")
 

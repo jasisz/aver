@@ -1,4 +1,4 @@
-(steps 15
+(steps 16
  (obligation k ((n int)) (none) (op == (v n) (v n)) (b true))
  (defs)
  (consts)

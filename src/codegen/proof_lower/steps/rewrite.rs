@@ -95,6 +95,9 @@ pub(crate) enum Equation {
     Wall(WallRule),
     /// The whole-body equation (arm 0) of a definition.
     Unfold(crate::ir::identity::FnId),
+    /// `lhs = rhs` for two closed terms, which compute shows: a builtin
+    /// on literals (`List.len([]) = 0`).
+    Closed(Box<(Term, Term)>),
 }
 
 /// `t = true` for `t = Bool.and(a, b)`, from `pa : a = true` and
@@ -534,6 +537,15 @@ impl Env<'_> {
                     body,
                 ))
             }
+            Equation::Closed(eq) => matches(&eq.0, t, &[], &mut Vec::new()).then(|| {
+                (
+                    Proof::Compute {
+                        lhs: canon(t),
+                        rhs: eq.1.clone(),
+                    },
+                    eq.1.clone(),
+                )
+            }),
             Equation::Wall(rule) => {
                 let (premises, concl) = rule.schema();
                 let vars: Vec<String> = rule.binders().iter().map(|s| s.to_string()).collect();
@@ -678,11 +690,6 @@ impl Env<'_> {
             path.pop();
         }
         Ok(None)
-    }
-
-    /// One application of the first equation that applies at the root.
-    pub(crate) fn apply_at_root(&mut self, eqs: &[Equation], t: &Term) -> Option<(Proof, Term)> {
-        eqs.iter().find_map(|eq| self.try_equation(eq, t))
     }
 
     /// Rewrite `t` to normal form under the given laws and wall rules.

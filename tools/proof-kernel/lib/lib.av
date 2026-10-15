@@ -153,7 +153,7 @@ fn evaluate(s: Scope, t: Term) -> Result<Rw, String>
 
 verify evaluate
     evaluate(Scope(defs = [], known = [Known(hyp = "h", name = "x", value = Term.TInt(2))]), Term.TOp("+", Term.TVar("x"), Term.TInt(1))) => Result.Ok(Rw(to = Term.TInt(3), proof = Proof.PTrans([Term.TOp("+", Term.TVar("x"), Term.TInt(1)), Term.TOp("+", Term.TInt(2), Term.TInt(1)), Term.TInt(3)], [Proof.PCongr(Term.TOp("+", Term.THole, Term.TInt(1)), Proof.PHyp("h")), Proof.PCompute(Term.TOp("+", Term.TInt(2), Term.TInt(1)), Term.TInt(3))])))
-    evaluate(Scope(defs = [], known = []), Term.TBi("List.len", [Term.TList([])])) => Result.Ok(Rw(to = Term.TInt(0), proof = Proof.PRule("list.len.nil", [], [])))
+    evaluate(Scope(defs = [], known = []), Term.TBi("List.len", [Term.TList([])])) => Result.Ok(Rw(to = Term.TInt(0), proof = Proof.PCompute(Term.TBi("List.len", [Term.TList([])]), Term.TInt(0))))
 
 fn evalWithin(s: Scope, t: Term, depth: Int) -> Result<Rw, String>
     ? "evaluate, nested at most depth deep."
@@ -405,15 +405,15 @@ verify boolEquation
     boolEquation("Bool.and", [Term.TVar("a"), Term.TVar("b")]) => Option.None
 
 fn listEquation(name: String, args: List<Term>) -> Option<Rw>
-    ? "The equations of List.len, List.take, List.concat and List.reverse on [] and on a cell, as the kernel's rules state them."
+    ? "The equations of List.len, List.take, List.concat and List.reverse on [] and on a cell, as the kernel's rules state them, and as compute shows them where the call is closed."
     match (name, args)
-        ("List.len", [Term.TList([])]) -> Option.Some(Rw(to = Term.TInt(0), proof = Proof.PRule("list.len.nil", [], [])))
+        ("List.len", [Term.TList([])]) -> Option.Some(Rw(to = Term.TInt(0), proof = Proof.PCompute(Term.TBi("List.len", [Term.TList([])]), Term.TInt(0))))
         ("List.len", [Term.TBi("List.prepend", [x, a])]) -> Option.Some(Rw(to = Term.TOp("+", Term.TBi("List.len", [a]), Term.TInt(1)), proof = Proof.PRule("list.len.cons", [Kernel.Term.bind("x", x), Kernel.Term.bind("a", a)], [])))
         ("List.take", [Term.TList([]), n]) -> Option.Some(Rw(to = Term.TList([]), proof = Proof.PRule("list.take.nil", [Kernel.Term.bind("n", n)], [])))
         ("List.take", [Term.TBi("List.prepend", [x, a]), Term.TInt(n)]) -> Option.Some(takeCell(x, a, n))
         ("List.concat", [Term.TList([]), b]) -> Option.Some(Rw(to = b, proof = Proof.PRule("list.concat.nil", [Kernel.Term.bind("b", b)], [])))
         ("List.concat", [Term.TBi("List.prepend", [x, a]), b]) -> Option.Some(Rw(to = cons(x, Term.TBi("List.concat", [a, b])), proof = Proof.PRule("list.concat.cons", [Kernel.Term.bind("x", x), Kernel.Term.bind("a", a), Kernel.Term.bind("b", b)], [])))
-        ("List.reverse", [Term.TList([])]) -> Option.Some(Rw(to = Term.TList([]), proof = Proof.PRule("list.reverse.nil", [], [])))
+        ("List.reverse", [Term.TList([])]) -> Option.Some(Rw(to = Term.TList([]), proof = Proof.PCompute(Term.TBi("List.reverse", [Term.TList([])]), Term.TList([]))))
         ("List.reverse", [Term.TBi("List.prepend", [x, a])]) -> Option.Some(Rw(to = Term.TBi("List.concat", [Term.TBi("List.reverse", [a]), cons(x, Term.TList([]))]), proof = Proof.PRule("list.reverse.cons", [Kernel.Term.bind("x", x), Kernel.Term.bind("a", a)], [])))
         _ -> Option.None
 

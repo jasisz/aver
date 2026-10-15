@@ -45,36 +45,11 @@ theorem or_true_l (b : Bool) : (true || b) = true := rfl
 theorem or_false_l (b : Bool) : (false || b) = b := rfl
 theorem or_true_r (a : Bool) : (a || true) = true := by cases a <;> rfl
 theorem or_false_r (a : Bool) : (a || false) = a := by cases a <;> rfl
-theorem not_true : (!true) = false := rfl
-theorem not_false : (!false) = true := rfl
+theorem ne_def (a b : Int) : (a != b) = !(a == b) := rfl
 theorem and_elim_l (a b : Bool) (h : (a && b) = true) : a = true := by
   cases a <;> cases b <;> first | rfl | exact absurd h (by decide)
 theorem and_elim_r (a b : Bool) (h : (a && b) = true) : b = true := by
   cases a <;> cases b <;> first | rfl | exact absurd h (by decide)
-theorem le_of_not_gt (a b : Int) (h : decide (a > b) = false) : decide (a <= b) = true :=
-  decide_eq_true (Int.not_lt.mp (of_decide_eq_false h))
-theorem le_false_of_gt (a b : Int) (h : decide (a > b) = true) : decide (a <= b) = false :=
-  decide_eq_false (Int.not_le.mpr (of_decide_eq_true h))
-theorem ge_of_not_lt (a b : Int) (h : decide (a < b) = false) : decide (a >= b) = true :=
-  decide_eq_true (Int.not_lt.mp (of_decide_eq_false h))
-theorem ge_false_of_lt (a b : Int) (h : decide (a < b) = true) : decide (a >= b) = false :=
-  decide_eq_false (Int.not_le.mpr (of_decide_eq_true h))
-theorem lt_of_not_ge (a b : Int) (h : decide (a >= b) = false) : decide (a < b) = true :=
-  decide_eq_true (Int.not_le.mp (of_decide_eq_false h))
-theorem lt_false_of_ge (a b : Int) (h : decide (a >= b) = true) : decide (a < b) = false :=
-  decide_eq_false (Int.not_lt.mpr (of_decide_eq_true h))
-theorem gt_of_not_le (a b : Int) (h : decide (a <= b) = false) : decide (a > b) = true :=
-  decide_eq_true (Int.not_le.mp (of_decide_eq_false h))
-theorem gt_false_of_le (a b : Int) (h : decide (a <= b) = true) : decide (a > b) = false :=
-  decide_eq_false (Int.not_lt.mpr (of_decide_eq_true h))
-theorem eq_of_not_ne (a b : Int) (h : (a != b) = false) : (a == b) = true := by
-  simpa [bne] using h
-theorem eq_false_of_ne (a b : Int) (h : (a != b) = true) : (a == b) = false := by
-  simpa [bne] using h
-theorem ne_of_not_eq (a b : Int) (h : (a == b) = false) : (a != b) = true := by
-  simp [bne, h]
-theorem ne_false_of_eq (a b : Int) (h : (a == b) = true) : (a != b) = false := by
-  simp [bne, h]
 theorem eq_of_le_ge (a b : Int) (h1 : decide (a <= b) = true) (h2 : decide (a >= b) = true) :
     (a == b) = true :=
   beq_iff_eq.mpr (Int.le_antisymm (of_decide_eq_true h1) (of_decide_eq_true h2))
@@ -164,15 +139,6 @@ theorem ediv_lt {n : Int} (k : Int) (hk : decide (k >= 2) = true) (h : 0 < n) :
     have : n * 1 < n * k := Int.mul_lt_mul_of_pos_left (by omega) h
     omega)
   omega
-theorem add_comm (a b : Int) : a + b = b + a := Int.add_comm a b
-theorem mul_comm (a b : Int) : a * b = b * a := Int.mul_comm a b
-theorem add_assoc (a b c : Int) : a + b + c = a + (b + c) := Int.add_assoc a b c
-theorem mul_assoc (a b c : Int) : a * b * c = a * (b * c) := Int.mul_assoc a b c
-theorem add_zero (a : Int) : a + 0 = a := Int.add_zero a
-theorem zero_add (a : Int) : 0 + a = a := Int.zero_add a
-theorem mul_one (a : Int) : a * 1 = a := Int.mul_one a
-theorem one_mul (a : Int) : 1 * a = a := Int.one_mul a
-theorem sub_zero (a : Int) : a - 0 = a := Int.sub_zero a
 theorem div_mod_recompose (a k : Int) (_h : decide (k > 0) = true) : a / k * k + a % k = a :=
   Int.ediv_mul_add_emod a k
 theorem div_range (a k m n : Int) (h1 : (decide (0 <= a) && decide (a < m)) = true)
@@ -184,7 +150,6 @@ theorem div_range (a k m n : Int) (h1 : (decide (0 <= a) && decide (a < m)) = tr
   exact ⟨Int.ediv_nonneg h0 (Int.le_of_lt hk), (Int.ediv_lt_iff_lt_mul hk).mpr hm⟩
 theorem list_concat_nil {α : Type} (b : List α) : (([] : List α) ++ b) = b := rfl
 theorem list_concat_cons {α : Type} (x : α) (a b : List α) : ((x :: a) ++ b) = (x :: (a ++ b)) := rfl
-theorem list_len_nil {α : Type} : ((([] : List α)).length : Int) = 0 := rfl
 theorem list_len_cons {α : Type} (x : α) (a : List α) : (((x :: a)).length : Int) = (a.length : Int) + 1 := rfl
 theorem list_take_nil {α : Type} (n : Int) : ([] : List α).take (Int.toNat n) = [] := by
   cases Int.toNat n <;> rfl
@@ -204,7 +169,6 @@ theorem list_drop_cons_gt {α : Type} (x : α) (a : List α) (n : Int) (h : deci
     (x :: a).drop (Int.toNat n) = a.drop (Int.toNat (n - 1)) := by
   have e : Int.toNat n = Int.toNat (n - 1) + 1 := by have := of_decide_eq_true h; omega
   rw [e]; rfl
-theorem list_reverse_nil {α : Type} : ([] : List α).reverse = [] := rfl
 theorem list_reverse_cons {α : Type} (x : α) (a : List α) : (x :: a).reverse = (a.reverse ++ [x]) :=
   List.reverse_cons
 theorem list_contains_nil {α : Type} [BEq α] (y : α) : ([] : List α).contains y = false := rfl
@@ -378,22 +342,9 @@ fn lemma(rule: WallRule) -> &'static str {
         WallRule::OrFalseL => "AverSteps.or_false_l",
         WallRule::OrTrueR => "AverSteps.or_true_r",
         WallRule::OrFalseR => "AverSteps.or_false_r",
-        WallRule::NotTrue => "AverSteps.not_true",
-        WallRule::NotFalse => "AverSteps.not_false",
         WallRule::AndElimL => "AverSteps.and_elim_l",
         WallRule::AndElimR => "AverSteps.and_elim_r",
-        WallRule::LeOfNotGt => "AverSteps.le_of_not_gt",
-        WallRule::LeFalseOfGt => "AverSteps.le_false_of_gt",
-        WallRule::GeOfNotLt => "AverSteps.ge_of_not_lt",
-        WallRule::GeFalseOfLt => "AverSteps.ge_false_of_lt",
-        WallRule::LtOfNotGe => "AverSteps.lt_of_not_ge",
-        WallRule::LtFalseOfGe => "AverSteps.lt_false_of_ge",
-        WallRule::GtOfNotLe => "AverSteps.gt_of_not_le",
-        WallRule::GtFalseOfLe => "AverSteps.gt_false_of_le",
-        WallRule::EqOfNotNe => "AverSteps.eq_of_not_ne",
-        WallRule::EqFalseOfNe => "AverSteps.eq_false_of_ne",
-        WallRule::NeOfNotEq => "AverSteps.ne_of_not_eq",
-        WallRule::NeFalseOfEq => "AverSteps.ne_false_of_eq",
+        WallRule::NeDef => "AverSteps.ne_def",
         WallRule::EqOfLeGe => "AverSteps.eq_of_le_ge",
         WallRule::MulNonneg => "AverSteps.mul_nonneg",
         WallRule::EqFalseOfLt => "AverSteps.eq_false_of_lt",
@@ -401,15 +352,6 @@ fn lemma(rule: WallRule) -> &'static str {
         WallRule::EqOfBeq => "AverSteps.eq_of_beq",
         WallRule::BeqRefl => "AverSteps.beq_refl",
         WallRule::BeqSymm => "AverSteps.beq_symm",
-        WallRule::AddComm => "AverSteps.add_comm",
-        WallRule::MulComm => "AverSteps.mul_comm",
-        WallRule::AddAssoc => "AverSteps.add_assoc",
-        WallRule::MulAssoc => "AverSteps.mul_assoc",
-        WallRule::AddZero => "AverSteps.add_zero",
-        WallRule::ZeroAdd => "AverSteps.zero_add",
-        WallRule::MulOne => "AverSteps.mul_one",
-        WallRule::OneMul => "AverSteps.one_mul",
-        WallRule::SubZero => "AverSteps.sub_zero",
         WallRule::DivOk => "AverSteps.int_div_ok",
         WallRule::ModOk => "AverSteps.int_mod_ok",
         WallRule::DivModRecompose => "AverSteps.div_mod_recompose",
@@ -427,7 +369,6 @@ fn lemma(rule: WallRule) -> &'static str {
         WallRule::BitsAndBit => "AverSteps.bits_and_bit",
         WallRule::ConcatNil => "AverSteps.list_concat_nil",
         WallRule::ConcatCons => "AverSteps.list_concat_cons",
-        WallRule::LenNil => "AverSteps.list_len_nil",
         WallRule::LenCons => "AverSteps.list_len_cons",
         WallRule::TakeNil => "AverSteps.list_take_nil",
         WallRule::TakeConsLe => "AverSteps.list_take_cons_le",
@@ -435,7 +376,6 @@ fn lemma(rule: WallRule) -> &'static str {
         WallRule::DropNil => "AverSteps.list_drop_nil",
         WallRule::DropConsLe => "AverSteps.list_drop_cons_le",
         WallRule::DropConsGt => "AverSteps.list_drop_cons_gt",
-        WallRule::ReverseNil => "AverSteps.list_reverse_nil",
         WallRule::ReverseCons => "AverSteps.list_reverse_cons",
         WallRule::ContainsNil => "AverSteps.list_contains_nil",
         WallRule::ContainsConsFound => "AverSteps.list_contains_cons_found",
@@ -1426,12 +1366,14 @@ impl Renderer<'_> {
                 }
             }
             // `decide` reads only a closed statement; two different
-            // constructors that hold a variable differ by reduction alone.
+            // constructors that hold a variable differ by reduction alone,
+            // and so do two lists over an element type without a decidable
+            // `=` (`[].reverse = []` in a fact over every type).
             Proof::Compute { lhs, .. } => {
                 let mut free = Vec::new();
                 term::free_vars(lhs, &mut free);
                 if free.is_empty() {
-                    "by decide".to_string()
+                    "by first | decide | rfl".to_string()
                 } else {
                     "rfl".to_string()
                 }

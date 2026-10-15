@@ -208,7 +208,7 @@ fn proof(p: Proof) -> String
         Proof.PLinear(g, v, hs, ws, cs) -> "(linear {term(g)} " + boolText(v) + " " + wrap(names(hs)) + " " + wrap(ints(ws)) + cuts(cs) + ")"
 
 verify proof
-    proof(Proof.PRule("int.add_zero", [Kernel.Term.bind("a", Term.TVar("x"))], [])) => "(rule int.add_zero ((a (v x))))"
+    proof(Proof.PRule("bits.not", [Kernel.Term.bind("a", Term.TVar("x"))], [])) => "(rule bits.not ((a (v x))))"
     proof(Proof.PLinear(Term.TVar("g"), true, [], [1], [Cut(divisor = 2, weights = [1])])) => "(linear (v g) true () (1) (cut 2 (1)))"
 
 fn boolText(b: Bool) -> String
@@ -401,7 +401,7 @@ verify sigs
 
 fn script(s: Script) -> String
     ? "The whole script, on one line."
-    "(steps 15 " + lawText("obligation", s.obligation) + ") (defs" + defs(s.defs) + ") (consts" + consts(s.consts) + ") (sums" + sums(s.sums) + ") (recs" + recs(s.recs) + ") (sigs" + sigs(s.sigs) + ") (laws" + laws(s.laws) + facts(s.facts) + ") (proof {proof(s.proof)}))"
+    "(steps 16 " + lawText("obligation", s.obligation) + ") (defs" + defs(s.defs) + ") (consts" + consts(s.consts) + ") (sums" + sums(s.sums) + ") (recs" + recs(s.recs) + ") (sigs" + sigs(s.sigs) + ") (laws" + laws(s.laws) + facts(s.facts) + ") (proof {proof(s.proof)}))"
 
 verify script
-    script(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), defs = [], consts = [], sums = [], recs = [], sigs = [], laws = [], facts = [], proof = Proof.PRefl(Term.TInt(1)))) => "(steps 15 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))"
+    script(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), defs = [], consts = [], sums = [], recs = [], sigs = [], laws = [], facts = [], proof = Proof.PRefl(Term.TInt(1)))) => "(steps 16 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))"

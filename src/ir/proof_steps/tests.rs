@@ -84,25 +84,67 @@ fn add(a: super::Term, b: super::Term) -> super::Term {
 
 #[test]
 fn a_rule_instance_proves_its_conclusion_and_nothing_else() {
+    let beq = |a, b| term::binop(BinOp::Eq, a, b);
     let comm = Proof::Rule {
-        rule: WallRule::AddComm,
+        rule: WallRule::BeqSymm,
         subst: vec![("a".into(), var("x")), ("b".into(), var("y"))],
         premises: Vec::new(),
     };
     let good = script(
-        add(var("x"), var("y")),
-        add(var("y"), var("x")),
+        beq(var("x"), var("y")),
+        beq(var("y"), var("x")),
         comm.clone(),
     );
     assert!(kernel(&good).is_ok());
-    let wrong = script(add(var("x"), var("y")), add(var("x"), var("y")), comm);
+    let wrong = script(beq(var("x"), var("y")), beq(var("x"), var("y")), comm);
     assert!(kernel(&wrong).is_err());
     let unbound = Proof::Rule {
-        rule: WallRule::AddComm,
+        rule: WallRule::BeqSymm,
         subst: vec![("a".into(), var("x"))],
         premises: Vec::new(),
     };
     assert!(claim(&unbound, &good, &Vec::new()).is_err());
+}
+
+/// `int.ne.def`: `(a != b) = Bool.not(a == b)` at two Ints, and only that.
+#[test]
+fn the_kernel_reads_not_equal_as_the_negation_of_equal_at_ints_only() {
+    let (x, y) = (|| var("x"), || var("y"));
+    let ne = |a, b| term::binop(BinOp::Neq, a, b);
+    let not_eq = |a, b| term::bool_not(term::binop(BinOp::Eq, a, b));
+    let step = |a, b| Proof::Rule {
+        rule: WallRule::NeDef,
+        subst: vec![("a".into(), a), ("b".into(), b)],
+        premises: Vec::new(),
+    };
+    let good = script(ne(x(), y()), not_eq(x(), y()), step(x(), y()));
+    assert!(kernel(&good).is_ok());
+    let mutants = [
+        // The sides of `==` swapped against the instance.
+        script(ne(x(), y()), not_eq(y(), x()), step(x(), y())),
+        // The instance at the other order.
+        script(ne(x(), y()), not_eq(x(), y()), step(y(), x())),
+        // `!=` read as `==`, and with the negation dropped.
+        script(
+            ne(x(), y()),
+            term::binop(BinOp::Eq, x(), y()),
+            step(x(), y()),
+        ),
+        // The equation read backwards without `symm`.
+        script(not_eq(x(), y()), ne(x(), y()), step(x(), y())),
+    ];
+    for (i, m) in mutants.iter().enumerate() {
+        assert!(kernel(m).is_err(), "mutant {i}");
+    }
+    // At a type other than Int: Bool, Float and String givens.
+    for ty in [
+        crate::ast::Type::Bool,
+        crate::ast::Type::Float,
+        crate::ast::Type::Str,
+    ] {
+        let err = kernel(&typed(good.clone(), ty.clone())).unwrap_err();
+        assert!(err.contains("is not Int"), "{ty:?}: {err}");
+    }
 }
 
 #[test]
@@ -1241,8 +1283,10 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
     use crate::ir::identity::FnId;
     let (a, b) = (|| var("a"), || var("b"));
     let i = |n: i64| term::int(&n.into());
+    // `bool.beq.symm`, which reads `==` with its sides swapped.
+    let beq = |x: super::Term, y: super::Term| term::binop(BinOp::Eq, x, y);
     let comm = |x: super::Term, y: super::Term| Proof::Rule {
-        rule: WallRule::AddComm,
+        rule: WallRule::BeqSymm,
         subst: vec![("a".into(), x), ("b".into(), y)],
         premises: Vec::new(),
     };
@@ -1634,48 +1678,48 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
         ),
         (
             script(
-                add(b(), a()),
-                add(a(), b()),
+                beq(b(), a()),
+                beq(a(), b()),
                 Proof::Symm(Box::new(comm(a(), b()))),
             ),
             script(
-                add(a(), b()),
-                add(b(), a()),
+                beq(a(), b()),
+                beq(b(), a()),
                 Proof::Symm(Box::new(comm(a(), b()))),
             ),
         ),
         (
             script(
-                add(a(), b()),
-                add(b(), a()),
+                beq(a(), b()),
+                beq(b(), a()),
                 Proof::Trans {
-                    terms: vec![add(a(), b()), add(b(), a())],
+                    terms: vec![beq(a(), b()), beq(b(), a())],
                     steps: vec![comm(a(), b())],
                 },
             ),
             script(
-                add(a(), b()),
-                add(a(), b()),
+                beq(a(), b()),
+                beq(a(), b()),
                 Proof::Trans {
-                    terms: vec![add(a(), b()), add(a(), b())],
+                    terms: vec![beq(a(), b()), beq(a(), b())],
                     steps: vec![comm(a(), b())],
                 },
             ),
         ),
         (
             script(
-                add(add(a(), b()), a()),
-                add(add(b(), a()), a()),
+                term::bool_not(beq(a(), b())),
+                term::bool_not(beq(b(), a())),
                 Proof::Congr {
-                    ctx: add(term::hole(), a()),
+                    ctx: term::bool_not(term::hole()),
                     inner: Box::new(comm(a(), b())),
                 },
             ),
             script(
-                add(add(a(), b()), add(a(), b())),
-                add(add(b(), a()), add(b(), a())),
+                term::bool_and(beq(a(), b()), beq(a(), b())),
+                term::bool_and(beq(b(), a()), beq(b(), a())),
                 Proof::Congr {
-                    ctx: add(term::hole(), term::hole()),
+                    ctx: term::bool_and(term::hole(), term::hole()),
                     inner: Box::new(comm(a(), b())),
                 },
             ),
@@ -1704,8 +1748,8 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
             script(positive(), term::boolean(true), Proof::Hyp("when".into())),
         ),
         (
-            script(add(a(), b()), add(b(), a()), comm(a(), b())),
-            script(add(a(), b()), add(a(), b()), comm(a(), b())),
+            script(beq(a(), b()), beq(b(), a()), comm(a(), b())),
+            script(beq(a(), b()), beq(a(), b()), comm(a(), b())),
         ),
         (cite(false), cite(true)),
         (compute(7), compute(6)),

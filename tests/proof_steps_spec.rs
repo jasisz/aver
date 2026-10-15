@@ -249,11 +249,11 @@ fn the_replayer_refuses_mutated_proofs_and_names_the_step() {
             mutate_proof(&lock, "(i 500000000)", "(i 500000001)"),
         ),
         (
-            "wrong substitution",
+            "wrong ring step",
             mutate_proof(
                 &comm,
-                "(rule int.add_comm ((a (v a)) (b (v b))))",
-                "(rule int.add_comm ((a (v b)) (b (v a))))",
+                "(ring (op + (v a) (v b)) (op + (v b) (v a)))",
+                "(ring (op + (v a) (v b)) (op + (v a) (v a)))",
             ),
         ),
         (
@@ -384,8 +384,8 @@ fn lean_accepts_the_step_terms_and_refuses_mutated_ones() {
     }
     let comm = exact_line(&lean, "add_law_commutes").to_string();
     let swapped = comm.replacen(
-        "AverSteps.add_comm (a) (b)",
-        "AverSteps.add_comm (b) (a)",
+        "(show ((a + b)) = ((b + a)) from by omega)",
+        "(show ((a + b)) = ((a + a)) from by omega)",
         1,
     );
     assert_ne!(comm, swapped);
@@ -396,7 +396,7 @@ fn lean_accepts_the_step_terms_and_refuses_mutated_ones() {
             &lean.replacen(&comm, &swapped, 1),
             "add.commutes"
         ),
-        "wrong substitution: Lean must refuse the mutated step term"
+        "wrong ring step: Lean must refuse the mutated step term"
     );
     let _ = fs::remove_dir_all(out);
 }
@@ -486,8 +486,9 @@ fn the_aver_backend_reports_what_each_closed_law_stands_on() {
     };
     let (_, lock) = aver_backend_json("lock.av", &out, None);
     let commutes = &lock["trust"]["add.commutes"];
-    assert_eq!(names(&commutes["rules"]), ["int.add_comm"], "{lock}");
-    for procedure in ["compute", "ring", "linear"] {
+    assert!(names(&commutes["rules"]).is_empty(), "{lock}");
+    assert_eq!(commutes["ring"], true, "{lock}");
+    for procedure in ["compute", "linear"] {
         assert_eq!(commutes[procedure], false, "{lock}");
     }
     let sequence = &lock["trust"]["sequenceChecked.agreesWithSpec"];
@@ -889,7 +890,7 @@ fn both_kernels_split_a_list_given_into_its_two_cases_and_refuse_mutations() {
     // The tail `t` of the first split no longer occurs in the claim, but it
     // stays a list variable: a later split may not name an element `t`,
     // which a split on `t` would then take for a list.
-    let reused = "(steps 15\n (obligation k ((xs (list int))) (none) (b true) (b true))\n (defs)\n (consts)\n (sums)\n (recs)\n (sigs)\n (laws)\n (proof (listcases xs (b true) (b true) (refl (b true)) (h t) (listcases xs (b true) (b true) (refl (b true)) (t u) (refl (b true))))))\n";
+    let reused = "(steps 16\n (obligation k ((xs (list int))) (none) (b true) (b true))\n (defs)\n (consts)\n (sums)\n (recs)\n (sigs)\n (laws)\n (proof (listcases xs (b true) (b true) (refl (b true)) (h t) (listcases xs (b true) (b true) (refl (b true)) (t u) (refl (b true))))))\n";
     let refused = aver::proof_kernel::verdict(reused);
     assert!(
         refused
@@ -3842,7 +3843,7 @@ fn joining_texts_is_never_read_as_int_arithmetic() {
     // made by hand.
     let script = |ty: &str| {
         format!(
-            "(steps 15 (obligation k ((a {ty}) (b {ty})) (none) (op + (v a) (v b)) (op + (v b) (v a))) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (ring (op + (v a) (v b)) (op + (v b) (v a)))))"
+            "(steps 16 (obligation k ((a {ty}) (b {ty})) (none) (op + (v a) (v b)) (op + (v b) (v a))) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (ring (op + (v a) (v b)) (op + (v b) (v a)))))"
         )
     };
     assert_eq!(
@@ -3982,7 +3983,7 @@ fn both_kernels_check_the_list_rules_and_refuse_mutations() {
             swap(
                 "pushed.growsByOne",
                 "(rule list.len.cons ((x (v x)) (a (v xs))))",
-                "(rule list.len.nil ())",
+                "(compute (bi List.len (list)) (i 0))",
             ),
         ),
         (
@@ -4091,8 +4092,8 @@ fn a_cited_builtin_fact_is_checked_with_the_law_and_refused_when_mutated() {
             "a wrong step inside the fact's proof",
             swap(
                 "joined.lengthAdds",
-                "(symm (rule list.len.nil ()))",
-                "(rule list.len.nil ())",
+                "(symm (compute (bi List.len (list)) (i 0)))",
+                "(compute (bi List.len (list)) (i 0))",
             ),
         ),
         (
@@ -5442,7 +5443,7 @@ const PICK_FALSE_LAWS: [&str; 5] = [
 /// (`0.0 / 0.0`) the VM answers otherwise. The rule that finds the element
 /// in front, like `x == x`, holds only at a type whose `==` is equality, so
 /// both kernels refuse it.
-const CONTAINS_FINDS_ITSELF: &str = "(steps 15
+const CONTAINS_FINDS_ITSELF: &str = "(steps 16
   (obligation containsFloat.alwaysFindsSelf ((x float)) (none)
     (bi List.contains (bi List.prepend (v x) (list)) (v x))
     (b true))
@@ -5536,7 +5537,7 @@ fn both_kernels_read_min_max_abs_and_contains_by_their_rules_and_refuse_mutation
             swap(
                 "has.skipsAnother",
                 "(compute (op == (i 2) (i 1)) (b false))",
-                "(rule bool.not.true ())",
+                "(compute (bi Bool.not (b true)) (b false))",
             ),
         ),
         (
@@ -5551,8 +5552,8 @@ fn both_kernels_read_min_max_abs_and_contains_by_their_rules_and_refuse_mutation
             "an element in front skipped by the comparison the other way round, unswapped",
             swap(
                 "has.skipsADifferentHead",
-                "(trans ((op == (v y) (v h)) (op == (v h) (v y)) (b false)) (rule bool.beq.symm ((a (v y)) (b (v h)))) (rule int.eq.false_of_ne ((a (v h)) (b (v y))) (hyp when)))",
-                "(rule int.eq.false_of_ne ((a (v h)) (b (v y))) (hyp when))",
+                "(trans ((op == (v y) (v h)) (op == (v h) (v y)) (b false)) (rule bool.beq.symm ((a (v y)) (b (v h)))) (cases ",
+                "(trans ((op == (v y) (v h)) (op == (v h) (v y)) (b false)) (refl (op == (v y) (v h))) (cases ",
             ),
         ),
         (
@@ -6361,8 +6362,8 @@ fn both_kernels_close_a_case_its_hypotheses_rule_out_and_refuse_a_wrong_reading(
         ),
         mutate_proof(
             &read("place.growsWhenItStays"),
-            "(rule bool.not.true ())",
-            "(rule bool.not.false ())",
+            "(compute (bi Bool.not (b true)) (b false))",
+            "(compute (bi Bool.not (b true)) (b true))",
         ),
         mutate_proof(
             &read("checked.zeroWhenOn"),
@@ -7379,7 +7380,7 @@ fn a_law_about_a_refined_given_is_cited_only_at_a_value_its_type_admits() {
     let minus_one = "(rec Natural (value (neg (i 1))))";
     let at_minus_one = |law: &str, premise: &str| {
         format!(
-            "(steps 15\n (obligation holds.ofMinusOne ((x int)) (none) (call isNonNegative {minus_one}) (b true))\n (defs)\n (consts)\n (sums)\n (recs\n  (rec Natural eq (value int)))\n (sigs\n  (isNonNegative ((named Natural)) bool))\n (laws\n  {law})\n (proof (law isNonNegative.always ((n {minus_one})){premise})))\n"
+            "(steps 16\n (obligation holds.ofMinusOne ((x int)) (none) (call isNonNegative {minus_one}) (b true))\n (defs)\n (consts)\n (sums)\n (recs\n  (rec Natural eq (value int)))\n (sigs\n  (isNonNegative ((named Natural)) bool))\n (laws\n  {law})\n (proof (law isNonNegative.always ((n {minus_one})){premise})))\n"
         )
     };
     let computed = format!(" (compute (op >= (get {minus_one} value) (i 0)) (b true))");

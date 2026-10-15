@@ -207,15 +207,15 @@ mod tests {
 
     #[test]
     fn reads_rules_procedures_and_citations_from_proof_positions_only() {
-        let text = "(steps 15 (obligation k ((rule int)) (none) (v rule) (v rule)) (defs) (consts) (sums) (recs) (sigs) \
-            (laws (law L ((x int)) (none) (v x) (v x)) (fact F ((x int)) (none) (v x) (v x) (rule bool.not.true ()))) \
+        let text = "(steps 16 (obligation k ((rule int)) (none) (v rule) (v rule)) (defs) (consts) (sums) (recs) (sigs) \
+            (laws (law L ((x int)) (none) (v x) (v x)) (fact F ((x int)) (none) (v x) (v x) (rule bool.and.true_r ((a (v x)))))) \
             (proof (trans ((v rule) (v rule) (v rule)) (law L ((x (v rule)))) (cases (v c) h (law F ((x (v rule)))) \
             (listcases xs (v xs) (v xs) (compute (i 1) (i 1)) (h t) (induct f ((v n)) (v n) (v n) (carry when) \
-            (case (g) ((ih (linear (v g) true () (1)))) ((0 ih2 () ((ring (i 1) (i 1))))) (rule int.add_zero ((a (v n)))))))))))";
+            (case (g) ((ih (linear (v g) true () (1)))) ((0 ih2 () ((ring (i 1) (i 1))))) (rule bits.not ((a (v n)))))))))))";
         let t = of_script(text).unwrap();
         assert_eq!(
             t.rules.into_iter().collect::<Vec<_>>(),
-            ["bool.not.true", "int.add_zero"]
+            ["bits.not", "bool.and.true_r"]
         );
         assert!(t.compute && t.ring && t.linear);
         assert_eq!(t.laws.into_iter().collect::<Vec<_>>(), ["L"]);
@@ -224,7 +224,7 @@ mod tests {
 
     #[test]
     fn a_proof_by_reflexivity_stands_on_nothing() {
-        let text = "(steps 15 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))";
+        let text = "(steps 16 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))";
         assert_eq!(of_script(text).unwrap(), Trust::default());
     }
 }

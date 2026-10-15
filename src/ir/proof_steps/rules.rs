@@ -25,24 +25,11 @@ pub enum WallRule {
     OrFalseL,
     OrTrueR,
     OrFalseR,
-    NotTrue,
-    NotFalse,
     // Projections of a true conjunction.
     AndElimL,
     AndElimR,
-    // A decided Int comparison decides its complement.
-    LeOfNotGt,
-    LeFalseOfGt,
-    GeOfNotLt,
-    GeFalseOfLt,
-    LtOfNotGe,
-    LtFalseOfGe,
-    GtOfNotLe,
-    GtFalseOfLe,
-    EqOfNotNe,
-    EqFalseOfNe,
-    NeOfNotEq,
-    NeFalseOfEq,
+    // `!=` on Int is the negation of `==`.
+    NeDef,
     // Two decided orders decide an equality.
     EqOfLeGe,
     EqFalseOfLt,
@@ -55,16 +42,6 @@ pub enum WallRule {
     BeqRefl,
     // Equality reads the same with its sides swapped.
     BeqSymm,
-    // Ring laws of Int.
-    AddComm,
-    MulComm,
-    AddAssoc,
-    MulAssoc,
-    AddZero,
-    ZeroAdd,
-    MulOne,
-    OneMul,
-    SubZero,
     // `Int.div` and `Int.mod` by a divisor that is not 0.
     DivOk,
     ModOk,
@@ -94,7 +71,6 @@ pub enum WallRule {
     // at or below zero takes nothing and drops nothing).
     ConcatNil,
     ConcatCons,
-    LenNil,
     LenCons,
     TakeNil,
     TakeConsLe,
@@ -102,7 +78,6 @@ pub enum WallRule {
     DropNil,
     DropConsLe,
     DropConsGt,
-    ReverseNil,
     ReverseCons,
     // `List.contains` on `[]`, and on `List.prepend(x, a)` where the value
     // looked for is the element in front (`(y == x) = true`: found) or is
@@ -149,7 +124,7 @@ pub enum WallRule {
 }
 
 impl WallRule {
-    pub const ALL: [WallRule; 94] = [
+    pub const ALL: [WallRule; 70] = [
         WallRule::AndTrueL,
         WallRule::AndFalseL,
         WallRule::AndTrueR,
@@ -158,22 +133,9 @@ impl WallRule {
         WallRule::OrFalseL,
         WallRule::OrTrueR,
         WallRule::OrFalseR,
-        WallRule::NotTrue,
-        WallRule::NotFalse,
         WallRule::AndElimL,
         WallRule::AndElimR,
-        WallRule::LeOfNotGt,
-        WallRule::LeFalseOfGt,
-        WallRule::GeOfNotLt,
-        WallRule::GeFalseOfLt,
-        WallRule::LtOfNotGe,
-        WallRule::LtFalseOfGe,
-        WallRule::GtOfNotLe,
-        WallRule::GtFalseOfLe,
-        WallRule::EqOfNotNe,
-        WallRule::EqFalseOfNe,
-        WallRule::NeOfNotEq,
-        WallRule::NeFalseOfEq,
+        WallRule::NeDef,
         WallRule::EqOfLeGe,
         WallRule::EqFalseOfLt,
         WallRule::EqFalseOfGt,
@@ -181,15 +143,6 @@ impl WallRule {
         WallRule::EqOfBeq,
         WallRule::BeqRefl,
         WallRule::BeqSymm,
-        WallRule::AddComm,
-        WallRule::MulComm,
-        WallRule::AddAssoc,
-        WallRule::MulAssoc,
-        WallRule::AddZero,
-        WallRule::ZeroAdd,
-        WallRule::MulOne,
-        WallRule::OneMul,
-        WallRule::SubZero,
         WallRule::DivOk,
         WallRule::ModOk,
         WallRule::DivModRecompose,
@@ -207,7 +160,6 @@ impl WallRule {
         WallRule::BitsAndBit,
         WallRule::ConcatNil,
         WallRule::ConcatCons,
-        WallRule::LenNil,
         WallRule::LenCons,
         WallRule::TakeNil,
         WallRule::TakeConsLe,
@@ -215,7 +167,6 @@ impl WallRule {
         WallRule::DropNil,
         WallRule::DropConsLe,
         WallRule::DropConsGt,
-        WallRule::ReverseNil,
         WallRule::ReverseCons,
         WallRule::ContainsNil,
         WallRule::ContainsConsFound,
@@ -257,22 +208,9 @@ impl WallRule {
             WallRule::OrFalseL => "bool.or.false_l",
             WallRule::OrTrueR => "bool.or.true_r",
             WallRule::OrFalseR => "bool.or.false_r",
-            WallRule::NotTrue => "bool.not.true",
-            WallRule::NotFalse => "bool.not.false",
             WallRule::AndElimL => "bool.and.elim_l",
             WallRule::AndElimR => "bool.and.elim_r",
-            WallRule::LeOfNotGt => "int.le.of_not_gt",
-            WallRule::LeFalseOfGt => "int.le.false_of_gt",
-            WallRule::GeOfNotLt => "int.ge.of_not_lt",
-            WallRule::GeFalseOfLt => "int.ge.false_of_lt",
-            WallRule::LtOfNotGe => "int.lt.of_not_ge",
-            WallRule::LtFalseOfGe => "int.lt.false_of_ge",
-            WallRule::GtOfNotLe => "int.gt.of_not_le",
-            WallRule::GtFalseOfLe => "int.gt.false_of_le",
-            WallRule::EqOfNotNe => "int.eq.of_not_ne",
-            WallRule::EqFalseOfNe => "int.eq.false_of_ne",
-            WallRule::NeOfNotEq => "int.ne.of_not_eq",
-            WallRule::NeFalseOfEq => "int.ne.false_of_eq",
+            WallRule::NeDef => "int.ne.def",
             WallRule::EqOfLeGe => "int.eq.of_le_ge",
             WallRule::MulNonneg => "int.mul_nonneg",
             WallRule::EqFalseOfLt => "int.eq.false_of_lt",
@@ -280,15 +218,6 @@ impl WallRule {
             WallRule::EqOfBeq => "int.eq.of_beq",
             WallRule::BeqRefl => "bool.beq.refl",
             WallRule::BeqSymm => "bool.beq.symm",
-            WallRule::AddComm => "int.add_comm",
-            WallRule::MulComm => "int.mul_comm",
-            WallRule::AddAssoc => "int.add_assoc",
-            WallRule::MulAssoc => "int.mul_assoc",
-            WallRule::AddZero => "int.add_zero",
-            WallRule::ZeroAdd => "int.zero_add",
-            WallRule::MulOne => "int.mul_one",
-            WallRule::OneMul => "int.one_mul",
-            WallRule::SubZero => "int.sub_zero",
             WallRule::DivOk => "int.div.ok",
             WallRule::ModOk => "int.mod.ok",
             WallRule::DivModRecompose => "int.div_mod_recompose",
@@ -306,7 +235,6 @@ impl WallRule {
             WallRule::BitsAndBit => "bits.and_bit",
             WallRule::ConcatNil => "list.concat.nil",
             WallRule::ConcatCons => "list.concat.cons",
-            WallRule::LenNil => "list.len.nil",
             WallRule::LenCons => "list.len.cons",
             WallRule::TakeNil => "list.take.nil",
             WallRule::TakeConsLe => "list.take.cons_le",
@@ -314,7 +242,6 @@ impl WallRule {
             WallRule::DropNil => "list.drop.nil",
             WallRule::DropConsLe => "list.drop.cons_le",
             WallRule::DropConsGt => "list.drop.cons_gt",
-            WallRule::ReverseNil => "list.reverse.nil",
             WallRule::ReverseCons => "list.reverse.cons",
             WallRule::ContainsNil => "list.contains.nil",
             WallRule::ContainsConsFound => "list.contains.cons_found",
@@ -359,13 +286,6 @@ impl WallRule {
             WallRule::AndTrueR | WallRule::AndFalseR | WallRule::OrTrueR | WallRule::OrFalseR => {
                 &["a"]
             }
-            WallRule::NotTrue | WallRule::NotFalse => &[],
-            WallRule::AddZero
-            | WallRule::ZeroAdd
-            | WallRule::MulOne
-            | WallRule::OneMul
-            | WallRule::SubZero => &["a"],
-            WallRule::AddAssoc | WallRule::MulAssoc => &["a", "b", "c"],
             WallRule::DivModRecompose | WallRule::ModRange | WallRule::DivOk | WallRule::ModOk => {
                 &["a", "k"]
             }
@@ -379,7 +299,6 @@ impl WallRule {
             WallRule::BitsAndBit => &["a", "k", "n"],
             WallRule::ConcatNil => &["b"],
             WallRule::ConcatCons => &["x", "a", "b"],
-            WallRule::LenNil | WallRule::ReverseNil => &[],
             WallRule::LenCons | WallRule::ReverseCons => &["x", "a"],
             WallRule::TakeNil | WallRule::DropNil => &["n"],
             WallRule::TakeConsLe
@@ -416,7 +335,6 @@ impl WallRule {
     pub fn schema(self) -> (Vec<Eqn>, Eqn) {
         let a = || var("a");
         let b = || var("b");
-        let c = || var("c");
         let t = || boolean(true);
         let f = || boolean(false);
         let i = |n: i64| term::int(&n.into());
@@ -496,22 +414,15 @@ impl WallRule {
             WallRule::OrFalseL => (vec![], Eqn::new(bool_or(f(), b()), b())),
             WallRule::OrTrueR => (vec![], Eqn::new(bool_or(a(), t()), t())),
             WallRule::OrFalseR => (vec![], Eqn::new(bool_or(a(), f()), a())),
-            WallRule::NotTrue => (vec![], Eqn::new(bool_not(t()), f())),
-            WallRule::NotFalse => (vec![], Eqn::new(bool_not(f()), t())),
             WallRule::AndElimL => (vec![is(bool_and(a(), b()), true)], is(a(), true)),
             WallRule::AndElimR => (vec![is(bool_and(a(), b()), true)], is(b(), true)),
-            WallRule::LeOfNotGt => compl(BinOp::Gt, false, BinOp::Lte, true),
-            WallRule::LeFalseOfGt => compl(BinOp::Gt, true, BinOp::Lte, false),
-            WallRule::GeOfNotLt => compl(BinOp::Lt, false, BinOp::Gte, true),
-            WallRule::GeFalseOfLt => compl(BinOp::Lt, true, BinOp::Gte, false),
-            WallRule::LtOfNotGe => compl(BinOp::Gte, false, BinOp::Lt, true),
-            WallRule::LtFalseOfGe => compl(BinOp::Gte, true, BinOp::Lt, false),
-            WallRule::GtOfNotLe => compl(BinOp::Lte, false, BinOp::Gt, true),
-            WallRule::GtFalseOfLe => compl(BinOp::Lte, true, BinOp::Gt, false),
-            WallRule::EqOfNotNe => compl(BinOp::Neq, false, BinOp::Eq, true),
-            WallRule::EqFalseOfNe => compl(BinOp::Neq, true, BinOp::Eq, false),
-            WallRule::NeOfNotEq => compl(BinOp::Eq, false, BinOp::Neq, true),
-            WallRule::NeFalseOfEq => compl(BinOp::Eq, true, BinOp::Neq, false),
+            WallRule::NeDef => (
+                vec![],
+                Eqn::new(
+                    cmp(BinOp::Neq, a(), b()),
+                    bool_not(cmp(BinOp::Eq, a(), b())),
+                ),
+            ),
             WallRule::EqOfLeGe => (
                 vec![
                     is(cmp(BinOp::Lte, a(), b()), true),
@@ -534,33 +445,6 @@ impl WallRule {
                 vec![],
                 Eqn::new(cmp(BinOp::Eq, a(), b()), cmp(BinOp::Eq, b(), a())),
             ),
-            WallRule::AddComm => (
-                vec![],
-                Eqn::new(binop(BinOp::Add, a(), b()), binop(BinOp::Add, b(), a())),
-            ),
-            WallRule::MulComm => (
-                vec![],
-                Eqn::new(binop(BinOp::Mul, a(), b()), binop(BinOp::Mul, b(), a())),
-            ),
-            WallRule::AddAssoc => (
-                vec![],
-                Eqn::new(
-                    binop(BinOp::Add, binop(BinOp::Add, a(), b()), c()),
-                    binop(BinOp::Add, a(), binop(BinOp::Add, b(), c())),
-                ),
-            ),
-            WallRule::MulAssoc => (
-                vec![],
-                Eqn::new(
-                    binop(BinOp::Mul, binop(BinOp::Mul, a(), b()), c()),
-                    binop(BinOp::Mul, a(), binop(BinOp::Mul, b(), c())),
-                ),
-            ),
-            WallRule::AddZero => (vec![], Eqn::new(binop(BinOp::Add, a(), i(0)), a())),
-            WallRule::ZeroAdd => (vec![], Eqn::new(binop(BinOp::Add, i(0), a()), a())),
-            WallRule::MulOne => (vec![], Eqn::new(binop(BinOp::Mul, a(), i(1)), a())),
-            WallRule::OneMul => (vec![], Eqn::new(binop(BinOp::Mul, i(1), a()), a())),
-            WallRule::SubZero => (vec![], Eqn::new(binop(BinOp::Sub, a(), i(0)), a())),
             WallRule::DivOk | WallRule::ModOk => {
                 let (name, value) = match self {
                     WallRule::DivOk => ("Int.div", div(a(), var("k"))),
@@ -698,7 +582,6 @@ impl WallRule {
                     cons(x(), list("List.concat", vec![a(), b()])),
                 ),
             ),
-            WallRule::LenNil => (vec![], Eqn::new(len(nil()), i(0))),
             WallRule::LenCons => (
                 vec![],
                 Eqn::new(len(cons(x(), a())), binop(BinOp::Add, len(a()), i(1))),
@@ -727,7 +610,6 @@ impl WallRule {
                     list("List.drop", vec![a(), pred()]),
                 ),
             ),
-            WallRule::ReverseNil => (vec![], Eqn::new(list("List.reverse", vec![nil()]), nil())),
             WallRule::ReverseCons => (
                 vec![],
                 Eqn::new(

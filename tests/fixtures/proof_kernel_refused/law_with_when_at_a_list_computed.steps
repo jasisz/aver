@@ -1,4 +1,4 @@
-(steps 15
+(steps 16
  (obligation k () (none) (op >= (call bump (list)) (i 1)) (b true))
  (defs
   (def bump ((x int)) int () (op + (v x) (i 1))))

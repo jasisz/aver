@@ -1,4 +1,4 @@
-(steps 15
+(steps 16
  (obligation k ((a str) (b str)) (none) (op + (v a) (v b)) (op + (v b) (v a)))
  (defs)
  (consts)

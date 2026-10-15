@@ -51,6 +51,25 @@ pub fn as_nonneg(t: &Term, value: bool, atoms: &mut Vec<Term>) -> Option<Poly> {
     Some(p)
 }
 
+/// The step `goal = value` from the hypotheses named, each with the
+/// comparison it states and its value, when weights without a cut show it:
+/// a comparison from its complement (`(a > b) = false` gives
+/// `(a <= b) = true`) is one such step.
+pub fn from_hyps(goal: &Term, value: bool, hyps: &[(String, Term, bool)]) -> Option<super::Proof> {
+    let mut atoms = Vec::new();
+    let mut facts = vec![as_nonneg(goal, !value, &mut atoms)?];
+    for (_, t, v) in hyps {
+        facts.push(as_nonneg(t, *v, &mut atoms)?);
+    }
+    Some(super::Proof::Linear {
+        goal: goal.clone(),
+        value,
+        hyps: hyps.iter().map(|(n, _, _)| n.clone()).collect(),
+        weights: certificate(&facts)?,
+        cuts: Vec::new(),
+    })
+}
+
 /// The weighted sum, when every weight is nonnegative.
 pub fn combine(ps: &[Poly], weights: &[BigInt]) -> Option<Poly> {
     if ps.len() != weights.len() || weights.iter().any(|w| w.is_negative()) {

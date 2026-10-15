@@ -1361,7 +1361,7 @@ pub fn boolEquation(
     }
 }
 
-/// The equations of List.len, List.take, List.concat and List.reverse on [] and on a cell, as the kernel's rules state them.
+/// The equations of List.len, List.take, List.concat and List.reverse on [] and on a cell, as the kernel's rules state them, and as compute shows them where the call is closed.
 pub fn listEquation(
     name @ _: AverStr,
     args @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
@@ -1382,7 +1382,7 @@ pub fn listEquation(
                                     {
                                         let __list_subject = __pat3;
                                         if __list_subject.is_empty() {
-                                            Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: crate::proof_std::aver_generated::kernel::term::Term::TInt(aver_rt::AverInt::from_i64(0)), proof: crate::proof_std::aver_generated::kernel::proof::Proof::PRule(AverStr::from("list.len.nil"), aver_rt::AverList::empty(), aver_rt::AverList::empty()) })
+                                            Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: crate::proof_std::aver_generated::kernel::term::Term::TInt(aver_rt::AverInt::from_i64(0)), proof: crate::proof_std::aver_generated::kernel::proof::Proof::PCompute(crate::proof_std::aver_generated::kernel::term::Term::TBi(AverStr::from("List.len"), aver_rt::AverList::from_vec(vec![crate::proof_std::aver_generated::kernel::term::Term::TList(aver_rt::AverList::empty())])), crate::proof_std::aver_generated::kernel::term::Term::TInt(aver_rt::AverInt::from_i64(0))) })
                                         } else {
                                             None
                                         }
@@ -1615,7 +1615,7 @@ pub fn listEquation(
                                 {
                                     match __pat28 {
         crate::proof_std::aver_generated::kernel::term::Term::TList(__pat30) => {
-            { let __list_subject = __pat30; if __list_subject.is_empty() { { let __list_subject = __pat29; if __list_subject.is_empty() { Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: crate::proof_std::aver_generated::kernel::term::Term::TList(aver_rt::AverList::empty()), proof: crate::proof_std::aver_generated::kernel::proof::Proof::PRule(AverStr::from("list.reverse.nil"), aver_rt::AverList::empty(), aver_rt::AverList::empty()) }) } else { None } } } else { None } }
+            { let __list_subject = __pat30; if __list_subject.is_empty() { { let __list_subject = __pat29; if __list_subject.is_empty() { Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: crate::proof_std::aver_generated::kernel::term::Term::TList(aver_rt::AverList::empty()), proof: crate::proof_std::aver_generated::kernel::proof::Proof::PCompute(crate::proof_std::aver_generated::kernel::term::Term::TBi(AverStr::from("List.reverse"), aver_rt::AverList::from_vec(vec![crate::proof_std::aver_generated::kernel::term::Term::TList(aver_rt::AverList::empty())])), crate::proof_std::aver_generated::kernel::term::Term::TList(aver_rt::AverList::empty())) }) } else { None } } } else { None } }
         },
         crate::proof_std::aver_generated::kernel::term::Term::TBi(__pat31, __pat32) => {
             match &*__pat31 {
