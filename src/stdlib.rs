@@ -292,6 +292,68 @@ pub(crate) const SOURCE_TYPED_BUILTINS: &[(&str, &[&str])] = &[
 /// references the `Digest32` record. Cases some backend later skips only
 /// over-load a standard module, which is harmless.
 pub fn implicit_stdlib_deps(items: &[crate::ast::TopLevel]) -> Vec<String> {
+    // One run reads the same modules again for each module that depends on
+    // them; what was found for equal items is given again. Equal items name
+    // the same callees and types, which is all this reads.
+    type Seen = std::collections::HashMap<usize, Vec<(Vec<crate::ast::TopLevel>, Vec<String>)>>;
+    thread_local! {
+        static SEEN: std::cell::RefCell<Seen> = std::cell::RefCell::new(Seen::new());
+    }
+    const SEEN_KEPT: usize = 256;
+    if let Some(found) = SEEN.with(|seen| {
+        seen.borrow().get(&items.len()).and_then(|same_len| {
+            same_len
+                .iter()
+                .find(|(kept, _)| same_items(kept, items))
+                .map(|(_, deps)| deps.clone())
+        })
+    }) {
+        return found;
+    }
+    let deps = implicit_stdlib_deps_read(items);
+    SEEN.with(|seen| {
+        let mut seen = seen.borrow_mut();
+        if seen.values().map(Vec::len).sum::<usize>() >= SEEN_KEPT {
+            seen.clear();
+        }
+        seen.entry(items.len())
+            .or_default()
+            .push((items.to_vec(), deps.clone()));
+    });
+    deps
+}
+
+/// `a == b`, where a function body shared by both is not compared part by
+/// part.
+fn same_items(a: &[crate::ast::TopLevel], b: &[crate::ast::TopLevel]) -> bool {
+    use crate::ast::{FnDef, TopLevel};
+    a.len() == b.len()
+        && a.iter().zip(b).all(|pair| match pair {
+            (TopLevel::FnDef(f), TopLevel::FnDef(g)) => {
+                let FnDef {
+                    name,
+                    line,
+                    params,
+                    return_type,
+                    effects,
+                    desc,
+                    body,
+                    resolution,
+                } = f;
+                *name == g.name
+                    && *line == g.line
+                    && *params == g.params
+                    && *return_type == g.return_type
+                    && *effects == g.effects
+                    && *desc == g.desc
+                    && *resolution == g.resolution
+                    && (std::sync::Arc::ptr_eq(body, &g.body) || **body == *g.body)
+            }
+            (x, y) => x == y,
+        })
+}
+
+fn implicit_stdlib_deps_read(items: &[crate::ast::TopLevel]) -> Vec<String> {
     let mut callees = std::collections::HashSet::new();
     for item in items {
         match item {
@@ -587,10 +649,12 @@ pub(crate) fn standard_capability_profile_dependencies(method: &str) -> Vec<Stri
         .unwrap_or_default()
 }
 
-pub(crate) fn append_required_standard_capability_modules(
+/// The standard capability modules `entry_items` and `modules` read
+/// without naming them, by name, before the ones those need in turn.
+fn required_standard_capability_names(
     entry_items: &[crate::ast::TopLevel],
-    modules: &mut Vec<crate::source::LoadedModule>,
-) {
+    modules: &[crate::source::LoadedModule],
+) -> Vec<String> {
     let mut required = std::collections::BTreeSet::new();
     let entry_scope = entry_items.iter().find_map(|item| match item {
         crate::ast::TopLevel::Module(module) => Some(module.name.as_str()),
@@ -610,7 +674,49 @@ pub(crate) fn append_required_standard_capability_modules(
             }
         }
     }
-    let mut pending = required.into_iter().collect::<Vec<_>>();
+    required.into_iter().collect()
+}
+
+/// `modules` with the standard capability modules they need appended
+/// ([`append_required_standard_capability_modules`]), borrowed where every
+/// one of them is there already.
+pub(crate) fn with_required_standard_capability_modules<'a>(
+    entry_items: &[crate::ast::TopLevel],
+    modules: &'a [crate::source::LoadedModule],
+) -> std::borrow::Cow<'a, [crate::source::LoadedModule]> {
+    // The walk of the append below, where it finds every module present:
+    // then it appends none.
+    let mut pending = required_standard_capability_names(entry_items, modules);
+    let mut index = 0;
+    while index < pending.len() {
+        let name = &pending[index];
+        index += 1;
+        let Some(loaded) = modules.iter().find(|loaded| loaded.dep_name == *name) else {
+            let mut owned = modules.to_vec();
+            append_required_standard_capability_modules(entry_items, &mut owned);
+            return std::borrow::Cow::Owned(owned);
+        };
+        let dependencies = loaded.items.iter().find_map(|item| match item {
+            crate::ast::TopLevel::Module(module) => Some(module.depends.as_slice()),
+            _ => None,
+        });
+        for dependency in dependencies.into_iter().flatten() {
+            if find(dependency).is_some()
+                && !modules.iter().any(|loaded| loaded.dep_name == *dependency)
+                && !pending.iter().any(|queued| queued == dependency)
+            {
+                pending.push(dependency.clone());
+            }
+        }
+    }
+    std::borrow::Cow::Borrowed(modules)
+}
+
+pub(crate) fn append_required_standard_capability_modules(
+    entry_items: &[crate::ast::TopLevel],
+    modules: &mut Vec<crate::source::LoadedModule>,
+) {
+    let mut pending = required_standard_capability_names(entry_items, modules);
     let mut index = 0;
     while index < pending.len() {
         let name = pending[index].clone();

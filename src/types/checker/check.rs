@@ -90,16 +90,16 @@ impl TypeChecker {
         // `build_signatures`'s resolution sees imported types
         // (e.g. `Tile` resolves to `Types.Tile` when `Types` is in
         // `depends`).
-        let mut loaded = loaded.to_vec();
-        crate::stdlib::append_required_standard_capability_modules(items, &mut loaded);
-        self.configure_capabilities(items, &loaded, None);
-        self.check_law_dependencies(items, &loaded);
-        self.prepare_loaded_modules(items, &loaded);
+        let loaded = crate::stdlib::with_required_standard_capability_modules(items, loaded);
+        let loaded = loaded.as_ref();
+        self.configure_capabilities(items, loaded, None);
+        self.check_law_dependencies(items, loaded);
+        self.prepare_loaded_modules(items, loaded);
         let visible_roots = Self::visible_module_roots(items);
-        self.integrate_loaded_modules(&loaded, &visible_roots);
+        self.integrate_loaded_modules(loaded, &visible_roots);
         self.build_signatures(items);
         if check_dependency_bodies {
-            self.check_loaded_module_bodies(&loaded, None);
+            self.check_loaded_module_bodies(loaded, None);
         }
         self.check_body(items);
     }

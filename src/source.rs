@@ -554,6 +554,10 @@ pub struct Program {
     /// carried so every re-lowering of a dependency cuts its `yield`
     /// functions at exactly the calls the whole-program walk cut them at.
     marked: crate::config::MarkedCapabilities,
+    /// The canonical path of each module's file, read from the file system
+    /// once for the whole run the first time a unit's dependencies are
+    /// gathered: every unit compares the paths of the same modules.
+    canonical_paths: std::sync::OnceLock<HashMap<PathBuf, PathBuf>>,
 }
 
 // Report units are prepared with `rayon` across worker threads; a `Program`
@@ -605,6 +609,20 @@ impl Program {
     /// module can be type-checked and compiled without asking the filesystem
     /// loader to rediscover its dependency cone. `module` may be the entry or
     /// any project dependency returned by [`Self::report_units`].
+    /// [`canonicalize_path`] of a module's path, read once per program.
+    fn canonical(&self, path: &Path) -> PathBuf {
+        let paths = self.canonical_paths.get_or_init(|| {
+            self.modules
+                .iter()
+                .map(|m| (m.path.clone(), canonicalize_path(&m.path)))
+                .collect()
+        });
+        match paths.get(path) {
+            Some(key) => key.clone(),
+            None => canonicalize_path(path),
+        }
+    }
+
     pub fn loaded_dependencies_for(
         &self,
         module: &ProgramModule,
@@ -614,11 +632,12 @@ impl Program {
             .iter()
             .map(|candidate| (candidate.dep_name.as_str(), candidate))
             .collect::<HashMap<_, _>>();
-        let target_key = canonicalize_path(&module.path);
+        let canonical = |path: &Path| self.canonical(path);
+        let target_key = canonical(&module.path);
         let mut reachable = HashSet::new();
         let mut loading = vec![target_key];
         validate_program_module_name(module, &module.dep_name)?;
-        collect_dependency_keys(module, &by_name, &mut reachable, &mut loading)?;
+        collect_dependency_keys(module, &by_name, &mut reachable, &mut loading, &canonical)?;
         // A process dependency is lowered once for the whole program, the
         // first time any unit asks: that form is handed out and marked settled,
         // so the pipeline call below neither re-checks nor re-lowers what the
@@ -631,7 +650,7 @@ impl Program {
         let mut modules: Vec<LoadedModule> = self
             .modules
             .iter()
-            .filter(|candidate| reachable.contains(&canonicalize_path(&candidate.path)))
+            .filter(|candidate| reachable.contains(&canonical(&candidate.path)))
             .map(|candidate| match memo.get(&candidate.path) {
                 Some(lowered) => {
                     settled.push(true);
@@ -817,6 +836,7 @@ fn collect_dependency_keys(
     by_name: &HashMap<&str, &ProgramModule>,
     reachable: &mut HashSet<PathBuf>,
     loading: &mut Vec<PathBuf>,
+    canonical: &dyn Fn(&Path) -> PathBuf,
 ) -> Result<(), LoadError> {
     let Some(declaration) = visibility::module_decl(&module.items) else {
         return Ok(());
@@ -829,7 +849,7 @@ fn collect_dependency_keys(
         }
     }
 
-    let module_key = canonicalize_path(&module.path);
+    let module_key = canonical(&module.path);
     for name in names {
         let Some(dependency) = by_name.get(name.as_str()).copied() else {
             // A tolerant walk still resolves every edge before constructing a
@@ -841,7 +861,7 @@ fn collect_dependency_keys(
                 required_by: Some(module.path.clone()),
             });
         };
-        let key = canonicalize_path(&dependency.path);
+        let key = canonical(&dependency.path);
         // Source-typed standard modules may imply themselves through their
         // own builtins. The disk walk excludes that ownership edge too; an
         // explicitly written `depends [Self]` remains a real cycle.
@@ -858,7 +878,7 @@ fn collect_dependency_keys(
             continue;
         }
         loading.push(key);
-        collect_dependency_keys(dependency, by_name, reachable, loading)?;
+        collect_dependency_keys(dependency, by_name, reachable, loading, canonical)?;
         loading.pop();
     }
     Ok(())
@@ -1009,6 +1029,7 @@ pub fn load_program_with_cache(
     Ok(Program {
         modules,
         lowering_memo: std::sync::OnceLock::new(),
+        canonical_paths: std::sync::OnceLock::new(),
         marked,
     })
 }

@@ -176,8 +176,7 @@ fn build_symbols_with_loaded(
     items: &[TopLevel],
     loaded: &[crate::source::LoadedModule],
 ) -> SymbolTable {
-    let mut loaded = loaded.to_vec();
-    crate::stdlib::append_required_standard_capability_modules(items, &mut loaded);
+    let loaded = crate::stdlib::with_required_standard_capability_modules(items, loaded);
     let dep_modules = symbols_dep_modules_from_loaded(&loaded);
     SymbolTable::build(items, &dep_modules)
 }
@@ -1857,18 +1856,6 @@ impl TypeChecker {
 
     pub(crate) fn has_variants_for(&self, name: &str) -> bool {
         self.variants_for(name).is_some()
-    }
-
-    /// Iterate every fn signature regardless of which storage half
-    /// holds it. Used by the namespace-prefix check and by
-    /// `finalize_check_result` to flatten for external export.
-    fn all_fn_sigs(&self) -> impl Iterator<Item = (String, &FnSig)> + '_ {
-        let from_user = self.fn_sigs.iter().map(|(id, sig)| {
-            let name = self.symbol_table.fn_entry(*id).key.canonical();
-            (name, sig)
-        });
-        let from_extra = self.extra_sigs.iter().map(|(k, sig)| (k.clone(), sig));
-        from_user.chain(from_extra)
     }
 
     fn fn_sig_contains_canonical(&self, canonical: &str) -> bool {
