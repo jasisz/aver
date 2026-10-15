@@ -4322,6 +4322,68 @@ fn lean_states_each_cited_fact_once_for_every_element_type() {
     let _ = fs::remove_dir_all(out);
 }
 
+/// `--check-json` says where the run spent its time, per law and summed by
+/// phase, and the report is the same apart from those times.
+#[test]
+fn the_aver_backend_reports_the_time_of_each_phase_per_law() {
+    let dir = repo_root().join(FIXTURES);
+    let summary = || -> serde_json::Value {
+        let json = aver_in(
+            &dir,
+            &["proof", "hints.av", "--backend", "aver", "--check-json"],
+        );
+        serde_json::from_str(
+            String::from_utf8_lossy(&json.stdout)
+                .lines()
+                .rev()
+                .find(|l| l.starts_with('{'))
+                .unwrap(),
+        )
+        .unwrap()
+    };
+    let mut first = summary();
+    let timing = first["timing"].clone();
+    let laws = timing["laws"].as_object().unwrap();
+    let keys: Vec<&String> = laws.keys().collect();
+    let closed: Vec<&String> = first["closed_by"].as_object().unwrap().keys().collect();
+    assert_eq!(keys, closed);
+    for phase in [
+        "frontend",
+        "produce",
+        "automatic",
+        "kernel_in_producer",
+        "kernel_final",
+        "hint_using",
+    ] {
+        assert!(
+            timing["phases_ms"][phase].as_f64().is_some(),
+            "{phase}: {timing}"
+        );
+    }
+    // A closed law tries no hint; the open one finds its `using` line.
+    assert_eq!(
+        laws["reversed.twiceIsTheSame"]["hints"],
+        serde_json::json!({})
+    );
+    assert!(
+        laws["reversed.twiceIsTheSame"]["kernel_calls"]
+            .as_u64()
+            .unwrap()
+            >= 1
+    );
+    let open = &laws["reversed.vectorLengthIsNeverNegative"];
+    assert_eq!(open["hints"]["using"]["found"], 1, "{open}");
+    assert!(open["hints"]["using"]["ms"].as_f64().is_some(), "{open}");
+    // Apart from the times, a second run reports the same.
+    let mut second = summary();
+    for s in [&mut first, &mut second] {
+        let obj = s.as_object_mut().unwrap();
+        obj.remove("timing");
+        obj.remove("kernel_ms");
+    }
+    assert_eq!(first, second);
+}
+
 /// The list facts of `facts::NORMALIZING` rewrite where evaluation stops
 /// although no law cites them: the laws close, and each script carries the
 /// facts it used, with their proofs, so the kernel checks them. A law they

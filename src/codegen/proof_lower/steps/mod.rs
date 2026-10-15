@@ -1549,6 +1549,9 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
         // The laws that match where an attempt stopped, by key, and where
         // the attempts stopped.
         let mut hints = Found::default();
+        let mut timing = crate::ir::StepsTiming::default();
+        let law_started = std::time::Instant::now();
+        let kernel_before = crate::proof_kernel::spent();
         // A law that names its plan is proved by that plan alone.
         let mut produced = if ir.law_theorems[i].by_plan.is_some() {
             Produced {
@@ -1559,6 +1562,7 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
         } else {
             produce(inputs, ir, i, &[], &mut hints)
         };
+        timing.produce = law_started.elapsed();
         // A law without a `using` line that stays open is tried once more
         // with the earlier laws the steps closed, where evaluation stops
         // (`using []` turns this off). What closes without them keeps its
@@ -1568,6 +1572,7 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             && ir.law_theorems[i].using.is_none()
             && ir.law_theorems[i].by_plan.is_none()
         {
+            let started = std::time::Instant::now();
             let pool = auto_pool(inputs, ir, i);
             if !pool.is_empty() {
                 let mut more = Found::default();
@@ -1593,6 +1598,7 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                     }
                 }
             }
+            timing.automatic = started.elapsed();
         }
         ir.law_theorems[i].obligation_steps = produced.obligations;
         let mut produced_advice = produced.advice;
@@ -1620,14 +1626,28 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             Err(why) => {
                 // A plan that closes the law comes first:
                 // it is the one hint that closes the law outright.
+                let started = std::time::Instant::now();
                 let mut from_plans = by_plan::hints(inputs, ir, i, &mut plans, &mut named_plans);
+                timing
+                    .hints
+                    .push(("by_plan", started.elapsed(), from_plans.len()));
                 // Then, for a wrapper that starts an accumulator at a
                 // constant, the law about the recursion that closes it.
-                from_plans.extend(accumulator::hint(inputs, ir, i));
+                let started = std::time::Instant::now();
+                let accumulated = accumulator::hint(inputs, ir, i);
+                timing.hints.push((
+                    "accumulator",
+                    started.elapsed(),
+                    usize::from(accumulated.is_some()),
+                ));
+                from_plans.extend(accumulated);
                 // Then, for a law with `because` lines, the same law
                 // without them, when the steps close that.
                 let started = std::time::Instant::now();
                 let without = because_hint(inputs, ir, i);
+                timing
+                    .hints
+                    .push(("because", started.elapsed(), usize::from(without.is_some())));
                 if debug && !ir.law_theorems[i].reasons.is_empty() {
                     let key = law_key(inputs, &ir.law_theorems[i]);
                     let ms = started.elapsed().as_millis();
@@ -1637,6 +1657,9 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                 // Then the `using` line the steps close it with.
                 let started = std::time::Instant::now();
                 let line = using_hint(inputs, ir, i, hints.laws);
+                timing
+                    .hints
+                    .push(("using", started.elapsed(), usize::from(line.is_some())));
                 if debug {
                     let key = law_key(inputs, &ir.law_theorems[i]);
                     let ms = started.elapsed().as_millis();
@@ -1649,6 +1672,9 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                 if from_plans.is_empty() && lemma::enabled(inputs) {
                     let started = std::time::Instant::now();
                     let lemma = lemma::hint(inputs, ir, i, &hints.stops);
+                    timing
+                        .hints
+                        .push(("lemma", started.elapsed(), usize::from(lemma.is_some())));
                     if debug {
                         let key = law_key(inputs, &ir.law_theorems[i]);
                         let ms = started.elapsed().as_millis();
@@ -1662,5 +1688,9 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                 ir.law_theorems[i].steps_hints = hints;
             }
         }
+        let (kernel, calls) = crate::proof_kernel::spent();
+        timing.kernel = kernel - kernel_before.0;
+        timing.kernel_calls = calls - kernel_before.1;
+        ir.law_theorems[i].steps_timing = timing;
     }
 }

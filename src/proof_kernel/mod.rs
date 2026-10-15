@@ -33,9 +33,26 @@ pub mod aver_generated;
 /// runs on its own stack (`crate::proof_stack`); a kernel that stops with
 /// an internal error refuses the script.
 pub fn verdict(script: &str) -> Result<String, String> {
-    crate::proof_stack::run("the proof kernel", || {
+    let started = std::time::Instant::now();
+    let out = crate::proof_stack::run("the proof kernel", || {
         aver_generated::entry::verdict(AverStr::from(script))
             .map(|key| key.to_string())
             .map_err(|why| why.to_string())
-    })?
+    });
+    SPENT.with(|s| {
+        let (time, calls) = s.get();
+        s.set((time + started.elapsed(), calls + 1));
+    });
+    out?
+}
+
+thread_local! {
+    static SPENT: std::cell::Cell<(std::time::Duration, u64)> =
+        const { std::cell::Cell::new((std::time::Duration::ZERO, 0)) };
+}
+
+/// The time [`verdict`] took on this thread so far, and how many scripts
+/// it checked; a phase's share is the difference across it.
+pub fn spent() -> (std::time::Duration, u64) {
+    SPENT.with(|s| s.get())
 }

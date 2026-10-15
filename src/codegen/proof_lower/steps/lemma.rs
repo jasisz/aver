@@ -696,6 +696,7 @@ fn law_of(
         steps_hints: Vec::new(),
         steps_auto_using: Vec::new(),
         obligation_steps: Vec::new(),
+        steps_timing: Default::default(),
         ..t.clone()
     }
 }

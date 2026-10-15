@@ -518,6 +518,24 @@ pub struct LawTheorem {
     /// (`<law>.because<k>`, then `<law>.implication`), with its own script
     /// or why none. A script states what it assumes in its premise.
     pub obligation_steps: Vec<ObligationSteps>,
+    /// Where the step producers spent their time on this law, reported by
+    /// `aver proof --backend aver --check-json`. Never read by a proof.
+    pub steps_timing: StepsTiming,
+}
+
+/// The time the step producers took on one law, by phase. Each hint
+/// phase runs only on a law the steps left open.
+#[derive(Debug, Clone, Default)]
+pub struct StepsTiming {
+    /// The first attempt (or the law's `by` plan).
+    pub produce: std::time::Duration,
+    /// The second attempt, with the earlier laws the steps closed.
+    pub automatic: std::time::Duration,
+    /// Each hint producer, with how many hints it found.
+    pub hints: Vec<(&'static str, std::time::Duration, usize)>,
+    /// The kernel checks run inside the phases above, and how many.
+    pub kernel: std::time::Duration,
+    pub kernel_calls: u64,
 }
 
 /// One obligation of a `because` chain and its proof as data, if any.
