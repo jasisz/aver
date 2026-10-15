@@ -3794,6 +3794,11 @@ impl Env<'_> {
             {
                 return Ok(Ok(proof));
             }
+            // A list variable a hypothesis says is empty or not: that
+            // variable as `[]` and as a cell.
+            if let Some(proof) = self.split_list_var_stated_empty(lhs, rhs, depth) {
+                return Ok(Ok(proof));
+            }
         }
         // An Int comparison in scope whose sides call a definition that
         // chooses by a `match`: each call evaluated, split on what its

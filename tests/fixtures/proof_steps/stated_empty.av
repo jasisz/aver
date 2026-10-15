@@ -1,0 +1,38 @@
+module StatedEmpty
+    intent =
+        "A list a when line says is empty or not: steps split it into [] and a cell, and in one case"
+        "the line is false."
+    exposes [firstOr, middle]
+    effects []
+
+fn firstOr(values: List<Int>, fallback: Int) -> Int
+    ? "The first value, or the fallback for an empty list."
+    match values
+        [] -> fallback
+        [head, ..tail] -> head
+
+verify firstOr
+    firstOr([], 3) => 3
+    firstOr([1, 2], 3) => 1
+
+verify firstOr law notEmptyHasALength
+    given values: List<Int> = [[1], [1, 2]]
+    when values != []
+    List.len(values) > 0 holds
+
+verify firstOr law emptyOnTheLeft
+    given values: List<Int> = [[1], [1, 2]]
+    when [] != values
+    List.len(values) >= 1 holds
+
+fn middle(values: List<Int>) -> Int
+    ? "The index half way along."
+    Int.div(List.len(values), 2)
+
+verify middle
+    middle([1, 2, 3]) => 1
+
+verify middle law withinAList
+    given values: List<Int> = [[1], [1, 2], [1, 2, 3]]
+    when values != []
+    middle(values) < List.len(values) holds

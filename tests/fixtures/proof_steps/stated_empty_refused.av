@@ -1,0 +1,26 @@
+module StatedEmptyRefused
+    intent =
+        "Laws of the same shapes that hold on their samples but not for every list: none may close"
+        "by steps. A list that is not empty may still have one value only."
+    exposes [firstOr]
+    effects []
+
+fn firstOr(values: List<Int>, fallback: Int) -> Int
+    ? "The first value, or the fallback for an empty list."
+    match values
+        [] -> fallback
+        [head, ..tail] -> head
+
+verify firstOr
+    firstOr([], 3) => 3
+    firstOr([1, 2], 3) => 1
+
+verify firstOr law notEmptyHasTwo
+    given values: List<Int> = [[1, 2], [1, 2, 3]]
+    when values != []
+    List.len(values) > 1 holds
+
+verify firstOr law emptyKeepsTheFallback
+    given values: List<Int> = [[], [3]]
+    when values != []
+    firstOr(values, 3) => 3

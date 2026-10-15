@@ -588,6 +588,49 @@ impl Env<'_> {
         let v = stopped
             .iter()
             .find_map(|t| list_var_under_match(t, &self.split_binders))?;
+        self.split_list_var(&v, lhs, rhs, depth)
+    }
+
+    /// Where a hypothesis states whether a list variable `v` is empty
+    /// (`(v == []) = false`, `(v != []) = true`, from a `when` or a case),
+    /// that variable in each of the two cases a list is, as
+    /// [`Self::split_list_var_under_match`] splits it: in one case the
+    /// hypothesis evaluates to the other Bool, in the other the lengths and
+    /// the evaluation read the cell. A cell's names are not split again.
+    pub(crate) fn split_list_var_stated_empty(
+        &mut self,
+        lhs: &Term,
+        rhs: &Term,
+        depth: usize,
+    ) -> Option<Proof> {
+        let nil_side = |t: &Term| matches!(&t.node, ResolvedExpr::List(xs) if xs.is_empty());
+        let v = self.hyps.iter().rev().find_map(|(_, e)| {
+            term::bool_value(&e.rhs)?;
+            let ResolvedExpr::BinOp(crate::ast::BinOp::Eq | crate::ast::BinOp::Neq, a, b) =
+                &e.lhs.node
+            else {
+                return None;
+            };
+            let v = match (nil_side(a), nil_side(b)) {
+                (false, true) => a,
+                (true, false) => b,
+                _ => return None,
+            };
+            match &v.node {
+                ResolvedExpr::Ident(n)
+                    if matches!(v.ty(), Some(Type::List(_))) && !self.split_binders.contains(n) =>
+                {
+                    Some((**v).clone())
+                }
+                _ => None,
+            }
+        })?;
+        self.split_list_var(&v, lhs, rhs, depth)
+    }
+
+    /// `lhs = rhs` with the list variable `v` as `[]` and as a cell of
+    /// fresh names, in the claim and in the hypotheses.
+    fn split_list_var(&mut self, v: &Term, lhs: &Term, rhs: &Term, depth: usize) -> Option<Proof> {
         let ResolvedExpr::Ident(var) = &v.node else {
             return None;
         };
