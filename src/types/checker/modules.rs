@@ -630,7 +630,15 @@ impl TypeChecker {
 
     pub(super) fn has_namespace_prefix(&self, key: &str) -> bool {
         let prefix = format!("{}.", key);
-        self.all_fn_sigs().any(|(k, _)| k.starts_with(&prefix))
+        // The canonical names of user functions, read in parts rather than
+        // written out one by one (see [`Self::all_fn_sigs`]).
+        self.fn_sigs.keys().any(|id| {
+            let fn_key = &self.symbol_table.fn_entry(*id).key;
+            match fn_key.scope_str() {
+                Some(scope) => parts_start_with(&[scope, ".", &fn_key.name], &prefix),
+                None => fn_key.name.starts_with(&prefix),
+            }
+        }) || self.extra_sigs.keys().any(|k| k.starts_with(&prefix))
             || self.value_members.keys().any(|k| k.starts_with(&prefix))
     }
 
@@ -806,4 +814,20 @@ impl TypeChecker {
         }
         Ok(())
     }
+}
+
+/// Whether the text `parts` written one after the other starts with
+/// `prefix`.
+fn parts_start_with(parts: &[&str], prefix: &str) -> bool {
+    let mut rest = prefix;
+    for part in parts {
+        if rest.len() <= part.len() {
+            return part.starts_with(rest);
+        }
+        if !rest.starts_with(part) {
+            return false;
+        }
+        rest = &rest[part.len()..];
+    }
+    rest.is_empty()
 }

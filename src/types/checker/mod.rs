@@ -176,8 +176,7 @@ fn build_symbols_with_loaded(
     items: &[TopLevel],
     loaded: &[crate::source::LoadedModule],
 ) -> SymbolTable {
-    let mut loaded = loaded.to_vec();
-    crate::stdlib::append_required_standard_capability_modules(items, &mut loaded);
+    let loaded = crate::stdlib::with_required_standard_capability_modules(items, loaded);
     let dep_modules = symbols_dep_modules_from_loaded(&loaded);
     SymbolTable::build(items, &dep_modules)
 }
