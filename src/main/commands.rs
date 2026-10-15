@@ -9304,6 +9304,15 @@ fn run_proof_check(
                     (o.law.clone(), steps.closed_by(&o.law, universal).into())
                 })
                 .collect();
+            // What each law steps closed stands on, as under `--backend aver`.
+            let trust: serde_json::Map<String, serde_json::Value> = closed_by
+                .iter()
+                .filter(|(_, by)| by.as_str() == Some("steps"))
+                .filter_map(|(law, _)| Some((law.clone(), steps.trust.get(law)?.to_json())))
+                .collect();
+            if !trust.is_empty() {
+                obj.insert("trust".into(), serde_json::Value::Object(trust));
+            }
             obj.insert("closed_by".into(), serde_json::Value::Object(closed_by));
             obj.insert(
                 "steps_rejected".into(),

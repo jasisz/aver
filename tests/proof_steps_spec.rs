@@ -470,6 +470,192 @@ fn the_aver_backend_closes_by_steps_without_lean_on_the_path() {
     let _ = fs::remove_dir_all(out);
 }
 
+/// `trust` says what each law closed by steps stands on: the wall rules
+/// its steps apply, including inside the proofs of the facts it cites,
+/// whether it uses the kernel's evaluator or a decision procedure, and the
+/// laws and facts it cites. A law left open has no entry.
+#[test]
+fn the_aver_backend_reports_what_each_closed_law_stands_on() {
+    let out = scratch("trust");
+    let names = |v: &serde_json::Value| -> Vec<String> {
+        v.as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n.as_str().unwrap().to_string())
+            .collect()
+    };
+    let (_, lock) = aver_backend_json("lock.av", &out, None);
+    let commutes = &lock["trust"]["add.commutes"];
+    assert_eq!(names(&commutes["rules"]), ["int.add_comm"], "{lock}");
+    for procedure in ["compute", "ring", "linear"] {
+        assert_eq!(commutes[procedure], false, "{lock}");
+    }
+    let sequence = &lock["trust"]["sequenceChecked.agreesWithSpec"];
+    assert_eq!(sequence["compute"], true, "{lock}");
+    assert_eq!(sequence["linear"], true, "{lock}");
+    assert!(names(&sequence["rules"]).contains(&"bits.and_bit".to_string()));
+    let (_, facts) = aver_backend_json("facts.av", &out, None);
+    let batches = &facts["trust"]["batch.threeBatches"];
+    assert_eq!(names(&batches["facts"]), ["List.concat.assoc"], "{facts}");
+    assert_eq!(
+        names(&batches["rules"]),
+        ["list.concat.cons", "list.concat.nil"],
+        "{facts}"
+    );
+    assert_eq!(names(&batches["laws"]), Vec::<String>::new());
+    let (_, using) = aver_backend_json("using.av", &out, None);
+    assert_eq!(
+        names(&using["trust"]["sameLen.againstOne"]["laws"]),
+        ["sameLen.commutes"],
+        "{using}"
+    );
+    assert_eq!(using["closed_by"]["g.overlapping"], "open");
+    assert!(using["trust"].get("g.overlapping").is_none(), "{using}");
+    let _ = fs::remove_dir_all(out);
+}
+
+/// A script as one line with its cited laws ahead of its cited facts, the
+/// order the kernel keeps them in.
+fn canonical(text: &str) -> String {
+    use aver::ir::proof_steps::read::{Sx, parse};
+    let Sx::List(mut parts) = parse(text).unwrap() else {
+        panic!("not a script: {text}");
+    };
+    for part in &mut parts {
+        if let Sx::List(xs) = part
+            && matches!(xs.first(), Some(Sx::Atom(a)) if a == "laws")
+        {
+            let is_fact = |x: &Sx| matches!(x, Sx::List(f) if matches!(f.first(), Some(Sx::Atom(a)) if a == "fact"));
+            let (facts, laws): (Vec<Sx>, Vec<Sx>) = xs.drain(1..).partition(is_fact);
+            xs.extend(laws);
+            xs.extend(facts);
+        }
+    }
+    Sx::List(parts).print()
+}
+
+/// The kernel reads a script as the compiler meant it: each script,
+/// decoded by the kernel (`tools/proof-kernel/kernel/decode.av`) and written
+/// out again (`tools/proof-kernel/reprint.av`), is the script the compiler
+/// wrote, item for item. Blanks between items are free. The sample is the
+/// smallest fixture script with each kind of step, and the scripts of a
+/// corpus file.
+#[test]
+fn the_kernel_reads_back_each_script_as_the_compiler_wrote_it() {
+    let out = scratch("round-trip");
+    let mut written: Vec<PathBuf> = Vec::new();
+    for fixture in [
+        "lock.av",
+        "facts.av",
+        "case_hypotheses.av",
+        "binding_names.av",
+        "defaults_and_updates.av",
+        "induction_on_list.av",
+        "finite.av",
+        "case_contradictions.av",
+        "induction.av",
+        "because.av",
+        "remainders.av",
+        "maps.av",
+        "vectors.av",
+    ] {
+        written.extend(
+            export_steps(fixture, &out.join(fixture))
+                .into_iter()
+                .map(|(_, p)| p),
+        );
+    }
+    written.push(repo_root().join(FIXTURES).join("list_cases.steps"));
+    let size = |p: &PathBuf| fs::metadata(p).unwrap().len();
+    let mut sample: Vec<PathBuf> = Vec::new();
+    for kind in [
+        "refl",
+        "symm",
+        "trans",
+        "congr",
+        "unfold",
+        "const",
+        "arm",
+        "proj",
+        "cell",
+        "hyp",
+        "rule",
+        "law",
+        "fact",
+        "compute",
+        "cases",
+        "split",
+        "have",
+        "enum",
+        "absurd",
+        "induct",
+        "listinduct",
+        "listcases",
+        "ring",
+        "linear",
+        "cut",
+        "carry",
+        "rec",
+        "upd",
+        "match",
+        "sum",
+    ] {
+        let tag = format!("({kind} ");
+        let smallest = written
+            .iter()
+            .filter(|p| fs::read_to_string(p).unwrap().contains(&tag))
+            .min_by_key(|p| size(p))
+            .unwrap_or_else(|| panic!("no script writes {tag}"));
+        if !sample.contains(smallest) {
+            sample.push(smallest.clone());
+        }
+    }
+    let corpus = out.join("corpus");
+    let exported = aver_in(
+        &repo_root(),
+        &[
+            "proof",
+            "examples/formal/law_auto.av",
+            "--module-root",
+            "examples/formal",
+            "-o",
+            corpus.to_str().unwrap(),
+            "--verify-mode",
+            "sorry",
+        ],
+    );
+    assert!(exported.status.success(), "{}", format_output(&exported));
+    let mut from_corpus: Vec<PathBuf> = fs::read_dir(corpus.join("proof_steps"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "steps"))
+        .collect();
+    from_corpus.sort();
+    assert!(!from_corpus.is_empty());
+    sample.extend(from_corpus);
+    let kernel = repo_root().join(KERNEL);
+    let mut args = vec![
+        "run".to_string(),
+        "roundtrip.av".to_string(),
+        "--module-root".to_string(),
+        ".".to_string(),
+        "--".to_string(),
+    ];
+    args.extend(sample.iter().map(|f| f.to_string_lossy().to_string()));
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let result = aver_in(&kernel, &refs);
+    assert!(result.status.success(), "{}", format_output(&result));
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 2 * sample.len(), "{}", format_output(&result));
+    for (file, pair) in sample.iter().zip(lines.chunks(2)) {
+        assert_eq!(pair[0], file.to_string_lossy());
+        let wrote = canonical(&fs::read_to_string(file).unwrap());
+        assert_eq!(pair[1], wrote, "{}", file.display());
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
 #[test]
 fn both_backends_close_the_same_laws_by_steps() {
     if !lean_required::lake_available() {

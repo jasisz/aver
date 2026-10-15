@@ -46,8 +46,7 @@
 //!          | (induct FN (TERM…) TERM TERM [(carry NAME…)] (case (NAME…) (IH…) ((INT NAME (TERM…) (PROOF…))…) PROOF)…)
 //!          | (listinduct NAME TERM TERM [(carry NAME…)] PROOF (NAME NAME) (NAME…) ((NAME (TERM…) (PROOF…))…) PROOF)
 //!          | (listcases NAME TERM TERM PROOF (NAME NAME) PROOF)
-//!          | (intinduct NAME TERM TERM NAME PROOF (NAME…) (NAME…) ((NAME (TERM…) (PROOF…))…) PROOF)
-//!          | (ring TERM TERM) | (linear TERM BOOL (NAME…) (INT…))
+//!          | (ring TERM TERM) | (linear TERM BOOL (NAME…) (INT…) (cut INT (INT…))…)
 //! ```
 
 use crate::ast::{BinOp, Literal};

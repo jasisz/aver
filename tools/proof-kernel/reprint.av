@@ -1,0 +1,407 @@
+module Reprint
+    intent =
+        "A decoded step script written out again in the grammar of src/ir/proof_steps/sexpr.rs,"
+        "one line, one space between items: what the kernel read, for the round-trip test."
+        "Not part of the kernel; the cited laws come before the cited facts, as the kernel keeps them."
+    exposes [script]
+    depends [Kernel.Term, Kernel.Proof]
+    effects []
+
+fn wrap(spaced: String) -> String
+    ? "Items each written with a space in front, as one parenthesised list."
+    match spaced == ""
+        true -> "()"
+        false -> "(" + String.slice(spaced, 1, String.len(spaced)) + ")"
+
+verify wrap
+    wrap("") => "()"
+    wrap(" a b") => "(a b)"
+
+fn quote(s: String) -> String
+    ? "A text as the step data quotes it: a backslash, a quote and a line break escaped."
+    "\"" + String.replace(String.replace(String.replace(s, "\\", "\\\\"), "\"", "\\\""), "\n", "\\n") + "\""
+
+verify quote
+    quote("a\"b") => "\"a\\\"b\""
+    quote("x\\y\nz") => "\"x\\\\y\\nz\""
+
+fn names(ns: List<String>) -> String
+    ? "Names, each with a space in front."
+    match ns
+        [] -> ""
+        [n, ..rest] -> " " + n + names(rest)
+
+verify names
+    names(["a", "b"]) => " a b"
+
+fn ints(ns: List<Int>) -> String
+    ? "Integers, each with a space in front."
+    match ns
+        [] -> ""
+        [n, ..rest] -> " " + String.fromInt(n) + ints(rest)
+
+verify ints
+    ints([2, 0 - 1]) => " 2 -1"
+
+fn ty(t: Ty) -> String
+    ? "A type."
+    match t
+        Ty.TyInt -> "int"
+        Ty.TyBool -> "bool"
+        Ty.TyStr -> "str"
+        Ty.TyFloat -> "float"
+        Ty.TyUnit -> "unit"
+        Ty.TyList(a) -> "(list {ty(a)})"
+        Ty.TyOption(a) -> "(option {ty(a)})"
+        Ty.TyVector(a) -> "(vector {ty(a)})"
+        Ty.TyResult(a, b) -> "(result {ty(a)} {ty(b)})"
+        Ty.TyMap(k, v) -> "(map {ty(k)} {ty(v)})"
+        Ty.TyTuple(ts) -> "(tuple" + tys(ts) + ")"
+        Ty.TyNamed(n) -> "(named {n})"
+        Ty.TyVar(n, eq) -> match eq
+            true -> "(var {n} eq)"
+            false -> "(var {n})"
+        Ty.TyRigid(n, eq) -> "_"
+        Ty.TyAny -> "?"
+
+verify ty
+    ty(Ty.TyList(Ty.TyVar("t", true))) => "(list (var t eq))"
+    ty(Ty.TyTuple([])) => "(tuple)"
+
+fn tys(ts: List<Ty>) -> String
+    ? "Types, each with a space in front."
+    match ts
+        [] -> ""
+        [t, ..rest] -> " " + ty(t) + tys(rest)
+
+verify tys
+    tys([Ty.TyInt]) => " int"
+
+fn typedVars(vs: List<TypedVar>) -> String
+    ? "(NAME TYPE)…, each with a space in front."
+    match vs
+        [] -> ""
+        [v, ..rest] -> " ({v.name} {ty(v.ty)})" + typedVars(rest)
+
+verify typedVars
+    typedVars([Kernel.Term.typed("n", Ty.TyInt)]) => " (n int)"
+
+fn term(t: Term) -> String
+    ? "A term."
+    match t
+        Term.TInt(n) -> "(i " + String.fromInt(n) + ")"
+        Term.TBool(b) -> match b
+            true -> "(b true)"
+            false -> "(b false)"
+        Term.TStr(s) -> "(s " + quote(s) + ")"
+        Term.TUnit -> "(unit)"
+        Term.TVar(n) -> "(v {n})"
+        Term.THole -> "(hole)"
+        Term.TGet(o, f) -> "(get {term(o)} {f})"
+        Term.TCall(n, xs) -> "(call {n}" + terms(xs) + ")"
+        Term.TBi(n, xs) -> "(bi {n}" + terms(xs) + ")"
+        Term.TCtor(n, xs) -> "(ctor {n}" + terms(xs) + ")"
+        Term.TOp(o, a, b) -> "(op {o} {term(a)} {term(b)})"
+        Term.TNeg(a) -> "(neg {term(a)})"
+        Term.TMatch(s, arms) -> "(match {term(s)}" + armsText(arms) + ")"
+        Term.TParts(xs) -> "(str" + terms(xs) + ")"
+        Term.TList(xs) -> "(list" + terms(xs) + ")"
+        Term.TTuple(xs) -> "(tuple" + terms(xs) + ")"
+        Term.TRec(n, fs) -> "(rec {n}" + fields(fs) + ")"
+        Term.TUpd(n, b, fs) -> "(upd {n} {term(b)}" + fields(fs) + ")"
+
+verify term
+    term(Term.TCall("f", [Term.TInt(0 - 2), Term.TStr("q\"")])) => "(call f (i -2) (s \"q\\\"\"))"
+    term(Term.TList([])) => "(list)"
+
+fn terms(ts: List<Term>) -> String
+    ? "Terms, each with a space in front."
+    match ts
+        [] -> ""
+        [t, ..rest] -> " " + term(t) + terms(rest)
+
+verify terms
+    terms([Term.TUnit]) => " (unit)"
+
+fn fields(fs: List<Field>) -> String
+    ? "(FIELD TERM)…, each with a space in front."
+    match fs
+        [] -> ""
+        [f, ..rest] -> " ({f.name} {term(f.value)})" + fields(rest)
+
+verify fields
+    fields([Field(name = "a", value = Term.TUnit)]) => " (a (unit))"
+
+fn armsText(arms: List<Arm>) -> String
+    ? "(arm PAT TERM)…, each with a space in front."
+    match arms
+        [] -> ""
+        [a, ..rest] -> " (arm {pat(a.pattern)} {term(a.body)})" + armsText(rest)
+
+verify armsText
+    armsText([Arm(pattern = Pat.PWild, body = Term.TUnit)]) => " (arm (pw) (unit))"
+
+fn pat(p: Pat) -> String
+    ? "A pattern."
+    match p
+        Pat.PWild -> "(pw)"
+        Pat.PVar(n) -> "(pv {n})"
+        Pat.PLit(t) -> "(pl {term(t)})"
+        Pat.PNil -> "(pnil)"
+        Pat.PCons(h, t) -> "(pcons {h} {t})"
+        Pat.PTuple(ps) -> "(pt" + pats(ps) + ")"
+        Pat.PCtor(c, ns) -> "(pc {c}" + names(ns) + ")"
+
+verify pat
+    pat(Pat.PCtor("Option.None", [])) => "(pc Option.None)"
+
+fn pats(ps: List<Pat>) -> String
+    ? "Patterns, each with a space in front."
+    match ps
+        [] -> ""
+        [p, ..rest] -> " " + pat(p) + pats(rest)
+
+verify pats
+    pats([Pat.PNil]) => " (pnil)"
+
+fn bindings(bs: List<Binding>) -> String
+    ? "((NAME TERM)…)"
+    wrap(bindingItems(bs))
+
+verify bindings
+    bindings([]) => "()"
+
+fn bindingItems(bs: List<Binding>) -> String
+    ? "(NAME TERM)…, each with a space in front."
+    match bs
+        [] -> ""
+        [b, ..rest] -> " ({b.name} {term(b.value)})" + bindingItems(rest)
+
+verify bindingItems
+    bindingItems([Kernel.Term.bind("a", Term.TUnit)]) => " (a (unit))"
+
+fn proof(p: Proof) -> String
+    ? "A proof step."
+    match p
+        Proof.PRefl(t) -> "(refl {term(t)})"
+        Proof.PSymm(q) -> "(symm {proof(q)})"
+        Proof.PTrans(ts, ps) -> "(trans " + wrap(terms(ts)) + proofs(ps) + ")"
+        Proof.PCongr(c, q) -> "(congr {term(c)} {proof(q)})"
+        Proof.PUnfold(f, k, xs, ys, pre) -> "(unfold {f} " + String.fromInt(k) + " " + wrap(terms(xs)) + " " + wrap(terms(ys)) + proofs(pre) + ")"
+        Proof.PConst(n) -> "(const {n})"
+        Proof.PArm(k, ys, t, q) -> "(arm " + String.fromInt(k) + " " + wrap(terms(ys)) + " {term(t)} {proof(q)})"
+        Proof.PProj(t) -> "(proj {term(t)})"
+        Proof.PCell(t) -> "(cell {term(t)})"
+        Proof.PHyp(h) -> "(hyp {h})"
+        Proof.PRule(id, bs, ps) -> "(rule {id} " + bindings(bs) + proofs(ps) + ")"
+        Proof.PLaw(k, bs, ps) -> "(law {k} " + bindings(bs) + proofs(ps) + ")"
+        Proof.PCompute(a, b) -> "(compute {term(a)} {term(b)})"
+        Proof.PCases(on, h, t, f) -> "(cases {term(on)} {h} {proof(t)} {proof(f)})"
+        Proof.PSplit(f, xs, on, h, cs) -> "(split {f} " + wrap(terms(xs)) + " {term(on)} {h}" + splitCases(cs) + ")"
+        Proof.PHave(h, fact, q, body) -> "(have {h} {term(fact)} {proof(q)} {proof(body)})"
+        Proof.PEnum(v, l, r, cs) -> "(enum {v} {term(l)} {term(r)}" + proofs(cs) + ")"
+        Proof.PAbsurd(q, l, r) -> "(absurd {proof(q)} {term(l)} {term(r)})"
+        Proof.PInduct(f, xs, l, r, carry, cs) -> "(induct {f} " + wrap(terms(xs)) + " {term(l)} {term(r)}" + carried(carry) + inductCases(cs) + ")"
+        Proof.PListInduct(v, l, r, carry, n, h, t, general, hs, c) -> "(listinduct {v} {term(l)} {term(r)}" + carried(carry) + " {proof(n)} ({h} {t}) " + wrap(names(general)) + " " + wrap(ihAts(hs)) + " {proof(c)})"
+        Proof.PListCases(v, l, r, n, h, t, c) -> "(listcases {v} {term(l)} {term(r)} {proof(n)} ({h} {t}) {proof(c)})"
+        Proof.PRing(l, r) -> "(ring {term(l)} {term(r)})"
+        Proof.PLinear(g, v, hs, ws, cs) -> "(linear {term(g)} " + boolText(v) + " " + wrap(names(hs)) + " " + wrap(ints(ws)) + cuts(cs) + ")"
+
+verify proof
+    proof(Proof.PRule("int.add_zero", [Kernel.Term.bind("a", Term.TVar("x"))], [])) => "(rule int.add_zero ((a (v x))))"
+    proof(Proof.PLinear(Term.TVar("g"), true, [], [1], [Cut(divisor = 2, weights = [1])])) => "(linear (v g) true () (1) (cut 2 (1)))"
+
+fn boolText(b: Bool) -> String
+    ? "true or false."
+    match b
+        true -> "true"
+        false -> "false"
+
+verify boolText
+    boolText(false) => "false"
+
+fn proofs(ps: List<Proof>) -> String
+    ? "Proofs, each with a space in front."
+    match ps
+        [] -> ""
+        [p, ..rest] -> " " + proof(p) + proofs(rest)
+
+verify proofs
+    proofs([Proof.PHyp("h")]) => " (hyp h)"
+
+fn carried(ns: List<String>) -> String
+    ? "The carried hypotheses of an induction, (carry NAME…) with a space in front, when there are any."
+    match ns
+        [] -> ""
+        _ -> " (carry" + names(ns) + ")"
+
+verify carried
+    carried([]) => ""
+    carried(["when"]) => " (carry when)"
+
+fn cuts(cs: List<Cut>) -> String
+    ? "(cut INT (INT…))…, each with a space in front."
+    match cs
+        [] -> ""
+        [c, ..rest] -> " (cut " + String.fromInt(c.divisor) + " " + wrap(ints(c.weights)) + ")" + cuts(rest)
+
+verify cuts
+    cuts([]) => ""
+
+fn splitCases(cs: List<SplitCase>) -> String
+    ? "(case CTOR (NAME…) PROOF)…, each with a space in front."
+    match cs
+        [] -> ""
+        [c, ..rest] -> " (case {c.ctor} " + wrap(names(c.binders)) + " {proof(c.proof)})" + splitCases(rest)
+
+verify splitCases
+    splitCases([SplitCase(ctor = "nil", binders = [], proof = Proof.PHyp("h"))]) => " (case nil () (hyp h))"
+
+fn inductCases(cs: List<Case>) -> String
+    ? "(case (NAME…) (IH…) (MORE…) PROOF)…, each with a space in front."
+    match cs
+        [] -> ""
+        [c, ..rest] -> " (case " + wrap(names(c.binders)) + " " + wrap(hypotheses(c.ihs, c.carry)) + " " + wrap(mores(c.more)) + " {proof(c.proof)})" + inductCases(rest)
+
+verify inductCases
+    inductCases([Case(binders = ["g"], ihs = ["ih"], carry = [[]], more = [], proof = Proof.PHyp("ih"))]) => " (case (g) (ih) () (hyp ih))"
+
+fn hypotheses(ns: List<String>, carry: List<List<Proof>>) -> String
+    ? "Each hypothesis: its name, or (NAME PROOF…) with the proofs of the carried hypotheses; each with a space in front."
+    match (ns, carry)
+        ([n, ..rest], [[], ..more]) -> " " + n + hypotheses(rest, more)
+        ([n, ..rest], [ps, ..more]) -> " ({n}" + proofs(ps) + ")" + hypotheses(rest, more)
+        ([n, ..rest], []) -> " " + n + hypotheses(rest, [])
+        _ -> ""
+
+verify hypotheses
+    hypotheses(["a", "b"], [[], [Proof.PHyp("h")]]) => " a (b (hyp h))"
+
+fn mores(ms: List<More>) -> String
+    ? "(K IH (TERM…) (PROOF…))…, each with a space in front."
+    match ms
+        [] -> ""
+        [m, ..rest] -> " (" + String.fromInt(m.call) + " " + ihBody(m.ih) + ")" + mores(rest)
+
+verify mores
+    mores([More(call = 0, ih = IhAt(name = "ih", at = [], carry = []))]) => " (0 ih () ())"
+
+fn ihBody(ih: IhAt) -> String
+    ? "NAME (TERM…) (PROOF…)"
+    ih.name + " " + wrap(terms(ih.at)) + " " + wrap(proofs(ih.carry))
+
+verify ihBody
+    ihBody(IhAt(name = "ih", at = [Term.TUnit], carry = [])) => "ih ((unit)) ()"
+
+fn ihAts(hs: List<IhAt>) -> String
+    ? "(IH (TERM…) (PROOF…))…, each with a space in front."
+    match hs
+        [] -> ""
+        [ih, ..rest] -> " (" + ihBody(ih) + ")" + ihAts(rest)
+
+verify ihAts
+    ihAts([]) => ""
+
+fn premise(ps: List<Term>) -> String
+    ? "(none) or the term."
+    match ps
+        [p, ..rest] -> term(p)
+        [] -> "(none)"
+
+verify premise
+    premise([]) => "(none)"
+
+fn lawText(head: String, l: Law) -> String
+    ? "(HEAD KEY ((NAME TYPE)…) PREMISE TERM TERM), without the closing parenthesis."
+    "({head} {l.key} " + wrap(typedVars(l.givens)) + " " + premise(l.premise) + " {term(l.lhs)} {term(l.rhs)}"
+
+verify lawText
+    lawText("law", Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit)) => "(law k () (none) (unit) (unit)"
+
+fn laws(ls: List<Law>) -> String
+    ? "Cited laws, each with a space in front."
+    match ls
+        [] -> ""
+        [l, ..rest] -> " " + lawText("law", l) + ")" + laws(rest)
+
+verify laws
+    laws([]) => ""
+
+fn facts(fs: List<Fact>) -> String
+    ? "Cited facts with their proofs, each with a space in front."
+    match fs
+        [] -> ""
+        [f, ..rest] -> " " + lawText("fact", f.law) + " {proof(f.proof)})" + facts(rest)
+
+verify facts
+    facts([]) => ""
+
+fn defs(ds: List<Def>) -> String
+    ? "(def NAME ((PARAM TYPE)…) TYPE ((NAME TERM)…) TERM)…, each with a space in front."
+    match ds
+        [] -> ""
+        [d, ..rest] -> " (def {d.name} " + wrap(typedVars(d.params)) + " {ty(d.ret)} " + bindings(d.lets) + " {term(d.body)})" + defs(rest)
+
+verify defs
+    defs([]) => ""
+
+fn consts(cs: List<Const>) -> String
+    ? "(const NAME TYPE TERM)…, each with a space in front."
+    match cs
+        [] -> ""
+        [c, ..rest] -> " (const {c.name} {ty(c.ty)} {term(c.value)})" + consts(rest)
+
+verify consts
+    consts([]) => ""
+
+fn eqMark(eq: Bool) -> String
+    ? "` eq` for a type whose == is equality."
+    match eq
+        true -> " eq"
+        false -> ""
+
+verify eqMark
+    eqMark(true) => " eq"
+
+fn sums(ss: List<Sum>) -> String
+    ? "(sum NAME [eq] (CTOR TYPE…)…)…, each with a space in front."
+    match ss
+        [] -> ""
+        [s, ..rest] -> " (sum {s.name}" + eqMark(s.eq) + variants(s.variants) + ")" + sums(rest)
+
+verify sums
+    sums([]) => ""
+
+fn variants(vs: List<Variant>) -> String
+    ? "(CTOR TYPE…)…, each with a space in front."
+    match vs
+        [] -> ""
+        [v, ..rest] -> " ({v.name}" + tys(v.fields) + ")" + variants(rest)
+
+verify variants
+    variants([Variant(name = "C.A", fields = [])]) => " (C.A)"
+
+fn recs(rs: List<Rec>) -> String
+    ? "(rec NAME [eq] (FIELD TYPE)…)…, each with a space in front."
+    match rs
+        [] -> ""
+        [r, ..rest] -> " (rec {r.name}" + eqMark(r.eq) + typedVars(r.fields) + ")" + recs(rest)
+
+verify recs
+    recs([]) => ""
+
+fn sigs(gs: List<FnSig>) -> String
+    ? "(NAME (TYPE…) TYPE)…, each with a space in front."
+    match gs
+        [] -> ""
+        [g, ..rest] -> " ({g.name} " + wrap(tys(g.params)) + " {ty(g.ret)})" + sigs(rest)
+
+verify sigs
+    sigs([]) => ""
+
+fn script(s: Script) -> String
+    ? "The whole script, on one line."
+    "(steps 15 " + lawText("obligation", s.obligation) + ") (defs" + defs(s.defs) + ") (consts" + consts(s.consts) + ") (sums" + sums(s.sums) + ") (recs" + recs(s.recs) + ") (sigs" + sigs(s.sigs) + ") (laws" + laws(s.laws) + facts(s.facts) + ") (proof {proof(s.proof)}))"
+
+verify script
+    script(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), defs = [], consts = [], sums = [], recs = [], sigs = [], laws = [], facts = [], proof = Proof.PRefl(Term.TInt(1)))) => "(steps 15 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))"

@@ -18,6 +18,9 @@ pub(super) struct StepsReport {
     /// The laws a project plan proved (`by Module.plan`), with how a report
     /// names that proof, read from the comment its script starts with.
     pub by_plan: BTreeMap<String, String>,
+    /// What each script stands on, read off its text (see
+    /// `aver::ir::proof_steps::trust`).
+    pub trust: BTreeMap<String, aver::ir::proof_steps::trust::Trust>,
 }
 
 impl StepsReport {
@@ -131,6 +134,13 @@ pub(super) fn collect(output_dir: &str, build_log: &str) -> StepsReport {
             ))
         })
         .collect();
+    let trust = with("steps")
+        .into_iter()
+        .filter_map(|(law, p)| {
+            let text = std::fs::read_to_string(p).ok()?;
+            Some((law, aver::ir::proof_steps::trust::of_script(&text).ok()?))
+        })
+        .collect();
     let rejected = build_log
         .lines()
         .filter_map(|line| line.split_once("AVER_STEPS_REJECTED:"))
@@ -143,6 +153,7 @@ pub(super) fn collect(output_dir: &str, build_log: &str) -> StepsReport {
         refused,
         hints,
         by_plan,
+        trust,
     }
 }
 
