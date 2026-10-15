@@ -34,7 +34,9 @@
 //!
 //! A law left open is also proved again with the facts and earlier laws
 //! that match where it stopped added to its `using` line, only for a hint
-//! naming the line it closes with ([`using_hint`]).
+//! naming the line it closes with ([`using_hint`]). When no hint closes it,
+//! the lemmas stated from where the steps stopped that close it are hinted
+//! instead ([`lemma`]).
 //!
 //! A law no producer handles keeps `steps: None` and its tactic portfolio.
 
@@ -48,6 +50,7 @@ mod evaluated;
 mod finite;
 mod hypotheses;
 mod induction;
+mod lemma;
 mod memo;
 mod rewrite;
 mod split;
@@ -613,6 +616,15 @@ fn laws_applied(p: &Proof, out: &mut Vec<String>) {
     each_part(p, &mut |q| laws_applied(q, out));
 }
 
+/// What failed attempts found, for the hints of a law left open: the keys
+/// of the facts and earlier laws whose left side matched where an attempt
+/// stopped, and where evaluation stopped ([`env::Stop`]).
+#[derive(Default)]
+pub(crate) struct Found {
+    pub laws: Vec<String>,
+    pub stops: Vec<env::Stop>,
+}
+
 /// What one obligation's proof needs from its environment.
 struct Part {
     proof: Proof,
@@ -641,7 +653,7 @@ fn prove_part(
     induct_on: Option<(crate::ir::identity::FnId, Option<&str>)>,
     algebraic: bool,
     fuel: usize,
-    hints: &mut Vec<String>,
+    hints: &mut Found,
 ) -> Result<Part, String> {
     // Each attempt starts from a fresh environment: a failed one may have
     // opened definitions and bound hypothesis names. The attempts share
@@ -716,8 +728,13 @@ fn prove_part(
                 Err(why) => {
                     refusals.push(why);
                     for h in env.hints.drain(..) {
-                        if !hints.contains(&h) {
-                            hints.push(h);
+                        if !hints.laws.contains(&h) {
+                            hints.laws.push(h);
+                        }
+                    }
+                    for stop in env.stops.drain(..) {
+                        if hints.stops.len() < env::MAX_STOPS {
+                            hints.stops.push(stop);
                         }
                     }
                     met_halving |= env.met_halving.get();
@@ -912,7 +929,7 @@ fn produce(
     ir: &ProofIR,
     i: usize,
     auto: &[LawRef],
-    hints: &mut Vec<String>,
+    hints: &mut Found,
 ) -> Produced {
     produce_as(inputs, ir, i, &ir.law_theorems[i], auto, env::FUEL, hints)
 }
@@ -926,7 +943,7 @@ fn produce_as(
     t: &LawTheorem,
     auto: &[LawRef],
     fuel: usize,
-    hints: &mut Vec<String>,
+    hints: &mut Found,
 ) -> Produced {
     let refuse = |why: String| Produced {
         law: Err(why),
@@ -1285,7 +1302,7 @@ fn auto_at(
         cuts.iter()
             .map(|c| (c.name.clone(), chain::eqn_true(&c.fact))),
     );
-    let mut hints = Vec::new();
+    let mut hints = Found::default();
     let mut part = prove_part(
         inputs,
         t,
@@ -1360,11 +1377,11 @@ fn because_hint(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize) -> Option<Str
             .all(|l| closed_by_steps(inputs, earlier, &l.key))
     };
     let closes = |fuel: usize| {
-        produce_as(inputs, ir, i, &bare, &[], fuel, &mut Vec::new())
+        produce_as(inputs, ir, i, &bare, &[], fuel, &mut Found::default())
             .law
             .is_ok_and(closed)
             || (!pool.is_empty()
-                && produce_as(inputs, ir, i, &bare, &pool, fuel, &mut Vec::new())
+                && produce_as(inputs, ir, i, &bare, &pool, fuel, &mut Found::default())
                     .law
                     .is_ok_and(closed))
     };
@@ -1456,7 +1473,12 @@ fn using_hint(
             using: Some(line(added)),
             ..t.clone()
         };
-        produce_as(inputs, ir, i, &with, &[], fuel, found).law.ok()
+        let mut more = Found::default();
+        let out = produce_as(inputs, ir, i, &with, &[], fuel, &mut more)
+            .law
+            .ok();
+        found.extend(more.laws);
+        out
     };
     let mut added: Vec<String> = Vec::new();
     for _ in 0..MAX_HINT_ROUNDS {
@@ -1507,8 +1529,9 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
     // stays open.
     let mut named_plans = None;
     for i in 0..ir.law_theorems.len() {
-        // The laws that match where an attempt stopped, by key.
-        let mut hints = Vec::new();
+        // The laws that match where an attempt stopped, by key, and where
+        // the attempts stopped.
+        let mut hints = Found::default();
         // A law that names its plan is proved by that plan alone.
         let mut produced = if ir.law_theorems[i].by_plan.is_some() {
             Produced {
@@ -1530,7 +1553,13 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
         {
             let pool = auto_pool(inputs, ir, i);
             if !pool.is_empty() {
-                let again = produce(inputs, ir, i, &pool, &mut Vec::new());
+                let mut more = Found::default();
+                let again = produce(inputs, ir, i, &pool, &mut more);
+                // Where the pass with the earlier laws stopped comes first:
+                // it got further.
+                more.stops.append(&mut hints.stops);
+                more.stops.truncate(env::MAX_STOPS);
+                hints.stops = more.stops;
                 if let Ok(script) = &again.law {
                     let used: Vec<String> = pool
                         .iter()
@@ -1590,13 +1619,26 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                 from_plans.extend(without);
                 // Then the `using` line the steps close it with.
                 let started = std::time::Instant::now();
-                let line = using_hint(inputs, ir, i, hints);
+                let line = using_hint(inputs, ir, i, hints.laws);
                 if debug {
                     let key = law_key(inputs, &ir.law_theorems[i]);
                     let ms = started.elapsed().as_millis();
                     eprintln!("steps: {key}: using hint in {ms} ms: {line:?}");
                 }
                 from_plans.extend(line);
+                // Last, when nothing above closes it, a lemma stated from
+                // where the steps stopped, which the steps close and with
+                // which they close the law.
+                if from_plans.is_empty() && lemma::enabled(inputs) {
+                    let started = std::time::Instant::now();
+                    let lemma = lemma::hint(inputs, ir, i, &hints.stops);
+                    if debug {
+                        let key = law_key(inputs, &ir.law_theorems[i]);
+                        let ms = started.elapsed().as_millis();
+                        eprintln!("steps: {key}: lemma hint in {ms} ms: {lemma:?}");
+                    }
+                    from_plans.extend(lemma);
+                }
                 let hints = from_plans;
                 ir.law_theorems[i].steps = None;
                 ir.law_theorems[i].steps_refusal = Some(why);

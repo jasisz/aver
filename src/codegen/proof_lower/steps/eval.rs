@@ -4185,6 +4185,13 @@ impl Env<'_> {
     pub(crate) fn stopped_at(&mut self, lhs: &Term, rhs: &Term) -> String {
         use crate::ir::proof_steps::show;
         self.note_fact_hints(&[lhs, rhs]);
+        if self.stops.len() < super::env::MAX_STOPS {
+            self.stops.push(super::env::Stop {
+                lhs: lhs.clone(),
+                rhs: rhs.clone(),
+                hyps: self.hyps.iter().map(|(_, e)| e.clone()).collect(),
+            });
+        }
         let names = self.inputs.symbol_table;
         let mut s = format!(
             "evaluation stops at `{}` and `{}`",

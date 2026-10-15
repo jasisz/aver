@@ -57,6 +57,10 @@ pub(crate) struct Env<'a> {
     /// matches a part of a term evaluation stopped at: what a hinted
     /// `using` line may add (see `super::using_hint`).
     pub hints: Vec<String>,
+    /// Where evaluation stopped: both sides and the hypotheses in scope,
+    /// [`MAX_STOPS`] at most, for the hint naming a missing lemma
+    /// (`super::lemma`).
+    pub stops: Vec<Stop>,
     /// Advice for a law the steps closed: the `induction` line that would
     /// have spared trying the others.
     pub advice: Vec<String>,
@@ -136,6 +140,18 @@ pub(crate) struct Env<'a> {
     pub reading: usize,
 }
 
+/// Where evaluation stopped: the two sides it could not bring together,
+/// and the hypotheses in scope there.
+#[derive(Clone)]
+pub(crate) struct Stop {
+    pub lhs: Term,
+    pub rhs: Term,
+    pub hyps: Vec<Eqn>,
+}
+
+/// Most stops one attempt keeps.
+pub(crate) const MAX_STOPS: usize = 16;
+
 /// The evaluation steps one attempt on an obligation may take.
 pub(crate) const FUEL: usize = 4000;
 
@@ -162,6 +178,7 @@ impl<'a> Env<'a> {
             next_ih: 0,
             nesting: 0,
             hints: Vec::new(),
+            stops: Vec::new(),
             advice: Vec::new(),
             inducting: Vec::new(),
             open_premises: Vec::new(),

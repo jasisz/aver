@@ -376,11 +376,11 @@ pub(super) fn hint(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize) -> Option<
         probe.law_theorems.truncate(i);
         probe.law_theorems.push(general);
         let mut pinned: Vec<String> = Vec::new();
-        let mut closed = super::produce(inputs, &probe, i, &[], &mut Vec::new()).law;
+        let mut closed = super::produce(inputs, &probe, i, &[], &mut super::Found::default()).law;
         if closed.is_err() {
             let pool = super::auto_pool(inputs, &probe, i);
             if !pool.is_empty() {
-                closed = super::produce(inputs, &probe, i, &pool, &mut Vec::new()).law;
+                closed = super::produce(inputs, &probe, i, &pool, &mut super::Found::default()).law;
                 if let Ok(script) = &closed {
                     pinned = pool
                         .iter()
@@ -401,7 +401,7 @@ pub(super) fn hint(inputs: &ProofLowerInputs, ir: &ProofIR, i: usize) -> Option<
             using: Some(using.clone()),
             ..t.clone()
         });
-        if super::produce(inputs, &probe, i + 1, &[], &mut Vec::new())
+        if super::produce(inputs, &probe, i + 1, &[], &mut super::Found::default())
             .law
             .is_err()
         {
