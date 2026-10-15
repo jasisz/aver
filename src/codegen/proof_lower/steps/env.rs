@@ -9,6 +9,10 @@ use crate::ir::identity::FnId;
 use crate::ir::proof_steps::term::{Term, canon};
 use crate::ir::proof_steps::{Const, Def, Eqn, LawRef, Proof};
 
+/// A divisor, the hypotheses in scope when it was read, and its proof of
+/// `k > 0` if there is one ([`Env::divisor_positive`]).
+pub(crate) type DivisorProof = (Term, Vec<(String, Eqn)>, Option<Proof>);
+
 pub(crate) struct Env<'a> {
     pub inputs: &'a ProofLowerInputs<'a>,
     defs: HashMap<FnId, Option<Def>>,
@@ -123,7 +127,7 @@ pub(crate) struct Env<'a> {
     pub naming_divisor: bool,
     /// What [`Env::divisor_positive`] found, by divisor and the hypotheses
     /// in scope then.
-    pub divisors: Vec<(Term, Vec<(String, Eqn)>, Option<Proof>)>,
+    pub divisors: Vec<DivisorProof>,
     /// The comparisons (the opposite of the goal first) whose products
     /// settled nothing ([`super::nonlinear`]), so they are not multiplied
     /// out again.
