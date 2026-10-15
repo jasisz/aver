@@ -2007,10 +2007,12 @@ fn both_kernels_open_a_division_down_to_zero_and_refuse_mutations() {
         assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
     }
     let step = read("digits.positiveStep");
-    let one = read("digits.oneDigit");
+    // A digit read back is pinned by the division step itself; two read
+    // back bound their quotient by `int.div_range`.
+    let two = read("digits.twoDigitsReadBack");
     let appends = read("digits.accumulatorAppends");
     assert!(step.contains("(unfold digits 1 "), "{step}");
-    assert!(one.contains("(rule int.div_range "), "{one}");
+    assert!(two.contains("(rule int.div_range "), "{two}");
     assert!(
         appends.contains("(proof (induct digits ((v value) (v acc)) "),
         "{appends}"
@@ -2040,13 +2042,13 @@ fn both_kernels_open_a_division_down_to_zero_and_refuse_mutations() {
         (&step, step.replace("(i 256)", "(i 1)")),
         // A quotient bound read from a range the dividend is not shown in.
         (
-            &one,
-            one.replacen("(m (i 256)) (n (i 1))", "(m (i 512)) (n (i 2))", 1),
+            &two,
+            two.replacen("(m (i 256)) (n (i 1))", "(m (i 512)) (n (i 2))", 1),
         ),
         // A bound that is not the range divided by the divisor.
         (
-            &one,
-            one.replacen("(m (i 256)) (n (i 1))", "(m (i 256)) (n (i 2))", 1),
+            &two,
+            two.replacen("(m (i 256)) (n (i 1))", "(m (i 256)) (n (i 2))", 1),
         ),
     ];
     for (i, (source, mutant)) in mutants.iter().enumerate() {
@@ -2242,6 +2244,99 @@ fn lean_closes_remainders_and_masks_by_their_steps() {
     let lean = fs::read_to_string(out.join("Remainders.lean")).unwrap();
     for lemma in ["bits_and_low", "bits_and_bit", "bits_not", "bits_shl"] {
         assert!(lean.contains(&format!("AverSteps.{lemma}")), "{lemma}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+const DIVISION_LAWS: [&str; 5] = [
+    "carried.belowTheBase",
+    "digits.oneDigitMore",
+    "phase.repeatsBackwards",
+    "phase.repeatsEveryWindow",
+    "split.readsTheDigits",
+];
+
+/// Euclidean division by a literal inside a larger term takes a step where
+/// linear arithmetic over the integers pins it: a remainder repeats with
+/// its period (`(h + 2016) % 2016` is `h % 2016`), and digits written in
+/// base 256 read back. Both kernels accept the steps and refuse them with
+/// a cut by a number that does not divide the row, or without their cuts.
+/// Laws that hold on their samples only (a period one short, a digit that
+/// may be 256 or below zero) do not close.
+#[test]
+fn both_kernels_pin_a_division_inside_a_term_and_refuse_mutations() {
+    let out = scratch("divisions");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("divisions.av", &out).into_iter().collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), DIVISION_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let window = read("phase.repeatsEveryWindow");
+    let period = "(rule int.eq.of_beq ((a (bi __int_mod_euclid (op + (v height) (i 2016)) (i 2016))) (b (bi __int_mod_euclid (v height) (i 2016))))";
+    assert!(window.contains(period), "{window}");
+    assert!(window.contains("(cut 2016 "), "{window}");
+    let without_cuts = {
+        let mut text = window.clone();
+        while let Some(at) = text.find(" (cut ") {
+            let close = text[at..].find("))").unwrap() + at + 2;
+            text.replace_range(at..close, "");
+        }
+        text
+    };
+    let mutants = [
+        window.replacen("(cut 2016 ", "(cut 2015 ", 1),
+        without_cuts,
+        // The period one short: the remainders differ.
+        window.replace(
+            "(bi __int_mod_euclid (op + (v height) (i 2016)) (i 2016))",
+            "(bi __int_mod_euclid (op + (v height) (i 2015)) (i 2016))",
+        ),
+    ];
+    for (i, mutant) in mutants.iter().enumerate() {
+        assert_ne!(*mutant, window, "mutant {i} changed nothing");
+        let verdict = aver::proof_kernel::verdict(mutant);
+        assert!(verdict.is_err(), "mutant {i}: {verdict:?}\n{mutant}");
+        let path = out.join(format!("mutant{i}.steps"));
+        fs::write(&path, mutant).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(!result.status.success(), "{}", format_output(&result));
+    }
+    let refused = scratch("divisions-refused");
+    assert!(export_steps("divisions_refused.av", &refused).is_empty());
+    let _ = fs::remove_dir_all(out);
+    let _ = fs::remove_dir_all(refused);
+}
+
+#[test]
+fn lean_closes_divisions_inside_a_term_by_their_steps() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("divisions-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "divisions.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in DIVISION_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
     }
     let _ = fs::remove_dir_all(out);
 }
