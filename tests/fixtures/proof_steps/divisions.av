@@ -1,0 +1,58 @@
+module Divisions
+    intent =
+        "Steps on Euclidean division by a literal inside a larger term: a quotient and a remainder"
+        "of an Int that is linear in its atoms are written out where linear arithmetic over the"
+        "integers pins them, so a value written as base-256 digits reads back digit by digit and"
+        "a remainder repeats with its period."
+    exposes [Phase, phase, split, digits, carried]
+    effects []
+
+type Phase
+    Boundary
+    Inside
+
+fn phase(height: Int) -> Phase
+    ? "Whether a height starts a window of 2016."
+    match Int.mod(height, 2016) == 0
+        true -> Phase.Boundary
+        false -> Phase.Inside
+
+verify phase law repeatsEveryWindow
+    given height: Int = [0, 1, 2015, 2016, 4033]
+    phase(height + 2016) => phase(height)
+
+verify phase law repeatsBackwards
+    given height: Int = [0, 1, 2015, 2016, 4033]
+    phase(height - 4032) => phase(height)
+
+fn split(x: Int) -> List<Int>
+    ? "The low base-256 digit of x, then what is above it."
+    [Int.mod(x, 256), Int.div(x, 256)]
+
+verify split law readsTheDigits
+    given above: Int = [-3, 0, 7]
+    given digit: Int = [0, 1, 255]
+    when Bool.and(digit >= 0, digit < 256)
+    split(above * 256 + digit) => [digit, above]
+
+fn digits(value: Int, count: Int) -> List<Int>
+    ? "The count lowest base-256 digits of value, the lowest first."
+    match count <= 0
+        true -> []
+        false -> List.prepend(Int.mod(value, 256), digits(Int.div(value, 256), count - 1))
+
+verify digits law oneDigitMore
+    given above: Int = [0, 5, 70000]
+    given digit: Int = [0, 1, 255]
+    given count: Int = [0, 1, 3]
+    when Bool.and(Bool.and(digit >= 0, digit < 256), count >= 0)
+    digits(digit + 256 * above, count + 1) => List.prepend(digit, digits(above, count))
+
+fn carried(x: Int) -> Int
+    ? "The remainder of x - 1 by 256."
+    Int.mod(x - 1, 256)
+
+verify carried law belowTheBase
+    given x: Int = [1, 2, 256]
+    when Bool.and(x >= 1, x <= 256)
+    [carried(x)] => [x - 1]

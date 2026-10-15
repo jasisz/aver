@@ -1,0 +1,37 @@
+module DivisionsRefused
+    intent =
+        "Laws about Euclidean division by a literal inside a larger term that hold on their samples"
+        "but not for every Int: none may close by steps. A digit may be 256, a window is 2016 long,"
+        "not 2015, and a remainder of a negative number is not the number."
+    exposes [Phase, phase, split]
+    effects []
+
+type Phase
+    Boundary
+    Inside
+
+fn phase(height: Int) -> Phase
+    ? "Whether a height starts a window of 2016."
+    match Int.mod(height, 2016) == 0
+        true -> Phase.Boundary
+        false -> Phase.Inside
+
+verify phase law repeatsEveryShorterWindow
+    given height: Int = [2, 3]
+    phase(height + 2015) => phase(height)
+
+fn split(x: Int) -> List<Int>
+    ? "The low base-256 digit of x, then what is above it."
+    [Int.mod(x, 256), Int.div(x, 256)]
+
+verify split law readsADigitUpToTheBase
+    given above: Int = [0, 7]
+    given digit: Int = [0, 255]
+    when Bool.and(digit >= 0, digit <= 256)
+    split(above * 256 + digit) => [digit, above]
+
+verify split law readsANegativeDigit
+    given above: Int = [0, 7]
+    given digit: Int = [0, 255]
+    when digit < 256
+    split(above * 256 + digit) => [digit, above]

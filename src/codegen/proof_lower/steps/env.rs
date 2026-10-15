@@ -17,6 +17,11 @@ pub(crate) struct Env<'a> {
     /// Whether a definition counts an Int toward zero, and whether it
     /// divides it on the way, by [`Env::counts_down`].
     countdowns: std::cell::RefCell<HashMap<FnId, (bool, bool)>>,
+    /// The division by a literal that a step takes out the multiples of
+    /// the divisor from, with its proof, which reads no hypothesis, by the
+    /// division (see `Env::division_step`).
+    pub(crate) wholes:
+        std::cell::RefCell<HashMap<String, Option<(crate::ir::proof_steps::Proof, Term)>>>,
     /// Definitions opened so far, in first-use order.
     pub used: Vec<FnId>,
     consts: HashMap<String, Option<Const>>,
@@ -162,6 +167,7 @@ impl<'a> Env<'a> {
             defs: HashMap::new(),
             raw_defs: std::cell::RefCell::new(HashMap::new()),
             countdowns: std::cell::RefCell::new(HashMap::new()),
+            wholes: std::cell::RefCell::new(HashMap::new()),
             used: Vec::new(),
             consts: HashMap::new(),
             used_consts: Vec::new(),

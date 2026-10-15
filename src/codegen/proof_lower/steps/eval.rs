@@ -306,6 +306,39 @@ fn division_facts(ts: &[&Term]) -> (Vec<(Term, Proof)>, Vec<Term>) {
     (out, divs)
 }
 
+/// The Int term a polynomial over `atoms` reads as: its monomials in
+/// order, each an atom product times its coefficient's magnitude, added
+/// or taken away by its sign, then the constant; `0` for none.
+fn poly_term(p: &crate::ir::proof_steps::ring::Poly, atoms: &[Term]) -> Term {
+    use num_traits::{One, Signed};
+    let monomials = p.iter().filter(|(m, _)| !m.is_empty());
+    let constant = p.iter().filter(|(m, _)| m.is_empty());
+    let mut out: Option<Term> = None;
+    for (m, c) in monomials.chain(constant) {
+        let magnitude = c.abs();
+        let part = match m
+            .iter()
+            .map(|&i| atoms[i].clone())
+            .reduce(|a, b| term::binop(BinOp::Mul, a, b))
+        {
+            None => term::int(&magnitude),
+            Some(product) if magnitude.is_one() => product,
+            Some(product) => term::binop(BinOp::Mul, product, term::int(&magnitude)),
+        };
+        let op = if c.is_negative() {
+            BinOp::Sub
+        } else {
+            BinOp::Add
+        };
+        out = Some(match out {
+            None if c.is_negative() => term::binop(BinOp::Sub, term::int(&0.into()), part),
+            None => part,
+            Some(acc) => term::binop(op, acc, part),
+        });
+    }
+    out.unwrap_or_else(|| term::int(&0.into()))
+}
+
 /// The facts (the opposite of the goal first) a certificate over the
 /// rationals uses, by index from 1, with its weights: the opposite's,
 /// then theirs.
@@ -1781,10 +1814,270 @@ impl Env<'_> {
         if let Some(step) = self.default_step(cur) {
             return Ok(step);
         }
+        if let Some(step) = self.division_step(cur)? {
+            return Ok(step);
+        }
         if let Some(step) = self.pick_step(cur, &blocked)? {
             return Ok(step);
         }
         self.settle(cur, blocked)
+    }
+
+    /// Euclidean division of an open Int term `t` by a literal `k > 0`
+    /// takes one step where linear arithmetic over ℤ pins its value. Read
+    /// `t` as `k * q + r`, each coefficient of `r` the remainder of its own
+    /// by `k` rounded toward zero, so smaller than `k` and of its sign.
+    /// Where the facts in scope put `r`, or `r` moved by one `k` towards
+    /// that range, in `0 <= r < k`, `t % k` is that remainder and `t / k`
+    /// is `q` (moved by one the other way); elsewhere, where `q` is not
+    /// zero, `t % k` is `r % k` and `t / k` is `q + r / k`
+    /// (`(h + 2016) % 2016` is `h % 2016`). Each step is the Int equality
+    /// decided by its two orders and `int.eq.of_beq`, which the
+    /// remainders' recomposition and range settle over ℤ, as `omega`
+    /// would. What a hypothesis or a cited law states about the call comes
+    /// first.
+    fn division_step(&mut self, cur: &Term) -> Result<Option<Step>, String> {
+        use crate::ir::hir::BuiltinIntrinsic;
+        use crate::ir::proof_steps::ring::{Poly, poly};
+        use num_bigint::BigInt;
+        use num_traits::{Signed, Zero};
+        let ResolvedExpr::Call(ResolvedCallee::Intrinsic(op), args) = &cur.node else {
+            return Ok(None);
+        };
+        let modulo = match op {
+            BuiltinIntrinsic::IntModEuclid => true,
+            BuiltinIntrinsic::IntDivEuclid => false,
+            _ => return Ok(None),
+        };
+        let [t, k_term] = args.as_slice() else {
+            return Ok(None);
+        };
+        let Some(k) = term::int_value(k_term).filter(|k| k.is_positive()) else {
+            return Ok(None);
+        };
+        if term::int_value(t).is_some() {
+            return Ok(None);
+        }
+        let mut atoms = Vec::new();
+        let p = poly(t, &mut atoms);
+        let (mut q, mut r) = (Poly::new(), Poly::new());
+        for (m, c) in &p {
+            // Rounded toward zero: `c - quot * k` keeps the sign of `c`.
+            let quot = c / &k;
+            let rem = c - &quot * &k;
+            if !quot.is_zero() {
+                q.insert(m.clone(), quot);
+            }
+            if !rem.is_zero() {
+                r.insert(m.clone(), rem);
+            }
+        }
+        let zero = || term::int(&BigInt::from(0));
+        let k_lit = term::int(&k);
+        // Whether the decided comparisons in scope put `r` in `0..k`. Only
+        // where each atom of `r` is in one of them: an atom no comparison
+        // bounds cannot be eliminated, and this is tried at every division
+        // evaluation stops at.
+        let mut bounded = Vec::new();
+        for (_, e) in &self.hyps {
+            if let Some(v) = term::bool_value(&e.rhs) {
+                crate::ir::proof_steps::linear::as_nonneg(&e.lhs, v, &mut bounded);
+            }
+        }
+        let in_range = |env: &Self, rem: &Poly| {
+            let all_bounded = rem.keys().flatten().all(|&i| bounded.contains(&atoms[i]));
+            if !all_bounded {
+                return false;
+            }
+            let r = canon(&poly_term(rem, &atoms));
+            let low = canon(&term::binop(BinOp::Lte, zero(), r.clone()));
+            let high = canon(&term::binop(BinOp::Lt, r, k_lit.clone()));
+            env.plain_linear(&low, true).is_some() && env.plain_linear(&high, true).is_some()
+        };
+        // The remainder as read, then, where it has a part that is not a
+        // constant, one `k` towards `0..k`: down from a positive constant
+        // (`(x + 255) % 256` for `1 - 256 <= x < 1`), up from a negative
+        // one or a negative coefficient (`(x - 1) % 256` for
+        // `1 <= x <= 256`). The quotient moves the other way.
+        let mut candidates = vec![(r.clone(), BigInt::zero())];
+        if r.keys().any(|m| !m.is_empty()) {
+            let constant = r.get(&Vec::new()).cloned().unwrap_or_default();
+            let carry = if constant.is_positive() {
+                BigInt::from(1)
+            } else if constant.is_negative() || r.values().any(|c| c.is_negative()) {
+                BigInt::from(-1)
+            } else {
+                BigInt::zero()
+            };
+            if !carry.is_zero() {
+                let mut moved = r.clone();
+                *moved.entry(Vec::new()).or_default() -= &carry * &k;
+                moved.retain(|_, c| !c.is_zero());
+                candidates.push((moved, carry));
+            }
+        }
+        for (rem, carry) in candidates {
+            if in_range(self, &rem) {
+                let rem_term = canon(&poly_term(&rem, &atoms));
+                let mut quot = q.clone();
+                *quot.entry(Vec::new()).or_default() += &carry;
+                quot.retain(|_, c| !c.is_zero());
+                let to = if modulo {
+                    rem_term
+                } else {
+                    canon(&poly_term(&quot, &atoms))
+                };
+                if to == canon(cur) {
+                    break;
+                }
+                if let Some(step) = self.known(cur)? {
+                    return Ok(Some(step));
+                }
+                if let Some(step) = self.division_equal(cur, &to, true) {
+                    return Ok(Some(step));
+                }
+                break;
+            }
+        }
+        // Elsewhere, the parts of `t` that are multiples of `k` come out
+        // whole, the rest stays as it is: `(a * 256 + h) % 256` is
+        // `h % 256`, `(a * 256 + h) / 256` is `a + h / 256`. That reads no
+        // hypothesis, so it is found once for each division.
+        let (whole, rest): (Poly, Poly) = p
+            .iter()
+            .map(|(m, c)| (m.clone(), c.clone()))
+            .partition(|(_, c)| (c % &k).is_zero());
+        if whole.is_empty() {
+            return Ok(None);
+        }
+        // Only towards a division a hypothesis in scope already names: the
+        // step is taken where it lets a hypothesis decide, not wherever a
+        // multiple can come out (unpacking a value that is not read
+        // further costs every step after it).
+        let inner = canon(&term::intrinsic(
+            *op,
+            vec![canon(&poly_term(&rest, &atoms)), k_lit.clone()],
+        ));
+        if !self
+            .hyps
+            .iter()
+            .any(|(_, e)| holds(&e.lhs, &inner) || holds(&e.rhs, &inner))
+        {
+            return Ok(None);
+        }
+        if let Some(step) = self.known(cur)? {
+            return Ok(Some(step));
+        }
+        let key = format!("{:?}", canon(cur));
+        let remembered = self.wholes.borrow().get(&key).cloned();
+        let found = match remembered {
+            Some(found) => found,
+            None => {
+                let whole: Poly = whole.into_iter().map(|(m, c)| (m, c / &k)).collect();
+                let to = if modulo {
+                    inner
+                } else {
+                    canon(&term::binop(BinOp::Add, poly_term(&whole, &atoms), inner))
+                };
+                let found = self.division_equal(cur, &to, false).map(|step| match step {
+                    Step::Progress(b) => *b,
+                    _ => unreachable!("a division step makes progress"),
+                });
+                self.wholes.borrow_mut().insert(key, found.clone());
+                found
+            }
+        };
+        Ok(found.map(|b| Step::Progress(Box::new(b))))
+    }
+
+    /// The step `cur = to` for a division `cur` by its two orders, each
+    /// over ℤ by [`Self::division_linear`], with the decided comparisons
+    /// in scope where `with_hyps`.
+    fn division_equal(&mut self, cur: &Term, to: &Term, with_hyps: bool) -> Option<Step> {
+        let subst = vec![("a".to_string(), canon(cur)), ("b".to_string(), to.clone())];
+        let (orders, _) = WallRule::EqOfLeGe
+            .instantiate(&subst)
+            .expect("rule binders");
+        let premises = orders
+            .iter()
+            .map(|e| self.division_linear(&e.lhs, term::bool_value(&e.rhs)?, with_hyps))
+            .collect::<Option<Vec<_>>>()?;
+        Some(Step::Progress(Box::new((
+            Proof::Rule {
+                rule: WallRule::EqOfBeq,
+                subst: subst.clone(),
+                premises: vec![Proof::Rule {
+                    rule: WallRule::EqOfLeGe,
+                    subst,
+                    premises,
+                }],
+            },
+            to.clone(),
+        ))))
+    }
+
+    /// `goal = value` for an Int comparison `goal` about divisions by
+    /// literals, from what those divisions give linear arithmetic
+    /// (`int.div_mod_recompose`, `int.mod_range`) and, where `with_hyps`,
+    /// the decided comparisons in scope, over ℤ: the facts a step of
+    /// [`Self::division_step`] needs, without the wider reading of
+    /// [`Self::linear_proof`]. The division facts the certificate uses are
+    /// cut in just above it.
+    fn division_linear(&mut self, goal: &Term, value: bool, with_hyps: bool) -> Option<Proof> {
+        use crate::ir::proof_steps::linear;
+        let mut atoms = Vec::new();
+        let mut facts = vec![linear::as_nonneg(goal, !value, &mut atoms)?];
+        let mut names = Vec::new();
+        let in_scope = if with_hyps { &self.hyps[..] } else { &[] };
+        for (n, e) in in_scope {
+            let Some(v) = term::bool_value(&e.rhs) else {
+                continue;
+            };
+            if let Some(p) = linear::as_nonneg(&e.lhs, v, &mut atoms) {
+                facts.push(p);
+                names.push(n.clone());
+            }
+        }
+        let plain = names.len();
+        let (divisions, _) = division_facts(&[goal]);
+        for (f, _) in &divisions {
+            facts.push(linear::as_nonneg(f, true, &mut atoms)?);
+        }
+        let (used, weights, rounded) = settle_over_integers(&facts)?;
+        // The cuts are named apart from every name in scope but not from
+        // the count of fresh names, so an evaluation that takes this step
+        // is still remembered ([`super::memo`]): the names are local to
+        // the step.
+        let taken = |n: &String| self.givens.contains(n) || self.hyps.iter().any(|(h, _)| h == n);
+        let mut local = (0..).map(|i| format!("h_div{i}")).filter(|n| !taken(n));
+        let mut hyps = Vec::new();
+        let mut cuts = Vec::new();
+        for k in used.into_iter().map(|i| i - 1) {
+            if k < plain {
+                hyps.push(names[k].clone());
+            } else {
+                let (fact, proof) = divisions[k - plain].clone();
+                let name = local.next().expect("names without end");
+                hyps.push(name.clone());
+                cuts.push((name, fact, proof));
+            }
+        }
+        let mut proof = Proof::Linear {
+            goal: canon(goal),
+            value,
+            hyps,
+            weights,
+            cuts: rounded,
+        };
+        for (name, fact, from) in cuts.into_iter().rev() {
+            proof = Proof::Have {
+                name,
+                fact,
+                proof: Box::new(from),
+                body: Box::new(proof),
+            };
+        }
+        Some(proof)
     }
 
     /// `Int.min`, `Int.max` or `Int.abs` takes one step by the rule its
