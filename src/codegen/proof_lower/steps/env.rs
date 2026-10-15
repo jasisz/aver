@@ -7,7 +7,11 @@ use crate::ast::Stmt;
 use crate::codegen::proof_lower::ProofLowerInputs;
 use crate::ir::identity::FnId;
 use crate::ir::proof_steps::term::{Term, canon};
-use crate::ir::proof_steps::{Const, Def, Eqn, LawRef};
+use crate::ir::proof_steps::{Const, Def, Eqn, LawRef, Proof};
+
+/// A divisor, the hypotheses in scope when it was read, and its proof of
+/// `k > 0` if there is one ([`Env::divisor_positive`]).
+pub(crate) type DivisorProof = (Term, Vec<(String, Eqn)>, Option<Proof>);
 
 pub(crate) struct Env<'a> {
     pub inputs: &'a ProofLowerInputs<'a>,
@@ -117,6 +121,17 @@ pub(crate) struct Env<'a> {
     /// Whether a premise is being proved by evaluation
     /// ([`Env::discharge`]), so the laws met inside are not proved so again.
     pub discharging: bool,
+    /// Whether a divisor that is not a literal is being shown positive for
+    /// linear arithmetic ([`Env::linear_proof`]), so a division inside it
+    /// is not read again.
+    pub naming_divisor: bool,
+    /// What [`Env::divisor_positive`] found, by divisor and the hypotheses
+    /// in scope then.
+    pub divisors: Vec<DivisorProof>,
+    /// The comparisons (the opposite of the goal first) whose products
+    /// settled nothing ([`super::nonlinear`]), so they are not multiplied
+    /// out again.
+    pub unsettled_products: Vec<Vec<Eqn>>,
     /// Whether linear arithmetic also reads the comparisons inside a true
     /// conjunction and that lengths are not negative where the facts in
     /// scope do not settle a comparison: only while a case is read for a
@@ -203,6 +218,9 @@ impl<'a> Env<'a> {
             refute_fuel: super::hypotheses::REFUTE_FUEL,
             refuted: Vec::new(),
             open_whens: Vec::new(),
+            naming_divisor: false,
+            divisors: Vec::new(),
+            unsettled_products: Vec::new(),
             discharging: false,
             wide_linear: false,
             read_fuel: super::evaluated::budget(super::evaluated::READ_FUEL),

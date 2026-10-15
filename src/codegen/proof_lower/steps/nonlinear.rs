@@ -2,9 +2,12 @@
 //! them: where the comparisons in scope do not settle a goal about a
 //! product of two Int terms, each pair of them, read as `p >= 0` and
 //! `q >= 0`, gives `0 <= p * q` (`int.mul_nonneg`), and linear arithmetic
-//! reads that product multiplied out with the rest. Only a goal with a
-//! monomial of degree two or more is read so, only a product that shares
-//! one of those monomials is kept, and only a few comparisons are paired.
+//! reads that product multiplied out with the rest. The opposite of the
+//! goal is a factor too, in the case of a split on the goal where it
+//! holds. Only a goal with a monomial of degree two or more, or one about a
+//! quotient or a remainder by a divisor that is not a literal, is read so
+//! (see [`wanted`]); only a product that shares such a monomial is kept,
+//! and only a few comparisons are paired.
 //!
 //! Each factor's own `0 <= p` is a one-line linear step from its
 //! comparison, and the product is one rule instance; the kernels check
@@ -26,6 +29,10 @@ const MAX_FACTORS: usize = 6;
 /// The name a factor's own fact has inside the step that reads it.
 const FACTOR: &str = "h_factor";
 
+/// The hypothesis that the goal does not hold, in the case of a split on
+/// the goal where a product reads it as a factor.
+pub(super) const OPPOSITE: &str = "h_opposite";
+
 /// Where a comparison comes from: a hypothesis in scope by name, or a fact
 /// with its proof (`fact = true`).
 #[derive(Clone)]
@@ -34,9 +41,42 @@ pub(super) enum Source {
     Fact(Box<Proof>),
 }
 
-/// Whether one of the rows multiplies two atoms.
-pub(super) fn has_product(rows: &[Poly]) -> bool {
-    rows.iter().any(|p| p.keys().any(|m| m.len() >= 2))
+/// The monomials of degree two or more a product must share to be kept:
+/// the goal's (`rows[0]`), or, for a goal that reads a quotient or a
+/// remainder by a divisor that is not a literal, those of the other rows
+/// about an atom of the goal (`q * d` beside `q`). None for any other goal,
+/// which products are not tried for.
+pub(super) fn wanted(rows: &[Poly], atoms: &[Term]) -> Vec<Vec<usize>> {
+    use crate::ir::hir::{BuiltinIntrinsic, ResolvedCallee};
+    let Some(goal) = rows.first() else {
+        return Vec::new();
+    };
+    let own: Vec<Vec<usize>> = goal.keys().filter(|m| m.len() >= 2).cloned().collect();
+    if !own.is_empty() {
+        return own;
+    }
+    let named_division = |t: &Term| {
+        matches!(
+            &t.node,
+            ResolvedExpr::Call(
+                ResolvedCallee::Intrinsic(BuiltinIntrinsic::IntDivEuclid | BuiltinIntrinsic::IntModEuclid),
+                args,
+            ) if args.len() == 2 && term::int_value(&args[1]).is_none()
+        )
+    };
+    let read: Vec<usize> = goal.keys().flatten().copied().collect();
+    if !read.iter().any(|&i| named_division(&atoms[i])) {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for row in &rows[1..] {
+        for m in row.keys() {
+            if m.len() >= 2 && m.iter().any(|i| read.contains(i)) && !out.contains(m) {
+                out.push(m.clone());
+            }
+        }
+    }
+    out
 }
 
 /// The comparison `t = value` as `0 <= p`, `p` the term whose polynomial
@@ -105,15 +145,14 @@ fn factor_proof(e: &Eqn, p: &Term, source: &Source) -> Option<Proof> {
 }
 
 /// The products of pairs of `comparisons` (each `fact = value` with where
-/// it comes from) that share a monomial of degree two or more with the
-/// row `goal`, each as `0 <= p * q` with its proof. `atoms` is the list
-/// the rows are read over.
+/// it comes from) that share one of the `wanted` monomials, each as
+/// `0 <= p * q` with its proof. `atoms` is the list the rows are read
+/// over.
 pub(super) fn products(
-    goal: &Poly,
+    wanted: &[Vec<usize>],
     atoms: &[Term],
     comparisons: &[(Eqn, Source)],
 ) -> Vec<(Term, Proof)> {
-    let wanted: Vec<&Vec<usize>> = goal.keys().filter(|m| m.len() >= 2).collect();
     let factors: Vec<(Term, Proof)> = comparisons
         .iter()
         .filter_map(|(e, source)| {
@@ -140,8 +179,7 @@ pub(super) fn products(
             let Some(row) = linear::as_nonneg(&concl.lhs, true, &mut seen) else {
                 continue;
             };
-            if !row.keys().any(|m| wanted.contains(&m)) || out.iter().any(|(f, _)| *f == concl.lhs)
-            {
+            if !row.keys().any(|m| wanted.contains(m)) || out.iter().any(|(f, _)| *f == concl.lhs) {
                 continue;
             }
             out.push((
@@ -155,4 +193,19 @@ pub(super) fn products(
         }
     }
     out
+}
+
+impl super::env::Env<'_> {
+    /// What the products for `goal = value` are read from: the opposite of
+    /// the goal and the comparisons `known`, as equations.
+    pub(super) fn product_key(
+        &self,
+        goal: &Term,
+        value: bool,
+        known: &[(String, Eqn)],
+    ) -> Vec<Eqn> {
+        let mut key = vec![Eqn::new(canon(goal), term::boolean(!value))];
+        key.extend(known.iter().map(|(_, e)| e.clone()));
+        key
+    }
 }

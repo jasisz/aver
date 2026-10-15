@@ -90,6 +90,14 @@ theorem eq_of_beq {α : Type} [BEq α] [LawfulBEq α] (a b : α) (h : (a == b) =
 theorem beq_refl {α : Type} [BEq α] [ReflBEq α] (a : α) : (a == a) = true := beq_self_eq_true a
 theorem beq_symm {α : Type} [BEq α] [LawfulBEq α] (a b : α) : (a == b) = (b == a) :=
   Bool.eq_iff_iff.mpr (by rw [beq_iff_eq, beq_iff_eq]; exact eq_comm)
+theorem int_div_ok (a k : Int) (h : (k == 0) = false) :
+    (if k == 0 then Except.error "division by zero" else Except.ok (a / k) : Except String Int) =
+      Except.ok (a / k) := by
+  simp [h]
+theorem int_mod_ok (a k : Int) (h : (k == 0) = false) :
+    (if k == 0 then Except.error "division by zero" else Except.ok (a % k) : Except String Int) =
+      Except.ok (a % k) := by
+  simp [h]
 theorem mod_range (a k : Int) (h : decide (k > 0) = true) :
     (decide (0 <= a % k) && decide (a % k < k)) = true := by
   simp only [Bool.and_eq_true, decide_eq_true_eq] at h ⊢
@@ -402,6 +410,8 @@ fn lemma(rule: WallRule) -> &'static str {
         WallRule::MulOne => "AverSteps.mul_one",
         WallRule::OneMul => "AverSteps.one_mul",
         WallRule::SubZero => "AverSteps.sub_zero",
+        WallRule::DivOk => "AverSteps.int_div_ok",
+        WallRule::ModOk => "AverSteps.int_mod_ok",
         WallRule::DivModRecompose => "AverSteps.div_mod_recompose",
         WallRule::DivRange => "AverSteps.div_range",
         WallRule::ModRange => "AverSteps.mod_range",

@@ -44,6 +44,7 @@ mod accumulator;
 mod by_plan;
 mod chain;
 mod decls;
+mod divisor;
 mod env;
 mod eval;
 mod evaluated;
@@ -596,7 +597,7 @@ fn split_calls(p: &Proof, out: &mut Vec<crate::ir::identity::FnId>) {
 
 /// Whether `p` may read hypothesis `name` (an over-approximation: a
 /// hypothesis of the same name bound inside counts too).
-fn uses_hyp(p: &Proof, name: &str) -> bool {
+pub(super) fn uses_hyp(p: &Proof, name: &str) -> bool {
     let mut found = match p {
         Proof::Hyp(n) => n == name,
         Proof::Linear { hyps, .. } => hyps.iter().any(|n| n == name),
