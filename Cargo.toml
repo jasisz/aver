@@ -139,6 +139,12 @@ wit-component = { version = "0.248", optional = true }
 wit-encoder = { version = "0.248", optional = true }
 wit-parser = { version = "0.248", optional = true }
 
+# The allocator of the `aver` binary (`src/main.rs`): the compiler builds and
+# drops terms by the million, and the system allocator of macOS spends a
+# fifth of `aver proof` there.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+mimalloc = { version = "0.1", default-features = false }
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 insta = "1"
