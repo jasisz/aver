@@ -234,6 +234,15 @@ const LEAN_RESERVED: &[&str] = &[
     "with_annotate_term",
     "with_weak_namespace",
     "without_expected_type",
+    // Contract words of a `def` (`given xs`, `requires P`, `ensures b => Q`).
+    // They are not tokens, so the token-table probe below cannot see them,
+    // but Lean forbids them as a `def` binder (`requires` and `ensures`
+    // since 4.34, `given` since 4.35): `def f (given : String)` fails to
+    // parse. Lean 4.35 forbids `decreasing` and `invariant` only inside
+    // `do` loop headers, which the exporter does not emit.
+    "ensures",
+    "given",
+    "requires",
     // Global Lean declarations that make a bare user function ambiguous or
     // break simp/unfold references even though they are not syntax tokens.
     // `some` / `none` are the root aliases of the Option constructors: a
@@ -361,6 +370,9 @@ mod tests {
             "termination_by",
             "max",
             "and",
+            "given",
+            "requires",
+            "ensures",
         ] {
             assert_eq!(aver_name_to_lean(name), format!("{name}'"));
         }
