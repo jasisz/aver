@@ -333,7 +333,7 @@ impl Parser {
         match &self.current().kind {
             TokenKind::Module => Ok(Some(TopLevel::Module(self.parse_module()?))),
             TokenKind::Fn => Ok(Some(TopLevel::FnDef(self.parse_fn()?))),
-            TokenKind::Verify => Ok(Some(TopLevel::Verify(self.parse_verify()?))),
+            TokenKind::Verify => Ok(Some(TopLevel::Verify(self.parse_verify()?.into()))),
             TokenKind::Decision => Ok(Some(TopLevel::Decision(self.parse_decision()?))),
             TokenKind::Type => Ok(Some(TopLevel::TypeDef(self.parse_sum_type_def()?))),
             TokenKind::Record => Ok(Some(TopLevel::TypeDef(self.parse_record_def()?))),

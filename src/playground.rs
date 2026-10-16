@@ -236,7 +236,10 @@ fn build_synth_entry_fn(
         .map(value_to_literal_expr)
         .collect::<Result<_, _>>()?;
     let callee = Spanned::bare(Expr::Ident(target_fn.to_string()));
-    let call = Spanned::bare(Expr::FnCall(Box::new(callee), arg_exprs));
+    let call = Spanned::bare(Expr::FnCall(
+        crate::ast::Shared::new(callee),
+        arg_exprs.into(),
+    ));
     let body = FnBody::Block(vec![Stmt::Expr(call)]);
     Ok(TopLevel::FnDef(FnDef {
         name: "__entry__".to_string(),

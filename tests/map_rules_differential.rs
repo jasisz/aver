@@ -42,7 +42,7 @@ fn point(x: i64, y: i64) -> Term {
     Spanned::bare(ResolvedExpr::RecordCreate {
         type_id: None,
         type_name: "Pt".into(),
-        fields: vec![("x".into(), int(x)), ("y".into(), int(y))],
+        fields: aver::ast::shared::vec(vec![("x".into(), int(x)), ("y".into(), int(y))]),
     })
 }
 

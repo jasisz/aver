@@ -613,20 +613,26 @@ impl<'a> Lowering<'a> {
                 Ok(spanned_like(
                     expr,
                     Expr::Match {
-                        subject: Box::new(subject),
+                        subject: crate::ast::Shared::new(subject),
                         arms: arms.clone(),
                     },
                 ))
             }
             Expr::ErrorProp(inner) => {
                 let inner = self.extract(inner, hoisted, cut)?;
-                Ok(spanned_like(expr, Expr::ErrorProp(Box::new(inner))))
+                Ok(spanned_like(
+                    expr,
+                    Expr::ErrorProp(crate::ast::Shared::new(inner)),
+                ))
             }
             Expr::FnCall(callee, args)
                 if self.stop_op(expr).is_some() || self.nested_callee(expr).is_some() =>
             {
                 let args = self.extract_all(args, hoisted, cut)?;
-                Ok(spanned_like(expr, Expr::FnCall(callee.clone(), args)))
+                Ok(spanned_like(
+                    expr,
+                    Expr::FnCall(callee.clone(), crate::ast::shared::vec(args)),
+                ))
             }
             Expr::TailCall(tc) => {
                 let args = self.extract_all(&tc.args, hoisted, cut)?;
@@ -712,7 +718,7 @@ impl<'a> Lowering<'a> {
                 let rebuilt = spanned_like(
                     expr,
                     Expr::Match {
-                        subject: Box::new(subject),
+                        subject: crate::ast::Shared::new(subject),
                         arms: arms.clone(),
                     },
                 );
@@ -726,7 +732,10 @@ impl<'a> Lowering<'a> {
             Expr::FnCall(callee, args) => {
                 let nested = self.nested_callee(expr).is_some();
                 let args = self.extract_all(args, hoisted, cut)?;
-                let rebuilt = spanned_like(expr, Expr::FnCall(callee.clone(), args));
+                let rebuilt = spanned_like(
+                    expr,
+                    Expr::FnCall(callee.clone(), crate::ast::shared::vec(args)),
+                );
                 return Ok(if self.stop_op(expr).is_some() || nested {
                     self.hoist(rebuilt, hoisted)
                 } else {
@@ -735,7 +744,7 @@ impl<'a> Lowering<'a> {
             }
             Expr::ErrorProp(inner) => {
                 let inner = self.extract(inner, hoisted, cut)?;
-                let rebuilt = spanned_like(expr, Expr::ErrorProp(Box::new(inner)));
+                let rebuilt = spanned_like(expr, Expr::ErrorProp(crate::ast::Shared::new(inner)));
                 return Ok(self.hoist(rebuilt, hoisted));
             }
             Expr::IndependentProduct(_, unwrap) => {
@@ -755,17 +764,20 @@ impl<'a> Lowering<'a> {
                 let left_cut = cut || self.needs_lowering(r);
                 Expr::BinOp(
                     *op,
-                    Box::new(self.extract(l, hoisted, left_cut)?),
-                    Box::new(self.extract(r, hoisted, cut)?),
+                    crate::ast::Shared::new(self.extract(l, hoisted, left_cut)?),
+                    crate::ast::Shared::new(self.extract(r, hoisted, cut)?),
                 )
             }
-            Expr::Neg(inner) => Expr::Neg(Box::new(self.extract(inner, hoisted, cut)?)),
-            Expr::Attr(inner, field) => {
-                Expr::Attr(Box::new(self.extract(inner, hoisted, cut)?), field.clone())
+            Expr::Neg(inner) => {
+                Expr::Neg(crate::ast::Shared::new(self.extract(inner, hoisted, cut)?))
             }
+            Expr::Attr(inner, field) => Expr::Attr(
+                crate::ast::Shared::new(self.extract(inner, hoisted, cut)?),
+                field.clone(),
+            ),
             Expr::Constructor(name, Some(inner)) => Expr::Constructor(
                 name.clone(),
-                Some(Box::new(self.extract(inner, hoisted, cut)?)),
+                Some(crate::ast::Shared::new(self.extract(inner, hoisted, cut)?)),
             ),
             Expr::InterpolatedStr(parts) => {
                 let positions: Vec<&Spanned<Expr>> = parts
@@ -782,14 +794,20 @@ impl<'a> Lowering<'a> {
                         StrPart::Literal(s) => StrPart::Literal(s.clone()),
                         StrPart::Parsed(inner) => {
                             let cut = flags.next().unwrap_or(cut);
-                            StrPart::Parsed(Box::new(self.extract(inner, hoisted, cut)?))
+                            StrPart::Parsed(crate::ast::Shared::new(
+                                self.extract(inner, hoisted, cut)?,
+                            ))
                         }
                     });
                 }
                 Expr::InterpolatedStr(out)
             }
-            Expr::List(items) => Expr::List(self.extract_all(items, hoisted, cut)?),
-            Expr::Tuple(items) => Expr::Tuple(self.extract_all(items, hoisted, cut)?),
+            Expr::List(items) => Expr::List(crate::ast::shared::vec(
+                self.extract_all(items, hoisted, cut)?,
+            )),
+            Expr::Tuple(items) => Expr::Tuple(crate::ast::shared::vec(
+                self.extract_all(items, hoisted, cut)?,
+            )),
             Expr::MapLiteral(entries) => {
                 let positions: Vec<&Spanned<Expr>> =
                     entries.iter().flat_map(|(k, v)| [k, v]).collect();
@@ -803,7 +821,7 @@ impl<'a> Lowering<'a> {
                         self.extract(v, hoisted, value_cut)?,
                     ));
                 }
-                Expr::MapLiteral(out)
+                Expr::MapLiteral(crate::ast::shared::vec(out))
             }
             Expr::RecordCreate { type_name, fields } => {
                 let positions: Vec<&Spanned<Expr>> =
@@ -816,7 +834,7 @@ impl<'a> Lowering<'a> {
                 }
                 Expr::RecordCreate {
                     type_name: type_name.clone(),
-                    fields: out,
+                    fields: crate::ast::shared::vec(out),
                 }
             }
             Expr::RecordUpdate {
@@ -837,8 +855,8 @@ impl<'a> Lowering<'a> {
                 }
                 Expr::RecordUpdate {
                     type_name: type_name.clone(),
-                    base: Box::new(base),
-                    updates: out,
+                    base: crate::ast::Shared::new(base),
+                    updates: crate::ast::shared::vec(out),
                 }
             }
             Expr::Literal(_)
@@ -976,7 +994,7 @@ impl<'a> Lowering<'a> {
                 Ok(Spanned::new(
                     Expr::Match {
                         subject: subject.clone(),
-                        arms: lowered,
+                        arms: crate::ast::shared::vec(lowered),
                     },
                     expr.line,
                 ))
@@ -993,12 +1011,12 @@ impl<'a> Lowering<'a> {
             {
                 let args = args.clone();
                 let target = self.fd.name.clone();
-                self.emit_yield(&target, args, expr.line, ret)
+                self.emit_yield(&target, crate::ast::Shared::unwrap(args), expr.line, ret)
             }
             Expr::FnCall(_, args) if self.nested_callee(&expr).is_some() => {
                 let target = self.nested_callee(&expr).unwrap_or_default();
                 let args = args.clone();
-                self.emit_tail_into(&target, args, expr.line, ret)
+                self.emit_tail_into(&target, crate::ast::Shared::unwrap(args), expr.line, ret)
             }
             _ => Ok(self.apply_ret(expr, ret)),
         }
@@ -1206,7 +1224,7 @@ impl<'a> Lowering<'a> {
             fields,
             arm,
         };
-        Ok(self.waiting(&kind_name, args.clone(), state, line))
+        Ok(self.waiting(&kind_name, args.to_vec(), state, line))
     }
 
     /// `x = e?` cuts the path in two: `Err` leaves the function through
@@ -1320,7 +1338,7 @@ impl<'a> Lowering<'a> {
         Ok(Spanned::new(
             Expr::Match {
                 subject: subject.clone(),
-                arms: lowered,
+                arms: crate::ast::shared::vec(lowered),
             },
             line,
         ))
@@ -1579,7 +1597,11 @@ impl<'a> Lowering<'a> {
             done_body,
             line,
         );
-        let mut call_args = vec![call(&protocol.start, args, line)];
+        let mut call_args = vec![call(
+            &protocol.start,
+            crate::ast::Shared::unwrap(args),
+            line,
+        )];
         call_args.extend(fields.iter().map(|(name, _)| ident(name, line)));
         Ok(call(&helper, call_args, line))
     }

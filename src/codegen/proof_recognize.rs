@@ -1211,14 +1211,16 @@ pub(crate) fn substitute_idents_in_expr(
             Some(replacement) => replacement.clone(),
             None => expr.node.clone(),
         },
-        Expr::Neg(inner) => Expr::Neg(Box::new(substitute_idents_in_expr(inner, subst))),
-        Expr::ErrorProp(inner) => {
-            Expr::ErrorProp(Box::new(substitute_idents_in_expr(inner, subst)))
-        }
+        Expr::Neg(inner) => Expr::Neg(crate::ast::Shared::new(substitute_idents_in_expr(
+            inner, subst,
+        ))),
+        Expr::ErrorProp(inner) => Expr::ErrorProp(crate::ast::Shared::new(
+            substitute_idents_in_expr(inner, subst),
+        )),
         Expr::BinOp(op, l, r) => Expr::BinOp(
             *op,
-            Box::new(substitute_idents_in_expr(l, subst)),
-            Box::new(substitute_idents_in_expr(r, subst)),
+            crate::ast::Shared::new(substitute_idents_in_expr(l, subst)),
+            crate::ast::Shared::new(substitute_idents_in_expr(r, subst)),
         ),
         Expr::FnCall(callee, args) => Expr::FnCall(
             callee.clone(),
@@ -1230,7 +1232,7 @@ pub(crate) fn substitute_idents_in_expr(
             name.clone(),
             payload
                 .as_ref()
-                .map(|p| Box::new(substitute_idents_in_expr(p, subst))),
+                .map(|p| crate::ast::Shared::new(substitute_idents_in_expr(p, subst))),
         ),
         Expr::Tuple(items) => Expr::Tuple(
             items

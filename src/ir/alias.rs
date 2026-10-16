@@ -596,7 +596,7 @@ mod tests {
         let map_rhs = Spanned::bare(Expr::Ident("m".to_string()));
         map_rhs
             .ty
-            .set(Type::Map(Box::new(Type::Int), Box::new(Type::Int)))
+            .set(Type::Map(Box::new(Type::Int), Box::new(Type::Int)).into())
             .expect("fresh cell");
 
         let mut items = vec![TopLevel::FnDef(FnDef {
@@ -612,28 +612,34 @@ mod tests {
                     "r".to_string(),
                     None,
                     Spanned::bare(Expr::Match {
-                        subject: Box::new(Spanned::bare(Expr::Ident("m".to_string()))),
-                        arms: vec![
+                        subject: crate::ast::Shared::new(Spanned::bare(Expr::Ident(
+                            "m".to_string(),
+                        ))),
+                        arms: crate::ast::shared::vec(vec![
                             MatchArm {
                                 pattern: Pattern::Constructor(
                                     "Option.Some".to_string(),
                                     vec!["v".to_string()],
                                 ),
-                                body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
+                                body: crate::ast::Shared::new(Spanned::bare(Expr::Literal(
+                                    Literal::Int(1),
+                                ))),
                                 binding_slots: std::sync::OnceLock::new(),
                             },
                             MatchArm {
                                 pattern: Pattern::Wildcard,
-                                body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
+                                body: crate::ast::Shared::new(Spanned::bare(Expr::Literal(
+                                    Literal::Int(0),
+                                ))),
                                 binding_slots: std::sync::OnceLock::new(),
                             },
-                        ],
+                        ]),
                     }),
                 ),
                 Stmt::Expr(Spanned::bare(Expr::BinOp(
                     BinOp::Add,
-                    Box::new(Spanned::bare(Expr::Ident("r".to_string()))),
-                    Box::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
+                    crate::ast::Shared::new(Spanned::bare(Expr::Ident("r".to_string()))),
+                    crate::ast::Shared::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
                 ))),
             ])),
             resolution: None,

@@ -8133,7 +8133,7 @@ pub(super) fn cmd_proof(
         .items
         .iter()
         .filter_map(|item| match item {
-            TopLevel::Verify(block) => Some(block),
+            TopLevel::Verify(block) => Some(&**block),
             _ => None,
         })
         .chain(ctx.modules.iter().flat_map(|module| &module.verify_blocks))
@@ -9810,7 +9810,7 @@ fn duplicate_program_law_identities(ctx: &codegen::CodegenContext) -> Vec<String
         .items
         .iter()
         .filter_map(|item| match item {
-            TopLevel::Verify(vb) => Some(vb.clone()),
+            TopLevel::Verify(vb) => Some((**vb).clone()),
             _ => None,
         })
         .collect();
@@ -11287,7 +11287,7 @@ fn build_candidate_law(
         trace: false,
         cases_givens: vec![],
     };
-    aver::ast::unparse::unparse(&[TopLevel::Verify(block)])
+    aver::ast::unparse::unparse(&[TopLevel::Verify(block.into())])
         .map_err(|e| format!("could not render candidate: {e}"))
         .map(|s| s.trim_end().to_string())
 }
@@ -11314,9 +11314,12 @@ fn synth_domain(
         }
         "List<Int>" => {
             return Some(VerifyGivenDomain::Explicit(vec![
-                Spanned::new(Expr::List(vec![]), 0),
-                Spanned::new(Expr::List(vec![int(1)]), 0),
-                Spanned::new(Expr::List(vec![int(3), int(1), int(2)]), 0),
+                Spanned::new(Expr::List(crate::ast::shared::vec(vec![])), 0),
+                Spanned::new(Expr::List(crate::ast::shared::vec(vec![int(1)])), 0),
+                Spanned::new(
+                    Expr::List(crate::ast::shared::vec(vec![int(3), int(1), int(2)])),
+                    0,
+                ),
             ]));
         }
         _ => {}
@@ -11326,11 +11329,11 @@ fn synth_domain(
     let succ = |x: Spanned<Expr>| {
         Spanned::new(
             Expr::FnCall(
-                Box::new(Spanned::new(
+                crate::ast::Shared::new(Spanned::new(
                     Expr::Ident(format!("{}.{}", p.type_name, p.succ_ctor)),
                     0,
                 )),
-                vec![x],
+                crate::ast::shared::vec(vec![x]),
             ),
             0,
         )
@@ -11344,10 +11347,14 @@ fn synth_domain(
     }
     if ty == format!("List<{}>", p.type_name) {
         return Some(VerifyGivenDomain::Explicit(vec![
-            Spanned::new(Expr::List(vec![]), 0),
-            Spanned::new(Expr::List(vec![zero()]), 0),
+            Spanned::new(Expr::List(crate::ast::shared::vec(vec![])), 0),
+            Spanned::new(Expr::List(crate::ast::shared::vec(vec![zero()])), 0),
             Spanned::new(
-                Expr::List(vec![succ(zero()), zero(), succ(succ(zero()))]),
+                Expr::List(crate::ast::shared::vec(vec![
+                    succ(zero()),
+                    zero(),
+                    succ(succ(zero())),
+                ])),
                 0,
             ),
         ]));
@@ -13311,12 +13318,9 @@ mod tests {
             by_plan: None,
             sample_guards: vec![],
         }));
-        super::TopLevel::Verify(VerifyBlock::new_unspanned(
-            fn_name.to_string(),
-            0,
-            vec![],
-            vk,
-        ))
+        super::TopLevel::Verify(
+            VerifyBlock::new_unspanned(fn_name.to_string(), 0, vec![], vk).into(),
+        )
     }
 
     #[test]

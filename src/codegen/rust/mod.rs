@@ -224,7 +224,7 @@ fn transpile_project(
         .iter()
         .filter_map(|item| {
             if let TopLevel::Verify(vb) = item {
-                Some(vb)
+                Some(&**vb)
             } else {
                 None
             }
@@ -788,7 +788,7 @@ fn entry_module_sections(
         .items
         .iter()
         .filter_map(|item| match item {
-            TopLevel::Verify(block) => Some(block),
+            TopLevel::Verify(block) => Some(&**block),
             _ => None,
         })
         .flat_map(|block| block.process_driver_names())

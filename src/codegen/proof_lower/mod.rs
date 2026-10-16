@@ -1039,7 +1039,7 @@ fn rebuild_bool_and(
         acc = Spanned::new(
             ResolvedExpr::Call(
                 ResolvedCallee::Builtin("Bool.and".to_string()),
-                vec![acc, leaf],
+                crate::ast::shared::vec(vec![acc, leaf]),
             ),
             line,
         );
@@ -2483,7 +2483,7 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
     // obligation. The DAG invariant keeps the bare fn name unambiguous within
     // each scope.
     let entry_verifies = inputs.entry_items.iter().filter_map(|item| match item {
-        TopLevel::Verify(vb) => Some((None, vb)),
+        TopLevel::Verify(vb) => Some((None, &**vb)),
         _ => None,
     });
     let dep_verifies = inputs.dep_modules.iter().flat_map(|m| {

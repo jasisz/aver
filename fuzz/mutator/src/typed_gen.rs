@@ -318,7 +318,7 @@ pub fn generate<R: Rng>(
                 args.push(generate(p, scope, depth + 1, rng)?);
             }
             let callee = Spanned::bare(Expr::Ident(sig.name.clone()));
-            Some(Spanned::bare(Expr::FnCall(Box::new(callee), args)))
+            Some(Spanned::bare(Expr::FnCall(aver::ast::Shared::new(callee), args.into())))
         }
         3 => generate_comparison(scope, depth, rng).or_else(|| generate_base(target, scope, depth, rng)),
         4 => generate_int_arith(scope, depth, rng).or_else(|| generate_base(target, scope, depth, rng)),
@@ -339,8 +339,8 @@ fn generate_comparison<R: Rng>(
         .unwrap();
     Some(Spanned::bare(Expr::BinOp(
         op,
-        Box::new(lhs),
-        Box::new(rhs),
+        aver::ast::Shared::new(lhs),
+        aver::ast::Shared::new(rhs),
     )))
 }
 
@@ -354,8 +354,8 @@ fn generate_int_arith<R: Rng>(
     let op = *[BinOp::Add, BinOp::Sub, BinOp::Mul].choose(rng).unwrap();
     Some(Spanned::bare(Expr::BinOp(
         op,
-        Box::new(lhs),
-        Box::new(rhs),
+        aver::ast::Shared::new(lhs),
+        aver::ast::Shared::new(rhs),
     )))
 }
 
@@ -400,7 +400,7 @@ fn generate_base<R: Rng>(
                 // Option.None is field access, no call parens. Match
                 // what the parser produces for the bare constructor.
                 Some(Spanned::bare(Expr::Attr(
-                    Box::new(Spanned::bare(Expr::Ident("Option".to_string()))),
+                    aver::ast::Shared::new(Spanned::bare(Expr::Ident("Option".to_string()))),
                     "None".to_string(),
                 )))
             }
@@ -411,14 +411,14 @@ fn generate_base<R: Rng>(
             for _ in 0..n {
                 items.push(generate(elem, scope, depth + 1, rng)?);
             }
-            Some(Spanned::bare(Expr::List(items)))
+            Some(Spanned::bare(Expr::List(items.into())))
         }
         GenType::Tuple(elems) => {
             let mut items = Vec::with_capacity(elems.len());
             for e in elems {
                 items.push(generate(e, scope, depth + 1, rng)?);
             }
-            Some(Spanned::bare(Expr::Tuple(items)))
+            Some(Spanned::bare(Expr::Tuple(items.into())))
         }
         GenType::Named(name) => {
             if let Some(variants) = scope.sums.get(name).cloned() {
@@ -428,7 +428,7 @@ fn generate_base<R: Rng>(
                     // parens. Otherwise the parser sees an empty arg
                     // list which is legal but verbose.
                     return Some(Spanned::bare(Expr::Attr(
-                        Box::new(Spanned::bare(Expr::Ident(name.clone()))),
+                        aver::ast::Shared::new(Spanned::bare(Expr::Ident(name.clone()))),
                         v.name,
                     )));
                 }
@@ -446,7 +446,7 @@ fn generate_base<R: Rng>(
                 }
                 Some(Spanned::bare(Expr::RecordCreate {
                     type_name: name.clone(),
-                    fields: record_fields,
+                    fields: record_fields.into(),
                 }))
             } else {
                 None
@@ -465,10 +465,10 @@ fn constructor_call(
     args: Vec<Spanned<Expr>>,
 ) -> Spanned<Expr> {
     let callee = Spanned::bare(Expr::Attr(
-        Box::new(Spanned::bare(Expr::Ident(namespace.to_string()))),
+        aver::ast::Shared::new(Spanned::bare(Expr::Ident(namespace.to_string()))),
         variant.to_string(),
     ));
-    Spanned::bare(Expr::FnCall(Box::new(callee), args))
+    Spanned::bare(Expr::FnCall(aver::ast::Shared::new(callee), args.into()))
 }
 
 /// Replace `fd.body` with a freshly-generated expression of

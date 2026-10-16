@@ -61,9 +61,10 @@ fn inline_in_place(expr: &mut Spanned<MirExpr>, candidates: &HashMap<FnId, Liter
     };
 
     if let Some(lit) = replacement {
-        let ty = std::sync::OnceLock::new();
+        let ty: std::sync::OnceLock<crate::ast::Shared<crate::ast::Type>> =
+            std::sync::OnceLock::new();
         if let Some(t) = expr.ty() {
-            let _ = ty.set(t.clone());
+            let _ = ty.set(crate::ast::Shared::new(t.clone()));
         }
         expr.node = MirExpr::Literal(Spanned {
             node: lit,

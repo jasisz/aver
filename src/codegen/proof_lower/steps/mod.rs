@@ -161,8 +161,10 @@ fn refinements(
         );
         let of = term::var(&given);
         of.set_ty(ty.clone());
-        let read =
-            crate::ast::Spanned::bare(ResolvedExpr::Attr(Box::new(of), decl.carrier_field.clone()));
+        let read = crate::ast::Spanned::bare(ResolvedExpr::Attr(
+            crate::ast::Shared::new(of),
+            decl.carrier_field.clone(),
+        ));
         read.set_ty(finite::qualify(
             inputs,
             &crate::types::parse_type_str(&decl.carrier_type),

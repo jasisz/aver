@@ -86,7 +86,10 @@ pub fn boundary_exprs(ty: &Type) -> Vec<Spanned<Expr>> {
         Spanned::bare(Expr::Literal(lit))
     }
     fn ctor(name: &str, arg: Option<Spanned<Expr>>) -> Spanned<Expr> {
-        Spanned::bare(Expr::Constructor(name.to_string(), arg.map(Box::new)))
+        Spanned::bare(Expr::Constructor(
+            name.to_string(),
+            arg.map(Box::new).map(crate::ast::Shared::from),
+        ))
     }
 
     match ty {
@@ -119,9 +122,11 @@ pub fn boundary_exprs(ty: &Type) -> Vec<Spanned<Expr>> {
             // boundary values. Larger / nested lists would explode the
             // cartesian product; "none" and "one boundary element" cover
             // the typical off-by-one and edge-element bugs.
-            let mut out = vec![Spanned::bare(Expr::List(Vec::new()))];
+            let mut out = vec![Spanned::bare(Expr::List(crate::ast::shared::vec(
+                Vec::new(),
+            )))];
             for v in boundary_exprs(inner).into_iter().take(3) {
-                out.push(Spanned::bare(Expr::List(vec![v])));
+                out.push(Spanned::bare(Expr::List(crate::ast::shared::vec(vec![v]))));
             }
             out
         }
@@ -136,7 +141,7 @@ pub fn boundary_exprs(ty: &Type) -> Vec<Spanned<Expr>> {
                 .collect();
             cartesian_exprs(&per_component)
                 .into_iter()
-                .map(|combo| Spanned::bare(Expr::Tuple(combo)))
+                .map(|combo| Spanned::bare(Expr::Tuple(crate::ast::shared::vec(combo))))
                 .collect()
         }
         // No literal/constructor representation in 0.13: Map and Vector

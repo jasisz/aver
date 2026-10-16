@@ -71,7 +71,7 @@ fn walk(
     match (&t.node, called) {
         (_, Some((g, args))) => {
             if g == f {
-                out.push((args.clone(), bound.clone()));
+                out.push((args.to_vec(), bound.clone()));
             } else {
                 helper_calls(g, args, f, ds, fuel, bound, out)?;
             }

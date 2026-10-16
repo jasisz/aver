@@ -518,10 +518,20 @@ pub struct ProgramModule {
 }
 
 impl ProgramModule {
+    /// The module for a caller to check. Function bodies stay shared with
+    /// this module; a verify block or a top-level statement is the caller's
+    /// own, so the stamps its check leaves stay with that caller.
     pub fn as_loaded(&self) -> LoadedModule {
         LoadedModule {
             dep_name: self.dep_name.clone(),
-            items: self.items.clone(),
+            items: self
+                .items
+                .iter()
+                .map(|item| match item {
+                    TopLevel::Verify(_) | TopLevel::Stmt(_) => item.unshared(),
+                    other => other.clone(),
+                })
+                .collect(),
             path: self.path.clone(),
             check_errors: Vec::new(),
         }
@@ -724,17 +734,7 @@ impl SharedLowering {
 fn detached(module: &LoadedModule) -> LoadedModule {
     LoadedModule {
         dep_name: module.dep_name.clone(),
-        items: module
-            .items
-            .iter()
-            .map(|item| match item {
-                TopLevel::FnDef(fd) => TopLevel::FnDef(crate::ast::FnDef {
-                    body: std::sync::Arc::new(fd.body.as_ref().clone()),
-                    ..fd.clone()
-                }),
-                other => other.clone(),
-            })
-            .collect(),
+        items: module.items.iter().map(TopLevel::unshared).collect(),
         path: module.path.clone(),
         check_errors: module.check_errors.clone(),
     }
@@ -772,7 +772,17 @@ fn lower_shared(
     let run = std::sync::Arc::new(SharedLowering {
         written: written
             .iter()
-            .map(|module| (module.as_loaded(), module.source.clone()))
+            // Only compared, never checked: shared with the module, so
+            // the comparison sees the same nodes at once.
+            .map(|module| {
+                let seen = LoadedModule {
+                    dep_name: module.dep_name.clone(),
+                    items: module.items.clone(),
+                    path: module.path.clone(),
+                    check_errors: Vec::new(),
+                };
+                (seen, module.source.clone())
+            })
             .collect(),
         module_root: module_root.map(str::to_string),
         marked: marked.clone(),

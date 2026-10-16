@@ -1025,7 +1025,7 @@ pub(super) fn same_file_verify_blocks(ctx: &CodegenContext) -> Vec<&VerifyBlock>
             .items
             .iter()
             .filter_map(|item| match item {
-                crate::ast::TopLevel::Verify(vb) => Some(vb),
+                crate::ast::TopLevel::Verify(vb) => Some(&**vb),
                 _ => None,
             })
             .collect(),

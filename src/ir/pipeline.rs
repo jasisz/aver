@@ -1070,20 +1070,11 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
     let mut processes = crate::yield_lowering::Processes::default();
     let mut lowered: Option<TypeCheckResult> = None;
     if crate::yield_lowering::may_have_processes(items) {
-        // A deep copy: `FnDef.body` is shared behind an `Arc`, and the
-        // first check must stamp the copy's bodies, not the program's —
+        // A deep copy: nodes are shared between copies of a tree, and the
+        // first check must stamp the copy's nodes, not the program's —
         // the coordinator's references to not-yet-generated names would
         // otherwise carry `Invalid` stamps into the lowered module.
-        let written: Vec<TopLevel> = items
-            .iter()
-            .map(|item| match item {
-                TopLevel::FnDef(fd) => TopLevel::FnDef(crate::ast::FnDef {
-                    body: std::sync::Arc::new(fd.body.as_ref().clone()),
-                    ..fd.clone()
-                }),
-                other => other.clone(),
-            })
-            .collect();
+        let written: Vec<TopLevel> = items.iter().map(TopLevel::unshared).collect();
         let phase_one = typecheck(&written, mode);
         processes = crate::yield_lowering::derive_processes(
             &written,

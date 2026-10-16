@@ -818,7 +818,13 @@ fn sp_at_typed(line: usize, expr: Expr, ty: crate::types::Type) -> Spanned<Expr>
 /// or [`finalize_intrinsic_call`].
 fn intrinsic_call(line: usize, name: &str, args: Vec<Spanned<Expr>>) -> Spanned<Expr> {
     let callee = sp_at(line, Expr::Ident(name.to_string()));
-    sp_at(line, Expr::FnCall(Box::new(callee), args))
+    sp_at(
+        line,
+        Expr::FnCall(
+            crate::ast::Shared::new(callee),
+            crate::ast::shared::vec(args),
+        ),
+    )
 }
 
 /// Same as [`intrinsic_call`] but stamps the result with the compiler-only
@@ -1142,8 +1148,8 @@ fn try_rewrite_fusion_site(
     let buffered_call = sp_at_typed(
         line,
         Expr::FnCall(
-            Box::new(sp_at(line, Expr::Ident(format!("{}__buffered", sink_name)))),
-            buffered_args,
+            crate::ast::Shared::new(sp_at(line, Expr::Ident(format!("{}__buffered", sink_name)))),
+            crate::ast::shared::vec(buffered_args),
         ),
         crate::types::Type::Str,
     );
@@ -1277,12 +1283,12 @@ fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef>
         BufferBuildKind::InternalReverse => vec![
             MatchArm {
                 pattern: Pattern::Literal(Literal::Bool(true)),
-                body: Box::new(buf_ident()),
+                body: crate::ast::Shared::new(buf_ident()),
                 binding_slots: std::sync::OnceLock::new(),
             },
             MatchArm {
                 pattern: Pattern::Literal(Literal::Bool(false)),
-                body: Box::new(new_recursive_body),
+                body: crate::ast::Shared::new(new_recursive_body),
                 binding_slots: std::sync::OnceLock::new(),
             },
         ],
@@ -1300,12 +1306,12 @@ fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef>
             vec![
                 MatchArm {
                     pattern: Pattern::EmptyList,
-                    body: Box::new(buf_ident()),
+                    body: crate::ast::Shared::new(buf_ident()),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: cons_pat,
-                    body: Box::new(new_recursive_body),
+                    body: crate::ast::Shared::new(new_recursive_body),
                     binding_slots: std::sync::OnceLock::new(),
                 },
             ]
@@ -1321,7 +1327,7 @@ fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef>
         line,
         Expr::Match {
             subject: subject_orig.clone(),
-            arms: new_arms,
+            arms: crate::ast::shared::vec(new_arms),
         },
         crate::types::Type::named(INTERNAL_BUFFER_TYPE),
     );

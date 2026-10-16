@@ -529,8 +529,8 @@ fn rewrite_producer_calls(
     new_args.push(Spanned::new(Expr::Literal(Literal::Int(0)), line));
     new_args.extend(args[loop_info.list_idx + 1..].iter().cloned());
     expr.node = Expr::FnCall(
-        Box::new(Spanned::new(Expr::Ident(loop_info.new_name.clone()), line)),
-        new_args,
+        crate::ast::Shared::new(Spanned::new(Expr::Ident(loop_info.new_name.clone()), line)),
+        crate::ast::shared::vec(new_args),
     );
     fired.insert(loop_info.new_name.clone());
     count + 1
@@ -656,8 +656,8 @@ fn cursor_call(name: &str, idx: &str, line: crate::ast::SourceLine) -> Spanned<E
     };
     sp_typed(
         Expr::FnCall(
-            Box::new(sp(Expr::Ident(name.to_string()), line)),
-            vec![s, i],
+            crate::ast::Shared::new(sp(Expr::Ident(name.to_string()), line)),
+            crate::ast::shared::vec(vec![s, i]),
         ),
         line,
         result_ty,
@@ -682,12 +682,12 @@ fn bind(
     let ty = body.ty().cloned();
     let out = sp(
         Expr::Match {
-            subject: Box::new(value),
-            arms: vec![MatchArm {
+            subject: crate::ast::Shared::new(value),
+            arms: crate::ast::shared::vec(vec![MatchArm {
                 pattern,
-                body: Box::new(body),
+                body: crate::ast::Shared::new(body),
                 binding_slots: std::sync::OnceLock::new(),
-            }],
+            }]),
         },
         line,
     );
@@ -757,14 +757,14 @@ impl Cursorer<'_> {
                         .fold(cursors.clone(), |acc, name| shadow(&acc, name));
                     new_arms.push(MatchArm {
                         pattern: arm.pattern.clone(),
-                        body: Box::new(self.transform(&arm.body, &inner)?),
+                        body: crate::ast::Shared::new(self.transform(&arm.body, &inner)?),
                         binding_slots: std::sync::OnceLock::new(),
                     });
                 }
                 Ok(sp(
                     Expr::Match {
-                        subject: Box::new(new_subject),
-                        arms: new_arms,
+                        subject: crate::ast::Shared::new(new_subject),
+                        arms: crate::ast::shared::vec(new_arms),
                     },
                     line,
                 ))
@@ -777,15 +777,24 @@ impl Cursorer<'_> {
                     let new_args = self.transform_self_call_args(args, cursors, line)?;
                     return Ok(sp(
                         Expr::FnCall(
-                            Box::new(sp(Expr::Ident(self.new_name.to_string()), line)),
-                            new_args,
+                            crate::ast::Shared::new(sp(
+                                Expr::Ident(self.new_name.to_string()),
+                                line,
+                            )),
+                            crate::ast::shared::vec(new_args),
                         ),
                         line,
                     ));
                 }
                 let new_callee = self.transform(callee, cursors)?;
                 let new_args = self.transform_each(args, cursors)?;
-                Ok(sp(Expr::FnCall(Box::new(new_callee), new_args), line))
+                Ok(sp(
+                    Expr::FnCall(
+                        crate::ast::Shared::new(new_callee),
+                        crate::ast::shared::vec(new_args),
+                    ),
+                    line,
+                ))
             }
 
             Expr::TailCall(data) if data.target == self.self_name => {
@@ -804,23 +813,26 @@ impl Cursorer<'_> {
             // counted, and an uncounted read is a wrong fuse.
             Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => Ok(expr.clone()),
             Expr::Attr(base, field) => Ok(sp(
-                Expr::Attr(Box::new(self.transform(base, cursors)?), field.clone()),
+                Expr::Attr(
+                    crate::ast::Shared::new(self.transform(base, cursors)?),
+                    field.clone(),
+                ),
                 line,
             )),
             Expr::BinOp(op, lhs, rhs) => Ok(sp(
                 Expr::BinOp(
                     *op,
-                    Box::new(self.transform(lhs, cursors)?),
-                    Box::new(self.transform(rhs, cursors)?),
+                    crate::ast::Shared::new(self.transform(lhs, cursors)?),
+                    crate::ast::Shared::new(self.transform(rhs, cursors)?),
                 ),
                 line,
             )),
             Expr::Neg(inner) => Ok(sp(
-                Expr::Neg(Box::new(self.transform(inner, cursors)?)),
+                Expr::Neg(crate::ast::Shared::new(self.transform(inner, cursors)?)),
                 line,
             )),
             Expr::ErrorProp(inner) => Ok(sp(
-                Expr::ErrorProp(Box::new(self.transform(inner, cursors)?)),
+                Expr::ErrorProp(crate::ast::Shared::new(self.transform(inner, cursors)?)),
                 line,
             )),
             Expr::Constructor(name, payload) => {
@@ -828,7 +840,10 @@ impl Cursorer<'_> {
                     Some(p) => Some(Box::new(self.transform(p, cursors)?)),
                     None => None,
                 };
-                Ok(sp(Expr::Constructor(name.clone(), lowered), line))
+                Ok(sp(
+                    Expr::Constructor(name.clone(), lowered.map(crate::ast::Shared::from)),
+                    line,
+                ))
             }
             Expr::InterpolatedStr(parts) => {
                 let mut out = Vec::with_capacity(parts.len());
@@ -836,16 +851,29 @@ impl Cursorer<'_> {
                     out.push(match part {
                         StrPart::Literal(s) => StrPart::Literal(s.clone()),
                         StrPart::Parsed(e) => {
-                            StrPart::Parsed(Box::new(self.transform(e, cursors)?))
+                            StrPart::Parsed(crate::ast::Shared::new(self.transform(e, cursors)?))
                         }
                     });
                 }
                 Ok(sp(Expr::InterpolatedStr(out), line))
             }
-            Expr::List(items) => Ok(sp(Expr::List(self.transform_each(items, cursors)?), line)),
-            Expr::Tuple(items) => Ok(sp(Expr::Tuple(self.transform_each(items, cursors)?), line)),
+            Expr::List(items) => Ok(sp(
+                Expr::List(crate::ast::shared::vec(
+                    self.transform_each(items, cursors)?,
+                )),
+                line,
+            )),
+            Expr::Tuple(items) => Ok(sp(
+                Expr::Tuple(crate::ast::shared::vec(
+                    self.transform_each(items, cursors)?,
+                )),
+                line,
+            )),
             Expr::IndependentProduct(items, unwrap) => Ok(sp(
-                Expr::IndependentProduct(self.transform_each(items, cursors)?, *unwrap),
+                Expr::IndependentProduct(
+                    crate::ast::shared::vec(self.transform_each(items, cursors)?),
+                    *unwrap,
+                ),
                 line,
             )),
             Expr::MapLiteral(entries) => {
@@ -853,7 +881,7 @@ impl Cursorer<'_> {
                 for (k, v) in entries {
                     out.push((self.transform(k, cursors)?, self.transform(v, cursors)?));
                 }
-                Ok(sp(Expr::MapLiteral(out), line))
+                Ok(sp(Expr::MapLiteral(crate::ast::shared::vec(out)), line))
             }
             Expr::RecordCreate { type_name, fields } => {
                 let mut out = Vec::with_capacity(fields.len());
@@ -863,7 +891,7 @@ impl Cursorer<'_> {
                 Ok(sp(
                     Expr::RecordCreate {
                         type_name: type_name.clone(),
-                        fields: out,
+                        fields: crate::ast::shared::vec(out),
                     },
                     line,
                 ))
@@ -881,8 +909,8 @@ impl Cursorer<'_> {
                 Ok(sp(
                     Expr::RecordUpdate {
                         type_name: type_name.clone(),
-                        base: Box::new(new_base),
-                        updates: out,
+                        base: crate::ast::Shared::new(new_base),
+                        updates: crate::ast::shared::vec(out),
                     },
                     line,
                 ))
@@ -962,19 +990,19 @@ impl Cursorer<'_> {
 
         Ok(sp(
             Expr::Match {
-                subject: Box::new(cursor_call("__str_cursor_end", idx, line)),
-                arms: vec![
+                subject: crate::ast::Shared::new(cursor_call("__str_cursor_end", idx, line)),
+                arms: crate::ast::shared::vec(vec![
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(true)),
-                        body: Box::new(nil_arm),
+                        body: crate::ast::Shared::new(nil_arm),
                         binding_slots: std::sync::OnceLock::new(),
                     },
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(false)),
-                        body: Box::new(with_head),
+                        body: crate::ast::Shared::new(with_head),
                         binding_slots: std::sync::OnceLock::new(),
                     },
-                ],
+                ]),
             },
             line,
         ))
@@ -1064,8 +1092,8 @@ fn rewrite_codepoint_matches(expr: &mut Spanned<Expr>) -> usize {
 
     let new_subject = sp_typed(
         Expr::FnCall(
-            Box::new(Spanned::new(Expr::Ident(intrinsic.to_string()), line)),
-            vec![inner],
+            crate::ast::Shared::new(Spanned::new(Expr::Ident(intrinsic.to_string()), line)),
+            crate::ast::shared::vec(vec![inner]),
         ),
         line,
         crate::types::Type::Int,
@@ -1313,8 +1341,8 @@ fn build_code_variant(fd: &FnDef, fold: CodeFold, new_name: &str) -> FnDef {
             };
             sp_typed(
                 Expr::FnCall(
-                    Box::new(sp(Expr::Ident(intrinsic.to_string()), line)),
-                    vec![code_read],
+                    crate::ast::Shared::new(sp(Expr::Ident(intrinsic.to_string()), line)),
+                    crate::ast::shared::vec(vec![code_read]),
                 ),
                 line,
                 crate::types::Type::Int,
@@ -1323,7 +1351,7 @@ fn build_code_variant(fd: &FnDef, fold: CodeFold, new_name: &str) -> FnDef {
     };
     let new_match = sp(
         Expr::Match {
-            subject: Box::new(new_subject),
+            subject: crate::ast::Shared::new(new_subject),
             arms: arms
                 .iter()
                 .map(|arm| MatchArm {

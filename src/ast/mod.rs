@@ -1,4 +1,6 @@
+pub mod shared;
 pub mod types;
+pub use shared::Shared;
 pub mod unparse;
 pub use types::Type;
 
@@ -36,17 +38,17 @@ impl From<bool> for AnnotBool {
 pub struct Spanned<T> {
     pub node: T,
     pub line: SourceLine,
-    pub ty: std::sync::OnceLock<Type>,
+    pub ty: std::sync::OnceLock<Shared<Type>>,
 }
 
 // `OnceLock` does not derive `Clone` (the cell is invariant over `T`), so the
 // inner type is cloned manually.
 impl<T: Clone> Clone for Spanned<T> {
     fn clone(&self) -> Self {
-        let ty = std::sync::OnceLock::new();
-        if let Some(t) = self.ty.get() {
-            let _ = ty.set(t.clone());
-        }
+        let ty = match self.ty.get() {
+            Some(t) => std::sync::OnceLock::from(t.clone()),
+            None => std::sync::OnceLock::new(),
+        };
         Self {
             node: self.node.clone(),
             line: self.line,
@@ -57,7 +59,7 @@ impl<T: Clone> Clone for Spanned<T> {
 
 impl<T: PartialEq> PartialEq for Spanned<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.node == other.node
+        std::ptr::eq(self, other) || self.node == other.node
     }
 }
 
@@ -78,12 +80,17 @@ impl<T> Spanned<T> {
     /// Record the inferred type for this node. No-op if a type is already set
     /// (later inference passes must not contradict the first one).
     pub fn set_ty(&self, ty: Type) {
-        let _ = self.ty.set(ty);
+        let _ = self.ty.set(Shared::new(ty));
+    }
+
+    /// Record a type another node already carries, sharing it.
+    pub fn set_ty_shared(&self, ty: &Shared<Type>) {
+        let _ = self.ty.set(ty.clone());
     }
 
     /// Inferred type for this node, if the type checker has visited it.
     pub fn ty(&self) -> Option<&Type> {
-        self.ty.get()
+        self.ty.get().map(|t| &**t)
     }
 }
 
@@ -385,7 +392,7 @@ pub enum BinOp {
 #[derive(Debug)]
 pub struct MatchArm {
     pub pattern: Pattern,
-    pub body: Box<Spanned<Expr>>,
+    pub body: Shared<Spanned<Expr>>,
     /// Per-arm slot table for the pattern's bindings, in pattern order.
     /// Filled by the resolver pass; backend code reads from here
     /// instead of doing a name lookup, so two arms with the same
@@ -428,7 +435,7 @@ impl MatchArm {
     pub fn new(pattern: Pattern, body: Spanned<Expr>) -> Self {
         Self {
             pattern,
-            body: Box::new(body),
+            body: crate::ast::Shared::new(body),
             binding_slots: std::sync::OnceLock::new(),
         }
     }
@@ -436,7 +443,7 @@ impl MatchArm {
     pub fn new_boxed(pattern: Pattern, body: Box<Spanned<Expr>>) -> Self {
         Self {
             pattern,
-            body,
+            body: crate::ast::Shared::from(body),
             binding_slots: std::sync::OnceLock::new(),
         }
     }
@@ -530,7 +537,7 @@ impl Pattern {
 #[derive(Debug, Clone, PartialEq)]
 pub enum StrPart {
     Literal(String),
-    Parsed(Box<Spanned<Expr>>),
+    Parsed(Shared<Spanned<Expr>>),
 }
 
 /// Data for a tail-call expression.
@@ -552,36 +559,36 @@ impl TailCallData {
 pub enum Expr {
     Literal(Literal),
     Ident(String),
-    Attr(Box<Spanned<Expr>>, String),
-    FnCall(Box<Spanned<Expr>>, Vec<Spanned<Expr>>),
-    BinOp(BinOp, Box<Spanned<Expr>>, Box<Spanned<Expr>>),
+    Attr(Shared<Spanned<Expr>>, String),
+    FnCall(Shared<Spanned<Expr>>, Shared<Vec<Spanned<Expr>>>),
+    BinOp(BinOp, Shared<Spanned<Expr>>, Shared<Spanned<Expr>>),
     /// Unary numeric negation: `-x`. Operand must be numeric (`Int` or
     /// `Float`); result is the same type. Used to be desugared in the
     /// parser to `BinOp(Sub, Literal(Int(0)), x)`, which loses the IEEE
     /// `-0.0` sign bit on `Float` operands and produces an `Int`/`Float`
     /// mixed `BinOp` that backends had to recognise with pattern hacks.
-    Neg(Box<Spanned<Expr>>),
+    Neg(Shared<Spanned<Expr>>),
     Match {
-        subject: Box<Spanned<Expr>>,
-        arms: Vec<MatchArm>,
+        subject: Shared<Spanned<Expr>>,
+        arms: Shared<Vec<MatchArm>>,
     },
-    Constructor(String, Option<Box<Spanned<Expr>>>),
-    ErrorProp(Box<Spanned<Expr>>),
+    Constructor(String, Option<Shared<Spanned<Expr>>>),
+    ErrorProp(Shared<Spanned<Expr>>),
     InterpolatedStr(Vec<StrPart>),
-    List(Vec<Spanned<Expr>>),
-    Tuple(Vec<Spanned<Expr>>),
+    List(Shared<Vec<Spanned<Expr>>>),
+    Tuple(Shared<Vec<Spanned<Expr>>>),
     /// Map literal: `{"a" => 1, "b" => 2}`
-    MapLiteral(Vec<(Spanned<Expr>, Spanned<Expr>)>),
+    MapLiteral(Shared<Vec<(Spanned<Expr>, Spanned<Expr>)>>),
     /// Record creation: `User(name = "Alice", age = 30)`
     RecordCreate {
         type_name: String,
-        fields: Vec<(String, Spanned<Expr>)>,
+        fields: Shared<Vec<(String, Spanned<Expr>)>>,
     },
     /// Record update: `User.update(base, field = newVal, ...)`
     RecordUpdate {
         type_name: String,
-        base: Box<Spanned<Expr>>,
-        updates: Vec<(String, Spanned<Expr>)>,
+        base: Shared<Spanned<Expr>>,
+        updates: Shared<Vec<(String, Spanned<Expr>)>>,
     },
     /// Tail-position call to a function in the same SCC (self or mutual recursion).
     /// Produced by the TCO transform pass before type-checking.
@@ -592,7 +599,7 @@ pub enum Expr {
     /// `unwrap=true` (`?!`): all elements must be Result; unwraps Ok values, propagates first Err.
     /// `unwrap=false` (`!`): returns raw tuple of results.
     /// Produces a replay group (effects matched by branch_path + effect_occurrence + type + args).
-    IndependentProduct(Vec<Spanned<Expr>>, bool),
+    IndependentProduct(Shared<Vec<Spanned<Expr>>>, bool),
     /// Compiled variable lookup: `env[last][slot]` — O(1) instead of HashMap scan.
     /// Produced by the resolver pass for locals inside function bodies.
     /// `last_use` is set by `ir::last_use` — when true, this is the final
@@ -644,6 +651,170 @@ impl FnBody {
             Some(Stmt::Expr(expr)) => Some(expr),
             _ => None,
         }
+    }
+}
+
+// Unsharing. Children are `Shared`, so a cloned tree shares its nodes with
+// the original, and with them the cells the type checker and the resolver
+// write through `&` (`Spanned::ty`, `MatchArm::binding_slots`). A tree that
+// is about to be checked on its own, apart from the original, is unshared
+// first: every node is copied, keeping the stamps already set, as cloning
+// did when children were boxed. The matches are exhaustive on purpose, so a
+// new kind of child cannot be missed.
+
+impl Spanned<Expr> {
+    /// Copy every node under this one that another tree still holds.
+    pub fn unshare(&mut self) {
+        self.node.unshare();
+    }
+}
+
+impl Expr {
+    /// Copy every child node that another tree still holds.
+    pub fn unshare(&mut self) {
+        match self {
+            Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => {}
+            Expr::Attr(e, _) | Expr::Neg(e) | Expr::ErrorProp(e) => e.unshare(),
+            Expr::Constructor(_, arg) => {
+                if let Some(e) = arg {
+                    e.unshare();
+                }
+            }
+            Expr::FnCall(f, args) => {
+                f.unshare();
+                args.iter_mut().for_each(Spanned::unshare);
+            }
+            Expr::BinOp(_, a, b) => {
+                a.unshare();
+                b.unshare();
+            }
+            Expr::Match { subject, arms } => {
+                subject.unshare();
+                for arm in arms.iter_mut() {
+                    arm.body.unshare();
+                }
+            }
+            Expr::InterpolatedStr(parts) => {
+                for part in parts {
+                    match part {
+                        StrPart::Literal(_) => {}
+                        StrPart::Parsed(e) => e.unshare(),
+                    }
+                }
+            }
+            Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+                items.iter_mut().for_each(Spanned::unshare);
+            }
+            Expr::MapLiteral(entries) => {
+                for (k, v) in entries.iter_mut() {
+                    k.unshare();
+                    v.unshare();
+                }
+            }
+            Expr::RecordCreate { fields, .. } => {
+                for (_, e) in fields.iter_mut() {
+                    e.unshare();
+                }
+            }
+            Expr::RecordUpdate { base, updates, .. } => {
+                base.unshare();
+                for (_, e) in updates.iter_mut() {
+                    e.unshare();
+                }
+            }
+            Expr::TailCall(data) => data.args.iter_mut().for_each(Spanned::unshare),
+        }
+    }
+}
+
+impl Stmt {
+    /// Copy every node under this statement that another tree still holds.
+    pub fn unshare(&mut self) {
+        match self {
+            Stmt::Binding(_, _, e) | Stmt::Expr(e) => e.unshare(),
+        }
+    }
+}
+
+impl VerifyGiven {
+    fn unshare(&mut self) {
+        match &mut self.domain {
+            VerifyGivenDomain::IntRange { .. } => {}
+            VerifyGivenDomain::Explicit(values) => values.iter_mut().for_each(Spanned::unshare),
+        }
+    }
+}
+
+impl VerifyBlock {
+    /// Copy every node under this block that another tree still holds.
+    pub fn unshare(&mut self) {
+        let VerifyBlock {
+            fn_name: _,
+            process_verification: _,
+            line: _,
+            cases,
+            case_spans: _,
+            case_ids: _,
+            case_givens,
+            case_hostile_origins: _,
+            case_hostile_profiles: _,
+            case_reverse_order: _,
+            kind,
+            trace: _,
+            cases_givens,
+        } = self;
+        for (l, r) in cases {
+            l.unshare();
+            r.unshare();
+        }
+        for (_, e) in case_givens.iter_mut().flatten() {
+            e.unshare();
+        }
+        cases_givens.iter_mut().for_each(VerifyGiven::unshare);
+        match kind {
+            VerifyKind::Cases => {}
+            VerifyKind::Law(law) => {
+                let VerifyLaw {
+                    name: _,
+                    givens,
+                    when,
+                    because,
+                    using: _,
+                    induction: _,
+                    by_plan: _,
+                    lhs,
+                    rhs,
+                    sample_guards,
+                } = &mut **law;
+                givens.iter_mut().for_each(VerifyGiven::unshare);
+                when.iter_mut().for_each(Spanned::unshare);
+                because.iter_mut().for_each(Spanned::unshare);
+                lhs.unshare();
+                rhs.unshare();
+                sample_guards.iter_mut().for_each(Spanned::unshare);
+            }
+        }
+    }
+}
+
+impl TopLevel {
+    /// A copy of this item that shares no node with it, for a check that
+    /// must stamp its own copy: stamps already set are kept.
+    pub fn unshared(&self) -> TopLevel {
+        let mut item = self.clone();
+        match &mut item {
+            TopLevel::FnDef(fd) => std::sync::Arc::make_mut(&mut fd.body)
+                .stmts_mut()
+                .iter_mut()
+                .for_each(Stmt::unshare),
+            TopLevel::Verify(vb) => vb.unshare(),
+            TopLevel::Stmt(s) => s.unshare(),
+            TopLevel::Module(_)
+            | TopLevel::Decision(_)
+            | TopLevel::TypeDef(_)
+            | TopLevel::Capability(_) => {}
+        }
+        item
     }
 }
 
@@ -1104,11 +1275,14 @@ pub enum TypeDef {
     },
 }
 
+// The enum is no larger than before verify blocks were shared; only the
+// second-largest variant shrank, which is what the lint measures.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum TopLevel {
     Module(Module),
     FnDef(FnDef),
-    Verify(VerifyBlock),
+    Verify(Shared<VerifyBlock>),
     Decision(DecisionBlock),
     Stmt(Stmt),
     TypeDef(TypeDef),

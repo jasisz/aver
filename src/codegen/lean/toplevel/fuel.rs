@@ -809,8 +809,8 @@ fn expr_is_self_pos_plus_one_tailcall(
     let (target, args) = match &expr.node {
         Expr::TailCall(data) => (&data.target, &data.args),
         Expr::FnCall(callee, args) => match &callee.node {
-            Expr::Ident(name) => (name, args),
-            Expr::Resolved { name, .. } => (name, args),
+            Expr::Ident(name) => (name, &**args),
+            Expr::Resolved { name, .. } => (name, &**args),
             _ => return false,
         },
         _ => return false,

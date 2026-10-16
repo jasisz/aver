@@ -125,7 +125,7 @@ pub(super) fn detect_wrapper_over_recursion(
         return None;
     };
     let (wcallee_name, wargs) = match &wbody.node {
-        Expr::FnCall(c, a) => (ident_name(c)?, a.clone()),
+        Expr::FnCall(c, a) => (ident_name(c)?, a.to_vec()),
         Expr::TailCall(td) => (td.target.as_str(), td.args.clone()),
         _ => return None,
     };
@@ -355,7 +355,7 @@ pub(super) fn detect_tailrec_fixed_base_fold(
             1 => {
                 // S(n) -> loop(base, n, combine(base, acc))
                 let (callee, cargs) = match &arm.body.node {
-                    Expr::FnCall(c, a) => (expr_to_dotted_name(&c.node)?, a.clone()),
+                    Expr::FnCall(c, a) => (expr_to_dotted_name(&c.node)?, a.to_vec()),
                     Expr::TailCall(td) => (td.target.clone(), td.args.clone()),
                     _ => return None,
                 };
@@ -767,14 +767,22 @@ pub(super) fn simplify_identity_expr(
                     } else if int_lit(&right.node) == Some(0) {
                         return left;
                     } else {
-                        Expr::BinOp(*op, Box::new(left), Box::new(right))
+                        Expr::BinOp(
+                            *op,
+                            crate::ast::Shared::new(left),
+                            crate::ast::Shared::new(right),
+                        )
                     }
                 }
                 BinOp::Sub => {
                     if int_lit(&right.node) == Some(0) {
                         return left;
                     } else {
-                        Expr::BinOp(*op, Box::new(left), Box::new(right))
+                        Expr::BinOp(
+                            *op,
+                            crate::ast::Shared::new(left),
+                            crate::ast::Shared::new(right),
+                        )
                     }
                 }
                 BinOp::Mul => {
@@ -785,27 +793,36 @@ pub(super) fn simplify_identity_expr(
                     } else if int_lit(&right.node) == Some(1) {
                         return left;
                     } else {
-                        Expr::BinOp(*op, Box::new(left), Box::new(right))
+                        Expr::BinOp(
+                            *op,
+                            crate::ast::Shared::new(left),
+                            crate::ast::Shared::new(right),
+                        )
                     }
                 }
-                _ => Expr::BinOp(*op, Box::new(left), Box::new(right)),
+                _ => Expr::BinOp(
+                    *op,
+                    crate::ast::Shared::new(left),
+                    crate::ast::Shared::new(right),
+                ),
             }
         }
-        Expr::Neg(inner) => Expr::Neg(Box::new(simplify_identity_expr(inner))),
-        Expr::Attr(base, field) => {
-            Expr::Attr(Box::new(simplify_identity_expr(base)), field.clone())
-        }
+        Expr::Neg(inner) => Expr::Neg(crate::ast::Shared::new(simplify_identity_expr(inner))),
+        Expr::Attr(base, field) => Expr::Attr(
+            crate::ast::Shared::new(simplify_identity_expr(base)),
+            field.clone(),
+        ),
         Expr::FnCall(callee, args) => Expr::FnCall(
-            Box::new(simplify_identity_expr(callee)),
+            crate::ast::Shared::new(simplify_identity_expr(callee)),
             args.iter().map(simplify_identity_expr).collect(),
         ),
         Expr::Match { subject, arms } => Expr::Match {
-            subject: Box::new(simplify_identity_expr(subject)),
+            subject: crate::ast::Shared::new(simplify_identity_expr(subject)),
             arms: arms
                 .iter()
                 .map(|arm| crate::ast::MatchArm {
                     pattern: arm.pattern.clone(),
-                    body: Box::new(simplify_identity_expr(&arm.body)),
+                    body: crate::ast::Shared::new(simplify_identity_expr(&arm.body)),
                     binding_slots: arm.binding_slots.clone(),
                 })
                 .collect(),

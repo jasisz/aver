@@ -64,6 +64,7 @@ fn own_laws(items: &[TopLevel]) -> impl Iterator<Item = (String, &VerifyBlock)> 
         let TopLevel::Verify(block) = item else {
             return None;
         };
+        let block: &crate::ast::VerifyBlock = block;
         let VerifyKind::Law(law) = &block.kind else {
             return None;
         };

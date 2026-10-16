@@ -37,7 +37,7 @@ pub fn order_verify_blocks_for_citation(ctx: &mut CodegenContext) -> Vec<Citatio
             .items
             .iter()
             .filter_map(|item| match item {
-                TopLevel::Verify(vb) => Some(vb),
+                TopLevel::Verify(vb) => Some(&**vb),
                 _ => None,
             })
             .collect();
@@ -50,7 +50,7 @@ pub fn order_verify_blocks_for_citation(ctx: &mut CodegenContext) -> Vec<Citatio
             .items
             .iter()
             .filter_map(|item| match item {
-                TopLevel::Verify(vb) => Some(vb),
+                TopLevel::Verify(vb) => Some(&**vb),
                 _ => None,
             })
             .collect();
@@ -61,7 +61,7 @@ pub fn order_verify_blocks_for_citation(ctx: &mut CodegenContext) -> Vec<Citatio
         if let TopLevel::Verify(vb) = item
             && let Some(next) = reordered.pop()
         {
-            *vb = next;
+            *vb = next.into();
         }
     }
     for i in 0..ctx.modules.len() {

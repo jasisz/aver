@@ -665,9 +665,9 @@ fn take_slot(slots: &[u16], cursor: &mut usize) -> Result<u16, SkipReason> {
 /// opcodes, future inliner / monomorphizer) can read
 /// `mir_expr.ty()` without re-deriving the type.
 fn wrap<T, U>(node: T, source: &Spanned<U>) -> Spanned<T> {
-    let ty = std::sync::OnceLock::new();
+    let ty: std::sync::OnceLock<crate::ast::Shared<crate::ast::Type>> = std::sync::OnceLock::new();
     if let Some(t) = source.ty() {
-        let _ = ty.set(t.clone());
+        let _ = ty.set(crate::ast::Shared::new(t.clone()));
     }
     Spanned {
         node,
@@ -711,8 +711,9 @@ fn lower_stmt_chain(
             (lower_expr(tail_expr, program)?, &stmts[..stmts.len() - 1])
         }
         ResolvedStmt::Binding { value, .. } => {
-            let ty = std::sync::OnceLock::new();
-            let _ = ty.set(Type::Unit);
+            let ty: std::sync::OnceLock<crate::ast::Shared<crate::ast::Type>> =
+                std::sync::OnceLock::new();
+            let _ = ty.set(crate::ast::Shared::new(Type::Unit));
             let unit = Spanned {
                 node: MirExpr::Literal(Spanned {
                     node: Literal::Unit,

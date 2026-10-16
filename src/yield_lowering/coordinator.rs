@@ -1280,6 +1280,7 @@ pub(super) fn rewrite_run_names(items: &mut [TopLevel]) {
                 }
             }
             TopLevel::Verify(vb) => {
+                let vb = &mut **vb;
                 for (left, right) in vb.cases.iter_mut() {
                     expr(left);
                     expr(right);

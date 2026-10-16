@@ -981,7 +981,11 @@ mod tests {
         l: Spanned<ResolvedExpr>,
         r: Spanned<ResolvedExpr>,
     ) -> Spanned<ResolvedExpr> {
-        sp_r(ResolvedExpr::BinOp(op, Box::new(l), Box::new(r)))
+        sp_r(ResolvedExpr::BinOp(
+            op,
+            crate::ast::Shared::new(l),
+            crate::ast::Shared::new(r),
+        ))
     }
 
     fn pred(expr: Spanned<ResolvedExpr>) -> Predicate {
@@ -1120,10 +1124,10 @@ mod tests {
         use crate::ir::hir::ResolvedCallee;
         let and = sp_r(ResolvedExpr::Call(
             ResolvedCallee::Builtin("Bool.and".to_string()),
-            vec![
+            crate::ast::shared::vec(vec![
                 cmp_r(BinOp::Gte, ident_r("n"), int_r(0)),
                 cmp_r(BinOp::Lte, ident_r("n"), int_r(100)),
-            ],
+            ]),
         ));
         let (i, known) = interval_of_invariant(&pred(and));
         assert!(known);
@@ -1145,10 +1149,10 @@ mod tests {
         use crate::ir::hir::ResolvedCallee;
         let or = sp_r(ResolvedExpr::Call(
             ResolvedCallee::Builtin("Bool.or".to_string()),
-            vec![
+            crate::ast::shared::vec(vec![
                 cmp_r(BinOp::Gte, ident_r("n"), int_r(0)),
                 cmp_r(BinOp::Lte, ident_r("n"), int_r(100)),
-            ],
+            ]),
         ));
         let (i, known) = interval_of_invariant(&pred(or));
         assert!(!known);

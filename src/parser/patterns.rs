@@ -61,8 +61,8 @@ impl Parser {
         }
 
         Ok(Expr::Match {
-            subject: Box::new(subject),
-            arms,
+            subject: crate::ast::Shared::new(subject),
+            arms: crate::ast::shared::vec(arms),
         })
     }
 

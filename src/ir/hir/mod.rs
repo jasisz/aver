@@ -76,7 +76,7 @@
 //!   bare-string lookups that the resolved layer subsumes (Phase D
 //!   in #147 terminology).
 
-use crate::ast::{AnnotBool, BinOp, FnResolution, Literal, Module, Spanned, Type};
+use crate::ast::{AnnotBool, BinOp, FnResolution, Literal, Module, Shared, Spanned, Type};
 use crate::ir::identity::{CtorId, FnId, TypeId};
 
 pub mod classify;
@@ -388,35 +388,35 @@ pub enum ResolvedExpr {
     /// resolved; the field name stays as source text because record
     /// fields are scoped under their owning `TypeId`, not in a
     /// global namespace.
-    Attr(Box<Spanned<ResolvedExpr>>, String),
+    Attr(Shared<Spanned<ResolvedExpr>>, String),
     /// Function call — `Expr::FnCall(callee, args)` lifted into a
     /// [`ResolvedCallee`].
-    Call(ResolvedCallee, Vec<Spanned<ResolvedExpr>>),
+    Call(ResolvedCallee, Shared<Vec<Spanned<ResolvedExpr>>>),
     /// Binary operator.
     BinOp(
         BinOp,
-        Box<Spanned<ResolvedExpr>>,
-        Box<Spanned<ResolvedExpr>>,
+        Shared<Spanned<ResolvedExpr>>,
+        Shared<Spanned<ResolvedExpr>>,
     ),
     /// Unary minus.
-    Neg(Box<Spanned<ResolvedExpr>>),
+    Neg(Shared<Spanned<ResolvedExpr>>),
     /// `match subject { arm, … }`.
     Match {
-        subject: Box<Spanned<ResolvedExpr>>,
-        arms: Vec<ResolvedMatchArm>,
+        subject: Shared<Spanned<ResolvedExpr>>,
+        arms: Shared<Vec<ResolvedMatchArm>>,
     },
     /// Constructor call — `Result.Ok(v)`, `Shape.Circle(r)`, etc.
-    Ctor(ResolvedCtor, Vec<Spanned<ResolvedExpr>>),
+    Ctor(ResolvedCtor, Shared<Vec<Spanned<ResolvedExpr>>>),
     /// Result-error propagation: `expr?`.
-    ErrorProp(Box<Spanned<ResolvedExpr>>),
+    ErrorProp(Shared<Spanned<ResolvedExpr>>),
     /// Interpolated string `"a${x}b"`.
     InterpolatedStr(Vec<ResolvedStrPart>),
     /// `[a, b, c]` list literal.
-    List(Vec<Spanned<ResolvedExpr>>),
+    List(Shared<Vec<Spanned<ResolvedExpr>>>),
     /// `(a, b, c)` tuple literal.
-    Tuple(Vec<Spanned<ResolvedExpr>>),
+    Tuple(Shared<Vec<Spanned<ResolvedExpr>>>),
     /// `{"a" => 1, "b" => 2}` map literal.
-    MapLiteral(Vec<(Spanned<ResolvedExpr>, Spanned<ResolvedExpr>)>),
+    MapLiteral(Shared<Vec<(Spanned<ResolvedExpr>, Spanned<ResolvedExpr>)>>),
     /// `Shape(name = "...", count = 0)` record-create form. The
     /// `type_id` is `Some` for records resolved through the local symbol
     /// table, `None` for imported capability-owned and compiler-owned
@@ -427,24 +427,24 @@ pub enum ResolvedExpr {
         /// Source-level type name kept verbatim for diagnostics +
         /// backend codegen mangling. Mirrors `Type::Named { name }`.
         type_name: String,
-        fields: Vec<(String, Spanned<ResolvedExpr>)>,
+        fields: Shared<Vec<(String, Spanned<ResolvedExpr>)>>,
     },
     /// `Shape.update(base, field = newVal, …)` record-update.
     RecordUpdate {
         type_id: Option<TypeId>,
         type_name: String,
-        base: Box<Spanned<ResolvedExpr>>,
-        updates: Vec<(String, Spanned<ResolvedExpr>)>,
+        base: Shared<Spanned<ResolvedExpr>>,
+        updates: Shared<Vec<(String, Spanned<ResolvedExpr>)>>,
     },
     /// Tail-position call (SCC peer). `target` is the `FnId` the
     /// TCO transform pass committed to.
     TailCall {
         target: FnId,
-        args: Vec<Spanned<ResolvedExpr>>,
+        args: Shared<Vec<Spanned<ResolvedExpr>>>,
     },
     /// Independent product `(a, b)!` or `(a, b)?!`. `unwrap` toggles
     /// the `?!` form.
-    IndependentProduct(Vec<Spanned<ResolvedExpr>>, bool),
+    IndependentProduct(Shared<Vec<Spanned<ResolvedExpr>>>, bool),
 }
 
 /// Callee classification for [`ResolvedExpr::Call`]. Replaces the
@@ -489,7 +489,7 @@ pub enum ResolvedCallee {
         /// The source-faithful expression the resolver gave up on,
         /// kept for diagnostics. Resolved recursively into the same
         /// IR so the surrounding tree still walks cleanly.
-        callee: Box<Spanned<ResolvedExpr>>,
+        callee: Shared<Spanned<ResolvedExpr>>,
     },
 }
 
@@ -789,7 +789,7 @@ pub enum BuiltinCtor {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResolvedStrPart {
     Literal(String),
-    Parsed(Box<Spanned<ResolvedExpr>>),
+    Parsed(Shared<Spanned<ResolvedExpr>>),
 }
 
 /// One arm of a `match` — mirror of [`crate::ast::MatchArm`] with
@@ -797,7 +797,7 @@ pub enum ResolvedStrPart {
 #[derive(Debug)]
 pub struct ResolvedMatchArm {
     pub pattern: ResolvedPattern,
-    pub body: Box<Spanned<ResolvedExpr>>,
+    pub body: Shared<Spanned<ResolvedExpr>>,
     /// Per-arm slot table — same role as
     /// [`crate::ast::MatchArm::binding_slots`]. Populated by the
     /// resolver pass; backends read it instead of re-doing the
@@ -924,7 +924,10 @@ mod tests {
             ResolvedCtor::Unresolved {
                 name: "Step.Continue".to_string(),
             },
-            vec![Spanned::new(ResolvedExpr::Literal(Literal::Int(1)), line)],
+            crate::ast::shared::vec(vec![Spanned::new(
+                ResolvedExpr::Literal(Literal::Int(1)),
+                line,
+            )]),
         );
         ResolvedFnDef {
             fn_id: FnId(1),
@@ -1027,7 +1030,10 @@ mod tests {
         let callee = ResolvedCallee::Fn(FnId(7));
         let call = ResolvedExpr::Call(
             callee,
-            vec![Spanned::new(ResolvedExpr::Literal(Literal::Int(42)), 3)],
+            crate::ast::shared::vec(vec![Spanned::new(
+                ResolvedExpr::Literal(Literal::Int(42)),
+                3,
+            )]),
         );
         // Smoke check: shape constructs and the FnId survives clone.
         let clone = call.clone();
@@ -1050,7 +1056,10 @@ mod tests {
         };
         let expr = ResolvedExpr::Ctor(
             ctor,
-            vec![Spanned::new(ResolvedExpr::Literal(Literal::Float(1.0)), 1)],
+            crate::ast::shared::vec(vec![Spanned::new(
+                ResolvedExpr::Literal(Literal::Float(1.0)),
+                1,
+            )]),
         );
         let ResolvedExpr::Ctor(
             ResolvedCtor::User {
@@ -1108,12 +1117,12 @@ mod tests {
         let body = Box::new(Spanned::new(ResolvedExpr::Literal(Literal::Int(0)), 1));
         let a = ResolvedMatchArm {
             pattern: ResolvedPattern::Wildcard,
-            body: body.clone(),
+            body: crate::ast::Shared::from(body.clone()),
             binding_slots: std::sync::OnceLock::new(),
         };
         let b = ResolvedMatchArm {
             pattern: ResolvedPattern::Wildcard,
-            body,
+            body: crate::ast::Shared::from(body),
             binding_slots: {
                 let lock = std::sync::OnceLock::new();
                 let _ = lock.set(vec![3, 4]);
@@ -1173,9 +1182,9 @@ mod tests {
         let inner = Spanned::new(ResolvedExpr::Ident("dynamic".to_string()), 1);
         let call = ResolvedExpr::Call(
             ResolvedCallee::Unresolved {
-                callee: Box::new(inner.clone()),
+                callee: crate::ast::Shared::new(inner.clone()),
             },
-            vec![],
+            crate::ast::shared::vec(vec![]),
         );
         let clone = call.clone();
         assert_eq!(clone, call);
@@ -1225,36 +1234,44 @@ mod tests {
             last_use: AnnotBool(false),
         };
         let dummy = || Box::new(Spanned::new(ResolvedExpr::Literal(Literal::Int(0)), 1));
-        let _: ResolvedExpr = ResolvedExpr::Attr(dummy(), String::new());
-        let _: ResolvedExpr = ResolvedExpr::Call(ResolvedCallee::Fn(FnId(0)), vec![]);
-        let _: ResolvedExpr = ResolvedExpr::BinOp(BinOp::Add, dummy(), dummy());
-        let _: ResolvedExpr = ResolvedExpr::Neg(dummy());
-        let _: ResolvedExpr = ResolvedExpr::Match {
-            subject: dummy(),
-            arms: vec![],
-        };
+        let _: ResolvedExpr = ResolvedExpr::Attr(crate::ast::Shared::from(dummy()), String::new());
         let _: ResolvedExpr =
-            ResolvedExpr::Ctor(ResolvedCtor::Builtin(BuiltinCtor::OptionNone), vec![]);
-        let _: ResolvedExpr = ResolvedExpr::ErrorProp(dummy());
+            ResolvedExpr::Call(ResolvedCallee::Fn(FnId(0)), crate::ast::shared::vec(vec![]));
+        let _: ResolvedExpr = ResolvedExpr::BinOp(
+            BinOp::Add,
+            crate::ast::Shared::from(dummy()),
+            crate::ast::Shared::from(dummy()),
+        );
+        let _: ResolvedExpr = ResolvedExpr::Neg(crate::ast::Shared::from(dummy()));
+        let _: ResolvedExpr = ResolvedExpr::Match {
+            subject: crate::ast::Shared::from(dummy()),
+            arms: crate::ast::shared::vec(vec![]),
+        };
+        let _: ResolvedExpr = ResolvedExpr::Ctor(
+            ResolvedCtor::Builtin(BuiltinCtor::OptionNone),
+            crate::ast::shared::vec(vec![]),
+        );
+        let _: ResolvedExpr = ResolvedExpr::ErrorProp(crate::ast::Shared::from(dummy()));
         let _: ResolvedExpr = ResolvedExpr::InterpolatedStr(vec![]);
-        let _: ResolvedExpr = ResolvedExpr::List(vec![]);
-        let _: ResolvedExpr = ResolvedExpr::Tuple(vec![]);
-        let _: ResolvedExpr = ResolvedExpr::MapLiteral(vec![]);
+        let _: ResolvedExpr = ResolvedExpr::List(crate::ast::shared::vec(vec![]));
+        let _: ResolvedExpr = ResolvedExpr::Tuple(crate::ast::shared::vec(vec![]));
+        let _: ResolvedExpr = ResolvedExpr::MapLiteral(crate::ast::shared::vec(vec![]));
         let _: ResolvedExpr = ResolvedExpr::RecordCreate {
             type_id: None,
             type_name: String::new(),
-            fields: vec![],
+            fields: crate::ast::shared::vec(vec![]),
         };
         let _: ResolvedExpr = ResolvedExpr::RecordUpdate {
             type_id: None,
             type_name: String::new(),
-            base: dummy(),
-            updates: vec![],
+            base: crate::ast::Shared::from(dummy()),
+            updates: crate::ast::shared::vec(vec![]),
         };
         let _: ResolvedExpr = ResolvedExpr::TailCall {
             target: FnId(0),
-            args: vec![],
+            args: crate::ast::shared::vec(vec![]),
         };
-        let _: ResolvedExpr = ResolvedExpr::IndependentProduct(vec![], false);
+        let _: ResolvedExpr =
+            ResolvedExpr::IndependentProduct(crate::ast::shared::vec(vec![]), false);
     }
 }

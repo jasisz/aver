@@ -232,8 +232,11 @@ pub(crate) fn ident_name(e: &Spanned<Expr>) -> Option<&str> {
 
 fn cons(head: Spanned<Expr>, tail: Spanned<Expr>) -> Spanned<Expr> {
     Spanned::bare(Expr::FnCall(
-        Box::new(ident("List.concat")),
-        vec![Spanned::bare(Expr::List(vec![head])), tail],
+        crate::ast::Shared::new(ident("List.concat")),
+        crate::ast::shared::vec(vec![
+            Spanned::bare(Expr::List(crate::ast::shared::vec(vec![head]))),
+            tail,
+        ]),
     ))
 }
 
@@ -295,22 +298,27 @@ fn map_children(
     f: &mut impl FnMut(&Spanned<Expr>) -> Spanned<Expr>,
 ) -> Spanned<Expr> {
     let node = match &e.node {
-        Expr::FnCall(callee, args) => {
-            Expr::FnCall(Box::new(f(callee)), args.iter().map(&mut *f).collect())
-        }
+        Expr::FnCall(callee, args) => Expr::FnCall(
+            crate::ast::Shared::new(f(callee)),
+            args.iter().map(&mut *f).collect(),
+        ),
         Expr::TailCall(data) => Expr::FnCall(
-            Box::new(ident(&data.target)),
+            crate::ast::Shared::new(ident(&data.target)),
             data.args.iter().map(&mut *f).collect(),
         ),
         Expr::List(items) => Expr::List(items.iter().map(&mut *f).collect()),
         Expr::Tuple(items) => Expr::Tuple(items.iter().map(&mut *f).collect()),
         Expr::Constructor(name, Some(inner)) => {
-            Expr::Constructor(name.clone(), Some(Box::new(f(inner))))
+            Expr::Constructor(name.clone(), Some(crate::ast::Shared::new(f(inner))))
         }
-        Expr::Attr(inner, field) => Expr::Attr(Box::new(f(inner)), field.clone()),
-        Expr::BinOp(op, l, r) => Expr::BinOp(*op, Box::new(f(l)), Box::new(f(r))),
-        Expr::Neg(inner) => Expr::Neg(Box::new(f(inner))),
-        Expr::ErrorProp(inner) => Expr::ErrorProp(Box::new(f(inner))),
+        Expr::Attr(inner, field) => Expr::Attr(crate::ast::Shared::new(f(inner)), field.clone()),
+        Expr::BinOp(op, l, r) => Expr::BinOp(
+            *op,
+            crate::ast::Shared::new(f(l)),
+            crate::ast::Shared::new(f(r)),
+        ),
+        Expr::Neg(inner) => Expr::Neg(crate::ast::Shared::new(f(inner))),
+        Expr::ErrorProp(inner) => Expr::ErrorProp(crate::ast::Shared::new(f(inner))),
         other => other.clone(),
     };
     Spanned::bare(node)

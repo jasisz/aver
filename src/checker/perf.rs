@@ -613,16 +613,20 @@ mod tests {
     }
 
     fn binop(op: BinOp, left: Expr, right: Expr) -> Expr {
-        Expr::BinOp(op, Box::new(spanned(left)), Box::new(spanned(right)))
+        Expr::BinOp(
+            op,
+            crate::ast::Shared::new(spanned(left)),
+            crate::ast::Shared::new(spanned(right)),
+        )
     }
 
     fn list_len_call(arg: Expr) -> Expr {
         Expr::FnCall(
-            Box::new(spanned(Expr::Attr(
-                Box::new(spanned(Expr::Ident("List".to_string()))),
+            crate::ast::Shared::new(spanned(Expr::Attr(
+                crate::ast::Shared::new(spanned(Expr::Ident("List".to_string()))),
                 "len".to_string(),
             ))),
-            vec![spanned(arg)],
+            crate::ast::shared::vec(vec![spanned(arg)]),
         )
     }
 
@@ -759,19 +763,19 @@ mod tests {
 
     fn eq_match(subject: Expr, true_body: Expr, false_body: Expr) -> Expr {
         Expr::Match {
-            subject: Box::new(spanned(subject)),
-            arms: vec![
+            subject: crate::ast::Shared::new(spanned(subject)),
+            arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(true)),
-                    body: Box::new(spanned(true_body)),
+                    body: crate::ast::Shared::new(spanned(true_body)),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(false)),
-                    body: Box::new(spanned(false_body)),
+                    body: crate::ast::Shared::new(spanned(false_body)),
                     binding_slots: std::sync::OnceLock::new(),
                 },
-            ],
+            ]),
         }
     }
 
@@ -912,34 +916,40 @@ mod tests {
         //     true -> "one"
         //     _ -> "other"
         let inner = Expr::Match {
-            subject: Box::new(spanned(binop(BinOp::Eq, ident("x"), int(1)))),
-            arms: vec![
+            subject: crate::ast::Shared::new(spanned(binop(BinOp::Eq, ident("x"), int(1)))),
+            arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(true)),
-                    body: Box::new(spanned(Expr::Literal(Literal::Str("one".to_string())))),
+                    body: crate::ast::Shared::new(spanned(Expr::Literal(Literal::Str(
+                        "one".to_string(),
+                    )))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Wildcard,
-                    body: Box::new(spanned(Expr::Literal(Literal::Str("other".to_string())))),
+                    body: crate::ast::Shared::new(spanned(Expr::Literal(Literal::Str(
+                        "other".to_string(),
+                    )))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
-            ],
+            ]),
         };
         let outer = Expr::Match {
-            subject: Box::new(spanned(binop(BinOp::Eq, ident("x"), int(0)))),
-            arms: vec![
+            subject: crate::ast::Shared::new(spanned(binop(BinOp::Eq, ident("x"), int(0)))),
+            arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(true)),
-                    body: Box::new(spanned(Expr::Literal(Literal::Str("zero".to_string())))),
+                    body: crate::ast::Shared::new(spanned(Expr::Literal(Literal::Str(
+                        "zero".to_string(),
+                    )))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Wildcard,
-                    body: Box::new(spanned(inner)),
+                    body: crate::ast::Shared::new(spanned(inner)),
                     binding_slots: std::sync::OnceLock::new(),
                 },
-            ],
+            ]),
         };
         let fd = make_fn(
             "classify",
@@ -971,11 +981,11 @@ mod tests {
         //
         // `width` is forwarded unchanged → `Float.fromInt(width)` is loop-invariant
         let int_to_float_call = Expr::FnCall(
-            Box::new(spanned(Expr::Attr(
-                Box::new(spanned(ident("Float"))),
+            crate::ast::Shared::new(spanned(Expr::Attr(
+                crate::ast::Shared::new(spanned(ident("Float"))),
                 "fromInt".to_string(),
             ))),
-            vec![spanned(ident("width"))],
+            crate::ast::shared::vec(vec![spanned(ident("width"))]),
         );
         let tailcall = Expr::TailCall(Box::new(TailCallData::new(
             "draw".to_string(),
@@ -1012,11 +1022,11 @@ mod tests {
         //   w = Float.fromInt(width)
         //   TailCall("draw", [x + 1, width - 1])  ← width is NOT forwarded unchanged
         let int_to_float_call = Expr::FnCall(
-            Box::new(spanned(Expr::Attr(
-                Box::new(spanned(ident("Float"))),
+            crate::ast::Shared::new(spanned(Expr::Attr(
+                crate::ast::Shared::new(spanned(ident("Float"))),
                 "fromInt".to_string(),
             ))),
-            vec![spanned(ident("width"))],
+            crate::ast::shared::vec(vec![spanned(ident("width"))]),
         );
         let tailcall = Expr::TailCall(Box::new(TailCallData::new(
             "draw".to_string(),
@@ -1111,11 +1121,11 @@ mod tests {
         //   w = Float.fromInt(y)
         //   w  (no TailCall → not a recursive fn in TCO sense)
         let int_to_float_call = Expr::FnCall(
-            Box::new(spanned(Expr::Attr(
-                Box::new(spanned(ident("Float"))),
+            crate::ast::Shared::new(spanned(Expr::Attr(
+                crate::ast::Shared::new(spanned(ident("Float"))),
                 "fromInt".to_string(),
             ))),
-            vec![spanned(ident("y"))],
+            crate::ast::shared::vec(vec![spanned(ident("y"))]),
         );
         let fd = make_fn(
             "f",

@@ -35,7 +35,7 @@ pub(in crate::yield_lowering) fn strengthen_laws(
         {
             let source = block.fn_name.clone();
             let target = format!("__{}ProtocolTrace", protocol.fn_name);
-            let mut auxiliary = block.clone();
+            let mut auxiliary = crate::ast::VerifyBlock::clone(block);
             auxiliary.fn_name.push_str("From");
             let VerifyKind::Law(aux) = &mut auxiliary.kind else {
                 unreachable!()
@@ -74,7 +74,7 @@ pub(in crate::yield_lowering) fn strengthen_laws(
             ];
             let samples = [
                 Spanned::new(Expr::Literal(Literal::Int(0)), block.line),
-                Spanned::new(Expr::List(vec![]), block.line),
+                Spanned::new(Expr::List(crate::ast::shared::vec(vec![])), block.line),
                 Spanned::new(Expr::Literal(Literal::Int(0)), block.line),
             ];
             let mut names = Vec::new();
@@ -122,7 +122,7 @@ pub(in crate::yield_lowering) fn strengthen_laws(
                 unreachable!()
             };
             original.using.get_or_insert_with(Vec::new).push(dependency);
-            let auxiliary = TopLevel::Verify(auxiliary);
+            let auxiliary = TopLevel::Verify(auxiliary.into());
             generated.push(auxiliary.clone());
             output.push(auxiliary);
         }

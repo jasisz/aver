@@ -41,7 +41,7 @@ pub(super) fn detect_spec_equivalence(
                 Expr::Ident(n) | Expr::Resolved { name: n, .. } => n.clone(),
                 _ => return None,
             };
-            Some((name, args.clone()))
+            Some((name, args.to_vec()))
         };
     let canonical_shape =
         |lhs: &Spanned<crate::ast::Expr>, rhs: &Spanned<crate::ast::Expr>| -> bool {
@@ -148,7 +148,7 @@ pub(super) fn detect_simp_normalized_spec_equivalence(
                 Expr::Ident(n) | Expr::Resolved { name: n, .. } => n.clone(),
                 _ => return None,
             };
-            Some((name, args.clone()))
+            Some((name, args.to_vec()))
         };
     let canonical_shape_args = |lhs: &Spanned<crate::ast::Expr>,
                                 rhs: &Spanned<crate::ast::Expr>|
@@ -288,7 +288,7 @@ pub(super) fn detect_linear_int_spec_equivalence(
                 Expr::Ident(n) | Expr::Resolved { name: n, .. } => n.clone(),
                 _ => return None,
             };
-            Some((name, args.clone()))
+            Some((name, args.to_vec()))
         };
     let canonical_shape_args = |lhs: &Spanned<crate::ast::Expr>,
                                 rhs: &Spanned<crate::ast::Expr>|
@@ -414,7 +414,7 @@ pub(super) fn detect_effectful_spec_equivalence(
                 Expr::Ident(n) | Expr::Resolved { name: n, .. } => n.clone(),
                 _ => return None,
             };
-            Some((name, args.clone()))
+            Some((name, args.to_vec()))
         };
     let try_side = |impl_side: &Spanned<crate::ast::Expr>,
                     spec_side: &Spanned<crate::ast::Expr>|

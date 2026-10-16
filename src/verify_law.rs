@@ -918,12 +918,12 @@ mod tests {
 
         let verify_law = law(
             Spanned::bare(Expr::FnCall(
-                Box::new(Spanned::bare(Expr::Ident("foo".to_string()))),
-                vec![Spanned::bare(Expr::Ident("x".to_string()))],
+                crate::ast::Shared::new(Spanned::bare(Expr::Ident("foo".to_string()))),
+                crate::ast::shared::vec(vec![Spanned::bare(Expr::Ident("x".to_string()))]),
             )),
             Spanned::bare(Expr::FnCall(
-                Box::new(Spanned::bare(Expr::Ident("fooSpec".to_string()))),
-                vec![Spanned::bare(Expr::Ident("x".to_string()))],
+                crate::ast::Shared::new(Spanned::bare(Expr::Ident("fooSpec".to_string()))),
+                crate::ast::shared::vec(vec![Spanned::bare(Expr::Ident("x".to_string()))]),
             )),
             "fooSpec",
         );
@@ -995,15 +995,15 @@ mod tests {
 
         let verify_law = law(
             Spanned::bare(Expr::FnCall(
-                Box::new(Spanned::bare(Expr::Ident("foo".to_string()))),
-                vec![Spanned::bare(Expr::Ident("x".to_string()))],
+                crate::ast::Shared::new(Spanned::bare(Expr::Ident("foo".to_string()))),
+                crate::ast::shared::vec(vec![Spanned::bare(Expr::Ident("x".to_string()))]),
             )),
             Spanned::bare(Expr::FnCall(
-                Box::new(Spanned::bare(Expr::Ident("fooSpec".to_string()))),
-                vec![
+                crate::ast::Shared::new(Spanned::bare(Expr::Ident("fooSpec".to_string()))),
+                crate::ast::shared::vec(vec![
                     Spanned::bare(Expr::Literal(Literal::Int(5))),
                     Spanned::bare(Expr::Ident("x".to_string())),
-                ],
+                ]),
             )),
             "fooSpec",
         );

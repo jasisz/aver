@@ -161,7 +161,7 @@ verify depth law reflexive
 }
 
 fn builtin(name: &str, args: Vec<Spanned<Expr>>) -> Spanned<Expr> {
-    Spanned::bare(Expr::Call(Callee::Builtin(name.into()), args))
+    Spanned::bare(Expr::Call(Callee::Builtin(name.into()), args.into()))
 }
 
 #[test]
@@ -180,11 +180,11 @@ fn concrete_applications_retain_fixed_seeds_and_compose_distinct_functions() {
         let base = Spanned::bare(Expr::Literal(Literal::Int(radix)));
         let quotient = Spanned::bare(Expr::Call(
             Callee::Intrinsic(aver::ir::hir::BuiltinIntrinsic::IntDivEuclid),
-            vec![value.clone(), base.clone()],
+            vec![value.clone(), base.clone()].into(),
         ));
         let remainder = Spanned::bare(Expr::Call(
             Callee::Intrinsic(aver::ir::hir::BuiltinIntrinsic::IntModEuclid),
-            vec![value, base],
+            vec![value, base].into(),
         ));
         let prefix = step
             .applications
@@ -196,7 +196,7 @@ fn concrete_applications_retain_fixed_seeds_and_compose_distinct_functions() {
             prefix.arguments,
             vec![
                 quotient.clone(),
-                Spanned::bare(Expr::List(vec![remainder.clone()]))
+                Spanned::bare(Expr::List(vec![remainder.clone()].into()))
             ]
         );
         let read = law_theorem(&ctx, "read", "suffix").unwrap();
@@ -208,7 +208,7 @@ fn concrete_applications_retain_fixed_seeds_and_compose_distinct_functions() {
         assert_eq!(suffix.fn_id, read.fn_id);
         let rest = Spanned::bare(Expr::Call(
             Callee::Fn(theorem.fn_id),
-            vec![quotient, Spanned::bare(Expr::List(vec![]))],
+            vec![quotient, Spanned::bare(Expr::List(Vec::new().into()))].into(),
         ));
         assert_eq!(
             suffix.arguments,

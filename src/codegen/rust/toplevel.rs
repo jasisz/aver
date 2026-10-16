@@ -1967,7 +1967,7 @@ mod tests {
 
     fn call(name: &str, args: Vec<Expr>) -> Expr {
         Expr::FnCall(
-            Box::new(Spanned::bare(Expr::Ident(name.to_string()))),
+            crate::ast::Shared::new(Spanned::bare(Expr::Ident(name.to_string()))),
             args.into_iter().map(Spanned::bare).collect(),
         )
     }
@@ -1976,7 +1976,7 @@ mod tests {
     fn oracle_trace_shapes_are_detected() {
         // `.result` projection (Oracle trace-result record).
         let result_proj = Expr::Attr(
-            Box::new(Spanned::bare(call("rollAndReport", vec![]))),
+            crate::ast::Shared::new(Spanned::bare(call("rollAndReport", vec![]))),
             "result".to_string(),
         );
         assert!(verify_case_is_oracle_only(
@@ -1986,11 +1986,13 @@ mod tests {
 
         // `.trace.contains(...)` (Oracle trace assertion).
         let trace_attr = Expr::Attr(
-            Box::new(Spanned::bare(call("report", vec![]))),
+            crate::ast::Shared::new(Spanned::bare(call("report", vec![]))),
             "trace".to_string(),
         );
-        let trace_contains =
-            Expr::Attr(Box::new(Spanned::bare(trace_attr)), "contains".to_string());
+        let trace_contains = Expr::Attr(
+            crate::ast::Shared::new(Spanned::bare(trace_attr)),
+            "contains".to_string(),
+        );
         assert!(verify_case_is_oracle_only(
             &trace_contains,
             &Expr::Literal(Literal::Bool(true))
@@ -1998,7 +2000,7 @@ mod tests {
 
         // `BranchPath.Root` arg to a given-universal Oracle stub call.
         let branch_root = Expr::Attr(
-            Box::new(Spanned::bare(Expr::Ident("BranchPath".to_string()))),
+            crate::ast::Shared::new(Spanned::bare(Expr::Ident("BranchPath".to_string()))),
             "Root".to_string(),
         );
         let oracle_call = call("highDie", vec![branch_root, Expr::Literal(Literal::Int(0))]);
@@ -2016,7 +2018,7 @@ mod tests {
         // trace projection.
         let left = call("terminalWidth", vec![]);
         let right = Expr::Attr(
-            Box::new(Spanned::bare(call("fixedSizeStub", vec![]))),
+            crate::ast::Shared::new(Spanned::bare(call("fixedSizeStub", vec![]))),
             "width".to_string(),
         );
         assert!(!verify_case_is_oracle_only(&left, &right));
@@ -2024,8 +2026,8 @@ mod tests {
         // A plain arithmetic law stays runnable.
         let plus = Expr::BinOp(
             crate::ast::BinOp::Add,
-            Box::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
-            Box::new(Spanned::bare(Expr::Literal(Literal::Int(2)))),
+            crate::ast::Shared::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
+            crate::ast::Shared::new(Spanned::bare(Expr::Literal(Literal::Int(2)))),
         );
         assert!(!verify_case_is_oracle_only(
             &plus,

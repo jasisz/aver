@@ -821,8 +821,8 @@ fn bind_over(value: Spanned<Expr>, pattern: Pattern, body: Spanned<Expr>) -> Spa
     let out = sp_at(
         line,
         Expr::Match {
-            subject: Box::new(value),
-            arms: vec![arm],
+            subject: crate::ast::Shared::new(value),
+            arms: crate::ast::shared::vec(vec![arm]),
         },
     );
     if let Some(ty) = ty {

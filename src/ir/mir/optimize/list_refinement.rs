@@ -362,9 +362,10 @@ fn replace_with_success(
 }
 
 fn typed_span<T>(node: T, line: crate::ast::SourceLine, ty: Option<Type>) -> Spanned<T> {
-    let cell = std::sync::OnceLock::new();
+    let cell: std::sync::OnceLock<crate::ast::Shared<crate::ast::Type>> =
+        std::sync::OnceLock::new();
     if let Some(ty) = ty {
-        let _ = cell.set(ty);
+        let _ = cell.set(crate::ast::Shared::new(ty));
     }
     Spanned {
         node,

@@ -270,7 +270,7 @@ pub fn rewrite_recursive_calls_expr(
     let new_node = match &expr.node {
         Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => return expr.clone(),
         Expr::Attr(obj, field) => Expr::Attr(
-            Box::new(rewrite_recursive_calls_expr(obj, targets, fuel_var)),
+            crate::ast::Shared::new(rewrite_recursive_calls_expr(obj, targets, fuel_var)),
             field.clone(),
         ),
         Expr::FnCall(callee, args) => {
@@ -285,49 +285,59 @@ pub fn rewrite_recursive_calls_expr(
                 call_args.push(Spanned::new(Expr::Ident(fuel_var.to_string()), line));
                 call_args.extend(rewritten_args);
                 Expr::FnCall(
-                    Box::new(Spanned::new(Expr::Ident(fuel_helper_name(&name)), line)),
-                    call_args,
+                    crate::ast::Shared::new(Spanned::new(
+                        Expr::Ident(fuel_helper_name(&name)),
+                        line,
+                    )),
+                    crate::ast::shared::vec(call_args),
                 )
             } else {
                 Expr::FnCall(
-                    Box::new(rewrite_recursive_calls_expr(callee, targets, fuel_var)),
-                    rewritten_args,
+                    crate::ast::Shared::new(rewrite_recursive_calls_expr(
+                        callee, targets, fuel_var,
+                    )),
+                    crate::ast::shared::vec(rewritten_args),
                 )
             }
         }
         Expr::BinOp(op, left, right) => Expr::BinOp(
             *op,
-            Box::new(rewrite_recursive_calls_expr(left, targets, fuel_var)),
-            Box::new(rewrite_recursive_calls_expr(right, targets, fuel_var)),
+            crate::ast::Shared::new(rewrite_recursive_calls_expr(left, targets, fuel_var)),
+            crate::ast::Shared::new(rewrite_recursive_calls_expr(right, targets, fuel_var)),
         ),
-        Expr::Neg(inner) => Expr::Neg(Box::new(rewrite_recursive_calls_expr(
+        Expr::Neg(inner) => Expr::Neg(crate::ast::Shared::new(rewrite_recursive_calls_expr(
             inner, targets, fuel_var,
         ))),
         Expr::Match { subject, arms } => Expr::Match {
-            subject: Box::new(rewrite_recursive_calls_expr(subject, targets, fuel_var)),
+            subject: crate::ast::Shared::new(rewrite_recursive_calls_expr(
+                subject, targets, fuel_var,
+            )),
             arms: arms
                 .iter()
                 .map(|arm| MatchArm {
                     pattern: arm.pattern.clone(),
-                    body: Box::new(rewrite_recursive_calls_expr(&arm.body, targets, fuel_var)),
+                    body: crate::ast::Shared::new(rewrite_recursive_calls_expr(
+                        &arm.body, targets, fuel_var,
+                    )),
                     binding_slots: std::sync::OnceLock::new(),
                 })
                 .collect(),
         },
         Expr::Constructor(name, arg) => Expr::Constructor(
             name.clone(),
-            arg.as_ref()
-                .map(|inner| Box::new(rewrite_recursive_calls_expr(inner, targets, fuel_var))),
+            arg.as_ref().map(|inner| {
+                crate::ast::Shared::new(rewrite_recursive_calls_expr(inner, targets, fuel_var))
+            }),
         ),
-        Expr::ErrorProp(inner) => Expr::ErrorProp(Box::new(rewrite_recursive_calls_expr(
-            inner, targets, fuel_var,
-        ))),
+        Expr::ErrorProp(inner) => Expr::ErrorProp(crate::ast::Shared::new(
+            rewrite_recursive_calls_expr(inner, targets, fuel_var),
+        )),
         Expr::InterpolatedStr(parts) => Expr::InterpolatedStr(
             parts
                 .iter()
                 .map(|part| match part {
                     StrPart::Literal(_) => part.clone(),
-                    StrPart::Parsed(inner) => StrPart::Parsed(Box::new(
+                    StrPart::Parsed(inner) => StrPart::Parsed(crate::ast::Shared::new(
                         rewrite_recursive_calls_expr(inner, targets, fuel_var),
                     )),
                 })
@@ -381,7 +391,7 @@ pub fn rewrite_recursive_calls_expr(
             updates,
         } => Expr::RecordUpdate {
             type_name: type_name.clone(),
-            base: Box::new(rewrite_recursive_calls_expr(base, targets, fuel_var)),
+            base: crate::ast::Shared::new(rewrite_recursive_calls_expr(base, targets, fuel_var)),
             updates: updates
                 .iter()
                 .map(|(name, value)| {
@@ -403,8 +413,11 @@ pub fn rewrite_recursive_calls_expr(
                 call_args.push(Spanned::new(Expr::Ident(fuel_var.to_string()), line));
                 call_args.extend(rewritten_args);
                 Expr::FnCall(
-                    Box::new(Spanned::new(Expr::Ident(fuel_helper_name(target)), line)),
-                    call_args,
+                    crate::ast::Shared::new(Spanned::new(
+                        Expr::Ident(fuel_helper_name(target)),
+                        line,
+                    )),
+                    crate::ast::shared::vec(call_args),
                 )
             } else {
                 Expr::TailCall(Box::new(TailCallData::new(target.clone(), rewritten_args)))
@@ -456,7 +469,7 @@ pub fn rewrite_native_guarded_calls_resolved_expr(
     };
     let synth_aux_callee = |line: usize| -> ResolvedCallee {
         ResolvedCallee::Unresolved {
-            callee: Box::new(Spanned::new(
+            callee: crate::ast::Shared::new(Spanned::new(
                 ResolvedExpr::Ident(aux_name.to_string()),
                 line,
             )),
@@ -466,7 +479,9 @@ pub fn rewrite_native_guarded_calls_resolved_expr(
         ResolvedExpr::Literal(_) | ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } => {
             return expr.clone();
         }
-        ResolvedExpr::Attr(obj, field) => ResolvedExpr::Attr(Box::new(rec(obj)), field.clone()),
+        ResolvedExpr::Attr(obj, field) => {
+            ResolvedExpr::Attr(crate::ast::Shared::new(rec(obj)), field.clone())
+        }
         ResolvedExpr::Call(callee, args) => {
             let rewritten_args: Vec<Spanned<ResolvedExpr>> = args.iter().map(&rec).collect();
             let target_matches =
@@ -477,22 +492,24 @@ pub fn rewrite_native_guarded_calls_resolved_expr(
                     ResolvedExpr::Ident(OMEGA_PROOF_SENTINEL.to_string()),
                     line,
                 ));
-                ResolvedExpr::Call(synth_aux_callee(line), call_args)
+                ResolvedExpr::Call(synth_aux_callee(line), crate::ast::shared::vec(call_args))
             } else {
-                ResolvedExpr::Call(callee.clone(), rewritten_args)
+                ResolvedExpr::Call(callee.clone(), crate::ast::shared::vec(rewritten_args))
             }
         }
-        ResolvedExpr::BinOp(op, left, right) => {
-            ResolvedExpr::BinOp(*op, Box::new(rec(left)), Box::new(rec(right)))
-        }
-        ResolvedExpr::Neg(inner) => ResolvedExpr::Neg(Box::new(rec(inner))),
+        ResolvedExpr::BinOp(op, left, right) => ResolvedExpr::BinOp(
+            *op,
+            crate::ast::Shared::new(rec(left)),
+            crate::ast::Shared::new(rec(right)),
+        ),
+        ResolvedExpr::Neg(inner) => ResolvedExpr::Neg(crate::ast::Shared::new(rec(inner))),
         ResolvedExpr::Match { subject, arms } => ResolvedExpr::Match {
-            subject: Box::new(rec(subject)),
+            subject: crate::ast::Shared::new(rec(subject)),
             arms: arms
                 .iter()
                 .map(|arm| ResolvedMatchArm {
                     pattern: arm.pattern.clone(),
-                    body: Box::new(rec(&arm.body)),
+                    body: crate::ast::Shared::new(rec(&arm.body)),
                     binding_slots: std::sync::OnceLock::new(),
                 })
                 .collect(),
@@ -500,13 +517,17 @@ pub fn rewrite_native_guarded_calls_resolved_expr(
         ResolvedExpr::Ctor(ctor, args) => {
             ResolvedExpr::Ctor(ctor.clone(), args.iter().map(&rec).collect())
         }
-        ResolvedExpr::ErrorProp(inner) => ResolvedExpr::ErrorProp(Box::new(rec(inner))),
+        ResolvedExpr::ErrorProp(inner) => {
+            ResolvedExpr::ErrorProp(crate::ast::Shared::new(rec(inner)))
+        }
         ResolvedExpr::InterpolatedStr(parts) => ResolvedExpr::InterpolatedStr(
             parts
                 .iter()
                 .map(|p| match p {
                     ResolvedStrPart::Literal(_) => p.clone(),
-                    ResolvedStrPart::Parsed(inner) => ResolvedStrPart::Parsed(Box::new(rec(inner))),
+                    ResolvedStrPart::Parsed(inner) => {
+                        ResolvedStrPart::Parsed(crate::ast::Shared::new(rec(inner)))
+                    }
                 })
                 .collect(),
         ),
@@ -535,7 +556,7 @@ pub fn rewrite_native_guarded_calls_resolved_expr(
         } => ResolvedExpr::RecordUpdate {
             type_id: *type_id,
             type_name: type_name.clone(),
-            base: Box::new(rec(base)),
+            base: crate::ast::Shared::new(rec(base)),
             updates: updates.iter().map(|(n, v)| (n.clone(), rec(v))).collect(),
         },
         ResolvedExpr::TailCall { target, args } => {
@@ -546,11 +567,11 @@ pub fn rewrite_native_guarded_calls_resolved_expr(
                     ResolvedExpr::Ident(OMEGA_PROOF_SENTINEL.to_string()),
                     line,
                 ));
-                ResolvedExpr::Call(synth_aux_callee(line), call_args)
+                ResolvedExpr::Call(synth_aux_callee(line), crate::ast::shared::vec(call_args))
             } else {
                 ResolvedExpr::TailCall {
                     target: *target,
-                    args: rewritten_args,
+                    args: crate::ast::shared::vec(rewritten_args),
                 }
             }
         }

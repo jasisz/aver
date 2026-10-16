@@ -415,7 +415,7 @@ mod tests {
 
     fn span_with_ty<T>(node: T, ty: Type) -> Spanned<T> {
         let cell = std::sync::OnceLock::new();
-        let _ = cell.set(ty);
+        let _ = cell.set(crate::ast::Shared::new(ty));
         Spanned {
             node,
             line: 0,

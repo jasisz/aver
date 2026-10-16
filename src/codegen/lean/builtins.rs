@@ -394,7 +394,7 @@ mod tests {
         let ctx = empty_ctx();
         let option_expr = Spanned::bare(ResolvedExpr::Call(
             ResolvedCallee::Builtin("String.fromCodePoint".to_string()),
-            vec![Spanned::bare(ResolvedExpr::Literal(Literal::Int(8)))],
+            crate::ast::shared::vec(vec![Spanned::bare(ResolvedExpr::Literal(Literal::Int(8)))]),
         ));
         let default_expr = Spanned::bare(ResolvedExpr::Literal(Literal::Str("".to_string())));
 
@@ -409,7 +409,9 @@ mod tests {
         let ctx = empty_ctx();
         let emitted = emit_builtin_call(
             "List.len",
-            &[Spanned::bare(ResolvedExpr::List(vec![]))],
+            &[Spanned::bare(ResolvedExpr::List(crate::ast::shared::vec(
+                vec![],
+            )))],
             &ctx,
         )
         .expect("List.len should be emitted");

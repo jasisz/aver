@@ -122,7 +122,7 @@ pub fn build_context_for_items(
                 ctx.all_fn_defs.push(fd.clone());
             }
             TopLevel::TypeDef(td) => ctx.type_defs.push(td.clone()),
-            TopLevel::Verify(vb) => ctx.verify_blocks.push(vb.clone()),
+            TopLevel::Verify(vb) => ctx.verify_blocks.push((**vb).clone()),
             TopLevel::Decision(db) => ctx.decisions.push(db.clone()),
             _ => {}
         }

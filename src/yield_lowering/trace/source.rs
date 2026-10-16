@@ -97,7 +97,7 @@ impl<'a> Compiler<'a> {
         Spanned::new(
             Expr::RecordCreate {
                 type_name: self.model.result_type(self.function),
-                fields: vec![
+                fields: crate::ast::shared::vec(vec![
                     ("remaining".into(), cursor.inputs),
                     ("position".into(), cursor.position),
                     ("consumed".into(), cursor.consumed),
@@ -108,7 +108,7 @@ impl<'a> Compiler<'a> {
                         "valid".into(),
                         Spanned::new(Expr::Literal(Literal::Bool(valid)), 0),
                     ),
-                ],
+                ]),
             },
             0,
         )
@@ -360,8 +360,12 @@ impl<'a> Compiler<'a> {
             let observed = call(&self.model.source_name(&helper), arguments, 0);
             let result = self.name();
             let value = self.name();
-            let field =
-                |name: &str| Spanned::new(Expr::Attr(Box::new(ident(&result, 0)), name.into()), 0);
+            let field = |name: &str| {
+                Spanned::new(
+                    Expr::Attr(crate::ast::Shared::new(ident(&result, 0)), name.into()),
+                    0,
+                )
+            };
             let current = Cursor {
                 inputs: segment_cursor.map_or_else(
                     || field("remaining"),
@@ -373,8 +377,8 @@ impl<'a> Compiler<'a> {
                                 Spanned::new(
                                     Expr::BinOp(
                                         BinOp::Sub,
-                                        Box::new(field("consumed")),
-                                        Box::new(consumed),
+                                        crate::ast::Shared::new(field("consumed")),
+                                        crate::ast::Shared::new(consumed),
                                     ),
                                     0,
                                 ),
@@ -436,8 +440,8 @@ impl<'a> Compiler<'a> {
         let position = Spanned::new(
             Expr::BinOp(
                 BinOp::Add,
-                Box::new(cursor.position.clone()),
-                Box::new(Spanned::new(Expr::Literal(Literal::Int(1)), 0)),
+                crate::ast::Shared::new(cursor.position.clone()),
+                crate::ast::Shared::new(Spanned::new(Expr::Literal(Literal::Int(1)), 0)),
             ),
             0,
         );
@@ -454,7 +458,7 @@ impl<'a> Compiler<'a> {
             "List.concat",
             vec![
                 cursor.events.clone(),
-                Spanned::new(Expr::List(vec![event]), 0),
+                Spanned::new(Expr::List(crate::ast::shared::vec(vec![event])), 0),
             ],
             0,
         );
@@ -499,8 +503,8 @@ fn add_one(value: Expression) -> Expression {
     Spanned::new(
         Expr::BinOp(
             BinOp::Add,
-            Box::new(value),
-            Box::new(Spanned::new(Expr::Literal(Literal::Int(1)), 0)),
+            crate::ast::Shared::new(value),
+            crate::ast::Shared::new(Spanned::new(Expr::Literal(Literal::Int(1)), 0)),
         ),
         0,
     )

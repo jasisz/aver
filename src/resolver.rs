@@ -720,8 +720,8 @@ mod tests {
             desc: None,
             body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::BinOp(
                 BinOp::Add,
-                Box::new(Spanned::bare(Expr::Ident("a".to_string()))),
-                Box::new(Spanned::bare(Expr::Ident("b".to_string()))),
+                crate::ast::Shared::new(Spanned::bare(Expr::Ident("a".to_string()))),
+                crate::ast::Shared::new(Spanned::bare(Expr::Ident("b".to_string()))),
             )))),
             resolution: None,
         };
@@ -810,8 +810,8 @@ mod tests {
             effects: vec![],
             desc: None,
             body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::FnCall(
-                Box::new(Spanned::bare(Expr::Ident("Console".to_string()))),
-                vec![Spanned::bare(Expr::Ident("x".to_string()))],
+                crate::ast::Shared::new(Spanned::bare(Expr::Ident("Console".to_string()))),
+                crate::ast::shared::vec(vec![Spanned::bare(Expr::Ident("x".to_string()))]),
             )))),
             resolution: None,
         };
@@ -857,8 +857,8 @@ mod tests {
                     None,
                     Spanned::bare(Expr::BinOp(
                         BinOp::Add,
-                        Box::new(Spanned::bare(Expr::Ident("x".to_string()))),
-                        Box::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
+                        crate::ast::Shared::new(Spanned::bare(Expr::Ident("x".to_string()))),
+                        crate::ast::Shared::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
                     )),
                 ),
                 Stmt::Expr(Spanned::bare(Expr::Ident("y".to_string()))),
@@ -922,22 +922,26 @@ mod tests {
             desc: None,
             body: Rc::new(FnBody::from_expr(Spanned::new(
                 Expr::Match {
-                    subject: Box::new(Spanned::bare(Expr::Ident("x".to_string()))),
-                    arms: vec![
+                    subject: crate::ast::Shared::new(Spanned::bare(Expr::Ident("x".to_string()))),
+                    arms: crate::ast::shared::vec(vec![
                         MatchArm {
                             pattern: Pattern::Constructor(
                                 "Result.Ok".to_string(),
                                 vec!["v".to_string()],
                             ),
-                            body: Box::new(Spanned::bare(Expr::Ident("v".to_string()))),
+                            body: crate::ast::Shared::new(Spanned::bare(Expr::Ident(
+                                "v".to_string(),
+                            ))),
                             binding_slots: std::sync::OnceLock::new(),
                         },
                         MatchArm {
                             pattern: Pattern::Wildcard,
-                            body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
+                            body: crate::ast::Shared::new(Spanned::bare(Expr::Literal(
+                                Literal::Int(0),
+                            ))),
                             binding_slots: std::sync::OnceLock::new(),
                         },
-                    ],
+                    ]),
                 },
                 1,
             ))),
@@ -987,22 +991,28 @@ mod tests {
                     "result".to_string(),
                     None,
                     Spanned::bare(Expr::Match {
-                        subject: Box::new(Spanned::bare(Expr::Ident("x".to_string()))),
-                        arms: vec![
+                        subject: crate::ast::Shared::new(Spanned::bare(Expr::Ident(
+                            "x".to_string(),
+                        ))),
+                        arms: crate::ast::shared::vec(vec![
                             MatchArm {
                                 pattern: Pattern::Constructor(
                                     "Option.Some".to_string(),
                                     vec!["v".to_string()],
                                 ),
-                                body: Box::new(Spanned::bare(Expr::Ident("v".to_string()))),
+                                body: crate::ast::Shared::new(Spanned::bare(Expr::Ident(
+                                    "v".to_string(),
+                                ))),
                                 binding_slots: std::sync::OnceLock::new(),
                             },
                             MatchArm {
                                 pattern: Pattern::Wildcard,
-                                body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
+                                body: crate::ast::Shared::new(Spanned::bare(Expr::Literal(
+                                    Literal::Int(0),
+                                ))),
                                 binding_slots: std::sync::OnceLock::new(),
                             },
-                        ],
+                        ]),
                     }),
                 ),
                 Stmt::Expr(Spanned::bare(Expr::Ident("result".to_string()))),
@@ -1088,30 +1098,36 @@ mod tests {
                     None,
                     Spanned::bare(Expr::BinOp(
                         BinOp::Add,
-                        Box::new(Spanned::bare(Expr::Ident("x".to_string()))),
-                        Box::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
+                        crate::ast::Shared::new(Spanned::bare(Expr::Ident("x".to_string()))),
+                        crate::ast::Shared::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
                     )),
                 ),
                 Stmt::Binding(
                     "r".to_string(),
                     None,
                     Spanned::bare(Expr::Match {
-                        subject: Box::new(Spanned::bare(Expr::Ident("x".to_string()))),
-                        arms: vec![
+                        subject: crate::ast::Shared::new(Spanned::bare(Expr::Ident(
+                            "x".to_string(),
+                        ))),
+                        arms: crate::ast::shared::vec(vec![
                             MatchArm {
                                 pattern: Pattern::Constructor(
                                     "Option.Some".to_string(),
                                     vec!["v".to_string()],
                                 ),
-                                body: Box::new(Spanned::bare(Expr::Ident("v".to_string()))),
+                                body: crate::ast::Shared::new(Spanned::bare(Expr::Ident(
+                                    "v".to_string(),
+                                ))),
                                 binding_slots: std::sync::OnceLock::new(),
                             },
                             MatchArm {
                                 pattern: Pattern::Wildcard,
-                                body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
+                                body: crate::ast::Shared::new(Spanned::bare(Expr::Literal(
+                                    Literal::Int(0),
+                                ))),
                                 binding_slots: std::sync::OnceLock::new(),
                             },
-                        ],
+                        ]),
                     }),
                 ),
                 Stmt::Expr(Spanned::bare(Expr::Ident("v".to_string()))),

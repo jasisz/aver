@@ -1796,14 +1796,17 @@ mod tests {
     }
 
     fn call(name: &str, args: Vec<Spanned<Expr>>) -> Spanned<Expr> {
-        Spanned::bare(Expr::FnCall(Box::new(ident(name)), args))
+        Spanned::bare(Expr::FnCall(
+            crate::ast::Shared::new(ident(name)),
+            crate::ast::shared::vec(args),
+        ))
     }
 
     fn add1(inner: Spanned<Expr>) -> Spanned<Expr> {
         Spanned::bare(Expr::BinOp(
             BinOp::Add,
-            Box::new(inner),
-            Box::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
+            crate::ast::Shared::new(inner),
+            crate::ast::Shared::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
         ))
     }
 

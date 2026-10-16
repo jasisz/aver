@@ -5,7 +5,7 @@ use crate::types::Type;
 fn fuel_rewrite_preserves_the_primitive_type_of_an_interpolated_record_field() {
     let field = Spanned::new(
         Expr::Attr(
-            Box::new(Spanned::bare(Expr::Ident("item".into()))),
+            crate::ast::Shared::new(Spanned::bare(Expr::Ident("item".into()))),
             "value".into(),
         ),
         17,
@@ -14,7 +14,7 @@ fn fuel_rewrite_preserves_the_primitive_type_of_an_interpolated_record_field() {
     let text = Spanned::new(
         Expr::InterpolatedStr(vec![
             StrPart::Literal("Witness item of ".into()),
-            StrPart::Parsed(Box::new(field)),
+            StrPart::Parsed(crate::ast::Shared::new(field)),
         ]),
         17,
     );
@@ -45,7 +45,10 @@ fn fuel_calls_keep_their_result_type_without_copying_the_old_callee_signature() 
         vec![],
     ));
     for node in [
-        Expr::FnCall(Box::new(callee), vec![argument.clone()]),
+        Expr::FnCall(
+            crate::ast::Shared::new(callee),
+            crate::ast::shared::vec(vec![argument.clone()]),
+        ),
         Expr::TailCall(Box::new(TailCallData::new("walk".into(), vec![argument]))),
     ] {
         let call = Spanned::new(node, 19);
@@ -70,25 +73,28 @@ fn guarded_hir_rewrite_preserves_interpolated_field_and_recursive_call_types() {
     let target = crate::ir::FnId(7);
     let field = Spanned::new(
         ResolvedExpr::Attr(
-            Box::new(Spanned::bare(ResolvedExpr::Ident("item".into()))),
+            crate::ast::Shared::new(Spanned::bare(ResolvedExpr::Ident("item".into()))),
             "value".into(),
         ),
         23,
     );
     field.set_ty(Type::Int);
     for call_node in [
-        ResolvedExpr::Call(ResolvedCallee::Fn(target), vec![field.clone()]),
+        ResolvedExpr::Call(
+            ResolvedCallee::Fn(target),
+            crate::ast::shared::vec(vec![field.clone()]),
+        ),
         ResolvedExpr::TailCall {
             target,
-            args: vec![field.clone()],
+            args: crate::ast::shared::vec(vec![field.clone()]),
         },
     ] {
         let call = Spanned::new(call_node, 23);
         call.set_ty(Type::Int);
         let text = Spanned::new(
             ResolvedExpr::InterpolatedStr(vec![
-                ResolvedStrPart::Parsed(Box::new(field.clone())),
-                ResolvedStrPart::Parsed(Box::new(call)),
+                ResolvedStrPart::Parsed(crate::ast::Shared::new(field.clone())),
+                ResolvedStrPart::Parsed(crate::ast::Shared::new(call)),
             ]),
             23,
         );

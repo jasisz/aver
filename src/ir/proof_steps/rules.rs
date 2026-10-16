@@ -362,8 +362,11 @@ impl WallRule {
         let above_zero = || is(cmp(BinOp::Gt, n(), i(0)), true);
         let pred = || binop(BinOp::Sub, n(), i(1));
         let (m, k, v, k2) = (|| var("m"), || var("k"), || var("v"), || var("k2"));
-        let empty =
-            || crate::ast::Spanned::bare(crate::ir::hir::ResolvedExpr::MapLiteral(Vec::new()));
+        let empty = || {
+            crate::ast::Spanned::bare(crate::ir::hir::ResolvedExpr::MapLiteral(
+                crate::ast::shared::vec(Vec::new()),
+            ))
+        };
         let set = || term::builtin("Map.set", vec![m(), k(), v()], None);
         let get = |map: Term, key: Term| term::builtin("Map.get", vec![map, key], None);
         let has = |map: Term, key: Term| {
@@ -373,7 +376,7 @@ impl WallRule {
         let option = |c: crate::ir::hir::BuiltinCtor, args: Vec<Term>| {
             crate::ast::Spanned::bare(crate::ir::hir::ResolvedExpr::Ctor(
                 crate::ir::hir::ResolvedCtor::Builtin(c),
-                args,
+                crate::ast::shared::vec(args),
             ))
         };
         let other = || is(cmp(BinOp::Neq, k(), k2()), true);
@@ -394,7 +397,7 @@ impl WallRule {
         let made = || {
             crate::ast::Spanned::bare(crate::ir::hir::ResolvedExpr::Call(
                 crate::ir::hir::ResolvedCallee::Intrinsic(BuiltinIntrinsic::VectorNew),
-                vec![nn(), x()],
+                crate::ast::shared::vec(vec![nn(), x()]),
             ))
         };
         let none = || option(crate::ir::hir::BuiltinCtor::OptionNone, vec![]);

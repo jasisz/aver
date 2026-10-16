@@ -573,16 +573,20 @@ mod tests {
     }
 
     fn binop(op: BinOp, left: Expr, right: Expr) -> Expr {
-        Expr::BinOp(op, Box::new(spanned(left)), Box::new(spanned(right)))
+        Expr::BinOp(
+            op,
+            crate::ast::Shared::new(spanned(left)),
+            crate::ast::Shared::new(spanned(right)),
+        )
     }
 
     fn namespace_call(namespace: &str, method: &str, arg: Expr) -> Expr {
         Expr::FnCall(
-            Box::new(spanned(Expr::Attr(
-                Box::new(spanned(ident(namespace))),
+            crate::ast::Shared::new(spanned(Expr::Attr(
+                crate::ast::Shared::new(spanned(ident(namespace))),
                 method.to_string(),
             ))),
-            vec![spanned(arg)],
+            crate::ast::shared::vec(vec![spanned(arg)]),
         )
     }
 
@@ -596,19 +600,19 @@ mod tests {
         let body = binop(BinOp::Sub, zr_sq, zi_sq);
 
         let match_expr = Expr::Match {
-            subject: Box::new(spanned(subject)),
-            arms: vec![
+            subject: crate::ast::Shared::new(spanned(subject)),
+            arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: crate::ast::Pattern::Literal(Literal::Bool(true)),
-                    body: Box::new(spanned(body)),
+                    body: crate::ast::Shared::new(spanned(body)),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: crate::ast::Pattern::Literal(Literal::Bool(false)),
-                    body: Box::new(spanned(ident("i"))),
+                    body: crate::ast::Shared::new(spanned(ident("i"))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
-            ],
+            ]),
         };
 
         let fd = FnDef {
@@ -641,19 +645,19 @@ mod tests {
         let body = binop(BinOp::Add, ident("x"), int(1));
 
         let match_expr = Expr::Match {
-            subject: Box::new(spanned(subject)),
-            arms: vec![
+            subject: crate::ast::Shared::new(spanned(subject)),
+            arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: crate::ast::Pattern::Literal(Literal::Bool(true)),
-                    body: Box::new(spanned(body)),
+                    body: crate::ast::Shared::new(spanned(body)),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: crate::ast::Pattern::Literal(Literal::Bool(false)),
-                    body: Box::new(spanned(ident("x"))),
+                    body: crate::ast::Shared::new(spanned(ident("x"))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
-            ],
+            ]),
         };
 
         let fd = FnDef {
@@ -683,19 +687,19 @@ mod tests {
         let subject = binop(BinOp::Eq, ident("x"), int(0));
 
         let match_expr = Expr::Match {
-            subject: Box::new(spanned(subject)),
-            arms: vec![
+            subject: crate::ast::Shared::new(spanned(subject)),
+            arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: crate::ast::Pattern::Literal(Literal::Bool(true)),
-                    body: Box::new(spanned(ident("x"))),
+                    body: crate::ast::Shared::new(spanned(ident("x"))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: crate::ast::Pattern::Literal(Literal::Bool(false)),
-                    body: Box::new(spanned(ident("x"))),
+                    body: crate::ast::Shared::new(spanned(ident("x"))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
-            ],
+            ]),
         };
 
         let fd = FnDef {
@@ -723,11 +727,11 @@ mod tests {
     #[test]
     fn detects_repeated_pure_fncall_in_body() {
         let len_call = Expr::FnCall(
-            Box::new(spanned(Expr::Attr(
-                Box::new(spanned(Expr::Ident("String".to_string()))),
+            crate::ast::Shared::new(spanned(Expr::Attr(
+                crate::ast::Shared::new(spanned(Expr::Ident("String".to_string()))),
                 "len".to_string(),
             ))),
-            vec![spanned(ident("s"))],
+            crate::ast::shared::vec(vec![spanned(ident("s"))]),
         );
 
         let fd = FnDef {
@@ -778,19 +782,23 @@ fn size(bag: Bag) -> Int
     fn warns_for_builtin_call_repeated_within_one_match_arm() {
         let len_call = namespace_call("Map", "len", ident("entries"));
         let match_expr = Expr::Match {
-            subject: Box::new(spanned(ident("bag"))),
-            arms: vec![
+            subject: crate::ast::Shared::new(spanned(ident("bag"))),
+            arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: crate::ast::Pattern::Ident("memory".to_string()),
-                    body: Box::new(spanned(binop(BinOp::Add, len_call.clone(), len_call))),
+                    body: crate::ast::Shared::new(spanned(binop(
+                        BinOp::Add,
+                        len_call.clone(),
+                        len_call,
+                    ))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: crate::ast::Pattern::Wildcard,
-                    body: Box::new(spanned(int(0))),
+                    body: crate::ast::Shared::new(spanned(int(0))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
-            ],
+            ]),
         };
         let fd = caller_fn("size", vec![], match_expr);
 
@@ -807,11 +815,11 @@ fn size(bag: Bag) -> Int
     #[test]
     fn no_warning_for_effectful_call() {
         let print_call = Expr::FnCall(
-            Box::new(spanned(Expr::Attr(
-                Box::new(spanned(Expr::Ident("Console".to_string()))),
+            crate::ast::Shared::new(spanned(Expr::Attr(
+                crate::ast::Shared::new(spanned(Expr::Ident("Console".to_string()))),
                 "print".to_string(),
             ))),
-            vec![spanned(ident("x"))],
+            crate::ast::shared::vec(vec![spanned(ident("x"))]),
         );
 
         let fd = FnDef {
@@ -840,11 +848,11 @@ fn size(bag: Bag) -> Int
     #[test]
     fn duplicate_reports_first_occurrence_line() {
         let len_call = Expr::FnCall(
-            Box::new(spanned(Expr::Attr(
-                Box::new(spanned(Expr::Ident("List".to_string()))),
+            crate::ast::Shared::new(spanned(Expr::Attr(
+                crate::ast::Shared::new(spanned(Expr::Ident("List".to_string()))),
                 "len".to_string(),
             ))),
-            vec![spanned(ident("xs"))],
+            crate::ast::shared::vec(vec![spanned(ident("xs"))]),
         );
 
         let fd = FnDef {
@@ -901,7 +909,10 @@ fn size(bag: Bag) -> Int
     }
 
     fn user_call(name: &str) -> Expr {
-        Expr::FnCall(Box::new(spanned(ident(name))), vec![spanned(ident("x"))])
+        Expr::FnCall(
+            crate::ast::Shared::new(spanned(ident(name))),
+            crate::ast::shared::vec(vec![spanned(ident("x"))]),
+        )
     }
 
     #[test]
@@ -925,19 +936,19 @@ fn size(bag: Bag) -> Int
         // Same call in two arms — only one runs, so hoisting would eager-eval
         // it on the other path. Must NOT warn (branch gate).
         let match_expr = Expr::Match {
-            subject: Box::new(spanned(binop(BinOp::Gt, ident("x"), int(0)))),
-            arms: vec![
+            subject: crate::ast::Shared::new(spanned(binop(BinOp::Gt, ident("x"), int(0)))),
+            arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: crate::ast::Pattern::Literal(Literal::Bool(true)),
-                    body: Box::new(spanned(user_call("cost"))),
+                    body: crate::ast::Shared::new(spanned(user_call("cost"))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: crate::ast::Pattern::Literal(Literal::Bool(false)),
-                    body: Box::new(spanned(user_call("cost"))),
+                    body: crate::ast::Shared::new(spanned(user_call("cost"))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
-            ],
+            ]),
         };
         let items = vec![
             TopLevel::FnDef(pure_int_fn("cost")),
