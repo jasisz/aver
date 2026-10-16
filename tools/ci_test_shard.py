@@ -89,6 +89,7 @@ def weighted_shards(
     count: int,
     weights: Mapping[str, float],
     split_targets: set[str],
+    initial_loads: list[float] | None = None,
 ) -> tuple[list[list[str]], list[float]]:
     known = set(targets)
     stale = (set(weights) | split_targets) - known
@@ -98,7 +99,7 @@ def weighted_shards(
         )
 
     shards: list[list[str]] = [[] for _ in range(count)]
-    loads = [0.0] * count
+    loads = list(initial_loads) if initial_loads is not None else [0.0] * count
     regular = [target for target in targets if target not in split_targets]
     ordered = sorted(
         regular,
@@ -246,23 +247,39 @@ def main() -> int:
     )
     targets = integration_targets(metadata)
     weights, split_targets = load_schedule()
-    shards, loads = weighted_shards(targets, args.count, weights, split_targets)
+    # The split cases are the longest single items, so they are placed first
+    # and the whole targets fill in around them, longest first. Placing the
+    # targets first evened out the targets alone and then stacked the
+    # four-to-seven-minute cases on top of shards that were already full.
+    split_selected: list[tuple[str, str]] = []
+    case_loads = [0.0] * args.count
+    if split_targets:
+        case_weights = load_case_weights()
+        case_shards = weighted_cases(
+            split_cases(split_targets), args.count, case_weights, case_loads
+        )
+        case_loads = [
+            sum(
+                case_weights.get(f"{target}::{case}", DEFAULT_WEIGHT_SECONDS)
+                for target, case in shard
+            )
+            for shard in case_shards
+        ]
+        split_selected = case_shards[args.index]
+    shards, loads = weighted_shards(
+        targets, args.count, weights, split_targets, case_loads
+    )
     selected = shards[args.index]
-    if not selected and not split_targets:
+    if not selected and not split_selected:
         raise SystemExit(f"integration-test shard {args.index}/{args.count} is empty")
 
     print(
         f"integration-test shard {args.index + 1}/{args.count} "
-        f"(~{loads[args.index]:.1f}s measured whole-target load): "
+        f"(~{loads[args.index]:.1f}s measured load): "
         + ", ".join(selected),
         flush=True,
     )
-    split_selected: list[tuple[str, str]] = []
     if split_targets:
-        case_shards = weighted_cases(
-            split_cases(split_targets), args.count, load_case_weights(), loads
-        )
-        split_selected = case_shards[args.index]
         print(
             f"test-case share {args.index + 1}/{args.count}: "
             + ", ".join(f"{target}::{case}" for target, case in split_selected),

@@ -72,6 +72,13 @@ class WeightedShardTests(unittest.TestCase):
         self.assertEqual([command[i + 1] for i, arg in enumerate(command) if arg == "--test"],
                          ["big", "huge"])
 
+    def test_whole_targets_fill_in_around_the_split_cases(self) -> None:
+        shards, loads = sharding.weighted_shards(
+            ["slow_a", "slow_b"], 2, {"slow_a": 100.0, "slow_b": 90.0}, set(), [400.0, 0.0]
+        )
+        self.assertEqual(shards, [[], ["slow_a", "slow_b"]])
+        self.assertEqual(loads, [400.0, 190.0])
+
     def test_target_seconds_are_read_from_cargo_output(self) -> None:
         clock = sharding.TargetClock()
         for line in [
