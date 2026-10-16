@@ -96,7 +96,11 @@ fn a_previous_type_stamp_cannot_revive_an_unknown_call() {
         name: "OldResult".into(),
     });
     let errs = errors(vec![TopLevel::Stmt(Stmt::Expr(Spanned::bare(
-        Expr::BinOp(BinOp::Eq, crate::ast::Shared::new(call.clone()), crate::ast::Shared::new(call)),
+        Expr::BinOp(
+            BinOp::Eq,
+            crate::ast::Shared::new(call.clone()),
+            crate::ast::Shared::new(call),
+        ),
     )))]);
     assert!(
         errs.iter()
@@ -139,12 +143,18 @@ fn duplicate_wildcard_arms_are_unreachable() {
                 arms: crate::ast::shared::vec(vec![
                     MatchArm {
                         pattern: Pattern::Wildcard,
-                        body: crate::ast::Shared::new(Spanned::new(Expr::Literal(Literal::Int(1)), 3)),
+                        body: crate::ast::Shared::new(Spanned::new(
+                            Expr::Literal(Literal::Int(1)),
+                            3,
+                        )),
                         binding_slots: std::sync::OnceLock::new(),
                     },
                     MatchArm {
                         pattern: Pattern::Wildcard,
-                        body: crate::ast::Shared::new(Spanned::new(Expr::Literal(Literal::Int(2)), 4)),
+                        body: crate::ast::Shared::new(Spanned::new(
+                            Expr::Literal(Literal::Int(2)),
+                            4,
+                        )),
                         binding_slots: std::sync::OnceLock::new(),
                     },
                 ]),
@@ -181,17 +191,26 @@ fn duplicate_literal_int_arms_are_unreachable() {
                 arms: crate::ast::shared::vec(vec![
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Int(0)),
-                        body: crate::ast::Shared::new(Spanned::new(Expr::Literal(Literal::Int(1)), 3)),
+                        body: crate::ast::Shared::new(Spanned::new(
+                            Expr::Literal(Literal::Int(1)),
+                            3,
+                        )),
                         binding_slots: std::sync::OnceLock::new(),
                     },
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Int(0)),
-                        body: crate::ast::Shared::new(Spanned::new(Expr::Literal(Literal::Int(2)), 4)),
+                        body: crate::ast::Shared::new(Spanned::new(
+                            Expr::Literal(Literal::Int(2)),
+                            4,
+                        )),
                         binding_slots: std::sync::OnceLock::new(),
                     },
                     MatchArm {
                         pattern: Pattern::Wildcard,
-                        body: crate::ast::Shared::new(Spanned::new(Expr::Literal(Literal::Int(3)), 5)),
+                        body: crate::ast::Shared::new(Spanned::new(
+                            Expr::Literal(Literal::Int(3)),
+                            5,
+                        )),
                         binding_slots: std::sync::OnceLock::new(),
                     },
                 ]),
@@ -223,17 +242,26 @@ fn distinct_literal_int_arms_are_ok() {
                 arms: crate::ast::shared::vec(vec![
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Int(0)),
-                        body: crate::ast::Shared::new(Spanned::new(Expr::Literal(Literal::Int(1)), 3)),
+                        body: crate::ast::Shared::new(Spanned::new(
+                            Expr::Literal(Literal::Int(1)),
+                            3,
+                        )),
                         binding_slots: std::sync::OnceLock::new(),
                     },
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Int(1)),
-                        body: crate::ast::Shared::new(Spanned::new(Expr::Literal(Literal::Int(2)), 4)),
+                        body: crate::ast::Shared::new(Spanned::new(
+                            Expr::Literal(Literal::Int(2)),
+                            4,
+                        )),
                         binding_slots: std::sync::OnceLock::new(),
                     },
                     MatchArm {
                         pattern: Pattern::Wildcard,
-                        body: crate::ast::Shared::new(Spanned::new(Expr::Literal(Literal::Int(3)), 5)),
+                        body: crate::ast::Shared::new(Spanned::new(
+                            Expr::Literal(Literal::Int(3)),
+                            5,
+                        )),
                         binding_slots: std::sync::OnceLock::new(),
                     },
                 ]),
@@ -303,7 +331,9 @@ fn tuple_union_patterns_can_be_exhaustive_without_single_total_arm() {
                             Pattern::Literal(Literal::Bool(true)),
                             Pattern::Wildcard,
                         ]),
-                        body: crate::ast::Shared::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
+                        body: crate::ast::Shared::new(Spanned::bare(Expr::Literal(Literal::Int(
+                            1,
+                        )))),
                         binding_slots: std::sync::OnceLock::new(),
                     },
                     MatchArm {
@@ -311,7 +341,9 @@ fn tuple_union_patterns_can_be_exhaustive_without_single_total_arm() {
                             Pattern::Literal(Literal::Bool(false)),
                             Pattern::Wildcard,
                         ]),
-                        body: crate::ast::Shared::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
+                        body: crate::ast::Shared::new(Spanned::bare(Expr::Literal(Literal::Int(
+                            0,
+                        )))),
                         binding_slots: std::sync::OnceLock::new(),
                     },
                 ]),
@@ -348,7 +380,9 @@ fn nested_tuple_union_still_reports_missing_case() {
                             Pattern::Literal(Literal::Bool(true)),
                             Pattern::Wildcard,
                         ]),
-                        body: crate::ast::Shared::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
+                        body: crate::ast::Shared::new(Spanned::bare(Expr::Literal(Literal::Int(
+                            1,
+                        )))),
                         binding_slots: std::sync::OnceLock::new(),
                     },
                     MatchArm {
@@ -356,7 +390,9 @@ fn nested_tuple_union_still_reports_missing_case() {
                             Pattern::Wildcard,
                             Pattern::Literal(Literal::Bool(true)),
                         ]),
-                        body: crate::ast::Shared::new(Spanned::bare(Expr::Literal(Literal::Int(2)))),
+                        body: crate::ast::Shared::new(Spanned::bare(Expr::Literal(Literal::Int(
+                            2,
+                        )))),
                         binding_slots: std::sync::OnceLock::new(),
                     },
                 ]),

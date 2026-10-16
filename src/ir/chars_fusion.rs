@@ -777,7 +777,10 @@ impl Cursorer<'_> {
                     let new_args = self.transform_self_call_args(args, cursors, line)?;
                     return Ok(sp(
                         Expr::FnCall(
-                            crate::ast::Shared::new(sp(Expr::Ident(self.new_name.to_string()), line)),
+                            crate::ast::Shared::new(sp(
+                                Expr::Ident(self.new_name.to_string()),
+                                line,
+                            )),
                             crate::ast::shared::vec(new_args),
                         ),
                         line,
@@ -785,7 +788,13 @@ impl Cursorer<'_> {
                 }
                 let new_callee = self.transform(callee, cursors)?;
                 let new_args = self.transform_each(args, cursors)?;
-                Ok(sp(Expr::FnCall(crate::ast::Shared::new(new_callee), crate::ast::shared::vec(new_args)), line))
+                Ok(sp(
+                    Expr::FnCall(
+                        crate::ast::Shared::new(new_callee),
+                        crate::ast::shared::vec(new_args),
+                    ),
+                    line,
+                ))
             }
 
             Expr::TailCall(data) if data.target == self.self_name => {
@@ -804,7 +813,10 @@ impl Cursorer<'_> {
             // counted, and an uncounted read is a wrong fuse.
             Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => Ok(expr.clone()),
             Expr::Attr(base, field) => Ok(sp(
-                Expr::Attr(crate::ast::Shared::new(self.transform(base, cursors)?), field.clone()),
+                Expr::Attr(
+                    crate::ast::Shared::new(self.transform(base, cursors)?),
+                    field.clone(),
+                ),
                 line,
             )),
             Expr::BinOp(op, lhs, rhs) => Ok(sp(
@@ -828,7 +840,10 @@ impl Cursorer<'_> {
                     Some(p) => Some(Box::new(self.transform(p, cursors)?)),
                     None => None,
                 };
-                Ok(sp(Expr::Constructor(name.clone(), lowered.map(crate::ast::Shared::from)), line))
+                Ok(sp(
+                    Expr::Constructor(name.clone(), lowered.map(crate::ast::Shared::from)),
+                    line,
+                ))
             }
             Expr::InterpolatedStr(parts) => {
                 let mut out = Vec::with_capacity(parts.len());
@@ -842,10 +857,23 @@ impl Cursorer<'_> {
                 }
                 Ok(sp(Expr::InterpolatedStr(out), line))
             }
-            Expr::List(items) => Ok(sp(Expr::List(crate::ast::shared::vec(self.transform_each(items, cursors)?)), line)),
-            Expr::Tuple(items) => Ok(sp(Expr::Tuple(crate::ast::shared::vec(self.transform_each(items, cursors)?)), line)),
+            Expr::List(items) => Ok(sp(
+                Expr::List(crate::ast::shared::vec(
+                    self.transform_each(items, cursors)?,
+                )),
+                line,
+            )),
+            Expr::Tuple(items) => Ok(sp(
+                Expr::Tuple(crate::ast::shared::vec(
+                    self.transform_each(items, cursors)?,
+                )),
+                line,
+            )),
             Expr::IndependentProduct(items, unwrap) => Ok(sp(
-                Expr::IndependentProduct(crate::ast::shared::vec(self.transform_each(items, cursors)?), *unwrap),
+                Expr::IndependentProduct(
+                    crate::ast::shared::vec(self.transform_each(items, cursors)?),
+                    *unwrap,
+                ),
                 line,
             )),
             Expr::MapLiteral(entries) => {

@@ -3747,7 +3747,7 @@ mod byte_payload_tests {
         payload.set_ty(Type::named(crate::ir::INTERNAL_BYTE_PAYLOAD_TYPE));
         let record = Spanned::bare(Expr::RecordCreate {
             type_name: "Bytes.Bytes".into(),
-            fields: vec![("data".into(), payload)],
+            fields: vec![("data".into(), payload)].into(),
         });
         let items = vec![TopLevel::FnDef(FnDef {
             name: "wrap".into(),

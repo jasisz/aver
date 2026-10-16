@@ -213,5 +213,11 @@ fn sp_at_typed(line: usize, node: Expr, ty: Type) -> Spanned<Expr> {
 
 fn intrinsic_call(line: usize, name: &str, args: Vec<Spanned<Expr>>) -> Spanned<Expr> {
     let callee = sp_at(line, Expr::Ident(name.to_string()));
-    sp_at(line, Expr::FnCall(crate::ast::Shared::new(callee), crate::ast::shared::vec(args)))
+    sp_at(
+        line,
+        Expr::FnCall(
+            crate::ast::Shared::new(callee),
+            crate::ast::shared::vec(args),
+        ),
+    )
 }

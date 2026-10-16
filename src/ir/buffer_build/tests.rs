@@ -13,11 +13,17 @@ fn ident(name: &str) -> Spanned<Expr> {
 }
 
 fn dotted(module: &str, member: &str) -> Spanned<Expr> {
-    sp(Expr::Attr(crate::ast::Shared::new(ident(module)), member.to_string()))
+    sp(Expr::Attr(
+        crate::ast::Shared::new(ident(module)),
+        member.to_string(),
+    ))
 }
 
 fn call(callee: Spanned<Expr>, args: Vec<Spanned<Expr>>) -> Spanned<Expr> {
-    sp(Expr::FnCall(crate::ast::Shared::new(callee), crate::ast::shared::vec(args)))
+    sp(Expr::FnCall(
+        crate::ast::Shared::new(callee),
+        crate::ast::shared::vec(args),
+    ))
 }
 
 /// Build a canonical buffer-build fn: takes (col: Int, acc: List<Int>),
@@ -590,7 +596,10 @@ fn skips_synth_when_no_rewriteable_call_site() {
         desc: None,
         body: Arc::new(FnBody::Block(vec![Stmt::Expr(call(
             ident_expr("build"),
-            vec![sp(Expr::Literal(Literal::Int(0))), sp(Expr::List(crate::ast::shared::vec(vec![])))],
+            vec![
+                sp(Expr::Literal(Literal::Int(0))),
+                sp(Expr::List(crate::ast::shared::vec(vec![]))),
+            ],
         ))])),
         resolution: None,
     };

@@ -981,7 +981,11 @@ mod tests {
         l: Spanned<ResolvedExpr>,
         r: Spanned<ResolvedExpr>,
     ) -> Spanned<ResolvedExpr> {
-        sp_r(ResolvedExpr::BinOp(op, crate::ast::Shared::new(l), crate::ast::Shared::new(r)))
+        sp_r(ResolvedExpr::BinOp(
+            op,
+            crate::ast::Shared::new(l),
+            crate::ast::Shared::new(r),
+        ))
     }
 
     fn pred(expr: Spanned<ResolvedExpr>) -> Predicate {

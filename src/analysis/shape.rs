@@ -1679,7 +1679,13 @@ mod call_walk_tests {
     use crate::ast::{Expr, Spanned};
 
     fn call(callee: Expr) -> Spanned<Expr> {
-        Spanned::new(Expr::FnCall(crate::ast::Shared::new(Spanned::new(callee, 1)), crate::ast::shared::vec(vec![])), 1)
+        Spanned::new(
+            Expr::FnCall(
+                crate::ast::Shared::new(Spanned::new(callee, 1)),
+                crate::ast::shared::vec(vec![]),
+            ),
+            1,
+        )
     }
 
     fn callee_of(call: &Spanned<Expr>) -> Spanned<Expr> {

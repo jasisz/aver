@@ -1551,7 +1551,10 @@ impl Renderer<'_> {
                         }
                     };
                     let f_name = emit_expr(
-                        &Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(*fn_id), crate::ast::shared::vec(Vec::new()))),
+                        &Spanned::bare(ResolvedExpr::Call(
+                            ResolvedCallee::Fn(*fn_id),
+                            crate::ast::shared::vec(Vec::new()),
+                        )),
                         self.ctx,
                     );
                     // Lean leaves out of `f.induct` every parameter each
@@ -2036,7 +2039,10 @@ impl Renderer<'_> {
         let xs: Vec<Term> = (0..def.params.len())
             .map(|i| term::var(&format!("x{i}")))
             .collect();
-        let call = Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(fn_id), crate::ast::shared::vec(xs.clone())));
+        let call = Spanned::bare(ResolvedExpr::Call(
+            ResolvedCallee::Fn(fn_id),
+            crate::ast::shared::vec(xs.clone()),
+        ));
         let outer = def.outer(&xs)?;
         let mut binders = String::new();
         let mut names: Vec<String> = Vec::new();
@@ -2048,7 +2054,10 @@ impl Renderer<'_> {
             names.push(format!("x{i}"));
         }
         let f_name = emit_expr(
-            &Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(fn_id), crate::ast::shared::vec(Vec::new()))),
+            &Spanned::bare(ResolvedExpr::Call(
+                ResolvedCallee::Fn(fn_id),
+                crate::ast::shared::vec(Vec::new()),
+            )),
             self.ctx,
         );
         let name = format!("__aver_unfold_{}", self.unfolds.len());

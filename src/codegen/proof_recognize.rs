@@ -1211,10 +1211,12 @@ pub(crate) fn substitute_idents_in_expr(
             Some(replacement) => replacement.clone(),
             None => expr.node.clone(),
         },
-        Expr::Neg(inner) => Expr::Neg(crate::ast::Shared::new(substitute_idents_in_expr(inner, subst))),
-        Expr::ErrorProp(inner) => {
-            Expr::ErrorProp(crate::ast::Shared::new(substitute_idents_in_expr(inner, subst)))
-        }
+        Expr::Neg(inner) => Expr::Neg(crate::ast::Shared::new(substitute_idents_in_expr(
+            inner, subst,
+        ))),
+        Expr::ErrorProp(inner) => Expr::ErrorProp(crate::ast::Shared::new(
+            substitute_idents_in_expr(inner, subst),
+        )),
         Expr::BinOp(op, l, r) => Expr::BinOp(
             *op,
             crate::ast::Shared::new(substitute_idents_in_expr(l, subst)),

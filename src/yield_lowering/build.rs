@@ -66,18 +66,30 @@ pub(super) fn ctor(
     line: usize,
 ) -> Spanned<Expr> {
     let head = Spanned::new(
-        Expr::Attr(crate::ast::Shared::new(ident(type_name, line)), variant.to_string()),
+        Expr::Attr(
+            crate::ast::Shared::new(ident(type_name, line)),
+            variant.to_string(),
+        ),
         line,
     );
     if args.is_empty() {
         head
     } else {
-        Spanned::new(Expr::FnCall(crate::ast::Shared::new(head), crate::ast::shared::vec(args)), line)
+        Spanned::new(
+            Expr::FnCall(crate::ast::Shared::new(head), crate::ast::shared::vec(args)),
+            line,
+        )
     }
 }
 
 pub(super) fn call(fn_name: &str, args: Vec<Spanned<Expr>>, line: usize) -> Spanned<Expr> {
-    Spanned::new(Expr::FnCall(crate::ast::Shared::new(ident(fn_name, line)), crate::ast::shared::vec(args)), line)
+    Spanned::new(
+        Expr::FnCall(
+            crate::ast::Shared::new(ident(fn_name, line)),
+            crate::ast::shared::vec(args),
+        ),
+        line,
+    )
 }
 
 pub(super) fn match_expr(

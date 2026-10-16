@@ -841,9 +841,11 @@ fn rf_inline_wrappers_inner(
     use crate::ast::{Expr, Spanned};
     let rec = |x: &crate::ast::Spanned<Expr>| rf_inline_wrappers_inner(x, ctx, recursive);
     let mapped = match &e.node {
-        Expr::BinOp(op, a, b) => {
-            Spanned::bare(Expr::BinOp(*op, crate::ast::Shared::new(rec(a)), crate::ast::Shared::new(rec(b))))
-        }
+        Expr::BinOp(op, a, b) => Spanned::bare(Expr::BinOp(
+            *op,
+            crate::ast::Shared::new(rec(a)),
+            crate::ast::Shared::new(rec(b)),
+        )),
         Expr::Neg(a) => Spanned::bare(Expr::Neg(crate::ast::Shared::new(rec(a)))),
         Expr::FnCall(c, args) => {
             Spanned::bare(Expr::FnCall(c.clone(), args.iter().map(rec).collect()))

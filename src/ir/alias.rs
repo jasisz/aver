@@ -612,19 +612,25 @@ mod tests {
                     "r".to_string(),
                     None,
                     Spanned::bare(Expr::Match {
-                        subject: crate::ast::Shared::new(Spanned::bare(Expr::Ident("m".to_string()))),
+                        subject: crate::ast::Shared::new(Spanned::bare(Expr::Ident(
+                            "m".to_string(),
+                        ))),
                         arms: crate::ast::shared::vec(vec![
                             MatchArm {
                                 pattern: Pattern::Constructor(
                                     "Option.Some".to_string(),
                                     vec!["v".to_string()],
                                 ),
-                                body: crate::ast::Shared::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
+                                body: crate::ast::Shared::new(Spanned::bare(Expr::Literal(
+                                    Literal::Int(1),
+                                ))),
                                 binding_slots: std::sync::OnceLock::new(),
                             },
                             MatchArm {
                                 pattern: Pattern::Wildcard,
-                                body: crate::ast::Shared::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
+                                body: crate::ast::Shared::new(Spanned::bare(Expr::Literal(
+                                    Literal::Int(0),
+                                ))),
                                 binding_slots: std::sync::OnceLock::new(),
                             },
                         ]),

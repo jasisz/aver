@@ -1796,7 +1796,10 @@ mod tests {
     }
 
     fn call(name: &str, args: Vec<Spanned<Expr>>) -> Spanned<Expr> {
-        Spanned::bare(Expr::FnCall(crate::ast::Shared::new(ident(name)), crate::ast::shared::vec(args)))
+        Spanned::bare(Expr::FnCall(
+            crate::ast::Shared::new(ident(name)),
+            crate::ast::shared::vec(args),
+        ))
     }
 
     fn add1(inner: Spanned<Expr>) -> Spanned<Expr> {

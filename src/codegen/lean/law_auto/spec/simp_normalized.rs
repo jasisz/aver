@@ -29,14 +29,22 @@ fn simplify_identity_expr(expr: &Spanned<Expr>) -> Spanned<Expr> {
                     } else if int_lit(&right.node) == Some(0) {
                         return left;
                     } else {
-                        Expr::BinOp(*op, crate::ast::Shared::new(left), crate::ast::Shared::new(right))
+                        Expr::BinOp(
+                            *op,
+                            crate::ast::Shared::new(left),
+                            crate::ast::Shared::new(right),
+                        )
                     }
                 }
                 BinOp::Sub => {
                     if int_lit(&right.node) == Some(0) {
                         return left;
                     } else {
-                        Expr::BinOp(*op, crate::ast::Shared::new(left), crate::ast::Shared::new(right))
+                        Expr::BinOp(
+                            *op,
+                            crate::ast::Shared::new(left),
+                            crate::ast::Shared::new(right),
+                        )
                     }
                 }
                 BinOp::Mul => {
@@ -47,16 +55,25 @@ fn simplify_identity_expr(expr: &Spanned<Expr>) -> Spanned<Expr> {
                     } else if int_lit(&right.node) == Some(1) {
                         return left;
                     } else {
-                        Expr::BinOp(*op, crate::ast::Shared::new(left), crate::ast::Shared::new(right))
+                        Expr::BinOp(
+                            *op,
+                            crate::ast::Shared::new(left),
+                            crate::ast::Shared::new(right),
+                        )
                     }
                 }
-                _ => Expr::BinOp(*op, crate::ast::Shared::new(left), crate::ast::Shared::new(right)),
+                _ => Expr::BinOp(
+                    *op,
+                    crate::ast::Shared::new(left),
+                    crate::ast::Shared::new(right),
+                ),
             }
         }
         Expr::Neg(inner) => Expr::Neg(crate::ast::Shared::new(simplify_identity_expr(inner))),
-        Expr::Attr(base, field) => {
-            Expr::Attr(crate::ast::Shared::new(simplify_identity_expr(base)), field.clone())
-        }
+        Expr::Attr(base, field) => Expr::Attr(
+            crate::ast::Shared::new(simplify_identity_expr(base)),
+            field.clone(),
+        ),
         Expr::FnCall(callee, args) => Expr::FnCall(
             crate::ast::Shared::new(simplify_identity_expr(callee)),
             args.iter().map(simplify_identity_expr).collect(),
@@ -78,15 +95,17 @@ fn simplify_identity_expr(expr: &Spanned<Expr>) -> Spanned<Expr> {
                 .as_ref()
                 .map(|inner| crate::ast::Shared::new(simplify_identity_expr(inner))),
         ),
-        Expr::ErrorProp(inner) => Expr::ErrorProp(crate::ast::Shared::new(simplify_identity_expr(inner))),
+        Expr::ErrorProp(inner) => {
+            Expr::ErrorProp(crate::ast::Shared::new(simplify_identity_expr(inner)))
+        }
         Expr::InterpolatedStr(parts) => Expr::InterpolatedStr(
             parts
                 .iter()
                 .map(|part| match part {
                     crate::ast::StrPart::Literal(s) => crate::ast::StrPart::Literal(s.clone()),
-                    crate::ast::StrPart::Parsed(inner) => {
-                        crate::ast::StrPart::Parsed(crate::ast::Shared::new(simplify_identity_expr(inner)))
-                    }
+                    crate::ast::StrPart::Parsed(inner) => crate::ast::StrPart::Parsed(
+                        crate::ast::Shared::new(simplify_identity_expr(inner)),
+                    ),
                 })
                 .collect(),
         ),

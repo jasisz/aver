@@ -32,7 +32,13 @@ fn int(value: i64) -> Spanned<Expr> {
 }
 
 fn call(name: &str, args: Vec<Spanned<Expr>>) -> Spanned<Expr> {
-    Spanned::new(Expr::FnCall(crate::ast::Shared::new(var(name)), crate::ast::shared::vec(args)), 0)
+    Spanned::new(
+        Expr::FnCall(
+            crate::ast::Shared::new(var(name)),
+            crate::ast::shared::vec(args),
+        ),
+        0,
+    )
 }
 
 fn self_args<'a>(

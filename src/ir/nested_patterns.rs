@@ -580,7 +580,10 @@ impl<'a> Lowering<'a> {
                 Spanned::new(
                     Expr::Match {
                         subject: crate::ast::Shared::new(subject.clone()),
-                        arms: crate::ast::shared::vec(vec![MatchArm::new(Pattern::Ident(name), inner)]),
+                        arms: crate::ast::shared::vec(vec![MatchArm::new(
+                            Pattern::Ident(name),
+                            inner,
+                        )]),
                     },
                     line,
                 )

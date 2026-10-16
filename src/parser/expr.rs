@@ -85,7 +85,14 @@ impl Parser {
             };
             self.advance();
             let right = self.parse_additive()?;
-            left = self.spanned(Expr::BinOp(op, crate::ast::Shared::new(left), crate::ast::Shared::new(right)), line);
+            left = self.spanned(
+                Expr::BinOp(
+                    op,
+                    crate::ast::Shared::new(left),
+                    crate::ast::Shared::new(right),
+                ),
+                line,
+            );
         }
 
         Ok(left)
@@ -106,7 +113,14 @@ impl Parser {
             };
             self.advance();
             let right = self.parse_multiplicative()?;
-            left = self.spanned(Expr::BinOp(op, crate::ast::Shared::new(left), crate::ast::Shared::new(right)), line);
+            left = self.spanned(
+                Expr::BinOp(
+                    op,
+                    crate::ast::Shared::new(left),
+                    crate::ast::Shared::new(right),
+                ),
+                line,
+            );
         }
 
         Ok(left)
@@ -127,7 +141,14 @@ impl Parser {
             };
             self.advance();
             let right = self.parse_unary()?;
-            left = self.spanned(Expr::BinOp(op, crate::ast::Shared::new(left), crate::ast::Shared::new(right)), line);
+            left = self.spanned(
+                Expr::BinOp(
+                    op,
+                    crate::ast::Shared::new(left),
+                    crate::ast::Shared::new(right),
+                ),
+                line,
+            );
         }
 
         Ok(left)
@@ -272,7 +293,13 @@ impl Parser {
                         self.advance();
                         let args = self.parse_args()?;
                         self.expect_exact(&TokenKind::RParen)?;
-                        expr = self.spanned(Expr::FnCall(crate::ast::Shared::new(expr), crate::ast::shared::vec(args)), call_line);
+                        expr = self.spanned(
+                            Expr::FnCall(
+                                crate::ast::Shared::new(expr),
+                                crate::ast::shared::vec(args),
+                            ),
+                            call_line,
+                        );
                     }
                 }
             } else {
@@ -344,7 +371,13 @@ impl Parser {
                 self.advance(); // consume (
                 let fields = self.parse_record_create_fields()?;
                 self.expect_exact(&TokenKind::RParen)?;
-                return Ok(self.spanned(Expr::RecordCreate { type_name, fields: crate::ast::shared::vec(fields) }, line));
+                return Ok(self.spanned(
+                    Expr::RecordCreate {
+                        type_name,
+                        fields: crate::ast::shared::vec(fields),
+                    },
+                    line,
+                ));
             }
 
             // Dotted record constructor: Tcp.Connection(id = ..., host = ...)
@@ -366,7 +399,10 @@ impl Parser {
             self.advance();
             let args = self.parse_args()?;
             self.expect_exact(&TokenKind::RParen)?;
-            return Ok(self.spanned(Expr::FnCall(crate::ast::Shared::new(atom), crate::ast::shared::vec(args)), call_line));
+            return Ok(self.spanned(
+                Expr::FnCall(crate::ast::Shared::new(atom), crate::ast::shared::vec(args)),
+                call_line,
+            ));
         }
 
         Ok(atom)

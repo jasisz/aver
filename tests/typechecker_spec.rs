@@ -6629,7 +6629,10 @@ mod no_silent_invalid {
     #[test]
     fn unknown_compiler_built_constructor_is_reported() {
         let body = Spanned::new(
-            Expr::Constructor("Shape.Circle".to_string(), Some(aver::ast::Shared::new(int(1)))),
+            Expr::Constructor(
+                "Shape.Circle".to_string(),
+                Some(aver::ast::Shared::new(int(1))),
+            ),
             2,
         );
         let errs = errors_with_body(&shape_src("fn f() -> Shape\n    Shape.Circle(1)\n"), body);
@@ -6639,7 +6642,10 @@ mod no_silent_invalid {
     #[test]
     fn qualified_compiler_built_option_constructor_is_typed() {
         let body = Spanned::new(
-            Expr::Constructor("Option.Some".to_string(), Some(aver::ast::Shared::new(int(1)))),
+            Expr::Constructor(
+                "Option.Some".to_string(),
+                Some(aver::ast::Shared::new(int(1))),
+            ),
             2,
         );
         let errs = errors_with_body("fn f() -> Option<Int>\n    Option.Some(1)\n", body);

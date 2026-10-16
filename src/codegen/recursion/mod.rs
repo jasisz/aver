@@ -285,12 +285,17 @@ pub fn rewrite_recursive_calls_expr(
                 call_args.push(Spanned::new(Expr::Ident(fuel_var.to_string()), line));
                 call_args.extend(rewritten_args);
                 Expr::FnCall(
-                    crate::ast::Shared::new(Spanned::new(Expr::Ident(fuel_helper_name(&name)), line)),
+                    crate::ast::Shared::new(Spanned::new(
+                        Expr::Ident(fuel_helper_name(&name)),
+                        line,
+                    )),
                     crate::ast::shared::vec(call_args),
                 )
             } else {
                 Expr::FnCall(
-                    crate::ast::Shared::new(rewrite_recursive_calls_expr(callee, targets, fuel_var)),
+                    crate::ast::Shared::new(rewrite_recursive_calls_expr(
+                        callee, targets, fuel_var,
+                    )),
                     crate::ast::shared::vec(rewritten_args),
                 )
             }
@@ -304,24 +309,29 @@ pub fn rewrite_recursive_calls_expr(
             inner, targets, fuel_var,
         ))),
         Expr::Match { subject, arms } => Expr::Match {
-            subject: crate::ast::Shared::new(rewrite_recursive_calls_expr(subject, targets, fuel_var)),
+            subject: crate::ast::Shared::new(rewrite_recursive_calls_expr(
+                subject, targets, fuel_var,
+            )),
             arms: arms
                 .iter()
                 .map(|arm| MatchArm {
                     pattern: arm.pattern.clone(),
-                    body: crate::ast::Shared::new(rewrite_recursive_calls_expr(&arm.body, targets, fuel_var)),
+                    body: crate::ast::Shared::new(rewrite_recursive_calls_expr(
+                        &arm.body, targets, fuel_var,
+                    )),
                     binding_slots: std::sync::OnceLock::new(),
                 })
                 .collect(),
         },
         Expr::Constructor(name, arg) => Expr::Constructor(
             name.clone(),
-            arg.as_ref()
-                .map(|inner| crate::ast::Shared::new(rewrite_recursive_calls_expr(inner, targets, fuel_var))),
+            arg.as_ref().map(|inner| {
+                crate::ast::Shared::new(rewrite_recursive_calls_expr(inner, targets, fuel_var))
+            }),
         ),
-        Expr::ErrorProp(inner) => Expr::ErrorProp(crate::ast::Shared::new(rewrite_recursive_calls_expr(
-            inner, targets, fuel_var,
-        ))),
+        Expr::ErrorProp(inner) => Expr::ErrorProp(crate::ast::Shared::new(
+            rewrite_recursive_calls_expr(inner, targets, fuel_var),
+        )),
         Expr::InterpolatedStr(parts) => Expr::InterpolatedStr(
             parts
                 .iter()
@@ -403,7 +413,10 @@ pub fn rewrite_recursive_calls_expr(
                 call_args.push(Spanned::new(Expr::Ident(fuel_var.to_string()), line));
                 call_args.extend(rewritten_args);
                 Expr::FnCall(
-                    crate::ast::Shared::new(Spanned::new(Expr::Ident(fuel_helper_name(target)), line)),
+                    crate::ast::Shared::new(Spanned::new(
+                        Expr::Ident(fuel_helper_name(target)),
+                        line,
+                    )),
                     crate::ast::shared::vec(call_args),
                 )
             } else {
@@ -466,7 +479,9 @@ pub fn rewrite_native_guarded_calls_resolved_expr(
         ResolvedExpr::Literal(_) | ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } => {
             return expr.clone();
         }
-        ResolvedExpr::Attr(obj, field) => ResolvedExpr::Attr(crate::ast::Shared::new(rec(obj)), field.clone()),
+        ResolvedExpr::Attr(obj, field) => {
+            ResolvedExpr::Attr(crate::ast::Shared::new(rec(obj)), field.clone())
+        }
         ResolvedExpr::Call(callee, args) => {
             let rewritten_args: Vec<Spanned<ResolvedExpr>> = args.iter().map(&rec).collect();
             let target_matches =
@@ -482,9 +497,11 @@ pub fn rewrite_native_guarded_calls_resolved_expr(
                 ResolvedExpr::Call(callee.clone(), crate::ast::shared::vec(rewritten_args))
             }
         }
-        ResolvedExpr::BinOp(op, left, right) => {
-            ResolvedExpr::BinOp(*op, crate::ast::Shared::new(rec(left)), crate::ast::Shared::new(rec(right)))
-        }
+        ResolvedExpr::BinOp(op, left, right) => ResolvedExpr::BinOp(
+            *op,
+            crate::ast::Shared::new(rec(left)),
+            crate::ast::Shared::new(rec(right)),
+        ),
         ResolvedExpr::Neg(inner) => ResolvedExpr::Neg(crate::ast::Shared::new(rec(inner))),
         ResolvedExpr::Match { subject, arms } => ResolvedExpr::Match {
             subject: crate::ast::Shared::new(rec(subject)),
@@ -500,13 +517,17 @@ pub fn rewrite_native_guarded_calls_resolved_expr(
         ResolvedExpr::Ctor(ctor, args) => {
             ResolvedExpr::Ctor(ctor.clone(), args.iter().map(&rec).collect())
         }
-        ResolvedExpr::ErrorProp(inner) => ResolvedExpr::ErrorProp(crate::ast::Shared::new(rec(inner))),
+        ResolvedExpr::ErrorProp(inner) => {
+            ResolvedExpr::ErrorProp(crate::ast::Shared::new(rec(inner)))
+        }
         ResolvedExpr::InterpolatedStr(parts) => ResolvedExpr::InterpolatedStr(
             parts
                 .iter()
                 .map(|p| match p {
                     ResolvedStrPart::Literal(_) => p.clone(),
-                    ResolvedStrPart::Parsed(inner) => ResolvedStrPart::Parsed(crate::ast::Shared::new(rec(inner))),
+                    ResolvedStrPart::Parsed(inner) => {
+                        ResolvedStrPart::Parsed(crate::ast::Shared::new(rec(inner)))
+                    }
                 })
                 .collect(),
         ),

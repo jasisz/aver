@@ -552,7 +552,13 @@ impl WorkerTransformer<'_> {
                         crate::types::Type::named(INDEX_TYPE),
                     ));
                 }
-                sp(Expr::FnCall(crate::ast::Shared::new(lowered_callee), crate::ast::shared::vec(lowered_args)), line)
+                sp(
+                    Expr::FnCall(
+                        crate::ast::Shared::new(lowered_callee),
+                        crate::ast::shared::vec(lowered_args),
+                    ),
+                    line,
+                )
             }
             Expr::TailCall(data) => {
                 let mut args: Vec<_> = data
@@ -600,7 +606,9 @@ impl WorkerTransformer<'_> {
                                 .any(|name| name == self.source_name);
                         crate::ast::MatchArm {
                             pattern: arm.pattern.clone(),
-                            body: crate::ast::Shared::new(self.transform(&arm.body, !shadowed && source_live)),
+                            body: crate::ast::Shared::new(
+                                self.transform(&arm.body, !shadowed && source_live),
+                            ),
                             binding_slots: std::sync::OnceLock::new(),
                         }
                     })
@@ -615,7 +623,10 @@ impl WorkerTransformer<'_> {
             }
             Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => expr.clone(),
             Expr::Attr(base, field) => sp(
-                Expr::Attr(crate::ast::Shared::new(self.transform(base, source_live)), field.clone()),
+                Expr::Attr(
+                    crate::ast::Shared::new(self.transform(base, source_live)),
+                    field.clone(),
+                ),
                 line,
             ),
             Expr::BinOp(op, lhs, rhs) => sp(
@@ -649,9 +660,9 @@ impl WorkerTransformer<'_> {
                         .iter()
                         .map(|part| match part {
                             StrPart::Literal(value) => StrPart::Literal(value.clone()),
-                            StrPart::Parsed(value) => {
-                                StrPart::Parsed(crate::ast::Shared::new(self.transform(value, source_live)))
-                            }
+                            StrPart::Parsed(value) => StrPart::Parsed(crate::ast::Shared::new(
+                                self.transform(value, source_live),
+                            )),
                         })
                         .collect(),
                 ),
@@ -1290,7 +1301,13 @@ fn ident(name: &str, line: crate::ast::SourceLine) -> Spanned<Expr> {
 }
 
 fn call(name: &str, args: Vec<Spanned<Expr>>, line: crate::ast::SourceLine) -> Spanned<Expr> {
-    sp(Expr::FnCall(crate::ast::Shared::new(ident(name, line)), crate::ast::shared::vec(args)), line)
+    sp(
+        Expr::FnCall(
+            crate::ast::Shared::new(ident(name, line)),
+            crate::ast::shared::vec(args),
+        ),
+        line,
+    )
 }
 
 fn typed_ident(name: &str, line: crate::ast::SourceLine, ty: crate::types::Type) -> Spanned<Expr> {

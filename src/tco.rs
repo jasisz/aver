@@ -57,7 +57,10 @@ fn transform_tail_expr(spanned: &mut Spanned<Expr>, scc_members: &HashSet<String
             {
                 let name = name.clone();
                 let args = std::mem::take(args);
-                spanned.node = Expr::TailCall(Box::new(TailCallData::new(name, crate::ast::Shared::unwrap(args))));
+                spanned.node = Expr::TailCall(Box::new(TailCallData::new(
+                    name,
+                    crate::ast::Shared::unwrap(args),
+                )));
             }
         }
         // Match: each arm body is in tail position

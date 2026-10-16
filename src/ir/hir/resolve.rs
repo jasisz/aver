@@ -317,7 +317,10 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
                     return ResolvedExpr::Ctor(ctor, crate::ast::shared::vec(vec![]));
                 }
             }
-            ResolvedExpr::Attr(crate::ast::Shared::new(resolve_spanned(ctx, obj)), field.clone())
+            ResolvedExpr::Attr(
+                crate::ast::Shared::new(resolve_spanned(ctx, obj)),
+                field.clone(),
+            )
         }
         Expr::FnCall(callee, args) => {
             let resolved_args: Vec<Spanned<ResolvedExpr>> =
@@ -330,7 +333,10 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
             // ...)` (which is for namespace methods like `Int.add`).
             if let Some(dotted) = expr_to_dotted_name(&callee.node) {
                 if let Some(builtin) = parse_builtin_ctor(&dotted) {
-                    return ResolvedExpr::Ctor(ResolvedCtor::Builtin(builtin), crate::ast::shared::vec(resolved_args));
+                    return ResolvedExpr::Ctor(
+                        ResolvedCtor::Builtin(builtin),
+                        crate::ast::shared::vec(resolved_args),
+                    );
                 }
                 if let Some((ctor_id, type_id, variant_name)) = ctx.resolve_user_ctor(&dotted) {
                     return ResolvedExpr::Ctor(
@@ -394,7 +400,10 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
                     _ => None,
                 };
                 if let Some(intrinsic) = intrinsic {
-                    return ResolvedExpr::Call(ResolvedCallee::Intrinsic(intrinsic), crate::ast::shared::vec(resolved_args));
+                    return ResolvedExpr::Call(
+                        ResolvedCallee::Intrinsic(intrinsic),
+                        crate::ast::shared::vec(resolved_args),
+                    );
                 }
             }
             // Both literal operands prove the unsigned fixed-width encoder
@@ -410,7 +419,10 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
                 && crate::ast::is_literal_total_int_endian_call(&args[0], &args[1])
             {
                 let builtin_call = Spanned::new(
-                    ResolvedExpr::Call(resolved_callee.clone(), crate::ast::shared::vec(resolved_args)),
+                    ResolvedExpr::Call(
+                        resolved_callee.clone(),
+                        crate::ast::shared::vec(resolved_args),
+                    ),
                     expr.line,
                 );
                 builtin_call.set_ty(crate::types::Type::Result(
@@ -462,7 +474,10 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
                 };
                 if discharged {
                     let effect_call = Spanned::new(
-                        ResolvedExpr::Call(resolved_callee.clone(), crate::ast::shared::vec(resolved_args)),
+                        ResolvedExpr::Call(
+                            resolved_callee.clone(),
+                            crate::ast::shared::vec(resolved_args),
+                        ),
                         expr.line,
                     );
                     let payload = if name == "Random.int" {
@@ -543,7 +558,10 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
                 return ResolvedExpr::RecordCreate {
                     type_id: ctx.symbols.type_id_of(&key),
                     type_name,
-                    fields: crate::ast::shared::vec(vec![(ctor.carrier_field.clone(), resolved_args.remove(0))]),
+                    fields: crate::ast::shared::vec(vec![(
+                        ctor.carrier_field.clone(),
+                        resolved_args.remove(0),
+                    )]),
                 };
             }
             ResolvedExpr::Call(resolved_callee, crate::ast::shared::vec(resolved_args))
@@ -566,15 +584,17 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
             };
             ResolvedExpr::Ctor(ctor, crate::ast::shared::vec(args))
         }
-        Expr::ErrorProp(inner) => ResolvedExpr::ErrorProp(crate::ast::Shared::new(resolve_spanned(ctx, inner))),
+        Expr::ErrorProp(inner) => {
+            ResolvedExpr::ErrorProp(crate::ast::Shared::new(resolve_spanned(ctx, inner)))
+        }
         Expr::InterpolatedStr(parts) => ResolvedExpr::InterpolatedStr(
             parts
                 .iter()
                 .map(|p| match p {
                     crate::ast::StrPart::Literal(s) => ResolvedStrPart::Literal(s.clone()),
-                    crate::ast::StrPart::Parsed(inner) => {
-                        ResolvedStrPart::Parsed(crate::ast::Shared::new(resolve_spanned(ctx, inner)))
-                    }
+                    crate::ast::StrPart::Parsed(inner) => ResolvedStrPart::Parsed(
+                        crate::ast::Shared::new(resolve_spanned(ctx, inner)),
+                    ),
                 })
                 .collect(),
         ),

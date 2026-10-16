@@ -45,7 +45,10 @@ fn fuel_calls_keep_their_result_type_without_copying_the_old_callee_signature() 
         vec![],
     ));
     for node in [
-        Expr::FnCall(crate::ast::Shared::new(callee), crate::ast::shared::vec(vec![argument.clone()])),
+        Expr::FnCall(
+            crate::ast::Shared::new(callee),
+            crate::ast::shared::vec(vec![argument.clone()]),
+        ),
         Expr::TailCall(Box::new(TailCallData::new("walk".into(), vec![argument]))),
     ] {
         let call = Spanned::new(node, 19);
@@ -77,7 +80,10 @@ fn guarded_hir_rewrite_preserves_interpolated_field_and_recursive_call_types() {
     );
     field.set_ty(Type::Int);
     for call_node in [
-        ResolvedExpr::Call(ResolvedCallee::Fn(target), crate::ast::shared::vec(vec![field.clone()])),
+        ResolvedExpr::Call(
+            ResolvedCallee::Fn(target),
+            crate::ast::shared::vec(vec![field.clone()]),
+        ),
         ResolvedExpr::TailCall {
             target,
             args: crate::ast::shared::vec(vec![field.clone()]),

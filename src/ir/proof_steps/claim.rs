@@ -34,7 +34,9 @@ pub fn pattern_term(p: &ResolvedPattern, binders: &[Term]) -> Result<Term, Strin
         }
         ResolvedPattern::EmptyList => {
             need(0)?;
-            Ok(Spanned::bare(ResolvedExpr::List(crate::ast::shared::vec(Vec::new()))))
+            Ok(Spanned::bare(ResolvedExpr::List(crate::ast::shared::vec(
+                Vec::new(),
+            ))))
         }
         ResolvedPattern::Cons(..) => {
             need(2)?;

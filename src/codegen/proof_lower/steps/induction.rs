@@ -550,7 +550,9 @@ impl Env<'_> {
             }
             Ok(hs)
         };
-        let nil_term = canon(&crate::ast::Spanned::bare(ResolvedExpr::List(crate::ast::shared::vec(Vec::new()))));
+        let nil_term = canon(&crate::ast::Spanned::bare(ResolvedExpr::List(
+            crate::ast::shared::vec(Vec::new()),
+        )));
         // The parts of the cell have the types the list's own gives them.
         let list_ty = ob
             .types

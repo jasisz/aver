@@ -1989,8 +1989,10 @@ mod tests {
             crate::ast::Shared::new(Spanned::bare(call("report", vec![]))),
             "trace".to_string(),
         );
-        let trace_contains =
-            Expr::Attr(crate::ast::Shared::new(Spanned::bare(trace_attr)), "contains".to_string());
+        let trace_contains = Expr::Attr(
+            crate::ast::Shared::new(Spanned::bare(trace_attr)),
+            "contains".to_string(),
+        );
         assert!(verify_case_is_oracle_only(
             &trace_contains,
             &Expr::Literal(Literal::Bool(true))

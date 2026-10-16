@@ -90,7 +90,11 @@ impl Z {
         Z::norm(-self.to_big())
     }
     fn abs(&self) -> Z {
-        if self.is_negative() { self.neg() } else { self.clone() }
+        if self.is_negative() {
+            self.neg()
+        } else {
+            self.clone()
+        }
     }
     /// Remainder with the sign of the dividend, as `BigInt`'s `%`.
     fn rem(&self, o: &Z) -> Z {
@@ -157,9 +161,7 @@ impl Table {
             .enumerate()
             .map(|(i, m)| (m, i as u32))
             .collect();
-        p.iter()
-            .map(|(m, c)| (index[m], Z::from_big(c)))
-            .collect()
+        p.iter().map(|(m, c)| (index[m], Z::from_big(c))).collect()
     }
     fn contradicts(&self, p: &P) -> bool {
         p.len() == 1 && self.is_const(p[0].0) && p[0].1.is_negative()
@@ -202,7 +204,10 @@ fn sum(x: &P, a: &Z, y: &P, b: &Z) -> P {
 }
 
 fn weights(x: &[Z], a: &Z, y: &[Z], b: &Z) -> Vec<Z> {
-    x.iter().zip(y).map(|(u, v)| u.mul(a).add(&v.mul(b))).collect()
+    x.iter()
+        .zip(y)
+        .map(|(u, v)| u.mul(a).add(&v.mul(b)))
+        .collect()
 }
 
 fn substitute_equality(t: &Table, rows: &[Row]) -> Option<Vec<Row>> {
@@ -354,7 +359,10 @@ pub(super) fn integer_search(ps: &[Poly]) -> Option<(Vec<BigInt>, Vec<super::lin
                 if let Some((_, w)) = rows.iter().find(|(p, _)| t.contradicts(p)) {
                     break 'search Some(w.clone());
                 }
-                rows = next.into_iter().map(|r| round(&t, r, n, &mut cuts)).collect();
+                rows = next
+                    .into_iter()
+                    .map(|r| round(&t, r, n, &mut cuts))
+                    .collect();
                 pad(&mut rows, n + cuts.len());
             }
             if let Some((_, w)) = rows.iter().find(|(p, _)| t.contradicts(p)) {

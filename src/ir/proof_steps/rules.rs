@@ -362,8 +362,11 @@ impl WallRule {
         let above_zero = || is(cmp(BinOp::Gt, n(), i(0)), true);
         let pred = || binop(BinOp::Sub, n(), i(1));
         let (m, k, v, k2) = (|| var("m"), || var("k"), || var("v"), || var("k2"));
-        let empty =
-            || crate::ast::Spanned::bare(crate::ir::hir::ResolvedExpr::MapLiteral(crate::ast::shared::vec(Vec::new())));
+        let empty = || {
+            crate::ast::Spanned::bare(crate::ir::hir::ResolvedExpr::MapLiteral(
+                crate::ast::shared::vec(Vec::new()),
+            ))
+        };
         let set = || term::builtin("Map.set", vec![m(), k(), v()], None);
         let get = |map: Term, key: Term| term::builtin("Map.get", vec![map, key], None);
         let has = |map: Term, key: Term| {

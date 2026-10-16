@@ -233,7 +233,10 @@ pub(crate) fn ident_name(e: &Spanned<Expr>) -> Option<&str> {
 fn cons(head: Spanned<Expr>, tail: Spanned<Expr>) -> Spanned<Expr> {
     Spanned::bare(Expr::FnCall(
         crate::ast::Shared::new(ident("List.concat")),
-        crate::ast::shared::vec(vec![Spanned::bare(Expr::List(crate::ast::shared::vec(vec![head]))), tail]),
+        crate::ast::shared::vec(vec![
+            Spanned::bare(Expr::List(crate::ast::shared::vec(vec![head]))),
+            tail,
+        ]),
     ))
 }
 
@@ -295,9 +298,10 @@ fn map_children(
     f: &mut impl FnMut(&Spanned<Expr>) -> Spanned<Expr>,
 ) -> Spanned<Expr> {
     let node = match &e.node {
-        Expr::FnCall(callee, args) => {
-            Expr::FnCall(crate::ast::Shared::new(f(callee)), args.iter().map(&mut *f).collect())
-        }
+        Expr::FnCall(callee, args) => Expr::FnCall(
+            crate::ast::Shared::new(f(callee)),
+            args.iter().map(&mut *f).collect(),
+        ),
         Expr::TailCall(data) => Expr::FnCall(
             crate::ast::Shared::new(ident(&data.target)),
             data.args.iter().map(&mut *f).collect(),
@@ -308,7 +312,11 @@ fn map_children(
             Expr::Constructor(name.clone(), Some(crate::ast::Shared::new(f(inner))))
         }
         Expr::Attr(inner, field) => Expr::Attr(crate::ast::Shared::new(f(inner)), field.clone()),
-        Expr::BinOp(op, l, r) => Expr::BinOp(*op, crate::ast::Shared::new(f(l)), crate::ast::Shared::new(f(r))),
+        Expr::BinOp(op, l, r) => Expr::BinOp(
+            *op,
+            crate::ast::Shared::new(f(l)),
+            crate::ast::Shared::new(f(r)),
+        ),
         Expr::Neg(inner) => Expr::Neg(crate::ast::Shared::new(f(inner))),
         Expr::ErrorProp(inner) => Expr::ErrorProp(crate::ast::Shared::new(f(inner))),
         other => other.clone(),

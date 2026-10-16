@@ -1033,7 +1033,10 @@ fn rewrite_dotted_module_ref(
         _ => {
             let type_name = flattened_type_name(&segments, split, colliding_bare_names);
             let last = segments[segments.len() - 1].to_string();
-            Expr::Attr(Box::new(Spanned::bare(Expr::Ident(type_name))), last)
+            Expr::Attr(
+                crate::ast::Shared::new(Spanned::bare(Expr::Ident(type_name))),
+                last,
+            )
         }
     })
 }

@@ -26,7 +26,11 @@ pub(super) fn map(t: &Term, f: &mut impl FnMut(&Term) -> Term) -> Term {
         }
         Expr::List(xs) => Expr::List(xs.iter().map(f).collect()),
         Expr::Tuple(xs) => Expr::Tuple(xs.iter().map(f).collect()),
-        Expr::BinOp(op, a, b) => Expr::BinOp(*op, crate::ast::Shared::new(f(a)), crate::ast::Shared::new(f(b))),
+        Expr::BinOp(op, a, b) => Expr::BinOp(
+            *op,
+            crate::ast::Shared::new(f(a)),
+            crate::ast::Shared::new(f(b)),
+        ),
         Expr::Neg(a) => Expr::Neg(crate::ast::Shared::new(f(a))),
         _ => return t.clone(),
     };
@@ -107,7 +111,10 @@ fn builtin(name: &str, args: Vec<Term>) -> Term {
         Some(ty @ crate::ast::Type::List(_)) => Some(ty.clone()),
         _ => None,
     });
-    let result = Spanned::bare(Expr::Call(Callee::Builtin(name.into()), crate::ast::shared::vec(args)));
+    let result = Spanned::bare(Expr::Call(
+        Callee::Builtin(name.into()),
+        crate::ast::shared::vec(args),
+    ));
     if let Some(ty) = ty {
         result.set_ty(ty);
     }
@@ -136,7 +143,10 @@ fn normalize_inner(t: &Term) -> Term {
     match (name.as_str(), args.as_slice()) {
         ("List.prepend", [head, tail]) => normalize(&builtin(
             "List.concat",
-            vec![Spanned::bare(Expr::List(crate::ast::shared::vec(vec![head.clone()]))), tail.clone()],
+            vec![
+                Spanned::bare(Expr::List(crate::ast::shared::vec(vec![head.clone()]))),
+                tail.clone(),
+            ],
         )),
         ("List.concat", [a, b]) if is_nil(a) => b.clone(),
         ("List.concat", [a, b]) if is_nil(b) => a.clone(),

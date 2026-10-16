@@ -415,12 +415,21 @@ impl Parser {
                             let line = prev.line;
                             let bool_and = Spanned::new(
                                 Expr::Attr(
-                                    crate::ast::Shared::new(Spanned::new(Expr::Ident("Bool".to_string()), line)),
+                                    crate::ast::Shared::new(Spanned::new(
+                                        Expr::Ident("Bool".to_string()),
+                                        line,
+                                    )),
                                     "and".to_string(),
                                 ),
                                 line,
                             );
-                            Spanned::new(Expr::FnCall(crate::ast::Shared::new(bool_and), crate::ast::shared::vec(vec![prev, next])), line)
+                            Spanned::new(
+                                Expr::FnCall(
+                                    crate::ast::Shared::new(bool_and),
+                                    crate::ast::shared::vec(vec![prev, next]),
+                                ),
+                                line,
+                            )
                         }
                     });
                 }
@@ -1242,7 +1251,10 @@ mod tests {
         // match (1, 2) { (a, b) -> a + b }
         // Outer `a = 99` must NOT overwrite the pattern's a.
         let input = bare(Expr::Match {
-            subject: crate::ast::Shared::new(bare(Expr::Tuple(crate::ast::shared::vec(vec![int(1), int(2)])))),
+            subject: crate::ast::Shared::new(bare(Expr::Tuple(crate::ast::shared::vec(vec![
+                int(1),
+                int(2),
+            ])))),
             arms: crate::ast::shared::vec(vec![MatchArm {
                 pattern: Pattern::Tuple(vec![
                     Pattern::Ident("a".to_string()),

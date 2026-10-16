@@ -300,7 +300,11 @@ pub fn untranslate_premise_json(
 /// equality becomes `a == b`, a comparison becomes `a < b` etc.
 fn untranslate_bool(v: &Value, ctx: &UntranslateCtx) -> Result<Spanned<Expr>, EngineGap> {
     if let Some((l, r)) = untranslate_eq(v, ctx) {
-        return Ok(sp(Expr::BinOp(BinOp::Eq, crate::ast::Shared::new(l?), crate::ast::Shared::new(r?))));
+        return Ok(sp(Expr::BinOp(
+            BinOp::Eq,
+            crate::ast::Shared::new(l?),
+            crate::ast::Shared::new(r?),
+        )));
     }
     // A split else-branch hypothesis `¬(<boolExpr> = b)` (non-constant, so not
     // dropped as vacuous) → the `when`-conjunct `<boolExpr> != b`. The Bool↔Prop
@@ -308,7 +312,11 @@ fn untranslate_bool(v: &Value, ctx: &UntranslateCtx) -> Result<Spanned<Expr>, En
     if let Some(inner) = negated_eq_inner(v)
         && let Some((l, r)) = untranslate_eq(inner, ctx)
     {
-        return Ok(sp(Expr::BinOp(BinOp::Neq, crate::ast::Shared::new(l?), crate::ast::Shared::new(r?))));
+        return Ok(sp(Expr::BinOp(
+            BinOp::Neq,
+            crate::ast::Shared::new(l?),
+            crate::ast::Shared::new(r?),
+        )));
     }
     if let Some(app) = v.get("app")
         && let Some(op) = comparison_binop(head_const(app))
@@ -475,7 +483,9 @@ fn untranslate_app(app: &Value, ctx: &UntranslateCtx) -> Result<Spanned<Expr>, E
     if head == Some("Neg.neg") {
         require_int_carrier(app)?;
         let args = app_operands(app, 1)?;
-        return Ok(sp(Expr::Neg(crate::ast::Shared::new(untranslate_expr(&args[0], ctx)?))));
+        return Ok(sp(Expr::Neg(crate::ast::Shared::new(untranslate_expr(
+            &args[0], ctx,
+        )?))));
     }
     // Numeric coercions have no Aver surface: Aver `Int` is ℤ and there is no
     // `Nat`, so a `Nat`-carried value must never be laundered into an Aver
@@ -564,7 +574,10 @@ fn untranslate_app(app: &Value, ctx: &UntranslateCtx) -> Result<Spanned<Expr>, E
     for a in all {
         args.push(untranslate_expr(a, ctx)?);
     }
-    Ok(sp(Expr::FnCall(crate::ast::Shared::new(sp(const_to_expr(name))), crate::ast::shared::vec(args))))
+    Ok(sp(Expr::FnCall(
+        crate::ast::Shared::new(sp(const_to_expr(name))),
+        crate::ast::shared::vec(args),
+    )))
 }
 
 /// The head constant name of an `app` JSON node, if the head is a `const`.

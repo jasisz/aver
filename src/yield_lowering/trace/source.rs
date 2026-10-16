@@ -360,8 +360,12 @@ impl<'a> Compiler<'a> {
             let observed = call(&self.model.source_name(&helper), arguments, 0);
             let result = self.name();
             let value = self.name();
-            let field =
-                |name: &str| Spanned::new(Expr::Attr(crate::ast::Shared::new(ident(&result, 0)), name.into()), 0);
+            let field = |name: &str| {
+                Spanned::new(
+                    Expr::Attr(crate::ast::Shared::new(ident(&result, 0)), name.into()),
+                    0,
+                )
+            };
             let current = Cursor {
                 inputs: segment_cursor.map_or_else(
                     || field("remaining"),

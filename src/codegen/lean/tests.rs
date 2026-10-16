@@ -608,65 +608,74 @@ verify addOne law shifts
 
 fn empty_ctx_with_verify_case() -> CodegenContext {
     let mut ctx = empty_ctx();
-    ctx.items.push(TopLevel::Verify(VerifyBlock {
-        process_verification: None,
-        fn_name: "f".to_string(),
-        line: 1,
-        cases: vec![(
-            sb(Expr::Literal(Literal::Int(1))),
-            sb(Expr::Literal(Literal::Int(1))),
-        )],
-        case_spans: vec![],
-        case_ids: vec![],
-        case_givens: vec![],
-        case_hostile_origins: vec![],
-        case_hostile_profiles: vec![],
-        case_reverse_order: vec![],
-        kind: VerifyKind::Cases,
-        trace: false,
-        cases_givens: vec![],
-    }.into()));
+    ctx.items.push(TopLevel::Verify(
+        VerifyBlock {
+            process_verification: None,
+            fn_name: "f".to_string(),
+            line: 1,
+            cases: vec![(
+                sb(Expr::Literal(Literal::Int(1))),
+                sb(Expr::Literal(Literal::Int(1))),
+            )],
+            case_spans: vec![],
+            case_ids: vec![],
+            case_givens: vec![],
+            case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
+            case_reverse_order: vec![],
+            kind: VerifyKind::Cases,
+            trace: false,
+            cases_givens: vec![],
+        }
+        .into(),
+    ));
     ctx
 }
 
 fn empty_ctx_with_two_verify_blocks_same_fn() -> CodegenContext {
     let mut ctx = empty_ctx();
-    ctx.items.push(TopLevel::Verify(VerifyBlock {
-        process_verification: None,
-        fn_name: "f".to_string(),
-        line: 1,
-        cases: vec![(
-            sb(Expr::Literal(Literal::Int(1))),
-            sb(Expr::Literal(Literal::Int(1))),
-        )],
-        case_spans: vec![],
-        case_ids: vec![],
-        case_givens: vec![],
-        case_hostile_origins: vec![],
-        case_hostile_profiles: vec![],
-        case_reverse_order: vec![],
-        kind: VerifyKind::Cases,
-        trace: false,
-        cases_givens: vec![],
-    }.into()));
-    ctx.items.push(TopLevel::Verify(VerifyBlock {
-        process_verification: None,
-        fn_name: "f".to_string(),
-        line: 2,
-        cases: vec![(
-            sb(Expr::Literal(Literal::Int(2))),
-            sb(Expr::Literal(Literal::Int(2))),
-        )],
-        case_spans: vec![],
-        case_ids: vec![],
-        case_givens: vec![],
-        case_hostile_origins: vec![],
-        case_hostile_profiles: vec![],
-        case_reverse_order: vec![],
-        kind: VerifyKind::Cases,
-        trace: false,
-        cases_givens: vec![],
-    }.into()));
+    ctx.items.push(TopLevel::Verify(
+        VerifyBlock {
+            process_verification: None,
+            fn_name: "f".to_string(),
+            line: 1,
+            cases: vec![(
+                sb(Expr::Literal(Literal::Int(1))),
+                sb(Expr::Literal(Literal::Int(1))),
+            )],
+            case_spans: vec![],
+            case_ids: vec![],
+            case_givens: vec![],
+            case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
+            case_reverse_order: vec![],
+            kind: VerifyKind::Cases,
+            trace: false,
+            cases_givens: vec![],
+        }
+        .into(),
+    ));
+    ctx.items.push(TopLevel::Verify(
+        VerifyBlock {
+            process_verification: None,
+            fn_name: "f".to_string(),
+            line: 2,
+            cases: vec![(
+                sb(Expr::Literal(Literal::Int(2))),
+                sb(Expr::Literal(Literal::Int(2))),
+            )],
+            case_spans: vec![],
+            case_ids: vec![],
+            case_givens: vec![],
+            case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
+            case_reverse_order: vec![],
+            kind: VerifyKind::Cases,
+            trace: false,
+            cases_givens: vec![],
+        }
+        .into(),
+    ));
     ctx
 }
 
@@ -691,91 +700,94 @@ fn empty_ctx_with_verify_law() -> CodegenContext {
     };
     ctx.fn_defs.push(add.clone());
     ctx.items.push(TopLevel::FnDef(add));
-    ctx.items.push(TopLevel::Verify(VerifyBlock {
-        process_verification: None,
-        fn_name: "add".to_string(),
-        line: 1,
-        cases: vec![
-            (
-                sb(Expr::FnCall(
-                    crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
-                    crate::ast::shared::vec(vec![
-                        sb(Expr::Literal(Literal::Int(1))),
-                        sb(Expr::Literal(Literal::Int(2))),
-                    ]),
-                )),
-                sb(Expr::FnCall(
-                    crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
-                    crate::ast::shared::vec(vec![
-                        sb(Expr::Literal(Literal::Int(2))),
-                        sb(Expr::Literal(Literal::Int(1))),
-                    ]),
-                )),
-            ),
-            (
-                sb(Expr::FnCall(
-                    crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
-                    crate::ast::shared::vec(vec![
-                        sb(Expr::Literal(Literal::Int(2))),
-                        sb(Expr::Literal(Literal::Int(3))),
-                    ]),
-                )),
-                sb(Expr::FnCall(
-                    crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
-                    crate::ast::shared::vec(vec![
-                        sb(Expr::Literal(Literal::Int(3))),
-                        sb(Expr::Literal(Literal::Int(2))),
-                    ]),
-                )),
-            ),
-        ],
-        case_spans: vec![],
-        case_ids: vec![],
-        case_givens: vec![],
-        case_hostile_origins: vec![],
-        case_hostile_profiles: vec![],
-        case_reverse_order: vec![],
-        kind: VerifyKind::Law(Box::new(VerifyLaw {
-            name: "commutative".to_string(),
-            givens: vec![
-                VerifyGiven {
-                    name: "a".to_string(),
-                    type_name: "Int".to_string(),
-                    domain: VerifyGivenDomain::IntRange { start: 1, end: 2 },
-                },
-                VerifyGiven {
-                    name: "b".to_string(),
-                    type_name: "Int".to_string(),
-                    domain: VerifyGivenDomain::Explicit(vec![
-                        sb(Expr::Literal(Literal::Int(2))),
-                        sb(Expr::Literal(Literal::Int(3))),
-                    ]),
-                },
+    ctx.items.push(TopLevel::Verify(
+        VerifyBlock {
+            process_verification: None,
+            fn_name: "add".to_string(),
+            line: 1,
+            cases: vec![
+                (
+                    sb(Expr::FnCall(
+                        crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                        crate::ast::shared::vec(vec![
+                            sb(Expr::Literal(Literal::Int(1))),
+                            sb(Expr::Literal(Literal::Int(2))),
+                        ]),
+                    )),
+                    sb(Expr::FnCall(
+                        crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                        crate::ast::shared::vec(vec![
+                            sb(Expr::Literal(Literal::Int(2))),
+                            sb(Expr::Literal(Literal::Int(1))),
+                        ]),
+                    )),
+                ),
+                (
+                    sb(Expr::FnCall(
+                        crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                        crate::ast::shared::vec(vec![
+                            sb(Expr::Literal(Literal::Int(2))),
+                            sb(Expr::Literal(Literal::Int(3))),
+                        ]),
+                    )),
+                    sb(Expr::FnCall(
+                        crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                        crate::ast::shared::vec(vec![
+                            sb(Expr::Literal(Literal::Int(3))),
+                            sb(Expr::Literal(Literal::Int(2))),
+                        ]),
+                    )),
+                ),
             ],
-            when: None,
-            lhs: sb(Expr::FnCall(
-                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
-                crate::ast::shared::vec(vec![
-                    sb(Expr::Ident("a".to_string())),
-                    sb(Expr::Ident("b".to_string())),
-                ]),
-            )),
-            rhs: sb(Expr::FnCall(
-                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
-                crate::ast::shared::vec(vec![
-                    sb(Expr::Ident("b".to_string())),
-                    sb(Expr::Ident("a".to_string())),
-                ]),
-            )),
-            because: Vec::new(),
-            using: None,
-            induction: None,
-            by_plan: None,
-            sample_guards: vec![],
-        })),
-        trace: false,
-        cases_givens: vec![],
-    }.into()));
+            case_spans: vec![],
+            case_ids: vec![],
+            case_givens: vec![],
+            case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
+            case_reverse_order: vec![],
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
+                name: "commutative".to_string(),
+                givens: vec![
+                    VerifyGiven {
+                        name: "a".to_string(),
+                        type_name: "Int".to_string(),
+                        domain: VerifyGivenDomain::IntRange { start: 1, end: 2 },
+                    },
+                    VerifyGiven {
+                        name: "b".to_string(),
+                        type_name: "Int".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![
+                            sb(Expr::Literal(Literal::Int(2))),
+                            sb(Expr::Literal(Literal::Int(3))),
+                        ]),
+                    },
+                ],
+                when: None,
+                lhs: sb(Expr::FnCall(
+                    crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                    crate::ast::shared::vec(vec![
+                        sb(Expr::Ident("a".to_string())),
+                        sb(Expr::Ident("b".to_string())),
+                    ]),
+                )),
+                rhs: sb(Expr::FnCall(
+                    crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                    crate::ast::shared::vec(vec![
+                        sb(Expr::Ident("b".to_string())),
+                        sb(Expr::Ident("a".to_string())),
+                    ]),
+                )),
+                because: Vec::new(),
+                using: None,
+                induction: None,
+                by_plan: None,
+                sample_guards: vec![],
+            })),
+            trace: false,
+            cases_givens: vec![],
+        }
+        .into(),
+    ));
     ctx
 }
 
@@ -1513,39 +1525,42 @@ fn transpile_auto_proves_reflexive_law_with_rfl() {
     };
     ctx.fn_defs.push(id_law.clone());
     ctx.items.push(TopLevel::FnDef(id_law));
-    ctx.items.push(TopLevel::Verify(VerifyBlock {
-        process_verification: None,
-        fn_name: "idLaw".to_string(),
-        line: 1,
-        cases: vec![(
-            sb(Expr::Literal(Literal::Int(1))),
-            sb(Expr::Literal(Literal::Int(1))),
-        )],
-        case_spans: vec![],
-        case_ids: vec![],
-        case_givens: vec![],
-        case_hostile_origins: vec![],
-        case_hostile_profiles: vec![],
-        case_reverse_order: vec![],
-        kind: VerifyKind::Law(Box::new(VerifyLaw {
-            name: "reflexive".to_string(),
-            givens: vec![VerifyGiven {
-                name: "x".to_string(),
-                type_name: "Int".to_string(),
-                domain: VerifyGivenDomain::IntRange { start: 1, end: 2 },
-            }],
-            when: None,
-            lhs: sb(Expr::Ident("x".to_string())),
-            rhs: sb(Expr::Ident("x".to_string())),
-            because: Vec::new(),
-            using: None,
-            induction: None,
-            by_plan: None,
-            sample_guards: vec![],
-        })),
-        trace: false,
-        cases_givens: vec![],
-    }.into()));
+    ctx.items.push(TopLevel::Verify(
+        VerifyBlock {
+            process_verification: None,
+            fn_name: "idLaw".to_string(),
+            line: 1,
+            cases: vec![(
+                sb(Expr::Literal(Literal::Int(1))),
+                sb(Expr::Literal(Literal::Int(1))),
+            )],
+            case_spans: vec![],
+            case_ids: vec![],
+            case_givens: vec![],
+            case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
+            case_reverse_order: vec![],
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
+                name: "reflexive".to_string(),
+                givens: vec![VerifyGiven {
+                    name: "x".to_string(),
+                    type_name: "Int".to_string(),
+                    domain: VerifyGivenDomain::IntRange { start: 1, end: 2 },
+                }],
+                when: None,
+                lhs: sb(Expr::Ident("x".to_string())),
+                rhs: sb(Expr::Ident("x".to_string())),
+                because: Vec::new(),
+                using: None,
+                induction: None,
+                by_plan: None,
+                sample_guards: vec![],
+            })),
+            trace: false,
+            cases_givens: vec![],
+        }
+        .into(),
+    ));
     // Synthetic-AST test bypasses the parser + pipeline, so the
     // LawLower stage hasn't run. refresh_facts populates
     // ProofIR.law_theorems with Reflexive on `x => x` — backend's
@@ -1565,54 +1580,57 @@ fn transpile_auto_proves_reflexive_law_with_rfl() {
 #[test]
 fn transpile_auto_proves_identity_law_for_int_add_wrapper() {
     let mut ctx = empty_ctx_with_verify_law();
-    ctx.items.push(TopLevel::Verify(VerifyBlock {
-        process_verification: None,
-        fn_name: "add".to_string(),
-        line: 10,
-        cases: vec![(
-            sb(Expr::FnCall(
-                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
-                crate::ast::shared::vec(vec![
-                    sb(Expr::Literal(Literal::Int(1))),
-                    sb(Expr::Literal(Literal::Int(0))),
-                ]),
-            )),
-            sb(Expr::Literal(Literal::Int(1))),
-        )],
-        case_spans: vec![],
-        case_ids: vec![],
-        case_givens: vec![],
-        case_hostile_origins: vec![],
-        case_hostile_profiles: vec![],
-        case_reverse_order: vec![],
-        kind: VerifyKind::Law(Box::new(VerifyLaw {
-            name: "identityZero".to_string(),
-            givens: vec![VerifyGiven {
-                name: "a".to_string(),
-                type_name: "Int".to_string(),
-                domain: VerifyGivenDomain::Explicit(vec![
-                    sb(Expr::Literal(Literal::Int(0))),
-                    sb(Expr::Literal(Literal::Int(1))),
-                ]),
-            }],
-            when: None,
-            lhs: sb(Expr::FnCall(
-                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
-                crate::ast::shared::vec(vec![
-                    sb(Expr::Ident("a".to_string())),
-                    sb(Expr::Literal(Literal::Int(0))),
-                ]),
-            )),
-            rhs: sb(Expr::Ident("a".to_string())),
-            because: Vec::new(),
-            using: None,
-            induction: None,
-            by_plan: None,
-            sample_guards: vec![],
-        })),
-        trace: false,
-        cases_givens: vec![],
-    }.into()));
+    ctx.items.push(TopLevel::Verify(
+        VerifyBlock {
+            process_verification: None,
+            fn_name: "add".to_string(),
+            line: 10,
+            cases: vec![(
+                sb(Expr::FnCall(
+                    crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                    crate::ast::shared::vec(vec![
+                        sb(Expr::Literal(Literal::Int(1))),
+                        sb(Expr::Literal(Literal::Int(0))),
+                    ]),
+                )),
+                sb(Expr::Literal(Literal::Int(1))),
+            )],
+            case_spans: vec![],
+            case_ids: vec![],
+            case_givens: vec![],
+            case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
+            case_reverse_order: vec![],
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
+                name: "identityZero".to_string(),
+                givens: vec![VerifyGiven {
+                    name: "a".to_string(),
+                    type_name: "Int".to_string(),
+                    domain: VerifyGivenDomain::Explicit(vec![
+                        sb(Expr::Literal(Literal::Int(0))),
+                        sb(Expr::Literal(Literal::Int(1))),
+                    ]),
+                }],
+                when: None,
+                lhs: sb(Expr::FnCall(
+                    crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                    crate::ast::shared::vec(vec![
+                        sb(Expr::Ident("a".to_string())),
+                        sb(Expr::Literal(Literal::Int(0))),
+                    ]),
+                )),
+                rhs: sb(Expr::Ident("a".to_string())),
+                because: Vec::new(),
+                using: None,
+                induction: None,
+                by_plan: None,
+                sample_guards: vec![],
+            })),
+            trace: false,
+            cases_givens: vec![],
+        }
+        .into(),
+    ));
     populate_proof_ir(&mut ctx);
     let out = transpile(&mut ctx);
     let lean = out
@@ -1628,99 +1646,108 @@ fn transpile_auto_proves_identity_law_for_int_add_wrapper() {
 #[test]
 fn transpile_auto_proves_associative_law_for_int_add_wrapper() {
     let mut ctx = empty_ctx_with_verify_law();
-    ctx.items.push(TopLevel::Verify(VerifyBlock {
-        process_verification: None,
-        fn_name: "add".to_string(),
-        line: 20,
-        cases: vec![(
-            sb(Expr::FnCall(
-                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
-                crate::ast::shared::vec(vec![
-                    sb(Expr::FnCall(
-                        crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
-                        crate::ast::shared::vec(vec![
-                            sb(Expr::Literal(Literal::Int(1))),
-                            sb(Expr::Literal(Literal::Int(2))),
-                        ]),
-                    )),
-                    sb(Expr::Literal(Literal::Int(3))),
-                ]),
-            )),
-            sb(Expr::FnCall(
-                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
-                crate::ast::shared::vec(vec![
-                    sb(Expr::Literal(Literal::Int(1))),
-                    sb(Expr::FnCall(
-                        crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
-                        crate::ast::shared::vec(vec![
-                            sb(Expr::Literal(Literal::Int(2))),
-                            sb(Expr::Literal(Literal::Int(3))),
-                        ]),
-                    )),
-                ]),
-            )),
-        )],
-        case_spans: vec![],
-        case_ids: vec![],
-        case_givens: vec![],
-        case_hostile_origins: vec![],
-        case_hostile_profiles: vec![],
-        case_reverse_order: vec![],
-        kind: VerifyKind::Law(Box::new(VerifyLaw {
-            name: "associative".to_string(),
-            givens: vec![
-                VerifyGiven {
-                    name: "a".to_string(),
-                    type_name: "Int".to_string(),
-                    domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(1)))]),
-                },
-                VerifyGiven {
-                    name: "b".to_string(),
-                    type_name: "Int".to_string(),
-                    domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(2)))]),
-                },
-                VerifyGiven {
-                    name: "c".to_string(),
-                    type_name: "Int".to_string(),
-                    domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(3)))]),
-                },
-            ],
-            when: None,
-            lhs: sb(Expr::FnCall(
-                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
-                crate::ast::shared::vec(vec![
-                    sb(Expr::FnCall(
-                        crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
-                        crate::ast::shared::vec(vec![
-                            sb(Expr::Ident("a".to_string())),
-                            sb(Expr::Ident("b".to_string())),
-                        ]),
-                    )),
-                    sb(Expr::Ident("c".to_string())),
-                ]),
-            )),
-            rhs: sb(Expr::FnCall(
-                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
-                crate::ast::shared::vec(vec![
-                    sb(Expr::Ident("a".to_string())),
-                    sb(Expr::FnCall(
-                        crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
-                        crate::ast::shared::vec(vec![
-                            sb(Expr::Ident("b".to_string())),
-                            sb(Expr::Ident("c".to_string())),
-                        ]),
-                    )),
-                ]),
-            )),
-            because: Vec::new(),
-            using: None,
-            induction: None,
-            by_plan: None,
-            sample_guards: vec![],
-        })),
-        trace: false,
-        cases_givens: vec![],
-    }.into()));
+    ctx.items.push(TopLevel::Verify(
+        VerifyBlock {
+            process_verification: None,
+            fn_name: "add".to_string(),
+            line: 20,
+            cases: vec![(
+                sb(Expr::FnCall(
+                    crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                    crate::ast::shared::vec(vec![
+                        sb(Expr::FnCall(
+                            crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                            crate::ast::shared::vec(vec![
+                                sb(Expr::Literal(Literal::Int(1))),
+                                sb(Expr::Literal(Literal::Int(2))),
+                            ]),
+                        )),
+                        sb(Expr::Literal(Literal::Int(3))),
+                    ]),
+                )),
+                sb(Expr::FnCall(
+                    crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                    crate::ast::shared::vec(vec![
+                        sb(Expr::Literal(Literal::Int(1))),
+                        sb(Expr::FnCall(
+                            crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                            crate::ast::shared::vec(vec![
+                                sb(Expr::Literal(Literal::Int(2))),
+                                sb(Expr::Literal(Literal::Int(3))),
+                            ]),
+                        )),
+                    ]),
+                )),
+            )],
+            case_spans: vec![],
+            case_ids: vec![],
+            case_givens: vec![],
+            case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
+            case_reverse_order: vec![],
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
+                name: "associative".to_string(),
+                givens: vec![
+                    VerifyGiven {
+                        name: "a".to_string(),
+                        type_name: "Int".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(
+                            1,
+                        )))]),
+                    },
+                    VerifyGiven {
+                        name: "b".to_string(),
+                        type_name: "Int".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(
+                            2,
+                        )))]),
+                    },
+                    VerifyGiven {
+                        name: "c".to_string(),
+                        type_name: "Int".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(
+                            3,
+                        )))]),
+                    },
+                ],
+                when: None,
+                lhs: sb(Expr::FnCall(
+                    crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                    crate::ast::shared::vec(vec![
+                        sb(Expr::FnCall(
+                            crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                            crate::ast::shared::vec(vec![
+                                sb(Expr::Ident("a".to_string())),
+                                sb(Expr::Ident("b".to_string())),
+                            ]),
+                        )),
+                        sb(Expr::Ident("c".to_string())),
+                    ]),
+                )),
+                rhs: sb(Expr::FnCall(
+                    crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                    crate::ast::shared::vec(vec![
+                        sb(Expr::Ident("a".to_string())),
+                        sb(Expr::FnCall(
+                            crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                            crate::ast::shared::vec(vec![
+                                sb(Expr::Ident("b".to_string())),
+                                sb(Expr::Ident("c".to_string())),
+                            ]),
+                        )),
+                    ]),
+                )),
+                because: Vec::new(),
+                using: None,
+                induction: None,
+                by_plan: None,
+                sample_guards: vec![],
+            })),
+            trace: false,
+            cases_givens: vec![],
+        }
+        .into(),
+    ));
     populate_proof_ir(&mut ctx);
     let out = transpile(&mut ctx);
     let lean = out
@@ -1758,115 +1785,125 @@ fn transpile_auto_proves_sub_laws() {
     ctx.fn_defs.push(sub.clone());
     ctx.items.push(TopLevel::FnDef(sub));
 
-    ctx.items.push(TopLevel::Verify(VerifyBlock {
-        process_verification: None,
-        fn_name: "sub".to_string(),
-        line: 10,
-        cases: vec![(
-            sb(Expr::FnCall(
-                crate::ast::Shared::from(sbb(Expr::Ident("sub".to_string()))),
-                crate::ast::shared::vec(vec![
-                    sb(Expr::Literal(Literal::Int(2))),
-                    sb(Expr::Literal(Literal::Int(0))),
-                ]),
-            )),
-            sb(Expr::Literal(Literal::Int(2))),
-        )],
-        case_spans: vec![],
-        case_ids: vec![],
-        case_givens: vec![],
-        case_hostile_origins: vec![],
-        case_hostile_profiles: vec![],
-        case_reverse_order: vec![],
-        kind: VerifyKind::Law(Box::new(VerifyLaw {
-            name: "rightIdentity".to_string(),
-            givens: vec![VerifyGiven {
-                name: "a".to_string(),
-                type_name: "Int".to_string(),
-                domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(2)))]),
-            }],
-            when: None,
-            lhs: sb(Expr::FnCall(
-                crate::ast::Shared::from(sbb(Expr::Ident("sub".to_string()))),
-                crate::ast::shared::vec(vec![
-                    sb(Expr::Ident("a".to_string())),
-                    sb(Expr::Literal(Literal::Int(0))),
-                ]),
-            )),
-            rhs: sb(Expr::Ident("a".to_string())),
-            because: Vec::new(),
-            using: None,
-            induction: None,
-            by_plan: None,
-            sample_guards: vec![],
-        })),
-        trace: false,
-        cases_givens: vec![],
-    }.into()));
-    ctx.items.push(TopLevel::Verify(VerifyBlock {
-        process_verification: None,
-        fn_name: "sub".to_string(),
-        line: 20,
-        cases: vec![(
-            sb(Expr::FnCall(
-                crate::ast::Shared::from(sbb(Expr::Ident("sub".to_string()))),
-                crate::ast::shared::vec(vec![
-                    sb(Expr::Literal(Literal::Int(2))),
-                    sb(Expr::Literal(Literal::Int(1))),
-                ]),
-            )),
-            sb(Expr::Neg(crate::ast::Shared::from(sbb(Expr::FnCall(
-                crate::ast::Shared::from(sbb(Expr::Ident("sub".to_string()))),
-                crate::ast::shared::vec(vec![
-                    sb(Expr::Literal(Literal::Int(1))),
-                    sb(Expr::Literal(Literal::Int(2))),
-                ]),
-            ))))),
-        )],
-        case_spans: vec![],
-        case_ids: vec![],
-        case_givens: vec![],
-        case_hostile_origins: vec![],
-        case_hostile_profiles: vec![],
-        case_reverse_order: vec![],
-        kind: VerifyKind::Law(Box::new(VerifyLaw {
-            name: "antiCommutative".to_string(),
-            givens: vec![
-                VerifyGiven {
+    ctx.items.push(TopLevel::Verify(
+        VerifyBlock {
+            process_verification: None,
+            fn_name: "sub".to_string(),
+            line: 10,
+            cases: vec![(
+                sb(Expr::FnCall(
+                    crate::ast::Shared::from(sbb(Expr::Ident("sub".to_string()))),
+                    crate::ast::shared::vec(vec![
+                        sb(Expr::Literal(Literal::Int(2))),
+                        sb(Expr::Literal(Literal::Int(0))),
+                    ]),
+                )),
+                sb(Expr::Literal(Literal::Int(2))),
+            )],
+            case_spans: vec![],
+            case_ids: vec![],
+            case_givens: vec![],
+            case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
+            case_reverse_order: vec![],
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
+                name: "rightIdentity".to_string(),
+                givens: vec![VerifyGiven {
                     name: "a".to_string(),
                     type_name: "Int".to_string(),
                     domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(2)))]),
-                },
-                VerifyGiven {
-                    name: "b".to_string(),
-                    type_name: "Int".to_string(),
-                    domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(1)))]),
-                },
-            ],
-            when: None,
-            lhs: sb(Expr::FnCall(
-                crate::ast::Shared::from(sbb(Expr::Ident("sub".to_string()))),
-                crate::ast::shared::vec(vec![
-                    sb(Expr::Ident("a".to_string())),
-                    sb(Expr::Ident("b".to_string())),
-                ]),
-            )),
-            rhs: sb(Expr::Neg(crate::ast::Shared::from(sbb(Expr::FnCall(
-                crate::ast::Shared::from(sbb(Expr::Ident("sub".to_string()))),
-                crate::ast::shared::vec(vec![
-                    sb(Expr::Ident("b".to_string())),
-                    sb(Expr::Ident("a".to_string())),
-                ]),
-            ))))),
-            because: Vec::new(),
-            using: None,
-            induction: None,
-            by_plan: None,
-            sample_guards: vec![],
-        })),
-        trace: false,
-        cases_givens: vec![],
-    }.into()));
+                }],
+                when: None,
+                lhs: sb(Expr::FnCall(
+                    crate::ast::Shared::from(sbb(Expr::Ident("sub".to_string()))),
+                    crate::ast::shared::vec(vec![
+                        sb(Expr::Ident("a".to_string())),
+                        sb(Expr::Literal(Literal::Int(0))),
+                    ]),
+                )),
+                rhs: sb(Expr::Ident("a".to_string())),
+                because: Vec::new(),
+                using: None,
+                induction: None,
+                by_plan: None,
+                sample_guards: vec![],
+            })),
+            trace: false,
+            cases_givens: vec![],
+        }
+        .into(),
+    ));
+    ctx.items.push(TopLevel::Verify(
+        VerifyBlock {
+            process_verification: None,
+            fn_name: "sub".to_string(),
+            line: 20,
+            cases: vec![(
+                sb(Expr::FnCall(
+                    crate::ast::Shared::from(sbb(Expr::Ident("sub".to_string()))),
+                    crate::ast::shared::vec(vec![
+                        sb(Expr::Literal(Literal::Int(2))),
+                        sb(Expr::Literal(Literal::Int(1))),
+                    ]),
+                )),
+                sb(Expr::Neg(crate::ast::Shared::from(sbb(Expr::FnCall(
+                    crate::ast::Shared::from(sbb(Expr::Ident("sub".to_string()))),
+                    crate::ast::shared::vec(vec![
+                        sb(Expr::Literal(Literal::Int(1))),
+                        sb(Expr::Literal(Literal::Int(2))),
+                    ]),
+                ))))),
+            )],
+            case_spans: vec![],
+            case_ids: vec![],
+            case_givens: vec![],
+            case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
+            case_reverse_order: vec![],
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
+                name: "antiCommutative".to_string(),
+                givens: vec![
+                    VerifyGiven {
+                        name: "a".to_string(),
+                        type_name: "Int".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(
+                            2,
+                        )))]),
+                    },
+                    VerifyGiven {
+                        name: "b".to_string(),
+                        type_name: "Int".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(
+                            1,
+                        )))]),
+                    },
+                ],
+                when: None,
+                lhs: sb(Expr::FnCall(
+                    crate::ast::Shared::from(sbb(Expr::Ident("sub".to_string()))),
+                    crate::ast::shared::vec(vec![
+                        sb(Expr::Ident("a".to_string())),
+                        sb(Expr::Ident("b".to_string())),
+                    ]),
+                )),
+                rhs: sb(Expr::Neg(crate::ast::Shared::from(sbb(Expr::FnCall(
+                    crate::ast::Shared::from(sbb(Expr::Ident("sub".to_string()))),
+                    crate::ast::shared::vec(vec![
+                        sb(Expr::Ident("b".to_string())),
+                        sb(Expr::Ident("a".to_string())),
+                    ]),
+                ))))),
+                because: Vec::new(),
+                using: None,
+                induction: None,
+                by_plan: None,
+                sample_guards: vec![],
+            })),
+            trace: false,
+            cases_givens: vec![],
+        }
+        .into(),
+    ));
 
     populate_proof_ir(&mut ctx);
     let out = transpile(&mut ctx);
@@ -1921,57 +1958,60 @@ fn transpile_auto_proves_unary_wrapper_equivalence_law() {
     ctx.fn_defs.push(add_one.clone());
     ctx.items.push(TopLevel::FnDef(add));
     ctx.items.push(TopLevel::FnDef(add_one));
-    ctx.items.push(TopLevel::Verify(VerifyBlock {
-        process_verification: None,
-        fn_name: "addOne".to_string(),
-        line: 3,
-        cases: vec![(
-            sb(Expr::FnCall(
-                crate::ast::Shared::from(sbb(Expr::Ident("addOne".to_string()))),
-                crate::ast::shared::vec(vec![sb(Expr::Literal(Literal::Int(2)))]),
-            )),
-            sb(Expr::FnCall(
-                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
-                crate::ast::shared::vec(vec![
-                    sb(Expr::Literal(Literal::Int(2))),
-                    sb(Expr::Literal(Literal::Int(1))),
-                ]),
-            )),
-        )],
-        case_spans: vec![],
-        case_ids: vec![],
-        case_givens: vec![],
-        case_hostile_origins: vec![],
-        case_hostile_profiles: vec![],
-        case_reverse_order: vec![],
-        kind: VerifyKind::Law(Box::new(VerifyLaw {
-            name: "identityViaAdd".to_string(),
-            givens: vec![VerifyGiven {
-                name: "n".to_string(),
-                type_name: "Int".to_string(),
-                domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(2)))]),
-            }],
-            when: None,
-            lhs: sb(Expr::FnCall(
-                crate::ast::Shared::from(sbb(Expr::Ident("addOne".to_string()))),
-                crate::ast::shared::vec(vec![sb(Expr::Ident("n".to_string()))]),
-            )),
-            rhs: sb(Expr::FnCall(
-                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
-                crate::ast::shared::vec(vec![
-                    sb(Expr::Ident("n".to_string())),
-                    sb(Expr::Literal(Literal::Int(1))),
-                ]),
-            )),
-            because: Vec::new(),
-            using: None,
-            induction: None,
-            by_plan: None,
-            sample_guards: vec![],
-        })),
-        trace: false,
-        cases_givens: vec![],
-    }.into()));
+    ctx.items.push(TopLevel::Verify(
+        VerifyBlock {
+            process_verification: None,
+            fn_name: "addOne".to_string(),
+            line: 3,
+            cases: vec![(
+                sb(Expr::FnCall(
+                    crate::ast::Shared::from(sbb(Expr::Ident("addOne".to_string()))),
+                    crate::ast::shared::vec(vec![sb(Expr::Literal(Literal::Int(2)))]),
+                )),
+                sb(Expr::FnCall(
+                    crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                    crate::ast::shared::vec(vec![
+                        sb(Expr::Literal(Literal::Int(2))),
+                        sb(Expr::Literal(Literal::Int(1))),
+                    ]),
+                )),
+            )],
+            case_spans: vec![],
+            case_ids: vec![],
+            case_givens: vec![],
+            case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
+            case_reverse_order: vec![],
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
+                name: "identityViaAdd".to_string(),
+                givens: vec![VerifyGiven {
+                    name: "n".to_string(),
+                    type_name: "Int".to_string(),
+                    domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(2)))]),
+                }],
+                when: None,
+                lhs: sb(Expr::FnCall(
+                    crate::ast::Shared::from(sbb(Expr::Ident("addOne".to_string()))),
+                    crate::ast::shared::vec(vec![sb(Expr::Ident("n".to_string()))]),
+                )),
+                rhs: sb(Expr::FnCall(
+                    crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                    crate::ast::shared::vec(vec![
+                        sb(Expr::Ident("n".to_string())),
+                        sb(Expr::Literal(Literal::Int(1))),
+                    ]),
+                )),
+                because: Vec::new(),
+                using: None,
+                induction: None,
+                by_plan: None,
+                sample_guards: vec![],
+            })),
+            trace: false,
+            cases_givens: vec![],
+        }
+        .into(),
+    ));
     populate_proof_ir(&mut ctx);
     let out = transpile(&mut ctx);
     let lean = out
@@ -2050,129 +2090,139 @@ fn transpile_auto_proves_direct_map_set_laws() {
         ))
     };
 
-    ctx.items.push(TopLevel::Verify(VerifyBlock {
-        process_verification: None,
-        fn_name: "map".to_string(),
-        line: 1,
-        cases: vec![(
-            map_has(
-                map_set(
-                    sb(Expr::Ident("m".to_string())),
+    ctx.items.push(TopLevel::Verify(
+        VerifyBlock {
+            process_verification: None,
+            fn_name: "map".to_string(),
+            line: 1,
+            cases: vec![(
+                map_has(
+                    map_set(
+                        sb(Expr::Ident("m".to_string())),
+                        sb(Expr::Ident("k".to_string())),
+                        sb(Expr::Ident("v".to_string())),
+                    ),
                     sb(Expr::Ident("k".to_string())),
-                    sb(Expr::Ident("v".to_string())),
                 ),
-                sb(Expr::Ident("k".to_string())),
-            ),
-            sb(Expr::Literal(Literal::Bool(true))),
-        )],
-        case_spans: vec![],
-        case_ids: vec![],
-        case_givens: vec![],
-        case_hostile_origins: vec![],
-        case_hostile_profiles: vec![],
-        case_reverse_order: vec![],
-        kind: VerifyKind::Law(Box::new(VerifyLaw {
-            name: "setHasKey".to_string(),
-            givens: vec![
-                VerifyGiven {
-                    name: "m".to_string(),
-                    type_name: "Map<String, Int>".to_string(),
-                    domain: VerifyGivenDomain::Explicit(vec![map_empty()]),
-                },
-                VerifyGiven {
-                    name: "k".to_string(),
-                    type_name: "String".to_string(),
-                    domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Str(
-                        "a".to_string(),
-                    )))]),
-                },
-                VerifyGiven {
-                    name: "v".to_string(),
-                    type_name: "Int".to_string(),
-                    domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(1)))]),
-                },
-            ],
-            when: None,
-            lhs: map_has(
-                map_set(
-                    sb(Expr::Ident("m".to_string())),
+                sb(Expr::Literal(Literal::Bool(true))),
+            )],
+            case_spans: vec![],
+            case_ids: vec![],
+            case_givens: vec![],
+            case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
+            case_reverse_order: vec![],
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
+                name: "setHasKey".to_string(),
+                givens: vec![
+                    VerifyGiven {
+                        name: "m".to_string(),
+                        type_name: "Map<String, Int>".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![map_empty()]),
+                    },
+                    VerifyGiven {
+                        name: "k".to_string(),
+                        type_name: "String".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Str(
+                            "a".to_string(),
+                        )))]),
+                    },
+                    VerifyGiven {
+                        name: "v".to_string(),
+                        type_name: "Int".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(
+                            1,
+                        )))]),
+                    },
+                ],
+                when: None,
+                lhs: map_has(
+                    map_set(
+                        sb(Expr::Ident("m".to_string())),
+                        sb(Expr::Ident("k".to_string())),
+                        sb(Expr::Ident("v".to_string())),
+                    ),
                     sb(Expr::Ident("k".to_string())),
-                    sb(Expr::Ident("v".to_string())),
                 ),
-                sb(Expr::Ident("k".to_string())),
-            ),
-            rhs: sb(Expr::Literal(Literal::Bool(true))),
-            because: Vec::new(),
-            using: None,
-            induction: None,
-            by_plan: None,
-            sample_guards: vec![],
-        })),
-        trace: false,
-        cases_givens: vec![],
-    }.into()));
+                rhs: sb(Expr::Literal(Literal::Bool(true))),
+                because: Vec::new(),
+                using: None,
+                induction: None,
+                by_plan: None,
+                sample_guards: vec![],
+            })),
+            trace: false,
+            cases_givens: vec![],
+        }
+        .into(),
+    ));
 
-    ctx.items.push(TopLevel::Verify(VerifyBlock {
-        process_verification: None,
-        fn_name: "map".to_string(),
-        line: 2,
-        cases: vec![(
-            map_get(
-                map_set(
-                    sb(Expr::Ident("m".to_string())),
+    ctx.items.push(TopLevel::Verify(
+        VerifyBlock {
+            process_verification: None,
+            fn_name: "map".to_string(),
+            line: 2,
+            cases: vec![(
+                map_get(
+                    map_set(
+                        sb(Expr::Ident("m".to_string())),
+                        sb(Expr::Ident("k".to_string())),
+                        sb(Expr::Ident("v".to_string())),
+                    ),
                     sb(Expr::Ident("k".to_string())),
-                    sb(Expr::Ident("v".to_string())),
                 ),
-                sb(Expr::Ident("k".to_string())),
-            ),
-            some(sb(Expr::Ident("v".to_string()))),
-        )],
-        case_spans: vec![],
-        case_ids: vec![],
-        case_givens: vec![],
-        case_hostile_origins: vec![],
-        case_hostile_profiles: vec![],
-        case_reverse_order: vec![],
-        kind: VerifyKind::Law(Box::new(VerifyLaw {
-            name: "setGetKey".to_string(),
-            givens: vec![
-                VerifyGiven {
-                    name: "m".to_string(),
-                    type_name: "Map<String, Int>".to_string(),
-                    domain: VerifyGivenDomain::Explicit(vec![map_empty()]),
-                },
-                VerifyGiven {
-                    name: "k".to_string(),
-                    type_name: "String".to_string(),
-                    domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Str(
-                        "a".to_string(),
-                    )))]),
-                },
-                VerifyGiven {
-                    name: "v".to_string(),
-                    type_name: "Int".to_string(),
-                    domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(1)))]),
-                },
-            ],
-            when: None,
-            lhs: map_get(
-                map_set(
-                    sb(Expr::Ident("m".to_string())),
+                some(sb(Expr::Ident("v".to_string()))),
+            )],
+            case_spans: vec![],
+            case_ids: vec![],
+            case_givens: vec![],
+            case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
+            case_reverse_order: vec![],
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
+                name: "setGetKey".to_string(),
+                givens: vec![
+                    VerifyGiven {
+                        name: "m".to_string(),
+                        type_name: "Map<String, Int>".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![map_empty()]),
+                    },
+                    VerifyGiven {
+                        name: "k".to_string(),
+                        type_name: "String".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Str(
+                            "a".to_string(),
+                        )))]),
+                    },
+                    VerifyGiven {
+                        name: "v".to_string(),
+                        type_name: "Int".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(
+                            1,
+                        )))]),
+                    },
+                ],
+                when: None,
+                lhs: map_get(
+                    map_set(
+                        sb(Expr::Ident("m".to_string())),
+                        sb(Expr::Ident("k".to_string())),
+                        sb(Expr::Ident("v".to_string())),
+                    ),
                     sb(Expr::Ident("k".to_string())),
-                    sb(Expr::Ident("v".to_string())),
                 ),
-                sb(Expr::Ident("k".to_string())),
-            ),
-            rhs: some(sb(Expr::Ident("v".to_string()))),
-            because: Vec::new(),
-            using: None,
-            induction: None,
-            by_plan: None,
-            sample_guards: vec![],
-        })),
-        trace: false,
-        cases_givens: vec![],
-    }.into()));
+                rhs: some(sb(Expr::Ident("v".to_string()))),
+                because: Vec::new(),
+                using: None,
+                induction: None,
+                by_plan: None,
+                sample_guards: vec![],
+            })),
+            trace: false,
+            cases_givens: vec![],
+        }
+        .into(),
+    ));
 
     populate_proof_ir(&mut ctx);
     let out = transpile(&mut ctx);
@@ -2441,136 +2491,142 @@ fn transpile_auto_proves_map_update_laws() {
     ctx.fn_defs.push(inc_count.clone());
     ctx.items.push(TopLevel::FnDef(inc_count));
 
-    ctx.items.push(TopLevel::Verify(VerifyBlock {
-        process_verification: None,
-        fn_name: "incCount".to_string(),
-        line: 10,
-        cases: vec![(
-            map_has(
-                sb(Expr::FnCall(
-                    crate::ast::Shared::from(sbb(Expr::Ident("incCount".to_string()))),
-                    crate::ast::shared::vec(vec![
-                        sb(Expr::Ident("counts".to_string())),
-                        sb(Expr::Ident("word".to_string())),
-                    ]),
-                )),
-                sb(Expr::Ident("word".to_string())),
-            ),
-            sb(Expr::Literal(Literal::Bool(true))),
-        )],
-        case_spans: vec![],
-        case_ids: vec![],
-        case_givens: vec![],
-        case_hostile_origins: vec![],
-        case_hostile_profiles: vec![],
-        case_reverse_order: vec![],
-        kind: VerifyKind::Law(Box::new(VerifyLaw {
-            name: "keyPresent".to_string(),
-            givens: vec![
-                VerifyGiven {
+    ctx.items.push(TopLevel::Verify(
+        VerifyBlock {
+            process_verification: None,
+            fn_name: "incCount".to_string(),
+            line: 10,
+            cases: vec![(
+                map_has(
+                    sb(Expr::FnCall(
+                        crate::ast::Shared::from(sbb(Expr::Ident("incCount".to_string()))),
+                        crate::ast::shared::vec(vec![
+                            sb(Expr::Ident("counts".to_string())),
+                            sb(Expr::Ident("word".to_string())),
+                        ]),
+                    )),
+                    sb(Expr::Ident("word".to_string())),
+                ),
+                sb(Expr::Literal(Literal::Bool(true))),
+            )],
+            case_spans: vec![],
+            case_ids: vec![],
+            case_givens: vec![],
+            case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
+            case_reverse_order: vec![],
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
+                name: "keyPresent".to_string(),
+                givens: vec![
+                    VerifyGiven {
+                        name: "counts".to_string(),
+                        type_name: "Map<String, Int>".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![map_empty()]),
+                    },
+                    VerifyGiven {
+                        name: "word".to_string(),
+                        type_name: "String".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Str(
+                            "a".to_string(),
+                        )))]),
+                    },
+                ],
+                when: None,
+                lhs: map_has(
+                    sb(Expr::FnCall(
+                        crate::ast::Shared::from(sbb(Expr::Ident("incCount".to_string()))),
+                        crate::ast::shared::vec(vec![
+                            sb(Expr::Ident("counts".to_string())),
+                            sb(Expr::Ident("word".to_string())),
+                        ]),
+                    )),
+                    sb(Expr::Ident("word".to_string())),
+                ),
+                rhs: sb(Expr::Literal(Literal::Bool(true))),
+                because: Vec::new(),
+                using: None,
+                induction: None,
+                by_plan: None,
+                sample_guards: vec![],
+            })),
+            trace: false,
+            cases_givens: vec![],
+        }
+        .into(),
+    ));
+
+    ctx.items.push(TopLevel::Verify(
+        VerifyBlock {
+            process_verification: None,
+            fn_name: "incCount".to_string(),
+            line: 20,
+            cases: vec![(
+                map_get(
+                    sb(Expr::FnCall(
+                        crate::ast::Shared::from(sbb(Expr::Ident("incCount".to_string()))),
+                        crate::ast::shared::vec(vec![
+                            sb(Expr::Ident("counts".to_string())),
+                            sb(Expr::Literal(Literal::Str("a".to_string()))),
+                        ]),
+                    )),
+                    sb(Expr::Literal(Literal::Str("a".to_string()))),
+                ),
+                option_some(sb(Expr::FnCall(
+                    crate::ast::Shared::from(sbb(Expr::Ident("addOne".to_string()))),
+                    crate::ast::shared::vec(vec![option_with_default(
+                        map_get(
+                            sb(Expr::Ident("counts".to_string())),
+                            sb(Expr::Literal(Literal::Str("a".to_string()))),
+                        ),
+                        sb(Expr::Literal(Literal::Int(0))),
+                    )]),
+                ))),
+            )],
+            case_spans: vec![],
+            case_ids: vec![],
+            case_givens: vec![],
+            case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
+            case_reverse_order: vec![],
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
+                name: "existingKeyIncrements".to_string(),
+                givens: vec![VerifyGiven {
                     name: "counts".to_string(),
                     type_name: "Map<String, Int>".to_string(),
                     domain: VerifyGivenDomain::Explicit(vec![map_empty()]),
-                },
-                VerifyGiven {
-                    name: "word".to_string(),
-                    type_name: "String".to_string(),
-                    domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Str(
-                        "a".to_string(),
-                    )))]),
-                },
-            ],
-            when: None,
-            lhs: map_has(
-                sb(Expr::FnCall(
-                    crate::ast::Shared::from(sbb(Expr::Ident("incCount".to_string()))),
-                    crate::ast::shared::vec(vec![
-                        sb(Expr::Ident("counts".to_string())),
-                        sb(Expr::Ident("word".to_string())),
-                    ]),
-                )),
-                sb(Expr::Ident("word".to_string())),
-            ),
-            rhs: sb(Expr::Literal(Literal::Bool(true))),
-            because: Vec::new(),
-            using: None,
-            induction: None,
-            by_plan: None,
-            sample_guards: vec![],
-        })),
-        trace: false,
-        cases_givens: vec![],
-    }.into()));
-
-    ctx.items.push(TopLevel::Verify(VerifyBlock {
-        process_verification: None,
-        fn_name: "incCount".to_string(),
-        line: 20,
-        cases: vec![(
-            map_get(
-                sb(Expr::FnCall(
-                    crate::ast::Shared::from(sbb(Expr::Ident("incCount".to_string()))),
-                    crate::ast::shared::vec(vec![
-                        sb(Expr::Ident("counts".to_string())),
-                        sb(Expr::Literal(Literal::Str("a".to_string()))),
-                    ]),
-                )),
-                sb(Expr::Literal(Literal::Str("a".to_string()))),
-            ),
-            option_some(sb(Expr::FnCall(
-                crate::ast::Shared::from(sbb(Expr::Ident("addOne".to_string()))),
-                crate::ast::shared::vec(vec![option_with_default(
-                    map_get(
-                        sb(Expr::Ident("counts".to_string())),
-                        sb(Expr::Literal(Literal::Str("a".to_string()))),
-                    ),
-                    sb(Expr::Literal(Literal::Int(0))),
-                )]),
-            ))),
-        )],
-        case_spans: vec![],
-        case_ids: vec![],
-        case_givens: vec![],
-        case_hostile_origins: vec![],
-        case_hostile_profiles: vec![],
-        case_reverse_order: vec![],
-        kind: VerifyKind::Law(Box::new(VerifyLaw {
-            name: "existingKeyIncrements".to_string(),
-            givens: vec![VerifyGiven {
-                name: "counts".to_string(),
-                type_name: "Map<String, Int>".to_string(),
-                domain: VerifyGivenDomain::Explicit(vec![map_empty()]),
-            }],
-            when: None,
-            lhs: map_get(
-                sb(Expr::FnCall(
-                    crate::ast::Shared::from(sbb(Expr::Ident("incCount".to_string()))),
-                    crate::ast::shared::vec(vec![
-                        sb(Expr::Ident("counts".to_string())),
-                        sb(Expr::Literal(Literal::Str("a".to_string()))),
-                    ]),
-                )),
-                sb(Expr::Literal(Literal::Str("a".to_string()))),
-            ),
-            rhs: option_some(sb(Expr::FnCall(
-                crate::ast::Shared::from(sbb(Expr::Ident("addOne".to_string()))),
-                crate::ast::shared::vec(vec![option_with_default(
-                    map_get(
-                        sb(Expr::Ident("counts".to_string())),
-                        sb(Expr::Literal(Literal::Str("a".to_string()))),
-                    ),
-                    sb(Expr::Literal(Literal::Int(0))),
-                )]),
-            ))),
-            because: Vec::new(),
-            using: None,
-            induction: None,
-            by_plan: None,
-            sample_guards: vec![],
-        })),
-        trace: false,
-        cases_givens: vec![],
-    }.into()));
+                }],
+                when: None,
+                lhs: map_get(
+                    sb(Expr::FnCall(
+                        crate::ast::Shared::from(sbb(Expr::Ident("incCount".to_string()))),
+                        crate::ast::shared::vec(vec![
+                            sb(Expr::Ident("counts".to_string())),
+                            sb(Expr::Literal(Literal::Str("a".to_string()))),
+                        ]),
+                    )),
+                    sb(Expr::Literal(Literal::Str("a".to_string()))),
+                ),
+                rhs: option_some(sb(Expr::FnCall(
+                    crate::ast::Shared::from(sbb(Expr::Ident("addOne".to_string()))),
+                    crate::ast::shared::vec(vec![option_with_default(
+                        map_get(
+                            sb(Expr::Ident("counts".to_string())),
+                            sb(Expr::Literal(Literal::Str("a".to_string()))),
+                        ),
+                        sb(Expr::Literal(Literal::Int(0))),
+                    )]),
+                ))),
+                because: Vec::new(),
+                using: None,
+                induction: None,
+                by_plan: None,
+                sample_guards: vec![],
+            })),
+            trace: false,
+            cases_givens: vec![],
+        }
+        .into(),
+    ));
 
     populate_proof_ir(&mut ctx);
     let out = transpile(&mut ctx);
@@ -2613,70 +2669,77 @@ fn transpile_parenthesizes_negative_int_call_args_in_law_samples() {
     };
     ctx.fn_defs.push(add.clone());
     ctx.items.push(TopLevel::FnDef(add));
-    ctx.items.push(TopLevel::Verify(VerifyBlock {
-        process_verification: None,
-        fn_name: "add".to_string(),
-        line: 1,
-        cases: vec![(
-            sb(Expr::FnCall(
-                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
-                crate::ast::shared::vec(vec![
-                    sb(Expr::Literal(Literal::Int(-2))),
-                    sb(Expr::Literal(Literal::Int(-1))),
-                ]),
-            )),
-            sb(Expr::FnCall(
-                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
-                crate::ast::shared::vec(vec![
-                    sb(Expr::Literal(Literal::Int(-1))),
-                    sb(Expr::Literal(Literal::Int(-2))),
-                ]),
-            )),
-        )],
-        case_spans: vec![],
-        case_ids: vec![],
-        case_givens: vec![],
-        case_hostile_origins: vec![],
-        case_hostile_profiles: vec![],
-        case_reverse_order: vec![],
-        kind: VerifyKind::Law(Box::new(VerifyLaw {
-            name: "commutative".to_string(),
-            givens: vec![
-                VerifyGiven {
-                    name: "a".to_string(),
-                    type_name: "Int".to_string(),
-                    domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(-2)))]),
-                },
-                VerifyGiven {
-                    name: "b".to_string(),
-                    type_name: "Int".to_string(),
-                    domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(-1)))]),
-                },
-            ],
-            when: None,
-            lhs: sb(Expr::FnCall(
-                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
-                crate::ast::shared::vec(vec![
-                    sb(Expr::Ident("a".to_string())),
-                    sb(Expr::Ident("b".to_string())),
-                ]),
-            )),
-            rhs: sb(Expr::FnCall(
-                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
-                crate::ast::shared::vec(vec![
-                    sb(Expr::Ident("b".to_string())),
-                    sb(Expr::Ident("a".to_string())),
-                ]),
-            )),
-            because: Vec::new(),
-            using: None,
-            induction: None,
-            by_plan: None,
-            sample_guards: vec![],
-        })),
-        trace: false,
-        cases_givens: vec![],
-    }.into()));
+    ctx.items.push(TopLevel::Verify(
+        VerifyBlock {
+            process_verification: None,
+            fn_name: "add".to_string(),
+            line: 1,
+            cases: vec![(
+                sb(Expr::FnCall(
+                    crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                    crate::ast::shared::vec(vec![
+                        sb(Expr::Literal(Literal::Int(-2))),
+                        sb(Expr::Literal(Literal::Int(-1))),
+                    ]),
+                )),
+                sb(Expr::FnCall(
+                    crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                    crate::ast::shared::vec(vec![
+                        sb(Expr::Literal(Literal::Int(-1))),
+                        sb(Expr::Literal(Literal::Int(-2))),
+                    ]),
+                )),
+            )],
+            case_spans: vec![],
+            case_ids: vec![],
+            case_givens: vec![],
+            case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
+            case_reverse_order: vec![],
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
+                name: "commutative".to_string(),
+                givens: vec![
+                    VerifyGiven {
+                        name: "a".to_string(),
+                        type_name: "Int".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(
+                            -2,
+                        )))]),
+                    },
+                    VerifyGiven {
+                        name: "b".to_string(),
+                        type_name: "Int".to_string(),
+                        domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(
+                            -1,
+                        )))]),
+                    },
+                ],
+                when: None,
+                lhs: sb(Expr::FnCall(
+                    crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                    crate::ast::shared::vec(vec![
+                        sb(Expr::Ident("a".to_string())),
+                        sb(Expr::Ident("b".to_string())),
+                    ]),
+                )),
+                rhs: sb(Expr::FnCall(
+                    crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                    crate::ast::shared::vec(vec![
+                        sb(Expr::Ident("b".to_string())),
+                        sb(Expr::Ident("a".to_string())),
+                    ]),
+                )),
+                because: Vec::new(),
+                using: None,
+                induction: None,
+                by_plan: None,
+                sample_guards: vec![],
+            })),
+            trace: false,
+            cases_givens: vec![],
+        }
+        .into(),
+    ));
 
     populate_proof_ir(&mut ctx);
     let out = transpile(&mut ctx);
@@ -2705,57 +2768,63 @@ fn verify_law_numbering_is_scoped_per_law_name() {
     };
     ctx.fn_defs.push(f.clone());
     ctx.items.push(TopLevel::FnDef(f));
-    ctx.items.push(TopLevel::Verify(VerifyBlock {
-        process_verification: None,
-        fn_name: "f".to_string(),
-        line: 1,
-        cases: vec![(
-            sb(Expr::Literal(Literal::Int(1))),
-            sb(Expr::Literal(Literal::Int(1))),
-        )],
-        case_spans: vec![],
-        case_ids: vec![],
-        case_givens: vec![],
-        case_hostile_origins: vec![],
-        case_hostile_profiles: vec![],
-        case_reverse_order: vec![],
-        kind: VerifyKind::Cases,
-        trace: false,
-        cases_givens: vec![],
-    }.into()));
-    ctx.items.push(TopLevel::Verify(VerifyBlock {
-        process_verification: None,
-        fn_name: "f".to_string(),
-        line: 2,
-        cases: vec![(
-            sb(Expr::Literal(Literal::Int(2))),
-            sb(Expr::Literal(Literal::Int(2))),
-        )],
-        case_spans: vec![],
-        case_ids: vec![],
-        case_givens: vec![],
-        case_hostile_origins: vec![],
-        case_hostile_profiles: vec![],
-        case_reverse_order: vec![],
-        kind: VerifyKind::Law(Box::new(VerifyLaw {
-            name: "identity".to_string(),
-            givens: vec![VerifyGiven {
-                name: "x".to_string(),
-                type_name: "Int".to_string(),
-                domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(2)))]),
-            }],
-            when: None,
-            lhs: sb(Expr::Ident("x".to_string())),
-            rhs: sb(Expr::Ident("x".to_string())),
-            because: Vec::new(),
-            using: None,
-            induction: None,
-            by_plan: None,
-            sample_guards: vec![],
-        })),
-        trace: false,
-        cases_givens: vec![],
-    }.into()));
+    ctx.items.push(TopLevel::Verify(
+        VerifyBlock {
+            process_verification: None,
+            fn_name: "f".to_string(),
+            line: 1,
+            cases: vec![(
+                sb(Expr::Literal(Literal::Int(1))),
+                sb(Expr::Literal(Literal::Int(1))),
+            )],
+            case_spans: vec![],
+            case_ids: vec![],
+            case_givens: vec![],
+            case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
+            case_reverse_order: vec![],
+            kind: VerifyKind::Cases,
+            trace: false,
+            cases_givens: vec![],
+        }
+        .into(),
+    ));
+    ctx.items.push(TopLevel::Verify(
+        VerifyBlock {
+            process_verification: None,
+            fn_name: "f".to_string(),
+            line: 2,
+            cases: vec![(
+                sb(Expr::Literal(Literal::Int(2))),
+                sb(Expr::Literal(Literal::Int(2))),
+            )],
+            case_spans: vec![],
+            case_ids: vec![],
+            case_givens: vec![],
+            case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
+            case_reverse_order: vec![],
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
+                name: "identity".to_string(),
+                givens: vec![VerifyGiven {
+                    name: "x".to_string(),
+                    type_name: "Int".to_string(),
+                    domain: VerifyGivenDomain::Explicit(vec![sb(Expr::Literal(Literal::Int(2)))]),
+                }],
+                when: None,
+                lhs: sb(Expr::Ident("x".to_string())),
+                rhs: sb(Expr::Ident("x".to_string())),
+                because: Vec::new(),
+                using: None,
+                induction: None,
+                by_plan: None,
+                sample_guards: vec![],
+            })),
+            trace: false,
+            cases_givens: vec![],
+        }
+        .into(),
+    ));
     populate_proof_ir(&mut ctx);
     let out = transpile_with_verify_mode(&mut ctx, VerifyEmitMode::TheoremSkeleton);
     let lean = out
@@ -2789,14 +2858,16 @@ fn proof_mode_accepts_single_int_countdown_recursion() {
                 },
                 MatchArm {
                     pattern: Pattern::Wildcard,
-                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(TailCallData::new(
-                        "down".to_string(),
-                        vec![sb(Expr::BinOp(
-                            BinOp::Sub,
-                            crate::ast::Shared::from(sbb(Expr::Ident("n".to_string()))),
-                            crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(1)))),
-                        ))],
-                    ))))),
+                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(
+                        TailCallData::new(
+                            "down".to_string(),
+                            vec![sb(Expr::BinOp(
+                                BinOp::Sub,
+                                crate::ast::Shared::from(sbb(Expr::Ident("n".to_string()))),
+                                crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(1)))),
+                            ))],
+                        ),
+                    )))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
             ]),
@@ -3137,22 +3208,26 @@ fn proof_mode_accepts_single_int_countdown_on_nonfirst_param() {
             arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(true)),
-                    body: crate::ast::Shared::from(sbb(Expr::List(crate::ast::shared::vec(vec![])))),
+                    body: crate::ast::Shared::from(sbb(Expr::List(crate::ast::shared::vec(
+                        vec![],
+                    )))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(false)),
-                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(TailCallData::new(
-                        "repeatLike".to_string(),
-                        vec![
-                            sb(Expr::Ident("char".to_string())),
-                            sb(Expr::BinOp(
-                                BinOp::Sub,
-                                crate::ast::Shared::from(sbb(Expr::Ident("n".to_string()))),
-                                crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(1)))),
-                            )),
-                        ],
-                    ))))),
+                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(
+                        TailCallData::new(
+                            "repeatLike".to_string(),
+                            vec![
+                                sb(Expr::Ident("char".to_string())),
+                                sb(Expr::BinOp(
+                                    BinOp::Sub,
+                                    crate::ast::Shared::from(sbb(Expr::Ident("n".to_string()))),
+                                    crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(1)))),
+                                )),
+                            ],
+                        ),
+                    )))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
             ]),
@@ -3200,14 +3275,16 @@ fn proof_mode_accepts_negative_guarded_int_ascent() {
             arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(true)),
-                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(TailCallData::new(
-                        "normalize".to_string(),
-                        vec![sb(Expr::BinOp(
-                            BinOp::Add,
-                            crate::ast::Shared::from(sbb(Expr::Ident("angle".to_string()))),
-                            crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(360)))),
-                        ))],
-                    ))))),
+                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(
+                        TailCallData::new(
+                            "normalize".to_string(),
+                            vec![sb(Expr::BinOp(
+                                BinOp::Add,
+                                crate::ast::Shared::from(sbb(Expr::Ident("angle".to_string()))),
+                                crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(360)))),
+                            ))],
+                        ),
+                    )))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
@@ -3260,10 +3337,12 @@ fn proof_mode_accepts_single_list_structural_recursion() {
                 },
                 MatchArm {
                     pattern: Pattern::Cons("h".to_string(), "t".to_string()),
-                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(TailCallData::new(
-                        "len".to_string(),
-                        vec![sb(Expr::Ident("t".to_string()))],
-                    ))))),
+                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(
+                        TailCallData::new(
+                            "len".to_string(),
+                            vec![sb(Expr::Ident("t".to_string()))],
+                        ),
+                    )))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
             ]),
@@ -3305,17 +3384,19 @@ fn proof_mode_accepts_single_list_structural_recursion_on_nonfirst_param() {
                 },
                 MatchArm {
                     pattern: Pattern::Cons("h".to_string(), "t".to_string()),
-                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(TailCallData::new(
-                        "lenFrom".to_string(),
-                        vec![
-                            sb(Expr::BinOp(
-                                BinOp::Add,
-                                crate::ast::Shared::from(sbb(Expr::Ident("count".to_string()))),
-                                crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(1)))),
-                            )),
-                            sb(Expr::Ident("t".to_string())),
-                        ],
-                    ))))),
+                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(
+                        TailCallData::new(
+                            "lenFrom".to_string(),
+                            vec![
+                                sb(Expr::BinOp(
+                                    BinOp::Add,
+                                    crate::ast::Shared::from(sbb(Expr::Ident("count".to_string()))),
+                                    crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(1)))),
+                                )),
+                                sb(Expr::Ident("t".to_string())),
+                            ],
+                        ),
+                    )))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
             ]),
@@ -3371,17 +3452,19 @@ fn proof_mode_accepts_single_string_pos_advance_recursion() {
                 },
                 MatchArm {
                     pattern: Pattern::Wildcard,
-                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(TailCallData::new(
-                        "skipWs".to_string(),
-                        vec![
-                            sb(Expr::Ident("s".to_string())),
-                            sb(Expr::BinOp(
-                                BinOp::Add,
-                                crate::ast::Shared::from(sbb(Expr::Ident("pos".to_string()))),
-                                crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(1)))),
-                            )),
-                        ],
-                    ))))),
+                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(
+                        TailCallData::new(
+                            "skipWs".to_string(),
+                            vec![
+                                sb(Expr::Ident("s".to_string())),
+                                sb(Expr::BinOp(
+                                    BinOp::Add,
+                                    crate::ast::Shared::from(sbb(Expr::Ident("pos".to_string()))),
+                                    crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(1)))),
+                                )),
+                            ],
+                        ),
+                    )))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
             ]),
@@ -3600,14 +3683,16 @@ fn proof_mode_accepts_mutual_int_countdown_recursion() {
                 },
                 MatchArm {
                     pattern: Pattern::Wildcard,
-                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(TailCallData::new(
-                        "odd".to_string(),
-                        vec![sb(Expr::BinOp(
-                            BinOp::Sub,
-                            crate::ast::Shared::from(sbb(Expr::Ident("n".to_string()))),
-                            crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(1)))),
-                        ))],
-                    ))))),
+                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(
+                        TailCallData::new(
+                            "odd".to_string(),
+                            vec![sb(Expr::BinOp(
+                                BinOp::Sub,
+                                crate::ast::Shared::from(sbb(Expr::Ident("n".to_string()))),
+                                crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(1)))),
+                            ))],
+                        ),
+                    )))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
             ]),
@@ -3631,14 +3716,16 @@ fn proof_mode_accepts_mutual_int_countdown_recursion() {
                 },
                 MatchArm {
                     pattern: Pattern::Wildcard,
-                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(TailCallData::new(
-                        "even".to_string(),
-                        vec![sb(Expr::BinOp(
-                            BinOp::Sub,
-                            crate::ast::Shared::from(sbb(Expr::Ident("n".to_string()))),
-                            crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(1)))),
-                        ))],
-                    ))))),
+                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(
+                        TailCallData::new(
+                            "even".to_string(),
+                            vec![sb(Expr::BinOp(
+                                BinOp::Sub,
+                                crate::ast::Shared::from(sbb(Expr::Ident("n".to_string()))),
+                                crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(1)))),
+                            ))],
+                        ),
+                    )))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
             ]),
@@ -3693,13 +3780,15 @@ fn proof_mode_accepts_mutual_string_pos_recursion_with_ranked_same_edges() {
                 },
                 MatchArm {
                     pattern: Pattern::Wildcard,
-                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(TailCallData::new(
-                        "g".to_string(),
-                        vec![
-                            sb(Expr::Ident("s".to_string())),
-                            sb(Expr::Ident("pos".to_string())),
-                        ],
-                    ))))),
+                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(
+                        TailCallData::new(
+                            "g".to_string(),
+                            vec![
+                                sb(Expr::Ident("s".to_string())),
+                                sb(Expr::Ident("pos".to_string())),
+                            ],
+                        ),
+                    )))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
             ]),
@@ -3730,17 +3819,19 @@ fn proof_mode_accepts_mutual_string_pos_recursion_with_ranked_same_edges() {
                 },
                 MatchArm {
                     pattern: Pattern::Wildcard,
-                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(TailCallData::new(
-                        "f".to_string(),
-                        vec![
-                            sb(Expr::Ident("s".to_string())),
-                            sb(Expr::BinOp(
-                                BinOp::Add,
-                                crate::ast::Shared::from(sbb(Expr::Ident("pos".to_string()))),
-                                crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(1)))),
-                            )),
-                        ],
-                    ))))),
+                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(
+                        TailCallData::new(
+                            "f".to_string(),
+                            vec![
+                                sb(Expr::Ident("s".to_string())),
+                                sb(Expr::BinOp(
+                                    BinOp::Add,
+                                    crate::ast::Shared::from(sbb(Expr::Ident("pos".to_string()))),
+                                    crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(1)))),
+                                )),
+                            ],
+                        ),
+                    )))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
             ]),
@@ -3808,10 +3899,9 @@ fn proof_mode_accepts_mutual_ranked_sizeof_recursion() {
                 },
                 MatchArm {
                     pattern: Pattern::Cons("h".to_string(), "t".to_string()),
-                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(TailCallData::new(
-                        "f".to_string(),
-                        vec![sb(Expr::Ident("t".to_string()))],
-                    ))))),
+                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(
+                        TailCallData::new("f".to_string(), vec![sb(Expr::Ident("t".to_string()))]),
+                    )))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
             ]),

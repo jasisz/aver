@@ -654,6 +654,170 @@ impl FnBody {
     }
 }
 
+// Unsharing. Children are `Shared`, so a cloned tree shares its nodes with
+// the original, and with them the cells the type checker and the resolver
+// write through `&` (`Spanned::ty`, `MatchArm::binding_slots`). A tree that
+// is about to be checked on its own, apart from the original, is unshared
+// first: every node is copied, keeping the stamps already set, as cloning
+// did when children were boxed. The matches are exhaustive on purpose, so a
+// new kind of child cannot be missed.
+
+impl Spanned<Expr> {
+    /// Copy every node under this one that another tree still holds.
+    pub fn unshare(&mut self) {
+        self.node.unshare();
+    }
+}
+
+impl Expr {
+    /// Copy every child node that another tree still holds.
+    pub fn unshare(&mut self) {
+        match self {
+            Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => {}
+            Expr::Attr(e, _) | Expr::Neg(e) | Expr::ErrorProp(e) => e.unshare(),
+            Expr::Constructor(_, arg) => {
+                if let Some(e) = arg {
+                    e.unshare();
+                }
+            }
+            Expr::FnCall(f, args) => {
+                f.unshare();
+                args.iter_mut().for_each(Spanned::unshare);
+            }
+            Expr::BinOp(_, a, b) => {
+                a.unshare();
+                b.unshare();
+            }
+            Expr::Match { subject, arms } => {
+                subject.unshare();
+                for arm in arms.iter_mut() {
+                    arm.body.unshare();
+                }
+            }
+            Expr::InterpolatedStr(parts) => {
+                for part in parts {
+                    match part {
+                        StrPart::Literal(_) => {}
+                        StrPart::Parsed(e) => e.unshare(),
+                    }
+                }
+            }
+            Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+                items.iter_mut().for_each(Spanned::unshare);
+            }
+            Expr::MapLiteral(entries) => {
+                for (k, v) in entries.iter_mut() {
+                    k.unshare();
+                    v.unshare();
+                }
+            }
+            Expr::RecordCreate { fields, .. } => {
+                for (_, e) in fields.iter_mut() {
+                    e.unshare();
+                }
+            }
+            Expr::RecordUpdate { base, updates, .. } => {
+                base.unshare();
+                for (_, e) in updates.iter_mut() {
+                    e.unshare();
+                }
+            }
+            Expr::TailCall(data) => data.args.iter_mut().for_each(Spanned::unshare),
+        }
+    }
+}
+
+impl Stmt {
+    /// Copy every node under this statement that another tree still holds.
+    pub fn unshare(&mut self) {
+        match self {
+            Stmt::Binding(_, _, e) | Stmt::Expr(e) => e.unshare(),
+        }
+    }
+}
+
+impl VerifyGiven {
+    fn unshare(&mut self) {
+        match &mut self.domain {
+            VerifyGivenDomain::IntRange { .. } => {}
+            VerifyGivenDomain::Explicit(values) => values.iter_mut().for_each(Spanned::unshare),
+        }
+    }
+}
+
+impl VerifyBlock {
+    /// Copy every node under this block that another tree still holds.
+    pub fn unshare(&mut self) {
+        let VerifyBlock {
+            fn_name: _,
+            process_verification: _,
+            line: _,
+            cases,
+            case_spans: _,
+            case_ids: _,
+            case_givens,
+            case_hostile_origins: _,
+            case_hostile_profiles: _,
+            case_reverse_order: _,
+            kind,
+            trace: _,
+            cases_givens,
+        } = self;
+        for (l, r) in cases {
+            l.unshare();
+            r.unshare();
+        }
+        for (_, e) in case_givens.iter_mut().flatten() {
+            e.unshare();
+        }
+        cases_givens.iter_mut().for_each(VerifyGiven::unshare);
+        match kind {
+            VerifyKind::Cases => {}
+            VerifyKind::Law(law) => {
+                let VerifyLaw {
+                    name: _,
+                    givens,
+                    when,
+                    because,
+                    using: _,
+                    induction: _,
+                    by_plan: _,
+                    lhs,
+                    rhs,
+                    sample_guards,
+                } = &mut **law;
+                givens.iter_mut().for_each(VerifyGiven::unshare);
+                when.iter_mut().for_each(Spanned::unshare);
+                because.iter_mut().for_each(Spanned::unshare);
+                lhs.unshare();
+                rhs.unshare();
+                sample_guards.iter_mut().for_each(Spanned::unshare);
+            }
+        }
+    }
+}
+
+impl TopLevel {
+    /// A copy of this item that shares no node with it, for a check that
+    /// must stamp its own copy: stamps already set are kept.
+    pub fn unshared(&self) -> TopLevel {
+        let mut item = self.clone();
+        match &mut item {
+            TopLevel::FnDef(fd) => std::sync::Arc::make_mut(&mut fd.body)
+                .stmts_mut()
+                .iter_mut()
+                .for_each(Stmt::unshare),
+            TopLevel::Verify(vb) => vb.unshare(),
+            TopLevel::Stmt(s) => s.unshare(),
+            TopLevel::Module(_)
+            | TopLevel::Decision(_)
+            | TopLevel::TypeDef(_)
+            | TopLevel::Capability(_) => {}
+        }
+        item
+    }
+}
+
 /// Compile-time resolution metadata for a function body.
 /// Produced by `resolver::resolve_fn` — maps local variable names to slot indices
 /// so the VM can use `Vec<Value>` instead of `HashMap` lookups.
@@ -1111,6 +1275,9 @@ pub enum TypeDef {
     },
 }
 
+// The enum is no larger than before verify blocks were shared; only the
+// second-largest variant shrank, which is what the lint measures.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum TopLevel {
     Module(Module),

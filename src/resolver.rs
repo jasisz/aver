@@ -929,12 +929,16 @@ mod tests {
                                 "Result.Ok".to_string(),
                                 vec!["v".to_string()],
                             ),
-                            body: crate::ast::Shared::new(Spanned::bare(Expr::Ident("v".to_string()))),
+                            body: crate::ast::Shared::new(Spanned::bare(Expr::Ident(
+                                "v".to_string(),
+                            ))),
                             binding_slots: std::sync::OnceLock::new(),
                         },
                         MatchArm {
                             pattern: Pattern::Wildcard,
-                            body: crate::ast::Shared::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
+                            body: crate::ast::Shared::new(Spanned::bare(Expr::Literal(
+                                Literal::Int(0),
+                            ))),
                             binding_slots: std::sync::OnceLock::new(),
                         },
                     ]),
@@ -987,19 +991,25 @@ mod tests {
                     "result".to_string(),
                     None,
                     Spanned::bare(Expr::Match {
-                        subject: crate::ast::Shared::new(Spanned::bare(Expr::Ident("x".to_string()))),
+                        subject: crate::ast::Shared::new(Spanned::bare(Expr::Ident(
+                            "x".to_string(),
+                        ))),
                         arms: crate::ast::shared::vec(vec![
                             MatchArm {
                                 pattern: Pattern::Constructor(
                                     "Option.Some".to_string(),
                                     vec!["v".to_string()],
                                 ),
-                                body: crate::ast::Shared::new(Spanned::bare(Expr::Ident("v".to_string()))),
+                                body: crate::ast::Shared::new(Spanned::bare(Expr::Ident(
+                                    "v".to_string(),
+                                ))),
                                 binding_slots: std::sync::OnceLock::new(),
                             },
                             MatchArm {
                                 pattern: Pattern::Wildcard,
-                                body: crate::ast::Shared::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
+                                body: crate::ast::Shared::new(Spanned::bare(Expr::Literal(
+                                    Literal::Int(0),
+                                ))),
                                 binding_slots: std::sync::OnceLock::new(),
                             },
                         ]),
@@ -1096,19 +1106,25 @@ mod tests {
                     "r".to_string(),
                     None,
                     Spanned::bare(Expr::Match {
-                        subject: crate::ast::Shared::new(Spanned::bare(Expr::Ident("x".to_string()))),
+                        subject: crate::ast::Shared::new(Spanned::bare(Expr::Ident(
+                            "x".to_string(),
+                        ))),
                         arms: crate::ast::shared::vec(vec![
                             MatchArm {
                                 pattern: Pattern::Constructor(
                                     "Option.Some".to_string(),
                                     vec!["v".to_string()],
                                 ),
-                                body: crate::ast::Shared::new(Spanned::bare(Expr::Ident("v".to_string()))),
+                                body: crate::ast::Shared::new(Spanned::bare(Expr::Ident(
+                                    "v".to_string(),
+                                ))),
                                 binding_slots: std::sync::OnceLock::new(),
                             },
                             MatchArm {
                                 pattern: Pattern::Wildcard,
-                                body: crate::ast::Shared::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
+                                body: crate::ast::Shared::new(Spanned::bare(Expr::Literal(
+                                    Literal::Int(0),
+                                ))),
                                 binding_slots: std::sync::OnceLock::new(),
                             },
                         ]),

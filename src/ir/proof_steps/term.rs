@@ -96,19 +96,28 @@ pub fn binop(op: BinOp, a: Term, b: Term) -> Term {
         BinOp::Div => a.ty().cloned(),
         _ => Some(Type::Bool),
     };
-    typed(ResolvedExpr::BinOp(op, crate::ast::Shared::new(a), crate::ast::Shared::new(b)), ty)
+    typed(
+        ResolvedExpr::BinOp(op, crate::ast::Shared::new(a), crate::ast::Shared::new(b)),
+        ty,
+    )
 }
 
 pub fn builtin(name: &str, args: Vec<Term>, ty: Option<Type>) -> Term {
     typed(
-        ResolvedExpr::Call(ResolvedCallee::Builtin(name.to_string()), crate::ast::shared::vec(args)),
+        ResolvedExpr::Call(
+            ResolvedCallee::Builtin(name.to_string()),
+            crate::ast::shared::vec(args),
+        ),
         ty,
     )
 }
 
 pub fn intrinsic(which: BuiltinIntrinsic, args: Vec<Term>) -> Term {
     typed(
-        ResolvedExpr::Call(ResolvedCallee::Intrinsic(which), crate::ast::shared::vec(args)),
+        ResolvedExpr::Call(
+            ResolvedCallee::Intrinsic(which),
+            crate::ast::shared::vec(args),
+        ),
         Some(Type::Int),
     )
 }
@@ -410,9 +419,17 @@ pub fn map_children(
         ResolvedExpr::Literal(_) | ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } => {
             return Ok(t.clone());
         }
-        ResolvedExpr::Attr(o, field) => ResolvedExpr::Attr(crate::ast::Shared::from(b(o, f)?), field.clone()),
-        ResolvedExpr::Call(callee, args) => ResolvedExpr::Call(callee.clone(), crate::ast::shared::vec(all(args, f)?)),
-        ResolvedExpr::BinOp(op, l, r) => ResolvedExpr::BinOp(*op, crate::ast::Shared::from(b(l, f)?), crate::ast::Shared::from(b(r, f)?)),
+        ResolvedExpr::Attr(o, field) => {
+            ResolvedExpr::Attr(crate::ast::Shared::from(b(o, f)?), field.clone())
+        }
+        ResolvedExpr::Call(callee, args) => {
+            ResolvedExpr::Call(callee.clone(), crate::ast::shared::vec(all(args, f)?))
+        }
+        ResolvedExpr::BinOp(op, l, r) => ResolvedExpr::BinOp(
+            *op,
+            crate::ast::Shared::from(b(l, f)?),
+            crate::ast::Shared::from(b(r, f)?),
+        ),
         ResolvedExpr::Neg(a) => ResolvedExpr::Neg(crate::ast::Shared::from(b(a, f)?)),
         ResolvedExpr::Match { subject, arms } => ResolvedExpr::Match {
             subject: crate::ast::Shared::from(b(subject, f)?),
@@ -427,14 +444,18 @@ pub fn map_children(
                 })
                 .collect::<Result<_, String>>()?,
         },
-        ResolvedExpr::Ctor(c, args) => ResolvedExpr::Ctor(c.clone(), crate::ast::shared::vec(all(args, f)?)),
+        ResolvedExpr::Ctor(c, args) => {
+            ResolvedExpr::Ctor(c.clone(), crate::ast::shared::vec(all(args, f)?))
+        }
         ResolvedExpr::ErrorProp(a) => ResolvedExpr::ErrorProp(crate::ast::Shared::from(b(a, f)?)),
         ResolvedExpr::InterpolatedStr(parts) => ResolvedExpr::InterpolatedStr(
             parts
                 .iter()
                 .map(|p| match p {
                     ResolvedStrPart::Literal(s) => Ok(ResolvedStrPart::Literal(s.clone())),
-                    ResolvedStrPart::Parsed(e) => Ok(ResolvedStrPart::Parsed(crate::ast::Shared::from(b(e, f)?))),
+                    ResolvedStrPart::Parsed(e) => {
+                        Ok(ResolvedStrPart::Parsed(crate::ast::Shared::from(b(e, f)?)))
+                    }
                 })
                 .collect::<Result<_, String>>()?,
         ),

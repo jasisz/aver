@@ -895,7 +895,10 @@ pub(super) fn substitute_idents(
             crate::ast::Shared::new(substitute_idents(c, map)),
             args.iter().map(|x| substitute_idents(x, map)).collect(),
         ),
-        Expr::Attr(b, f) => Expr::Attr(crate::ast::Shared::new(substitute_idents(b, map)), f.clone()),
+        Expr::Attr(b, f) => Expr::Attr(
+            crate::ast::Shared::new(substitute_idents(b, map)),
+            f.clone(),
+        ),
         // Record construction / update: a value-level fn (`fpValue`, `fpTrunc`)
         // whose body builds a record must have its FIELD expressions substituted
         // too, or a parameter referenced only inside a field (e.g. `fpTrunc`'s

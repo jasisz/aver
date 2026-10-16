@@ -573,7 +573,11 @@ mod tests {
     }
 
     fn binop(op: BinOp, left: Expr, right: Expr) -> Expr {
-        Expr::BinOp(op, crate::ast::Shared::new(spanned(left)), crate::ast::Shared::new(spanned(right)))
+        Expr::BinOp(
+            op,
+            crate::ast::Shared::new(spanned(left)),
+            crate::ast::Shared::new(spanned(right)),
+        )
     }
 
     fn namespace_call(namespace: &str, method: &str, arg: Expr) -> Expr {
@@ -782,7 +786,11 @@ fn size(bag: Bag) -> Int
             arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: crate::ast::Pattern::Ident("memory".to_string()),
-                    body: crate::ast::Shared::new(spanned(binop(BinOp::Add, len_call.clone(), len_call))),
+                    body: crate::ast::Shared::new(spanned(binop(
+                        BinOp::Add,
+                        len_call.clone(),
+                        len_call,
+                    ))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
@@ -901,7 +909,10 @@ fn size(bag: Bag) -> Int
     }
 
     fn user_call(name: &str) -> Expr {
-        Expr::FnCall(crate::ast::Shared::new(spanned(ident(name))), crate::ast::shared::vec(vec![spanned(ident("x"))]))
+        Expr::FnCall(
+            crate::ast::Shared::new(spanned(ident(name))),
+            crate::ast::shared::vec(vec![spanned(ident("x"))]),
+        )
     }
 
     #[test]

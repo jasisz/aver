@@ -491,7 +491,10 @@ fn try_lift_question_op_stmt(
         spanned(
             Expr::Constructor(
                 "Result.Ok".to_string(),
-                Some(crate::ast::Shared::new(spanned(Expr::Ident(ok_value_name.clone()), line))),
+                Some(crate::ast::Shared::new(spanned(
+                    Expr::Ident(ok_value_name.clone()),
+                    line,
+                ))),
             ),
             line,
         )
@@ -509,7 +512,10 @@ fn try_lift_question_op_stmt(
         spanned(
             Expr::Constructor(
                 "Result.Err".to_string(),
-                Some(crate::ast::Shared::new(spanned(Expr::Ident(err_name), line))),
+                Some(crate::ast::Shared::new(spanned(
+                    Expr::Ident(err_name),
+                    line,
+                ))),
             ),
             line,
         ),
@@ -574,7 +580,10 @@ fn try_lift_error_prop_stmt(
             .collect();
         let tuple_expr = spanned(Expr::Tuple(crate::ast::shared::vec(tuple_items)), line);
         spanned(
-            Expr::Constructor("Result.Ok".to_string(), Some(crate::ast::Shared::new(tuple_expr))),
+            Expr::Constructor(
+                "Result.Ok".to_string(),
+                Some(crate::ast::Shared::new(tuple_expr)),
+            ),
             line,
         )
     } else {
@@ -714,7 +723,11 @@ fn oracle_counter_expr(cfg: &LiftConfig, offset: u32, line: SourceLine) -> Spann
         base
     } else {
         spanned(
-            Expr::BinOp(crate::ast::BinOp::Add, crate::ast::Shared::new(base), crate::ast::Shared::new(literal())),
+            Expr::BinOp(
+                crate::ast::BinOp::Add,
+                crate::ast::Shared::new(base),
+                crate::ast::Shared::new(literal()),
+            ),
             line,
         )
     }
@@ -737,7 +750,10 @@ fn build_error_prop_cascade(items: Vec<Spanned<Expr>>, line: SourceLine) -> Span
         .collect();
     let tuple_expr = spanned(Expr::Tuple(crate::ast::shared::vec(tuple_items)), line);
     let ok_wrap = spanned(
-        Expr::Constructor("Result.Ok".to_string(), Some(crate::ast::Shared::new(tuple_expr))),
+        Expr::Constructor(
+            "Result.Ok".to_string(),
+            Some(crate::ast::Shared::new(tuple_expr)),
+        ),
         line,
     );
     let mut cont = ok_wrap;
@@ -761,7 +777,10 @@ fn result_match_cascade(
         spanned(
             Expr::Constructor(
                 "Result.Err".to_string(),
-                Some(crate::ast::Shared::new(spanned(Expr::Ident("err_".to_string()), line))),
+                Some(crate::ast::Shared::new(spanned(
+                    Expr::Ident("err_".to_string()),
+                    line,
+                ))),
             ),
             line,
         ),
@@ -856,7 +875,10 @@ fn spanned(node: Expr, line: SourceLine) -> Spanned<Expr> {
 fn branch_child_path(parent: &Spanned<Expr>, idx: u32, line: SourceLine) -> Spanned<Expr> {
     let branch_path_ident = spanned(Expr::Ident("BranchPath".to_string()), line);
     let child_callee = spanned(
-        Expr::Attr(crate::ast::Shared::new(branch_path_ident), "child".to_string()),
+        Expr::Attr(
+            crate::ast::Shared::new(branch_path_ident),
+            "child".to_string(),
+        ),
         line,
     );
     spanned(
@@ -904,9 +926,9 @@ fn lift_expr(
             for p in parts {
                 new_parts.push(match p {
                     crate::ast::StrPart::Literal(s) => crate::ast::StrPart::Literal(s.clone()),
-                    crate::ast::StrPart::Parsed(inner) => crate::ast::StrPart::Parsed(crate::ast::Shared::new(
-                        lift_expr(inner, cfg, path_expr, counters)?,
-                    )),
+                    crate::ast::StrPart::Parsed(inner) => crate::ast::StrPart::Parsed(
+                        crate::ast::Shared::new(lift_expr(inner, cfg, path_expr, counters)?),
+                    ),
                 });
             }
             Expr::InterpolatedStr(new_parts)
@@ -940,11 +962,17 @@ fn lift_expr(
                     expr.line,
                 );
                 injected.extend(new_args);
-                Expr::FnCall(crate::ast::Shared::new(new_callee), crate::ast::shared::vec(injected))
+                Expr::FnCall(
+                    crate::ast::Shared::new(new_callee),
+                    crate::ast::shared::vec(injected),
+                )
             } else {
                 let new_callee = lift_expr(callee, cfg, path_expr, counters)?;
                 let new_args = lift_args(args, cfg, path_expr, counters)?;
-                Expr::FnCall(crate::ast::Shared::new(new_callee), crate::ast::shared::vec(new_args))
+                Expr::FnCall(
+                    crate::ast::Shared::new(new_callee),
+                    crate::ast::shared::vec(new_args),
+                )
             }
         }
 
@@ -954,7 +982,9 @@ fn lift_expr(
             crate::ast::Shared::new(lift_expr(r, cfg, path_expr, counters)?),
         ),
 
-        Expr::Neg(inner) => Expr::Neg(crate::ast::Shared::new(lift_expr(inner, cfg, path_expr, counters)?)),
+        Expr::Neg(inner) => Expr::Neg(crate::ast::Shared::new(lift_expr(
+            inner, cfg, path_expr, counters,
+        )?)),
 
         Expr::Match { subject, arms } => {
             let new_subject = lift_expr(subject, cfg, path_expr, counters)?;
@@ -998,15 +1028,21 @@ fn lift_expr(
 
         Expr::Constructor(name, Some(arg)) => Expr::Constructor(
             name.clone(),
-            Some(crate::ast::Shared::new(lift_expr(arg, cfg, path_expr, counters)?)),
+            Some(crate::ast::Shared::new(lift_expr(
+                arg, cfg, path_expr, counters,
+            )?)),
         ),
 
-        Expr::ErrorProp(inner) => {
-            Expr::ErrorProp(crate::ast::Shared::new(lift_expr(inner, cfg, path_expr, counters)?))
-        }
+        Expr::ErrorProp(inner) => Expr::ErrorProp(crate::ast::Shared::new(lift_expr(
+            inner, cfg, path_expr, counters,
+        )?)),
 
-        Expr::List(elems) => Expr::List(crate::ast::shared::vec(lift_args(elems, cfg, path_expr, counters)?)),
-        Expr::Tuple(items) => Expr::Tuple(crate::ast::shared::vec(lift_args(items, cfg, path_expr, counters)?)),
+        Expr::List(elems) => Expr::List(crate::ast::shared::vec(lift_args(
+            elems, cfg, path_expr, counters,
+        )?)),
+        Expr::Tuple(items) => Expr::Tuple(crate::ast::shared::vec(lift_args(
+            items, cfg, path_expr, counters,
+        )?)),
 
         Expr::IndependentProduct(elements, is_error_prop) => {
             // Each branch gets: fresh counter starting at 0, and an extended
@@ -1159,7 +1195,10 @@ fn lift_classified_call(
             // Reconstruct the original callee expression (we already know
             // the shape because it matched our `Attr` heuristic).
             let callee_expr = rebuild_dotted_callee(effect_name, original);
-            return Ok(Expr::FnCall(crate::ast::Shared::new(callee_expr), crate::ast::shared::vec(injected)));
+            return Ok(Expr::FnCall(
+                crate::ast::Shared::new(callee_expr),
+                crate::ast::shared::vec(injected),
+            ));
         }
     };
 

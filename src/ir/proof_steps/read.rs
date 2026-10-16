@@ -443,7 +443,10 @@ impl Reader {
                 let f = self.atom(one(0)?)?;
                 let xs = self.terms(&args[1..])?;
                 Self::typed(
-                    ResolvedExpr::Call(ResolvedCallee::Fn(self.fn_id(f)?), crate::ast::shared::vec(xs)),
+                    ResolvedExpr::Call(
+                        ResolvedCallee::Fn(self.fn_id(f)?),
+                        crate::ast::shared::vec(xs),
+                    ),
                     self.call_types.get(f).cloned(),
                 )
             }
@@ -451,7 +454,9 @@ impl Reader {
                 let b = self.atom(one(0)?)?;
                 let xs = self.terms(&args[1..])?;
                 if b == "Map.empty" && xs.is_empty() {
-                    return Ok(Spanned::bare(ResolvedExpr::MapLiteral(crate::ast::shared::vec(Vec::new()))));
+                    return Ok(Spanned::bare(ResolvedExpr::MapLiteral(
+                        crate::ast::shared::vec(Vec::new()),
+                    )));
                 }
                 let callee = match self.builtins.get(b) {
                     Some(c) => c.clone(),
@@ -475,7 +480,10 @@ impl Reader {
             }
             "ctor" => {
                 let c = self.ctor(self.atom(one(0)?)?)?;
-                Spanned::bare(ResolvedExpr::Ctor(c, crate::ast::shared::vec(self.terms(&args[1..])?)))
+                Spanned::bare(ResolvedExpr::Ctor(
+                    c,
+                    crate::ast::shared::vec(self.terms(&args[1..])?),
+                ))
             }
             "op" => {
                 let sym = self.atom(one(0)?)?;
@@ -483,7 +491,9 @@ impl Reader {
                 let b = self.term(one(2)?)?;
                 operator(sym, a, b)?
             }
-            "neg" => Spanned::bare(ResolvedExpr::Neg(crate::ast::Shared::new(self.term(one(0)?)?))),
+            "neg" => Spanned::bare(ResolvedExpr::Neg(crate::ast::Shared::new(
+                self.term(one(0)?)?,
+            ))),
             "match" => {
                 let subject = self.term(one(0)?)?;
                 let mut arms = Vec::new();
@@ -508,7 +518,9 @@ impl Reader {
                 for a in args {
                     match self.tagged(a) {
                         Ok(("s", [Sx::Text(t)])) => parts.push(ResolvedStrPart::Literal(t.clone())),
-                        _ => parts.push(ResolvedStrPart::Parsed(crate::ast::Shared::new(self.term(a)?))),
+                        _ => parts.push(ResolvedStrPart::Parsed(crate::ast::Shared::new(
+                            self.term(a)?,
+                        ))),
                     }
                 }
                 Self::typed(ResolvedExpr::InterpolatedStr(parts), Some(Type::Str))
@@ -516,9 +528,14 @@ impl Reader {
             "list" => {
                 let xs = self.terms(args)?;
                 let ty = xs.first().and_then(|x| x.ty().cloned());
-                Self::typed(ResolvedExpr::List(crate::ast::shared::vec(xs)), ty.map(|t| Type::List(Box::new(t))))
+                Self::typed(
+                    ResolvedExpr::List(crate::ast::shared::vec(xs)),
+                    ty.map(|t| Type::List(Box::new(t))),
+                )
             }
-            "tuple" => Spanned::bare(ResolvedExpr::Tuple(crate::ast::shared::vec(self.terms(args)?))),
+            "tuple" => Spanned::bare(ResolvedExpr::Tuple(crate::ast::shared::vec(
+                self.terms(args)?,
+            ))),
             "rec" => {
                 let (type_id, type_name) = self.record(self.atom(one(0)?)?)?;
                 Spanned::bare(ResolvedExpr::RecordCreate {
@@ -935,7 +952,11 @@ fn operator(sym: &str, a: Term, b: Term) -> Result<Term, String> {
     // and left untyped when neither is.
     let arithmetic = matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div);
     let operand = a.ty().or(b.ty()).cloned();
-    let t = Spanned::bare(ResolvedExpr::BinOp(op, crate::ast::Shared::new(a), crate::ast::Shared::new(b)));
+    let t = Spanned::bare(ResolvedExpr::BinOp(
+        op,
+        crate::ast::Shared::new(a),
+        crate::ast::Shared::new(b),
+    ));
     match (arithmetic, operand) {
         (true, Some(ty)) => t.set_ty(ty),
         (true, None) => {}

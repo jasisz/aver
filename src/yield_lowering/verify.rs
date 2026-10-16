@@ -132,7 +132,10 @@ fn driver(
             let mut segments = operation.split('.');
             let base = build::ident(segments.next().expect("operation namespace"), line);
             let callee = segments.fold(base, |base, field| {
-                Spanned::new(Expr::Attr(crate::ast::Shared::new(base), field.to_string()), line)
+                Spanned::new(
+                    Expr::Attr(crate::ast::Shared::new(base), field.to_string()),
+                    line,
+                )
             });
             let request = Spanned::new(
                 Expr::FnCall(

@@ -711,7 +711,8 @@ fn lower_stmt_chain(
             (lower_expr(tail_expr, program)?, &stmts[..stmts.len() - 1])
         }
         ResolvedStmt::Binding { value, .. } => {
-            let ty: std::sync::OnceLock<crate::ast::Shared<crate::ast::Type>> = std::sync::OnceLock::new();
+            let ty: std::sync::OnceLock<crate::ast::Shared<crate::ast::Type>> =
+                std::sync::OnceLock::new();
             let _ = ty.set(crate::ast::Shared::new(Type::Unit));
             let unit = Spanned {
                 node: MirExpr::Literal(Spanned {

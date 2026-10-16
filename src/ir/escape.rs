@@ -749,7 +749,10 @@ mod tests {
     }
 
     fn fn_call(callee: Spanned<Expr>, args: Vec<Spanned<Expr>>) -> Spanned<Expr> {
-        sp(Expr::FnCall(crate::ast::Shared::new(callee), crate::ast::shared::vec(args)))
+        sp(Expr::FnCall(
+            crate::ast::Shared::new(callee),
+            crate::ast::shared::vec(args),
+        ))
     }
 
     fn record_create(type_name: &str, fields: Vec<(&str, Spanned<Expr>)>) -> Spanned<Expr> {

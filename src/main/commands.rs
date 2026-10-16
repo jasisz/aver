@@ -11316,7 +11316,10 @@ fn synth_domain(
             return Some(VerifyGivenDomain::Explicit(vec![
                 Spanned::new(Expr::List(crate::ast::shared::vec(vec![])), 0),
                 Spanned::new(Expr::List(crate::ast::shared::vec(vec![int(1)])), 0),
-                Spanned::new(Expr::List(crate::ast::shared::vec(vec![int(3), int(1), int(2)])), 0),
+                Spanned::new(
+                    Expr::List(crate::ast::shared::vec(vec![int(3), int(1), int(2)])),
+                    0,
+                ),
             ]));
         }
         _ => {}
@@ -11347,7 +11350,11 @@ fn synth_domain(
             Spanned::new(Expr::List(crate::ast::shared::vec(vec![])), 0),
             Spanned::new(Expr::List(crate::ast::shared::vec(vec![zero()])), 0),
             Spanned::new(
-                Expr::List(crate::ast::shared::vec(vec![succ(zero()), zero(), succ(succ(zero()))])),
+                Expr::List(crate::ast::shared::vec(vec![
+                    succ(zero()),
+                    zero(),
+                    succ(succ(zero())),
+                ])),
                 0,
             ),
         ]));
@@ -13311,12 +13318,9 @@ mod tests {
             by_plan: None,
             sample_guards: vec![],
         }));
-        super::TopLevel::Verify(VerifyBlock::new_unspanned(
-            fn_name.to_string(),
-            0,
-            vec![],
-            vk,
-        ).into())
+        super::TopLevel::Verify(
+            VerifyBlock::new_unspanned(fn_name.to_string(), 0, vec![], vk).into(),
+        )
     }
 
     #[test]

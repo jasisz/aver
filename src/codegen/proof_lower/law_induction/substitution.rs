@@ -24,7 +24,11 @@ pub(super) fn substitute(
             return Some(replacement);
         }
         Expr::Literal(_) => return Some(expr.clone()),
-        Expr::BinOp(op, a, b) => Expr::BinOp(*op, crate::ast::Shared::new(rec(a)?), crate::ast::Shared::new(rec(b)?)),
+        Expr::BinOp(op, a, b) => Expr::BinOp(
+            *op,
+            crate::ast::Shared::new(rec(a)?),
+            crate::ast::Shared::new(rec(b)?),
+        ),
         Expr::Neg(e) => Expr::Neg(crate::ast::Shared::new(rec(e)?)),
         Expr::List(xs) => Expr::List(xs.iter().map(rec).collect::<Option<_>>()?),
         Expr::Tuple(xs) => Expr::Tuple(xs.iter().map(rec).collect::<Option<_>>()?),

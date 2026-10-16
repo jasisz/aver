@@ -1056,10 +1056,16 @@ fn result_wrapper_payload<'e>(expr: &'e Expr, variant: &str) -> Option<&'e Vec<S
 /// shape the parser builds, stamped with the retargeted answer type.
 fn result_wrapper(line: usize, variant: &str, payload: Spanned<Expr>) -> Spanned<Expr> {
     let base = sp_at(line, Expr::Ident("Result".to_string()));
-    let callee = sp_at(line, Expr::Attr(crate::ast::Shared::new(base), variant.to_string()));
+    let callee = sp_at(
+        line,
+        Expr::Attr(crate::ast::Shared::new(base), variant.to_string()),
+    );
     sp_at_typed(
         line,
-        Expr::FnCall(crate::ast::Shared::new(callee), crate::ast::shared::vec(vec![payload])),
+        Expr::FnCall(
+            crate::ast::Shared::new(callee),
+            crate::ast::shared::vec(vec![payload]),
+        ),
         bytes_result_type(),
     )
 }

@@ -780,9 +780,9 @@ mod tests {
                         crate::ast::Shared::new(aver::ast::Spanned::bare(aver::ast::Expr::Ident(
                             "fib".to_string(),
                         ))),
-                        crate::ast::shared::vec(vec![aver::ast::Spanned::bare(aver::ast::Expr::Literal(
-                            aver::ast::Literal::Int(5),
-                        ))]),
+                        crate::ast::shared::vec(vec![aver::ast::Spanned::bare(
+                            aver::ast::Expr::Literal(aver::ast::Literal::Int(5)),
+                        )]),
                     )),
                     aver::ast::Spanned::bare(aver::ast::Expr::Literal(aver::ast::Literal::Int(8))),
                 )],

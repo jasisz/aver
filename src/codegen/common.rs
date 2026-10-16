@@ -460,13 +460,17 @@ pub fn substitute_ident_in_resolved_expr(
         ResolvedExpr::Literal(_) | ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } => {
             return expr.clone();
         }
-        ResolvedExpr::Attr(obj, field) => ResolvedExpr::Attr(crate::ast::Shared::new(rec(obj)), field.clone()),
+        ResolvedExpr::Attr(obj, field) => {
+            ResolvedExpr::Attr(crate::ast::Shared::new(rec(obj)), field.clone())
+        }
         ResolvedExpr::Call(callee, args) => {
             ResolvedExpr::Call(callee.clone(), args.iter().map(&rec).collect())
         }
-        ResolvedExpr::BinOp(op, left, right) => {
-            ResolvedExpr::BinOp(*op, crate::ast::Shared::new(rec(left)), crate::ast::Shared::new(rec(right)))
-        }
+        ResolvedExpr::BinOp(op, left, right) => ResolvedExpr::BinOp(
+            *op,
+            crate::ast::Shared::new(rec(left)),
+            crate::ast::Shared::new(rec(right)),
+        ),
         ResolvedExpr::Neg(inner) => ResolvedExpr::Neg(crate::ast::Shared::new(rec(inner))),
         ResolvedExpr::Match { subject, arms } => ResolvedExpr::Match {
             subject: crate::ast::Shared::new(rec(subject)),
@@ -482,13 +486,17 @@ pub fn substitute_ident_in_resolved_expr(
         ResolvedExpr::Ctor(ctor, args) => {
             ResolvedExpr::Ctor(ctor.clone(), args.iter().map(&rec).collect())
         }
-        ResolvedExpr::ErrorProp(inner) => ResolvedExpr::ErrorProp(crate::ast::Shared::new(rec(inner))),
+        ResolvedExpr::ErrorProp(inner) => {
+            ResolvedExpr::ErrorProp(crate::ast::Shared::new(rec(inner)))
+        }
         ResolvedExpr::InterpolatedStr(parts) => ResolvedExpr::InterpolatedStr(
             parts
                 .iter()
                 .map(|p| match p {
                     ResolvedStrPart::Literal(_) => p.clone(),
-                    ResolvedStrPart::Parsed(inner) => ResolvedStrPart::Parsed(crate::ast::Shared::new(rec(inner))),
+                    ResolvedStrPart::Parsed(inner) => {
+                        ResolvedStrPart::Parsed(crate::ast::Shared::new(rec(inner)))
+                    }
                 })
                 .collect(),
         ),
@@ -559,7 +567,9 @@ pub fn substitute_ident_in_expr(expr: &Spanned<Expr>, from: &str, to: &str) -> S
             crate::ast::Shared::new(substitute_ident_in_expr(left, from, to)),
             crate::ast::Shared::new(substitute_ident_in_expr(right, from, to)),
         ),
-        Expr::Neg(inner) => Expr::Neg(crate::ast::Shared::new(substitute_ident_in_expr(inner, from, to))),
+        Expr::Neg(inner) => Expr::Neg(crate::ast::Shared::new(substitute_ident_in_expr(
+            inner, from, to,
+        ))),
         Expr::Match { subject, arms } => Expr::Match {
             subject: crate::ast::Shared::new(substitute_ident_in_expr(subject, from, to)),
             arms: arms
@@ -576,17 +586,17 @@ pub fn substitute_ident_in_expr(expr: &Spanned<Expr>, from: &str, to: &str) -> S
             arg.as_ref()
                 .map(|inner| crate::ast::Shared::new(substitute_ident_in_expr(inner, from, to))),
         ),
-        Expr::ErrorProp(inner) => {
-            Expr::ErrorProp(crate::ast::Shared::new(substitute_ident_in_expr(inner, from, to)))
-        }
+        Expr::ErrorProp(inner) => Expr::ErrorProp(crate::ast::Shared::new(
+            substitute_ident_in_expr(inner, from, to),
+        )),
         Expr::InterpolatedStr(parts) => Expr::InterpolatedStr(
             parts
                 .iter()
                 .map(|part| match part {
                     StrPart::Literal(_) => part.clone(),
-                    StrPart::Parsed(inner) => {
-                        StrPart::Parsed(crate::ast::Shared::new(substitute_ident_in_expr(inner, from, to)))
-                    }
+                    StrPart::Parsed(inner) => StrPart::Parsed(crate::ast::Shared::new(
+                        substitute_ident_in_expr(inner, from, to),
+                    )),
                 })
                 .collect(),
         ),
@@ -3112,11 +3122,17 @@ fn project_oracle_direct_calls(
             } else {
                 project_oracle_direct_calls(callee, oracle_names)
             };
-            Expr::FnCall(crate::ast::Shared::new(new_callee), crate::ast::shared::vec(new_args))
+            Expr::FnCall(
+                crate::ast::Shared::new(new_callee),
+                crate::ast::shared::vec(new_args),
+            )
         }
         Expr::Constructor(name, Some(arg)) => Expr::Constructor(
             name.clone(),
-            Some(crate::ast::Shared::new(project_oracle_direct_calls(arg, oracle_names))),
+            Some(crate::ast::Shared::new(project_oracle_direct_calls(
+                arg,
+                oracle_names,
+            ))),
         ),
         Expr::Attr(obj, field) => Expr::Attr(
             crate::ast::Shared::new(project_oracle_direct_calls(obj, oracle_names)),
@@ -3237,10 +3253,22 @@ where
                     }
                 }
                 injected.extend(rewritten_args);
-                return Spanned::new(Expr::FnCall(crate::ast::Shared::from(rewritten_callee), crate::ast::shared::vec(injected)), expr.line);
+                return Spanned::new(
+                    Expr::FnCall(
+                        crate::ast::Shared::from(rewritten_callee),
+                        crate::ast::shared::vec(injected),
+                    ),
+                    expr.line,
+                );
             }
 
-            Spanned::new(Expr::FnCall(crate::ast::Shared::from(rewritten_callee), crate::ast::shared::vec(rewritten_args)), expr.line)
+            Spanned::new(
+                Expr::FnCall(
+                    crate::ast::Shared::from(rewritten_callee),
+                    crate::ast::shared::vec(rewritten_args),
+                ),
+                expr.line,
+            )
         }
         Expr::BinOp(op, l, r) => Spanned::new(
             Expr::BinOp(
@@ -3506,7 +3534,9 @@ mod tests {
             givens: vec![VerifyGiven {
                 name: "xs".to_string(),
                 type_name: "List<String>".to_string(),
-                domain: VerifyGivenDomain::Explicit(vec![sb(Expr::List(crate::ast::shared::vec(vec![])))]),
+                domain: VerifyGivenDomain::Explicit(vec![sb(Expr::List(crate::ast::shared::vec(
+                    vec![],
+                )))]),
             }],
             when: None,
             lhs,
@@ -3524,7 +3554,13 @@ mod tests {
         use crate::ast::BinOp;
         let a = || bsb(Expr::Ident("a".to_string()));
         let b = || bsb(Expr::Ident("b".to_string()));
-        let binop = |op, l: Box<Spanned<Expr>>, r: Box<Spanned<Expr>>| sb(Expr::BinOp(op, crate::ast::Shared::from(l), crate::ast::Shared::from(r)));
+        let binop = |op, l: Box<Spanned<Expr>>, r: Box<Spanned<Expr>>| {
+            sb(Expr::BinOp(
+                op,
+                crate::ast::Shared::from(l),
+                crate::ast::Shared::from(r),
+            ))
+        };
 
         // `a > b` canonicalizes to `b < a` — operands swapped, STILL strict.
         let canon_gt = canonicalize_comparison(&binop(BinOp::Gt, a(), b()));
@@ -3545,7 +3581,10 @@ mod tests {
             let clause = binop(op, a(), b());
             assert_eq!(canonicalize_comparison(&clause).node, clause.node);
         }
-        let call = sb(Expr::FnCall(crate::ast::Shared::from(a()), crate::ast::shared::vec(vec![sb(Expr::Ident("x".to_string()))])));
+        let call = sb(Expr::FnCall(
+            crate::ast::Shared::from(a()),
+            crate::ast::shared::vec(vec![sb(Expr::Ident("x".to_string()))]),
+        ));
         assert_eq!(canonicalize_comparison(&call).node, call.node);
     }
 
@@ -3651,7 +3690,10 @@ mod tests {
         let runtime_trace_lhs = sb(Expr::FnCall(
             crate::ast::Shared::from(bsb(Expr::Attr(
                 crate::ast::Shared::from(bsb(Expr::Attr(
-                    crate::ast::Shared::from(bsb(Expr::FnCall(crate::ast::Shared::from(bsb(Expr::Ident("fn".to_string()))), crate::ast::shared::vec(vec![])))),
+                    crate::ast::Shared::from(bsb(Expr::FnCall(
+                        crate::ast::Shared::from(bsb(Expr::Ident("fn".to_string()))),
+                        crate::ast::shared::vec(vec![]),
+                    ))),
                     "trace".to_string(),
                 ))),
                 "event".to_string(),

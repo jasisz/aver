@@ -100,6 +100,7 @@ pub fn contradicts(p: &Poly) -> bool {
 /// coefficient), after being scaled by `|c|` (`c` the coefficient of `m`
 /// in `p`). The weights stay nonnegative, so the result is still a sum the
 /// kernels check. `None` when no row has its opposite.
+#[cfg(test)]
 fn substitute_equality(rows: &[(Poly, Vec<BigInt>)]) -> Option<Vec<(Poly, Vec<BigInt>)>> {
     let negated = |p: &Poly| -> Poly { p.iter().map(|(k, c)| (k.clone(), -c)).collect() };
     let (i, j, m) = rows.iter().enumerate().find_map(|(i, (p, _))| {
@@ -151,18 +152,12 @@ fn substitute_equality(rows: &[(Poly, Vec<BigInt>)]) -> Option<Vec<(Poly, Vec<Bi
 /// Weights, one per inequality, that add up to a contradiction, if
 /// Fourier–Motzkin elimination over the monomials finds them.
 pub fn certificate(ps: &[Poly]) -> Option<Vec<BigInt>> {
-    let fast = super::linear_fast::certificate(ps);
-    if check_fast() {
-        assert_eq!(fast, certificate_by_maps(ps), "AVER_LINEAR_CHECK: certificate");
-    }
-    fast
+    super::linear_fast::certificate(ps)
 }
 
-fn check_fast() -> bool {
-    static CHECK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *CHECK.get_or_init(|| std::env::var_os("AVER_LINEAR_CHECK").is_some())
-}
-
+/// The same search over the polynomial maps, kept as the reference the
+/// flat search is tested against.
+#[cfg(test)]
 fn certificate_by_maps(ps: &[Poly]) -> Option<Vec<BigInt>> {
     // Each row: the inequality and the weights that build it.
     let n = ps.len();
@@ -244,6 +239,7 @@ pub struct Certificate {
     pub cuts: Vec<Cut>,
 }
 
+#[cfg(test)]
 fn gcd(a: &BigInt, b: &BigInt) -> BigInt {
     let (mut a, mut b) = (a.abs(), b.abs());
     while !b.is_zero() {
@@ -262,6 +258,7 @@ fn div_floor(a: &BigInt, b: &BigInt) -> BigInt {
 
 /// The greatest common divisor of the coefficients of `p` other than its
 /// constant; zero when `p` is a constant.
+#[cfg(test)]
 fn content(p: &Poly) -> BigInt {
     p.iter()
         .filter(|(m, _)| !m.is_empty())
@@ -322,14 +319,13 @@ pub fn checks(ps: &[Poly], cert: &Certificate) -> bool {
 /// [`Cut`]), as `omega` normalises its constraints. Only the comparisons
 /// and cuts the contradiction uses keep a weight.
 pub fn integer_certificate(ps: &[Poly]) -> Option<Certificate> {
-    let fast = super::linear_fast::integer_search(ps);
-    if check_fast() {
-        assert_eq!(fast, integer_search_by_maps(ps), "AVER_LINEAR_CHECK: integer");
-    }
-    let (found, cuts) = fast?;
+    let (found, cuts) = super::linear_fast::integer_search(ps)?;
     finish(ps, found, cuts)
 }
 
+/// The search of [`integer_certificate`] over the polynomial maps, kept as
+/// the reference the flat search is tested against.
+#[cfg(test)]
 fn integer_search_by_maps(ps: &[Poly]) -> Option<(Vec<BigInt>, Vec<Cut>)> {
     let n = ps.len();
     let mut cuts: Vec<Cut> = Vec::new();
@@ -488,4 +484,65 @@ pub fn restricted(cert: &Certificate, n: usize, keep: &[usize]) -> Option<Certif
 /// Whether comparison `i` of `n` has a weight anywhere in `cert`.
 pub fn uses(cert: &Certificate, i: usize) -> bool {
     !cert.weights[i].is_zero() || cert.cuts.iter().any(|c| !c.weights[i].is_zero())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A small deterministic generator, so a failure names its seed.
+    struct Lcg(u64);
+    impl Lcg {
+        fn next(&mut self, bound: u64) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (self.0 >> 33) % bound
+        }
+    }
+
+    fn system(rng: &mut Lcg) -> Vec<Poly> {
+        let monomials: [Vec<usize>; 6] =
+            [vec![], vec![0], vec![1], vec![2], vec![0, 1], vec![0, 0]];
+        let rows = 2 + rng.next(5) as usize;
+        (0..rows)
+            .map(|_| {
+                let mut p = Poly::new();
+                for m in &monomials {
+                    if rng.next(3) == 0 {
+                        continue;
+                    }
+                    let mut c = BigInt::from(rng.next(7) as i64 - 3);
+                    // Now and then a coefficient that outgrows a machine
+                    // word once rows are combined.
+                    if rng.next(8) == 0 {
+                        c *= BigInt::from(i64::MAX / 3);
+                    }
+                    if !c.is_zero() {
+                        p.insert(m.clone(), c);
+                    }
+                }
+                p
+            })
+            .collect()
+    }
+
+    #[test]
+    fn flat_search_finds_what_the_map_search_finds() {
+        let mut found = 0;
+        for seed in 0..4000u64 {
+            let ps = system(&mut Lcg(seed));
+            let fast = certificate(&ps);
+            assert_eq!(fast, certificate_by_maps(&ps), "seed {seed}: {ps:?}");
+            assert_eq!(
+                super::super::linear_fast::integer_search(&ps),
+                integer_search_by_maps(&ps),
+                "seed {seed}: {ps:?}"
+            );
+            found += usize::from(fast.is_some());
+        }
+        // The systems must reach the contradiction branch, not only miss.
+        assert!(found > 50, "only {found} systems had a certificate");
+    }
 }

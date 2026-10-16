@@ -408,12 +408,15 @@ fn repr_expr_via_clone(
     let mk_attr_call = |module: &str, method: &str| {
         let callee = Spanned::new(
             Expr::Attr(
-                Box::new(Spanned::new(Expr::Ident(module.to_string()), line)),
+                crate::ast::Shared::new(Spanned::new(Expr::Ident(module.to_string()), line)),
                 method.to_string(),
             ),
             line,
         );
-        Spanned::new(Expr::FnCall(Box::new(callee), vec![expr.clone()]), line)
+        Spanned::new(
+            Expr::FnCall(crate::ast::Shared::new(callee), vec![expr.clone()].into()),
+            line,
+        )
     };
     match ty {
         Type::Int => Some(mk_attr_call("String", "fromInt")),
@@ -421,7 +424,7 @@ fn repr_expr_via_clone(
         Type::Str => Some(expr.clone()),
         Type::Bool => Some(Spanned::new(
             Expr::Match {
-                subject: Box::new(expr.clone()),
+                subject: crate::ast::Shared::new(expr.clone()),
                 arms: vec![
                     MatchArm::new(
                         Pattern::Literal(Literal::Bool(true)),
@@ -431,7 +434,8 @@ fn repr_expr_via_clone(
                         Pattern::Literal(Literal::Bool(false)),
                         Spanned::new(Expr::Literal(Literal::Str("false".to_string())), line),
                     ),
-                ],
+                ]
+                .into(),
             },
             line,
         )),
@@ -439,8 +443,8 @@ fn repr_expr_via_clone(
             let helper = synth.helper_for(other)?;
             Some(Spanned::new(
                 Expr::FnCall(
-                    Box::new(Spanned::new(Expr::Ident(helper), line)),
-                    vec![expr.clone()],
+                    crate::ast::Shared::new(Spanned::new(Expr::Ident(helper), line)),
+                    vec![expr.clone()].into(),
                 ),
                 line,
             ))
@@ -477,8 +481,8 @@ fn build_verify_wasm_gc_plans(
             let check_expr = Spanned::new(
                 Expr::BinOp(
                     BinOp::Eq,
-                    Box::new(left_expr.clone()),
-                    Box::new(right_expr.clone()),
+                    crate::ast::Shared::new(left_expr.clone()),
+                    crate::ast::Shared::new(right_expr.clone()),
                 ),
                 block.line,
             );

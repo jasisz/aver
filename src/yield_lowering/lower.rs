@@ -620,13 +620,19 @@ impl<'a> Lowering<'a> {
             }
             Expr::ErrorProp(inner) => {
                 let inner = self.extract(inner, hoisted, cut)?;
-                Ok(spanned_like(expr, Expr::ErrorProp(crate::ast::Shared::new(inner))))
+                Ok(spanned_like(
+                    expr,
+                    Expr::ErrorProp(crate::ast::Shared::new(inner)),
+                ))
             }
             Expr::FnCall(callee, args)
                 if self.stop_op(expr).is_some() || self.nested_callee(expr).is_some() =>
             {
                 let args = self.extract_all(args, hoisted, cut)?;
-                Ok(spanned_like(expr, Expr::FnCall(callee.clone(), crate::ast::shared::vec(args))))
+                Ok(spanned_like(
+                    expr,
+                    Expr::FnCall(callee.clone(), crate::ast::shared::vec(args)),
+                ))
             }
             Expr::TailCall(tc) => {
                 let args = self.extract_all(&tc.args, hoisted, cut)?;
@@ -726,7 +732,10 @@ impl<'a> Lowering<'a> {
             Expr::FnCall(callee, args) => {
                 let nested = self.nested_callee(expr).is_some();
                 let args = self.extract_all(args, hoisted, cut)?;
-                let rebuilt = spanned_like(expr, Expr::FnCall(callee.clone(), crate::ast::shared::vec(args)));
+                let rebuilt = spanned_like(
+                    expr,
+                    Expr::FnCall(callee.clone(), crate::ast::shared::vec(args)),
+                );
                 return Ok(if self.stop_op(expr).is_some() || nested {
                     self.hoist(rebuilt, hoisted)
                 } else {
@@ -759,10 +768,13 @@ impl<'a> Lowering<'a> {
                     crate::ast::Shared::new(self.extract(r, hoisted, cut)?),
                 )
             }
-            Expr::Neg(inner) => Expr::Neg(crate::ast::Shared::new(self.extract(inner, hoisted, cut)?)),
-            Expr::Attr(inner, field) => {
-                Expr::Attr(crate::ast::Shared::new(self.extract(inner, hoisted, cut)?), field.clone())
+            Expr::Neg(inner) => {
+                Expr::Neg(crate::ast::Shared::new(self.extract(inner, hoisted, cut)?))
             }
+            Expr::Attr(inner, field) => Expr::Attr(
+                crate::ast::Shared::new(self.extract(inner, hoisted, cut)?),
+                field.clone(),
+            ),
             Expr::Constructor(name, Some(inner)) => Expr::Constructor(
                 name.clone(),
                 Some(crate::ast::Shared::new(self.extract(inner, hoisted, cut)?)),
@@ -782,14 +794,20 @@ impl<'a> Lowering<'a> {
                         StrPart::Literal(s) => StrPart::Literal(s.clone()),
                         StrPart::Parsed(inner) => {
                             let cut = flags.next().unwrap_or(cut);
-                            StrPart::Parsed(crate::ast::Shared::new(self.extract(inner, hoisted, cut)?))
+                            StrPart::Parsed(crate::ast::Shared::new(
+                                self.extract(inner, hoisted, cut)?,
+                            ))
                         }
                     });
                 }
                 Expr::InterpolatedStr(out)
             }
-            Expr::List(items) => Expr::List(crate::ast::shared::vec(self.extract_all(items, hoisted, cut)?)),
-            Expr::Tuple(items) => Expr::Tuple(crate::ast::shared::vec(self.extract_all(items, hoisted, cut)?)),
+            Expr::List(items) => Expr::List(crate::ast::shared::vec(
+                self.extract_all(items, hoisted, cut)?,
+            )),
+            Expr::Tuple(items) => Expr::Tuple(crate::ast::shared::vec(
+                self.extract_all(items, hoisted, cut)?,
+            )),
             Expr::MapLiteral(entries) => {
                 let positions: Vec<&Spanned<Expr>> =
                     entries.iter().flat_map(|(k, v)| [k, v]).collect();
@@ -1579,7 +1597,11 @@ impl<'a> Lowering<'a> {
             done_body,
             line,
         );
-        let mut call_args = vec![call(&protocol.start, crate::ast::Shared::unwrap(args), line)];
+        let mut call_args = vec![call(
+            &protocol.start,
+            crate::ast::Shared::unwrap(args),
+            line,
+        )];
         call_args.extend(fields.iter().map(|(name, _)| ident(name, line)));
         Ok(call(&helper, call_args, line))
     }

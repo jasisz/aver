@@ -924,7 +924,10 @@ mod tests {
             ResolvedCtor::Unresolved {
                 name: "Step.Continue".to_string(),
             },
-            crate::ast::shared::vec(vec![Spanned::new(ResolvedExpr::Literal(Literal::Int(1)), line)]),
+            crate::ast::shared::vec(vec![Spanned::new(
+                ResolvedExpr::Literal(Literal::Int(1)),
+                line,
+            )]),
         );
         ResolvedFnDef {
             fn_id: FnId(1),
@@ -1027,7 +1030,10 @@ mod tests {
         let callee = ResolvedCallee::Fn(FnId(7));
         let call = ResolvedExpr::Call(
             callee,
-            crate::ast::shared::vec(vec![Spanned::new(ResolvedExpr::Literal(Literal::Int(42)), 3)]),
+            crate::ast::shared::vec(vec![Spanned::new(
+                ResolvedExpr::Literal(Literal::Int(42)),
+                3,
+            )]),
         );
         // Smoke check: shape constructs and the FnId survives clone.
         let clone = call.clone();
@@ -1050,7 +1056,10 @@ mod tests {
         };
         let expr = ResolvedExpr::Ctor(
             ctor,
-            crate::ast::shared::vec(vec![Spanned::new(ResolvedExpr::Literal(Literal::Float(1.0)), 1)]),
+            crate::ast::shared::vec(vec![Spanned::new(
+                ResolvedExpr::Literal(Literal::Float(1.0)),
+                1,
+            )]),
         );
         let ResolvedExpr::Ctor(
             ResolvedCtor::User {
@@ -1226,15 +1235,22 @@ mod tests {
         };
         let dummy = || Box::new(Spanned::new(ResolvedExpr::Literal(Literal::Int(0)), 1));
         let _: ResolvedExpr = ResolvedExpr::Attr(crate::ast::Shared::from(dummy()), String::new());
-        let _: ResolvedExpr = ResolvedExpr::Call(ResolvedCallee::Fn(FnId(0)), crate::ast::shared::vec(vec![]));
-        let _: ResolvedExpr = ResolvedExpr::BinOp(BinOp::Add, crate::ast::Shared::from(dummy()), crate::ast::Shared::from(dummy()));
+        let _: ResolvedExpr =
+            ResolvedExpr::Call(ResolvedCallee::Fn(FnId(0)), crate::ast::shared::vec(vec![]));
+        let _: ResolvedExpr = ResolvedExpr::BinOp(
+            BinOp::Add,
+            crate::ast::Shared::from(dummy()),
+            crate::ast::Shared::from(dummy()),
+        );
         let _: ResolvedExpr = ResolvedExpr::Neg(crate::ast::Shared::from(dummy()));
         let _: ResolvedExpr = ResolvedExpr::Match {
             subject: crate::ast::Shared::from(dummy()),
             arms: crate::ast::shared::vec(vec![]),
         };
-        let _: ResolvedExpr =
-            ResolvedExpr::Ctor(ResolvedCtor::Builtin(BuiltinCtor::OptionNone), crate::ast::shared::vec(vec![]));
+        let _: ResolvedExpr = ResolvedExpr::Ctor(
+            ResolvedCtor::Builtin(BuiltinCtor::OptionNone),
+            crate::ast::shared::vec(vec![]),
+        );
         let _: ResolvedExpr = ResolvedExpr::ErrorProp(crate::ast::Shared::from(dummy()));
         let _: ResolvedExpr = ResolvedExpr::InterpolatedStr(vec![]);
         let _: ResolvedExpr = ResolvedExpr::List(crate::ast::shared::vec(vec![]));
@@ -1255,6 +1271,7 @@ mod tests {
             target: FnId(0),
             args: crate::ast::shared::vec(vec![]),
         };
-        let _: ResolvedExpr = ResolvedExpr::IndependentProduct(crate::ast::shared::vec(vec![]), false);
+        let _: ResolvedExpr =
+            ResolvedExpr::IndependentProduct(crate::ast::shared::vec(vec![]), false);
     }
 }

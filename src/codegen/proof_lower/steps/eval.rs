@@ -2564,7 +2564,11 @@ impl Env<'_> {
                     } else {
                         WallRule::MapHasSetSame
                     };
-                    (rule, bind(&["m", "k", "v"], crate::ast::Shared::unwrap(p)), vec![])
+                    (
+                        rule,
+                        bind(&["m", "k", "v"], crate::ast::Shared::unwrap(p)),
+                        vec![],
+                    )
                 } else {
                     let ne = term::binop(BinOp::Neq, p[1].clone(), args[1].clone());
                     let Some((true, premise)) = decided(self, ne)? else {
@@ -2577,7 +2581,11 @@ impl Env<'_> {
                     };
                     let mut values = p;
                     values.push(args[1].clone());
-                    (rule, bind(&["m", "k", "v", "k2"], crate::ast::Shared::unwrap(values)), vec![premise])
+                    (
+                        rule,
+                        bind(&["m", "k", "v", "k2"], crate::ast::Shared::unwrap(values)),
+                        vec![premise],
+                    )
                 }
             }
             ("Map.len", 1, false, Some(p)) => {

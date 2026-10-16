@@ -767,14 +767,22 @@ pub(super) fn simplify_identity_expr(
                     } else if int_lit(&right.node) == Some(0) {
                         return left;
                     } else {
-                        Expr::BinOp(*op, crate::ast::Shared::new(left), crate::ast::Shared::new(right))
+                        Expr::BinOp(
+                            *op,
+                            crate::ast::Shared::new(left),
+                            crate::ast::Shared::new(right),
+                        )
                     }
                 }
                 BinOp::Sub => {
                     if int_lit(&right.node) == Some(0) {
                         return left;
                     } else {
-                        Expr::BinOp(*op, crate::ast::Shared::new(left), crate::ast::Shared::new(right))
+                        Expr::BinOp(
+                            *op,
+                            crate::ast::Shared::new(left),
+                            crate::ast::Shared::new(right),
+                        )
                     }
                 }
                 BinOp::Mul => {
@@ -785,16 +793,25 @@ pub(super) fn simplify_identity_expr(
                     } else if int_lit(&right.node) == Some(1) {
                         return left;
                     } else {
-                        Expr::BinOp(*op, crate::ast::Shared::new(left), crate::ast::Shared::new(right))
+                        Expr::BinOp(
+                            *op,
+                            crate::ast::Shared::new(left),
+                            crate::ast::Shared::new(right),
+                        )
                     }
                 }
-                _ => Expr::BinOp(*op, crate::ast::Shared::new(left), crate::ast::Shared::new(right)),
+                _ => Expr::BinOp(
+                    *op,
+                    crate::ast::Shared::new(left),
+                    crate::ast::Shared::new(right),
+                ),
             }
         }
         Expr::Neg(inner) => Expr::Neg(crate::ast::Shared::new(simplify_identity_expr(inner))),
-        Expr::Attr(base, field) => {
-            Expr::Attr(crate::ast::Shared::new(simplify_identity_expr(base)), field.clone())
-        }
+        Expr::Attr(base, field) => Expr::Attr(
+            crate::ast::Shared::new(simplify_identity_expr(base)),
+            field.clone(),
+        ),
         Expr::FnCall(callee, args) => Expr::FnCall(
             crate::ast::Shared::new(simplify_identity_expr(callee)),
             args.iter().map(simplify_identity_expr).collect(),

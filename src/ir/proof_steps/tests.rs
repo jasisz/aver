@@ -931,7 +931,10 @@ fn a_recursive_definition_opens_only_when_it_recurses_on_a_part_of_its_match() {
     use crate::ir::hir::ResolvedCallee;
     use crate::ir::identity::FnId;
     let call = |args: Vec<super::Term>| {
-        Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(FnId(7)), crate::ast::shared::vec(args)))
+        Spanned::bare(ResolvedExpr::Call(
+            ResolvedCallee::Fn(FnId(7)),
+            crate::ast::shared::vec(args),
+        ))
     };
     let arm = |pattern, body| ResolvedMatchArm {
         pattern,
@@ -989,7 +992,10 @@ fn a_recursion_through_a_helper_is_checked_as_if_the_helper_stood_in_the_arm() {
     use crate::ir::hir::ResolvedCallee;
     use crate::ir::identity::FnId;
     let call = |id: u32, args: Vec<super::Term>| {
-        Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(FnId(id)), crate::ast::shared::vec(args)))
+        Spanned::bare(ResolvedExpr::Call(
+            ResolvedCallee::Fn(FnId(id)),
+            crate::ast::shared::vec(args),
+        ))
     };
     let arm = |pattern, body| ResolvedMatchArm {
         pattern,
@@ -1134,7 +1140,11 @@ fn the_ring_step_compares_polynomials_and_leaves_text_joining_alone() {
         &mul(var("a"), var("b"))
     ));
     let join = |x: super::Term, y: super::Term| {
-        let t = Spanned::bare(ResolvedExpr::BinOp(BinOp::Add, crate::ast::Shared::new(x), crate::ast::Shared::new(y)));
+        let t = Spanned::bare(ResolvedExpr::BinOp(
+            BinOp::Add,
+            crate::ast::Shared::new(x),
+            crate::ast::Shared::new(y),
+        ));
         t.set_ty(Type::Str);
         t
     };
@@ -1303,7 +1313,12 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
 
     // f(x) = x + x
     let f = FnId(3);
-    let call_f = |x: super::Term| Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(f), crate::ast::shared::vec(vec![x])));
+    let call_f = |x: super::Term| {
+        Spanned::bare(ResolvedExpr::Call(
+            ResolvedCallee::Fn(f),
+            crate::ast::shared::vec(vec![x]),
+        ))
+    };
     let def_f = super::Def {
         fn_id: f,
         name: "__fn_3".into(),
@@ -1331,7 +1346,12 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
 
     // g(xs) = match xs { [] -> 0, [h, ..t] -> g(t) }, so g(xs) = 0.
     let g = FnId(4);
-    let call_g = |x: super::Term| Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(g), crate::ast::shared::vec(vec![x])));
+    let call_g = |x: super::Term| {
+        Spanned::bare(ResolvedExpr::Call(
+            ResolvedCallee::Fn(g),
+            crate::ast::shared::vec(vec![x]),
+        ))
+    };
     let cell = |h: &str, t: &str| term::builtin("List.prepend", vec![var(h), var(t)], None);
     let def_g = super::Def {
         fn_id: g,
@@ -1518,7 +1538,7 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
         )
     };
 
-    let mut enum_split = |cases: Vec<bool>| {
+    let enum_split = |cases: Vec<bool>| {
         let claim = term::binop(BinOp::Eq, var("c"), var("c"));
         let mut s = script(
             claim.clone(),
@@ -1813,7 +1833,10 @@ mod toward_zero {
         term::int(&n.into())
     }
     pub fn call(args: Vec<Term>) -> Term {
-        Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(F), crate::ast::shared::vec(args)))
+        Spanned::bare(ResolvedExpr::Call(
+            ResolvedCallee::Fn(F),
+            crate::ast::shared::vec(args),
+        ))
     }
     pub fn div(x: Term, k: Term) -> Term {
         term::intrinsic(BuiltinIntrinsic::IntDivEuclid, vec![x, k])
@@ -1851,7 +1874,10 @@ mod toward_zero {
             lets: Vec::new(),
             body: Spanned::bare(ResolvedExpr::Match {
                 subject: crate::ast::Shared::new(subject),
-                arms: crate::ast::shared::vec(vec![arm(when(true), on_true), arm(when(false), on_false)]),
+                arms: crate::ast::shared::vec(vec![
+                    arm(when(true), on_true),
+                    arm(when(false), on_false),
+                ]),
             }),
         }
     }
@@ -2463,7 +2489,10 @@ fn a_split_on_a_constructor_covers_the_type_with_fresh_names() {
             arm(ResolvedPattern::Wildcard, one.clone()),
         ],
     );
-    let b_value = Spanned::bare(ResolvedExpr::Ctor(ctor(1, "C.B"), crate::ast::shared::vec(vec![var("n1")])));
+    let b_value = Spanned::bare(ResolvedExpr::Ctor(
+        ctor(1, "C.B"),
+        crate::ast::shared::vec(vec![var("n1")]),
+    ));
     let b_other = SplitCase {
         proof: case(2, vec![], &one),
         ..b.clone()
@@ -2572,7 +2601,7 @@ fn list_split(both: bool) -> Script {
             proof: case(2, vec!["h1", "t1"], &one),
         });
     }
-    let mut s = script(
+    let s = script(
         ge(call.clone()),
         term::boolean(true),
         Proof::Split {
@@ -2794,7 +2823,10 @@ fn a_wildcard_field_takes_its_place_among_the_binders() {
             ]),
         }),
     };
-    let value = Spanned::bare(ResolvedExpr::Ctor(ctor(1, "C.B"), crate::ast::shared::vec(vec![var("a"), var("b")])));
+    let value = Spanned::bare(ResolvedExpr::Ctor(
+        ctor(1, "C.B"),
+        crate::ast::shared::vec(vec![var("a"), var("b")]),
+    ));
     let call = Spanned::bare(ResolvedExpr::Call(
         ResolvedCallee::Fn(FnId(0)),
         crate::ast::shared::vec(vec![value.clone()]),

@@ -118,7 +118,9 @@ where
             line,
         ),
         Expr::Neg(inner) => Spanned::new(
-            Expr::Neg(crate::ast::Shared::new(rewrite_inner(inner, scope, rewrite))),
+            Expr::Neg(crate::ast::Shared::new(rewrite_inner(
+                inner, scope, rewrite,
+            ))),
             line,
         ),
         Expr::Match { subject, arms } => {
@@ -162,7 +164,9 @@ where
             line,
         ),
         Expr::ErrorProp(inner) => Spanned::new(
-            Expr::ErrorProp(crate::ast::Shared::new(rewrite_inner(inner, scope, rewrite))),
+            Expr::ErrorProp(crate::ast::Shared::new(rewrite_inner(
+                inner, scope, rewrite,
+            ))),
             line,
         ),
         Expr::InterpolatedStr(parts) => Spanned::new(
@@ -171,9 +175,9 @@ where
                     .iter()
                     .map(|part| match part {
                         StrPart::Literal(s) => StrPart::Literal(s.clone()),
-                        StrPart::Parsed(inner) => {
-                            StrPart::Parsed(crate::ast::Shared::new(rewrite_inner(inner, scope, rewrite)))
-                        }
+                        StrPart::Parsed(inner) => StrPart::Parsed(crate::ast::Shared::new(
+                            rewrite_inner(inner, scope, rewrite),
+                        )),
                     })
                     .collect(),
             ),
@@ -309,7 +313,10 @@ mod tests {
     #[test]
     fn tuple_pattern_shadowing() {
         let e = bare(Expr::Match {
-            subject: crate::ast::Shared::new(bare(Expr::Tuple(crate::ast::shared::vec(vec![int(1), int(2)])))),
+            subject: crate::ast::Shared::new(bare(Expr::Tuple(crate::ast::shared::vec(vec![
+                int(1),
+                int(2),
+            ])))),
             arms: crate::ast::shared::vec(vec![MatchArm::new(
                 Pattern::Tuple(vec![
                     Pattern::Ident("a".to_string()),
@@ -352,10 +359,17 @@ mod tests {
     #[test]
     fn cons_pattern_shadows_head_and_tail() {
         let e = bare(Expr::Match {
-            subject: crate::ast::Shared::new(bare(Expr::List(crate::ast::shared::vec(vec![int(1), int(2)])))),
+            subject: crate::ast::Shared::new(bare(Expr::List(crate::ast::shared::vec(vec![
+                int(1),
+                int(2),
+            ])))),
             arms: crate::ast::shared::vec(vec![MatchArm::new(
                 Pattern::Cons("h".to_string(), "t".to_string()),
-                bare(Expr::Tuple(crate::ast::shared::vec(vec![ident("h"), ident("t"), ident("z")]))),
+                bare(Expr::Tuple(crate::ast::shared::vec(vec![
+                    ident("h"),
+                    ident("t"),
+                    ident("z"),
+                ]))),
             )]),
         });
         let out = rewrite_idents_scoped(&e, |n| match n {

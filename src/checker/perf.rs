@@ -613,7 +613,11 @@ mod tests {
     }
 
     fn binop(op: BinOp, left: Expr, right: Expr) -> Expr {
-        Expr::BinOp(op, crate::ast::Shared::new(spanned(left)), crate::ast::Shared::new(spanned(right)))
+        Expr::BinOp(
+            op,
+            crate::ast::Shared::new(spanned(left)),
+            crate::ast::Shared::new(spanned(right)),
+        )
     }
 
     fn list_len_call(arg: Expr) -> Expr {
@@ -916,12 +920,16 @@ mod tests {
             arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(true)),
-                    body: crate::ast::Shared::new(spanned(Expr::Literal(Literal::Str("one".to_string())))),
+                    body: crate::ast::Shared::new(spanned(Expr::Literal(Literal::Str(
+                        "one".to_string(),
+                    )))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Wildcard,
-                    body: crate::ast::Shared::new(spanned(Expr::Literal(Literal::Str("other".to_string())))),
+                    body: crate::ast::Shared::new(spanned(Expr::Literal(Literal::Str(
+                        "other".to_string(),
+                    )))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
             ]),
@@ -931,7 +939,9 @@ mod tests {
             arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(true)),
-                    body: crate::ast::Shared::new(spanned(Expr::Literal(Literal::Str("zero".to_string())))),
+                    body: crate::ast::Shared::new(spanned(Expr::Literal(Literal::Str(
+                        "zero".to_string(),
+                    )))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {

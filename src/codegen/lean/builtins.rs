@@ -409,7 +409,9 @@ mod tests {
         let ctx = empty_ctx();
         let emitted = emit_builtin_call(
             "List.len",
-            &[Spanned::bare(ResolvedExpr::List(crate::ast::shared::vec(vec![])))],
+            &[Spanned::bare(ResolvedExpr::List(crate::ast::shared::vec(
+                vec![],
+            )))],
             &ctx,
         )
         .expect("List.len should be emitted");
