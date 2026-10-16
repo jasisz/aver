@@ -2131,7 +2131,9 @@ impl Renderer<'_> {
                 _ if !ruled.is_empty() => {
                     "rw [h]; split <;> first | contradiction | simp_all".to_string()
                 }
-                "subst h; rfl" => format!("subst h; first | rfl | {SAME_MATCHES}"),
+                "(try subst h); rfl" => {
+                    format!("(try subst h); first | rfl | {SAME_MATCHES}")
+                }
                 "rw [h]; try rfl" => format!("rw [h]; all_goals first | rfl | {SAME_MATCHES}"),
                 other => other.to_string(),
             };
