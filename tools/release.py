@@ -134,7 +134,7 @@ def ci_verified_commit(commit: str) -> tuple[bool, str]:
                 "--limit",
                 "50",
                 "--json",
-                "name,conclusion,status,event",
+                "name,conclusion,status,event,headBranch",
             ],
             capture=True,
             check=True,
@@ -154,8 +154,16 @@ def ci_verified_commit(commit: str) -> tuple[bool, str]:
             continue
         # A pull-request run on the same SHA is the reduced smoke matrix
         # (Certification runs one hardening case per attack class there), so
-        # it never stands in for the push, schedule or manual run.
+        # it never stands in for the push, schedule or manual run. A push to
+        # main runs only the ready-to-merge part of Certification, so for
+        # Certification it does not either.
         if result.get("event") == "pull_request":
+            continue
+        if (
+            result.get("name") == "Certification"
+            and result.get("event") == "push"
+            and result.get("headBranch") == "main"
+        ):
             continue
         name = result.get("name")
         if isinstance(name, str) and name in RELEASE_CI_WORKFLOWS:

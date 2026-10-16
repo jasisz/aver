@@ -10,10 +10,11 @@ The two gates lean in opposite directions on purpose:
   editor support, the CI files of other workflows, integration tests outside
   the certificate suites). The Certification lanes run when ANY changed path
   is outside that list, so a path nobody thought about runs the lanes.
-* ``pack`` lists the paths the Wasmtime deployment pack is built from. The
-  pack lane runs when any changed path is in that list. Every push to main
-  and every release candidate still runs it, so a path missing here costs at
-  most one main push before the failure shows.
+* ``pack`` lists the paths the Wasmtime deployment pack is built from. On a
+  pull request with the ``ready-to-merge`` label, the pack lane runs when any
+  changed path is in that list. Every push to main and every release
+  candidate still runs it, so a path missing here costs at most one main push
+  before the failure shows.
 
 An empty or unreadable list of paths always runs the lane.
 
@@ -98,7 +99,7 @@ PACK_TRIGGERS = (
     "tests/wasmtime_pack_spec.rs",
     "tests/support/*",
     "tests/fixtures/native_provider_*",
-    ".github/workflows/ci.yml",
+    ".github/workflows/cert.yml",
     "tools/ci_pr_gate.py",
 )
 

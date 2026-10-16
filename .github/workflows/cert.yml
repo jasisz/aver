@@ -1,13 +1,17 @@
 name: Certification
 
 on:
-  # Release candidates get the complete matrix on their exact commit. Ordinary
-  # pushes to main remain on the twice-daily cadence below, avoiding 330 lane-min
-  # for every merge while making the release gate explicit and reproducible.
+  # Release candidates get the complete matrix on their exact commit. A push
+  # to main runs the ready-to-merge set (see `decide`); the complete matrix
+  # stays on the twice-daily cadence below, avoiding 330 lane-min for every
+  # merge while making the release gate explicit and reproducible.
   push:
-    branches: ['release/**']
+    branches: [main, 'release/**']
+  # `labeled` starts the ready-to-merge set when a pull request gets the
+  # `ready-to-merge` label, without running the per-push lanes again.
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, labeled]
   # The full matrix runs on a timer rather than on every push to main. It is
   # Hundreds of minutes of kernel work, on a runner pool shared with
   # every other workflow here, so paying it per push made each pull request
@@ -21,8 +25,10 @@ on:
     - cron: '37 1 * * *'
   workflow_dispatch:
 
+# A labeled run has a group of its own, so labelling a pull request does not
+# cancel the lanes of its last push, and that push's lanes do not cancel it.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ github.event.action == 'labeled' && '-labeled' || '' }}
   cancel-in-progress: true
 
 env:
@@ -39,6 +45,9 @@ jobs:
     if: github.event_name != 'schedule' || github.repository == 'jasisz/aver'
     outputs:
       lanes: ${{ steps.pick.outputs.lanes }}
+      ready: ${{ steps.pick.outputs.ready }}
+      pack: ${{ steps.pick.outputs.pack }}
+      ready_state: ${{ steps.pick.outputs.ready_state }}
     steps:
       - uses: actions/checkout@v5
 
@@ -66,13 +75,13 @@ jobs:
                   bad.append(f"{suite} {family}: expected 1..{n}, got {sorted(seen)}")
           if not any(lane.get('smoke') for lane in lanes):
               bad.append("no lane is marked smoke — every pull request would run nothing")
-          # A pull-request-only lane names its tests one by one. A renamed or
-          # deleted test would silently leave the smoke set, so every name has
-          # to still be a test of its suite, listed once.
+          # A ready lane names its tests one by one. A renamed or deleted test
+          # would silently leave the ready-to-merge set, so every name has to
+          # still be a test of its suite, listed once.
           seen = set()
           for lane in lanes:
-              if lane.get('pr_only') and not lane.get('smoke'):
-                  bad.append(f"{lane['lane']}: a pull-request-only lane must be smoke")
+              if lane.get('ready') and lane.get('smoke'):
+                  bad.append(f"{lane['lane']}: a ready lane runs before merge, not on every push; it cannot be smoke")
               names = re.findall(r'test\(=([A-Za-z0-9_:]+)\)', lane.get('filter') or '')
               if not names:
                   continue
@@ -103,52 +112,84 @@ jobs:
         id: pick
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          LABELLED: ${{ contains(github.event.pull_request.labels.*.name, 'ready-to-merge') }}
         run: |
           set -euo pipefail
+          out() { echo "$1=$2" >> "$GITHUB_OUTPUT"; }
 
-          # A pull request runs the smoke lanes only: the cheap ones that
-          # still reach every suite, one hardening tamper per attack class
-          # (the `pr-smoke-*` lanes, which name their tests), and the
-          # guard-isolation lanes, whose failures are soundness regressions. They
-          # are marked in .github/cert-lanes.json rather than listed here, so
-          # the full set stays the single source and a lane cannot be dropped
-          # from one place and kept in the other. The complete hardening
-          # suite runs on the schedule, on manual runs and on every release
-          # candidate (`release/**`), where `pr_only` lanes are left out.
-          #
-          # A pull request whose every changed path is outside the
-          # certificate's reach (tools/ci_pr_gate.py lists those paths) runs
-          # no lane at all. An unreadable file list runs the smoke lanes.
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          # Three sets of lanes, marked in .github/cert-lanes.json rather than
+          # listed here, so the file stays the single source and a lane cannot
+          # be dropped from one place and kept in the other:
+          #   * smoke: every push to a pull request. The cheap lanes that
+          #     still reach every suite, and the guard-isolation lanes, whose
+          #     failures are soundness regressions.
+          #   * ready: the `ready-*` lanes, one hardening tamper per attack
+          #     class plus the acceptance controls. Each takes 9 to 17
+          #     minutes, because most declines rebuild the wall from clean.
+          #   * full: every lane but the ready ones, whose tests the full
+          #     hardening slices already run. The schedule, manual runs and
+          #     every release candidate (`release/**`) run it.
+          # The ready lanes and the Wasmtime pack test (`pack`, 17 minutes)
+          # are the ready-to-merge set. A pull request runs it once it has the
+          # `ready-to-merge` label, on the labelling and on every later push,
+          # and every push to main runs it. Keeping it off the other pushes
+          # keeps one push within twenty minutes when the runners are busy.
+          smoke=$(jq -c '[.[] | select(.smoke and (.ready | not))]' .github/cert-lanes.json)
+          ready=$(jq -c '[.[] | select(.ready)]' .github/cert-lanes.json)
+          full=$(jq -c '[.[] | select(.ready | not)]' .github/cert-lanes.json)
+
+          if [ "$EVENT" = "pull_request" ]; then
+            # A pull request whose every changed path is outside the
+            # certificate's reach (tools/ci_pr_gate.py lists those paths)
+            # runs no certificate lane, and the pack runs only when a changed
+            # path feeds it. An unreadable file list runs both.
             files=$(gh api --paginate \
               "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files?per_page=100" \
               --jq '.[] | .filename, (.previous_filename // empty)') || files=""
             # The API lists at most 3000 files; past that the list is not the whole PR.
             if [ "$(printf '%s\n' "$files" | grep -c .)" -ge 3000 ]; then files=""; fi
-            if [ "$(printf '%s\n' "$files" | python3 tools/ci_pr_gate.py cert)" = "false" ]; then
+            cert=$(printf '%s\n' "$files" | python3 tools/ci_pr_gate.py cert)
+            pack=$(printf '%s\n' "$files" | python3 tools/ci_pr_gate.py pack)
+            if [ "$cert" = "false" ]; then
               echo "every changed path is outside the certificate's reach — no lane runs"
               printf '%s\n' "$files"
-              echo "lanes=[]" >> "$GITHUB_OUTPUT"
+              smoke='[]'; ready='[]'
+            fi
+            # A labeled run carries the ready-to-merge set only: the lanes of
+            # the last push run in that push's own run.
+            if [ "$ACTION" = "labeled" ]; then smoke='[]'; fi
+            # A label given when the pull request is opened arrives as its own
+            # `labeled` event, and that run carries the set.
+            if [ "$LABELLED" != "true" ] || [ "$ACTION" = "opened" ]; then
+              echo "no ready-to-merge label: the ready-to-merge set does not run"
+              out lanes "$smoke"; out ready '[]'; out pack false; out ready_state unlabelled
               exit 0
             fi
-            echo "lanes=$(jq -c '[.[] | select(.smoke)]' .github/cert-lanes.json)" >> "$GITHUB_OUTPUT"
+            out lanes "$smoke"; out ready "$ready"; out pack "$pack"; out ready_state run
+            exit 0
+          fi
+
+          if [ "$EVENT" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            out lanes '[]'; out ready "$ready"; out pack true; out ready_state run
             exit 0
           fi
 
           # Scheduled run: certify main only if it moved. `head_sha` of the last
           # successful scheduled run is the last commit this suite passed on.
-          if [ "${{ github.event_name }}" = "schedule" ]; then
+          if [ "$EVENT" = "schedule" ]; then
             last=$(gh api \
               "repos/${{ github.repository }}/actions/workflows/cert.yml/runs?event=schedule&status=success&per_page=1" \
               --jq '.workflow_runs[0].head_sha // ""')
             if [ "$last" = "${{ github.sha }}" ]; then
               echo "main unchanged since ${last} — nothing to certify"
-              echo "lanes=[]" >> "$GITHUB_OUTPUT"
+              out lanes '[]'; out ready '[]'; out pack false; out ready_state run
               exit 0
             fi
           fi
 
-          echo "lanes=$(jq -c '[.[] | select(.pr_only | not)]' .github/cert-lanes.json)" >> "$GITHUB_OUTPUT"
+          out lanes "$full"; out ready '[]'; out pack true; out ready_state run
 
   cert-kernel:
     needs: decide
@@ -187,11 +228,11 @@ jobs:
     # only to add throughput.
     # The hardening suite is also sliced: the unsplit suite exceeded the
     # job's hour limit while tests were still passing. The eight slices run
-    # in the full matrix. A pull request runs the `pr-smoke-*` lanes instead,
-    # which name one tamper per attack class plus the acceptance controls
-    # (most declines cost a cold rebuild of the wall, because the checker
-    # retries a failed cache-assisted build from clean). All tests and
-    # verifier limits stay unchanged.
+    # in the full matrix. Before merge and on main the `ready-*` lanes run
+    # instead (job `cert-ready` below), which name one tamper per attack class
+    # plus the acceptance controls (most declines cost a cold rebuild of the
+    # wall, because the checker retries a failed cache-assisted build from
+    # clean). All tests and verifier limits stay unchanged.
     name: Cert Kernel (${{ matrix.suite }}${{ matrix.lane && format(' {0}', matrix.lane) || '' }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -203,14 +244,15 @@ jobs:
       max-parallel: ${{ github.event_name == 'schedule' && 8 || 64 }}
       matrix:
         include: ${{ fromJSON(needs.decide.outputs.lanes) }}
-    env:
+    # `cert-ready` runs these same steps through the anchors.
+    env: &cert-env
       CARGO_BUILD_JOBS: '2'
       CARGO_INCREMENTAL: '0'
       RUSTFLAGS: -C debuginfo=0
       # Lean is installed on these runners, so a certificate test that finds
       # no `lake` fails instead of skipping.
       AVER_CERT_REQUIRE_LEAN: '1'
-    steps:
+    steps: &cert-steps
       - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
@@ -341,3 +383,101 @@ jobs:
         run: >-
           cargo test -p aver-lang --features wasm,wasip2 --test cert_verify_spec
           --test cert_certify_spec wasip2
+
+  cert-ready:
+    # The ready-to-merge certificate lanes: the steps of `cert-kernel` over the
+    # `ready` lanes that `decide` picked. A job of their own, so that
+    # `Cert ready-to-merge` can tell their result from the per-push lanes'.
+    needs: decide
+    if: needs.decide.outputs.ready != '[]'
+    name: Cert Kernel (${{ matrix.suite }} ${{ matrix.lane }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.decide.outputs.ready) }}
+    env: *cert-env
+    steps: *cert-steps
+
+  pack:
+    # The Wasmtime deployment pack test builds two release Wasmtime hosts from
+    # a fresh cache, which is the cache-isolation contract it tests, so its
+    # fourteen to seventeen minutes cannot be cached away. It belongs to the
+    # ready-to-merge set, and a pull request runs it only when a changed path
+    # feeds the pack (tools/ci_pr_gate.py lists those paths).
+    name: WASM (pack)
+    needs: decide
+    if: needs.decide.outputs.pack == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      RUSTFLAGS: -C debuginfo=0
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm-pack
+
+      - name: Cache binaryen
+        id: cache-binaryen
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/binaryen
+          key: binaryen-${{ runner.os }}-version_129
+
+      - name: Install WASM tools
+        env:
+          BINARYEN_VERSION: version_129
+        run: |
+          if [ ! -x "$HOME/.local/binaryen/bin/wasm-opt" ]; then
+            curl -fsSL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 \
+              "https://github.com/WebAssembly/binaryen/releases/download/${BINARYEN_VERSION}/binaryen-${BINARYEN_VERSION}-x86_64-linux.tar.gz" -o binaryen.tar.gz
+            tar -xzf binaryen.tar.gz
+            mkdir -p "$HOME/.local"
+            rm -rf "$HOME/.local/binaryen"
+            mv "binaryen-${BINARYEN_VERSION}" "$HOME/.local/binaryen"
+          fi
+          echo "$HOME/.local/binaryen/bin" >> "$GITHUB_PATH"
+          test -x "$HOME/.local/binaryen/bin/wasm-opt"
+
+      - name: Prefetch provider-host feature graph
+        # The pack builds generated hosts with Cargo offline.
+        run: cargo fetch --locked
+
+      - name: Test Wasmtime deployment packs
+        timeout-minutes: 35
+        # This test builds real release hosts with standard and custom
+        # providers in a fresh cache, then checks deployment, artifact binding
+        # and cache isolation. Keep that coverage and its fresh-cache contract.
+        run: |
+          cargo build -p aver-cert --bin aver-cert
+          cargo test -p aver-lang --features wasm --test wasmtime_pack_spec
+
+  ready:
+    # One check under a fixed name for the whole ready-to-merge set, to be
+    # read by name before a merge. On a pull request without the
+    # `ready-to-merge` label it is skipped, so it reads as not run rather than
+    # as passed. It fails on a failed, cancelled or skipped lane it needed.
+    name: Cert ready-to-merge
+    needs: [decide, cert-ready, pack]
+    if: always() && needs.decide.outputs.ready_state != 'unlabelled'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every ready-to-merge lane
+        env:
+          DECIDE: ${{ needs.decide.result }}
+          READY_LANES: ${{ needs.decide.outputs.ready }}
+          READY: ${{ needs.cert-ready.result }}
+          PACK_WANTED: ${{ needs.decide.outputs.pack }}
+          PACK: ${{ needs.pack.result }}
+        run: |
+          echo "decide: $DECIDE, certificate lanes: $READY, pack: $PACK"
+          test "$DECIDE" = success
+          if [ "$READY_LANES" != "[]" ]; then test "$READY" = success; fi
+          if [ "$PACK_WANTED" = "true" ]; then test "$PACK" = success; fi

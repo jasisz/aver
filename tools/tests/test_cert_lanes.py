@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keep the certification hardening lanes exhaustive in full CI and named on PRs."""
+"""Keep the certification hardening lanes exhaustive in full CI and named before merge."""
 
 from __future__ import annotations
 
@@ -14,11 +14,17 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 def full_matrix(lanes: list[dict]) -> list[dict]:
     """The lanes of a scheduled, manual or release-candidate run."""
-    return [lane for lane in lanes if not lane.get("pr_only")]
+    return [lane for lane in lanes if not lane.get("ready")]
 
 
 def pull_request_matrix(lanes: list[dict]) -> list[dict]:
-    return [lane for lane in lanes if lane.get("smoke")]
+    """The lanes of every push to a pull request."""
+    return [lane for lane in lanes if lane.get("smoke") and not lane.get("ready")]
+
+
+def ready_matrix(lanes: list[dict]) -> list[dict]:
+    """The lanes of a `ready-to-merge` pull request and of every push to main."""
+    return [lane for lane in lanes if lane.get("ready")]
 
 
 class CertificationLaneTests(unittest.TestCase):
@@ -41,16 +47,18 @@ class CertificationLaneTests(unittest.TestCase):
             partitions.append(index)
         self.assertEqual(sorted(partitions), list(range(1, len(lanes) + 1)))
 
-    def test_pull_requests_run_named_hardening_cases_that_exist(self) -> None:
+    def test_ready_lanes_run_named_hardening_cases_that_exist(self) -> None:
         source = (REPO_ROOT / "tests/cert_hardening_spec.rs").read_text()
-        lanes = [
-            lane for lane in pull_request_matrix(self.lanes)
-            if lane["suite"] == "cert_hardening_spec"
-        ]
-        self.assertTrue(lanes, "pull requests must still run hardening cases")
+        self.assertFalse(
+            [lane for lane in pull_request_matrix(self.lanes) if lane["suite"] == "cert_hardening_spec"],
+            "hardening runs before merge, not on every push",
+        )
+        lanes = ready_matrix(self.lanes)
+        self.assertTrue(lanes, "a pull request must still run hardening cases before merge")
         named: list[str] = []
         for lane in lanes:
-            self.assertTrue(lane.get("pr_only"), "full hardening shards stay off PRs")
+            self.assertEqual(lane["suite"], "cert_hardening_spec")
+            self.assertNotEqual(lane["filter"], "all()", "full hardening shards stay in the full matrix")
             self.assertEqual(set(lane["features"].split(",")), {"wasm", "wasip2"})
             names = re.findall(r"test\(=([A-Za-z0-9_]+)\)", lane["filter"])
             self.assertTrue(names)
@@ -64,7 +72,7 @@ class CertificationLaneTests(unittest.TestCase):
     def test_extra_wasip2_tests_run_once_in_both_matrices(self) -> None:
         for label, selected in (
             ("full", full_matrix(self.lanes)),
-            ("pull request", pull_request_matrix(self.lanes)),
+            ("ready to merge", ready_matrix(self.lanes)),
         ):
             with self.subTest(matrix=label):
                 owners = [lane for lane in selected if lane.get("wasip2_tests")]
