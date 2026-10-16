@@ -396,9 +396,12 @@ jobs:
             local label="$1"; shift
             local started
             started=$(date +%s)
-            target/debug/aver-cert "$@"
-            echo "::notice::${label}: $(( $(date +%s) - started ))s"
+            local status=0
+            target/debug/aver-cert "$@" || status=$?
+            echo "::notice::${label}: exit ${status}, $(( $(date +%s) - started ))s"
+            [ "$status" -eq 0 ] || failed=1
           }
+          failed=0
           target/debug/aver compile tools/certkit/fixtures/certprobe2.av \
             --target wasm-gc --certify --examples -o /tmp/admission-certprobe2
           target/debug/aver compile projects/payment_ops/main.av \
@@ -412,5 +415,6 @@ jobs:
           done
           for package in $packages; do
             project="${package%%:*}"; out="/tmp/admission-${project}"; wasm="$out/${package#*:}"
-            run_mode "${project} verify --paranoid (every kernel)" verify --paranoid "$wasm" "$out/cert"
+            AVER_CERT_PHASE_TIMEOUT_SECS=900 run_mode "${project} verify --paranoid (every kernel)" verify --paranoid "$wasm" "$out/cert"
           done
+          exit "$failed"
