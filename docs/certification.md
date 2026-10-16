@@ -1,6 +1,6 @@
 # Artifact Behavioral Certificates
 
-An Aver artifact certificate is a Lean proof about one exact WebAssembly artifact. It states what selected exports of that artifact compute. Lean 4.34 checks it against the delivered bytes, so you do not have to trust the Aver compiler that produced the artifact or the certificate.
+An Aver artifact certificate is a Lean proof about one exact WebAssembly artifact. It states what selected exports of that artifact compute. Lean 4.35 checks it against the delivered bytes, so you do not have to trust the Aver compiler that produced the artifact or the certificate.
 
 The proof runs from meaning to bytes. For every certified function the certificate carries a plan: the function's optimized MIR body, printed as Lean data. The checker's Lean wall lowers the plan to wasm the same way the compiler's MIR emitter does, requires the result to equal the function's code entry in the artifact, and proves that the lowered code computes what the plan means. The bytes are never decoded back into meaning.
 
@@ -17,7 +17,7 @@ cargo install aver-lang --features wasm
 cargo install aver-cert
 ```
 
-The compiler needs the `wasm` feature for `--target wasm-gc --certify`; add `wasip2` for component output. Verification needs a standard Elan installation. `aver-cert` selects the pinned Lean 4.34 toolchain through Elan and installs it when necessary.
+The compiler needs the `wasm` feature for `--target wasm-gc --certify`; add `wasip2` for component output. Verification needs a standard Elan installation. `aver-cert` selects the pinned Lean 4.35 toolchain through Elan and installs it when necessary.
 
 Generate an artifact and its certificate package:
 
@@ -44,7 +44,7 @@ aver-cert explain out/app.component.wasm out/cert
 
 If `aver-cert` is next to `aver` or on `PATH`, `aver cert check|verify|explain ...` runs the same commands. `aver cert` is an exact subprocess shortcut: it forwards the arguments and standard streams to `aver-cert`, and the compiler binary links no verifier. `inspect` is an alias of `explain`.
 
-`verify` is the release check. It exits successfully only when at least one export is certified and every step passes, including the final `leanchecker --fresh` replay of the whole proof. It prints `CERTIFIED`.
+`verify` is the release check. It exits successfully only when at least one export is certified and every step passes, including the final `leanchecker --fresh` replay of the whole proof. It prints `CERTIFIED`. `verify --paranoid` replaces that replay with a check by every kernel the pinned Lean release ships (see [Trust and explicit limits](#trust-and-explicit-limits)); it takes several times as long as the single replay.
 
 `check` is a faster developer and CI preflight. It runs the same Rust gates, `lake build` and checker witness, but trusts the freshly built or cached `.olean` files and skips the final replay. It prints `CHECKED`, never `CERTIFIED`. Do not use it as a release or admission gate.
 
@@ -150,7 +150,7 @@ Two things stay outside the bridge. The model definition `<Module>.<fn>` is emit
 
 ## Trust and explicit limits
 
-A verdict trusts the small `aver-cert` Rust path, the one retained `wasmparser::Validator` check, the embedded Lean wall, the Lean 4.34 toolchain, SHA-256, and the named runtime contracts. It does not run the producer, the plan printer or any Rust reconstruction of the claim.
+A verdict trusts the small `aver-cert` Rust path, the one retained `wasmparser::Validator` check, the embedded Lean wall, the Lean 4.35 toolchain, SHA-256, and the named runtime contracts. It does not run the producer, the plan printer or any Rust reconstruction of the claim.
 
 The runtime contracts say what the Int, String and index helpers compute. The certificate pins each helper's body to a template, but it does not prove the contracts. The bignum sub-routines those helpers call are not pinned at all, and the theorem treats every helper as a pure function that changes nothing the caller can reach.
 
@@ -158,7 +158,7 @@ L3 "returns" is about the wall's interpreter, where fuel counts nested calls. A 
 
 After the build, a checker-authored audit program loads the built proof. It is compiled with no certificate module in scope. It refuses a package that extends the parser, declares an instance outside a small admitted set, or gives a bridge an encoder that does not list a whole record or sum. It also collects the axioms of the accepted root and of every pin.
 
-`leanchecker --fresh` replays the proof in a fresh environment, but it ships with the same Lean toolchain. The scheme does not yet have a second, independently written kernel.
+`leanchecker --fresh` replays the proof in a fresh environment, but it ships with the same Lean toolchain. With `--paranoid`, the verifier instead exports the witness and everything it imports once with `leanexport` and has every kernel the pinned Lean release ships check that export: Lean's own, Lean's built with a hardened allocator, lean4lean, nanoda, con-leche and con-ron. They are separate implementations; con-leche comes with a Lean proof that what it accepts is consistent, and con-ron with a proof that its Rust code does what con-leche does. Every kernel must accept. A kernel that is missing from the toolchain or cannot start fails the check; none is skipped. All of them still read the same export, so the exporter is trusted. On the current wall nanoda runs out of memory on one theorem, so `--paranoid`, and the release and nightly job that runs it, fails until nanoda is fixed.
 
 The canonical Elan installation is a local trust anchor. Every Lake, Lean and leanchecker subprocess otherwise starts with a cleared environment, the exact pinned toolchain, no implicit Lake caches and checker-owned temporary paths.
 

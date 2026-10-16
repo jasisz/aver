@@ -589,6 +589,28 @@ fn cert_tripwire_accepts_clean_certificate_end_to_end() {
     );
 }
 
+/// `--paranoid` changes only the final replay: a changed artifact byte is
+/// still declined, before any kernel is asked, and never certified.
+#[test]
+fn cert_tripwire_paranoid_declines_a_changed_artifact_byte() {
+    let Some(out_dir) = tripwire_baseline("certverify-paranoid-byte") else {
+        return;
+    };
+    let wasm = out_dir.join("certprobe2.wasm");
+    let mut bytes = std::fs::read(&wasm).unwrap();
+    let last = bytes.len() - 1;
+    bytes[last] ^= 0x01;
+    std::fs::write(&wasm, &bytes).unwrap();
+
+    let (ok, report) = aver_cert(&["verify", "--paranoid"], &wasm, &out_dir.join("cert"));
+    assert!(!ok, "a changed byte must fail closed:\n{report}");
+    assert!(report.contains("DECLINED"), "missing DECLINED:\n{report}");
+    assert!(
+        !report.contains("CERTIFIED"),
+        "certified a changed byte:\n{report}"
+    );
+}
+
 /// The real wasip2 producer emits a component-bound package whose embedded core
 /// carries exact standard Console, Disk, and Time imports. It closes through
 /// the same production verifier as a raw wasm-gc module. No test-side manifest,

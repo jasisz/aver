@@ -191,7 +191,7 @@ pub fn emit_builtin_call(
         StringContains => format!("{}.containsSubstr {}", p(&a[0]), p(&a[1])),
         StringStartsWith => format!("{}.startsWith {}", p(&a[0]), p(&a[1])),
         StringEndsWith => format!("{}.endsWith {}", p(&a[0]), p(&a[1])),
-        StringTrim => format!("{}.trim", p(&a[0])),
+        StringTrim => format!("{}.trimAscii.copy", p(&a[0])),
         StringSplit => format!("AverString.split {} {}", p(&a[0]), p(&a[1])),
         StringJoin => format!("String.intercalate {} {}", p(&a[1]), p(&a[0])),
         StringReplace => format!("{}.replace {} {}", p(&a[0]), p(&a[1]), p(&a[2])),

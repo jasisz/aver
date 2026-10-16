@@ -18,7 +18,7 @@ cargo install aver-cert
 The first command installs the certificate producer; omit it if you only need
 to verify an existing package.
 
-Verification uses the checker-pinned `leanprover/lean4:v4.34.0` toolchain and
+Verification uses the checker-pinned `leanprover/lean4:v4.35.0` toolchain and
 requires a standard Elan installation. The verifier resolves
 `$ELAN_HOME/bin/elan`, or the platform's default Elan home when `ELAN_HOME` is
 unset (`$HOME/.elan` on Unix, `%USERPROFILE%\.elan` on Windows). It invokes that
@@ -43,6 +43,11 @@ the same Rust gates, `lake build`, and fresh checker-witness elaboration, but
 trusts the freshly built or explicitly cached `.olean` closure and skips
 `leanchecker --fresh`. Its green output is `CHECKED`, never `CERTIFIED`, and it
 must not gate a release or admission.
+
+`verify --paranoid` checks the proof with every kernel the pinned Lean release
+ships (Lean, Lean with a hardened allocator, lean4lean, nanoda, con-leche and
+con-ron) instead of `leanchecker --fresh` alone. Every kernel must accept; a
+kernel missing from the toolchain is a failure, not a skip.
 
 `explain` performs the same trusted check as `verify` before printing the
 accepted semantic faces, policies, contracts, and declined exports. `inspect`

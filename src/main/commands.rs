@@ -8097,6 +8097,9 @@ pub(super) fn cmd_proof(
     gate: Option<&str>,
     write_baseline: Option<&str>,
     compare_manifest: Option<&str>,
+    // `--paranoid`: after a clean build, every kernel the pinned Lean release
+    // ships must accept the proof. Off by default; costs nothing when off.
+    paranoid: bool,
 ) {
     if waterfall.waterfall.is_some() && !matches!(verify_mode, super::cli::ProofVerifyMode::Auto) {
         eprintln!("--waterfall requires --verify-mode auto");
@@ -8370,6 +8373,7 @@ pub(super) fn cmd_proof(
             explain
                 .then(|| proof_explain::Catalog::new(&ctx, file, &module_root))
                 .as_ref(),
+            paranoid,
         );
     }
 }
@@ -8679,6 +8683,7 @@ fn run_proof_check(
     source_file: &str,
     source_module_root: &str,
     proof_sources: Option<&proof_explain::Catalog>,
+    paranoid: bool,
 ) {
     use std::process::Command;
 
@@ -8865,12 +8870,24 @@ fn run_proof_check(
             .red()
         );
     }
+    // `--paranoid`: every kernel the pinned Lean release ships must accept the
+    // built project. Only a clean build is exported; a failed one already
+    // fails the check.
+    let paranoid_rejection: Option<String> = if paranoid && output.status.success() {
+        run_paranoid_kernels(output_dir, check_json).err()
+    } else {
+        None
+    };
+    if let Some(why) = &paranoid_rejection {
+        eprintln!("{}", format!("--paranoid: {why}").red());
+    }
     let passed = output.status.success()
         && isolated_errors.is_ok()
         && sorries <= sorry_budget_v
         && model_panic_hits == 0
         && declined_within_budget
-        && steps.rejected.is_empty();
+        && steps.rejected.is_empty()
+        && paranoid_rejection.is_none();
     if !declined_within_budget {
         // Headline only: the per-claim list already went to stdout above (and
         // under `--check-json` it travels in `declined_claims`), so repeating
@@ -9337,6 +9354,16 @@ fn run_proof_check(
         // `true` means the check FAILED with the compiler-model bug above
         // regardless of budgets.
         obj.insert("model_panicked".into(), (model_panic_hits > 0).into());
+        // Present only under `--paranoid`: `null` when every kernel accepted,
+        // otherwise why one did not.
+        if paranoid {
+            obj.insert(
+                "paranoid_rejection".into(),
+                paranoid_rejection
+                    .clone()
+                    .map_or(serde_json::Value::Null, Into::into),
+            );
+        }
         // ADDITIVE path pointer: the per-law table lives in its own file
         // (the gate's diff target), NOT inline in this summary line, so
         // existing substring consumers of check-json are untouched.
@@ -11645,6 +11672,99 @@ fn lean_lakefile_roots(dir: &str) -> Vec<String> {
     Vec::new()
 }
 
+/// `aver proof --paranoid`: export every lakefile root of the built proof
+/// project once with `leanexport`, then run every kernel the pinned Lean
+/// release ships over that export (the list in `aver_cert::kernels`). Each
+/// kernel's exit status is its verdict. A failed export, a kernel that is
+/// missing or cannot start, and a kernel that rejects are all failures; no
+/// kernel is skipped. Axioms are not judged here: the law audit already
+/// records them per law.
+fn run_paranoid_kernels(dir: &str, quiet: bool) -> Result<(), String> {
+    use super::paranoid_kernels::{EXPORTER, PARANOID_KERNELS, nanoda_config};
+    use std::process::Command;
+    let roots = lean_lakefile_roots(dir);
+    if roots.is_empty() {
+        return Err("the proof project's lakefile names no roots to export".to_string());
+    }
+    let started = std::time::Instant::now();
+    let exported = Command::new("lake")
+        .arg("env")
+        .arg(EXPORTER)
+        .args(&roots)
+        .current_dir(dir)
+        .output()
+        .map_err(|error| format!("could not start `lake env {EXPORTER}`: {error}"))?;
+    if !exported.status.success() {
+        return Err(format!(
+            "`{EXPORTER}` did not export the proof project:\n{}",
+            String::from_utf8_lossy(&exported.stderr).trim_end()
+        ));
+    }
+    let base = std::fs::canonicalize(dir)
+        .map_err(|error| format!("cannot resolve the proof project directory: {error}"))?;
+    let export_path = base.join("paranoid-export.ndjson");
+    let config_path = base.join("paranoid-nanoda.json");
+    let export_text = export_path.to_string_lossy().into_owned();
+    let config_text = config_path.to_string_lossy().into_owned();
+    std::fs::write(&export_path, &exported.stdout)
+        .map_err(|error| format!("cannot write the export: {error}"))?;
+    drop(exported);
+    std::fs::write(&config_path, nanoda_config(&export_text))
+        .map_err(|error| format!("cannot write the nanoda configuration: {error}"))?;
+    if !quiet {
+        println!(
+            "{}",
+            format!(
+                "--paranoid: exported the proof in {:.1}s",
+                started.elapsed().as_secs_f64()
+            )
+            .blue()
+        );
+    }
+    let mut verdict = Ok(());
+    for kernel in PARANOID_KERNELS {
+        let started = std::time::Instant::now();
+        let ran = Command::new("lake")
+            .arg("env")
+            .arg(kernel.binary)
+            .args(kernel.arguments(&export_text, &config_text))
+            .current_dir(dir)
+            .output();
+        let failure = match ran {
+            Err(error) => Some(format!("could not start: {error}")),
+            Ok(out) if !out.status.success() => Some(format!(
+                "exited with {}:\n{}{}",
+                out.status,
+                String::from_utf8_lossy(&out.stdout).trim_end(),
+                String::from_utf8_lossy(&out.stderr).trim_end()
+            )),
+            Ok(_) => None,
+        };
+        if let Some(why) = failure {
+            verdict = Err(format!(
+                "the {} kernel (`{}`) did not accept the proof; a missing kernel binary \
+                 is a failure, not a skip: {why}",
+                kernel.name, kernel.binary
+            ));
+            break;
+        }
+        if !quiet {
+            println!(
+                "{}",
+                format!(
+                    "--paranoid: {} kernel accepts ({:.1}s)",
+                    kernel.name,
+                    started.elapsed().as_secs_f64()
+                )
+                .blue()
+            );
+        }
+    }
+    let _ = std::fs::remove_file(&export_path);
+    let _ = std::fs::remove_file(&config_path);
+    verdict
+}
+
 /// Proof theorems of a built export whose proof failed to elaborate.
 ///
 /// The export puts each proof theorem behind `#guard_msgs (drop error, …)`
@@ -12005,7 +12125,7 @@ fn setup_mathlib_for_project(output_dir: &str) {
                 "{}",
                 "--allow-mathlib: set AVER_MATHLIB_CACHE to a lake project that has Mathlib \
                  built (a dir with .lake/packages/mathlib and lake-manifest.json, toolchain \
-                 leanprover/lean4:v4.34.0) — the break-glass tier reuses its prebuilt oleans \
+                 leanprover/lean4:v4.35.0) — the break-glass tier reuses its prebuilt oleans \
                  instead of re-fetching Mathlib per check."
                     .red()
             );

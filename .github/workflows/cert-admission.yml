@@ -1,0 +1,93 @@
+name: Cert Admission
+
+# The admission check a release relies on: real certificates checked by every
+# kernel the pinned Lean release ships (`aver-cert verify --paranoid`). It is
+# several times slower than the single-kernel replay, so it runs on release
+# branches, release tags and nightly, not on pull requests. Every kernel is
+# required; none is skipped.
+
+on:
+  push:
+    branches: ['release/**']
+    tags: ['v*']
+  schedule:
+    # 03:00 UTC daily against the tip of main, same as the other nightlies.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cert-admission:
+    name: Cert Admission (paranoid)
+    # Scheduled runs belong to this repository; a fork with Actions enabled
+    # would otherwise run our cron on its owner's account.
+    if: github.event_name != 'schedule' || github.repository == 'jasisz/aver'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      RUSTFLAGS: -C debuginfo=0
+      AVER_CERT_PHASE_TIMEOUT_SECS: '3600'
+      AVER_CERT_TIMINGS: '1'
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache Lean toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.elan
+          key: elan-${{ runner.os }}-${{ hashFiles('aver-cert/assets/wall/current/lean-toolchain') }}
+
+      - name: Install Lean (via elan)
+        run: |
+          if [ ! -x "$HOME/.elan/bin/elan" ]; then
+            curl -sSfL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30             https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh             | sh -s -- -y --default-toolchain stable
+          fi
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Verify pinned `lake` reachable
+        run: |
+          toolchain="$(tr -d '\r\n' < aver-cert/assets/wall/current/lean-toolchain)"
+          for attempt in 1 2 3 4 5 6; do
+            if elan run --install "$toolchain" lake --version; then exit 0; fi
+            echo "::warning::pinned lake/toolchain fetch failed (attempt ${attempt}/6); retrying in 15s"
+            sleep 15
+          done
+          echo "::error::pinned lake unreachable after 6 attempts (toolchain download)"
+          exit 1
+
+      - name: Build the compiler and the verifier
+        run: |
+          cargo build --features wasm --bin aver
+          cargo build -p aver-cert --bin aver-cert
+
+      - name: Certify, then verify with every kernel
+        # No build cache: each run builds from the staged sources.
+        run: |
+          set -euo pipefail
+          failed=0
+          target/debug/aver compile tools/certkit/fixtures/certprobe2.av \
+            --target wasm-gc --certify --examples -o /tmp/admission-certprobe2
+          target/debug/aver compile projects/payment_ops/main.av \
+            --module-root projects/payment_ops --target wasm-gc --certify --examples \
+            -o /tmp/admission-payment_ops
+          for package in certprobe2:certprobe2.wasm payment_ops:main.wasm; do
+            project="${package%%:*}"; out="/tmp/admission-${project}"; wasm="$out/${package#*:}"
+            started=$(date +%s)
+            status=0
+            AVER_CERT_PHASE_TIMEOUT_SECS=900 target/debug/aver-cert verify --paranoid "$wasm" "$out/cert" || status=$?
+            echo "::notice::${project} verify --paranoid: exit ${status}, $(( $(date +%s) - started ))s"
+            [ "$status" -eq 0 ] || failed=1
+          done
+          exit "$failed"

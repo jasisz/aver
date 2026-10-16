@@ -1789,7 +1789,7 @@ lean_lib «AverProof» where
 }
 
 pub(super) fn generate_toolchain() -> String {
-    "leanprover/lean4:v4.34.0\n".to_string()
+    "leanprover/lean4:v4.35.0\n".to_string()
 }
 
 /// The checker-owned wall module a certificate model imports for the prelude

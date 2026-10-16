@@ -121,8 +121,30 @@ pub enum Explanation {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ReplayMode {
+    /// `leanchecker --fresh` over the witness closure.
     Fresh,
+    /// Every kernel of [`crate::kernels::PARANOID_KERNELS`] over one export of
+    /// the witness closure. Replaces `Fresh`; Lean's own kernel is one of them.
+    Paranoid,
     TrustBuiltOleans,
+}
+
+/// Which kernels give the final verdict of [`verify_with`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Kernels {
+    /// Lean's own kernel, `leanchecker --fresh`.
+    Lean,
+    /// Every kernel the pinned Lean release ships (`--paranoid`).
+    Paranoid,
+}
+
+impl Kernels {
+    fn replay_mode(self) -> ReplayMode {
+        match self {
+            Self::Lean => ReplayMode::Fresh,
+            Self::Paranoid => ReplayMode::Paranoid,
+        }
+    }
 }
 
 struct CertifiedExport {
@@ -315,7 +337,12 @@ struct Candidates {
 }
 
 pub fn verify(artifact: &Path, cert_dir: &Path) -> Result<Verdict, String> {
-    let report = trusted_check(artifact, cert_dir, ReplayMode::Fresh)?;
+    verify_with(artifact, cert_dir, Kernels::Lean)
+}
+
+/// [`verify`] with a choice of the kernels that replay the witness closure.
+pub fn verify_with(artifact: &Path, cert_dir: &Path, kernels: Kernels) -> Result<Verdict, String> {
+    let report = trusted_check(artifact, cert_dir, kernels.replay_mode())?;
     let summary = summarize_report(artifact, report, "certified");
     if summary.count == 0 {
         Ok(Verdict::NoExports(summary.text))
@@ -516,8 +543,77 @@ fn replay_args_for(mode: ReplayMode, override_binary: Option<&str>) -> Option<Ve
             ],
             _ => FRESH_REPLAY_ARGS.iter().map(|a| (*a).to_string()).collect(),
         }),
-        ReplayMode::TrustBuiltOleans => None,
+        ReplayMode::Paranoid | ReplayMode::TrustBuiltOleans => None,
     }
+}
+
+/// Name component the witness closure is known to define: every pin lives
+/// under it. An export without it exported nothing worth checking.
+const WITNESS_NAMESPACE: &str = "AverCertChecker";
+/// The export every paranoid kernel reads, and nanoda's configuration.
+const PARANOID_EXPORT_FILE: &str = "witness-closure.ndjson";
+const NANODA_CONFIG_FILE: &str = "nanoda.json";
+
+/// The paranoid final replay: one `leanexport` of the witness module and its
+/// whole import closure (the same constants `leanchecker --fresh` replays),
+/// then every kernel the pinned release ships over it, each judged by its own
+/// exit status. Fails closed on a failed or empty export, and on any kernel
+/// that is missing, cannot start, or rejects.
+fn paranoid_replay(
+    lean: &LeanRunner,
+    build_dir: &Path,
+    kernels: &[crate::kernels::Kernel],
+) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    let exported = lean
+        .run_lake(
+            build_dir,
+            "paranoid export",
+            &["env", crate::kernels::EXPORTER, WITNESS_MODULE],
+        )
+        .map_err(|error| error.to_string())?;
+    report_step_timing("paranoid export", started.elapsed(), &[]);
+    if !exported.status.success() {
+        return Err(format!(
+            "certificate failed paranoid kernel replay: `{}` did not export the witness closure:\n{}",
+            crate::kernels::EXPORTER,
+            tail(&String::from_utf8_lossy(&exported.stderr), 30)
+        ));
+    }
+    if !crate::kernels::export_mentions(&exported.stdout, WITNESS_NAMESPACE) {
+        return Err(
+            "certificate failed paranoid kernel replay: the export of the witness closure \
+             does not contain the witness"
+                .to_string(),
+        );
+    }
+    let export_path = build_dir.join(PARANOID_EXPORT_FILE);
+    let config_path = build_dir.join(NANODA_CONFIG_FILE);
+    let export_text = export_path.to_string_lossy().into_owned();
+    let config_text = config_path.to_string_lossy().into_owned();
+    std::fs::write(&export_path, &exported.stdout)
+        .map_err(|error| format!("cannot write the paranoid export: {error}"))?;
+    drop(exported);
+    std::fs::write(&config_path, crate::kernels::nanoda_config(&export_text))
+        .map_err(|error| format!("cannot write the nanoda configuration: {error}"))?;
+    for kernel in kernels {
+        let phase = format!("{} kernel", kernel.name);
+        let mut arguments = vec!["env".to_string(), kernel.binary.to_string()];
+        arguments.extend(kernel.arguments(&export_text, &config_text));
+        let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
+        let replayed = run_lake(lean, build_dir, &phase, &arguments)?;
+        if !replayed.status.success() {
+            return Err(format!(
+                "certificate failed paranoid kernel replay: the {} kernel (`{}`) did not accept \
+                 the witness closure; a missing kernel binary is a failure, not a skip:\n{}",
+                kernel.name,
+                kernel.binary,
+                tail(&replayed.combined, 30)
+            ));
+        }
+    }
+    let _ = std::fs::remove_file(&export_path);
+    Ok(())
 }
 
 fn trusted_check(
@@ -749,7 +845,9 @@ fn trusted_check(
     let laws = parse_law_audits(&audited.combined, &candidates.laws)?;
     let bridged_laws = parse_bridged_law_audits(&audited.combined, &candidates.laws)?;
     let source_bridges = parse_bridge_audits(&audited.combined, &candidates.source_bridges)?;
-    if let Some(replay_args) = kernel_replay_args(replay_mode) {
+    if replay_mode == ReplayMode::Paranoid {
+        paranoid_replay(&lean, &build.path, &crate::kernels::PARANOID_KERNELS)?;
+    } else if let Some(replay_args) = kernel_replay_args(replay_mode) {
         let replay_args: Vec<&str> = replay_args.iter().map(String::as_str).collect();
         let replayed = run_lake(&lean, &build.path, "final kernel replay", &replay_args)?;
         if !replayed.status.success() {
@@ -4914,5 +5012,69 @@ mod tests {
         let audit = checker_audit(&candidates, &["Laws".to_string()]);
         assert!(!audit.contains("Evil.Domain.plus"), "{audit}");
         assert!(!audit.contains("Evil.Inner.Domain.plus"), "{audit}");
+    }
+
+    /// The paranoid replay fails closed before any real kernel is asked: an
+    /// export without the witness is refused, and a kernel binary the
+    /// toolchain does not ship is a failure, never a skip. One tiny module
+    /// over `Init`, so it needs the pinned toolchain but no wall build.
+    #[test]
+    fn paranoid_replay_refuses_an_empty_export_and_a_missing_kernel() {
+        let toolchain = wall::LEAN_TOOLCHAIN.trim();
+        let available = std::process::Command::new("elan")
+            .args(["run", "--install", toolchain, "lake", "--version"])
+            .output();
+        if !matches!(available, Ok(output) if output.status.success()) {
+            assert!(
+                std::env::var_os("AVER_CERT_REQUIRE_PINNED_LEAN").is_none(),
+                "pinned Elan toolchain is required for this fail-closed gate"
+            );
+            eprintln!("skipping paranoid replay test: pinned Elan toolchain unavailable");
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!(
+            "aver-cert-paranoid-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("lean-toolchain"), wall::LEAN_TOOLCHAIN).unwrap();
+        std::fs::write(
+            dir.join("lakefile.lean"),
+            format!(
+                "import Lake\nopen Lake DSL\npackage «paranoidprobe» where\n\
+                 @[default_target]\nlean_lib «Probe» where\n  roots := #[`{WITNESS_MODULE}]\n"
+            ),
+        )
+        .unwrap();
+        let runner = LeanRunner::new(wall::LEAN_TOOLCHAIN).unwrap();
+        let build = |source: &str| {
+            std::fs::write(dir.join(format!("{WITNESS_MODULE}.lean")), source).unwrap();
+            let built = runner.run_lake(&dir, "probe build", &["build"]).unwrap();
+            assert!(
+                built.status.success(),
+                "probe build failed:\n{}{}",
+                String::from_utf8_lossy(&built.stdout),
+                String::from_utf8_lossy(&built.stderr)
+            );
+        };
+        let missing = crate::kernels::Kernel {
+            name: "absent",
+            binary: "definitely-missing-kernel",
+            args: &[],
+            input: crate::kernels::KernelInput::ExportPath,
+        };
+
+        build("def Elsewhere.marker : Nat := 1\n");
+        let error = paranoid_replay(&runner, &dir, &[missing]).unwrap_err();
+        assert!(error.contains("does not contain the witness"), "{error}");
+
+        build(&format!("def {WITNESS_NAMESPACE}.marker : Nat := 1\n"));
+        let error = paranoid_replay(&runner, &dir, &[missing]).unwrap_err();
+        assert!(error.contains("`definitely-missing-kernel`"), "{error}");
+        assert!(error.contains("not a skip"), "{error}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

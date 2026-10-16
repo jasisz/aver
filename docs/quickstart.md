@@ -15,7 +15,7 @@ Apple Silicon warning: the image is currently `linux/amd64` only. Docker Desktop
 The image pins:
 
 - Rust `1.95.0`
-- Lean toolchain `leanprover/lean4:v4.34.0`
+- Lean toolchain `leanprover/lean4:v4.35.0`
 
 The Rust build is a debug build, which keeps the local quickstart's time in check. Release LTO is deliberately left out of this Docker path.
 
