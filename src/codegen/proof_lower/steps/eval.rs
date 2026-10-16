@@ -26,13 +26,17 @@ enum Step {
 }
 
 /// How deep evaluations may nest before the producer refuses: each level
-/// costs several large frames of the compiler's own stack, and a test
-/// thread has 2 MiB.
+/// costs several large frames of the compiler's own stack, so the producer
+/// runs on the stack the proof code runs on ([`crate::proof_stack`]). A
+/// wasm build has no thread to start and runs on the caller's stack.
+#[cfg(not(target_family = "wasm"))]
+const MAX_NESTING: usize = 96;
+#[cfg(target_family = "wasm")]
 const MAX_NESTING: usize = 24;
 
 /// Rounds of [`Env::meet_by_rewriting`], one rewrite of each side per
 /// round.
-const MAX_REWRITE_ROUNDS: usize = 64;
+const MAX_REWRITE_ROUNDS: usize = 256;
 
 /// Most earlier laws of the automatic pass that one stopped term is
 /// rewritten with candidates of, in file order.

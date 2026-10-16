@@ -1643,7 +1643,16 @@ fn first_tries(_inputs: &ProofLowerInputs, ir: &ProofIR) -> Vec<Option<FirstTry>
     ir.law_theorems.iter().map(|_| None).collect()
 }
 
+/// Prove every law by steps. The walk runs on the stack the proof code
+/// runs on ([`crate::proof_stack`]), as the first tries do, so how deep an
+/// evaluation may nest does not depend on the caller's thread.
 pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
+    if let Err(why) = crate::proof_stack::run("the proof steps", || walk_laws(inputs, ir)) {
+        panic!("{why}");
+    }
+}
+
+fn walk_laws(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
     let debug = std::env::var_os("AVER_STEPS_DEBUG").is_some();
     let mut plans = by_plan::Plans::default();
     // The plans of the modules `by` lines name, found when a law first
