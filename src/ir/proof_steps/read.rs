@@ -654,14 +654,14 @@ impl Reader {
                 if_true: Box::new(self.proof(t)?),
                 if_false: Box::new(self.proof(f)?),
             },
-            ("split", [Sx::Atom(f), xs, on, Sx::Atom(h), cs @ ..]) => {
-                let fn_id = self.fn_id(f)?;
+            ("split", [on, Sx::Atom(h), ks, cs @ ..]) => {
                 let on = self.term(on)?;
+                let lits = self.term_list(ks)?;
                 let mut cases = Vec::new();
                 for (i, c) in cs.iter().enumerate() {
                     match self.tagged(c)? {
                         ("case", [Sx::Atom(ctor), bs, p]) => {
-                            let ctor = self.split_ctor(ctor, f, i)?;
+                            let ctor = self.split_ctor(ctor, &lits, i)?;
                             let binders = self.names(bs)?;
                             // A list's cell parts have the list's types,
                             // which the binders' later reads need.
@@ -682,8 +682,6 @@ impl Reader {
                     }
                 }
                 Proof::Split {
-                    fn_id,
-                    args: self.term_list(xs)?,
                     on,
                     hyp: h.clone(),
                     cases,
@@ -817,27 +815,17 @@ impl Reader {
         })
     }
 
-    /// The constructor of split case `i` of a split over `f`'s match:
-    /// `nil`, `cons`, `else`, a constructor, or `lit`, whose literal is
-    /// read off arm `i + 1` of `f`.
-    fn split_ctor(&self, ctor: &str, f: &str, i: usize) -> Result<SplitCtor, String> {
+    /// The constructor of split case `i`: `nil`, `cons`, `else`, a
+    /// constructor, or `lit`, whose literal is literal `i` of the split.
+    fn split_ctor(&self, ctor: &str, lits: &[Term], i: usize) -> Result<SplitCtor, String> {
         Ok(match ctor {
             "nil" => SplitCtor::Nil,
             "cons" => SplitCtor::Cons,
             "else" => SplitCtor::Other,
-            "lit" => {
-                let body = self
-                    .def_bodies
-                    .get(f)
-                    .ok_or_else(|| format!("the goal has no definition {f}"))?;
-                match &body.node {
-                    ResolvedExpr::Match { arms, .. } => match arms.get(i).map(|a| &a.pattern) {
-                        Some(ResolvedPattern::Literal(l)) => SplitCtor::Lit(l.clone()),
-                        _ => return Err(format!("arm {} of {f} is not a literal", i + 1)),
-                    },
-                    _ => return Err(format!("{f} is not a match")),
-                }
-            }
+            "lit" => match lits.get(i).map(|k| &k.node) {
+                Some(ResolvedExpr::Literal(l)) => SplitCtor::Lit(l.clone()),
+                _ => return Err(format!("split case {} is not a literal", i + 1)),
+            },
             c => SplitCtor::Ctor(self.ctor(c)?),
         })
     }

@@ -22,8 +22,7 @@ type Fields = Vec<(String, Option<Type>)>;
 /// that call, and each constructor with the names its fields take in the
 /// arms (or `x`) and their types.
 pub(crate) struct Stuck {
-    fn_id: FnId,
-    args: Vec<Term>,
+    fn_id: Option<FnId>,
     on: Term,
     ctors: Vec<(SplitCtor, Fields)>,
 }
@@ -280,11 +279,53 @@ impl Env<'_> {
             return None;
         }
         Some(Stuck {
-            fn_id: *id,
-            args: args.iter().map(canon).collect(),
+            fn_id: Some(*id),
             on,
             ctors,
         })
+    }
+
+    /// The innermost `match` in `t` that stops at its subject as it stands,
+    /// outside any arm (an argument's before the term, the subject's own
+    /// before the subject): a `match` left in the middle of a term once
+    /// the definitions around it opened. Split as [`Self::stuck_subject`]
+    /// splits a definition's `match`, from its arms.
+    pub(crate) fn stuck_match(&mut self, t: &Term) -> Option<Stuck> {
+        if let ResolvedExpr::Match { subject, arms } = &t.node {
+            if let Some(inner) = self.stuck_match(subject) {
+                return Some(inner);
+            }
+            let ctors = self.split_ctors(arms, subject.ty())?;
+            let on = canon(subject);
+            if on.ty().is_none()
+                && let Some(ty) = subject.ty()
+            {
+                on.set_ty(ty.clone());
+            }
+            let mut root = &on;
+            while let ResolvedExpr::Attr(o, _) = &root.node {
+                root = o;
+            }
+            let finite = matches!(&root.node, ResolvedExpr::Ident(n) if self.finite.contains(n));
+            if finite || mentions_any(&on, &self.split_binders) || self.hyp_for(&on).is_some() {
+                return None;
+            }
+            let fuel = self.fuel;
+            let ev = self.whnf(&on);
+            self.fuel = fuel;
+            let ev = ev.ok()?;
+            if !ev.chain.is_empty() || super::eval::select_arm(arms, &on, &self.hyps).is_some() {
+                return None;
+            }
+            return Some(Stuck {
+                fn_id: None,
+                on,
+                ctors,
+            });
+        }
+        term::children(t)
+            .into_iter()
+            .find_map(|c| self.stuck_match(c))
     }
 
     /// `lhs = rhs` in one case per constructor of `st.on`, each under the
@@ -440,10 +481,10 @@ impl Env<'_> {
                 ..case
             });
         }
-        self.mark_used(st.fn_id);
+        if let Some(id) = st.fn_id {
+            self.mark_used(id);
+        }
         Ok(Proof::Split {
-            fn_id: st.fn_id,
-            args: st.args,
             on: st.on,
             hyp,
             cases,

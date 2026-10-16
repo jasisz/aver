@@ -52,10 +52,9 @@ pub enum Proof {
         std::sync::Arc<Proof>,
     ),
     PSplit(
-        AverStr,
-        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
         crate::proof_kernel::aver_generated::kernel::term::Term,
         AverStr,
+        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
         aver_rt::AverList<SplitCase>,
     ),
     PHave(
@@ -264,13 +263,12 @@ impl Ord for Proof {
                 .then_with(|| a0.cmp(b0))
                 .then_with(|| a1.cmp(b1))
                 .then_with(|| a2.cmp(b2)),
-            (Proof::PSplit(a0, a1, a2, a3, a4), Proof::PSplit(b0, b1, b2, b3, b4)) => {
+            (Proof::PSplit(a0, a1, a2, a3), Proof::PSplit(b0, b1, b2, b3)) => {
                 std::cmp::Ordering::Equal
                     .then_with(|| a0.cmp(b0))
                     .then_with(|| a1.cmp(b1))
                     .then_with(|| a2.cmp(b2))
                     .then_with(|| a3.cmp(b3))
-                    .then_with(|| a4.cmp(b4))
             }
             (Proof::PSymm(a0), Proof::PSymm(b0)) => {
                 std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
@@ -361,14 +359,13 @@ impl aver_rt::AverDisplay for Proof {
                 ]
                 .join(", ")
             ),
-            Proof::PSplit(f0, f1, f2, f3, f4) => format!(
+            Proof::PSplit(f0, f1, f2, f3) => format!(
                 "PSplit({})",
                 vec![
                     f0.aver_display_inner(),
                     f1.aver_display_inner(),
                     f2.aver_display_inner(),
-                    f3.aver_display_inner(),
-                    f4.aver_display_inner()
+                    f3.aver_display_inner()
                 ]
                 .join(", ")
             ),

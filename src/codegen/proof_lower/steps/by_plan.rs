@@ -347,15 +347,7 @@ fn needed_defs(goal: &Script, proof: &Proof) -> Vec<Def> {
                 named(if_true, out);
                 named(if_false, out);
             }
-            Proof::Split {
-                fn_id,
-                args,
-                on,
-                cases,
-                ..
-            } => {
-                out.push(*fn_id);
-                terms.extend(args);
+            Proof::Split { on, cases, .. } => {
                 terms.push(on);
                 cases.iter().for_each(|c| named(&c.proof, out));
             }
