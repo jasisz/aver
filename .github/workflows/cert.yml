@@ -399,19 +399,18 @@ jobs:
             target/debug/aver-cert "$@"
             echo "::notice::${label}: $(( $(date +%s) - started ))s"
           }
-          for project in certprobe2 payment_ops; do
-            out="/tmp/admission-${project}"
-            case "$project" in
-              certprobe2)
-                target/debug/aver compile tools/certkit/fixtures/certprobe2.av \
-                  --target wasm-gc --certify --examples -o "$out"
-                wasm="$out/certprobe2.wasm" ;;
-              payment_ops)
-                target/debug/aver compile projects/payment_ops/main.av \
-                  --module-root projects/payment_ops --target wasm-gc --certify --examples -o "$out"
-                wasm="$out/main.wasm" ;;
-            esac
+          target/debug/aver compile tools/certkit/fixtures/certprobe2.av \
+            --target wasm-gc --certify --examples -o /tmp/admission-certprobe2
+          target/debug/aver compile projects/payment_ops/main.av \
+            --module-root projects/payment_ops --target wasm-gc --certify --examples \
+            -o /tmp/admission-payment_ops
+          packages="certprobe2:certprobe2.wasm payment_ops:main.wasm"
+          for package in $packages; do
+            project="${package%%:*}"; out="/tmp/admission-${project}"; wasm="$out/${package#*:}"
             run_mode "${project} check (trusted oleans, no replay)" check "$wasm" "$out/cert"
             run_mode "${project} verify (leanchecker --fresh)" verify "$wasm" "$out/cert"
+          done
+          for package in $packages; do
+            project="${package%%:*}"; out="/tmp/admission-${project}"; wasm="$out/${package#*:}"
             run_mode "${project} verify --paranoid (every kernel)" verify --paranoid "$wasm" "$out/cert"
           done
