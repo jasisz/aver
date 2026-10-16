@@ -272,15 +272,6 @@ jobs:
         with:
           components: clippy
 
-      - name: Optimise the build
-        if: matrix.lane == 'checks'
-        # The two ratchets of this lane run the proof kernel written in Aver
-        # and the certificate producer over the whole corpus; unoptimised, the
-        # step ratchet alone took nine minutes. Set as in the native test
-        # shards: `opt-level = 1` in this checkout's Cargo config, in CI only,
-        # before the cache step.
-        run: printf '\n[profile.dev]\nopt-level = 1\n' >> .cargo/config.toml
-
       - uses: Swatinem/rust-cache@v2
         with:
           # Each lane warms its own feature graph without racing the other
@@ -374,9 +365,11 @@ jobs:
         # (the `tactic` level needs Lean and is checked nightly in proof.yml).
         # A gain is recorded in the same commit with `python3
         # tools/steps_ratchet.py --update`. The binary is the one the step
-        # above built, at opt-level 1 in this lane: about three minutes, where
-        # the unoptimised binary took nine. The limit leaves room for the
-        # producer to grow.
+        # above built. It takes about nine minutes with the debug binary.
+        # Built at opt-level 1, as the native test shards are, it took three,
+        # but compiling this lane's unit tests, canaries and binary optimised
+        # cost more than that, so the lane stays unoptimised. The limit leaves
+        # room for the producer to grow.
         timeout-minutes: 35
         run: python3 tools/steps_ratchet.py --aver target/debug/aver
 
