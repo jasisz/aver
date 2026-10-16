@@ -159,6 +159,15 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Optimise the compiler under test
+        # Most of these tests run the `aver` binary, and the slowest ones run
+        # the proof kernel written in Aver inside it. Unoptimised, that took
+        # over twenty minutes for one suite. `opt-level = 1` for aver-lang only,
+        # and only in CI: Cargo reads no per-package profile from the
+        # environment, so the setting goes into this runner's Cargo home, and
+        # the developer `dev` profile in Cargo.toml stays as it is.
+        run: printf '[profile.dev.package.aver-lang]\nopt-level = 1\n' >> "${CARGO_HOME:-$HOME/.cargo}/config.toml"
+
       - name: Prefetch provider-host feature graph
         # Some integration tests build generated provider hosts with Cargo
         # offline, so every shard fetches the exact locked graph first.
@@ -292,6 +301,15 @@ jobs:
           test -x "$HOME/.local/binaryen/bin/wasm-merge"
           test -x "$HOME/.local/binaryen/bin/wasm-opt"
           test -x "$HOME/.local/binaryen/bin/wasm-metadce"
+
+      - name: Optimise the compiler under test
+        if: matrix.lane == 'checks'
+        # The two ratchets below run the proof kernel written in Aver and the
+        # certificate producer over the whole corpus with the binary this lane
+        # builds. Unoptimised, the step ratchet alone took nine minutes.
+        # `opt-level = 1` for aver-lang only, in this runner's Cargo home: the
+        # developer `dev` profile in Cargo.toml stays as it is.
+        run: printf '[profile.dev.package.aver-lang]\nopt-level = 1\n' >> "${CARGO_HOME:-$HOME/.cargo}/config.toml"
 
       - name: Prefetch provider-host feature graph
         # Pack and provider tests build generated hosts with Cargo offline.
