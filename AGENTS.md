@@ -325,6 +325,13 @@ To create a new pure namespace, follow the pattern in `src/types/char.rs` or `sr
 - This is especially AI-friendly: `verify` cases are declarative, reviewable, and reusable across sessions.
 - Limits (still real): `verify` alone does not replace profiling, latency analysis, or debugging nondeterministic external systems.
 
+## Merging a pull request
+
+- Every push to a pull request must finish CI within 20 minutes of wall time, queueing included.
+- Before merging, add the `ready-to-merge` label. It starts the ready-to-merge set (the `ready-*` hardening lanes and, when the change feeds it, the Wasmtime pack), and every later push runs the set again. Merge only when every check is green, including `Cert ready-to-merge`, checked by name. Without the label that check is skipped: skipped means not run, not passed.
+- A new test that takes over 60 seconds gets its weight in `tools/ci_test_schedule.json` in the same pull request.
+- New heavy CI work goes to the ready-to-merge set or the nightly runs, not to every push.
+
 ## Releases: `tools/release.py` is the only path
 
 Use the two-phase path (add `--dry-run` first for a sanity pass):

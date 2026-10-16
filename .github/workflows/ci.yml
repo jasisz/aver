@@ -205,56 +205,20 @@ jobs:
       - name: Test aver-rt
         run: cargo test -p aver-rt
 
-  wasm_plan:
-    # The `pack` lane builds two release Wasmtime hosts from a fresh cache,
-    # which is the cache-isolation contract it tests, so its fourteen minutes
-    # cannot be cached away. A pull request runs it only when it changes what
-    # a pack is built from (tools/ci_pr_gate.py lists those paths); every
-    # push to main, every release candidate, the nightly and manual runs
-    # always run it. An unreadable file list runs it.
-    name: WASM lanes for this event
-    runs-on: ubuntu-latest
-    if: github.event_name != 'schedule' || github.repository == 'jasisz/aver'
-    outputs:
-      lanes: ${{ steps.pick.outputs.lanes }}
-    steps:
-      - uses: actions/checkout@v5
-      - name: Pick lanes
-        id: pick
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -uo pipefail
-          lanes='["checks","wasm-gc","pack"]'
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            files=$(gh api --paginate \
-              "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files?per_page=100" \
-              --jq '.[] | .filename, (.previous_filename // empty)') || files=""
-            if [ "$(printf '%s\n' "$files" | grep -c .)" -ge 3000 ]; then files=""; fi
-            if [ "$(printf '%s\n' "$files" | python3 tools/ci_pr_gate.py pack)" = "false" ]; then
-              echo "no changed path feeds the Wasmtime pack; it runs on the push to main"
-              lanes='["checks","wasm-gc"]'
-            fi
-          fi
-          echo "lanes=$lanes" >> "$GITHUB_OUTPUT"
-
   wasm_lanes:
     name: WASM (${{ matrix.lane }})
     runs-on: ubuntu-latest
-    needs: [wasm_plan]
     # Scheduled runs belong to this repository. A fork with Actions enabled
     # otherwise runs our cron on its owner's account and mails them about any
     # failure. Every other trigger still works in a fork, so a contributor can
     # run this workflow on their own branch.
     if: github.event_name != 'schedule' || github.repository == 'jasisz/aver'
-    # Measured on main in run 34773432037: the serial job took 24m44s,
-    # including 13m14s in wasmtime_pack_spec alone. Keep that real deployment
-    # test on PRs, but let its cold release-host build run beside the checks,
-    # other wasm-gc tests and WASI component tests rather than ahead of them.
+    # The Wasmtime deployment pack test, 14 to 17 minutes of cold release-host
+    # builds, runs in cert.yml as part of the ready-to-merge set (job `pack`).
     strategy:
       fail-fast: false
       matrix:
-        lane: ${{ fromJSON(needs.wasm_plan.outputs.lanes) }}
+        lane: [checks, wasm-gc]
     timeout-minutes: 45
     env:
       # The wasm/wasip2 feature set pulls in wasmtime + component-model
@@ -513,16 +477,6 @@ jobs:
           do
             cargo test -p aver-lang --features wasm,wasip2 --test "$test"
           done
-
-      - name: Test Wasmtime deployment packs
-        if: matrix.lane == 'pack'
-        timeout-minutes: 35
-        # This test builds real release hosts with standard and custom
-        # providers in a fresh cache, then checks deployment, artifact binding
-        # and cache isolation. Keep that coverage and its fresh-cache contract.
-        run: |
-          cargo build -p aver-cert --bin aver-cert
-          cargo test -p aver-lang --features wasm --test wasmtime_pack_spec
 
   wasm:
     # Preserve the required "WASM" check and the release dependency. An
