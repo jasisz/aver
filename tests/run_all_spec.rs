@@ -26,7 +26,7 @@ mod lean_required;
 mod loopback_peer;
 
 use aver_cmd::{aver_bin, format_output, repo_root};
-use loopback_peer::{free_port, loopback_peer, silent_peer};
+use loopback_peer::{FIRST_PORT, PAST_LAST_PORT, free_port, loopback_peer, silent_peer};
 #[cfg(unix)]
 #[path = "support/sigint.rs"]
 mod sigint;
@@ -230,6 +230,34 @@ fn a_parked_request_is_asked_again_only_when_its_wake_has_fired() {
         "{}",
         format_output(&out)
     );
+}
+
+/// The ports the slice is run on are never ones the kernel can give an
+/// outgoing connection as its own local port. The peer dials before the
+/// slice has bound, so a port inside that range can be handed to one of the
+/// peer's own attempts; on Linux that attempt connects to itself, the slice
+/// cannot bind, and the peer waits forever for a body.
+#[test]
+fn the_slice_ports_stay_below_the_kernels_outgoing_ports() {
+    for _ in 0..20_000 {
+        let port = free_port();
+        assert!(
+            (FIRST_PORT..PAST_LAST_PORT).contains(&port),
+            "free_port handed out {port}, outside {FIRST_PORT}..{PAST_LAST_PORT}"
+        );
+    }
+    // Where the kernel says what its range is, the range above is below it.
+    if let Ok(range) = std::fs::read_to_string("/proc/sys/net/ipv4/ip_local_port_range") {
+        let first: u16 = range
+            .split_whitespace()
+            .next()
+            .and_then(|first| first.parse().ok())
+            .unwrap_or_else(|| panic!("unreadable ip_local_port_range: {range:?}"));
+        assert!(
+            PAST_LAST_PORT <= first,
+            "this kernel hands outgoing connections ports from {first}, inside {FIRST_PORT}..{PAST_LAST_PORT}"
+        );
+    }
 }
 
 /// A peer that says nothing runs out the deadline its read was given.

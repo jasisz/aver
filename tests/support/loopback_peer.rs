@@ -32,27 +32,43 @@ pub const BODY_LEN: usize = 7;
 /// shorter than the test's own patience.
 pub const ECHO_DELAY: Duration = Duration::from_millis(250);
 
-/// A loopback port nobody is listening on. The listener is bound only to be
-/// told which port the kernel picked, then dropped, so the slice can bind it
-/// itself: a `Tcp.Listener` the slice owns is the whole point of its
-/// `Sockets` module, and a fixed port would collide with a parallel run.
+/// The lowest port `free_port` hands out.
+pub const FIRST_PORT: u16 = 20_000;
+
+/// One past the highest port `free_port` hands out. Linux hands out the
+/// local ports of outgoing connections from 32768 up by default, and macOS
+/// and Windows from 49152 up, so every port below this one is outside the
+/// range a connect can be given as its own local port.
+pub const PAST_LAST_PORT: u16 = 32_768;
+
+/// A loopback port nobody is listening on. The slice binds it itself: a
+/// `Tcp.Listener` the slice owns is the whole point of its `Sockets` module,
+/// and a fixed port would collide with a parallel run.
 pub fn free_port() -> u16 {
     // Not a port the kernel just handed out: a port nobody has bound.
     //
-    // The old way bound an ephemeral listener, read its port and dropped it.
-    // The tests of one binary run in parallel, and the slice takes about a
-    // second to bind after it is spawned, so while it was still parsing, a
-    // sibling test's throwaway listener could come up on the very same port
-    // and accept this test's peer into its backlog; dropping it reset the
-    // peer, and the slice then bound the port and waited for a client that was
-    // already gone. No listener is bound here at all: ports are handed out
-    // from a counter seeded by the process id, in a range below the kernel's
-    // ephemeral ports, so a peer can only ever connect to the slice it belongs
-    // to, and the first connect attempts are refused until that slice binds.
+    // An earlier version bound an ephemeral listener, read its port and
+    // dropped it. The tests of one binary run in parallel, and the slice
+    // takes about a second to bind after it is spawned, so while it was still
+    // parsing, a sibling test's throwaway listener could come up on the very
+    // same port and accept this test's peer into its backlog; dropping it
+    // reset the peer, and the slice then bound the port and waited for a
+    // client that was already gone. No listener is bound here at all: ports
+    // are handed out from a counter seeded by the process id, so a peer can
+    // only ever connect to the slice it belongs to, and the first connect
+    // attempts are refused until that slice binds.
+    //
+    // The range has to stay below the ports the kernel gives outgoing
+    // connections. The peer starts connecting before the slice has bound,
+    // and each refused attempt is given a fresh local port. On Linux, an
+    // attempt that happens to be given the very port it is dialling connects
+    // to itself: the connect succeeds, the slice can no longer bind that
+    // port, and the peer then waits forever for a body nobody will send.
     static NEXT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
-    let base = 20_000 + (std::process::id() % 20_000) as u16;
+    let span = (PAST_LAST_PORT - FIRST_PORT) / 2;
+    let base = FIRST_PORT + (std::process::id() % u32::from(span)) as u16;
     let taken = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    base + (taken % 9_000)
+    base + (taken % span)
 }
 
 /// Connects to the slice's listener, which is bound inside the first turn —
@@ -61,20 +77,32 @@ pub fn free_port() -> u16 {
 /// compiles the program (including JIT on wasm). Allow that startup work to
 /// finish even when sibling tests compete for the CI runner's CPUs; this
 /// deadline does not govern the socket conversation once connected.
+///
+/// A connection whose two ends are the same address is the peer talking to
+/// itself, not to the slice (see `free_port`); it is dropped and the next
+/// attempt made, so the peer can never wait on its own silence.
 pub fn connect_when_bound(port: u16) -> TcpStream {
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
-        match TcpStream::connect(("127.0.0.1", port)) {
-            Ok(stream) => return stream,
-            Err(error) => {
-                assert!(
-                    Instant::now() < deadline,
-                    "the slice never bound 127.0.0.1:{port}: {error}"
-                );
-                thread::sleep(Duration::from_millis(10));
-            }
-        }
+        let error = match TcpStream::connect(("127.0.0.1", port)) {
+            Ok(stream) if !connected_to_itself(&stream) => return stream,
+            Ok(_) => "connected to itself".to_string(),
+            Err(error) => error.to_string(),
+        };
+        assert!(
+            Instant::now() < deadline,
+            "the slice never bound 127.0.0.1:{port}: {error}"
+        );
+        thread::sleep(Duration::from_millis(10));
     }
+}
+
+/// Whether both ends of this connection are the same address.
+pub fn connected_to_itself(stream: &TcpStream) -> bool {
+    matches!(
+        (stream.local_addr(), stream.peer_addr()),
+        (Ok(local), Ok(peer)) if local == peer
+    )
 }
 
 /// One peer that connects, takes whatever the slice writes it, and answers
