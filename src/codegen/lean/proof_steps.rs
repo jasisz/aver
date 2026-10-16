@@ -1323,8 +1323,15 @@ impl Renderer<'_> {
                 // The evidence is read off the subject: a comparison is a
                 // Prop in the model, so its Bool premise goes through
                 // `decide`.
+                // `have`, not `(fun h_arm => …) premise`: applied to its
+                // premise, the function's type is unified with the stated
+                // equation before a `match` on either side is elaborated,
+                // and Lean then takes the premise for that `match`.
                 let tactic = arm_tactic(pat, subject, "h_arm")?;
-                format!("(fun h_arm => by {tactic}) {}", self.proof(premise, hyps)?)
+                format!(
+                    "(have h_arm := {}; by {tactic})",
+                    self.proof(premise, hyps)?
+                )
             }
             // A `when` that is a bare comparison is stated `(a < b) = true`,
             // which Lean reads as an equation of Props; recover the Bool
@@ -2205,7 +2212,9 @@ fn arm_tactic(pat: &ResolvedPattern, subject: &Term, h: &str) -> Result<String, 
         }
         // A variable subject is replaced outright; otherwise rewrite it.
         // Either way the selected arm is then a definitional reduction.
-        _ if matches!(subject.node, ResolvedExpr::Ident(_)) => format!("subst {h}; rfl"),
+        // A pattern that only names the subject leaves `h : x = x`, which
+        // `subst` does not take.
+        _ if matches!(subject.node, ResolvedExpr::Ident(_)) => format!("(try subst {h}); rfl"),
         _ => format!("rw [{h}]; try rfl"),
     })
 }
