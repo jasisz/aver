@@ -5426,6 +5426,74 @@ fn lean_takes_an_arm_of_a_nested_match_on_a_comparison() {
     let _ = fs::remove_dir_all(out);
 }
 
+/// A step taking a `match` arm states its premise with `have`: applied to
+/// the premise, a function's type is unified with the equation before a
+/// `match` on either side is elaborated, and Lean took the premise for
+/// that `match`. A pattern that only names a variable subject leaves
+/// `h : x = x`, which `subst` does not take. The export needs no Lean.
+#[test]
+fn an_arm_step_states_its_premise_with_have() {
+    let out = scratch("arm-have");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &["proof", "arm_of_a_match.av", "-o", out.to_str().unwrap()],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let lean = fs::read_to_string(out.join("ArmOfAMatch.lean")).unwrap();
+    // The law is closed by the steps branch, not the tactics.
+    exact_line(&lean, "front_law_frontIsThePoint");
+    assert!(!lean.contains("fun h_arm"), "{lean}");
+    assert!(
+        lean.contains("(have h_arm := (show (n) = (n) from rfl); by (try subst h_arm); rfl)"),
+        "{lean}"
+    );
+    assert!(
+        lean.matches("(have h_arm := ").count() >= 3,
+        "an arm on a name, one on a call and one on a field: {lean}"
+    );
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_takes_an_arm_whose_body_is_a_match() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("arm-of-a-match");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "arm_of_a_match.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "0",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        summary["steps_rejected"],
+        serde_json::json!([]),
+        "{summary}"
+    );
+    assert_eq!(
+        summary["closed_by"]["front.frontIsThePoint"], "steps",
+        "{summary}"
+    );
+    let _ = fs::remove_dir_all(out);
+}
+
 const VECTOR_LAWS: [&str; 10] = [
     "cells.keepTheList",
     "cells.lengthOfTheList",
