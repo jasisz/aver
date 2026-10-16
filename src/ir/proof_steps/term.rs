@@ -159,6 +159,9 @@ fn retag(t: &Term, node: ResolvedExpr) -> Term {
 
 /// Canonical form: variables as `Ident`, tail calls as calls.
 pub fn canon(t: &Term) -> Term {
+    if canon_keeps(t) {
+        return t.clone();
+    }
     let node = match &t.node {
         ResolvedExpr::Resolved { name, .. } => ResolvedExpr::Ident(name.clone()),
         ResolvedExpr::TailCall { target, args } => ResolvedExpr::Call(
@@ -195,6 +198,39 @@ pub fn is_canon(t: &Term) -> bool {
         ResolvedExpr::RecordCreate { fields, .. } => fields.iter().all(|(_, v)| is_canon(v)),
         ResolvedExpr::RecordUpdate { base, updates, .. } => {
             is_canon(base) && updates.iter().all(|(_, v)| is_canon(v))
+        }
+    }
+}
+
+/// Whether [`canon`] gives `t` back exactly (also each match arm's slots,
+/// which rebuilding drops): canonical already, with no slots on an arm.
+fn canon_keeps(t: &Term) -> bool {
+    match &t.node {
+        ResolvedExpr::Match { subject, arms } => {
+            canon_keeps(subject)
+                && arms
+                    .iter()
+                    .all(|arm| arm.binding_slots.get().is_none() && canon_keeps(&arm.body))
+        }
+        ResolvedExpr::Resolved { .. } | ResolvedExpr::TailCall { .. } => false,
+        ResolvedExpr::Literal(_) | ResolvedExpr::Ident(_) => true,
+        ResolvedExpr::Attr(o, _) | ResolvedExpr::Neg(o) | ResolvedExpr::ErrorProp(o) => {
+            canon_keeps(o)
+        }
+        ResolvedExpr::Call(_, xs)
+        | ResolvedExpr::Ctor(_, xs)
+        | ResolvedExpr::List(xs)
+        | ResolvedExpr::Tuple(xs)
+        | ResolvedExpr::IndependentProduct(xs, _) => xs.iter().all(canon_keeps),
+        ResolvedExpr::BinOp(_, l, r) => canon_keeps(l) && canon_keeps(r),
+        ResolvedExpr::InterpolatedStr(parts) => parts.iter().all(|p| match p {
+            ResolvedStrPart::Literal(_) => true,
+            ResolvedStrPart::Parsed(e) => canon_keeps(e),
+        }),
+        ResolvedExpr::MapLiteral(kvs) => kvs.iter().all(|(k, v)| canon_keeps(k) && canon_keeps(v)),
+        ResolvedExpr::RecordCreate { fields, .. } => fields.iter().all(|(_, v)| canon_keeps(v)),
+        ResolvedExpr::RecordUpdate { base, updates, .. } => {
+            canon_keeps(base) && updates.iter().all(|(_, v)| canon_keeps(v))
         }
     }
 }

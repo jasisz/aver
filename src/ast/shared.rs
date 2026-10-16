@@ -66,7 +66,7 @@ impl<T: std::fmt::Debug> std::fmt::Debug for Shared<T> {
 
 impl<T: PartialEq> PartialEq for Shared<T> {
     fn eq(&self, other: &Self) -> bool {
-        *self.0 == *other.0
+        Arc::ptr_eq(&self.0, &other.0) || *self.0 == *other.0
     }
 }
 
