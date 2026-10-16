@@ -486,6 +486,18 @@ fn laws_over_nested_literal_and_list_patterns_build() {
     );
 }
 
+/// `given`, `requires` and `ensures` are the contract words of a Lean `def`
+/// and are not tokens, so the token-table probe in the Lean syntax module
+/// does not see them; Lean still refuses them as a `def` binder. A program
+/// that names a parameter or a binding after one must still build.
+#[test]
+fn parameters_named_after_lean_contract_words_build() {
+    assert_proof_builds(
+        "tests/fixtures/lean_contract_words.av",
+        "aver-proof-contract-words",
+    );
+}
+
 #[test]
 fn a_method_application_in_argument_position_is_emitted_atomically() {
     assert_proof_builds(

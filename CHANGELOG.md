@@ -49,6 +49,7 @@ A 0.30 `--gate` baseline with `bounded` laws has to be recorded again.
 - **`aver verify` no longer crashes** when a dependency fails its own check, and `aver proof` no longer overflows the stack on a deep proof.
 - **Induction along a function whose pattern has a `_` part** (`[_, ..t]`, `Link(_, rest)`) no longer fails with `pattern binds 2 names, 1 given`.
 - **Lean accepts more of what the steps prove**: inductions under a comparison `when`, `match` arguments of `Bool.and`, nested comparisons, products of givens, and laws again depend on fewer axioms.
+- **A parameter or binding named `given`, `requires` or `ensures` exports to Lean again**; Lean 4.35 refused the generated code.
 
 ## 0.30.0 "Turn" — 2026-10-03
 

@@ -1,0 +1,36 @@
+module LeanContractWords
+    intent =
+        "Parameters and bindings named `given`, `requires` and `ensures`, the contract words of a Lean `def`."
+        "Lean does not take them as a `def` binder, so the export must rename them."
+    exposes [onGivenPort, checked, settled]
+    depends []
+    effects []
+
+fn onGivenPort(host: String, given: String) -> String
+    ? "The host joined with the port it was given."
+    String.join([host, given], ":")
+
+verify onGivenPort
+    onGivenPort("localhost", "8333") => "localhost:8333"
+
+fn checked(requires: Int, ensures: Int) -> Int
+    ? "The sum of both arguments, through a local binding."
+    given = requires + ensures
+    given
+
+verify checked
+    checked(1, 2) => 3
+    checked(-4, 4) => 0
+
+verify checked law sumIsSymmetric
+    given a: Int = [-2, 0, 3]
+    given b: Int = [-1, 5]
+    checked(a, b) => checked(b, a)
+
+fn settled(given: Int) -> Int
+    ? "The argument, unchanged."
+    given
+
+verify settled law isTheArgument
+    given given: Int = [-1, 0, 1]
+    settled(given) => given
