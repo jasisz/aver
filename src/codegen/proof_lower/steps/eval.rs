@@ -3927,18 +3927,6 @@ impl Env<'_> {
         {
             return Ok(Ok(proof));
         }
-        // Last, a `match` left in the middle of a side, stopped at its
-        // subject: one case per constructor or literal its arms read.
-        if depth > 0 {
-            let found = [nl.cur().clone(), nr.cur().clone()]
-                .iter()
-                .find_map(|t| self.stuck_match(t));
-            if let Some(st) = found
-                && let Ok(proof) = self.split_on(st, lhs, rhs, depth)
-            {
-                return Ok(Ok(proof));
-            }
-        }
         Err(self.stopped_at(nl.cur(), nr.cur()))
     }
 
