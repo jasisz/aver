@@ -3358,8 +3358,8 @@ fn both_kernels_accept_a_split_on_a_constructor() {
     // `Full` out, which the program declares.
     let dark = read("switchOff.staysDark");
     let open = dark.find("(split ").expect("a split");
-    // (split FN (ARGS) ON HYP CASE…): the first two sub-forms are the
-    // arguments and the subject.
+    // (split ON HYP (LITERALS) CASE…): the first two sub-forms are the
+    // subject and the literals.
     let cases = sub_forms(&dark, open)[2..].to_vec();
     assert_eq!(cases.len(), 3, "{dark}");
     let only_named = format!("{}{}", &dark[..cases[1].0], &dark[cases[2].1..]);
@@ -3446,7 +3446,7 @@ fn both_kernels_split_on_the_arms_of_a_match_and_refuse_mutations() {
 
     let bits = read("widthBits.eightPerByte");
     let other = "(case else (h_steps2 h_steps3 h_steps4) ";
-    assert!(bits.contains("(proof (split widthBits "), "{bits}");
+    assert!(bits.contains("(proof (split "), "{bits}");
     let at = bits.find(other).expect("the catch-all case");
     let body_at = at + other.len();
     let body = &bits[body_at..=closing(&bits, body_at)];

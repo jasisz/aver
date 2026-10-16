@@ -458,14 +458,14 @@ verify casesProof
     casesProof([]) => Result.Err("malformed cases")
 
 fn splitProof(args: List<Sexp>) -> Result<Proof, String>
-    ? "(split FN (TERM…) TERM NAME (case CTOR (NAME…) PROOF)…)"
+    ? "(split TERM NAME (LITERAL…) (case CTOR (NAME…) PROOF)…)"
     match args
-        [Sexp.Atom(f), xs, on, Sexp.Atom(h), ..cs] -> Result.Ok(Proof.PSplit(f, termList(xs)?, term(on)?, h, splitCases(cs)?))
+        [on, Sexp.Atom(h), ks, ..cs] -> Result.Ok(Proof.PSplit(term(on)?, h, termList(ks)?, splitCases(cs)?))
         _ -> Result.Err("malformed split")
 
 verify splitProof
     splitProof([]) => Result.Err("malformed split")
-    splitProof([Sexp.Atom("f"), Sexp.Node([]), Sexp.Node([Sexp.Atom("v"), Sexp.Atom("x")]), Sexp.Atom("h"), Sexp.Node([Sexp.Atom("case"), Sexp.Atom("nil"), Sexp.Node([]), Sexp.Node([Sexp.Atom("hyp"), Sexp.Atom("h")])])]) => Result.Ok(Proof.PSplit("f", [], Term.TVar("x"), "h", [SplitCase(ctor = "nil", binders = [], proof = Proof.PHyp("h"))]))
+    splitProof([Sexp.Node([Sexp.Atom("v"), Sexp.Atom("x")]), Sexp.Atom("h"), Sexp.Node([]), Sexp.Node([Sexp.Atom("case"), Sexp.Atom("nil"), Sexp.Node([]), Sexp.Node([Sexp.Atom("hyp"), Sexp.Atom("h")])])]) => Result.Ok(Proof.PSplit(Term.TVar("x"), "h", [], [SplitCase(ctor = "nil", binders = [], proof = Proof.PHyp("h"))]))
 
 fn splitCases(ss: List<Sexp>) -> Result<List<SplitCase>, String>
     ? "(case CTOR (NAME…) PROOF)…"

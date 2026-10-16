@@ -143,9 +143,9 @@ impl Walk {
                 }
                 self.proofs(args.get(2..))
             }
-            // (split FN (TERM…) TERM NAME (case CTOR (NAME…) PROOF)…)
+            // (split TERM NAME (LITERAL…) (case CTOR (NAME…) PROOF)…)
             "split" => {
-                for c in args.get(4..).unwrap_or(&[]) {
+                for c in args.get(3..).unwrap_or(&[]) {
                     self.proofs(items(c)?.get(3..))?;
                 }
                 Ok(())

@@ -197,7 +197,7 @@ fn proof(p: Proof) -> String
         Proof.PLaw(k, bs, ps) -> "(law {k} " + bindings(bs) + proofs(ps) + ")"
         Proof.PCompute(a, b) -> "(compute {term(a)} {term(b)})"
         Proof.PCases(on, h, t, f) -> "(cases {term(on)} {h} {proof(t)} {proof(f)})"
-        Proof.PSplit(f, xs, on, h, cs) -> "(split {f} " + wrap(terms(xs)) + " {term(on)} {h}" + splitCases(cs) + ")"
+        Proof.PSplit(on, h, ks, cs) -> "(split {term(on)} {h} " + wrap(terms(ks)) + splitCases(cs) + ")"
         Proof.PHave(h, fact, q, body) -> "(have {h} {term(fact)} {proof(q)} {proof(body)})"
         Proof.PEnum(v, l, r, cs) -> "(enum {v} {term(l)} {term(r)}" + proofs(cs) + ")"
         Proof.PAbsurd(q, l, r) -> "(absurd {proof(q)} {term(l)} {term(r)})"

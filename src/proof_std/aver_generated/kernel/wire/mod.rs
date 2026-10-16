@@ -1358,7 +1358,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                 __b
             })
         }
-        crate::proof_std::aver_generated::kernel::proof::Proof::PSplit(f, xs, on, h, cs) => {
+        crate::proof_std::aver_generated::kernel::proof::Proof::PSplit(on, h, ks, cs) => {
             crate::proof_std::aver_generated::kernel::wire::headed(
                 aver_rt::AverStr::from({
                     let mut __b = {
@@ -1367,38 +1367,34 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                 let mut __b = {
                                     let mut __b = {
                                         let mut __b = {
-                                            let mut __b = {
-                                                let mut __b = aver_rt::Buffer::with_capacity(
-                                                    (aver_rt::AverInt::from_i64(75))
-                                                        .to_usize()
-                                                        .unwrap_or(0),
-                                                );
-                                                __b.push_str(&AverStr::from("split "));
-                                                __b
-                                            };
-                                            __b.push_str(&aver_rt::AverStr::from(
-                                                aver_rt::aver_display(&(f)),
-                                            ));
+                                            let mut __b = aver_rt::Buffer::with_capacity(
+                                                (aver_rt::AverInt::from_i64(58))
+                                                    .to_usize()
+                                                    .unwrap_or(0),
+                                            );
+                                            __b.push_str(&AverStr::from("split "));
                                             __b
                                         };
-                                        __b.push_str(&AverStr::from(" ("));
+                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(&on)))));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(&crate::proof_std::aver_generated::kernel::wire::termTexts(&xs))))));
+                                    __b.push_str(&AverStr::from(" "));
                                     __b
                                 };
-                                __b.push_str(&AverStr::from(") "));
+                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(h))));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                &(crate::proof_std::aver_generated::kernel::wire::termText(&on)),
-                            )));
+                            __b.push_str(&AverStr::from(" ("));
                             __b
                         };
-                        __b.push_str(&AverStr::from(" "));
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                            &(crate::proof_std::aver_generated::kernel::wire::spaced(
+                                &crate::proof_std::aver_generated::kernel::wire::termTexts(&ks),
+                            )),
+                        )));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(h))));
+                    __b.push_str(&AverStr::from(")"));
                     __b
                 }),
                 &crate::proof_std::aver_generated::kernel::wire::splitCaseTexts(&cs),

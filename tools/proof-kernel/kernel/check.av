@@ -116,7 +116,7 @@ fn conclude(p: Proof, env: Env, path: String) -> Result<Eqn, String>
         Proof.PLaw(k, bs, ps) -> lawStep(k, bs, ps, env, path)
         Proof.PCompute(a, b) -> compute(a, b, path)
         Proof.PCases(on, h, t, f) -> cases(on, h, t, f, env, path)
-        Proof.PSplit(f, xs, on, h, cs) -> split(f, xs, on, h, cs, env, path)
+        Proof.PSplit(on, h, lits, cs) -> split(on, h, lits, cs, env, path)
         Proof.PHave(h, fact, q, body) -> have(h, fact, q, body, env, path)
         Proof.PEnum(v, l, r, cs) -> enumStep(v, l, r, cs, env, path)
         Proof.PAbsurd(q, l, r) -> absurd(conclude(q, env, "{path}/absurd")?, l, r, path)
@@ -312,34 +312,37 @@ fn casesOfBool(on: Term, h: String, t: Proof, f: Proof, env: Env, path: String) 
 verify casesOfBool
     casesOfBool(Term.TVar("c"), "h", Proof.PHyp("h"), Proof.PHyp("h"), emptyEnv(), "p") => Result.Err("step p: the two branches prove different equations")
 
-fn split(f: String, xs: List<Term>, on: Term, h: String, cs: List<SplitCase>, env: Env, path: String) -> Result<Eqn, String>
-    ? "A split on on, the subject of the match that is f's body at xs: one case per constructor of the type the arms' patterns read, or one per arm of literals and a last catch-all."
-    match Kernel.Proof.findDef(f, env.defs)
-        Option.None -> refuse(path, "no definition of {f}")
-        Option.Some(d) -> match (argsFit(d, xs, env, path), d.body)
-            (Result.Err(why), _) -> Result.Err(why)
-            (_, Term.TMatch(s, arms)) -> splitOn(Kernel.Subst.subst(s, bindLets(d.lets, List.reverse(zipBind(Kernel.Types.paramsOf(d), xs)))?)? == on, typeOf(on, env, path), arms, on, h, cs, env, path)
-            _ -> refuse(path, "{f} at these arguments is not a match")
+fn split(on: Term, h: String, lits: List<Term>, cs: List<SplitCase>, env: Env, path: String) -> Result<Eqn, String>
+    ? "A split on any term: one case per constructor of its type ([] and [h, ..t] for a list, every constructor of a sum in order, each with one name per field); or, given literals of its type, one case per literal and a last one where it is none of them."
+    match (typeOf(on, env, path), lits)
+        (Result.Err(why), _) -> Result.Err(why)
+        (Result.Ok(t), []) -> splitConstructors(t, on, h, cs, env, path)
+        (Result.Ok(t), _) -> splitLiterals(t, lits, on, h, cs, env, path)
 
 verify split
-    split("f", [], Term.TVar("x"), "h", [], emptyEnv(), "p") => Result.Err("step p: no definition of f")
+    split(Term.TVar("x"), "h", [], [], emptyEnv(), "p") => Result.Err("step p: x is not a variable in scope")
+    split(Term.TVar("x"), "h", [Term.TStr("a")], [SplitCase(ctor = "lit", binders = [], proof = Proof.PRefl(Term.TInt(0))), SplitCase(ctor = "else", binders = ["n"], proof = Proof.PRefl(Term.TInt(0)))], intsEnv(["x"]), "p") => Result.Err("step p: the cases are not the literals and one more")
+    split(Term.TVar("x"), "h", [Term.TInt(1)], [SplitCase(ctor = "lit", binders = [], proof = Proof.PRefl(Term.TInt(0))), SplitCase(ctor = "else", binders = ["n"], proof = Proof.PRefl(Term.TInt(0)))], intsEnv(["x"]), "p") => Result.Ok(Eqn(lhs = Term.TInt(0), rhs = Term.TInt(0)))
+    split(Term.TVar("x"), "h", [Term.TInt(1)], [SplitCase(ctor = "lit", binders = [], proof = Proof.PHyp("h")), SplitCase(ctor = "else", binders = ["n"], proof = Proof.PHyp("n"))], intsEnv(["x"]), "p") => Result.Err("step p: the cases prove different equations")
 
-fn splitOn(isSubject: Bool, onTy: Result<Ty, String>, arms: List<Arm>, on: Term, h: String, cs: List<SplitCase>, env: Env, path: String) -> Result<Eqn, String>
-    ? "The term split on is the match's subject, and the cases are the constructors of its type ([] and [h, ..t] for a list, every constructor of a sum in order, each with one name per field), or the arms themselves when they are literals and a last catch-all."
-    match (isSubject, onTy, literalArms(arms, false))
-        (false, _, _) -> refuse(path, "the term split on is not the subject of the match")
-        (_, Result.Err(why), _) -> Result.Err(why)
-        (_, Result.Ok(t), true) -> splitLiterals(arms, on, h, cs, env, path)
-        (_, Result.Ok(t), false) -> splitConstructors(t, on, h, cs, env, path)
-
-fn splitLiterals(arms: List<Arm>, on: Term, h: String, cs: List<SplitCase>, env: Env, path: String) -> Result<Eqn, String>
-    ? "A split along literal arms: one case per arm, the last one naming one hypothesis per literal."
-    match Bool.and(splitCtors(cs) == litCtors(arms), binderCounts(cs) == litCounts(arms, 0))
-        true -> splitCases(cs, litHyps(arms, cs, on, h, []), noVars(cs), on, [], env, path)
-        false -> refuse(path, "the cases are not the arms of the match")
+fn splitLiterals(t: Ty, lits: List<Term>, on: Term, h: String, cs: List<SplitCase>, env: Env, path: String) -> Result<Eqn, String>
+    ? "A split along literals of the term's type: one case per literal under h : on = k, then one naming one hypothesis per literal, (on == k) = false."
+    match Bool.and(literalsOf(lits, t, env, path), Bool.and(splitCtors(cs) == litCtors(lits), binderCounts(cs) == litCounts(lits, 0)))
+        true -> splitCases(cs, litHyps(lits, cs, on, h, []), noVars(cs), on, [], env, path)
+        false -> refuse(path, "the cases are not the literals and one more")
 
 verify splitLiterals
-    splitLiterals([Arm(pattern = Pat.PLit(Term.TInt(1)), body = Term.TUnit), Arm(pattern = Pat.PWild, body = Term.TUnit)], Term.TVar("x"), "h", [], emptyEnv(), "p") => Result.Err("step p: the cases are not the arms of the match")
+    splitLiterals(Ty.TyInt, [Term.TInt(1)], Term.TVar("x"), "h", [], intsEnv(["x"]), "p") => Result.Err("step p: the cases are not the literals and one more")
+
+fn literalsOf(lits: List<Term>, t: Ty, env: Env, path: String) -> Bool
+    ? "Every one an Int, Bool, text or unit literal of type t."
+    match lits
+        [] -> true
+        [k, ..rest] -> Bool.and(Bool.and(isLiteral(k), typeOf(k, env, path) == Result.Ok(t)), literalsOf(rest, t, env, path))
+
+verify literalsOf
+    literalsOf([Term.TInt(1), Term.TStr("a")], Ty.TyInt, emptyEnv(), "p") => false
+    literalsOf([Term.TInt(1)], Ty.TyInt, emptyEnv(), "p") => true
 
 fn splitConstructors(t: Ty, on: Term, h: String, cs: List<SplitCase>, env: Env, path: String) -> Result<Eqn, String>
     ? "A split along the constructors of the subject's type: every one in order, each case naming one variable per field."
@@ -350,15 +353,6 @@ fn splitConstructors(t: Ty, on: Term, h: String, cs: List<SplitCase>, env: Env, 
 
 verify splitConstructors
     splitConstructors(Ty.TyInt, Term.TVar("x"), "h", [SplitCase(ctor = "nil", binders = [], proof = Proof.PRefl(Term.TUnit))], emptyEnv(), "p") => Result.Err("step p: the cases are not the constructors of Int")
-
-verify splitOn
-    splitOn(false, Result.Ok(Ty.TyInt), [], Term.TVar("x"), "h", [], emptyEnv(), "p") => Result.Err("step p: the term split on is not the subject of the match")
-    splitOn(true, Result.Ok(Ty.TyList(Ty.TyInt)), [Arm(pattern = Pat.PNil, body = Term.TInt(0)), Arm(pattern = Pat.PWild, body = Term.TInt(1))], Term.TVar("x"), "h", [SplitCase(ctor = "nil", binders = [], proof = Proof.PRefl(Term.TInt(0)))], emptyEnv(), "p") => Result.Err("step p: the cases are not the constructors of List<Int>")
-    splitOn(true, Result.Ok(Ty.TyNamed("C")), [Arm(pattern = Pat.PCtor("C.A", []), body = Term.TInt(0)), Arm(pattern = Pat.PWild, body = Term.TInt(1))], Term.TVar("x"), "h", [SplitCase(ctor = "C.B", binders = [], proof = Proof.PRefl(Term.TInt(0)))], sumEnv(), "p") => Result.Err("step p: the cases are not the constructors of C")
-    splitOn(true, Result.Ok(Ty.TyNamed("C")), [Arm(pattern = Pat.PCtor("C.A", []), body = Term.TInt(0))], Term.TVar("x"), "h", [SplitCase(ctor = "C.A", binders = [], proof = Proof.PRefl(Term.TInt(0))), SplitCase(ctor = "C.B", binders = [], proof = Proof.PRefl(Term.TInt(0)))], sumEnv(), "p") => Result.Ok(Eqn(lhs = Term.TInt(0), rhs = Term.TInt(0)))
-    splitOn(true, Result.Ok(Ty.TyNamed("C")), [Arm(pattern = Pat.PCtor("C.A", []), body = Term.TInt(0))], Term.TVar("x"), "h", [SplitCase(ctor = "C.A", binders = [], proof = Proof.PRefl(Term.TInt(0))), SplitCase(ctor = "C.B", binders = [], proof = Proof.PRefl(Term.TInt(0)))], emptyEnv(), "p") => Result.Err("step p: the cases are not the constructors of C")
-    splitOn(true, Result.Ok(Ty.TyNamed("C")), [Arm(pattern = Pat.PCtor("C.A", []), body = Term.TInt(0))], Term.TVar("x"), "h", [SplitCase(ctor = "C.A", binders = ["y"], proof = Proof.PRefl(Term.TInt(0))), SplitCase(ctor = "C.B", binders = [], proof = Proof.PRefl(Term.TInt(0)))], sumEnv(), "p") => Result.Err("step p: case C.A binds 1 names for 0 fields")
-    splitOn(true, Result.Err("step p: x is not a variable in scope"), [], Term.TVar("x"), "h", [], emptyEnv(), "p") => Result.Err("step p: x is not a variable in scope")
 
 fn sumEnv() -> Env
     ? "A given x of a declared sum C with bare constructors C.A and C.B."
@@ -418,40 +412,23 @@ verify splitValue
     splitValue(SplitCase(ctor = "cons", binders = ["a", "b"], proof = Proof.PRefl(Term.TUnit))) => Term.TBi("List.prepend", [Term.TVar("a"), Term.TVar("b")])
     splitValue(SplitCase(ctor = "C.S", binders = ["a"], proof = Proof.PRefl(Term.TUnit))) => Term.TCtor("C.S", [Term.TVar("a")])
 
-fn literalArms(arms: List<Arm>, seen: Bool) -> Bool
-    ? "One or more arms whose patterns are literals, then one last catch-all arm."
-    match arms
-        [a] -> Bool.and(seen, isCatchAll(a.pattern))
-        [a, ..rest] -> match a.pattern
-            Pat.PLit(k) -> Bool.and(isLiteral(k), literalArms(rest, true))
-            _ -> false
-        [] -> false
-
-verify literalArms
-    literalArms([Arm(pattern = Pat.PLit(Term.TInt(1)), body = Term.TUnit), Arm(pattern = Pat.PWild, body = Term.TUnit)], false) => true
-    literalArms([Arm(pattern = Pat.PWild, body = Term.TUnit)], false) => false
-    literalArms([Arm(pattern = Pat.PLit(Term.TInt(1)), body = Term.TUnit), Arm(pattern = Pat.PLit(Term.TInt(2)), body = Term.TUnit)], false) => false
-    literalArms([Arm(pattern = Pat.PWild, body = Term.TUnit), Arm(pattern = Pat.PLit(Term.TInt(1)), body = Term.TUnit), Arm(pattern = Pat.PWild, body = Term.TUnit)], false) => false
-
-fn litCtors(arms: List<Arm>) -> List<String>
-    ? "The case each arm of a literal match is (see literalArms): lit for a literal, else for the last, catch-all one."
-    match arms
-        [] -> []
-        [a] -> ["else"]
-        [a, ..rest] -> List.prepend("lit", litCtors(rest))
+fn litCtors(lits: List<Term>) -> List<String>
+    ? "The case of each literal, lit, then else for the last one."
+    match lits
+        [] -> ["else"]
+        [k, ..rest] -> List.prepend("lit", litCtors(rest))
 
 verify litCtors
-    litCtors([Arm(pattern = Pat.PLit(Term.TInt(1)), body = Term.TUnit), Arm(pattern = Pat.PWild, body = Term.TUnit)]) => ["lit", "else"]
+    litCtors([Term.TInt(1)]) => ["lit", "else"]
 
-fn litCounts(arms: List<Arm>, lits: Int) -> List<Int>
-    ? "How many names each case of a literal match binds (see literalArms): none for a literal, one per literal for the last, catch-all one."
-    match arms
-        [] -> []
-        [a] -> [lits]
-        [a, ..rest] -> List.prepend(0, litCounts(rest, lits + 1))
+fn litCounts(lits: List<Term>, n: Int) -> List<Int>
+    ? "How many names each case of a literal split binds: none for a literal, one per literal for the last one."
+    match lits
+        [] -> [n]
+        [k, ..rest] -> List.prepend(0, litCounts(rest, n + 1))
 
 verify litCounts
-    litCounts([Arm(pattern = Pat.PLit(Term.TInt(1)), body = Term.TUnit), Arm(pattern = Pat.PLit(Term.TInt(2)), body = Term.TUnit), Arm(pattern = Pat.PWild, body = Term.TUnit)], 0) => [0, 0, 2]
+    litCounts([Term.TInt(1), Term.TInt(2)], 0) => [0, 0, 2]
 
 fn ctorHyps(cs: List<SplitCase>, on: Term, h: String) -> List<List<Hyp>>
     ? "For each case of a split on a constructor, h : on = the constructor at the case's names."
@@ -462,23 +439,15 @@ fn ctorHyps(cs: List<SplitCase>, on: Term, h: String) -> List<List<Hyp>>
 verify ctorHyps
     ctorHyps([SplitCase(ctor = "nil", binders = [], proof = Proof.PRefl(Term.TUnit))], Term.TVar("x"), "h") => [[Hyp(name = "h", eqn = Eqn(lhs = Term.TVar("x"), rhs = Term.TList([])))]]
 
-fn litHyps(arms: List<Arm>, cs: List<SplitCase>, on: Term, h: String, lits: List<Term>) -> List<List<Hyp>>
-    ? "For each arm of a literal match, its case's hypotheses: h : on = k for a literal k, and for the catch-all one (on == k) = false per literal before it, named by the case's names."
-    match (arms, cs)
-        ([a, ..moreArms], [c, ..moreCases]) -> litCase(a.pattern, moreArms, c, moreCases, on, h, lits)
+fn litHyps(lits: List<Term>, cs: List<SplitCase>, on: Term, h: String, seen: List<Term>) -> List<List<Hyp>>
+    ? "Each case's hypotheses: h : on = k for a literal k, and for the last one (on == k) = false per literal, named by the case's names."
+    match (lits, cs)
+        ([k, ..ks], [c, ..more]) -> List.prepend([Hyp(name = h, eqn = Eqn(lhs = on, rhs = k))], litHyps(ks, more, on, h, List.concat(seen, [k])))
+        ([], [c, ..more]) -> [unequal(c.binders, seen, on)]
         _ -> []
 
 verify litHyps
-    litHyps([Arm(pattern = Pat.PLit(Term.TInt(1)), body = Term.TUnit), Arm(pattern = Pat.PWild, body = Term.TUnit)], [SplitCase(ctor = "lit", binders = [], proof = Proof.PRefl(Term.TUnit)), SplitCase(ctor = "else", binders = ["n"], proof = Proof.PRefl(Term.TUnit))], Term.TVar("x"), "h", []) => [[Hyp(name = "h", eqn = Eqn(lhs = Term.TVar("x"), rhs = Term.TInt(1)))], [Hyp(name = "n", eqn = Eqn(lhs = Term.TOp("==", Term.TVar("x"), Term.TInt(1)), rhs = Term.TBool(false)))]]
-
-fn litCase(p: Pat, arms: List<Arm>, c: SplitCase, cs: List<SplitCase>, on: Term, h: String, lits: List<Term>) -> List<List<Hyp>>
-    ? "The hypotheses of one arm's case, then of the arms after it."
-    match p
-        Pat.PLit(k) -> List.prepend([Hyp(name = h, eqn = Eqn(lhs = on, rhs = k))], litHyps(arms, cs, on, h, List.concat(lits, [k])))
-        _ -> [unequal(c.binders, lits, on)]
-
-verify litCase
-    litCase(Pat.PWild, [], SplitCase(ctor = "else", binders = [], proof = Proof.PRefl(Term.TUnit)), [], Term.TVar("x"), "h", []) => [[]]
+    litHyps([Term.TInt(1)], [SplitCase(ctor = "lit", binders = [], proof = Proof.PRefl(Term.TUnit)), SplitCase(ctor = "else", binders = ["n"], proof = Proof.PRefl(Term.TUnit))], Term.TVar("x"), "h", []) => [[Hyp(name = "h", eqn = Eqn(lhs = Term.TVar("x"), rhs = Term.TInt(1)))], [Hyp(name = "n", eqn = Eqn(lhs = Term.TOp("==", Term.TVar("x"), Term.TInt(1)), rhs = Term.TBool(false)))]]
 
 fn unequal(names: List<String>, lits: List<Term>, on: Term) -> List<Hyp>
     ? "Each name stating (on == k) = false for its literal k."

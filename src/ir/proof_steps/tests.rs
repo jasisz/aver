@@ -2345,8 +2345,6 @@ fn a_split_on_a_constructor_covers_the_type_with_fresh_names() {
         ],
     };
     let split = |on: super::Term, cases: Vec<SplitCase>| Proof::Split {
-        fn_id: FnId(0),
-        args: vec![var("a")],
         on,
         hyp: "h".into(),
         cases,
@@ -2578,8 +2576,6 @@ fn list_split(both: bool) -> Script {
         ge(call.clone()),
         term::boolean(true),
         Proof::Split {
-            fn_id: FnId(0),
-            args: vec![var("a")],
             on: var("a"),
             hyp: "h".into(),
             cases,
@@ -2669,8 +2665,6 @@ fn a_split_on_literal_arms_has_one_case_per_arm() {
     };
     let other = case(3, vec![var("a")], Proof::Refl(var("a")), 7);
     let split = |cases: Vec<SplitCase>| Proof::Split {
-        fn_id: FnId(0),
-        args: vec![var("a")],
         on: var("a"),
         hyp: "h".into(),
         cases,

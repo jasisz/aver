@@ -243,19 +243,15 @@ pub enum Proof {
         if_true: Box<Proof>,
         if_false: Box<Proof>,
     },
-    /// Case split on `on`, the subject of the `match` that is the body of
-    /// `fn_id` at `args` (which gives `on` the type the arms' patterns
-    /// have): one case per constructor of that type, in declaration order,
-    /// `[]` before `[h, ..t]` for a list, each checked with hypothesis
-    /// `hyp : on = C_i(binders)`, its binders fresh. Where the arms are
-    /// literals and a last catch-all, one case per arm instead: a literal
-    /// `k` under `hyp : on = k`, the catch-all under `(on == k) = false`
-    /// for every literal, each named by one of its binders (see
+    /// Case split on any term `on`: one case per constructor of its type,
+    /// in declaration order, `[]` before `[h, ..t]` for a list, each
+    /// checked with hypothesis `hyp : on = C_i(binders)`, its binders
+    /// fresh. Or, with literal cases of its type and a last one, one case
+    /// per literal `k` under `hyp : on = k`, the last under `(on == k) =
+    /// false` for every literal, each named by one of its binders (see
     /// [`split_hyps`]). Every case proves the same equation, which
     /// mentions no binder.
     Split {
-        fn_id: FnId,
-        args: Vec<Term>,
         on: Term,
         hyp: String,
         cases: Vec<SplitCase>,
@@ -735,10 +731,7 @@ impl Proof {
                 if_true.each_term(f);
                 if_false.each_term(f);
             }
-            Proof::Split {
-                args, on, cases, ..
-            } => {
-                all(args, f);
+            Proof::Split { on, cases, .. } => {
                 f(on);
                 cases.iter().for_each(|c| c.proof.each_term(f));
             }

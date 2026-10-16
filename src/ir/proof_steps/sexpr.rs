@@ -497,25 +497,23 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
             proof(if_true, names)?,
             proof(if_false, names)?
         ),
-        Proof::Split {
-            fn_id,
-            args,
-            on,
-            hyp,
-            cases,
-        } => {
+        Proof::Split { on, hyp, cases } => {
+            let lits: Vec<Term> = cases
+                .iter()
+                .filter(|c| matches!(c.ctor, super::SplitCtor::Lit(_)))
+                .filter_map(|c| c.value())
+                .collect();
             let mut s = format!(
-                "(split {} ({}) {} {hyp}",
-                names.fn_name(*fn_id),
-                list(args, names)?,
-                term(on, names)?
+                "(split {} {hyp} ({})",
+                term(on, names)?,
+                list(&lits, names)?
             );
             for c in cases {
                 let ctor = match &c.ctor {
                     super::SplitCtor::Nil => "nil".to_string(),
                     super::SplitCtor::Cons => "cons".to_string(),
                     super::SplitCtor::Ctor(c) => names.ctor_name(c),
-                    // The kernel reads the literal off the arm.
+                    // The literal is in the split's list.
                     super::SplitCtor::Lit(_) => "lit".to_string(),
                     super::SplitCtor::Other => "else".to_string(),
                 };

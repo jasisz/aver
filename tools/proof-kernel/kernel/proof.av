@@ -27,7 +27,7 @@ type Proof
     PLaw(String, List<Binding>, List<Proof>)
     PCompute(Term, Term)
     PCases(Term, String, Proof, Proof)
-    PSplit(String, List<Term>, Term, String, List<SplitCase>)
+    PSplit(Term, String, List<Term>, List<SplitCase>)
     PHave(String, Term, Proof, Proof)
     PEnum(String, Term, Term, List<Proof>)
     PAbsurd(Proof, Term, Term)

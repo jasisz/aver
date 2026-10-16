@@ -249,7 +249,7 @@ fn proofText(p: Proof) -> String
         Proof.PLaw(k, bs, ps) -> headed("law {k} {bindingsText(bs)}", proofTexts(ps))
         Proof.PCompute(a, b) -> "(compute {termText(a)} {termText(b)})"
         Proof.PCases(on, h, t, f) -> "(cases {termText(on)} {h} {proofText(t)} {proofText(f)})"
-        Proof.PSplit(f, xs, on, h, cs) -> headed("split {f} ({spaced(termTexts(xs))}) {termText(on)} {h}", splitCaseTexts(cs))
+        Proof.PSplit(on, h, ks, cs) -> headed("split {termText(on)} {h} ({spaced(termTexts(ks))})", splitCaseTexts(cs))
         Proof.PHave(n, fact, q, body) -> "(have {n} {termText(fact)} {proofText(q)} {proofText(body)})"
         Proof.PEnum(v, l, r, cs) -> headed("enum {v} {termText(l)} {termText(r)}", proofTexts(cs))
         Proof.PAbsurd(q, l, r) -> "(absurd {proofText(q)} {termText(l)} {termText(r)})"
@@ -263,7 +263,7 @@ verify proofText
     proofText(Proof.PTrans([Term.TInt(1), Term.TInt(1)], [Proof.PRefl(Term.TInt(1))])) => "(trans ((i 1) (i 1)) (refl (i 1)))"
     proofText(Proof.PUnfold("f", 2, [Term.TVar("x")], [], [])) => "(unfold f 2 ((v x)) ())"
     proofText(Proof.PRule("list.concat.nil", [Kernel.Term.bind("b", Term.TList([]))], [])) => "(rule list.concat.nil ((b (list))))"
-    proofText(Proof.PSplit("f", [Term.TVar("x")], Term.TVar("x"), "h", [SplitCase(ctor = "nil", binders = [], proof = Proof.PHyp("h"))])) => "(split f ((v x)) (v x) h (case nil () (hyp h)))"
+    proofText(Proof.PSplit(Term.TVar("x"), "h", [], [SplitCase(ctor = "nil", binders = [], proof = Proof.PHyp("h"))])) => "(split (v x) h () (case nil () (hyp h)))"
     proofText(Proof.PListCases("xs", Term.TVar("xs"), Term.TVar("xs"), Proof.PHyp("a"), "h", "t", Proof.PHyp("b"))) => "(listcases xs (v xs) (v xs) (hyp a) (h t) (hyp b))"
     proofText(Proof.PLinear(Term.TVar("g"), true, ["h"], [1, 2], [])) => "(linear (v g) true (h) (1 2))"
     proofText(Proof.PLinear(Term.TVar("g"), true, ["h"], [1, 2, 1], [Cut(divisor = 3, weights = [1, 0])])) => "(linear (v g) true (h) (1 2 1) (cut 3 (1 0)))"

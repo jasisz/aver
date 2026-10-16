@@ -1411,48 +1411,31 @@ pub fn casesProof(
     }
 }
 
-/// (split FN (TERM…) TERM NAME (case CTOR (NAME…) PROOF)…)
+/// (split TERM NAME (LITERAL…) (case CTOR (NAME…) PROOF)…)
 pub fn splitProof(
     args @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::sexp::Sexp>,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::proof::Proof, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
     {
         let __list_subject = args.clone();
-        if let Some((__pat0, __pat1)) = aver_rt::list_uncons_cloned(&__list_subject) {
-            match __pat0 {
-                crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(f) => {
-                    let __list_subject = __pat1;
-                    if let Some((xs, __pat2)) = aver_rt::list_uncons_cloned(&__list_subject) {
-                        {
+        if let Some((on, __pat0)) = aver_rt::list_uncons_cloned(&__list_subject) {
+            {
+                let __list_subject = __pat0;
+                if let Some((__pat1, __pat2)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                    match __pat1 {
+                        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(h) => {
                             let __list_subject = __pat2;
-                            if let Some((on, __pat3)) = aver_rt::list_uncons_cloned(&__list_subject)
-                            {
-                                {
-                                    let __list_subject = __pat3;
-                                    if let Some((__pat4, cs)) =
-                                        aver_rt::list_uncons_cloned(&__list_subject)
-                                    {
-                                        match __pat4 {
-        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(h) => {
-            Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PSplit(f, crate::proof_kernel::aver_generated::kernel::decode::termList(&xs)?, crate::proof_kernel::aver_generated::kernel::decode::term(&on)?, h, crate::proof_kernel::aver_generated::kernel::decode::splitCases(&cs)?))
-        },
-        _ => {
-            Err(AverStr::from("malformed split"))
-        }
-    }
-                                    } else {
-                                        Err(AverStr::from("malformed split"))
-                                    }
-                                }
+                            if let Some((ks, cs)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                                Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PSplit(crate::proof_kernel::aver_generated::kernel::decode::term(&on)?, h, crate::proof_kernel::aver_generated::kernel::decode::termList(&ks)?, crate::proof_kernel::aver_generated::kernel::decode::splitCases(&cs)?))
                             } else {
                                 Err(AverStr::from("malformed split"))
                             }
                         }
-                    } else {
-                        Err(AverStr::from("malformed split"))
+                        _ => Err(AverStr::from("malformed split")),
                     }
+                } else {
+                    Err(AverStr::from("malformed split"))
                 }
-                _ => Err(AverStr::from("malformed split")),
             }
         } else {
             Err(AverStr::from("malformed split"))

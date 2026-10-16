@@ -23,7 +23,6 @@ type Fields = Vec<(String, Option<Type>)>;
 /// arms (or `x`) and their types.
 pub(crate) struct Stuck {
     fn_id: FnId,
-    args: Vec<Term>,
     on: Term,
     ctors: Vec<(SplitCtor, Fields)>,
 }
@@ -281,7 +280,6 @@ impl Env<'_> {
         }
         Some(Stuck {
             fn_id: *id,
-            args: args.iter().map(canon).collect(),
             on,
             ctors,
         })
@@ -442,8 +440,6 @@ impl Env<'_> {
         }
         self.mark_used(st.fn_id);
         Ok(Proof::Split {
-            fn_id: st.fn_id,
-            args: st.args,
             on: st.on,
             hyp,
             cases,
