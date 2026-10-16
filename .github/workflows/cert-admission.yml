@@ -11,8 +11,9 @@ on:
     branches: ['release/**']
     tags: ['v*']
   schedule:
-    # 03:00 UTC daily against the tip of main, same as the other nightlies.
-    - cron: '0 3 * * *'
+    # 03:53 UTC daily against the tip of main, at its own time so the
+    # nightlies do not start together.
+    - cron: '53 3 * * *'
   workflow_dispatch:
 
 concurrency:

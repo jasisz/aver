@@ -8,10 +8,11 @@ on:
   # Nightly deep sweep against main with the heavy proptest budget: the
   # WASM lane's cross-backend differential runs 2000 cases nightly but a
   # 64-case smoke per-PR (see its `PROPTEST_CASES` below). Mirrors the
-  # fuzz / proof / rust-codegen nightlies (cron 03:00 UTC). Manual runs
-  # via workflow_dispatch also get the full 2000-case sweep.
+  # fuzz / proof / rust-codegen nightlies, each at its own uneven time so
+  # they do not start together. Manual runs via workflow_dispatch also get
+  # the full 2000-case sweep.
   schedule:
-    - cron: '0 3 * * *'
+    - cron: '43 0 * * *'
   workflow_dispatch:
 
 # A newer push to the same pull request, or a newer commit on main,
@@ -34,6 +35,10 @@ jobs:
     # failure. Every other trigger still works in a fork, so a contributor can
     # run this workflow on their own branch.
     if: github.event_name != 'schedule' || github.repository == 'jasisz/aver'
+    env:
+      # The 2,000-case broad sweep belongs to nightly/manual deep CI. Pull
+      # requests and pushes keep the ordinary 256-case proptest smoke.
+      PROPTEST_CASES: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '2000' || '256' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -111,6 +116,18 @@ jobs:
           cargo run --bin aver -- check examples/core
           cargo run --bin aver -- check examples/data
 
+      # The unit, doc and workspace-crate tests take two minutes or less each.
+      # As jobs of their own they each paid a runner, a checkout and a cache
+      # restore, and held two of the twenty runners the repository shares;
+      # here they reuse the build the gates above just made.
+      - name: aver-lang unit and docs
+        run: cargo test -p aver-lang --lib --bins && cargo test -p aver-lang --doc
+
+      - name: Workspace crates
+        # The workspace test builds aver-cert with its default `verify`
+        # feature only; the producer's unit tests need `engine` as well.
+        run: cargo test --workspace --exclude aver-lang && cargo test -p aver-cert --lib --all-features
+
   native_tests:
     name: Native tests (${{ matrix.name }})
     runs-on: ubuntu-latest
@@ -119,12 +136,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: aver-lang unit and docs
-            command: cargo test -p aver-lang --lib --bins && cargo test -p aver-lang --doc
-          - name: workspace crates
-            # The workspace test builds aver-cert with its default `verify`
-            # feature only; the producer's unit tests need `engine` as well.
-            command: cargo test --workspace --exclude aver-lang && cargo test -p aver-cert --lib --all-features
           - name: integrations 1/4
             command: python3 tools/ci_test_shard.py 0 4
           - name: integrations 2/4
@@ -144,8 +155,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Install nextest
-        if: startsWith(matrix.name, 'integrations')
         uses: taiki-e/install-action@nextest
+
+      - name: Optimise the build
+        # Most of these tests run the `aver` binary, and the slowest ones run
+        # the proof kernel written in Aver inside it: unoptimised, one suite
+        # took over ten minutes. `opt-level = 1` for the whole graph, in CI
+        # only: the developer `dev` profile in Cargo.toml stays as it is. The
+        # setting goes into this checkout's Cargo config, not the environment
+        # or the Cargo home, because the tests that build generated projects
+        # run Cargo in temporary directories, and those builds would pay for
+        # optimising their own dependencies. Written before the cache step,
+        # whose key hashes this file, so optimised dependencies are cached
+        # apart from unoptimised ones.
+        run: printf '\n[profile.dev]\nopt-level = 1\n' >> .cargo/config.toml
 
       - uses: Swatinem/rust-cache@v2
 
@@ -202,7 +225,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
-          lanes='["checks","wasm-gc","wasip2","pack"]'
+          lanes='["checks","wasm-gc","pack"]'
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             files=$(gh api --paginate \
               "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files?per_page=100" \
@@ -210,7 +233,7 @@ jobs:
             if [ "$(printf '%s\n' "$files" | grep -c .)" -ge 3000 ]; then files=""; fi
             if [ "$(printf '%s\n' "$files" | python3 tools/ci_pr_gate.py pack)" = "false" ]; then
               echo "no changed path feeds the Wasmtime pack; it runs on the push to main"
-              lanes='["checks","wasm-gc","wasip2"]'
+              lanes='["checks","wasm-gc"]'
             fi
           fi
           echo "lanes=$lanes" >> "$GITHUB_OUTPUT"
@@ -342,8 +365,11 @@ jobs:
         # (the `tactic` level needs Lean and is checked nightly in proof.yml).
         # A gain is recorded in the same commit with `python3
         # tools/steps_ratchet.py --update`. The binary is the one the step
-        # above built. It takes 16 to 19 minutes on main with the debug
-        # binary, so the limit leaves room for the producer to grow.
+        # above built. It takes about nine minutes with the debug binary.
+        # Built at opt-level 1, as the native test shards are, it took three,
+        # but compiling this lane's unit tests, canaries and binary optimised
+        # cost more than that, so the lane stays unoptimised. The limit leaves
+        # room for the producer to grow.
         timeout-minutes: 35
         run: python3 tools/steps_ratchet.py --aver target/debug/aver
 
@@ -450,11 +476,14 @@ jobs:
             the_vm_and_wasm_gc_lanes_agree_about_which_cases_are_runnable --exact
 
       - name: Test wasip2 suites
-        if: matrix.lane == 'wasip2'
+        if: matrix.lane == 'checks'
         # `wasip2` is a separate feature; `wasm` alone leaves every
         # `#![cfg(feature = "wasip2")]` test file at 0 tests. Keep these
         # component-model suites in their own loop so only wasip2 tests pay
-        # for the heavier wasmtime-wasi dependency graph. A suite whose tests
+        # for the heavier wasmtime-wasi dependency graph. They run in the
+        # checks lane, which already builds aver-lang with `wasm,wasip2`; a
+        # lane of their own rebuilt the same graph for four minutes of tests
+        # and took one more of the twenty runners. A suite whose tests
         # are gated on both `wasm` and `wasip2` runs here, where both are on;
         # tools/ci_test_coverage.py fails the build when a gated suite is in
         # neither loop.

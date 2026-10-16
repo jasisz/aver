@@ -25,10 +25,11 @@ name: Rust codegen
 
 on:
   schedule:
-    # 03:00 UTC daily — runs against the tip of main, same cadence
-    # as fuzz nightly + proof nightly. Three independent workflows
-    # each reading main, no cross-artefact deps.
-    - cron: '0 3 * * *'
+    # 01:11 UTC daily — runs against the tip of main, same cadence
+    # as fuzz nightly + proof nightly, at its own time so the nightlies
+    # do not start together. Independent workflows each reading main,
+    # no cross-artefact deps.
+    - cron: '11 1 * * *'
   pull_request:
     branches: [main]
     paths:

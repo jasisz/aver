@@ -1,42 +1,47 @@
 {
   "schema": 1,
   "source": {
-    "workflow_run": "https://github.com/jasisz/aver/actions/runs/33095728752",
-    "measured_at": "2026-08-27",
+    "workflow_run": "https://github.com/jasisz/aver/actions/runs/38906495526",
+    "measured_at": "2026-10-16",
     "default_weight_seconds": 1.0,
-    "case_weights_run": "https://github.com/jasisz/aver/actions/runs/37199873994",
-    "case_weights_measured_at": "2026-10-04"
+    "case_weights_run": "https://github.com/jasisz/aver/actions/runs/38906495526",
+    "case_weights_measured_at": "2026-10-16"
   },
   "split_targets": [
     "provider_vm_host_spec",
     "verify_step_budget_spec"
   ],
   "weights_seconds": {
-    "compile_spec": 13.93,
-    "eval_spec": 1.97,
-    "map_iteration_order": 2.95,
-    "map_key_order": 5.97,
-    "native_provider_rust_spec": 53.53,
-    "proof_spec": 2.08,
-    "proof_steps_vm_differential": 300.0,
-    "provider_package_workflow_spec": 33.88,
-    "provider_vm_host_spec": 998.43,
-    "rust_codegen_differential": 94.72,
-    "rust_codegen_regression": 12.14,
-    "rust_self_host_regen": 9.08,
-    "typechecker_spec": 1.53,
-    "verify_runner_regressions": 1.08,
-    "verify_step_budget_spec": 826.34,
-    "vm_pattern_shadow_matrix": 8.58
+    "compile_spec": 15.05,
+    "guide_example_spec": 22.7,
+    "knowledge_provider_spec": 24.67,
+    "map_iteration_order": 2.99,
+    "map_key_order": 7.59,
+    "module_bindings_spec": 17.55,
+    "native_provider_rust_spec": 63.22,
+    "proof_plans_spec": 21.36,
+    "proof_spec": 2.91,
+    "proof_steps_spec": 147.47,
+    "proof_steps_vm_differential": 159.23,
+    "provider_package_workflow_spec": 39.36,
+    "provider_vm_host_spec": 1226.22,
+    "run_all_spec": 7.34,
+    "rust_codegen_differential": 123.83,
+    "rust_codegen_regression": 20.18,
+    "rust_self_host_regen": 6.09,
+    "rust_work_spec": 119.97,
+    "typechecker_spec": 2.52,
+    "verify_step_budget_spec": 8.64,
+    "vm_pattern_shadow_matrix": 19.59,
+    "vm_record_field_take": 3.43,
+    "work_runtime_spec": 2.43,
+    "yield_verify_spec": 2.14
   },
   "case_weights_seconds": {
-    "provider_vm_host_spec::a_cooperative_stop_reaches_a_program_running_on_the_cached_host": 411.53,
-    "provider_vm_host_spec::bound_providers_run_on_wasm_gc_and_refuse_backends_without_a_host": 359.52,
-    "provider_vm_host_spec::configured_packages_run_and_verify_on_one_cached_vm_host": 345.92,
-    "provider_vm_host_spec::custom_wasm_gc_provider_effects_record_and_replay": 477.83,
-    "verify_step_budget_spec::a_raised_ceiling_reaches_check_run_compile_and_proof": 602.03,
-    "verify_step_budget_spec::a_raised_ceiling_reaches_the_remaining_doors": 589.16,
-    "verify_step_budget_spec::an_entry_that_only_raises_max_cases_is_not_reported_stale": 301.77,
-    "verify_step_budget_spec::reordering_two_matching_entries_changes_nothing": 578.83
+    "provider_vm_host_spec::a_cooperative_stop_reaches_a_program_running_on_the_cached_host": 232.55,
+    "provider_vm_host_spec::bound_providers_run_on_wasm_gc_and_refuse_backends_without_a_host": 419.64,
+    "provider_vm_host_spec::configured_packages_run_and_verify_on_one_cached_vm_host": 150.52,
+    "provider_vm_host_spec::custom_wasm_gc_provider_effects_record_and_replay": 423.51,
+    "verify_step_budget_spec::reordering_two_matching_entries_changes_nothing": 2.1
   }
 }

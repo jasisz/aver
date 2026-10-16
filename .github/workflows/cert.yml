@@ -2,7 +2,7 @@ name: Certification
 
 on:
   # Release candidates get the complete matrix on their exact commit. Ordinary
-  # pushes to main remain on the six-hour cadence below, avoiding 330 lane-min
+  # pushes to main remain on the twice-daily cadence below, avoiding 330 lane-min
   # for every merge while making the release gate explicit and reproducible.
   push:
     branches: ['release/**']
@@ -13,9 +13,12 @@ on:
   # every other workflow here, so paying it per push made each pull request
   # queue behind roughly forty minutes of certification that almost never
   # changed. The guard in `decide` skips the run outright when main has not
-  # moved since the last one, so a quiet stretch costs nothing.
+  # moved since the last one, so a quiet stretch costs nothing. Twice a day,
+  # late evening and night, at uneven minutes: every six hours put two of
+  # the four runs, about forty jobs each, into the working day.
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '7 21 * * *'
+    - cron: '37 1 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -194,6 +197,10 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
+      # The scheduled full matrix takes at most eight runners at a time, so a
+      # pull request opened while it runs still finds runners free. A pull
+      # request's own smoke lanes are not limited.
+      max-parallel: ${{ github.event_name == 'schedule' && 8 || 64 }}
       matrix:
         include: ${{ fromJSON(needs.decide.outputs.lanes) }}
     env:
