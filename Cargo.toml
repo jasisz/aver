@@ -79,7 +79,7 @@ runtime-net = ["runtime", "aver-rt/http"]
 terminal = ["aver-rt/terminal"]
 tty-render = ["dep:colored"]
 wasm = ["wasm-compile", "certify", "dep:wasmtime"]
-wasm-compile = ["dep:aver-cert", "dep:wasm-encoder", "dep:wasmprinter", "dep:wasmparser", "dep:wat"]
+wasm-compile = ["aver-cert/plans", "dep:wasm-encoder", "dep:wasmprinter", "dep:wasmparser", "dep:wat"]
 # Certificate production (`aver compile --certify`). Pulls the full aver-cert
 # engine (classifier, Lean renderer, embedded soundness wall) on top of the
 # wasm-gc compile pipeline it certifies, so `--features certify` is a
@@ -100,7 +100,7 @@ wasip2 = ["wasm-compile", "dep:wit-component", "dep:wit-encoder", "dep:wit-parse
 playground = ["wasm-compile", "dep:wasm-bindgen", "runtime", "tty-render"]
 
 [dependencies]
-aver-cert = { path = "aver-cert", version = "=0.1.6-dev", optional = true, default-features = false, features = ["plans"] }
+aver-cert = { path = "aver-cert", version = "=0.1.6-dev", default-features = false }
 aver-memory = { path = "aver-memory", version = "=0.2.17-dev" }
 aver-rt = { path = "aver-rt", version = "=0.4.13-dev", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }

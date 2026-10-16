@@ -8,6 +8,7 @@
 
 pub mod bridge_statement;
 pub mod format;
+pub mod kernels;
 pub mod lean_gate;
 #[cfg(any(feature = "engine", feature = "verify"))]
 pub mod wall;
@@ -31,5 +32,6 @@ mod verifier;
 mod wasip2_binding;
 #[cfg(feature = "verify")]
 pub use verifier::{
-    ARTIFACT_DECODE_LINE, CheckVerdict, Explanation, Verdict, check, explain, verify,
+    ARTIFACT_DECODE_LINE, CheckVerdict, Explanation, Kernels, Verdict, check, explain, verify,
+    verify_with,
 };

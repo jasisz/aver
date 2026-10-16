@@ -43,7 +43,7 @@ theorem addTwo_wasm_certified
   refine ⟨w, ?_, hrepr⟩
   simp only [wFuncN, addTwoCode, addTwoHost, boxRef, carrierSmall, initLocals,
     wRunF, popArgs, List.getElem?_cons_zero, List.length, List.take, List.drop,
-    List.reverse, List.replicate, if_true, reduceIte]
+    List.reverse, List.replicate, ite_true, reduceIte]
   simp only [carrierSmall] at hw
   simp [hw]
 

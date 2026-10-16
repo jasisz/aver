@@ -27,6 +27,12 @@ enum Command {
         artifact: PathBuf,
         /// The emitted `cert/` directory.
         cert_dir: PathBuf,
+        /// Replay the witness closure with every kernel the pinned Lean
+        /// release ships (Lean, Lean with a hardened allocator, lean4lean,
+        /// nanoda, con-leche, con-ron) instead of Lean's alone. Every kernel
+        /// must accept; a missing kernel is a failure.
+        #[arg(long)]
+        paranoid: bool,
     },
     /// Fast developer preflight. Trusts the freshly built or explicitly cached
     /// `.olean` closure and skips whole-closure `leanchecker --fresh`.
@@ -51,6 +57,7 @@ enum Route {
     StrictVerify {
         artifact: PathBuf,
         cert_dir: PathBuf,
+        kernels: aver_cert::Kernels,
     },
     TrustedOleanCheck {
         artifact: PathBuf,
@@ -65,7 +72,19 @@ enum Route {
 impl Command {
     fn into_route(self) -> Route {
         match self {
-            Self::Verify { artifact, cert_dir } => Route::StrictVerify { artifact, cert_dir },
+            Self::Verify {
+                artifact,
+                cert_dir,
+                paranoid,
+            } => Route::StrictVerify {
+                artifact,
+                cert_dir,
+                kernels: if paranoid {
+                    aver_cert::Kernels::Paranoid
+                } else {
+                    aver_cert::Kernels::Lean
+                },
+            },
             Self::Check { artifact, cert_dir } => Route::TrustedOleanCheck { artifact, cert_dir },
             Self::Explain { artifact, cert_dir } | Self::Inspect { artifact, cert_dir } => {
                 Route::StrictExplain { artifact, cert_dir }
@@ -98,8 +117,11 @@ fn print_verdict(
 
 fn main() -> ExitCode {
     match Cli::parse().command.into_route() {
-        Route::StrictVerify { artifact, cert_dir } => match aver_cert::verify(&artifact, &cert_dir)
-        {
+        Route::StrictVerify {
+            artifact,
+            cert_dir,
+            kernels,
+        } => match aver_cert::verify_with(&artifact, &cert_dir, kernels) {
             Ok(Verdict::Certified {
                 summary,
                 faces,
@@ -214,6 +236,32 @@ mod tests {
             .expect("certificate command should parse")
             .command
             .into_route()
+    }
+
+    #[test]
+    fn verify_uses_lean_alone_unless_paranoid_is_given() {
+        assert!(matches!(
+            parse_route("verify"),
+            Route::StrictVerify {
+                kernels: aver_cert::Kernels::Lean,
+                ..
+            }
+        ));
+        let paranoid = Cli::try_parse_from(["aver-cert", "verify", "--paranoid", "a.wasm", "cert"])
+            .expect("--paranoid should parse")
+            .command
+            .into_route();
+        assert!(matches!(
+            paranoid,
+            Route::StrictVerify {
+                kernels: aver_cert::Kernels::Paranoid,
+                ..
+            }
+        ));
+        assert!(
+            Cli::try_parse_from(["aver-cert", "check", "--paranoid", "a.wasm", "cert"]).is_err(),
+            "the trusted-olean preflight replays nothing, so it takes no --paranoid"
+        );
     }
 
     #[test]

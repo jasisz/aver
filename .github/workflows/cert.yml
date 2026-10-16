@@ -334,3 +334,84 @@ jobs:
         run: >-
           cargo test -p aver-lang --features wasm,wasip2 --test cert_verify_spec
           --test cert_certify_spec wasip2
+
+  cert-admission:
+    # The admission check a release relies on: real certificates checked by
+    # every kernel the pinned Lean release ships (`aver-cert verify
+    # --paranoid`). It also times the developer preflight (`check`) and the
+    # single-kernel `verify` on the same packages, so the cost of each mode is
+    # visible in the log.
+    needs: decide
+    if: needs.decide.outputs.lanes != '[]'
+    name: Cert Admission (paranoid)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      RUSTFLAGS: -C debuginfo=0
+      AVER_CERT_PHASE_TIMEOUT_SECS: '3600'
+      AVER_CERT_TIMINGS: '1'
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache Lean toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.elan
+          key: elan-${{ runner.os }}-${{ hashFiles('aver-cert/assets/wall/current/lean-toolchain') }}
+
+      - name: Install Lean (via elan)
+        run: |
+          if [ ! -x "$HOME/.elan/bin/elan" ]; then
+            curl -sSfL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30             https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh             | sh -s -- -y --default-toolchain stable
+          fi
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Verify pinned `lake` reachable
+        run: |
+          toolchain="$(tr -d '\r\n' < aver-cert/assets/wall/current/lean-toolchain)"
+          for attempt in 1 2 3 4 5 6; do
+            if elan run --install "$toolchain" lake --version; then exit 0; fi
+            echo "::warning::pinned lake/toolchain fetch failed (attempt ${attempt}/6); retrying in 15s"
+            sleep 15
+          done
+          echo "::error::pinned lake unreachable after 6 attempts (toolchain download)"
+          exit 1
+
+      - name: Build the compiler and the verifier
+        run: |
+          cargo build --features wasm --bin aver
+          cargo build -p aver-cert --bin aver-cert
+
+      - name: Certify, then check with each mode
+        # No build cache in any mode: each run builds from the staged sources.
+        run: |
+          set -euo pipefail
+          run_mode() {
+            local label="$1"; shift
+            local started
+            started=$(date +%s)
+            target/debug/aver-cert "$@"
+            echo "::notice::${label}: $(( $(date +%s) - started ))s"
+          }
+          for project in certprobe2 payment_ops; do
+            out="/tmp/admission-${project}"
+            case "$project" in
+              certprobe2)
+                target/debug/aver compile tools/certkit/fixtures/certprobe2.av \
+                  --target wasm-gc --certify --examples -o "$out"
+                wasm="$out/certprobe2.wasm" ;;
+              payment_ops)
+                target/debug/aver compile projects/payment_ops/main.av \
+                  --module-root projects/payment_ops --target wasm-gc --certify --examples -o "$out"
+                wasm="$out/main.wasm" ;;
+            esac
+            run_mode "${project} check (trusted oleans, no replay)" check "$wasm" "$out/cert"
+            run_mode "${project} verify (leanchecker --fresh)" verify "$wasm" "$out/cert"
+            run_mode "${project} verify --paranoid (every kernel)" verify --paranoid "$wasm" "$out/cert"
+          done

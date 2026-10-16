@@ -2115,7 +2115,7 @@ theorem divOr_run {C : Nat} {S : CarrierSpec C} {M : MCtx} {host : HostTbl}
           subst hwl'; simp [List.getElem?_set]; omega
         simp [wRunF, g3] at hrun
     · simp only [hy, decide_false, Bool.false_eq_true, ↓reduceIte] at hrun
-      rw [wRunF_ifElse_single, if_pos rfl] at hrun
+      rw [wRunF_ifElse_single, ite_eq_left rfl] at hrun
       cases hr : g [wa, wb, .i32v (if isMod then 1 else 0)] with
       | none => simp [wRunF, g1, g2, hg, popArgs_three, hr] at hrun
       | some r =>

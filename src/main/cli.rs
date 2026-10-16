@@ -543,7 +543,7 @@ pub(super) enum Commands {
         optimize: Option<WasmOptMode>,
         /// Emit a format-v1 certificate data package next to the Wasm artifact.
         /// `aver cert verify` supplies its own Lean wall and the actual artifact
-        /// bytes, then checks the package with Lean 4.34. Unsupported exports
+        /// bytes, then checks the package with Lean 4.35. Unsupported exports
         /// are listed with a reason, never credited with a weaker theorem.
         /// Requires `--target wasm-gc` or `--target wasip2`. On wasm-gc it may
         /// accompany `--optimize`: the certificate binds the canonical `.wasm`,
@@ -840,6 +840,14 @@ pub(super) enum Commands {
         /// be read or carries no hashes.
         #[arg(long, requires = "check_mode")]
         compare_manifest: Option<String>,
+        /// Check mode (`--check`/`--check-json`) only, Lean backend only:
+        /// after a clean build, check the proof again with every kernel the
+        /// pinned Lean release ships (Lean, Lean with a hardened allocator,
+        /// lean4lean, nanoda, con-leche, con-ron). Every kernel must accept;
+        /// a missing kernel fails the check. Off by default, and costs
+        /// nothing when off.
+        #[arg(long, requires = "check_mode")]
+        paranoid: bool,
     },
     /// Hand the bundled Aver agent material to your agent setup. The language
     /// guide and the toolchain guide ship inside the binary; this writes them
@@ -875,6 +883,10 @@ pub(super) enum CertCommand {
         artifact: String,
         /// The emitted `cert/` directory.
         cert_dir: String,
+        /// Replay with every kernel the pinned Lean release ships instead of
+        /// Lean's alone; every kernel must accept.
+        #[arg(long)]
+        paranoid: bool,
     },
     /// Fast developer preflight. Trusts the freshly built or explicitly cached
     /// `.olean` closure, skips whole-closure `leanchecker --fresh`, and never
@@ -980,6 +992,29 @@ mod tests {
     }
 
     #[test]
+    fn proof_paranoid_is_off_by_default_and_needs_check_mode() {
+        let cli = Cli::parse_from(["aver", "proof", "x.av", "--check"]);
+        assert!(matches!(
+            cli.command,
+            Commands::Proof {
+                paranoid: false,
+                ..
+            }
+        ));
+        for mode in ["--check", "--check-json"] {
+            let cli = Cli::parse_from(["aver", "proof", "x.av", mode, "--paranoid"]);
+            assert!(matches!(
+                cli.command,
+                Commands::Proof { paranoid: true, .. }
+            ));
+        }
+        assert!(
+            Cli::try_parse_from(["aver", "proof", "x.av", "--paranoid"]).is_err(),
+            "--paranoid checks a built proof, so it needs --check or --check-json"
+        );
+    }
+
+    #[test]
     fn waterfall_requires_check_and_valid_limits() {
         assert!(Cli::try_parse_from(["aver", "proof", "x.av", "--waterfall", "/tmp/w"]).is_err());
         assert!(
@@ -1025,7 +1060,12 @@ mod tests {
         let cli = Cli::parse_from(["aver", "cert", "verify", "app.wasm", "out/cert"]);
         match cli.command {
             Commands::Cert {
-                cmd: CertCommand::Verify { artifact, cert_dir },
+                cmd:
+                    CertCommand::Verify {
+                        artifact,
+                        cert_dir,
+                        paranoid: false,
+                    },
             } => {
                 assert_eq!(artifact, "app.wasm");
                 assert_eq!(cert_dir, "out/cert");

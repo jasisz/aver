@@ -86,7 +86,7 @@ theorem popArgs_frame (arity : Nat) (st extra args rest : List WVal)
   by_cases hlen : st.length < arity
   · simp [hlen] at h
   · have hle : arity ≤ st.length := Nat.le_of_not_lt hlen
-    simp only [hlen, if_false, Option.some.injEq, Prod.mk.injEq] at h
+    simp only [hlen, ite_false, Option.some.injEq, Prod.mk.injEq] at h
     have hlen' : ¬ (st ++ extra).length < arity := by
       simp only [List.length_append]
       omega

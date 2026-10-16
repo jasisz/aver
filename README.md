@@ -52,7 +52,7 @@ cargo install aver-cert
 
 The `wasm` feature enables wasm-gc compilation and `--certify`. Leave it out only if you need nothing beyond the VM and the Rust backend. Install with `--features wasm,wasip2` if you also want the WASI 0.2 target shown below. `aver-lang` installs the compiler as `aver`.
 
-`aver-cert` installs the independent certificate verifier that `aver cert` uses. Keep both executables in the same directory or on `PATH`. The verifier has its own public version line, starting at `0.1.0` and separate from the `aver-lang` version, and it checks certificates with the pinned Lean 4.34 toolchain. Verification needs a standard Elan installation. The verifier resolves the canonical Elan executable directly and does not look up its trusted Lake, Lean or leanchecker processes through `PATH`.
+`aver-cert` installs the independent certificate verifier that `aver cert` uses. Keep both executables in the same directory or on `PATH`. The verifier has its own public version line, starting at `0.1.0` and separate from the `aver-lang` version, and it checks certificates with the pinned Lean 4.35 toolchain. Verification needs a standard Elan installation. The verifier resolves the canonical Elan executable directly and does not look up its trusted Lake, Lean or leanchecker processes through `PATH`.
 
 Then try it with a tiny file:
 

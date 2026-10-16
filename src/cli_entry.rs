@@ -550,7 +550,15 @@ fn main_impl(
             gate,
             write_baseline,
             compare_manifest,
+            paranoid,
         } if backend == "aver" => {
+            if *paranoid {
+                eprintln!(
+                    "--paranoid runs Lean's kernels over the Lean proof; the aver backend \
+                     builds no Lean proof (use --backend lean)"
+                );
+                std::process::exit(2);
+            }
             let _ = (
                 verify_mode,
                 examples,
@@ -589,6 +597,7 @@ fn main_impl(
             gate,
             write_baseline,
             compare_manifest,
+            paranoid,
         } => {
             commands::cmd_proof(
                 file,
@@ -608,6 +617,7 @@ fn main_impl(
                 gate.as_deref(),
                 write_baseline.as_deref(),
                 compare_manifest.as_deref(),
+                *paranoid,
             );
         }
         Commands::AgentConnect { global, print } => {
