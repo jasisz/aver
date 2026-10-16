@@ -74,7 +74,7 @@ pub(in crate::yield_lowering) fn strengthen_laws(
             ];
             let samples = [
                 Spanned::new(Expr::Literal(Literal::Int(0)), block.line),
-                Spanned::new(Expr::List(vec![]), block.line),
+                Spanned::new(Expr::List(crate::ast::shared::vec(vec![])), block.line),
                 Spanned::new(Expr::Literal(Literal::Int(0)), block.line),
             ];
             let mut names = Vec::new();

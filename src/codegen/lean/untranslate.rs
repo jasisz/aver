@@ -300,7 +300,7 @@ pub fn untranslate_premise_json(
 /// equality becomes `a == b`, a comparison becomes `a < b` etc.
 fn untranslate_bool(v: &Value, ctx: &UntranslateCtx) -> Result<Spanned<Expr>, EngineGap> {
     if let Some((l, r)) = untranslate_eq(v, ctx) {
-        return Ok(sp(Expr::BinOp(BinOp::Eq, Box::new(l?), Box::new(r?))));
+        return Ok(sp(Expr::BinOp(BinOp::Eq, crate::ast::Shared::new(l?), crate::ast::Shared::new(r?))));
     }
     // A split else-branch hypothesis `¬(<boolExpr> = b)` (non-constant, so not
     // dropped as vacuous) → the `when`-conjunct `<boolExpr> != b`. The Bool↔Prop
@@ -308,7 +308,7 @@ fn untranslate_bool(v: &Value, ctx: &UntranslateCtx) -> Result<Spanned<Expr>, En
     if let Some(inner) = negated_eq_inner(v)
         && let Some((l, r)) = untranslate_eq(inner, ctx)
     {
-        return Ok(sp(Expr::BinOp(BinOp::Neq, Box::new(l?), Box::new(r?))));
+        return Ok(sp(Expr::BinOp(BinOp::Neq, crate::ast::Shared::new(l?), crate::ast::Shared::new(r?))));
     }
     if let Some(app) = v.get("app")
         && let Some(op) = comparison_binop(head_const(app))
@@ -317,8 +317,8 @@ fn untranslate_bool(v: &Value, ctx: &UntranslateCtx) -> Result<Spanned<Expr>, En
         let args = app_operands(app, 2)?;
         return Ok(sp(Expr::BinOp(
             op,
-            Box::new(untranslate_expr(&args[0], ctx)?),
-            Box::new(untranslate_expr(&args[1], ctx)?),
+            crate::ast::Shared::new(untranslate_expr(&args[0], ctx)?),
+            crate::ast::Shared::new(untranslate_expr(&args[1], ctx)?),
         )));
     }
     Err(EngineGap::new(
@@ -412,7 +412,7 @@ fn untranslate_expr(v: &Value, ctx: &UntranslateCtx) -> Result<Spanned<Expr>, En
             .get("e")
             .ok_or_else(|| EngineGap::new("field projection without a receiver"))?;
         return Ok(sp(Expr::Attr(
-            Box::new(untranslate_expr(receiver, ctx)?),
+            crate::ast::Shared::new(untranslate_expr(receiver, ctx)?),
             field.clone(),
         )));
     }
@@ -436,7 +436,7 @@ fn untranslate_app(app: &Value, ctx: &UntranslateCtx) -> Result<Spanned<Expr>, E
             .filter(|args| args.len() == 1)
             .ok_or_else(|| EngineGap::new("record accessor has no unique source receiver"))?;
         return Ok(sp(Expr::Attr(
-            Box::new(untranslate_expr(&args[0], ctx)?),
+            crate::ast::Shared::new(untranslate_expr(&args[0], ctx)?),
             field.clone(),
         )));
     }
@@ -475,7 +475,7 @@ fn untranslate_app(app: &Value, ctx: &UntranslateCtx) -> Result<Spanned<Expr>, E
     if head == Some("Neg.neg") {
         require_int_carrier(app)?;
         let args = app_operands(app, 1)?;
-        return Ok(sp(Expr::Neg(Box::new(untranslate_expr(&args[0], ctx)?))));
+        return Ok(sp(Expr::Neg(crate::ast::Shared::new(untranslate_expr(&args[0], ctx)?))));
     }
     // Numeric coercions have no Aver surface: Aver `Int` is ℤ and there is no
     // `Nat`, so a `Nat`-carried value must never be laundered into an Aver
@@ -504,8 +504,8 @@ fn untranslate_app(app: &Value, ctx: &UntranslateCtx) -> Result<Spanned<Expr>, E
         let args = app_operands(app, 2)?;
         return Ok(sp(Expr::BinOp(
             op,
-            Box::new(untranslate_expr(&args[0], ctx)?),
-            Box::new(untranslate_expr(&args[1], ctx)?),
+            crate::ast::Shared::new(untranslate_expr(&args[0], ctx)?),
+            crate::ast::Shared::new(untranslate_expr(&args[1], ctx)?),
         )));
     }
     if let Some(op) = comparison_binop(head) {
@@ -513,8 +513,8 @@ fn untranslate_app(app: &Value, ctx: &UntranslateCtx) -> Result<Spanned<Expr>, E
         let args = app_operands(app, 2)?;
         return Ok(sp(Expr::BinOp(
             op,
-            Box::new(untranslate_expr(&args[0], ctx)?),
-            Box::new(untranslate_expr(&args[1], ctx)?),
+            crate::ast::Shared::new(untranslate_expr(&args[0], ctx)?),
+            crate::ast::Shared::new(untranslate_expr(&args[1], ctx)?),
         )));
     }
     if head == Some("Eq") {
@@ -523,7 +523,7 @@ fn untranslate_app(app: &Value, ctx: &UntranslateCtx) -> Result<Spanned<Expr>, E
     // List builtins in our translator's image: `[x]` / `x :: xs` / `a ++ b`
     // spell back as Aver list literals and `List.concat`.
     if head == Some("List.nil") {
-        return Ok(sp(Expr::List(vec![])));
+        return Ok(sp(Expr::List(crate::ast::shared::vec(vec![]))));
     }
     if head == Some("List.cons") {
         // `@List.cons _ a b` → `List.concat([a], b)`.
@@ -531,8 +531,8 @@ fn untranslate_app(app: &Value, ctx: &UntranslateCtx) -> Result<Spanned<Expr>, E
         let a = untranslate_expr(&ops[0], ctx)?;
         let b = untranslate_expr(&ops[1], ctx)?;
         return Ok(sp(Expr::FnCall(
-            Box::new(sp(Expr::Ident("List.concat".to_string()))),
-            vec![sp(Expr::List(vec![a])), b],
+            crate::ast::Shared::new(sp(Expr::Ident("List.concat".to_string()))),
+            crate::ast::shared::vec(vec![sp(Expr::List(crate::ast::shared::vec(vec![a]))), b]),
         )));
     }
     if matches!(
@@ -542,11 +542,11 @@ fn untranslate_app(app: &Value, ctx: &UntranslateCtx) -> Result<Spanned<Expr>, E
         // `a ++ b` → `List.concat(a, b)`.
         let ops = app_operands(app, 2)?;
         return Ok(sp(Expr::FnCall(
-            Box::new(sp(Expr::Ident("List.concat".to_string()))),
-            vec![
+            crate::ast::Shared::new(sp(Expr::Ident("List.concat".to_string()))),
+            crate::ast::shared::vec(vec![
                 untranslate_expr(&ops[0], ctx)?,
                 untranslate_expr(&ops[1], ctx)?,
-            ],
+            ]),
         )));
     }
     // Otherwise: a user / module function applied to arguments. The head must be
@@ -564,7 +564,7 @@ fn untranslate_app(app: &Value, ctx: &UntranslateCtx) -> Result<Spanned<Expr>, E
     for a in all {
         args.push(untranslate_expr(a, ctx)?);
     }
-    Ok(sp(Expr::FnCall(Box::new(sp(const_to_expr(name))), args)))
+    Ok(sp(Expr::FnCall(crate::ast::Shared::new(sp(const_to_expr(name))), crate::ast::shared::vec(args))))
 }
 
 /// The head constant name of an `app` JSON node, if the head is a `const`.
@@ -656,7 +656,7 @@ fn const_to_expr(name: &str) -> Expr {
     match name {
         "Bool.true" | "True" => return Expr::Literal(Literal::Bool(true)),
         "Bool.false" | "False" => return Expr::Literal(Literal::Bool(false)),
-        "List.nil" => return Expr::List(vec![]),
+        "List.nil" => return Expr::List(crate::ast::shared::vec(vec![])),
         _ => {}
     }
     Expr::Ident(lean_dotted_to_aver(name))
@@ -793,8 +793,8 @@ fn peano_zero(p: &PeanoCtx) -> Expr {
 /// The Peano successor `T.Succ(x)`.
 fn peano_succ(p: &PeanoCtx, x: Spanned<Expr>) -> Expr {
     Expr::FnCall(
-        Box::new(sp(Expr::Ident(format!("{}.{}", p.type_name, p.succ_ctor)))),
-        vec![x],
+        crate::ast::Shared::new(sp(Expr::Ident(format!("{}.{}", p.type_name, p.succ_ctor)))),
+        crate::ast::shared::vec(vec![x]),
     )
 }
 

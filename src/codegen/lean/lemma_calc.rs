@@ -243,8 +243,8 @@ fn antiunify(
             ));
         }
         return Ok(Expr::FnCall(
-            Box::new(Spanned::new(Expr::Ident(h1.to_string()), 0)),
-            args,
+            crate::ast::Shared::new(Spanned::new(Expr::Ident(h1.to_string()), 0)),
+            crate::ast::shared::vec(args),
         ));
     }
     // Same binary operator → recurse on both operands.
@@ -255,8 +255,8 @@ fn antiunify(
         let r = antiunify(&r1.node, &r2.node, env, subst, fresh)?;
         return Ok(Expr::BinOp(
             *o1,
-            Box::new(Spanned::new(l, 0)),
-            Box::new(Spanned::new(r, 0)),
+            crate::ast::Shared::new(Spanned::new(l, 0)),
+            crate::ast::Shared::new(Spanned::new(r, 0)),
         ));
     }
     Err("anti-unification diff needs a term outside the goal and IH".to_string())
@@ -387,8 +387,8 @@ fn unary_ctor_app<'a>(e: &'a Expr, env: &CalcEnv) -> Option<(&'a str, &'a Expr)>
 
 fn rewrap_ctor(ctor: &str, inner: Expr) -> Expr {
     Expr::FnCall(
-        Box::new(Spanned::new(Expr::Ident(ctor.to_string()), 0)),
-        vec![Spanned::new(inner, 0)],
+        crate::ast::Shared::new(Spanned::new(Expr::Ident(ctor.to_string()), 0)),
+        crate::ast::shared::vec(vec![Spanned::new(inner, 0)]),
     )
 }
 

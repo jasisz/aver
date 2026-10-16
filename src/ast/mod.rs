@@ -392,7 +392,7 @@ pub enum BinOp {
 #[derive(Debug)]
 pub struct MatchArm {
     pub pattern: Pattern,
-    pub body: Box<Spanned<Expr>>,
+    pub body: Shared<Spanned<Expr>>,
     /// Per-arm slot table for the pattern's bindings, in pattern order.
     /// Filled by the resolver pass; backend code reads from here
     /// instead of doing a name lookup, so two arms with the same
@@ -435,7 +435,7 @@ impl MatchArm {
     pub fn new(pattern: Pattern, body: Spanned<Expr>) -> Self {
         Self {
             pattern,
-            body: Box::new(body),
+            body: crate::ast::Shared::new(body),
             binding_slots: std::sync::OnceLock::new(),
         }
     }
@@ -443,7 +443,7 @@ impl MatchArm {
     pub fn new_boxed(pattern: Pattern, body: Box<Spanned<Expr>>) -> Self {
         Self {
             pattern,
-            body,
+            body: crate::ast::Shared::from(body),
             binding_slots: std::sync::OnceLock::new(),
         }
     }
@@ -537,7 +537,7 @@ impl Pattern {
 #[derive(Debug, Clone, PartialEq)]
 pub enum StrPart {
     Literal(String),
-    Parsed(Box<Spanned<Expr>>),
+    Parsed(Shared<Spanned<Expr>>),
 }
 
 /// Data for a tail-call expression.
@@ -559,36 +559,36 @@ impl TailCallData {
 pub enum Expr {
     Literal(Literal),
     Ident(String),
-    Attr(Box<Spanned<Expr>>, String),
-    FnCall(Box<Spanned<Expr>>, Vec<Spanned<Expr>>),
-    BinOp(BinOp, Box<Spanned<Expr>>, Box<Spanned<Expr>>),
+    Attr(Shared<Spanned<Expr>>, String),
+    FnCall(Shared<Spanned<Expr>>, Shared<Vec<Spanned<Expr>>>),
+    BinOp(BinOp, Shared<Spanned<Expr>>, Shared<Spanned<Expr>>),
     /// Unary numeric negation: `-x`. Operand must be numeric (`Int` or
     /// `Float`); result is the same type. Used to be desugared in the
     /// parser to `BinOp(Sub, Literal(Int(0)), x)`, which loses the IEEE
     /// `-0.0` sign bit on `Float` operands and produces an `Int`/`Float`
     /// mixed `BinOp` that backends had to recognise with pattern hacks.
-    Neg(Box<Spanned<Expr>>),
+    Neg(Shared<Spanned<Expr>>),
     Match {
-        subject: Box<Spanned<Expr>>,
-        arms: Vec<MatchArm>,
+        subject: Shared<Spanned<Expr>>,
+        arms: Shared<Vec<MatchArm>>,
     },
-    Constructor(String, Option<Box<Spanned<Expr>>>),
-    ErrorProp(Box<Spanned<Expr>>),
+    Constructor(String, Option<Shared<Spanned<Expr>>>),
+    ErrorProp(Shared<Spanned<Expr>>),
     InterpolatedStr(Vec<StrPart>),
-    List(Vec<Spanned<Expr>>),
-    Tuple(Vec<Spanned<Expr>>),
+    List(Shared<Vec<Spanned<Expr>>>),
+    Tuple(Shared<Vec<Spanned<Expr>>>),
     /// Map literal: `{"a" => 1, "b" => 2}`
-    MapLiteral(Vec<(Spanned<Expr>, Spanned<Expr>)>),
+    MapLiteral(Shared<Vec<(Spanned<Expr>, Spanned<Expr>)>>),
     /// Record creation: `User(name = "Alice", age = 30)`
     RecordCreate {
         type_name: String,
-        fields: Vec<(String, Spanned<Expr>)>,
+        fields: Shared<Vec<(String, Spanned<Expr>)>>,
     },
     /// Record update: `User.update(base, field = newVal, ...)`
     RecordUpdate {
         type_name: String,
-        base: Box<Spanned<Expr>>,
-        updates: Vec<(String, Spanned<Expr>)>,
+        base: Shared<Spanned<Expr>>,
+        updates: Shared<Vec<(String, Spanned<Expr>)>>,
     },
     /// Tail-position call to a function in the same SCC (self or mutual recursion).
     /// Produced by the TCO transform pass before type-checking.
@@ -599,7 +599,7 @@ pub enum Expr {
     /// `unwrap=true` (`?!`): all elements must be Result; unwraps Ok values, propagates first Err.
     /// `unwrap=false` (`!`): returns raw tuple of results.
     /// Produces a replay group (effects matched by branch_path + effect_occurrence + type + args).
-    IndependentProduct(Vec<Spanned<Expr>>, bool),
+    IndependentProduct(Shared<Vec<Spanned<Expr>>>, bool),
     /// Compiled variable lookup: `env[last][slot]` — O(1) instead of HashMap scan.
     /// Produced by the resolver pass for locals inside function bodies.
     /// `last_use` is set by `ir::last_use` — when true, this is the final

@@ -11314,9 +11314,9 @@ fn synth_domain(
         }
         "List<Int>" => {
             return Some(VerifyGivenDomain::Explicit(vec![
-                Spanned::new(Expr::List(vec![]), 0),
-                Spanned::new(Expr::List(vec![int(1)]), 0),
-                Spanned::new(Expr::List(vec![int(3), int(1), int(2)]), 0),
+                Spanned::new(Expr::List(crate::ast::shared::vec(vec![])), 0),
+                Spanned::new(Expr::List(crate::ast::shared::vec(vec![int(1)])), 0),
+                Spanned::new(Expr::List(crate::ast::shared::vec(vec![int(3), int(1), int(2)])), 0),
             ]));
         }
         _ => {}
@@ -11326,11 +11326,11 @@ fn synth_domain(
     let succ = |x: Spanned<Expr>| {
         Spanned::new(
             Expr::FnCall(
-                Box::new(Spanned::new(
+                crate::ast::Shared::new(Spanned::new(
                     Expr::Ident(format!("{}.{}", p.type_name, p.succ_ctor)),
                     0,
                 )),
-                vec![x],
+                crate::ast::shared::vec(vec![x]),
             ),
             0,
         )
@@ -11344,10 +11344,10 @@ fn synth_domain(
     }
     if ty == format!("List<{}>", p.type_name) {
         return Some(VerifyGivenDomain::Explicit(vec![
-            Spanned::new(Expr::List(vec![]), 0),
-            Spanned::new(Expr::List(vec![zero()]), 0),
+            Spanned::new(Expr::List(crate::ast::shared::vec(vec![])), 0),
+            Spanned::new(Expr::List(crate::ast::shared::vec(vec![zero()])), 0),
             Spanned::new(
-                Expr::List(vec![succ(zero()), zero(), succ(succ(zero()))]),
+                Expr::List(crate::ast::shared::vec(vec![succ(zero()), zero(), succ(succ(zero()))])),
                 0,
             ),
         ]));

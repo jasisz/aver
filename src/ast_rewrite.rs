@@ -95,14 +95,14 @@ where
         Expr::Literal(_) => Spanned::new(expr.node.clone(), line),
         Expr::Attr(inner, field) => Spanned::new(
             Expr::Attr(
-                Box::new(rewrite_inner(inner, scope, rewrite)),
+                crate::ast::Shared::new(rewrite_inner(inner, scope, rewrite)),
                 field.clone(),
             ),
             line,
         ),
         Expr::FnCall(callee, args) => Spanned::new(
             Expr::FnCall(
-                Box::new(rewrite_inner(callee, scope, rewrite)),
+                crate::ast::Shared::new(rewrite_inner(callee, scope, rewrite)),
                 args.iter()
                     .map(|a| rewrite_inner(a, scope, rewrite))
                     .collect(),
@@ -112,13 +112,13 @@ where
         Expr::BinOp(op, l, r) => Spanned::new(
             Expr::BinOp(
                 *op,
-                Box::new(rewrite_inner(l, scope, rewrite)),
-                Box::new(rewrite_inner(r, scope, rewrite)),
+                crate::ast::Shared::new(rewrite_inner(l, scope, rewrite)),
+                crate::ast::Shared::new(rewrite_inner(r, scope, rewrite)),
             ),
             line,
         ),
         Expr::Neg(inner) => Spanned::new(
-            Expr::Neg(Box::new(rewrite_inner(inner, scope, rewrite))),
+            Expr::Neg(crate::ast::Shared::new(rewrite_inner(inner, scope, rewrite))),
             line,
         ),
         Expr::Match { subject, arms } => {
@@ -146,7 +146,7 @@ where
                 .collect();
             Spanned::new(
                 Expr::Match {
-                    subject: new_subject,
+                    subject: crate::ast::Shared::from(new_subject),
                     arms: new_arms,
                 },
                 line,
@@ -157,12 +157,12 @@ where
                 name.clone(),
                 payload
                     .as_ref()
-                    .map(|inner| Box::new(rewrite_inner(inner, scope, rewrite))),
+                    .map(|inner| crate::ast::Shared::new(rewrite_inner(inner, scope, rewrite))),
             ),
             line,
         ),
         Expr::ErrorProp(inner) => Spanned::new(
-            Expr::ErrorProp(Box::new(rewrite_inner(inner, scope, rewrite))),
+            Expr::ErrorProp(crate::ast::Shared::new(rewrite_inner(inner, scope, rewrite))),
             line,
         ),
         Expr::InterpolatedStr(parts) => Spanned::new(
@@ -172,7 +172,7 @@ where
                     .map(|part| match part {
                         StrPart::Literal(s) => StrPart::Literal(s.clone()),
                         StrPart::Parsed(inner) => {
-                            StrPart::Parsed(Box::new(rewrite_inner(inner, scope, rewrite)))
+                            StrPart::Parsed(crate::ast::Shared::new(rewrite_inner(inner, scope, rewrite)))
                         }
                     })
                     .collect(),
@@ -238,7 +238,7 @@ where
         } => Spanned::new(
             Expr::RecordUpdate {
                 type_name: type_name.clone(),
-                base: Box::new(rewrite_inner(base, scope, rewrite)),
+                base: crate::ast::Shared::new(rewrite_inner(base, scope, rewrite)),
                 updates: updates
                     .iter()
                     .map(|(n, v)| (n.clone(), rewrite_inner(v, scope, rewrite)))

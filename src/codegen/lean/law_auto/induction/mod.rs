@@ -1372,7 +1372,7 @@ fn qualify_module_calls(law: &VerifyLaw, module: &crate::codegen::ModuleInfo) ->
         let mut parts = path.split('.');
         let mut expr = Spanned::bare(Expr::Ident(parts.next().unwrap_or_default().to_string()));
         for part in parts {
-            expr = Spanned::bare(Expr::Attr(Box::new(expr), part.to_string()));
+            expr = Spanned::bare(Expr::Attr(crate::ast::Shared::new(expr), part.to_string()));
         }
         expr
     }

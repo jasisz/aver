@@ -432,7 +432,7 @@ fn children(expr: &Spanned<Expr>) -> Vec<&Spanned<Expr>> {
         Expr::Neg(inner) | Expr::ErrorProp(inner) | Expr::Attr(inner, _) => {
             children.push(inner);
         }
-        Expr::Constructor(_, inner) => children.extend(inner.iter().map(Box::as_ref)),
+        Expr::Constructor(_, inner) => children.extend(inner.iter().map(|x| &**x)),
         Expr::Match { subject, arms, .. } => {
             children.push(subject);
             children.extend(arms.iter().map(|arm| arm.body.as_ref()));

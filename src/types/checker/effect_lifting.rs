@@ -491,7 +491,7 @@ fn try_lift_question_op_stmt(
         spanned(
             Expr::Constructor(
                 "Result.Ok".to_string(),
-                Some(Box::new(spanned(Expr::Ident(ok_value_name.clone()), line))),
+                Some(crate::ast::Shared::new(spanned(Expr::Ident(ok_value_name.clone()), line))),
             ),
             line,
         )
@@ -509,7 +509,7 @@ fn try_lift_question_op_stmt(
         spanned(
             Expr::Constructor(
                 "Result.Err".to_string(),
-                Some(Box::new(spanned(Expr::Ident(err_name), line))),
+                Some(crate::ast::Shared::new(spanned(Expr::Ident(err_name), line))),
             ),
             line,
         ),
@@ -517,8 +517,8 @@ fn try_lift_question_op_stmt(
 
     let match_expr = spanned(
         Expr::Match {
-            subject: Box::new(lifted_inner),
-            arms: vec![ok_arm, err_arm],
+            subject: crate::ast::Shared::new(lifted_inner),
+            arms: crate::ast::shared::vec(vec![ok_arm, err_arm]),
         },
         line,
     );
@@ -572,9 +572,9 @@ fn try_lift_error_prop_stmt(
         let tuple_items: Vec<Spanned<Expr>> = (0..items.len())
             .map(|i| spanned(Expr::Ident(cps_binding(i)), line))
             .collect();
-        let tuple_expr = spanned(Expr::Tuple(tuple_items), line);
+        let tuple_expr = spanned(Expr::Tuple(crate::ast::shared::vec(tuple_items)), line);
         spanned(
-            Expr::Constructor("Result.Ok".to_string(), Some(Box::new(tuple_expr))),
+            Expr::Constructor("Result.Ok".to_string(), Some(crate::ast::Shared::new(tuple_expr))),
             line,
         )
     } else {
@@ -584,7 +584,7 @@ fn try_lift_error_prop_stmt(
         let tuple_items: Vec<Spanned<Expr>> = (0..items.len())
             .map(|i| spanned(Expr::Ident(cps_binding(i)), line))
             .collect();
-        let tuple_expr = spanned(Expr::Tuple(tuple_items), line);
+        let tuple_expr = spanned(Expr::Tuple(crate::ast::shared::vec(tuple_items)), line);
         let reconstruct = Stmt::Binding(bind_name, None, tuple_expr);
         let mut block_stmts = vec![reconstruct];
         let lifted_rest = lift_stmts(rest, cfg, path_expr, counters)?;
@@ -714,7 +714,7 @@ fn oracle_counter_expr(cfg: &LiftConfig, offset: u32, line: SourceLine) -> Spann
         base
     } else {
         spanned(
-            Expr::BinOp(crate::ast::BinOp::Add, Box::new(base), Box::new(literal())),
+            Expr::BinOp(crate::ast::BinOp::Add, crate::ast::Shared::new(base), crate::ast::Shared::new(literal())),
             line,
         )
     }
@@ -735,9 +735,9 @@ fn build_error_prop_cascade(items: Vec<Spanned<Expr>>, line: SourceLine) -> Span
     let tuple_items: Vec<Spanned<Expr>> = (0..items.len())
         .map(|i| spanned(Expr::Ident(cps_binding(i)), line))
         .collect();
-    let tuple_expr = spanned(Expr::Tuple(tuple_items), line);
+    let tuple_expr = spanned(Expr::Tuple(crate::ast::shared::vec(tuple_items)), line);
     let ok_wrap = spanned(
-        Expr::Constructor("Result.Ok".to_string(), Some(Box::new(tuple_expr))),
+        Expr::Constructor("Result.Ok".to_string(), Some(crate::ast::Shared::new(tuple_expr))),
         line,
     );
     let mut cont = ok_wrap;
@@ -761,7 +761,7 @@ fn result_match_cascade(
         spanned(
             Expr::Constructor(
                 "Result.Err".to_string(),
-                Some(Box::new(spanned(Expr::Ident("err_".to_string()), line))),
+                Some(crate::ast::Shared::new(spanned(Expr::Ident("err_".to_string()), line))),
             ),
             line,
         ),
@@ -772,8 +772,8 @@ fn result_match_cascade(
     );
     spanned(
         Expr::Match {
-            subject: Box::new(subject),
-            arms: vec![err_arm, ok_arm],
+            subject: crate::ast::Shared::new(subject),
+            arms: crate::ast::shared::vec(vec![err_arm, ok_arm]),
         },
         line,
     )
@@ -824,8 +824,8 @@ fn stmts_to_let_chain(stmts: &[Stmt], line: SourceLine) -> Spanned<Expr> {
                 let arm = MatchArm::new(Pattern::Ident(name.clone()), acc);
                 acc = spanned(
                     Expr::Match {
-                        subject: Box::new(value.clone()),
-                        arms: vec![arm],
+                        subject: crate::ast::Shared::new(value.clone()),
+                        arms: crate::ast::shared::vec(vec![arm]),
                     },
                     line,
                 );
@@ -837,8 +837,8 @@ fn stmts_to_let_chain(stmts: &[Stmt], line: SourceLine) -> Spanned<Expr> {
                 let arm = MatchArm::new(Pattern::Wildcard, acc);
                 acc = spanned(
                     Expr::Match {
-                        subject: Box::new(e.clone()),
-                        arms: vec![arm],
+                        subject: crate::ast::Shared::new(e.clone()),
+                        arms: crate::ast::shared::vec(vec![arm]),
                     },
                     line,
                 );
@@ -856,16 +856,16 @@ fn spanned(node: Expr, line: SourceLine) -> Spanned<Expr> {
 fn branch_child_path(parent: &Spanned<Expr>, idx: u32, line: SourceLine) -> Spanned<Expr> {
     let branch_path_ident = spanned(Expr::Ident("BranchPath".to_string()), line);
     let child_callee = spanned(
-        Expr::Attr(Box::new(branch_path_ident), "child".to_string()),
+        Expr::Attr(crate::ast::Shared::new(branch_path_ident), "child".to_string()),
         line,
     );
     spanned(
         Expr::FnCall(
-            Box::new(child_callee),
-            vec![
+            crate::ast::Shared::new(child_callee),
+            crate::ast::shared::vec(vec![
                 parent.clone(),
                 spanned(Expr::Literal(Literal::Int(idx as i64)), line),
-            ],
+            ]),
         ),
         line,
     )
@@ -904,7 +904,7 @@ fn lift_expr(
             for p in parts {
                 new_parts.push(match p {
                     crate::ast::StrPart::Literal(s) => crate::ast::StrPart::Literal(s.clone()),
-                    crate::ast::StrPart::Parsed(inner) => crate::ast::StrPart::Parsed(Box::new(
+                    crate::ast::StrPart::Parsed(inner) => crate::ast::StrPart::Parsed(crate::ast::Shared::new(
                         lift_expr(inner, cfg, path_expr, counters)?,
                     )),
                 });
@@ -913,7 +913,7 @@ fn lift_expr(
         }
 
         Expr::Attr(obj, field) => Expr::Attr(
-            Box::new(lift_expr(obj, cfg, path_expr, counters)?),
+            crate::ast::Shared::new(lift_expr(obj, cfg, path_expr, counters)?),
             field.clone(),
         ),
 
@@ -940,21 +940,21 @@ fn lift_expr(
                     expr.line,
                 );
                 injected.extend(new_args);
-                Expr::FnCall(Box::new(new_callee), injected)
+                Expr::FnCall(crate::ast::Shared::new(new_callee), crate::ast::shared::vec(injected))
             } else {
                 let new_callee = lift_expr(callee, cfg, path_expr, counters)?;
                 let new_args = lift_args(args, cfg, path_expr, counters)?;
-                Expr::FnCall(Box::new(new_callee), new_args)
+                Expr::FnCall(crate::ast::Shared::new(new_callee), crate::ast::shared::vec(new_args))
             }
         }
 
         Expr::BinOp(op, l, r) => Expr::BinOp(
             *op,
-            Box::new(lift_expr(l, cfg, path_expr, counters)?),
-            Box::new(lift_expr(r, cfg, path_expr, counters)?),
+            crate::ast::Shared::new(lift_expr(l, cfg, path_expr, counters)?),
+            crate::ast::Shared::new(lift_expr(r, cfg, path_expr, counters)?),
         ),
 
-        Expr::Neg(inner) => Expr::Neg(Box::new(lift_expr(inner, cfg, path_expr, counters)?)),
+        Expr::Neg(inner) => Expr::Neg(crate::ast::Shared::new(lift_expr(inner, cfg, path_expr, counters)?)),
 
         Expr::Match { subject, arms } => {
             let new_subject = lift_expr(subject, cfg, path_expr, counters)?;
@@ -991,22 +991,22 @@ fn lift_expr(
             counters.restart_from(&after_match, &after_arm_dependent);
             counters.mark_arm_dependent(&at_match, &arm_counts);
             Expr::Match {
-                subject: Box::new(new_subject),
-                arms: new_arms,
+                subject: crate::ast::Shared::new(new_subject),
+                arms: crate::ast::shared::vec(new_arms),
             }
         }
 
         Expr::Constructor(name, Some(arg)) => Expr::Constructor(
             name.clone(),
-            Some(Box::new(lift_expr(arg, cfg, path_expr, counters)?)),
+            Some(crate::ast::Shared::new(lift_expr(arg, cfg, path_expr, counters)?)),
         ),
 
         Expr::ErrorProp(inner) => {
-            Expr::ErrorProp(Box::new(lift_expr(inner, cfg, path_expr, counters)?))
+            Expr::ErrorProp(crate::ast::Shared::new(lift_expr(inner, cfg, path_expr, counters)?))
         }
 
-        Expr::List(elems) => Expr::List(lift_args(elems, cfg, path_expr, counters)?),
-        Expr::Tuple(items) => Expr::Tuple(lift_args(items, cfg, path_expr, counters)?),
+        Expr::List(elems) => Expr::List(crate::ast::shared::vec(lift_args(elems, cfg, path_expr, counters)?)),
+        Expr::Tuple(items) => Expr::Tuple(crate::ast::shared::vec(lift_args(items, cfg, path_expr, counters)?)),
 
         Expr::IndependentProduct(elements, is_error_prop) => {
             // Each branch gets: fresh counter starting at 0, and an extended
@@ -1032,7 +1032,7 @@ fn lift_expr(
                 // Same first-Err semantics as the stmt-level rewrite.
                 return Ok(build_error_prop_cascade(new_elements, expr.line));
             }
-            Expr::IndependentProduct(new_elements, *is_error_prop)
+            Expr::IndependentProduct(crate::ast::shared::vec(new_elements), *is_error_prop)
         }
 
         Expr::MapLiteral(entries) => {
@@ -1043,7 +1043,7 @@ fn lift_expr(
                     lift_expr(v, cfg, path_expr, counters)?,
                 ));
             }
-            Expr::MapLiteral(new_entries)
+            Expr::MapLiteral(crate::ast::shared::vec(new_entries))
         }
 
         Expr::RecordCreate { type_name, fields } => {
@@ -1053,7 +1053,7 @@ fn lift_expr(
             }
             Expr::RecordCreate {
                 type_name: type_name.clone(),
-                fields: new_fields,
+                fields: crate::ast::shared::vec(new_fields),
             }
         }
 
@@ -1068,8 +1068,8 @@ fn lift_expr(
             }
             Expr::RecordUpdate {
                 type_name: type_name.clone(),
-                base: Box::new(lift_expr(base, cfg, path_expr, counters)?),
-                updates: new_updates,
+                base: crate::ast::Shared::new(lift_expr(base, cfg, path_expr, counters)?),
+                updates: crate::ast::shared::vec(new_updates),
             }
         }
 
@@ -1159,7 +1159,7 @@ fn lift_classified_call(
             // Reconstruct the original callee expression (we already know
             // the shape because it matched our `Attr` heuristic).
             let callee_expr = rebuild_dotted_callee(effect_name, original);
-            return Ok(Expr::FnCall(Box::new(callee_expr), injected));
+            return Ok(Expr::FnCall(crate::ast::Shared::new(callee_expr), crate::ast::shared::vec(injected)));
         }
     };
 
@@ -1196,11 +1196,11 @@ fn lift_classified_call(
                     })?;
             let new_args = lift_args(args, cfg, path_expr, counters)?;
             Ok(Expr::FnCall(
-                Box::new(Spanned::new(
+                crate::ast::Shared::new(Spanned::new(
                     Expr::Ident(oracle_name.clone()),
                     original.line,
                 )),
-                new_args,
+                crate::ast::shared::vec(new_args),
             ))
         }
         EffectDimension::Generative | EffectDimension::GenerativeOutput => {
@@ -1258,21 +1258,21 @@ fn lift_classified_call(
             new_args.extend(lifted_args);
             let oracle_call = Spanned::new(
                 Expr::FnCall(
-                    Box::new(Spanned::new(
+                    crate::ast::Shared::new(Spanned::new(
                         Expr::Ident(oracle_name.clone()),
                         original.line,
                     )),
-                    new_args,
+                    crate::ast::shared::vec(new_args),
                 ),
                 original.line,
             );
             if discharged {
                 return Ok(Expr::FnCall(
-                    Box::new(Spanned::new(
+                    crate::ast::Shared::new(Spanned::new(
                         Expr::Ident("__result_proven".to_string()),
                         original.line,
                     )),
-                    vec![oracle_call],
+                    crate::ast::shared::vec(vec![oracle_call]),
                 ));
             }
             Ok(oracle_call.node)
@@ -1743,7 +1743,7 @@ fn rebuild_dotted_callee(full_name: &str, from: &Spanned<Expr>) -> Spanned<Expr>
     };
     Spanned::new(
         Expr::Attr(
-            Box::new(Spanned::new(Expr::Ident(head.to_string()), from.line)),
+            crate::ast::Shared::new(Spanned::new(Expr::Ident(head.to_string()), from.line)),
             tail.to_string(),
         ),
         from.line,

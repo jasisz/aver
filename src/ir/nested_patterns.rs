@@ -579,8 +579,8 @@ impl<'a> Lowering<'a> {
                 let inner = self.compile(&[Occ::Var(name.clone())], rows, &mut state);
                 Spanned::new(
                     Expr::Match {
-                        subject: Box::new(subject.clone()),
-                        arms: vec![MatchArm::new(Pattern::Ident(name), inner)],
+                        subject: crate::ast::Shared::new(subject.clone()),
+                        arms: crate::ast::shared::vec(vec![MatchArm::new(Pattern::Ident(name), inner)]),
                     },
                     line,
                 )
@@ -731,8 +731,8 @@ impl<'a> Lowering<'a> {
         };
         Spanned::new(
             Expr::Match {
-                subject: Box::new(subject),
-                arms: out_arms,
+                subject: crate::ast::Shared::new(subject),
+                arms: crate::ast::shared::vec(out_arms),
             },
             line,
         )

@@ -1538,7 +1538,7 @@ pub(crate) fn make_verify_helper(
 ) -> TopLevel {
     let body_expr = if wrap_result {
         Spanned::new(
-            Expr::Constructor("Result.Ok".to_string(), Some(Box::new(expr))),
+            Expr::Constructor("Result.Ok".to_string(), Some(crate::ast::Shared::new(expr))),
             line,
         )
     } else {

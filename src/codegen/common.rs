@@ -545,28 +545,28 @@ pub fn substitute_ident_in_expr(expr: &Spanned<Expr>, from: &str, to: &str) -> S
         }
         Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => return expr.clone(),
         Expr::Attr(obj, field) => Expr::Attr(
-            Box::new(substitute_ident_in_expr(obj, from, to)),
+            crate::ast::Shared::new(substitute_ident_in_expr(obj, from, to)),
             field.clone(),
         ),
         Expr::FnCall(callee, args) => Expr::FnCall(
-            Box::new(substitute_ident_in_expr(callee, from, to)),
+            crate::ast::Shared::new(substitute_ident_in_expr(callee, from, to)),
             args.iter()
                 .map(|a| substitute_ident_in_expr(a, from, to))
                 .collect(),
         ),
         Expr::BinOp(op, left, right) => Expr::BinOp(
             *op,
-            Box::new(substitute_ident_in_expr(left, from, to)),
-            Box::new(substitute_ident_in_expr(right, from, to)),
+            crate::ast::Shared::new(substitute_ident_in_expr(left, from, to)),
+            crate::ast::Shared::new(substitute_ident_in_expr(right, from, to)),
         ),
-        Expr::Neg(inner) => Expr::Neg(Box::new(substitute_ident_in_expr(inner, from, to))),
+        Expr::Neg(inner) => Expr::Neg(crate::ast::Shared::new(substitute_ident_in_expr(inner, from, to))),
         Expr::Match { subject, arms } => Expr::Match {
-            subject: Box::new(substitute_ident_in_expr(subject, from, to)),
+            subject: crate::ast::Shared::new(substitute_ident_in_expr(subject, from, to)),
             arms: arms
                 .iter()
                 .map(|arm| MatchArm {
                     pattern: arm.pattern.clone(),
-                    body: Box::new(substitute_ident_in_expr(&arm.body, from, to)),
+                    body: crate::ast::Shared::new(substitute_ident_in_expr(&arm.body, from, to)),
                     binding_slots: std::sync::OnceLock::new(),
                 })
                 .collect(),
@@ -574,10 +574,10 @@ pub fn substitute_ident_in_expr(expr: &Spanned<Expr>, from: &str, to: &str) -> S
         Expr::Constructor(name, arg) => Expr::Constructor(
             name.clone(),
             arg.as_ref()
-                .map(|inner| Box::new(substitute_ident_in_expr(inner, from, to))),
+                .map(|inner| crate::ast::Shared::new(substitute_ident_in_expr(inner, from, to))),
         ),
         Expr::ErrorProp(inner) => {
-            Expr::ErrorProp(Box::new(substitute_ident_in_expr(inner, from, to)))
+            Expr::ErrorProp(crate::ast::Shared::new(substitute_ident_in_expr(inner, from, to)))
         }
         Expr::InterpolatedStr(parts) => Expr::InterpolatedStr(
             parts
@@ -585,7 +585,7 @@ pub fn substitute_ident_in_expr(expr: &Spanned<Expr>, from: &str, to: &str) -> S
                 .map(|part| match part {
                     StrPart::Literal(_) => part.clone(),
                     StrPart::Parsed(inner) => {
-                        StrPart::Parsed(Box::new(substitute_ident_in_expr(inner, from, to)))
+                        StrPart::Parsed(crate::ast::Shared::new(substitute_ident_in_expr(inner, from, to)))
                     }
                 })
                 .collect(),
@@ -633,7 +633,7 @@ pub fn substitute_ident_in_expr(expr: &Spanned<Expr>, from: &str, to: &str) -> S
             updates,
         } => Expr::RecordUpdate {
             type_name: type_name.clone(),
-            base: Box::new(substitute_ident_in_expr(base, from, to)),
+            base: crate::ast::Shared::new(substitute_ident_in_expr(base, from, to)),
             updates: updates
                 .iter()
                 .map(|(n, v)| (n.clone(), substitute_ident_in_expr(v, from, to)))
@@ -3086,7 +3086,7 @@ fn project_oracle_direct_calls(
     let project_ident = |name: &str, line: usize| -> Spanned<Expr> {
         Spanned::new(
             Expr::Attr(
-                Box::new(Spanned::new(Expr::Ident(name.to_string()), line)),
+                crate::ast::Shared::new(Spanned::new(Expr::Ident(name.to_string()), line)),
                 "val".to_string(),
             ),
             line,
@@ -3112,20 +3112,20 @@ fn project_oracle_direct_calls(
             } else {
                 project_oracle_direct_calls(callee, oracle_names)
             };
-            Expr::FnCall(Box::new(new_callee), new_args)
+            Expr::FnCall(crate::ast::Shared::new(new_callee), crate::ast::shared::vec(new_args))
         }
         Expr::Constructor(name, Some(arg)) => Expr::Constructor(
             name.clone(),
-            Some(Box::new(project_oracle_direct_calls(arg, oracle_names))),
+            Some(crate::ast::Shared::new(project_oracle_direct_calls(arg, oracle_names))),
         ),
         Expr::Attr(obj, field) => Expr::Attr(
-            Box::new(project_oracle_direct_calls(obj, oracle_names)),
+            crate::ast::Shared::new(project_oracle_direct_calls(obj, oracle_names)),
             field.clone(),
         ),
         Expr::BinOp(op, l, r) => Expr::BinOp(
             *op,
-            Box::new(project_oracle_direct_calls(l, oracle_names)),
-            Box::new(project_oracle_direct_calls(r, oracle_names)),
+            crate::ast::Shared::new(project_oracle_direct_calls(l, oracle_names)),
+            crate::ast::Shared::new(project_oracle_direct_calls(r, oracle_names)),
         ),
         other => other.clone(),
     };
@@ -3198,7 +3198,7 @@ where
                         // constructor (PascalCase, no parens),
                         // symmetric with `Option.None`.
                         Expr::Attr(
-                            Box::new(Spanned::new(
+                            crate::ast::Shared::new(Spanned::new(
                                 Expr::Ident("BranchPath".to_string()),
                                 expr.line,
                             )),
@@ -3237,22 +3237,22 @@ where
                     }
                 }
                 injected.extend(rewritten_args);
-                return Spanned::new(Expr::FnCall(rewritten_callee, injected), expr.line);
+                return Spanned::new(Expr::FnCall(crate::ast::Shared::from(rewritten_callee), crate::ast::shared::vec(injected)), expr.line);
             }
 
-            Spanned::new(Expr::FnCall(rewritten_callee, rewritten_args), expr.line)
+            Spanned::new(Expr::FnCall(crate::ast::Shared::from(rewritten_callee), crate::ast::shared::vec(rewritten_args)), expr.line)
         }
         Expr::BinOp(op, l, r) => Spanned::new(
             Expr::BinOp(
                 *op,
-                Box::new(rewrite_effectful_call(
+                crate::ast::Shared::new(rewrite_effectful_call(
                     l,
                     injection_by_effect,
                     fresh_by_effect,
                     find_fn_def,
                     capabilities,
                 )),
-                Box::new(rewrite_effectful_call(
+                crate::ast::Shared::new(rewrite_effectful_call(
                     r,
                     injection_by_effect,
                     fresh_by_effect,

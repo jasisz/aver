@@ -85,7 +85,7 @@ impl Parser {
             };
             self.advance();
             let right = self.parse_additive()?;
-            left = self.spanned(Expr::BinOp(op, Box::new(left), Box::new(right)), line);
+            left = self.spanned(Expr::BinOp(op, crate::ast::Shared::new(left), crate::ast::Shared::new(right)), line);
         }
 
         Ok(left)
@@ -106,7 +106,7 @@ impl Parser {
             };
             self.advance();
             let right = self.parse_multiplicative()?;
-            left = self.spanned(Expr::BinOp(op, Box::new(left), Box::new(right)), line);
+            left = self.spanned(Expr::BinOp(op, crate::ast::Shared::new(left), crate::ast::Shared::new(right)), line);
         }
 
         Ok(left)
@@ -127,7 +127,7 @@ impl Parser {
             };
             self.advance();
             let right = self.parse_unary()?;
-            left = self.spanned(Expr::BinOp(op, Box::new(left), Box::new(right)), line);
+            left = self.spanned(Expr::BinOp(op, crate::ast::Shared::new(left), crate::ast::Shared::new(right)), line);
         }
 
         Ok(left)
@@ -156,7 +156,7 @@ impl Parser {
         }
         let mut operand = self.parse_postfix()?;
         for _ in 0..neg_depth {
-            operand = self.spanned(Expr::Neg(Box::new(operand)), first_line);
+            operand = self.spanned(Expr::Neg(crate::ast::Shared::new(operand)), first_line);
         }
         Ok(operand)
     }
@@ -206,7 +206,7 @@ impl Parser {
             } else if self.check_exact(&TokenKind::Question) {
                 let line = self.current().line;
                 self.advance();
-                expr = self.spanned(Expr::ErrorProp(Box::new(expr)), line);
+                expr = self.spanned(Expr::ErrorProp(crate::ast::Shared::new(expr)), line);
             } else if self.check_exact(&TokenKind::Dot) {
                 let dot_line = self.current().line;
                 self.advance();
@@ -218,7 +218,7 @@ impl Parser {
                     TokenKind::Ident(s) => s,
                     _ => unreachable!(),
                 };
-                expr = self.spanned(Expr::Attr(Box::new(expr), field), dot_line);
+                expr = self.spanned(Expr::Attr(crate::ast::Shared::new(expr), field), dot_line);
                 if self.check_exact(&TokenKind::LParen) {
                     // Detect `Type.update(base, field = val, ...)` for record update
                     if let Some(path) = Self::dotted_name(&expr)
@@ -240,8 +240,8 @@ impl Parser {
                             expr = self.spanned(
                                 Expr::RecordUpdate {
                                     type_name: prefix.to_string(),
-                                    base: Box::new(base),
-                                    updates,
+                                    base: crate::ast::Shared::new(base),
+                                    updates: crate::ast::shared::vec(updates),
                                 },
                                 update_line,
                             );
@@ -263,7 +263,7 @@ impl Parser {
                         expr = self.spanned(
                             Expr::RecordCreate {
                                 type_name: path,
-                                fields,
+                                fields: crate::ast::shared::vec(fields),
                             },
                             ctor_line,
                         );
@@ -272,7 +272,7 @@ impl Parser {
                         self.advance();
                         let args = self.parse_args()?;
                         self.expect_exact(&TokenKind::RParen)?;
-                        expr = self.spanned(Expr::FnCall(Box::new(expr), args), call_line);
+                        expr = self.spanned(Expr::FnCall(crate::ast::Shared::new(expr), crate::ast::shared::vec(args)), call_line);
                     }
                 }
             } else {
@@ -344,7 +344,7 @@ impl Parser {
                 self.advance(); // consume (
                 let fields = self.parse_record_create_fields()?;
                 self.expect_exact(&TokenKind::RParen)?;
-                return Ok(self.spanned(Expr::RecordCreate { type_name, fields }, line));
+                return Ok(self.spanned(Expr::RecordCreate { type_name, fields: crate::ast::shared::vec(fields) }, line));
             }
 
             // Dotted record constructor: Tcp.Connection(id = ..., host = ...)
@@ -356,7 +356,7 @@ impl Parser {
                 return Ok(self.spanned(
                     Expr::RecordCreate {
                         type_name: path,
-                        fields,
+                        fields: crate::ast::shared::vec(fields),
                     },
                     line,
                 ));
@@ -366,7 +366,7 @@ impl Parser {
             self.advance();
             let args = self.parse_args()?;
             self.expect_exact(&TokenKind::RParen)?;
-            return Ok(self.spanned(Expr::FnCall(Box::new(atom), args), call_line));
+            return Ok(self.spanned(Expr::FnCall(crate::ast::Shared::new(atom), crate::ast::shared::vec(args)), call_line));
         }
 
         Ok(atom)
@@ -445,7 +445,7 @@ impl Parser {
         }
 
         self.expect_exact(&TokenKind::RBrace)?;
-        Ok(Expr::MapLiteral(entries))
+        Ok(Expr::MapLiteral(crate::ast::shared::vec(entries)))
     }
 
     pub(super) fn parse_atom(&mut self) -> Result<Spanned<Expr>, ParseError> {
@@ -492,7 +492,7 @@ impl Parser {
                                 line: self.current().line,
                                 col: self.current().col,
                             })?;
-                            str_parts.push(StrPart::Parsed(Box::new(expr)));
+                            str_parts.push(StrPart::Parsed(crate::ast::Shared::new(expr)));
                         }
                     } else {
                         str_parts.push(StrPart::Literal(s));
@@ -518,7 +518,7 @@ impl Parser {
                         items.push(self.parse_expr()?);
                     }
                     self.expect_exact(&TokenKind::RParen)?;
-                    Ok(self.spanned(Expr::Tuple(items), line))
+                    Ok(self.spanned(Expr::Tuple(crate::ast::shared::vec(items)), line))
                 } else {
                     self.expect_exact(&TokenKind::RParen)?;
                     Ok(first)
@@ -546,7 +546,7 @@ impl Parser {
                     self.skip_formatting();
                 }
                 self.expect_exact(&TokenKind::RBracket)?;
-                Ok(self.spanned(Expr::List(elements), line))
+                Ok(self.spanned(Expr::List(crate::ast::shared::vec(elements)), line))
             }
             TokenKind::LBrace => {
                 let map = self.parse_map_literal()?;

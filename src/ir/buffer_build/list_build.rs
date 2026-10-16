@@ -1056,10 +1056,10 @@ fn result_wrapper_payload<'e>(expr: &'e Expr, variant: &str) -> Option<&'e Vec<S
 /// shape the parser builds, stamped with the retargeted answer type.
 fn result_wrapper(line: usize, variant: &str, payload: Spanned<Expr>) -> Spanned<Expr> {
     let base = sp_at(line, Expr::Ident("Result".to_string()));
-    let callee = sp_at(line, Expr::Attr(Box::new(base), variant.to_string()));
+    let callee = sp_at(line, Expr::Attr(crate::ast::Shared::new(base), variant.to_string()));
     sp_at_typed(
         line,
-        Expr::FnCall(Box::new(callee), vec![payload]),
+        Expr::FnCall(crate::ast::Shared::new(callee), crate::ast::shared::vec(vec![payload])),
         bytes_result_type(),
     )
 }
@@ -1442,7 +1442,7 @@ fn rewrite_consumer_fn(fd: &mut FnDef, metas: &HashMap<String, &ByteSinkMeta>) -
             let Some(Stmt::Expr(tail)) = stmts.last_mut() else {
                 unreachable!("the tail was matched as the fromList call");
             };
-            *tail = retargeted_call(*inner, tail, metas);
+            *tail = retargeted_call(crate::ast::Shared::unwrap(inner), tail, metas);
             deleted += 1;
         }
     }
@@ -1464,7 +1464,7 @@ fn rewrite_consumer_fn(fd: &mut FnDef, metas: &HashMap<String, &ByteSinkMeta>) -
         let Expr::ErrorProp(inner) = args.remove(0).node else {
             unreachable!("matched an error propagation one line above");
         };
-        *tail = retargeted_call(*inner, tail, metas);
+        *tail = retargeted_call(crate::ast::Shared::unwrap(inner), tail, metas);
         deleted += 1;
     }
 
@@ -1607,7 +1607,7 @@ fn byte_finalize_exit(line: usize, acc_name: &str) -> Spanned<Expr> {
         line,
         Expr::RecordCreate {
             type_name: BYTES_RECORD.to_string(),
-            fields: vec![("values".to_string(), vals)],
+            fields: crate::ast::shared::vec(vec![("values".to_string(), vals)]),
         },
         crate::types::Type::named(BYTES_RECORD),
     );
@@ -1623,8 +1623,8 @@ fn byte_finalize_exit(line: usize, acc_name: &str) -> Spanned<Expr> {
     sp_at_typed(
         line,
         Expr::Match {
-            subject: Box::new(subject),
-            arms: vec![
+            subject: crate::ast::Shared::new(subject),
+            arms: crate::ast::shared::vec(vec![
                 MatchArm::new(
                     Pattern::Constructor("Result.Ok".to_string(), vec!["__byt_vals".to_string()]),
                     ok_body,
@@ -1633,7 +1633,7 @@ fn byte_finalize_exit(line: usize, acc_name: &str) -> Spanned<Expr> {
                     Pattern::Constructor("Result.Err".to_string(), vec!["__byt_msg".to_string()]),
                     err_body,
                 ),
-            ],
+            ]),
         },
         bytes_result_type(),
     )
@@ -1876,7 +1876,7 @@ pub(super) fn try_rewrite_list_build_site(
     let call = sp_at(
         line,
         Expr::FnCall(
-            Box::new(sp_at(inner.line, Expr::Ident(new_name.clone()))),
+            crate::ast::Shared::new(sp_at(inner.line, Expr::Ident(new_name.clone()))),
             new_args,
         ),
     );

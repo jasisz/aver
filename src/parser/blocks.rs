@@ -325,7 +325,7 @@ impl Parser {
                     "Given domain must be list literal ([...]) or Int range (a..b)".to_string(),
                 ));
             };
-            VerifyGivenDomain::Explicit(values)
+            VerifyGivenDomain::Explicit(crate::ast::Shared::unwrap(values))
         };
 
         if Self::domain_len(&domain) == 0 {
@@ -415,12 +415,12 @@ impl Parser {
                             let line = prev.line;
                             let bool_and = Spanned::new(
                                 Expr::Attr(
-                                    Box::new(Spanned::new(Expr::Ident("Bool".to_string()), line)),
+                                    crate::ast::Shared::new(Spanned::new(Expr::Ident("Bool".to_string()), line)),
                                     "and".to_string(),
                                 ),
                                 line,
                             );
-                            Spanned::new(Expr::FnCall(Box::new(bool_and), vec![prev, next]), line)
+                            Spanned::new(Expr::FnCall(crate::ast::Shared::new(bool_and), crate::ast::shared::vec(vec![prev, next])), line)
                         }
                     });
                 }

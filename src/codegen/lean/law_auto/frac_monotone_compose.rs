@@ -54,13 +54,13 @@ fn substitute(
         }
         Expr::BinOp(op, a, b) => Expr::BinOp(
             *op,
-            Box::new(substitute(a, map)),
-            Box::new(substitute(b, map)),
+            crate::ast::Shared::new(substitute(a, map)),
+            crate::ast::Shared::new(substitute(b, map)),
         ),
-        Expr::Neg(a) => Expr::Neg(Box::new(substitute(a, map))),
-        Expr::Attr(b, f) => Expr::Attr(Box::new(substitute(b, map)), f.clone()),
+        Expr::Neg(a) => Expr::Neg(crate::ast::Shared::new(substitute(a, map))),
+        Expr::Attr(b, f) => Expr::Attr(crate::ast::Shared::new(substitute(b, map)), f.clone()),
         Expr::FnCall(c, args) => Expr::FnCall(
-            Box::new(substitute(c, map)),
+            crate::ast::Shared::new(substitute(c, map)),
             args.iter().map(|x| substitute(x, map)).collect(),
         ),
         other => other.clone(),

@@ -887,15 +887,15 @@ pub(super) fn substitute_idents(
         }
         Expr::BinOp(op, a, b) => Expr::BinOp(
             *op,
-            Box::new(substitute_idents(a, map)),
-            Box::new(substitute_idents(b, map)),
+            crate::ast::Shared::new(substitute_idents(a, map)),
+            crate::ast::Shared::new(substitute_idents(b, map)),
         ),
-        Expr::Neg(a) => Expr::Neg(Box::new(substitute_idents(a, map))),
+        Expr::Neg(a) => Expr::Neg(crate::ast::Shared::new(substitute_idents(a, map))),
         Expr::FnCall(c, args) => Expr::FnCall(
-            Box::new(substitute_idents(c, map)),
+            crate::ast::Shared::new(substitute_idents(c, map)),
             args.iter().map(|x| substitute_idents(x, map)).collect(),
         ),
-        Expr::Attr(b, f) => Expr::Attr(Box::new(substitute_idents(b, map)), f.clone()),
+        Expr::Attr(b, f) => Expr::Attr(crate::ast::Shared::new(substitute_idents(b, map)), f.clone()),
         // Record construction / update: a value-level fn (`fpValue`, `fpTrunc`)
         // whose body builds a record must have its FIELD expressions substituted
         // too, or a parameter referenced only inside a field (e.g. `fpTrunc`'s
@@ -914,18 +914,18 @@ pub(super) fn substitute_idents(
             updates,
         } => Expr::RecordUpdate {
             type_name: type_name.clone(),
-            base: Box::new(substitute_idents(base, map)),
+            base: crate::ast::Shared::new(substitute_idents(base, map)),
             updates: updates
                 .iter()
                 .map(|(fname, v)| (fname.clone(), substitute_idents(v, map)))
                 .collect(),
         },
         Expr::Match { subject, arms } => Expr::Match {
-            subject: Box::new(substitute_idents(subject, map)),
+            subject: crate::ast::Shared::new(substitute_idents(subject, map)),
             arms: arms
                 .iter()
                 .map(|arm| crate::ast::MatchArm {
-                    body: Box::new(substitute_idents(&arm.body, map)),
+                    body: crate::ast::Shared::new(substitute_idents(&arm.body, map)),
                     ..arm.clone()
                 })
                 .collect(),

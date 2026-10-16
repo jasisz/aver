@@ -101,7 +101,7 @@ fn make_verify_helper(
         effects,
         desc: None,
         body: Rc::new(FnBody::from_expr(Spanned::new(
-            Expr::Constructor("Result.Ok".to_string(), Some(Box::new(body_expr))),
+            Expr::Constructor("Result.Ok".to_string(), Some(crate::ast::Shared::new(body_expr))),
             line,
         ))),
         resolution: None,

@@ -158,7 +158,7 @@ fn match_impl_spec_call_shape(
         if l_name != vb.fn_name {
             return None;
         }
-        Some((l_name, l_args.clone(), r_name))
+        Some((l_name, l_args.to_vec(), r_name))
     };
     try_side(&law.lhs, &law.rhs).or_else(|| try_side(&law.rhs, &law.lhs))
 }

@@ -270,7 +270,7 @@ pub fn rewrite_recursive_calls_expr(
     let new_node = match &expr.node {
         Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => return expr.clone(),
         Expr::Attr(obj, field) => Expr::Attr(
-            Box::new(rewrite_recursive_calls_expr(obj, targets, fuel_var)),
+            crate::ast::Shared::new(rewrite_recursive_calls_expr(obj, targets, fuel_var)),
             field.clone(),
         ),
         Expr::FnCall(callee, args) => {
@@ -285,31 +285,31 @@ pub fn rewrite_recursive_calls_expr(
                 call_args.push(Spanned::new(Expr::Ident(fuel_var.to_string()), line));
                 call_args.extend(rewritten_args);
                 Expr::FnCall(
-                    Box::new(Spanned::new(Expr::Ident(fuel_helper_name(&name)), line)),
-                    call_args,
+                    crate::ast::Shared::new(Spanned::new(Expr::Ident(fuel_helper_name(&name)), line)),
+                    crate::ast::shared::vec(call_args),
                 )
             } else {
                 Expr::FnCall(
-                    Box::new(rewrite_recursive_calls_expr(callee, targets, fuel_var)),
-                    rewritten_args,
+                    crate::ast::Shared::new(rewrite_recursive_calls_expr(callee, targets, fuel_var)),
+                    crate::ast::shared::vec(rewritten_args),
                 )
             }
         }
         Expr::BinOp(op, left, right) => Expr::BinOp(
             *op,
-            Box::new(rewrite_recursive_calls_expr(left, targets, fuel_var)),
-            Box::new(rewrite_recursive_calls_expr(right, targets, fuel_var)),
+            crate::ast::Shared::new(rewrite_recursive_calls_expr(left, targets, fuel_var)),
+            crate::ast::Shared::new(rewrite_recursive_calls_expr(right, targets, fuel_var)),
         ),
-        Expr::Neg(inner) => Expr::Neg(Box::new(rewrite_recursive_calls_expr(
+        Expr::Neg(inner) => Expr::Neg(crate::ast::Shared::new(rewrite_recursive_calls_expr(
             inner, targets, fuel_var,
         ))),
         Expr::Match { subject, arms } => Expr::Match {
-            subject: Box::new(rewrite_recursive_calls_expr(subject, targets, fuel_var)),
+            subject: crate::ast::Shared::new(rewrite_recursive_calls_expr(subject, targets, fuel_var)),
             arms: arms
                 .iter()
                 .map(|arm| MatchArm {
                     pattern: arm.pattern.clone(),
-                    body: Box::new(rewrite_recursive_calls_expr(&arm.body, targets, fuel_var)),
+                    body: crate::ast::Shared::new(rewrite_recursive_calls_expr(&arm.body, targets, fuel_var)),
                     binding_slots: std::sync::OnceLock::new(),
                 })
                 .collect(),
@@ -317,9 +317,9 @@ pub fn rewrite_recursive_calls_expr(
         Expr::Constructor(name, arg) => Expr::Constructor(
             name.clone(),
             arg.as_ref()
-                .map(|inner| Box::new(rewrite_recursive_calls_expr(inner, targets, fuel_var))),
+                .map(|inner| crate::ast::Shared::new(rewrite_recursive_calls_expr(inner, targets, fuel_var))),
         ),
-        Expr::ErrorProp(inner) => Expr::ErrorProp(Box::new(rewrite_recursive_calls_expr(
+        Expr::ErrorProp(inner) => Expr::ErrorProp(crate::ast::Shared::new(rewrite_recursive_calls_expr(
             inner, targets, fuel_var,
         ))),
         Expr::InterpolatedStr(parts) => Expr::InterpolatedStr(
@@ -327,7 +327,7 @@ pub fn rewrite_recursive_calls_expr(
                 .iter()
                 .map(|part| match part {
                     StrPart::Literal(_) => part.clone(),
-                    StrPart::Parsed(inner) => StrPart::Parsed(Box::new(
+                    StrPart::Parsed(inner) => StrPart::Parsed(crate::ast::Shared::new(
                         rewrite_recursive_calls_expr(inner, targets, fuel_var),
                     )),
                 })
@@ -381,7 +381,7 @@ pub fn rewrite_recursive_calls_expr(
             updates,
         } => Expr::RecordUpdate {
             type_name: type_name.clone(),
-            base: Box::new(rewrite_recursive_calls_expr(base, targets, fuel_var)),
+            base: crate::ast::Shared::new(rewrite_recursive_calls_expr(base, targets, fuel_var)),
             updates: updates
                 .iter()
                 .map(|(name, value)| {
@@ -403,8 +403,8 @@ pub fn rewrite_recursive_calls_expr(
                 call_args.push(Spanned::new(Expr::Ident(fuel_var.to_string()), line));
                 call_args.extend(rewritten_args);
                 Expr::FnCall(
-                    Box::new(Spanned::new(Expr::Ident(fuel_helper_name(target)), line)),
-                    call_args,
+                    crate::ast::Shared::new(Spanned::new(Expr::Ident(fuel_helper_name(target)), line)),
+                    crate::ast::shared::vec(call_args),
                 )
             } else {
                 Expr::TailCall(Box::new(TailCallData::new(target.clone(), rewritten_args)))

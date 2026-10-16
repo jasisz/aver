@@ -552,7 +552,7 @@ impl WorkerTransformer<'_> {
                         crate::types::Type::named(INDEX_TYPE),
                     ));
                 }
-                sp(Expr::FnCall(Box::new(lowered_callee), lowered_args), line)
+                sp(Expr::FnCall(crate::ast::Shared::new(lowered_callee), crate::ast::shared::vec(lowered_args)), line)
             }
             Expr::TailCall(data) => {
                 let mut args: Vec<_> = data
@@ -600,14 +600,14 @@ impl WorkerTransformer<'_> {
                                 .any(|name| name == self.source_name);
                         crate::ast::MatchArm {
                             pattern: arm.pattern.clone(),
-                            body: Box::new(self.transform(&arm.body, !shadowed && source_live)),
+                            body: crate::ast::Shared::new(self.transform(&arm.body, !shadowed && source_live)),
                             binding_slots: std::sync::OnceLock::new(),
                         }
                     })
                     .collect();
                 sp(
                     Expr::Match {
-                        subject: Box::new(subject),
+                        subject: crate::ast::Shared::new(subject),
                         arms,
                     },
                     line,
@@ -615,23 +615,23 @@ impl WorkerTransformer<'_> {
             }
             Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => expr.clone(),
             Expr::Attr(base, field) => sp(
-                Expr::Attr(Box::new(self.transform(base, source_live)), field.clone()),
+                Expr::Attr(crate::ast::Shared::new(self.transform(base, source_live)), field.clone()),
                 line,
             ),
             Expr::BinOp(op, lhs, rhs) => sp(
                 Expr::BinOp(
                     *op,
-                    Box::new(self.transform(lhs, source_live)),
-                    Box::new(self.transform(rhs, source_live)),
+                    crate::ast::Shared::new(self.transform(lhs, source_live)),
+                    crate::ast::Shared::new(self.transform(rhs, source_live)),
                 ),
                 line,
             ),
             Expr::Neg(inner) => sp(
-                Expr::Neg(Box::new(self.transform(inner, source_live))),
+                Expr::Neg(crate::ast::Shared::new(self.transform(inner, source_live))),
                 line,
             ),
             Expr::ErrorProp(inner) => sp(
-                Expr::ErrorProp(Box::new(self.transform(inner, source_live))),
+                Expr::ErrorProp(crate::ast::Shared::new(self.transform(inner, source_live))),
                 line,
             ),
             Expr::Constructor(name, payload) => sp(
@@ -639,7 +639,7 @@ impl WorkerTransformer<'_> {
                     name.clone(),
                     payload
                         .as_ref()
-                        .map(|value| Box::new(self.transform(value, source_live))),
+                        .map(|value| crate::ast::Shared::new(self.transform(value, source_live))),
                 ),
                 line,
             ),
@@ -650,7 +650,7 @@ impl WorkerTransformer<'_> {
                         .map(|part| match part {
                             StrPart::Literal(value) => StrPart::Literal(value.clone()),
                             StrPart::Parsed(value) => {
-                                StrPart::Parsed(Box::new(self.transform(value, source_live)))
+                                StrPart::Parsed(crate::ast::Shared::new(self.transform(value, source_live)))
                             }
                         })
                         .collect(),
@@ -716,7 +716,7 @@ impl WorkerTransformer<'_> {
             } => sp(
                 Expr::RecordUpdate {
                     type_name: type_name.clone(),
-                    base: Box::new(self.transform(base, source_live)),
+                    base: crate::ast::Shared::new(self.transform(base, source_live)),
                     updates: updates
                         .iter()
                         .map(|(name, value)| (name.clone(), self.transform(value, source_live)))
@@ -802,11 +802,11 @@ impl WorkerTransformer<'_> {
         };
         let out = sp(
             Expr::Match {
-                subject: Box::new(indexed_subject),
-                arms: vec![
+                subject: crate::ast::Shared::new(indexed_subject),
+                arms: crate::ast::shared::vec(vec![
                     MatchArm::new(Pattern::Literal(Literal::Int(-1)), none_body),
                     MatchArm::new(some_pattern, some_body),
-                ],
+                ]),
             },
             line,
         );
@@ -1290,7 +1290,7 @@ fn ident(name: &str, line: crate::ast::SourceLine) -> Spanned<Expr> {
 }
 
 fn call(name: &str, args: Vec<Spanned<Expr>>, line: crate::ast::SourceLine) -> Spanned<Expr> {
-    sp(Expr::FnCall(Box::new(ident(name, line)), args), line)
+    sp(Expr::FnCall(crate::ast::Shared::new(ident(name, line)), crate::ast::shared::vec(args)), line)
 }
 
 fn typed_ident(name: &str, line: crate::ast::SourceLine, ty: crate::types::Type) -> Spanned<Expr> {

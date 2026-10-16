@@ -462,7 +462,7 @@ fn match_variant_constructor_call(expr: &Expr) -> Option<(String, Vec<Spanned<Ex
                     Expr::Resolved { name, .. } => name.clone(),
                     _ => return None,
                 };
-                Some((format!("{parent_name}.{member}"), args.clone()))
+                Some((format!("{parent_name}.{member}"), args.to_vec()))
             } else {
                 None
             }
