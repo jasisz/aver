@@ -11680,7 +11680,7 @@ fn lean_lakefile_roots(dir: &str) -> Vec<String> {
 /// kernel is skipped. Axioms are not judged here: the law audit already
 /// records them per law.
 fn run_paranoid_kernels(dir: &str, quiet: bool) -> Result<(), String> {
-    use aver_cert::kernels::{EXPORTER, PARANOID_KERNELS, nanoda_config};
+    use super::paranoid_kernels::{EXPORTER, PARANOID_KERNELS, nanoda_config};
     use std::process::Command;
     let roots = lean_lakefile_roots(dir);
     if roots.is_empty() {

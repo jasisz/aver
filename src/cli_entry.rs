@@ -24,6 +24,8 @@ mod effects_cmd;
 #[path = "main/facts_cmd.rs"]
 mod facts_cmd;
 use crate::format as format_cmd;
+#[path = "main/paranoid_kernels.rs"]
+mod paranoid_kernels;
 #[path = "main/proof_waterfall.rs"]
 mod proof_waterfall;
 #[path = "main/provider_host_cmd.rs"]

@@ -605,7 +605,10 @@ fn cert_tripwire_paranoid_declines_a_changed_artifact_byte() {
     let (ok, report) = aver_cert(&["verify", "--paranoid"], &wasm, &out_dir.join("cert"));
     assert!(!ok, "a changed byte must fail closed:\n{report}");
     assert!(report.contains("DECLINED"), "missing DECLINED:\n{report}");
-    assert!(!report.contains("CERTIFIED"), "certified a changed byte:\n{report}");
+    assert!(
+        !report.contains("CERTIFIED"),
+        "certified a changed byte:\n{report}"
+    );
 }
 
 /// The real wasip2 producer emits a component-bound package whose embedded core
