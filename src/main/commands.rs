@@ -8133,7 +8133,7 @@ pub(super) fn cmd_proof(
         .items
         .iter()
         .filter_map(|item| match item {
-            TopLevel::Verify(block) => Some(block),
+            TopLevel::Verify(block) => Some(&**block),
             _ => None,
         })
         .chain(ctx.modules.iter().flat_map(|module| &module.verify_blocks))
@@ -9810,7 +9810,7 @@ fn duplicate_program_law_identities(ctx: &codegen::CodegenContext) -> Vec<String
         .items
         .iter()
         .filter_map(|item| match item {
-            TopLevel::Verify(vb) => Some(vb.clone()),
+            TopLevel::Verify(vb) => Some((**vb).clone()),
             _ => None,
         })
         .collect();
@@ -11287,7 +11287,7 @@ fn build_candidate_law(
         trace: false,
         cases_givens: vec![],
     };
-    aver::ast::unparse::unparse(&[TopLevel::Verify(block)])
+    aver::ast::unparse::unparse(&[TopLevel::Verify(block.into())])
         .map_err(|e| format!("could not render candidate: {e}"))
         .map(|s| s.trim_end().to_string())
 }

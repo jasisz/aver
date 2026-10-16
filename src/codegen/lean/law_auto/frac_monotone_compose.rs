@@ -98,7 +98,7 @@ fn sibling_blocks<'a>(vb: &VerifyBlock, ctx: &'a CodegenContext) -> Vec<&'a Veri
     ctx.items
         .iter()
         .filter_map(|it| match it {
-            crate::ast::TopLevel::Verify(b) => Some(b),
+            crate::ast::TopLevel::Verify(b) => Some(&**b),
             _ => None,
         })
         .collect()

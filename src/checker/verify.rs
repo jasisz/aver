@@ -188,12 +188,12 @@ pub fn merge_verify_blocks(items: &[TopLevel]) -> Vec<VerifyBlock> {
                         .extend(vb.case_reverse_order.clone());
                     debug_assert_eq!(merged[idx].cases.len(), merged[idx].case_spans.len());
                 } else {
-                    merged.push(vb.clone());
+                    merged.push((**vb).clone());
                 }
             }
             VerifyKind::Law(_) => {
                 merged.extend(crate::verify_law::reasons::sample_blocks(vb));
-                merged.push(vb.clone());
+                merged.push((**vb).clone());
             }
         }
     }

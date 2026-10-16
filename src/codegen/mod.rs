@@ -315,7 +315,7 @@ pub fn collect_verify_blocks(items: &[TopLevel]) -> Vec<crate::ast::VerifyBlock>
     items
         .iter()
         .filter_map(|item| match item {
-            TopLevel::Verify(block) => Some(block.clone()),
+            TopLevel::Verify(block) => Some((**block).clone()),
             _ => None,
         })
         .collect()
@@ -353,7 +353,7 @@ pub fn collect_verify_laws(items: &[TopLevel]) -> Vec<crate::ast::VerifyBlock> {
                 if matches!(vb.kind, VerifyKind::Law(_))
                     && crate::visibility::is_exposed(&vb.fn_name, exposes) =>
             {
-                Some(vb.clone())
+                Some((**vb).clone())
             }
             _ => None,
         })

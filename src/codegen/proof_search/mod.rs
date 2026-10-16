@@ -129,7 +129,7 @@ pub fn populate(
     }
     let mut eligible = BTreeSet::new();
     let entry = inputs.entry_items.iter().filter_map(|item| match item {
-        TopLevel::Verify(vb) => Some((None, vb)),
+        TopLevel::Verify(vb) => Some((None, &**vb)),
         _ => None,
     });
     let deps = inputs.dep_modules.iter().flat_map(|m| {

@@ -1115,7 +1115,7 @@ pub enum TypeDef {
 pub enum TopLevel {
     Module(Module),
     FnDef(FnDef),
-    Verify(VerifyBlock),
+    Verify(Shared<VerifyBlock>),
     Decision(DecisionBlock),
     Stmt(Stmt),
     TypeDef(TypeDef),
