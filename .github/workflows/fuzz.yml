@@ -1,6 +1,6 @@
 name: Fuzz
 
-# `nightly` — runs on cron at 03:00 UTC against main with a
+# `nightly` — runs on cron at 23:17 UTC against main with a
 # 30-minute budget per target. Each nightly job tries to download
 # the previous run's AFL queue as the seed corpus so 30 min of
 # exploration compounds night over night; falls back to the
@@ -43,8 +43,12 @@ name: Fuzz
 
 on:
   schedule:
-    # 03:00 UTC daily — runs against the tip of main.
-    - cron: '0 3 * * *'
+    # 23:17 UTC daily — runs against the tip of main. The nightlies start
+    # at different, uneven times: GitHub delays a schedule set on the hour
+    # by hours when the whole platform is busy, and ours used to start
+    # together in the working day, taking the runner pool the pull
+    # requests share. This one runs first because it is the longest.
+    - cron: '17 23 * * *'
   # Allow manual nightly runs from the Actions tab (useful when
   # triaging a crash that AFL found in a previous nightly, or when
   # seeding the queue artifact for the first time on a new target).
@@ -100,6 +104,10 @@ jobs:
       contents: read
     strategy:
       fail-fast: false
+      # Three targets at a time: nine runners for over an hour each would
+      # leave a pull request opened meanwhile almost no runner of the
+      # twenty the repository shares.
+      max-parallel: 3
       matrix:
         # `corpus` + `dict` per target — parse_bytes and
         # typecheck_program share `corpus/parser` + the Aver dict

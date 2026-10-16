@@ -22,10 +22,10 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    # 03:00 UTC daily — still runs against the tip of main (catches
-    # toolchain bumps that no PR touches), same as fuzz
-    # nightly.
-    - cron: '0 3 * * *'
+    # 02:29 UTC daily — still runs against the tip of main (catches
+    # toolchain bumps that no PR touches), at its own time so the
+    # nightlies do not start together.
+    - cron: '29 2 * * *'
   workflow_dispatch:
     inputs:
       record_levels:

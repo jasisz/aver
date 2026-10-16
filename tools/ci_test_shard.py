@@ -16,13 +16,23 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
+import sys
 from pathlib import Path
 from typing import Mapping
 
 
 SCHEDULE_PATH = Path(__file__).with_name("ci_test_schedule.json")
 DEFAULT_WEIGHT_SECONDS = 1.0
+# A target the schedule does not weigh is packed as if it took one second.
+# One that takes longer than this makes its shard the slow one without anyone
+# noticing, so the run says so.
+UNWEIGHED_WARNING_SECONDS = 60.0
+
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+RUNNING = re.compile(r"Running tests/([A-Za-z0-9_]+)\.rs")
+FINISHED = re.compile(r"^test result: .* finished in ([0-9.]+)s")
 
 
 def integration_targets(metadata: dict[str, object]) -> list[str]:
@@ -108,6 +118,51 @@ def cargo_test_command(targets: list[str]) -> list[str]:
     for target in targets:
         command.extend(["--test", target])
     return command
+
+
+class TargetClock:
+    """Each integration target's seconds, read from `cargo test` output lines."""
+
+    def __init__(self) -> None:
+        self.seconds: dict[str, float] = {}
+        self.current: str | None = None
+
+    def feed(self, line: str) -> None:
+        line = ANSI.sub("", line)
+        running = RUNNING.search(line)
+        if running:
+            self.current = running.group(1)
+            return
+        finished = FINISHED.search(line.strip())
+        if finished and self.current is not None:
+            took = float(finished.group(1))
+            self.seconds[self.current] = self.seconds.get(self.current, 0.0) + took
+
+
+def run_timed(command: list[str]) -> tuple[int, dict[str, float]]:
+    """Run `cargo test`, echoing its output, and read each target's seconds."""
+    clock = TargetClock()
+    with subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace"
+    ) as process:
+        assert process.stdout is not None
+        for line in process.stdout:
+            sys.stdout.write(line)
+            sys.stdout.flush()
+            clock.feed(line)
+    return process.returncode, clock.seconds
+
+
+def unweighed_warnings(
+    seconds: Mapping[str, float], weights: Mapping[str, float]
+) -> list[str]:
+    """A warning for each target the schedule leaves unweighed that ran long."""
+    return [
+        f"{target} took {took:.0f}s but has no weight in {SCHEDULE_PATH.name}; "
+        "the shards are balanced as if it took one second, so add its measured weight"
+        for target, took in sorted(seconds.items())
+        if target not in weights and took > UNWEIGHED_WARNING_SECONDS
+    ]
 
 
 def split_cases(split_targets: set[str]) -> list[tuple[str, str]]:
@@ -216,9 +271,15 @@ def main() -> int:
     if args.plan:
         return 0
     if selected:
-        result = subprocess.run(cargo_test_command(selected), check=False)
-        if result.returncode != 0:
-            return result.returncode
+        returncode, seconds = run_timed(cargo_test_command(selected))
+        print(
+            "measured seconds per target: " + json.dumps(seconds, sort_keys=True),
+            flush=True,
+        )
+        for warning in unweighed_warnings(seconds, weights):
+            print(f"::warning::{warning}", flush=True)
+        if returncode != 0:
+            return returncode
     if split_selected:
         return subprocess.run(nextest_command(split_selected), check=False).returncode
     return 0

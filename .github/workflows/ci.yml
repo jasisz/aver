@@ -8,10 +8,11 @@ on:
   # Nightly deep sweep against main with the heavy proptest budget: the
   # WASM lane's cross-backend differential runs 2000 cases nightly but a
   # 64-case smoke per-PR (see its `PROPTEST_CASES` below). Mirrors the
-  # fuzz / proof / rust-codegen nightlies (cron 03:00 UTC). Manual runs
-  # via workflow_dispatch also get the full 2000-case sweep.
+  # fuzz / proof / rust-codegen nightlies, each at its own uneven time so
+  # they do not start together. Manual runs via workflow_dispatch also get
+  # the full 2000-case sweep.
   schedule:
-    - cron: '0 3 * * *'
+    - cron: '43 0 * * *'
   workflow_dispatch:
 
 # A newer push to the same pull request, or a newer commit on main,
@@ -34,6 +35,10 @@ jobs:
     # failure. Every other trigger still works in a fork, so a contributor can
     # run this workflow on their own branch.
     if: github.event_name != 'schedule' || github.repository == 'jasisz/aver'
+    env:
+      # The 2,000-case broad sweep belongs to nightly/manual deep CI. Pull
+      # requests and pushes keep the ordinary 256-case proptest smoke.
+      PROPTEST_CASES: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '2000' || '256' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -111,6 +116,18 @@ jobs:
           cargo run --bin aver -- check examples/core
           cargo run --bin aver -- check examples/data
 
+      # The unit, doc and workspace-crate tests take two minutes or less each.
+      # As jobs of their own they each paid a runner, a checkout and a cache
+      # restore, and held two of the twenty runners the repository shares;
+      # here they reuse the build the gates above just made.
+      - name: aver-lang unit and docs
+        run: cargo test -p aver-lang --lib --bins && cargo test -p aver-lang --doc
+
+      - name: Workspace crates
+        # The workspace test builds aver-cert with its default `verify`
+        # feature only; the producer's unit tests need `engine` as well.
+        run: cargo test --workspace --exclude aver-lang && cargo test -p aver-cert --lib --all-features
+
   native_tests:
     name: Native tests (${{ matrix.name }})
     runs-on: ubuntu-latest
@@ -119,12 +136,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: aver-lang unit and docs
-            command: cargo test -p aver-lang --lib --bins && cargo test -p aver-lang --doc
-          - name: workspace crates
-            # The workspace test builds aver-cert with its default `verify`
-            # feature only; the producer's unit tests need `engine` as well.
-            command: cargo test --workspace --exclude aver-lang && cargo test -p aver-cert --lib --all-features
           - name: integrations 1/4
             command: python3 tools/ci_test_shard.py 0 4
           - name: integrations 2/4
@@ -144,7 +155,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Install nextest
-        if: startsWith(matrix.name, 'integrations')
         uses: taiki-e/install-action@nextest
 
       - uses: Swatinem/rust-cache@v2

@@ -72,6 +72,25 @@ class WeightedShardTests(unittest.TestCase):
         self.assertEqual([command[i + 1] for i, arg in enumerate(command) if arg == "--test"],
                          ["big", "huge"])
 
+    def test_target_seconds_are_read_from_cargo_output(self) -> None:
+        clock = sharding.TargetClock()
+        for line in [
+            "\x1b[1m\x1b[92m     Running\x1b[0m tests/slow_spec.rs (target/debug/deps/slow_spec-1)\n",
+            "test result: \x1b[32mok\x1b[0m. 3 passed; 0 failed; 0 ignored; finished in 75.20s\n",
+            "     Running tests/quick_spec.rs (target/debug/deps/quick_spec-2)\n",
+            "test result: ok. 1 passed; 0 failed; 0 ignored; finished in 0.50s\n",
+        ]:
+            clock.feed(line)
+        self.assertEqual(clock.seconds, {"slow_spec": 75.2, "quick_spec": 0.5})
+
+    def test_a_long_unweighed_target_is_reported(self) -> None:
+        warnings = sharding.unweighed_warnings(
+            {"slow_spec": 75.2, "quick_spec": 0.5, "weighed_spec": 900.0},
+            {"weighed_spec": 800.0},
+        )
+        self.assertEqual(len(warnings), 1)
+        self.assertTrue(warnings[0].startswith("slow_spec took 75s"))
+
     def test_stale_case_weight_fails_closed(self) -> None:
         with self.assertRaisesRegex(SystemExit, "missing cases: huge::gone"):
             sharding.weighted_cases([("huge", "here")], 2, {"huge::gone": 5.0}, [0.0, 0.0])
