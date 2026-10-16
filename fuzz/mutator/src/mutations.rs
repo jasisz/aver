@@ -311,7 +311,7 @@ fn inject_error_prop<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool {
     let line = span_ref.line;
     let placeholder = Spanned::new(Expr::Literal(Literal::Unit), line);
     let inner = std::mem::replace(span_ref, placeholder);
-    *span_ref = Spanned::new(Expr::ErrorProp(Box::new(inner)), line);
+    *span_ref = Spanned::new(Expr::ErrorProp(aver::ast::Shared::new(inner)), line);
     true
 }
 
@@ -336,7 +336,7 @@ fn remove_error_prop<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool {
     let placeholder = Spanned::new(Expr::Literal(Literal::Unit), line);
     let outer = std::mem::replace(span_ref, placeholder);
     if let Expr::ErrorProp(inner) = outer.node {
-        *span_ref = *inner;
+        *span_ref = aver::ast::Shared::unwrap(inner);
         true
     } else {
         unreachable!("collected sites guaranteed to be ErrorProp")
@@ -359,7 +359,7 @@ fn swap_adjacent_match_arms<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool
         if let Expr::Match { arms, .. } = &mut expr.node
             && arms.len() >= 2
         {
-            sites.push(arms as *mut Vec<aver::ast::MatchArm>);
+            sites.push(&mut **arms as *mut Vec<aver::ast::MatchArm>);
         }
         false
     });
@@ -388,7 +388,7 @@ fn swap_bang_element<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool {
         if let Expr::IndependentProduct(items, _) = &mut expr.node
             && items.len() >= 2
         {
-            sites.push(items as *mut Vec<Spanned<Expr>>);
+            sites.push(&mut **items as *mut Vec<Spanned<Expr>>);
         }
         false
     });
@@ -531,7 +531,7 @@ fn negate_expression<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool {
     let line = span_ref.line;
     let placeholder = Spanned::new(Expr::Literal(Literal::Unit), line);
     let inner = std::mem::replace(span_ref, placeholder);
-    *span_ref = Spanned::new(Expr::Neg(Box::new(inner)), line);
+    *span_ref = Spanned::new(Expr::Neg(aver::ast::Shared::new(inner)), line);
     true
 }
 
@@ -750,7 +750,7 @@ fn reverse_match_arms<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool {
         if let Expr::Match { arms, .. } = &mut expr.node
             && arms.len() >= 2
         {
-            sites.push(arms as *mut Vec<aver::ast::MatchArm>);
+            sites.push(&mut **arms as *mut Vec<aver::ast::MatchArm>);
         }
         false
     });
@@ -779,7 +779,7 @@ fn shift_map_literal_entries<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> boo
         if let Expr::MapLiteral(entries) = &mut expr.node
             && entries.len() >= 2
         {
-            sites.push(entries as *mut Vec<(Spanned<Expr>, Spanned<Expr>)>);
+            sites.push(&mut **entries as *mut Vec<(Spanned<Expr>, Spanned<Expr>)>);
         }
         false
     });
@@ -970,12 +970,12 @@ fn inject_cross_module_call<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool
     let line = span_ref.line;
     let callee = Spanned::new(
         Expr::Attr(
-            Box::new(Spanned::new(Expr::Ident(module_name), line)),
+            aver::ast::Shared::new(Spanned::new(Expr::Ident(module_name), line)),
             fn_name.to_string(),
         ),
         line,
     );
-    let new = Expr::FnCall(Box::new(callee), Vec::new());
+    let new = Expr::FnCall(aver::ast::Shared::new(callee), Vec::new().into());
     let _ = std::mem::replace(span_ref, Spanned::new(new, line));
     true
 }
@@ -1022,7 +1022,7 @@ fn attempt_opaque_violation<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool
     // it's fine, in an external context it's the canonical opaque
     // violation. Either way the opaque-name lookup runs.
     let callee = Spanned::new(Expr::Ident(opaque_name), line);
-    let new = Expr::FnCall(Box::new(callee), Vec::new());
+    let new = Expr::FnCall(aver::ast::Shared::new(callee), Vec::new().into());
     let _ = std::mem::replace(span_ref, Spanned::new(new, line));
     true
 }
