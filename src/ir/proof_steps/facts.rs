@@ -72,7 +72,7 @@ pub struct Fact {
     pub key: &'static str,
     pub lean: &'static str,
     pub sorts: Vec<(String, Sort)>,
-    pub script: Script,
+    pub script: crate::ast::Shared<Script>,
 }
 
 impl Fact {
@@ -87,7 +87,7 @@ impl Fact {
             refined: Vec::new(),
             lhs: ob.lhs.clone(),
             rhs: ob.rhs.clone(),
-            fact: Some(Box::new(self.script.clone())),
+            fact: Some(self.script.clone()),
         }
     }
 }
@@ -334,7 +334,7 @@ fn by_list_induction(
         key,
         lean,
         sorts: givens.iter().map(|g| (g.clone(), Sort::List)).collect(),
-        script: Script {
+        script: crate::ast::Shared::new(Script {
             obligation: Obligation {
                 key: key.to_string(),
                 givens: givens.clone(),
@@ -372,7 +372,7 @@ fn by_list_induction(
                 }],
                 cons: Box::new(cons),
             },
-        },
+        }),
     }
 }
 
@@ -1741,7 +1741,7 @@ fn map_fact(
         key,
         lean,
         sorts: givens.iter().map(|g| (g.to_string(), sort(g))).collect(),
-        script: Script {
+        script: crate::ast::Shared::new(Script {
             obligation: Obligation {
                 key: key.to_string(),
                 givens: givens.iter().map(|g| g.to_string()).collect(),
@@ -1764,7 +1764,7 @@ fn map_fact(
             sigs: Vec::new(),
             plan: None,
             proof,
-        },
+        }),
     }
 }
 
@@ -1863,7 +1863,7 @@ fn vector_fact(
         key,
         lean,
         sorts: sorts.iter().map(|(g, s)| (g.to_string(), *s)).collect(),
-        script: Script {
+        script: crate::ast::Shared::new(Script {
             obligation: Obligation {
                 key: key.to_string(),
                 givens,
@@ -1890,7 +1890,7 @@ fn vector_fact(
             sigs: Vec::new(),
             plan: None,
             proof,
-        },
+        }),
     }
 }
 

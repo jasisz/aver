@@ -106,7 +106,7 @@ pub struct LawRef {
     pub rhs: Term,
     /// For a builtin fact ([`facts`]), its own script: the checkers check
     /// it, and that it states this law, before any step may cite it.
-    pub fact: Option<Box<Script>>,
+    pub fact: Option<crate::ast::Shared<Script>>,
 }
 
 /// A source definition an [`Proof::Unfold`] step opens: the function's

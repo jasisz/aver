@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 
 use num_bigint::BigInt;
-use num_traits::{Signed, Zero};
+use num_traits::Signed;
 
 use super::ring::Poly;
 

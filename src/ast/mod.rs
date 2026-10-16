@@ -59,7 +59,7 @@ impl<T: Clone> Clone for Spanned<T> {
 
 impl<T: PartialEq> PartialEq for Spanned<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.node == other.node
+        std::ptr::eq(self, other) || self.node == other.node
     }
 }
 

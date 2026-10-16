@@ -266,6 +266,9 @@ pub fn exact_eq(a: &Term, b: &Term) -> bool {
                 .zip(ys)
                 .all(|((n, x), (m, y))| n == m && exact_eq(x, y))
     };
+    if std::ptr::eq(a, b) {
+        return true;
+    }
     if a.line != b.line || a.ty() != b.ty() {
         return false;
     }
