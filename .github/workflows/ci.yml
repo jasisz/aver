@@ -225,7 +225,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
-          lanes='["checks","wasm-gc","wasip2","pack"]'
+          lanes='["checks","wasm-gc","pack"]'
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             files=$(gh api --paginate \
               "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files?per_page=100" \
@@ -233,7 +233,7 @@ jobs:
             if [ "$(printf '%s\n' "$files" | grep -c .)" -ge 3000 ]; then files=""; fi
             if [ "$(printf '%s\n' "$files" | python3 tools/ci_pr_gate.py pack)" = "false" ]; then
               echo "no changed path feeds the Wasmtime pack; it runs on the push to main"
-              lanes='["checks","wasm-gc","wasip2"]'
+              lanes='["checks","wasm-gc"]'
             fi
           fi
           echo "lanes=$lanes" >> "$GITHUB_OUTPUT"
@@ -476,11 +476,14 @@ jobs:
             the_vm_and_wasm_gc_lanes_agree_about_which_cases_are_runnable --exact
 
       - name: Test wasip2 suites
-        if: matrix.lane == 'wasip2'
+        if: matrix.lane == 'checks'
         # `wasip2` is a separate feature; `wasm` alone leaves every
         # `#![cfg(feature = "wasip2")]` test file at 0 tests. Keep these
         # component-model suites in their own loop so only wasip2 tests pay
-        # for the heavier wasmtime-wasi dependency graph. A suite whose tests
+        # for the heavier wasmtime-wasi dependency graph. They run in the
+        # checks lane, which already builds aver-lang with `wasm,wasip2`; a
+        # lane of their own rebuilt the same graph for four minutes of tests
+        # and took one more of the twenty runners. A suite whose tests
         # are gated on both `wasm` and `wasip2` runs here, where both are on;
         # tools/ci_test_coverage.py fails the build when a gated suite is in
         # neither loop.
