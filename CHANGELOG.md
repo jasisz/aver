@@ -20,7 +20,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 - **`List.contains` through `List.concat` and `List.reverse`**: the facts `List.contains.ofConcat` and `List.contains.ofReverse`, for elements whose `==` is equality.
 - **A list with a cell in it is not empty**: the facts `List.prepend.notEmpty` and `List.concat.notEmpty` (and with the sides of `==` swapped), for elements whose `==` is equality; a `match` on `List.concat(xs, [x])` splits `xs` into `[]` and a cell, and so does a hypothesis such as `when xs != []`.
 - **Certificates** prove their law-claims with proof steps, as `aver proof` does.
-- **`aver proof` is about twice as fast** and needs about half the memory.
+- **`aver proof` is about twice as fast** and needs about half the memory. Part of it is the allocator: the `aver` binary now allocates with mimalloc, which alone saves about a fifth of the time.
 
 ### Migration
 
