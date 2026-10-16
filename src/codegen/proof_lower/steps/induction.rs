@@ -257,7 +257,7 @@ impl Env<'_> {
     fn walked_by_recursion(&self, v: &str, ob: &Obligation) -> bool {
         fn calls(t: &Term, out: &mut Vec<(FnId, Vec<Term>)>) {
             if let ResolvedExpr::Call(ResolvedCallee::Fn(g), args) = &t.node {
-                out.push((*g, args.clone()));
+                out.push((*g, args.to_vec()));
             }
             for c in term::children(t) {
                 calls(c, out);
@@ -550,7 +550,7 @@ impl Env<'_> {
             }
             Ok(hs)
         };
-        let nil_term = canon(&crate::ast::Spanned::bare(ResolvedExpr::List(Vec::new())));
+        let nil_term = canon(&crate::ast::Spanned::bare(ResolvedExpr::List(crate::ast::shared::vec(Vec::new()))));
         // The parts of the cell have the types the list's own gives them.
         let list_ty = ob
             .types

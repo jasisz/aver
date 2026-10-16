@@ -1039,7 +1039,7 @@ fn rebuild_bool_and(
         acc = Spanned::new(
             ResolvedExpr::Call(
                 ResolvedCallee::Builtin("Bool.and".to_string()),
-                vec![acc, leaf],
+                crate::ast::shared::vec(vec![acc, leaf]),
             ),
             line,
         );

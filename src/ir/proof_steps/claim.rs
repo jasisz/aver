@@ -34,7 +34,7 @@ pub fn pattern_term(p: &ResolvedPattern, binders: &[Term]) -> Result<Term, Strin
         }
         ResolvedPattern::EmptyList => {
             need(0)?;
-            Ok(Spanned::bare(ResolvedExpr::List(Vec::new())))
+            Ok(Spanned::bare(ResolvedExpr::List(crate::ast::shared::vec(Vec::new()))))
         }
         ResolvedPattern::Cons(..) => {
             need(2)?;
@@ -51,7 +51,7 @@ pub fn pattern_term(p: &ResolvedPattern, binders: &[Term]) -> Result<Term, Strin
             }
             Ok(Spanned::bare(ResolvedExpr::Ctor(
                 c.clone(),
-                binders.to_vec(),
+                crate::ast::shared::vec(binders.to_vec()),
             )))
         }
         _ => Err("this pattern has no term to equate the subject with".into()),

@@ -216,7 +216,7 @@ pub(super) fn select_arm(
             }
             (ResolvedPattern::Ctor(c, names), ResolvedExpr::Ctor(c2, args)) => {
                 if c == c2 && names.len() == args.len() {
-                    return Some((k, args.clone(), false));
+                    return Some((k, args.to_vec(), false));
                 }
             }
             (ResolvedPattern::EmptyList, ResolvedExpr::List(xs)) if xs.is_empty() => {
@@ -225,7 +225,7 @@ pub(super) fn select_arm(
             (ResolvedPattern::Cons(..), ResolvedExpr::Call(ResolvedCallee::Builtin(b), args))
                 if b == "List.prepend" && args.len() == 2 =>
             {
-                return Some((k, args.clone(), false));
+                return Some((k, args.to_vec(), false));
             }
             // A list literal with an element is a cell.
             (ResolvedPattern::Cons(..), ResolvedExpr::List(xs)) if !xs.is_empty() => {
@@ -328,7 +328,7 @@ fn division_facts(
         if let ResolvedExpr::Call(_, args) = &m.node {
             let d = canon(&term::intrinsic(
                 BuiltinIntrinsic::IntDivEuclid,
-                args.clone(),
+                args.to_vec(),
             ));
             if !divs.contains(&d) {
                 divs.push(d);
@@ -1810,7 +1810,7 @@ impl Env<'_> {
                         Proof::Unfold {
                             fn_id: *id,
                             arm: 0,
-                            args: args.clone(),
+                            args: args.to_vec(),
                             binders: Vec::new(),
                             premise: None,
                         },
@@ -1847,7 +1847,7 @@ impl Env<'_> {
                         let unfold = Proof::Unfold {
                             fn_id: *id,
                             arm: k,
-                            args: args.clone(),
+                            args: args.to_vec(),
                             binders,
                             premise: Some(Box::new(premise)),
                         };
@@ -2363,7 +2363,7 @@ impl Env<'_> {
                 ResolvedExpr::Call(ResolvedCallee::Builtin(b), xs)
                     if b == want && xs.len() == n =>
                 {
-                    Some(xs.clone())
+                    Some(xs.to_vec())
                 }
                 _ => None,
             }
@@ -2373,7 +2373,7 @@ impl Env<'_> {
                 ResolvedExpr::Call(ResolvedCallee::Intrinsic(BuiltinIntrinsic::VectorNew), xs)
                     if xs.len() == 2 =>
                 {
-                    Some(xs.clone())
+                    Some(xs.to_vec())
                 }
                 _ => None,
             }
@@ -2564,7 +2564,7 @@ impl Env<'_> {
                     } else {
                         WallRule::MapHasSetSame
                     };
-                    (rule, bind(&["m", "k", "v"], p), vec![])
+                    (rule, bind(&["m", "k", "v"], crate::ast::Shared::unwrap(p)), vec![])
                 } else {
                     let ne = term::binop(BinOp::Neq, p[1].clone(), args[1].clone());
                     let Some((true, premise)) = decided(self, ne)? else {
@@ -2577,7 +2577,7 @@ impl Env<'_> {
                     };
                     let mut values = p;
                     values.push(args[1].clone());
-                    (rule, bind(&["m", "k", "v", "k2"], values), vec![premise])
+                    (rule, bind(&["m", "k", "v", "k2"], crate::ast::Shared::unwrap(values)), vec![premise])
                 }
             }
             ("Map.len", 1, false, Some(p)) => {
@@ -2589,12 +2589,12 @@ impl Env<'_> {
                 match decided(self, held.clone())? {
                     Some((true, premise)) => (
                         WallRule::MapLenSetPresent,
-                        bind(&["m", "k", "v"], p),
+                        bind(&["m", "k", "v"], crate::ast::Shared::unwrap(p)),
                         vec![premise],
                     ),
                     Some((false, premise)) => (
                         WallRule::MapLenSetAbsent,
-                        bind(&["m", "k", "v"], p),
+                        bind(&["m", "k", "v"], crate::ast::Shared::unwrap(p)),
                         vec![premise],
                     ),
                     None => return self.settle(cur, Some(canon(&held))).map(Some),

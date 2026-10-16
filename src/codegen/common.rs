@@ -460,21 +460,21 @@ pub fn substitute_ident_in_resolved_expr(
         ResolvedExpr::Literal(_) | ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } => {
             return expr.clone();
         }
-        ResolvedExpr::Attr(obj, field) => ResolvedExpr::Attr(Box::new(rec(obj)), field.clone()),
+        ResolvedExpr::Attr(obj, field) => ResolvedExpr::Attr(crate::ast::Shared::new(rec(obj)), field.clone()),
         ResolvedExpr::Call(callee, args) => {
             ResolvedExpr::Call(callee.clone(), args.iter().map(&rec).collect())
         }
         ResolvedExpr::BinOp(op, left, right) => {
-            ResolvedExpr::BinOp(*op, Box::new(rec(left)), Box::new(rec(right)))
+            ResolvedExpr::BinOp(*op, crate::ast::Shared::new(rec(left)), crate::ast::Shared::new(rec(right)))
         }
-        ResolvedExpr::Neg(inner) => ResolvedExpr::Neg(Box::new(rec(inner))),
+        ResolvedExpr::Neg(inner) => ResolvedExpr::Neg(crate::ast::Shared::new(rec(inner))),
         ResolvedExpr::Match { subject, arms } => ResolvedExpr::Match {
-            subject: Box::new(rec(subject)),
+            subject: crate::ast::Shared::new(rec(subject)),
             arms: arms
                 .iter()
                 .map(|arm| ResolvedMatchArm {
                     pattern: arm.pattern.clone(),
-                    body: Box::new(rec(&arm.body)),
+                    body: crate::ast::Shared::new(rec(&arm.body)),
                     binding_slots: std::sync::OnceLock::new(),
                 })
                 .collect(),
@@ -482,13 +482,13 @@ pub fn substitute_ident_in_resolved_expr(
         ResolvedExpr::Ctor(ctor, args) => {
             ResolvedExpr::Ctor(ctor.clone(), args.iter().map(&rec).collect())
         }
-        ResolvedExpr::ErrorProp(inner) => ResolvedExpr::ErrorProp(Box::new(rec(inner))),
+        ResolvedExpr::ErrorProp(inner) => ResolvedExpr::ErrorProp(crate::ast::Shared::new(rec(inner))),
         ResolvedExpr::InterpolatedStr(parts) => ResolvedExpr::InterpolatedStr(
             parts
                 .iter()
                 .map(|p| match p {
                     ResolvedStrPart::Literal(_) => p.clone(),
-                    ResolvedStrPart::Parsed(inner) => ResolvedStrPart::Parsed(Box::new(rec(inner))),
+                    ResolvedStrPart::Parsed(inner) => ResolvedStrPart::Parsed(crate::ast::Shared::new(rec(inner))),
                 })
                 .collect(),
         ),
@@ -517,7 +517,7 @@ pub fn substitute_ident_in_resolved_expr(
         } => ResolvedExpr::RecordUpdate {
             type_id: *type_id,
             type_name: type_name.clone(),
-            base: Box::new(rec(base)),
+            base: crate::ast::Shared::new(rec(base)),
             updates: updates.iter().map(|(n, v)| (n.clone(), rec(v))).collect(),
         },
         ResolvedExpr::TailCall { target, args } => ResolvedExpr::TailCall {

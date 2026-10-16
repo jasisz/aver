@@ -269,7 +269,7 @@ fn resolve_spanned(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> Spanned<Resolv
     let resolved = resolve_expr(ctx, expr);
     let out = Spanned::new(resolved, expr.line);
     if let Some(t) = expr.ty.get() {
-        let _ = out.ty.set(canonicalise_type(ctx, t.clone()));
+        out.set_ty(canonicalise_type(ctx, (**t).clone()));
     }
     out
 }
@@ -314,10 +314,10 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
                     ResolvedCtor::Builtin(BuiltinCtor::OptionNone) | ResolvedCtor::User { .. }
                 );
                 if nullary {
-                    return ResolvedExpr::Ctor(ctor, vec![]);
+                    return ResolvedExpr::Ctor(ctor, crate::ast::shared::vec(vec![]));
                 }
             }
-            ResolvedExpr::Attr(Box::new(resolve_spanned(ctx, obj)), field.clone())
+            ResolvedExpr::Attr(crate::ast::Shared::new(resolve_spanned(ctx, obj)), field.clone())
         }
         Expr::FnCall(callee, args) => {
             let resolved_args: Vec<Spanned<ResolvedExpr>> =
@@ -330,7 +330,7 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
             // ...)` (which is for namespace methods like `Int.add`).
             if let Some(dotted) = expr_to_dotted_name(&callee.node) {
                 if let Some(builtin) = parse_builtin_ctor(&dotted) {
-                    return ResolvedExpr::Ctor(ResolvedCtor::Builtin(builtin), resolved_args);
+                    return ResolvedExpr::Ctor(ResolvedCtor::Builtin(builtin), crate::ast::shared::vec(resolved_args));
                 }
                 if let Some((ctor_id, type_id, variant_name)) = ctx.resolve_user_ctor(&dotted) {
                     return ResolvedExpr::Ctor(
@@ -339,7 +339,7 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
                             type_id,
                             name: variant_name,
                         },
-                        resolved_args,
+                        crate::ast::shared::vec(resolved_args),
                     );
                 }
             }
@@ -394,7 +394,7 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
                     _ => None,
                 };
                 if let Some(intrinsic) = intrinsic {
-                    return ResolvedExpr::Call(ResolvedCallee::Intrinsic(intrinsic), resolved_args);
+                    return ResolvedExpr::Call(ResolvedCallee::Intrinsic(intrinsic), crate::ast::shared::vec(resolved_args));
                 }
             }
             // Both literal operands prove the unsigned fixed-width encoder
@@ -410,7 +410,7 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
                 && crate::ast::is_literal_total_int_endian_call(&args[0], &args[1])
             {
                 let builtin_call = Spanned::new(
-                    ResolvedExpr::Call(resolved_callee.clone(), resolved_args),
+                    ResolvedExpr::Call(resolved_callee.clone(), crate::ast::shared::vec(resolved_args)),
                     expr.line,
                 );
                 builtin_call.set_ty(crate::types::Type::Result(
@@ -419,7 +419,7 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
                 ));
                 return ResolvedExpr::Call(
                     ResolvedCallee::Intrinsic(BuiltinIntrinsic::ResultProven),
-                    vec![builtin_call],
+                    crate::ast::shared::vec(vec![builtin_call]),
                 );
             }
             if let ResolvedCallee::Builtin(name) = &resolved_callee
@@ -430,7 +430,7 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
             {
                 return ResolvedExpr::Call(
                     ResolvedCallee::Intrinsic(BuiltinIntrinsic::BranchPathParse),
-                    resolved_args,
+                    crate::ast::shared::vec(resolved_args),
                 );
             }
             // Effect-aware literal discharge. Unlike `Int.div`, these calls
@@ -462,7 +462,7 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
                 };
                 if discharged {
                     let effect_call = Spanned::new(
-                        ResolvedExpr::Call(resolved_callee.clone(), resolved_args),
+                        ResolvedExpr::Call(resolved_callee.clone(), crate::ast::shared::vec(resolved_args)),
                         expr.line,
                     );
                     let payload = if name == "Random.int" {
@@ -476,7 +476,7 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
                     ));
                     return ResolvedExpr::Call(
                         ResolvedCallee::Intrinsic(BuiltinIntrinsic::ResultProven),
-                        vec![effect_call],
+                        crate::ast::shared::vec(vec![effect_call]),
                     );
                 }
             }
@@ -543,19 +543,19 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
                 return ResolvedExpr::RecordCreate {
                     type_id: ctx.symbols.type_id_of(&key),
                     type_name,
-                    fields: vec![(ctor.carrier_field.clone(), resolved_args.remove(0))],
+                    fields: crate::ast::shared::vec(vec![(ctor.carrier_field.clone(), resolved_args.remove(0))]),
                 };
             }
-            ResolvedExpr::Call(resolved_callee, resolved_args)
+            ResolvedExpr::Call(resolved_callee, crate::ast::shared::vec(resolved_args))
         }
         Expr::BinOp(op, l, r) => ResolvedExpr::BinOp(
             *op,
-            Box::new(resolve_spanned(ctx, l)),
-            Box::new(resolve_spanned(ctx, r)),
+            crate::ast::Shared::new(resolve_spanned(ctx, l)),
+            crate::ast::Shared::new(resolve_spanned(ctx, r)),
         ),
-        Expr::Neg(inner) => ResolvedExpr::Neg(Box::new(resolve_spanned(ctx, inner))),
+        Expr::Neg(inner) => ResolvedExpr::Neg(crate::ast::Shared::new(resolve_spanned(ctx, inner))),
         Expr::Match { subject, arms } => ResolvedExpr::Match {
-            subject: Box::new(resolve_spanned(ctx, subject)),
+            subject: crate::ast::Shared::new(resolve_spanned(ctx, subject)),
             arms: arms.iter().map(|a| resolve_match_arm(ctx, a)).collect(),
         },
         Expr::Constructor(name, arg) => {
@@ -564,16 +564,16 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
                 Some(a) => vec![resolve_spanned(ctx, a)],
                 None => vec![],
             };
-            ResolvedExpr::Ctor(ctor, args)
+            ResolvedExpr::Ctor(ctor, crate::ast::shared::vec(args))
         }
-        Expr::ErrorProp(inner) => ResolvedExpr::ErrorProp(Box::new(resolve_spanned(ctx, inner))),
+        Expr::ErrorProp(inner) => ResolvedExpr::ErrorProp(crate::ast::Shared::new(resolve_spanned(ctx, inner))),
         Expr::InterpolatedStr(parts) => ResolvedExpr::InterpolatedStr(
             parts
                 .iter()
                 .map(|p| match p {
                     crate::ast::StrPart::Literal(s) => ResolvedStrPart::Literal(s.clone()),
                     crate::ast::StrPart::Parsed(inner) => {
-                        ResolvedStrPart::Parsed(Box::new(resolve_spanned(ctx, inner)))
+                        ResolvedStrPart::Parsed(crate::ast::Shared::new(resolve_spanned(ctx, inner)))
                     }
                 })
                 .collect(),
@@ -605,7 +605,7 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
         } => ResolvedExpr::RecordUpdate {
             type_id: ctx.resolve_type_id(type_name),
             type_name: type_name.clone(),
-            base: Box::new(resolve_spanned(ctx, base)),
+            base: crate::ast::Shared::new(resolve_spanned(ctx, base)),
             updates: updates
                 .iter()
                 .map(|(n, e)| (n.clone(), resolve_spanned(ctx, e)))
@@ -627,7 +627,7 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
                 // attributable.
                 None => ResolvedExpr::Call(
                     ResolvedCallee::Unresolved {
-                        callee: Box::new(Spanned::new(
+                        callee: crate::ast::Shared::new(Spanned::new(
                             ResolvedExpr::Ident(data.target.clone()),
                             expr.line,
                         )),
@@ -650,7 +650,7 @@ fn resolve_match_arm(ctx: &ResolveCtx<'_>, arm: &MatchArm) -> ResolvedMatchArm {
     }
     ResolvedMatchArm {
         pattern: resolve_pattern(ctx, &arm.pattern),
-        body: Box::new(resolve_spanned(ctx, &arm.body)),
+        body: crate::ast::Shared::new(resolve_spanned(ctx, &arm.body)),
         binding_slots,
     }
 }
@@ -721,14 +721,14 @@ pub(crate) fn classify_callee(ctx: &ResolveCtx<'_>, callee: &Spanned<Expr>) -> R
             match ctx.resolve_fn_id(name) {
                 Some(id) => ResolvedCallee::Fn(id),
                 None => ResolvedCallee::Unresolved {
-                    callee: Box::new(resolve_spanned(ctx, callee)),
+                    callee: crate::ast::Shared::new(resolve_spanned(ctx, callee)),
                 },
             }
         }
         Expr::Attr(_, _) => {
             let Some(dotted) = expr_to_dotted_name(&callee.node) else {
                 return ResolvedCallee::Unresolved {
-                    callee: Box::new(resolve_spanned(ctx, callee)),
+                    callee: crate::ast::Shared::new(resolve_spanned(ctx, callee)),
                 };
             };
             // Try user-fn first — module-scoped calls like
@@ -747,11 +747,11 @@ pub(crate) fn classify_callee(ctx: &ResolveCtx<'_>, callee: &Spanned<Expr>) -> R
                 return ResolvedCallee::Builtin(dotted);
             }
             ResolvedCallee::Unresolved {
-                callee: Box::new(resolve_spanned(ctx, callee)),
+                callee: crate::ast::Shared::new(resolve_spanned(ctx, callee)),
             }
         }
         _ => ResolvedCallee::Unresolved {
-            callee: Box::new(resolve_spanned(ctx, callee)),
+            callee: crate::ast::Shared::new(resolve_spanned(ctx, callee)),
         },
     }
 }

@@ -1,4 +1,6 @@
+pub mod shared;
 pub mod types;
+pub use shared::Shared;
 pub mod unparse;
 pub use types::Type;
 
@@ -36,17 +38,17 @@ impl From<bool> for AnnotBool {
 pub struct Spanned<T> {
     pub node: T,
     pub line: SourceLine,
-    pub ty: std::sync::OnceLock<Type>,
+    pub ty: std::sync::OnceLock<Shared<Type>>,
 }
 
 // `OnceLock` does not derive `Clone` (the cell is invariant over `T`), so the
 // inner type is cloned manually.
 impl<T: Clone> Clone for Spanned<T> {
     fn clone(&self) -> Self {
-        let ty = std::sync::OnceLock::new();
-        if let Some(t) = self.ty.get() {
-            let _ = ty.set(t.clone());
-        }
+        let ty = match self.ty.get() {
+            Some(t) => std::sync::OnceLock::from(t.clone()),
+            None => std::sync::OnceLock::new(),
+        };
         Self {
             node: self.node.clone(),
             line: self.line,
@@ -78,12 +80,17 @@ impl<T> Spanned<T> {
     /// Record the inferred type for this node. No-op if a type is already set
     /// (later inference passes must not contradict the first one).
     pub fn set_ty(&self, ty: Type) {
-        let _ = self.ty.set(ty);
+        let _ = self.ty.set(Shared::new(ty));
+    }
+
+    /// Record a type another node already carries, sharing it.
+    pub fn set_ty_shared(&self, ty: &Shared<Type>) {
+        let _ = self.ty.set(ty.clone());
     }
 
     /// Inferred type for this node, if the type checker has visited it.
     pub fn ty(&self) -> Option<&Type> {
-        self.ty.get()
+        self.ty.get().map(|t| &**t)
     }
 }
 

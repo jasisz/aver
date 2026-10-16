@@ -530,7 +530,7 @@ impl Env<'_> {
                     Proof::Unfold {
                         fn_id: *id,
                         arm: 0,
-                        args: args.clone(),
+                        args: args.to_vec(),
                         binders: Vec::new(),
                         premise: None,
                     },

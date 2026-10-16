@@ -1777,7 +1777,7 @@ fn map_get_after_set() -> Fact {
     let (m, k, v) = mkv();
     let some = crate::ast::Spanned::bare(crate::ir::hir::ResolvedExpr::Ctor(
         crate::ir::hir::ResolvedCtor::Builtin(crate::ir::hir::BuiltinCtor::OptionSome),
-        vec![v.clone()],
+        crate::ast::shared::vec(vec![v.clone()]),
     ));
     map_fact(
         "Map.get.afterSet",
@@ -1930,7 +1930,7 @@ fn in_range(i: Term, v: Term) -> Term {
 fn option(c: crate::ir::hir::BuiltinCtor, args: Vec<Term>) -> Term {
     crate::ast::Spanned::bare(crate::ir::hir::ResolvedExpr::Ctor(
         crate::ir::hir::ResolvedCtor::Builtin(c),
-        args,
+        crate::ast::shared::vec(args),
     ))
 }
 

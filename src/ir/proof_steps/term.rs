@@ -45,8 +45,8 @@ pub fn int(value: &BigInt) -> Term {
             return typed(
                 ResolvedExpr::BinOp(
                     BinOp::Sub,
-                    Box::new(int(&BigInt::from(0))),
-                    Box::new(magnitude),
+                    crate::ast::Shared::new(int(&BigInt::from(0))),
+                    crate::ast::Shared::new(magnitude),
                 ),
                 Some(Type::Int),
             );
@@ -68,8 +68,8 @@ pub fn cell_of(t: &Term) -> Option<Term> {
     };
     let (x, rest) = xs.split_first()?;
     let tail = list(rest.to_vec());
-    if let Some(ty) = t.ty() {
-        tail.set_ty(ty.clone());
+    if let Some(ty) = t.ty.get() {
+        tail.set_ty_shared(ty);
     }
     Some(builtin(
         "List.prepend",
@@ -80,7 +80,7 @@ pub fn cell_of(t: &Term) -> Option<Term> {
 
 /// A list literal.
 pub fn list(items: Vec<Term>) -> Term {
-    Spanned::bare(ResolvedExpr::List(items))
+    Spanned::bare(ResolvedExpr::List(crate::ast::shared::vec(items)))
 }
 
 pub fn boolean(value: bool) -> Term {
@@ -96,19 +96,19 @@ pub fn binop(op: BinOp, a: Term, b: Term) -> Term {
         BinOp::Div => a.ty().cloned(),
         _ => Some(Type::Bool),
     };
-    typed(ResolvedExpr::BinOp(op, Box::new(a), Box::new(b)), ty)
+    typed(ResolvedExpr::BinOp(op, crate::ast::Shared::new(a), crate::ast::Shared::new(b)), ty)
 }
 
 pub fn builtin(name: &str, args: Vec<Term>, ty: Option<Type>) -> Term {
     typed(
-        ResolvedExpr::Call(ResolvedCallee::Builtin(name.to_string()), args),
+        ResolvedExpr::Call(ResolvedCallee::Builtin(name.to_string()), crate::ast::shared::vec(args)),
         ty,
     )
 }
 
 pub fn intrinsic(which: BuiltinIntrinsic, args: Vec<Term>) -> Term {
     typed(
-        ResolvedExpr::Call(ResolvedCallee::Intrinsic(which), args),
+        ResolvedExpr::Call(ResolvedCallee::Intrinsic(which), crate::ast::shared::vec(args)),
         Some(Type::Int),
     )
 }
@@ -151,8 +151,8 @@ pub fn is_literal(t: &Term) -> bool {
 
 fn retag(t: &Term, node: ResolvedExpr) -> Term {
     let out = Spanned::new(node, t.line);
-    if let Some(ty) = t.ty() {
-        out.set_ty(ty.clone());
+    if let Some(ty) = t.ty.get() {
+        out.set_ty_shared(ty);
     }
     out
 }
@@ -371,36 +371,36 @@ pub fn map_children(
         ResolvedExpr::Literal(_) | ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } => {
             return Ok(t.clone());
         }
-        ResolvedExpr::Attr(o, field) => ResolvedExpr::Attr(b(o, f)?, field.clone()),
-        ResolvedExpr::Call(callee, args) => ResolvedExpr::Call(callee.clone(), all(args, f)?),
-        ResolvedExpr::BinOp(op, l, r) => ResolvedExpr::BinOp(*op, b(l, f)?, b(r, f)?),
-        ResolvedExpr::Neg(a) => ResolvedExpr::Neg(b(a, f)?),
+        ResolvedExpr::Attr(o, field) => ResolvedExpr::Attr(crate::ast::Shared::from(b(o, f)?), field.clone()),
+        ResolvedExpr::Call(callee, args) => ResolvedExpr::Call(callee.clone(), crate::ast::shared::vec(all(args, f)?)),
+        ResolvedExpr::BinOp(op, l, r) => ResolvedExpr::BinOp(*op, crate::ast::Shared::from(b(l, f)?), crate::ast::Shared::from(b(r, f)?)),
+        ResolvedExpr::Neg(a) => ResolvedExpr::Neg(crate::ast::Shared::from(b(a, f)?)),
         ResolvedExpr::Match { subject, arms } => ResolvedExpr::Match {
-            subject: b(subject, f)?,
+            subject: crate::ast::Shared::from(b(subject, f)?),
             arms: arms
                 .iter()
                 .map(|arm| {
                     Ok(ResolvedMatchArm {
                         pattern: arm.pattern.clone(),
-                        body: b(&arm.body, f)?,
+                        body: crate::ast::Shared::from(b(&arm.body, f)?),
                         binding_slots: std::sync::OnceLock::new(),
                     })
                 })
                 .collect::<Result<_, String>>()?,
         },
-        ResolvedExpr::Ctor(c, args) => ResolvedExpr::Ctor(c.clone(), all(args, f)?),
-        ResolvedExpr::ErrorProp(a) => ResolvedExpr::ErrorProp(b(a, f)?),
+        ResolvedExpr::Ctor(c, args) => ResolvedExpr::Ctor(c.clone(), crate::ast::shared::vec(all(args, f)?)),
+        ResolvedExpr::ErrorProp(a) => ResolvedExpr::ErrorProp(crate::ast::Shared::from(b(a, f)?)),
         ResolvedExpr::InterpolatedStr(parts) => ResolvedExpr::InterpolatedStr(
             parts
                 .iter()
                 .map(|p| match p {
                     ResolvedStrPart::Literal(s) => Ok(ResolvedStrPart::Literal(s.clone())),
-                    ResolvedStrPart::Parsed(e) => Ok(ResolvedStrPart::Parsed(b(e, f)?)),
+                    ResolvedStrPart::Parsed(e) => Ok(ResolvedStrPart::Parsed(crate::ast::Shared::from(b(e, f)?))),
                 })
                 .collect::<Result<_, String>>()?,
         ),
-        ResolvedExpr::List(xs) => ResolvedExpr::List(all(xs, f)?),
-        ResolvedExpr::Tuple(xs) => ResolvedExpr::Tuple(all(xs, f)?),
+        ResolvedExpr::List(xs) => ResolvedExpr::List(crate::ast::shared::vec(all(xs, f)?)),
+        ResolvedExpr::Tuple(xs) => ResolvedExpr::Tuple(crate::ast::shared::vec(all(xs, f)?)),
         ResolvedExpr::MapLiteral(kvs) => ResolvedExpr::MapLiteral(
             kvs.iter()
                 .map(|(k, v)| Ok((f(k)?, f(v)?)))
@@ -426,7 +426,7 @@ pub fn map_children(
         } => ResolvedExpr::RecordUpdate {
             type_id: *type_id,
             type_name: type_name.clone(),
-            base: b(base, f)?,
+            base: crate::ast::Shared::from(b(base, f)?),
             updates: updates
                 .iter()
                 .map(|(n, v)| Ok((n.clone(), f(v)?)))
@@ -434,10 +434,10 @@ pub fn map_children(
         },
         ResolvedExpr::TailCall { target, args } => ResolvedExpr::TailCall {
             target: *target,
-            args: all(args, f)?,
+            args: crate::ast::shared::vec(all(args, f)?),
         },
         ResolvedExpr::IndependentProduct(xs, u) => {
-            ResolvedExpr::IndependentProduct(all(xs, f)?, *u)
+            ResolvedExpr::IndependentProduct(crate::ast::shared::vec(all(xs, f)?), *u)
         }
     };
     Ok(retag(t, node))
@@ -532,15 +532,15 @@ pub fn subst(t: &Term, map: &[(String, Term)]) -> Result<Term, String> {
                 }
                 new_arms.push(ResolvedMatchArm {
                     pattern: arm.pattern.clone(),
-                    body: Box::new(subst(&arm.body, &inner)?),
+                    body: crate::ast::Shared::new(subst(&arm.body, &inner)?),
                     binding_slots: std::sync::OnceLock::new(),
                 });
             }
             Ok(retag(
                 t,
                 ResolvedExpr::Match {
-                    subject: Box::new(subject),
-                    arms: new_arms,
+                    subject: crate::ast::Shared::new(subject),
+                    arms: crate::ast::shared::vec(new_arms),
                 },
             ))
         }

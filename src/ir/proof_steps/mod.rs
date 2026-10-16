@@ -390,7 +390,7 @@ impl Finite {
             Finite::Bool => vec![term::boolean(false), term::boolean(true)],
             Finite::Sum(ctors) => ctors
                 .iter()
-                .map(|c| Spanned::bare(ResolvedExpr::Ctor(c.clone(), Vec::new())))
+                .map(|c| Spanned::bare(ResolvedExpr::Ctor(c.clone(), crate::ast::shared::vec(Vec::new()))))
                 .collect(),
             Finite::Record {
                 type_id,
@@ -408,7 +408,7 @@ impl Finite {
                 .collect(),
             Finite::Tuple(parts) => product(parts.iter().map(Finite::values).collect())
                 .into_iter()
-                .map(|vs| Spanned::bare(ResolvedExpr::Tuple(vs)))
+                .map(|vs| Spanned::bare(ResolvedExpr::Tuple(crate::ast::shared::vec(vs))))
                 .collect(),
         }
     }
@@ -493,7 +493,7 @@ impl SplitCase {
         Some(match &self.ctor {
             SplitCtor::Nil => term::nil(),
             SplitCtor::Cons => term::builtin("List.prepend", vars, None),
-            SplitCtor::Ctor(c) => Spanned::bare(ResolvedExpr::Ctor(c.clone(), vars)),
+            SplitCtor::Ctor(c) => Spanned::bare(ResolvedExpr::Ctor(c.clone(), crate::ast::shared::vec(vars))),
             SplitCtor::Lit(l) => Spanned::bare(ResolvedExpr::Literal(l.clone())),
             SplitCtor::Other => return None,
         })

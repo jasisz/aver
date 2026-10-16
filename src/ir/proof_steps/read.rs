@@ -436,14 +436,14 @@ impl Reader {
             }
             "hole" => term::hole(),
             "get" => Spanned::bare(ResolvedExpr::Attr(
-                Box::new(self.term(one(0)?)?),
+                crate::ast::Shared::new(self.term(one(0)?)?),
                 self.atom(one(1)?)?.to_string(),
             )),
             "call" => {
                 let f = self.atom(one(0)?)?;
                 let xs = self.terms(&args[1..])?;
                 Self::typed(
-                    ResolvedExpr::Call(ResolvedCallee::Fn(self.fn_id(f)?), xs),
+                    ResolvedExpr::Call(ResolvedCallee::Fn(self.fn_id(f)?), crate::ast::shared::vec(xs)),
                     self.call_types.get(f).cloned(),
                 )
             }
@@ -451,7 +451,7 @@ impl Reader {
                 let b = self.atom(one(0)?)?;
                 let xs = self.terms(&args[1..])?;
                 if b == "Map.empty" && xs.is_empty() {
-                    return Ok(Spanned::bare(ResolvedExpr::MapLiteral(Vec::new())));
+                    return Ok(Spanned::bare(ResolvedExpr::MapLiteral(crate::ast::shared::vec(Vec::new()))));
                 }
                 let callee = match self.builtins.get(b) {
                     Some(c) => c.clone(),
@@ -471,11 +471,11 @@ impl Reader {
                     tail.set_ty(Type::List(Box::new(ty.clone())));
                 }
                 let ty = builtin_type(b, &xs);
-                Self::typed(ResolvedExpr::Call(callee, xs), ty)
+                Self::typed(ResolvedExpr::Call(callee, crate::ast::shared::vec(xs)), ty)
             }
             "ctor" => {
                 let c = self.ctor(self.atom(one(0)?)?)?;
-                Spanned::bare(ResolvedExpr::Ctor(c, self.terms(&args[1..])?))
+                Spanned::bare(ResolvedExpr::Ctor(c, crate::ast::shared::vec(self.terms(&args[1..])?)))
             }
             "op" => {
                 let sym = self.atom(one(0)?)?;
@@ -483,7 +483,7 @@ impl Reader {
                 let b = self.term(one(2)?)?;
                 operator(sym, a, b)?
             }
-            "neg" => Spanned::bare(ResolvedExpr::Neg(Box::new(self.term(one(0)?)?))),
+            "neg" => Spanned::bare(ResolvedExpr::Neg(crate::ast::Shared::new(self.term(one(0)?)?))),
             "match" => {
                 let subject = self.term(one(0)?)?;
                 let mut arms = Vec::new();
@@ -494,13 +494,13 @@ impl Reader {
                     }
                     arms.push(ResolvedMatchArm {
                         pattern: self.pattern(&parts[0])?,
-                        body: Box::new(self.term(&parts[1])?),
+                        body: crate::ast::Shared::new(self.term(&parts[1])?),
                         binding_slots: std::sync::OnceLock::new(),
                     });
                 }
                 Spanned::bare(ResolvedExpr::Match {
-                    subject: Box::new(subject),
-                    arms,
+                    subject: crate::ast::Shared::new(subject),
+                    arms: crate::ast::shared::vec(arms),
                 })
             }
             "str" => {
@@ -508,7 +508,7 @@ impl Reader {
                 for a in args {
                     match self.tagged(a) {
                         Ok(("s", [Sx::Text(t)])) => parts.push(ResolvedStrPart::Literal(t.clone())),
-                        _ => parts.push(ResolvedStrPart::Parsed(Box::new(self.term(a)?))),
+                        _ => parts.push(ResolvedStrPart::Parsed(crate::ast::Shared::new(self.term(a)?))),
                     }
                 }
                 Self::typed(ResolvedExpr::InterpolatedStr(parts), Some(Type::Str))
@@ -516,15 +516,15 @@ impl Reader {
             "list" => {
                 let xs = self.terms(args)?;
                 let ty = xs.first().and_then(|x| x.ty().cloned());
-                Self::typed(ResolvedExpr::List(xs), ty.map(|t| Type::List(Box::new(t))))
+                Self::typed(ResolvedExpr::List(crate::ast::shared::vec(xs)), ty.map(|t| Type::List(Box::new(t))))
             }
-            "tuple" => Spanned::bare(ResolvedExpr::Tuple(self.terms(args)?)),
+            "tuple" => Spanned::bare(ResolvedExpr::Tuple(crate::ast::shared::vec(self.terms(args)?))),
             "rec" => {
                 let (type_id, type_name) = self.record(self.atom(one(0)?)?)?;
                 Spanned::bare(ResolvedExpr::RecordCreate {
                     type_id,
                     type_name,
-                    fields: self.fields(&args[1..])?,
+                    fields: crate::ast::shared::vec(self.fields(&args[1..])?),
                 })
             }
             "upd" => {
@@ -532,8 +532,8 @@ impl Reader {
                 Spanned::bare(ResolvedExpr::RecordUpdate {
                     type_id,
                     type_name,
-                    base: Box::new(self.term(one(1)?)?),
-                    updates: self.fields(&args[2..])?,
+                    base: crate::ast::Shared::new(self.term(one(1)?)?),
+                    updates: crate::ast::shared::vec(self.fields(&args[2..])?),
                 })
             }
             other => return Err(format!("unknown term {other}")),
@@ -935,7 +935,7 @@ fn operator(sym: &str, a: Term, b: Term) -> Result<Term, String> {
     // and left untyped when neither is.
     let arithmetic = matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div);
     let operand = a.ty().or(b.ty()).cloned();
-    let t = Spanned::bare(ResolvedExpr::BinOp(op, Box::new(a), Box::new(b)));
+    let t = Spanned::bare(ResolvedExpr::BinOp(op, crate::ast::Shared::new(a), crate::ast::Shared::new(b)));
     match (arithmetic, operand) {
         (true, Some(ty)) => t.set_ty(ty),
         (true, None) => {}

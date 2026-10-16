@@ -3172,7 +3172,7 @@ fn mir_pattern_to_resolved(pat: &MirPattern, ctx: &MirEmitCtx<'_>) -> Option<Res
 fn synthetic_arm(pattern: ResolvedPattern) -> ResolvedMatchArm {
     ResolvedMatchArm {
         pattern,
-        body: Box::new(Spanned {
+        body: crate::ast::Shared::new(Spanned {
             node: crate::ir::hir::ResolvedExpr::Literal(crate::ast::Literal::Unit),
             line: 0,
             ty: std::sync::OnceLock::new(),

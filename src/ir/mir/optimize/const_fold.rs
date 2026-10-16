@@ -80,9 +80,9 @@ fn fold_in_place(expr: &mut Spanned<MirExpr>, builtins: &[String]) {
 }
 
 fn literal_span(lit: Literal, source: &Spanned<MirExpr>) -> Spanned<Literal> {
-    let ty = std::sync::OnceLock::new();
+    let ty: std::sync::OnceLock<crate::ast::Shared<crate::ast::Type>> = std::sync::OnceLock::new();
     if let Some(t) = source.ty() {
-        let _ = ty.set(t.clone());
+        let _ = ty.set(crate::ast::Shared::new(t.clone()));
     }
     Spanned {
         node: lit,

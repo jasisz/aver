@@ -76,7 +76,7 @@
 //!   bare-string lookups that the resolved layer subsumes (Phase D
 //!   in #147 terminology).
 
-use crate::ast::{AnnotBool, BinOp, FnResolution, Literal, Module, Spanned, Type};
+use crate::ast::{AnnotBool, BinOp, FnResolution, Literal, Module, Shared, Spanned, Type};
 use crate::ir::identity::{CtorId, FnId, TypeId};
 
 pub mod classify;
@@ -388,35 +388,35 @@ pub enum ResolvedExpr {
     /// resolved; the field name stays as source text because record
     /// fields are scoped under their owning `TypeId`, not in a
     /// global namespace.
-    Attr(Box<Spanned<ResolvedExpr>>, String),
+    Attr(Shared<Spanned<ResolvedExpr>>, String),
     /// Function call — `Expr::FnCall(callee, args)` lifted into a
     /// [`ResolvedCallee`].
-    Call(ResolvedCallee, Vec<Spanned<ResolvedExpr>>),
+    Call(ResolvedCallee, Shared<Vec<Spanned<ResolvedExpr>>>),
     /// Binary operator.
     BinOp(
         BinOp,
-        Box<Spanned<ResolvedExpr>>,
-        Box<Spanned<ResolvedExpr>>,
+        Shared<Spanned<ResolvedExpr>>,
+        Shared<Spanned<ResolvedExpr>>,
     ),
     /// Unary minus.
-    Neg(Box<Spanned<ResolvedExpr>>),
+    Neg(Shared<Spanned<ResolvedExpr>>),
     /// `match subject { arm, … }`.
     Match {
-        subject: Box<Spanned<ResolvedExpr>>,
-        arms: Vec<ResolvedMatchArm>,
+        subject: Shared<Spanned<ResolvedExpr>>,
+        arms: Shared<Vec<ResolvedMatchArm>>,
     },
     /// Constructor call — `Result.Ok(v)`, `Shape.Circle(r)`, etc.
-    Ctor(ResolvedCtor, Vec<Spanned<ResolvedExpr>>),
+    Ctor(ResolvedCtor, Shared<Vec<Spanned<ResolvedExpr>>>),
     /// Result-error propagation: `expr?`.
-    ErrorProp(Box<Spanned<ResolvedExpr>>),
+    ErrorProp(Shared<Spanned<ResolvedExpr>>),
     /// Interpolated string `"a${x}b"`.
     InterpolatedStr(Vec<ResolvedStrPart>),
     /// `[a, b, c]` list literal.
-    List(Vec<Spanned<ResolvedExpr>>),
+    List(Shared<Vec<Spanned<ResolvedExpr>>>),
     /// `(a, b, c)` tuple literal.
-    Tuple(Vec<Spanned<ResolvedExpr>>),
+    Tuple(Shared<Vec<Spanned<ResolvedExpr>>>),
     /// `{"a" => 1, "b" => 2}` map literal.
-    MapLiteral(Vec<(Spanned<ResolvedExpr>, Spanned<ResolvedExpr>)>),
+    MapLiteral(Shared<Vec<(Spanned<ResolvedExpr>, Spanned<ResolvedExpr>)>>),
     /// `Shape(name = "...", count = 0)` record-create form. The
     /// `type_id` is `Some` for records resolved through the local symbol
     /// table, `None` for imported capability-owned and compiler-owned
@@ -427,24 +427,24 @@ pub enum ResolvedExpr {
         /// Source-level type name kept verbatim for diagnostics +
         /// backend codegen mangling. Mirrors `Type::Named { name }`.
         type_name: String,
-        fields: Vec<(String, Spanned<ResolvedExpr>)>,
+        fields: Shared<Vec<(String, Spanned<ResolvedExpr>)>>,
     },
     /// `Shape.update(base, field = newVal, …)` record-update.
     RecordUpdate {
         type_id: Option<TypeId>,
         type_name: String,
-        base: Box<Spanned<ResolvedExpr>>,
-        updates: Vec<(String, Spanned<ResolvedExpr>)>,
+        base: Shared<Spanned<ResolvedExpr>>,
+        updates: Shared<Vec<(String, Spanned<ResolvedExpr>)>>,
     },
     /// Tail-position call (SCC peer). `target` is the `FnId` the
     /// TCO transform pass committed to.
     TailCall {
         target: FnId,
-        args: Vec<Spanned<ResolvedExpr>>,
+        args: Shared<Vec<Spanned<ResolvedExpr>>>,
     },
     /// Independent product `(a, b)!` or `(a, b)?!`. `unwrap` toggles
     /// the `?!` form.
-    IndependentProduct(Vec<Spanned<ResolvedExpr>>, bool),
+    IndependentProduct(Shared<Vec<Spanned<ResolvedExpr>>>, bool),
 }
 
 /// Callee classification for [`ResolvedExpr::Call`]. Replaces the
@@ -489,7 +489,7 @@ pub enum ResolvedCallee {
         /// The source-faithful expression the resolver gave up on,
         /// kept for diagnostics. Resolved recursively into the same
         /// IR so the surrounding tree still walks cleanly.
-        callee: Box<Spanned<ResolvedExpr>>,
+        callee: Shared<Spanned<ResolvedExpr>>,
     },
 }
 
@@ -789,7 +789,7 @@ pub enum BuiltinCtor {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResolvedStrPart {
     Literal(String),
-    Parsed(Box<Spanned<ResolvedExpr>>),
+    Parsed(Shared<Spanned<ResolvedExpr>>),
 }
 
 /// One arm of a `match` — mirror of [`crate::ast::MatchArm`] with
@@ -797,7 +797,7 @@ pub enum ResolvedStrPart {
 #[derive(Debug)]
 pub struct ResolvedMatchArm {
     pub pattern: ResolvedPattern,
-    pub body: Box<Spanned<ResolvedExpr>>,
+    pub body: Shared<Spanned<ResolvedExpr>>,
     /// Per-arm slot table — same role as
     /// [`crate::ast::MatchArm::binding_slots`]. Populated by the
     /// resolver pass; backends read it instead of re-doing the
