@@ -27,6 +27,11 @@ pub(crate) struct Stuck {
     ctors: Vec<(SplitCtor, Fields)>,
 }
 
+/// Whether `t` has a `match` anywhere in it.
+fn has_match(t: &Term) -> bool {
+    matches!(t.node, ResolvedExpr::Match { .. }) || term::children(t).into_iter().any(has_match)
+}
+
 fn mentions_any(t: &Term, names: &[String]) -> bool {
     let mut fv = Vec::new();
     term::free_vars(t, &mut fv);
@@ -262,13 +267,18 @@ impl Env<'_> {
             return Some(inner);
         }
         // A given of a finite type, or a field of one, is split into every
-        // value instead (see [`super::finite`]).
+        // value instead (see [`super::finite`]). A term that holds a
+        // `match` is not split on: Lean does not take it as the subject.
         let mut root = &on;
         while let ResolvedExpr::Attr(o, _) = &root.node {
             root = o;
         }
         let finite = matches!(&root.node, ResolvedExpr::Ident(n) if self.finite.contains(n));
-        if finite || mentions_any(&on, &self.split_binders) || self.hyp_for(&on).is_some() {
+        if finite
+            || has_match(&on)
+            || mentions_any(&on, &self.split_binders)
+            || self.hyp_for(&on).is_some()
+        {
             return None;
         }
         let fuel = self.fuel;
@@ -289,7 +299,8 @@ impl Env<'_> {
     /// outside any arm (an argument's before the term, the subject's own
     /// before the subject): a `match` left in the middle of a term once
     /// the definitions around it opened. Split as [`Self::stuck_subject`]
-    /// splits a definition's `match`, from its arms.
+    /// splits a definition's `match`, from its arms. Not a subject that
+    /// holds a `match` of its own, which Lean does not split on.
     pub(crate) fn stuck_match(&mut self, t: &Term) -> Option<Stuck> {
         if let ResolvedExpr::Match { subject, arms } = &t.node {
             if let Some(inner) = self.stuck_match(subject) {
@@ -307,7 +318,11 @@ impl Env<'_> {
                 root = o;
             }
             let finite = matches!(&root.node, ResolvedExpr::Ident(n) if self.finite.contains(n));
-            if finite || mentions_any(&on, &self.split_binders) || self.hyp_for(&on).is_some() {
+            if finite
+                || has_match(&on)
+                || mentions_any(&on, &self.split_binders)
+                || self.hyp_for(&on).is_some()
+            {
                 return None;
             }
             let fuel = self.fuel;

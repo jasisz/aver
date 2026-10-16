@@ -57,12 +57,12 @@ const REFUSED: [(&str, &str, bool); 30] = [
     // A split along the constructors of a sum, of a term that is an Int.
     (
         "split_of_an_int_as_a_sum",
-        "step proof: pick: x := Int is not One",
+        "step proof: the cases are not the constructors of Int",
         true,
     ),
     (
         "split_of_an_int_as_a_sum_through_a_call",
-        "pick: x := Int is not One",
+        "the cases are not the constructors of Int",
         true,
     ),
     // A split into true and false of a term that is not a Bool.

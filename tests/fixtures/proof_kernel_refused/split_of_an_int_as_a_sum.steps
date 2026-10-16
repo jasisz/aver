@@ -8,4 +8,4 @@
  (recs)
  (sigs)
  (laws)
- (proof (split pick ((i 0)) (i 0) h0 (case One.Only () (split pick ((i 1)) (i 1) h1 (case One.Only () (trans ((i 0) (ctor One.Only) (i 1)) (hyp h0) (symm (hyp h1)))))))))
+ (proof (split (i 0) h0 () (case One.Only () (split (i 1) h1 () (case One.Only () (trans ((i 0) (ctor One.Only) (i 1)) (hyp h0) (symm (hyp h1)))))))))
