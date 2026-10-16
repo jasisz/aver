@@ -365,7 +365,7 @@ pub fn verify_with(artifact: &Path, cert_dir: &Path, kernels: Kernels) -> Result
 /// This function cannot produce [`Verdict::Certified`]. Release and admission
 /// gates must use [`verify`].
 pub fn check(artifact: &Path, cert_dir: &Path) -> Result<CheckVerdict, String> {
-    let report = trusted_check(artifact, cert_dir, ReplayMode::TrustBuiltOleans)?;
+    let report = trusted_check(artifact, cert_dir, ReplayMode::Fresh)?;
     let summary = summarize_report(artifact, report, "checked");
     if summary.count == 0 {
         Ok(CheckVerdict::NoExports(summary.text))
