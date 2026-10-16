@@ -1,0 +1,31 @@
+module ArmOfAMatch
+    intent = "Match arms whose bodies are matches again, on a name and on a call."
+    exposes [seg, front]
+    effects []
+
+record Seg
+    lo: Int
+    hi: Option<Int>
+
+fn seg(n: Int) -> Seg
+    ? "A segment from one point."
+    Seg(lo = n, hi = Option.Some(n))
+
+verify seg
+    seg(1).lo => 1
+
+fn front(n: Int) -> Int
+    ? "The high end of the segment at a point, read through names."
+    match n
+        t -> match t
+            u -> match seg(u)
+                s -> match s.hi
+                    Option.Some(x) -> x
+                    Option.None -> s.lo
+
+verify front
+    front(3) => 3
+
+verify front law frontIsThePoint
+    given n: Int = [-1, 0, 1, 5]
+    front(n) => n
