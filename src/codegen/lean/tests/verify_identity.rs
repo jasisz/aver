@@ -31,7 +31,7 @@ fn blocks(ctx: &CodegenContext) -> Vec<VerifyBlock> {
     ctx.items
         .iter()
         .filter_map(|item| match item {
-            TopLevel::Verify(vb) => Some(vb.clone()),
+            TopLevel::Verify(vb) => Some((**vb).clone()),
             _ => None,
         })
         .collect()

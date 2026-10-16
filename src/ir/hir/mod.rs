@@ -924,7 +924,7 @@ mod tests {
             ResolvedCtor::Unresolved {
                 name: "Step.Continue".to_string(),
             },
-            vec![Spanned::new(ResolvedExpr::Literal(Literal::Int(1)), line)],
+            crate::ast::shared::vec(vec![Spanned::new(ResolvedExpr::Literal(Literal::Int(1)), line)]),
         );
         ResolvedFnDef {
             fn_id: FnId(1),
@@ -1027,7 +1027,7 @@ mod tests {
         let callee = ResolvedCallee::Fn(FnId(7));
         let call = ResolvedExpr::Call(
             callee,
-            vec![Spanned::new(ResolvedExpr::Literal(Literal::Int(42)), 3)],
+            crate::ast::shared::vec(vec![Spanned::new(ResolvedExpr::Literal(Literal::Int(42)), 3)]),
         );
         // Smoke check: shape constructs and the FnId survives clone.
         let clone = call.clone();
@@ -1050,7 +1050,7 @@ mod tests {
         };
         let expr = ResolvedExpr::Ctor(
             ctor,
-            vec![Spanned::new(ResolvedExpr::Literal(Literal::Float(1.0)), 1)],
+            crate::ast::shared::vec(vec![Spanned::new(ResolvedExpr::Literal(Literal::Float(1.0)), 1)]),
         );
         let ResolvedExpr::Ctor(
             ResolvedCtor::User {
@@ -1108,12 +1108,12 @@ mod tests {
         let body = Box::new(Spanned::new(ResolvedExpr::Literal(Literal::Int(0)), 1));
         let a = ResolvedMatchArm {
             pattern: ResolvedPattern::Wildcard,
-            body: body.clone(),
+            body: crate::ast::Shared::from(body.clone()),
             binding_slots: std::sync::OnceLock::new(),
         };
         let b = ResolvedMatchArm {
             pattern: ResolvedPattern::Wildcard,
-            body,
+            body: crate::ast::Shared::from(body),
             binding_slots: {
                 let lock = std::sync::OnceLock::new();
                 let _ = lock.set(vec![3, 4]);
@@ -1173,9 +1173,9 @@ mod tests {
         let inner = Spanned::new(ResolvedExpr::Ident("dynamic".to_string()), 1);
         let call = ResolvedExpr::Call(
             ResolvedCallee::Unresolved {
-                callee: Box::new(inner.clone()),
+                callee: crate::ast::Shared::new(inner.clone()),
             },
-            vec![],
+            crate::ast::shared::vec(vec![]),
         );
         let clone = call.clone();
         assert_eq!(clone, call);
@@ -1225,36 +1225,36 @@ mod tests {
             last_use: AnnotBool(false),
         };
         let dummy = || Box::new(Spanned::new(ResolvedExpr::Literal(Literal::Int(0)), 1));
-        let _: ResolvedExpr = ResolvedExpr::Attr(dummy(), String::new());
-        let _: ResolvedExpr = ResolvedExpr::Call(ResolvedCallee::Fn(FnId(0)), vec![]);
-        let _: ResolvedExpr = ResolvedExpr::BinOp(BinOp::Add, dummy(), dummy());
-        let _: ResolvedExpr = ResolvedExpr::Neg(dummy());
+        let _: ResolvedExpr = ResolvedExpr::Attr(crate::ast::Shared::from(dummy()), String::new());
+        let _: ResolvedExpr = ResolvedExpr::Call(ResolvedCallee::Fn(FnId(0)), crate::ast::shared::vec(vec![]));
+        let _: ResolvedExpr = ResolvedExpr::BinOp(BinOp::Add, crate::ast::Shared::from(dummy()), crate::ast::Shared::from(dummy()));
+        let _: ResolvedExpr = ResolvedExpr::Neg(crate::ast::Shared::from(dummy()));
         let _: ResolvedExpr = ResolvedExpr::Match {
-            subject: dummy(),
-            arms: vec![],
+            subject: crate::ast::Shared::from(dummy()),
+            arms: crate::ast::shared::vec(vec![]),
         };
         let _: ResolvedExpr =
-            ResolvedExpr::Ctor(ResolvedCtor::Builtin(BuiltinCtor::OptionNone), vec![]);
-        let _: ResolvedExpr = ResolvedExpr::ErrorProp(dummy());
+            ResolvedExpr::Ctor(ResolvedCtor::Builtin(BuiltinCtor::OptionNone), crate::ast::shared::vec(vec![]));
+        let _: ResolvedExpr = ResolvedExpr::ErrorProp(crate::ast::Shared::from(dummy()));
         let _: ResolvedExpr = ResolvedExpr::InterpolatedStr(vec![]);
-        let _: ResolvedExpr = ResolvedExpr::List(vec![]);
-        let _: ResolvedExpr = ResolvedExpr::Tuple(vec![]);
-        let _: ResolvedExpr = ResolvedExpr::MapLiteral(vec![]);
+        let _: ResolvedExpr = ResolvedExpr::List(crate::ast::shared::vec(vec![]));
+        let _: ResolvedExpr = ResolvedExpr::Tuple(crate::ast::shared::vec(vec![]));
+        let _: ResolvedExpr = ResolvedExpr::MapLiteral(crate::ast::shared::vec(vec![]));
         let _: ResolvedExpr = ResolvedExpr::RecordCreate {
             type_id: None,
             type_name: String::new(),
-            fields: vec![],
+            fields: crate::ast::shared::vec(vec![]),
         };
         let _: ResolvedExpr = ResolvedExpr::RecordUpdate {
             type_id: None,
             type_name: String::new(),
-            base: dummy(),
-            updates: vec![],
+            base: crate::ast::Shared::from(dummy()),
+            updates: crate::ast::shared::vec(vec![]),
         };
         let _: ResolvedExpr = ResolvedExpr::TailCall {
             target: FnId(0),
-            args: vec![],
+            args: crate::ast::shared::vec(vec![]),
         };
-        let _: ResolvedExpr = ResolvedExpr::IndependentProduct(vec![], false);
+        let _: ResolvedExpr = ResolvedExpr::IndependentProduct(crate::ast::shared::vec(vec![]), false);
     }
 }

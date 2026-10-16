@@ -13316,7 +13316,7 @@ mod tests {
             0,
             vec![],
             vk,
-        ))
+        ).into())
     }
 
     #[test]

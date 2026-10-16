@@ -625,7 +625,7 @@ fn empty_ctx_with_verify_case() -> CodegenContext {
         kind: VerifyKind::Cases,
         trace: false,
         cases_givens: vec![],
-    }));
+    }.into()));
     ctx
 }
 
@@ -648,7 +648,7 @@ fn empty_ctx_with_two_verify_blocks_same_fn() -> CodegenContext {
         kind: VerifyKind::Cases,
         trace: false,
         cases_givens: vec![],
-    }));
+    }.into()));
     ctx.items.push(TopLevel::Verify(VerifyBlock {
         process_verification: None,
         fn_name: "f".to_string(),
@@ -666,7 +666,7 @@ fn empty_ctx_with_two_verify_blocks_same_fn() -> CodegenContext {
         kind: VerifyKind::Cases,
         trace: false,
         cases_givens: vec![],
-    }));
+    }.into()));
     ctx
 }
 
@@ -684,8 +684,8 @@ fn empty_ctx_with_verify_law() -> CodegenContext {
         desc: None,
         body: Rc::new(FnBody::from_expr(sb(Expr::BinOp(
             BinOp::Add,
-            sbb(Expr::Ident("a".to_string())),
-            sbb(Expr::Ident("b".to_string())),
+            crate::ast::Shared::from(sbb(Expr::Ident("a".to_string()))),
+            crate::ast::Shared::from(sbb(Expr::Ident("b".to_string()))),
         )))),
         resolution: None,
     };
@@ -698,34 +698,34 @@ fn empty_ctx_with_verify_law() -> CodegenContext {
         cases: vec![
             (
                 sb(Expr::FnCall(
-                    sbb(Expr::Ident("add".to_string())),
-                    vec![
+                    crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                    crate::ast::shared::vec(vec![
                         sb(Expr::Literal(Literal::Int(1))),
                         sb(Expr::Literal(Literal::Int(2))),
-                    ],
+                    ]),
                 )),
                 sb(Expr::FnCall(
-                    sbb(Expr::Ident("add".to_string())),
-                    vec![
+                    crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                    crate::ast::shared::vec(vec![
                         sb(Expr::Literal(Literal::Int(2))),
                         sb(Expr::Literal(Literal::Int(1))),
-                    ],
+                    ]),
                 )),
             ),
             (
                 sb(Expr::FnCall(
-                    sbb(Expr::Ident("add".to_string())),
-                    vec![
+                    crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                    crate::ast::shared::vec(vec![
                         sb(Expr::Literal(Literal::Int(2))),
                         sb(Expr::Literal(Literal::Int(3))),
-                    ],
+                    ]),
                 )),
                 sb(Expr::FnCall(
-                    sbb(Expr::Ident("add".to_string())),
-                    vec![
+                    crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                    crate::ast::shared::vec(vec![
                         sb(Expr::Literal(Literal::Int(3))),
                         sb(Expr::Literal(Literal::Int(2))),
-                    ],
+                    ]),
                 )),
             ),
         ],
@@ -754,18 +754,18 @@ fn empty_ctx_with_verify_law() -> CodegenContext {
             ],
             when: None,
             lhs: sb(Expr::FnCall(
-                sbb(Expr::Ident("add".to_string())),
-                vec![
+                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                crate::ast::shared::vec(vec![
                     sb(Expr::Ident("a".to_string())),
                     sb(Expr::Ident("b".to_string())),
-                ],
+                ]),
             )),
             rhs: sb(Expr::FnCall(
-                sbb(Expr::Ident("add".to_string())),
-                vec![
+                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                crate::ast::shared::vec(vec![
                     sb(Expr::Ident("b".to_string())),
                     sb(Expr::Ident("a".to_string())),
-                ],
+                ]),
             )),
             because: Vec::new(),
             using: None,
@@ -775,7 +775,7 @@ fn empty_ctx_with_verify_law() -> CodegenContext {
         })),
         trace: false,
         cases_givens: vec![],
-    }));
+    }.into()));
     ctx
 }
 
@@ -1545,7 +1545,7 @@ fn transpile_auto_proves_reflexive_law_with_rfl() {
         })),
         trace: false,
         cases_givens: vec![],
-    }));
+    }.into()));
     // Synthetic-AST test bypasses the parser + pipeline, so the
     // LawLower stage hasn't run. refresh_facts populates
     // ProofIR.law_theorems with Reflexive on `x => x` — backend's
@@ -1571,11 +1571,11 @@ fn transpile_auto_proves_identity_law_for_int_add_wrapper() {
         line: 10,
         cases: vec![(
             sb(Expr::FnCall(
-                sbb(Expr::Ident("add".to_string())),
-                vec![
+                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                crate::ast::shared::vec(vec![
                     sb(Expr::Literal(Literal::Int(1))),
                     sb(Expr::Literal(Literal::Int(0))),
-                ],
+                ]),
             )),
             sb(Expr::Literal(Literal::Int(1))),
         )],
@@ -1597,11 +1597,11 @@ fn transpile_auto_proves_identity_law_for_int_add_wrapper() {
             }],
             when: None,
             lhs: sb(Expr::FnCall(
-                sbb(Expr::Ident("add".to_string())),
-                vec![
+                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                crate::ast::shared::vec(vec![
                     sb(Expr::Ident("a".to_string())),
                     sb(Expr::Literal(Literal::Int(0))),
-                ],
+                ]),
             )),
             rhs: sb(Expr::Ident("a".to_string())),
             because: Vec::new(),
@@ -1612,7 +1612,7 @@ fn transpile_auto_proves_identity_law_for_int_add_wrapper() {
         })),
         trace: false,
         cases_givens: vec![],
-    }));
+    }.into()));
     populate_proof_ir(&mut ctx);
     let out = transpile(&mut ctx);
     let lean = out
@@ -1634,30 +1634,30 @@ fn transpile_auto_proves_associative_law_for_int_add_wrapper() {
         line: 20,
         cases: vec![(
             sb(Expr::FnCall(
-                sbb(Expr::Ident("add".to_string())),
-                vec![
+                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                crate::ast::shared::vec(vec![
                     sb(Expr::FnCall(
-                        sbb(Expr::Ident("add".to_string())),
-                        vec![
+                        crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                        crate::ast::shared::vec(vec![
                             sb(Expr::Literal(Literal::Int(1))),
                             sb(Expr::Literal(Literal::Int(2))),
-                        ],
+                        ]),
                     )),
                     sb(Expr::Literal(Literal::Int(3))),
-                ],
+                ]),
             )),
             sb(Expr::FnCall(
-                sbb(Expr::Ident("add".to_string())),
-                vec![
+                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                crate::ast::shared::vec(vec![
                     sb(Expr::Literal(Literal::Int(1))),
                     sb(Expr::FnCall(
-                        sbb(Expr::Ident("add".to_string())),
-                        vec![
+                        crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                        crate::ast::shared::vec(vec![
                             sb(Expr::Literal(Literal::Int(2))),
                             sb(Expr::Literal(Literal::Int(3))),
-                        ],
+                        ]),
                     )),
-                ],
+                ]),
             )),
         )],
         case_spans: vec![],
@@ -1687,30 +1687,30 @@ fn transpile_auto_proves_associative_law_for_int_add_wrapper() {
             ],
             when: None,
             lhs: sb(Expr::FnCall(
-                sbb(Expr::Ident("add".to_string())),
-                vec![
+                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                crate::ast::shared::vec(vec![
                     sb(Expr::FnCall(
-                        sbb(Expr::Ident("add".to_string())),
-                        vec![
+                        crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                        crate::ast::shared::vec(vec![
                             sb(Expr::Ident("a".to_string())),
                             sb(Expr::Ident("b".to_string())),
-                        ],
+                        ]),
                     )),
                     sb(Expr::Ident("c".to_string())),
-                ],
+                ]),
             )),
             rhs: sb(Expr::FnCall(
-                sbb(Expr::Ident("add".to_string())),
-                vec![
+                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                crate::ast::shared::vec(vec![
                     sb(Expr::Ident("a".to_string())),
                     sb(Expr::FnCall(
-                        sbb(Expr::Ident("add".to_string())),
-                        vec![
+                        crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                        crate::ast::shared::vec(vec![
                             sb(Expr::Ident("b".to_string())),
                             sb(Expr::Ident("c".to_string())),
-                        ],
+                        ]),
                     )),
-                ],
+                ]),
             )),
             because: Vec::new(),
             using: None,
@@ -1720,7 +1720,7 @@ fn transpile_auto_proves_associative_law_for_int_add_wrapper() {
         })),
         trace: false,
         cases_givens: vec![],
-    }));
+    }.into()));
     populate_proof_ir(&mut ctx);
     let out = transpile(&mut ctx);
     let lean = out
@@ -1750,8 +1750,8 @@ fn transpile_auto_proves_sub_laws() {
         desc: None,
         body: Rc::new(FnBody::from_expr(sb(Expr::BinOp(
             BinOp::Sub,
-            sbb(Expr::Ident("a".to_string())),
-            sbb(Expr::Ident("b".to_string())),
+            crate::ast::Shared::from(sbb(Expr::Ident("a".to_string()))),
+            crate::ast::Shared::from(sbb(Expr::Ident("b".to_string()))),
         )))),
         resolution: None,
     };
@@ -1764,11 +1764,11 @@ fn transpile_auto_proves_sub_laws() {
         line: 10,
         cases: vec![(
             sb(Expr::FnCall(
-                sbb(Expr::Ident("sub".to_string())),
-                vec![
+                crate::ast::Shared::from(sbb(Expr::Ident("sub".to_string()))),
+                crate::ast::shared::vec(vec![
                     sb(Expr::Literal(Literal::Int(2))),
                     sb(Expr::Literal(Literal::Int(0))),
-                ],
+                ]),
             )),
             sb(Expr::Literal(Literal::Int(2))),
         )],
@@ -1787,11 +1787,11 @@ fn transpile_auto_proves_sub_laws() {
             }],
             when: None,
             lhs: sb(Expr::FnCall(
-                sbb(Expr::Ident("sub".to_string())),
-                vec![
+                crate::ast::Shared::from(sbb(Expr::Ident("sub".to_string()))),
+                crate::ast::shared::vec(vec![
                     sb(Expr::Ident("a".to_string())),
                     sb(Expr::Literal(Literal::Int(0))),
-                ],
+                ]),
             )),
             rhs: sb(Expr::Ident("a".to_string())),
             because: Vec::new(),
@@ -1802,26 +1802,26 @@ fn transpile_auto_proves_sub_laws() {
         })),
         trace: false,
         cases_givens: vec![],
-    }));
+    }.into()));
     ctx.items.push(TopLevel::Verify(VerifyBlock {
         process_verification: None,
         fn_name: "sub".to_string(),
         line: 20,
         cases: vec![(
             sb(Expr::FnCall(
-                sbb(Expr::Ident("sub".to_string())),
-                vec![
+                crate::ast::Shared::from(sbb(Expr::Ident("sub".to_string()))),
+                crate::ast::shared::vec(vec![
                     sb(Expr::Literal(Literal::Int(2))),
                     sb(Expr::Literal(Literal::Int(1))),
-                ],
+                ]),
             )),
-            sb(Expr::Neg(sbb(Expr::FnCall(
-                sbb(Expr::Ident("sub".to_string())),
-                vec![
+            sb(Expr::Neg(crate::ast::Shared::from(sbb(Expr::FnCall(
+                crate::ast::Shared::from(sbb(Expr::Ident("sub".to_string()))),
+                crate::ast::shared::vec(vec![
                     sb(Expr::Literal(Literal::Int(1))),
                     sb(Expr::Literal(Literal::Int(2))),
-                ],
-            )))),
+                ]),
+            ))))),
         )],
         case_spans: vec![],
         case_ids: vec![],
@@ -1845,19 +1845,19 @@ fn transpile_auto_proves_sub_laws() {
             ],
             when: None,
             lhs: sb(Expr::FnCall(
-                sbb(Expr::Ident("sub".to_string())),
-                vec![
+                crate::ast::Shared::from(sbb(Expr::Ident("sub".to_string()))),
+                crate::ast::shared::vec(vec![
                     sb(Expr::Ident("a".to_string())),
                     sb(Expr::Ident("b".to_string())),
-                ],
+                ]),
             )),
-            rhs: sb(Expr::Neg(sbb(Expr::FnCall(
-                sbb(Expr::Ident("sub".to_string())),
-                vec![
+            rhs: sb(Expr::Neg(crate::ast::Shared::from(sbb(Expr::FnCall(
+                crate::ast::Shared::from(sbb(Expr::Ident("sub".to_string()))),
+                crate::ast::shared::vec(vec![
                     sb(Expr::Ident("b".to_string())),
                     sb(Expr::Ident("a".to_string())),
-                ],
-            )))),
+                ]),
+            ))))),
             because: Vec::new(),
             using: None,
             induction: None,
@@ -1866,7 +1866,7 @@ fn transpile_auto_proves_sub_laws() {
         })),
         trace: false,
         cases_givens: vec![],
-    }));
+    }.into()));
 
     populate_proof_ir(&mut ctx);
     let out = transpile(&mut ctx);
@@ -1898,8 +1898,8 @@ fn transpile_auto_proves_unary_wrapper_equivalence_law() {
         desc: None,
         body: Rc::new(FnBody::from_expr(sb(Expr::BinOp(
             BinOp::Add,
-            sbb(Expr::Ident("a".to_string())),
-            sbb(Expr::Ident("b".to_string())),
+            crate::ast::Shared::from(sbb(Expr::Ident("a".to_string()))),
+            crate::ast::Shared::from(sbb(Expr::Ident("b".to_string()))),
         )))),
         resolution: None,
     };
@@ -1912,8 +1912,8 @@ fn transpile_auto_proves_unary_wrapper_equivalence_law() {
         desc: None,
         body: Rc::new(FnBody::from_expr(sb(Expr::BinOp(
             BinOp::Add,
-            sbb(Expr::Ident("n".to_string())),
-            sbb(Expr::Literal(Literal::Int(1))),
+            crate::ast::Shared::from(sbb(Expr::Ident("n".to_string()))),
+            crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(1)))),
         )))),
         resolution: None,
     };
@@ -1927,15 +1927,15 @@ fn transpile_auto_proves_unary_wrapper_equivalence_law() {
         line: 3,
         cases: vec![(
             sb(Expr::FnCall(
-                sbb(Expr::Ident("addOne".to_string())),
-                vec![sb(Expr::Literal(Literal::Int(2)))],
+                crate::ast::Shared::from(sbb(Expr::Ident("addOne".to_string()))),
+                crate::ast::shared::vec(vec![sb(Expr::Literal(Literal::Int(2)))]),
             )),
             sb(Expr::FnCall(
-                sbb(Expr::Ident("add".to_string())),
-                vec![
+                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                crate::ast::shared::vec(vec![
                     sb(Expr::Literal(Literal::Int(2))),
                     sb(Expr::Literal(Literal::Int(1))),
-                ],
+                ]),
             )),
         )],
         case_spans: vec![],
@@ -1953,15 +1953,15 @@ fn transpile_auto_proves_unary_wrapper_equivalence_law() {
             }],
             when: None,
             lhs: sb(Expr::FnCall(
-                sbb(Expr::Ident("addOne".to_string())),
-                vec![sb(Expr::Ident("n".to_string()))],
+                crate::ast::Shared::from(sbb(Expr::Ident("addOne".to_string()))),
+                crate::ast::shared::vec(vec![sb(Expr::Ident("n".to_string()))]),
             )),
             rhs: sb(Expr::FnCall(
-                sbb(Expr::Ident("add".to_string())),
-                vec![
+                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                crate::ast::shared::vec(vec![
                     sb(Expr::Ident("n".to_string())),
                     sb(Expr::Literal(Literal::Int(1))),
-                ],
+                ]),
             )),
             because: Vec::new(),
             using: None,
@@ -1971,7 +1971,7 @@ fn transpile_auto_proves_unary_wrapper_equivalence_law() {
         })),
         trace: false,
         cases_givens: vec![],
-    }));
+    }.into()));
     populate_proof_ir(&mut ctx);
     let out = transpile(&mut ctx);
     let lean = out
@@ -2006,47 +2006,47 @@ fn transpile_auto_proves_direct_map_set_laws() {
 
     let map_set = |m: Spanned<Expr>, k: Spanned<Expr>, v: Spanned<Expr>| {
         sb(Expr::FnCall(
-            sbb(Expr::Attr(
-                sbb(Expr::Ident("Map".to_string())),
+            crate::ast::Shared::from(sbb(Expr::Attr(
+                crate::ast::Shared::from(sbb(Expr::Ident("Map".to_string()))),
                 "set".to_string(),
-            )),
-            vec![m, k, v],
+            ))),
+            crate::ast::shared::vec(vec![m, k, v]),
         ))
     };
     let map_has = |m: Spanned<Expr>, k: Spanned<Expr>| {
         sb(Expr::FnCall(
-            sbb(Expr::Attr(
-                sbb(Expr::Ident("Map".to_string())),
+            crate::ast::Shared::from(sbb(Expr::Attr(
+                crate::ast::Shared::from(sbb(Expr::Ident("Map".to_string()))),
                 "has".to_string(),
-            )),
-            vec![m, k],
+            ))),
+            crate::ast::shared::vec(vec![m, k]),
         ))
     };
     let map_get = |m: Spanned<Expr>, k: Spanned<Expr>| {
         sb(Expr::FnCall(
-            sbb(Expr::Attr(
-                sbb(Expr::Ident("Map".to_string())),
+            crate::ast::Shared::from(sbb(Expr::Attr(
+                crate::ast::Shared::from(sbb(Expr::Ident("Map".to_string()))),
                 "get".to_string(),
-            )),
-            vec![m, k],
+            ))),
+            crate::ast::shared::vec(vec![m, k]),
         ))
     };
     let some = |v: Spanned<Expr>| {
         sb(Expr::FnCall(
-            sbb(Expr::Attr(
-                sbb(Expr::Ident("Option".to_string())),
+            crate::ast::Shared::from(sbb(Expr::Attr(
+                crate::ast::Shared::from(sbb(Expr::Ident("Option".to_string()))),
                 "Some".to_string(),
-            )),
-            vec![v],
+            ))),
+            crate::ast::shared::vec(vec![v]),
         ))
     };
     let map_empty = || {
         sb(Expr::FnCall(
-            sbb(Expr::Attr(
-                sbb(Expr::Ident("Map".to_string())),
+            crate::ast::Shared::from(sbb(Expr::Attr(
+                crate::ast::Shared::from(sbb(Expr::Ident("Map".to_string()))),
                 "empty".to_string(),
-            )),
-            vec![],
+            ))),
+            crate::ast::shared::vec(vec![]),
         ))
     };
 
@@ -2110,7 +2110,7 @@ fn transpile_auto_proves_direct_map_set_laws() {
         })),
         trace: false,
         cases_givens: vec![],
-    }));
+    }.into()));
 
     ctx.items.push(TopLevel::Verify(VerifyBlock {
         process_verification: None,
@@ -2172,7 +2172,7 @@ fn transpile_auto_proves_direct_map_set_laws() {
         })),
         trace: false,
         cases_givens: vec![],
-    }));
+    }.into()));
 
     populate_proof_ir(&mut ctx);
     let out = transpile(&mut ctx);
@@ -2316,56 +2316,56 @@ fn transpile_auto_proves_map_update_laws() {
 
     let map_get = |m: Spanned<Expr>, k: Spanned<Expr>| {
         sb(Expr::FnCall(
-            sbb(Expr::Attr(
-                sbb(Expr::Ident("Map".to_string())),
+            crate::ast::Shared::from(sbb(Expr::Attr(
+                crate::ast::Shared::from(sbb(Expr::Ident("Map".to_string()))),
                 "get".to_string(),
-            )),
-            vec![m, k],
+            ))),
+            crate::ast::shared::vec(vec![m, k]),
         ))
     };
     let map_set = |m: Spanned<Expr>, k: Spanned<Expr>, v: Spanned<Expr>| {
         sb(Expr::FnCall(
-            sbb(Expr::Attr(
-                sbb(Expr::Ident("Map".to_string())),
+            crate::ast::Shared::from(sbb(Expr::Attr(
+                crate::ast::Shared::from(sbb(Expr::Ident("Map".to_string()))),
                 "set".to_string(),
-            )),
-            vec![m, k, v],
+            ))),
+            crate::ast::shared::vec(vec![m, k, v]),
         ))
     };
     let map_has = |m: Spanned<Expr>, k: Spanned<Expr>| {
         sb(Expr::FnCall(
-            sbb(Expr::Attr(
-                sbb(Expr::Ident("Map".to_string())),
+            crate::ast::Shared::from(sbb(Expr::Attr(
+                crate::ast::Shared::from(sbb(Expr::Ident("Map".to_string()))),
                 "has".to_string(),
-            )),
-            vec![m, k],
+            ))),
+            crate::ast::shared::vec(vec![m, k]),
         ))
     };
     let option_some = |v: Spanned<Expr>| {
         sb(Expr::FnCall(
-            sbb(Expr::Attr(
-                sbb(Expr::Ident("Option".to_string())),
+            crate::ast::Shared::from(sbb(Expr::Attr(
+                crate::ast::Shared::from(sbb(Expr::Ident("Option".to_string()))),
                 "Some".to_string(),
-            )),
-            vec![v],
+            ))),
+            crate::ast::shared::vec(vec![v]),
         ))
     };
     let option_with_default = |opt: Spanned<Expr>, def: Spanned<Expr>| {
         sb(Expr::FnCall(
-            sbb(Expr::Attr(
-                sbb(Expr::Ident("Option".to_string())),
+            crate::ast::Shared::from(sbb(Expr::Attr(
+                crate::ast::Shared::from(sbb(Expr::Ident("Option".to_string()))),
                 "withDefault".to_string(),
-            )),
-            vec![opt, def],
+            ))),
+            crate::ast::shared::vec(vec![opt, def]),
         ))
     };
     let map_empty = || {
         sb(Expr::FnCall(
-            sbb(Expr::Attr(
-                sbb(Expr::Ident("Map".to_string())),
+            crate::ast::Shared::from(sbb(Expr::Attr(
+                crate::ast::Shared::from(sbb(Expr::Ident("Map".to_string()))),
                 "empty".to_string(),
-            )),
-            vec![],
+            ))),
+            crate::ast::shared::vec(vec![]),
         ))
     };
 
@@ -2378,8 +2378,8 @@ fn transpile_auto_proves_map_update_laws() {
         desc: None,
         body: Rc::new(FnBody::from_expr(sb(Expr::BinOp(
             BinOp::Add,
-            sbb(Expr::Ident("n".to_string())),
-            sbb(Expr::Literal(Literal::Int(1))),
+            crate::ast::Shared::from(sbb(Expr::Ident("n".to_string()))),
+            crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(1)))),
         )))),
         resolution: None,
     };
@@ -2406,34 +2406,34 @@ fn transpile_auto_proves_map_update_laws() {
                 ),
             ),
             Stmt::Expr(sb(Expr::Match {
-                subject: sbb(Expr::Ident("current".to_string())),
-                arms: vec![
+                subject: crate::ast::Shared::from(sbb(Expr::Ident("current".to_string()))),
+                arms: crate::ast::shared::vec(vec![
                     MatchArm {
                         pattern: Pattern::Constructor(
                             "Option.Some".to_string(),
                             vec!["n".to_string()],
                         ),
-                        body: Box::new(map_set(
+                        body: crate::ast::Shared::new(map_set(
                             sb(Expr::Ident("counts".to_string())),
                             sb(Expr::Ident("word".to_string())),
                             sb(Expr::BinOp(
                                 BinOp::Add,
-                                sbb(Expr::Ident("n".to_string())),
-                                sbb(Expr::Literal(Literal::Int(1))),
+                                crate::ast::Shared::from(sbb(Expr::Ident("n".to_string()))),
+                                crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(1)))),
                             )),
                         )),
                         binding_slots: std::sync::OnceLock::new(),
                     },
                     MatchArm {
                         pattern: Pattern::Constructor("Option.None".to_string(), vec![]),
-                        body: Box::new(map_set(
+                        body: crate::ast::Shared::new(map_set(
                             sb(Expr::Ident("counts".to_string())),
                             sb(Expr::Ident("word".to_string())),
                             sb(Expr::Literal(Literal::Int(1))),
                         )),
                         binding_slots: std::sync::OnceLock::new(),
                     },
-                ],
+                ]),
             })),
         ])),
         resolution: None,
@@ -2448,11 +2448,11 @@ fn transpile_auto_proves_map_update_laws() {
         cases: vec![(
             map_has(
                 sb(Expr::FnCall(
-                    sbb(Expr::Ident("incCount".to_string())),
-                    vec![
+                    crate::ast::Shared::from(sbb(Expr::Ident("incCount".to_string()))),
+                    crate::ast::shared::vec(vec![
                         sb(Expr::Ident("counts".to_string())),
                         sb(Expr::Ident("word".to_string())),
-                    ],
+                    ]),
                 )),
                 sb(Expr::Ident("word".to_string())),
             ),
@@ -2483,11 +2483,11 @@ fn transpile_auto_proves_map_update_laws() {
             when: None,
             lhs: map_has(
                 sb(Expr::FnCall(
-                    sbb(Expr::Ident("incCount".to_string())),
-                    vec![
+                    crate::ast::Shared::from(sbb(Expr::Ident("incCount".to_string()))),
+                    crate::ast::shared::vec(vec![
                         sb(Expr::Ident("counts".to_string())),
                         sb(Expr::Ident("word".to_string())),
-                    ],
+                    ]),
                 )),
                 sb(Expr::Ident("word".to_string())),
             ),
@@ -2500,7 +2500,7 @@ fn transpile_auto_proves_map_update_laws() {
         })),
         trace: false,
         cases_givens: vec![],
-    }));
+    }.into()));
 
     ctx.items.push(TopLevel::Verify(VerifyBlock {
         process_verification: None,
@@ -2509,23 +2509,23 @@ fn transpile_auto_proves_map_update_laws() {
         cases: vec![(
             map_get(
                 sb(Expr::FnCall(
-                    sbb(Expr::Ident("incCount".to_string())),
-                    vec![
+                    crate::ast::Shared::from(sbb(Expr::Ident("incCount".to_string()))),
+                    crate::ast::shared::vec(vec![
                         sb(Expr::Ident("counts".to_string())),
                         sb(Expr::Literal(Literal::Str("a".to_string()))),
-                    ],
+                    ]),
                 )),
                 sb(Expr::Literal(Literal::Str("a".to_string()))),
             ),
             option_some(sb(Expr::FnCall(
-                sbb(Expr::Ident("addOne".to_string())),
-                vec![option_with_default(
+                crate::ast::Shared::from(sbb(Expr::Ident("addOne".to_string()))),
+                crate::ast::shared::vec(vec![option_with_default(
                     map_get(
                         sb(Expr::Ident("counts".to_string())),
                         sb(Expr::Literal(Literal::Str("a".to_string()))),
                     ),
                     sb(Expr::Literal(Literal::Int(0))),
-                )],
+                )]),
             ))),
         )],
         case_spans: vec![],
@@ -2544,23 +2544,23 @@ fn transpile_auto_proves_map_update_laws() {
             when: None,
             lhs: map_get(
                 sb(Expr::FnCall(
-                    sbb(Expr::Ident("incCount".to_string())),
-                    vec![
+                    crate::ast::Shared::from(sbb(Expr::Ident("incCount".to_string()))),
+                    crate::ast::shared::vec(vec![
                         sb(Expr::Ident("counts".to_string())),
                         sb(Expr::Literal(Literal::Str("a".to_string()))),
-                    ],
+                    ]),
                 )),
                 sb(Expr::Literal(Literal::Str("a".to_string()))),
             ),
             rhs: option_some(sb(Expr::FnCall(
-                sbb(Expr::Ident("addOne".to_string())),
-                vec![option_with_default(
+                crate::ast::Shared::from(sbb(Expr::Ident("addOne".to_string()))),
+                crate::ast::shared::vec(vec![option_with_default(
                     map_get(
                         sb(Expr::Ident("counts".to_string())),
                         sb(Expr::Literal(Literal::Str("a".to_string()))),
                     ),
                     sb(Expr::Literal(Literal::Int(0))),
-                )],
+                )]),
             ))),
             because: Vec::new(),
             using: None,
@@ -2570,7 +2570,7 @@ fn transpile_auto_proves_map_update_laws() {
         })),
         trace: false,
         cases_givens: vec![],
-    }));
+    }.into()));
 
     populate_proof_ir(&mut ctx);
     let out = transpile(&mut ctx);
@@ -2606,8 +2606,8 @@ fn transpile_parenthesizes_negative_int_call_args_in_law_samples() {
         desc: None,
         body: Rc::new(FnBody::from_expr(sb(Expr::BinOp(
             BinOp::Add,
-            sbb(Expr::Ident("a".to_string())),
-            sbb(Expr::Ident("b".to_string())),
+            crate::ast::Shared::from(sbb(Expr::Ident("a".to_string()))),
+            crate::ast::Shared::from(sbb(Expr::Ident("b".to_string()))),
         )))),
         resolution: None,
     };
@@ -2619,18 +2619,18 @@ fn transpile_parenthesizes_negative_int_call_args_in_law_samples() {
         line: 1,
         cases: vec![(
             sb(Expr::FnCall(
-                sbb(Expr::Ident("add".to_string())),
-                vec![
+                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                crate::ast::shared::vec(vec![
                     sb(Expr::Literal(Literal::Int(-2))),
                     sb(Expr::Literal(Literal::Int(-1))),
-                ],
+                ]),
             )),
             sb(Expr::FnCall(
-                sbb(Expr::Ident("add".to_string())),
-                vec![
+                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                crate::ast::shared::vec(vec![
                     sb(Expr::Literal(Literal::Int(-1))),
                     sb(Expr::Literal(Literal::Int(-2))),
-                ],
+                ]),
             )),
         )],
         case_spans: vec![],
@@ -2655,18 +2655,18 @@ fn transpile_parenthesizes_negative_int_call_args_in_law_samples() {
             ],
             when: None,
             lhs: sb(Expr::FnCall(
-                sbb(Expr::Ident("add".to_string())),
-                vec![
+                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                crate::ast::shared::vec(vec![
                     sb(Expr::Ident("a".to_string())),
                     sb(Expr::Ident("b".to_string())),
-                ],
+                ]),
             )),
             rhs: sb(Expr::FnCall(
-                sbb(Expr::Ident("add".to_string())),
-                vec![
+                crate::ast::Shared::from(sbb(Expr::Ident("add".to_string()))),
+                crate::ast::shared::vec(vec![
                     sb(Expr::Ident("b".to_string())),
                     sb(Expr::Ident("a".to_string())),
-                ],
+                ]),
             )),
             because: Vec::new(),
             using: None,
@@ -2676,7 +2676,7 @@ fn transpile_parenthesizes_negative_int_call_args_in_law_samples() {
         })),
         trace: false,
         cases_givens: vec![],
-    }));
+    }.into()));
 
     populate_proof_ir(&mut ctx);
     let out = transpile(&mut ctx);
@@ -2722,7 +2722,7 @@ fn verify_law_numbering_is_scoped_per_law_name() {
         kind: VerifyKind::Cases,
         trace: false,
         cases_givens: vec![],
-    }));
+    }.into()));
     ctx.items.push(TopLevel::Verify(VerifyBlock {
         process_verification: None,
         fn_name: "f".to_string(),
@@ -2755,7 +2755,7 @@ fn verify_law_numbering_is_scoped_per_law_name() {
         })),
         trace: false,
         cases_givens: vec![],
-    }));
+    }.into()));
     populate_proof_ir(&mut ctx);
     let out = transpile_with_verify_mode(&mut ctx, VerifyEmitMode::TheoremSkeleton);
     let lean = out
@@ -2780,26 +2780,26 @@ fn proof_mode_accepts_single_int_countdown_recursion() {
         effects: vec![],
         desc: None,
         body: Rc::new(FnBody::from_expr(sb(Expr::Match {
-            subject: sbb(Expr::Ident("n".to_string())),
-            arms: vec![
+            subject: crate::ast::Shared::from(sbb(Expr::Ident("n".to_string()))),
+            arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Int(0)),
-                    body: sbb(Expr::Literal(Literal::Int(0))),
+                    body: crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(0)))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Wildcard,
-                    body: sbb(Expr::TailCall(Box::new(TailCallData::new(
+                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(TailCallData::new(
                         "down".to_string(),
                         vec![sb(Expr::BinOp(
                             BinOp::Sub,
-                            sbb(Expr::Ident("n".to_string())),
-                            sbb(Expr::Literal(Literal::Int(1))),
+                            crate::ast::Shared::from(sbb(Expr::Ident("n".to_string()))),
+                            crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(1)))),
                         ))],
-                    )))),
+                    ))))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
-            ],
+            ]),
         }))),
         resolution: None,
     };
@@ -3129,33 +3129,33 @@ fn proof_mode_accepts_single_int_countdown_on_nonfirst_param() {
         effects: vec![],
         desc: None,
         body: Rc::new(FnBody::from_expr(sb(Expr::Match {
-            subject: sbb(Expr::BinOp(
+            subject: crate::ast::Shared::from(sbb(Expr::BinOp(
                 BinOp::Lte,
-                sbb(Expr::Ident("n".to_string())),
-                sbb(Expr::Literal(Literal::Int(0))),
-            )),
-            arms: vec![
+                crate::ast::Shared::from(sbb(Expr::Ident("n".to_string()))),
+                crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(0)))),
+            ))),
+            arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(true)),
-                    body: sbb(Expr::List(vec![])),
+                    body: crate::ast::Shared::from(sbb(Expr::List(crate::ast::shared::vec(vec![])))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(false)),
-                    body: sbb(Expr::TailCall(Box::new(TailCallData::new(
+                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(TailCallData::new(
                         "repeatLike".to_string(),
                         vec![
                             sb(Expr::Ident("char".to_string())),
                             sb(Expr::BinOp(
                                 BinOp::Sub,
-                                sbb(Expr::Ident("n".to_string())),
-                                sbb(Expr::Literal(Literal::Int(1))),
+                                crate::ast::Shared::from(sbb(Expr::Ident("n".to_string()))),
+                                crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(1)))),
                             )),
                         ],
-                    )))),
+                    ))))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
-            ],
+            ]),
         }))),
         resolution: None,
     };
@@ -3192,30 +3192,30 @@ fn proof_mode_accepts_negative_guarded_int_ascent() {
         effects: vec![],
         desc: None,
         body: Rc::new(FnBody::from_expr(sb(Expr::Match {
-            subject: sbb(Expr::BinOp(
+            subject: crate::ast::Shared::from(sbb(Expr::BinOp(
                 BinOp::Lt,
-                sbb(Expr::Ident("angle".to_string())),
-                sbb(Expr::Literal(Literal::Int(0))),
-            )),
-            arms: vec![
+                crate::ast::Shared::from(sbb(Expr::Ident("angle".to_string()))),
+                crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(0)))),
+            ))),
+            arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(true)),
-                    body: sbb(Expr::TailCall(Box::new(TailCallData::new(
+                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(TailCallData::new(
                         "normalize".to_string(),
                         vec![sb(Expr::BinOp(
                             BinOp::Add,
-                            sbb(Expr::Ident("angle".to_string())),
-                            sbb(Expr::Literal(Literal::Int(360))),
+                            crate::ast::Shared::from(sbb(Expr::Ident("angle".to_string()))),
+                            crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(360)))),
                         ))],
-                    )))),
+                    ))))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(false)),
-                    body: sbb(Expr::Ident("angle".to_string())),
+                    body: crate::ast::Shared::from(sbb(Expr::Ident("angle".to_string()))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
-            ],
+            ]),
         }))),
         resolution: None,
     };
@@ -3251,22 +3251,22 @@ fn proof_mode_accepts_single_list_structural_recursion() {
         effects: vec![],
         desc: None,
         body: Rc::new(FnBody::from_expr(sb(Expr::Match {
-            subject: sbb(Expr::Ident("xs".to_string())),
-            arms: vec![
+            subject: crate::ast::Shared::from(sbb(Expr::Ident("xs".to_string()))),
+            arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: Pattern::EmptyList,
-                    body: sbb(Expr::Literal(Literal::Int(0))),
+                    body: crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(0)))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Cons("h".to_string(), "t".to_string()),
-                    body: sbb(Expr::TailCall(Box::new(TailCallData::new(
+                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(TailCallData::new(
                         "len".to_string(),
                         vec![sb(Expr::Ident("t".to_string()))],
-                    )))),
+                    ))))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
-            ],
+            ]),
         }))),
         resolution: None,
     };
@@ -3296,29 +3296,29 @@ fn proof_mode_accepts_single_list_structural_recursion_on_nonfirst_param() {
         effects: vec![],
         desc: None,
         body: Rc::new(FnBody::from_expr(sb(Expr::Match {
-            subject: sbb(Expr::Ident("xs".to_string())),
-            arms: vec![
+            subject: crate::ast::Shared::from(sbb(Expr::Ident("xs".to_string()))),
+            arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: Pattern::EmptyList,
-                    body: sbb(Expr::Ident("count".to_string())),
+                    body: crate::ast::Shared::from(sbb(Expr::Ident("count".to_string()))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Cons("h".to_string(), "t".to_string()),
-                    body: sbb(Expr::TailCall(Box::new(TailCallData::new(
+                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(TailCallData::new(
                         "lenFrom".to_string(),
                         vec![
                             sb(Expr::BinOp(
                                 BinOp::Add,
-                                sbb(Expr::Ident("count".to_string())),
-                                sbb(Expr::Literal(Literal::Int(1))),
+                                crate::ast::Shared::from(sbb(Expr::Ident("count".to_string()))),
+                                crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(1)))),
                             )),
                             sb(Expr::Ident("t".to_string())),
                         ],
-                    )))),
+                    ))))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
-            ],
+            ]),
         }))),
         resolution: None,
     };
@@ -3353,38 +3353,38 @@ fn proof_mode_accepts_single_string_pos_advance_recursion() {
         effects: vec![],
         desc: None,
         body: Rc::new(FnBody::from_expr(sb(Expr::Match {
-            subject: sbb(Expr::FnCall(
-                sbb(Expr::Attr(
-                    sbb(Expr::Ident("String".to_string())),
+            subject: crate::ast::Shared::from(sbb(Expr::FnCall(
+                crate::ast::Shared::from(sbb(Expr::Attr(
+                    crate::ast::Shared::from(sbb(Expr::Ident("String".to_string()))),
                     "charAt".to_string(),
-                )),
-                vec![
+                ))),
+                crate::ast::shared::vec(vec![
                     sb(Expr::Ident("s".to_string())),
                     sb(Expr::Ident("pos".to_string())),
-                ],
-            )),
-            arms: vec![
+                ]),
+            ))),
+            arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: Pattern::Constructor("Option.None".to_string(), vec![]),
-                    body: sbb(Expr::Ident("pos".to_string())),
+                    body: crate::ast::Shared::from(sbb(Expr::Ident("pos".to_string()))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Wildcard,
-                    body: sbb(Expr::TailCall(Box::new(TailCallData::new(
+                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(TailCallData::new(
                         "skipWs".to_string(),
                         vec![
                             sb(Expr::Ident("s".to_string())),
                             sb(Expr::BinOp(
                                 BinOp::Add,
-                                sbb(Expr::Ident("pos".to_string())),
-                                sbb(Expr::Literal(Literal::Int(1))),
+                                crate::ast::Shared::from(sbb(Expr::Ident("pos".to_string()))),
+                                crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(1)))),
                             )),
                         ],
-                    )))),
+                    ))))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
-            ],
+            ]),
         }))),
         resolution: None,
     };
@@ -3591,26 +3591,26 @@ fn proof_mode_accepts_mutual_int_countdown_recursion() {
         effects: vec![],
         desc: None,
         body: Rc::new(FnBody::from_expr(sb(Expr::Match {
-            subject: sbb(Expr::Ident("n".to_string())),
-            arms: vec![
+            subject: crate::ast::Shared::from(sbb(Expr::Ident("n".to_string()))),
+            arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Int(0)),
-                    body: sbb(Expr::Literal(Literal::Bool(true))),
+                    body: crate::ast::Shared::from(sbb(Expr::Literal(Literal::Bool(true)))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Wildcard,
-                    body: sbb(Expr::TailCall(Box::new(TailCallData::new(
+                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(TailCallData::new(
                         "odd".to_string(),
                         vec![sb(Expr::BinOp(
                             BinOp::Sub,
-                            sbb(Expr::Ident("n".to_string())),
-                            sbb(Expr::Literal(Literal::Int(1))),
+                            crate::ast::Shared::from(sbb(Expr::Ident("n".to_string()))),
+                            crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(1)))),
                         ))],
-                    )))),
+                    ))))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
-            ],
+            ]),
         }))),
         resolution: None,
     };
@@ -3622,26 +3622,26 @@ fn proof_mode_accepts_mutual_int_countdown_recursion() {
         effects: vec![],
         desc: None,
         body: Rc::new(FnBody::from_expr(sb(Expr::Match {
-            subject: sbb(Expr::Ident("n".to_string())),
-            arms: vec![
+            subject: crate::ast::Shared::from(sbb(Expr::Ident("n".to_string()))),
+            arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Int(0)),
-                    body: sbb(Expr::Literal(Literal::Bool(false))),
+                    body: crate::ast::Shared::from(sbb(Expr::Literal(Literal::Bool(false)))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Wildcard,
-                    body: sbb(Expr::TailCall(Box::new(TailCallData::new(
+                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(TailCallData::new(
                         "even".to_string(),
                         vec![sb(Expr::BinOp(
                             BinOp::Sub,
-                            sbb(Expr::Ident("n".to_string())),
-                            sbb(Expr::Literal(Literal::Int(1))),
+                            crate::ast::Shared::from(sbb(Expr::Ident("n".to_string()))),
+                            crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(1)))),
                         ))],
-                    )))),
+                    ))))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
-            ],
+            ]),
         }))),
         resolution: None,
     };
@@ -3680,29 +3680,29 @@ fn proof_mode_accepts_mutual_string_pos_recursion_with_ranked_same_edges() {
         effects: vec![],
         desc: None,
         body: Rc::new(FnBody::from_expr(sb(Expr::Match {
-            subject: sbb(Expr::BinOp(
+            subject: crate::ast::Shared::from(sbb(Expr::BinOp(
                 BinOp::Gte,
-                sbb(Expr::Ident("pos".to_string())),
-                sbb(Expr::Literal(Literal::Int(3))),
-            )),
-            arms: vec![
+                crate::ast::Shared::from(sbb(Expr::Ident("pos".to_string()))),
+                crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(3)))),
+            ))),
+            arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(true)),
-                    body: sbb(Expr::Ident("pos".to_string())),
+                    body: crate::ast::Shared::from(sbb(Expr::Ident("pos".to_string()))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Wildcard,
-                    body: sbb(Expr::TailCall(Box::new(TailCallData::new(
+                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(TailCallData::new(
                         "g".to_string(),
                         vec![
                             sb(Expr::Ident("s".to_string())),
                             sb(Expr::Ident("pos".to_string())),
                         ],
-                    )))),
+                    ))))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
-            ],
+            ]),
         }))),
         resolution: None,
     };
@@ -3717,33 +3717,33 @@ fn proof_mode_accepts_mutual_string_pos_recursion_with_ranked_same_edges() {
         effects: vec![],
         desc: None,
         body: Rc::new(FnBody::from_expr(sb(Expr::Match {
-            subject: sbb(Expr::BinOp(
+            subject: crate::ast::Shared::from(sbb(Expr::BinOp(
                 BinOp::Gte,
-                sbb(Expr::Ident("pos".to_string())),
-                sbb(Expr::Literal(Literal::Int(3))),
-            )),
-            arms: vec![
+                crate::ast::Shared::from(sbb(Expr::Ident("pos".to_string()))),
+                crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(3)))),
+            ))),
+            arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(true)),
-                    body: sbb(Expr::Ident("pos".to_string())),
+                    body: crate::ast::Shared::from(sbb(Expr::Ident("pos".to_string()))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Wildcard,
-                    body: sbb(Expr::TailCall(Box::new(TailCallData::new(
+                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(TailCallData::new(
                         "f".to_string(),
                         vec![
                             sb(Expr::Ident("s".to_string())),
                             sb(Expr::BinOp(
                                 BinOp::Add,
-                                sbb(Expr::Ident("pos".to_string())),
-                                sbb(Expr::Literal(Literal::Int(1))),
+                                crate::ast::Shared::from(sbb(Expr::Ident("pos".to_string()))),
+                                crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(1)))),
                             )),
                         ],
-                    )))),
+                    ))))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
-            ],
+            ]),
         }))),
         resolution: None,
     };
@@ -3799,22 +3799,22 @@ fn proof_mode_accepts_mutual_ranked_sizeof_recursion() {
         effects: vec![],
         desc: None,
         body: Rc::new(FnBody::from_expr(sb(Expr::Match {
-            subject: sbb(Expr::Ident("xs".to_string())),
-            arms: vec![
+            subject: crate::ast::Shared::from(sbb(Expr::Ident("xs".to_string()))),
+            arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: Pattern::EmptyList,
-                    body: sbb(Expr::Literal(Literal::Int(0))),
+                    body: crate::ast::Shared::from(sbb(Expr::Literal(Literal::Int(0)))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Cons("h".to_string(), "t".to_string()),
-                    body: sbb(Expr::TailCall(Box::new(TailCallData::new(
+                    body: crate::ast::Shared::from(sbb(Expr::TailCall(Box::new(TailCallData::new(
                         "f".to_string(),
                         vec![sb(Expr::Ident("t".to_string()))],
-                    )))),
+                    ))))),
                     binding_slots: std::sync::OnceLock::new(),
                 },
-            ],
+            ]),
         }))),
         resolution: None,
     };
@@ -3858,8 +3858,8 @@ fn proof_mode_rejects_recursive_pure_functions() {
         effects: vec![],
         desc: None,
         body: Rc::new(FnBody::from_expr(sb(Expr::FnCall(
-            sbb(Expr::Ident("loop".to_string())),
-            vec![sb(Expr::Ident("n".to_string()))],
+            crate::ast::Shared::from(sbb(Expr::Ident("loop".to_string()))),
+            crate::ast::shared::vec(vec![sb(Expr::Ident("n".to_string()))]),
         )))),
         resolution: None,
     };

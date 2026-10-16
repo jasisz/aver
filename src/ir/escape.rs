@@ -737,19 +737,19 @@ mod tests {
     }
 
     fn attr(obj: Spanned<Expr>, field: &str) -> Spanned<Expr> {
-        sp(Expr::Attr(Box::new(obj), field.to_string()))
+        sp(Expr::Attr(crate::ast::Shared::new(obj), field.to_string()))
     }
 
     fn add(l: Spanned<Expr>, r: Spanned<Expr>) -> Spanned<Expr> {
         sp(Expr::BinOp(
             crate::ast::BinOp::Add,
-            Box::new(l),
-            Box::new(r),
+            crate::ast::Shared::new(l),
+            crate::ast::Shared::new(r),
         ))
     }
 
     fn fn_call(callee: Spanned<Expr>, args: Vec<Spanned<Expr>>) -> Spanned<Expr> {
-        sp(Expr::FnCall(Box::new(callee), args))
+        sp(Expr::FnCall(crate::ast::Shared::new(callee), crate::ast::shared::vec(args)))
     }
 
     fn record_create(type_name: &str, fields: Vec<(&str, Spanned<Expr>)>) -> Spanned<Expr> {
@@ -764,15 +764,15 @@ mod tests {
 
     fn match_expr(subject: Spanned<Expr>, arms: Vec<MatchArm>) -> Spanned<Expr> {
         sp(Expr::Match {
-            subject: Box::new(subject),
-            arms,
+            subject: crate::ast::Shared::new(subject),
+            arms: crate::ast::shared::vec(arms),
         })
     }
 
     fn arm(pattern: Pattern, body: Spanned<Expr>) -> MatchArm {
         MatchArm {
             pattern,
-            body: Box::new(body),
+            body: crate::ast::Shared::new(body),
             binding_slots: std::sync::OnceLock::new(),
         }
     }

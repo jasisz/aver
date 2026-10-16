@@ -1171,22 +1171,22 @@ mod tests {
         // The pattern arm binds `x` to 2, so the outer `x = 1`
         // substitution must NOT rewrite `x` in that arm's body.
         let mut expr = bare(Expr::Match {
-            subject: Box::new(bare(Expr::Constructor(
+            subject: crate::ast::Shared::new(bare(Expr::Constructor(
                 "Option.Some".to_string(),
-                Some(Box::new(int(2))),
+                Some(crate::ast::Shared::new(int(2))),
             ))),
-            arms: vec![
+            arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: Pattern::Constructor("Option.Some".to_string(), vec!["x".to_string()]),
-                    body: Box::new(ident("x")),
+                    body: crate::ast::Shared::new(ident("x")),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Constructor("Option.None".to_string(), vec![]),
-                    body: Box::new(int(0)),
+                    body: crate::ast::Shared::new(int(0)),
                     binding_slots: std::sync::OnceLock::new(),
                 },
-            ],
+            ]),
         });
         substitute_ident(&mut expr, "x", &int(1));
         let Expr::Match { arms, .. } = &expr.node else {
@@ -1207,22 +1207,22 @@ mod tests {
         // match Option.Some(2) { Option.Some(_) -> x, _ -> 0 }
         // None arm binds nothing; outer `x` should be rewritten there.
         let mut expr = bare(Expr::Match {
-            subject: Box::new(bare(Expr::Constructor(
+            subject: crate::ast::Shared::new(bare(Expr::Constructor(
                 "Option.Some".to_string(),
-                Some(Box::new(int(2))),
+                Some(crate::ast::Shared::new(int(2))),
             ))),
-            arms: vec![
+            arms: crate::ast::shared::vec(vec![
                 MatchArm {
                     pattern: Pattern::Wildcard,
-                    body: Box::new(ident("x")),
+                    body: crate::ast::Shared::new(ident("x")),
                     binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Constructor("Option.None".to_string(), vec![]),
-                    body: Box::new(ident("x")),
+                    body: crate::ast::Shared::new(ident("x")),
                     binding_slots: std::sync::OnceLock::new(),
                 },
-            ],
+            ]),
         });
         substitute_ident(&mut expr, "x", &int(7));
         let Expr::Match { arms, .. } = &expr.node else {
@@ -1242,19 +1242,19 @@ mod tests {
         // match (1, 2) { (a, b) -> a + b }
         // Outer `a = 99` must NOT overwrite the pattern's a.
         let input = bare(Expr::Match {
-            subject: Box::new(bare(Expr::Tuple(vec![int(1), int(2)]))),
-            arms: vec![MatchArm {
+            subject: crate::ast::Shared::new(bare(Expr::Tuple(crate::ast::shared::vec(vec![int(1), int(2)])))),
+            arms: crate::ast::shared::vec(vec![MatchArm {
                 pattern: Pattern::Tuple(vec![
                     Pattern::Ident("a".to_string()),
                     Pattern::Ident("b".to_string()),
                 ]),
-                body: Box::new(bare(Expr::BinOp(
+                body: crate::ast::Shared::new(bare(Expr::BinOp(
                     BinOp::Add,
-                    Box::new(ident("a")),
-                    Box::new(ident("b")),
+                    crate::ast::Shared::new(ident("a")),
+                    crate::ast::Shared::new(ident("b")),
                 ))),
                 binding_slots: std::sync::OnceLock::new(),
-            }],
+            }]),
         });
         let mut bindings = std::collections::HashMap::new();
         bindings.insert("a".to_string(), int(99));

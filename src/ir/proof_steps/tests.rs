@@ -151,12 +151,12 @@ fn the_kernel_reads_not_equal_as_the_negation_of_equal_at_ints_only() {
 fn substitution_refuses_to_capture_a_pattern_binder() {
     let arm = ResolvedMatchArm {
         pattern: ResolvedPattern::Ident("x".into()),
-        body: Box::new(var("y")),
+        body: crate::ast::Shared::new(var("y")),
         binding_slots: std::sync::OnceLock::new(),
     };
     let m = Spanned::bare(ResolvedExpr::Match {
-        subject: Box::new(var("s")),
-        arms: vec![arm],
+        subject: crate::ast::Shared::new(var("s")),
+        arms: crate::ast::shared::vec(vec![arm]),
     });
     assert!(term::subst(&m, &[("y".into(), var("x"))]).is_err());
     assert!(term::subst(&m, &[("y".into(), var("z"))]).is_ok());
@@ -337,7 +337,7 @@ fn a_split_is_on_a_bool() {
     };
     let call = Spanned::bare(ResolvedExpr::Call(
         ResolvedCallee::Fn(FnId(0)),
-        vec![var("a")],
+        crate::ast::shared::vec(vec![var("a")]),
     ));
     let def = |returns_bool: bool| super::Def {
         fn_id: FnId(0),
@@ -909,7 +909,7 @@ fn a_catch_all_arm_binds_the_value_it_is_chosen_for() {
     use crate::ast::Literal;
     let arm = |pattern, body| ResolvedMatchArm {
         pattern,
-        body: Box::new(body),
+        body: crate::ast::Shared::new(body),
         binding_slots: std::sync::OnceLock::new(),
     };
     let arms = vec![
@@ -931,11 +931,11 @@ fn a_recursive_definition_opens_only_when_it_recurses_on_a_part_of_its_match() {
     use crate::ir::hir::ResolvedCallee;
     use crate::ir::identity::FnId;
     let call = |args: Vec<super::Term>| {
-        Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(FnId(7)), args))
+        Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(FnId(7)), crate::ast::shared::vec(args)))
     };
     let arm = |pattern, body| ResolvedMatchArm {
         pattern,
-        body: Box::new(body),
+        body: crate::ast::Shared::new(body),
         binding_slots: std::sync::OnceLock::new(),
     };
     let def = |tail_call: super::Term| super::Def {
@@ -946,11 +946,11 @@ fn a_recursive_definition_opens_only_when_it_recurses_on_a_part_of_its_match() {
         ret: crate::ast::Type::Int,
         lets: Vec::new(),
         body: Spanned::bare(ResolvedExpr::Match {
-            subject: Box::new(var("xs")),
-            arms: vec![
+            subject: crate::ast::Shared::new(var("xs")),
+            arms: crate::ast::shared::vec(vec![
                 arm(ResolvedPattern::EmptyList, term::int(&0.into())),
                 arm(ResolvedPattern::Cons("h".into(), "t".into()), tail_call),
-            ],
+            ]),
         }),
     };
     let on_tail = def(call(vec![var("t")]));
@@ -989,11 +989,11 @@ fn a_recursion_through_a_helper_is_checked_as_if_the_helper_stood_in_the_arm() {
     use crate::ir::hir::ResolvedCallee;
     use crate::ir::identity::FnId;
     let call = |id: u32, args: Vec<super::Term>| {
-        Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(FnId(id)), args))
+        Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(FnId(id)), crate::ast::shared::vec(args)))
     };
     let arm = |pattern, body| ResolvedMatchArm {
         pattern,
-        body: Box::new(body),
+        body: crate::ast::Shared::new(body),
         binding_slots: std::sync::OnceLock::new(),
     };
     // f(xs) = match xs { [] -> 0, [h, ..t] -> g(h, t) }
@@ -1005,14 +1005,14 @@ fn a_recursion_through_a_helper_is_checked_as_if_the_helper_stood_in_the_arm() {
         ret: crate::ast::Type::Int,
         lets: Vec::new(),
         body: Spanned::bare(ResolvedExpr::Match {
-            subject: Box::new(var("xs")),
-            arms: vec![
+            subject: crate::ast::Shared::new(var("xs")),
+            arms: crate::ast::shared::vec(vec![
                 arm(ResolvedPattern::EmptyList, term::int(&0.into())),
                 arm(
                     ResolvedPattern::Cons("h".into(), "t".into()),
                     call(2, vec![var("h"), var("t")]),
                 ),
-            ],
+            ]),
         }),
     };
     // g(first, rest) = <back>
@@ -1050,20 +1050,20 @@ fn a_recursion_through_a_helper_is_checked_as_if_the_helper_stood_in_the_arm() {
     assert!(super::induct::recursion(&f, &[f.clone(), whole]).is_err());
     // And one that rebinds the name it passes back.
     let rebinding = g(Spanned::bare(ResolvedExpr::Match {
-        subject: Box::new(var("first")),
-        arms: vec![arm(
+        subject: crate::ast::Shared::new(var("first")),
+        arms: crate::ast::shared::vec(vec![arm(
             ResolvedPattern::Ident("t".into()),
             call(1, vec![var("t")]),
-        )],
+        )]),
     }));
     assert!(super::induct::recursion(&f, &[f.clone(), rebinding]).is_err());
     // A capture is refused, not renamed.
     let capturing = g(Spanned::bare(ResolvedExpr::Match {
-        subject: Box::new(var("first")),
-        arms: vec![arm(
+        subject: crate::ast::Shared::new(var("first")),
+        arms: crate::ast::shared::vec(vec![arm(
             ResolvedPattern::Ident("t".into()),
             call(1, vec![var("rest")]),
-        )],
+        )]),
     }));
     assert!(super::induct::recursion(&f, &[f.clone(), capturing]).is_err());
     // A helper's local bindings are substituted before its calls are read:
@@ -1134,7 +1134,7 @@ fn the_ring_step_compares_polynomials_and_leaves_text_joining_alone() {
         &mul(var("a"), var("b"))
     ));
     let join = |x: super::Term, y: super::Term| {
-        let t = Spanned::bare(ResolvedExpr::BinOp(BinOp::Add, Box::new(x), Box::new(y)));
+        let t = Spanned::bare(ResolvedExpr::BinOp(BinOp::Add, crate::ast::Shared::new(x), crate::ast::Shared::new(y)));
         t.set_ty(Type::Str);
         t
     };
@@ -1296,14 +1296,14 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
     };
     let arm = |pattern, body| ResolvedMatchArm {
         pattern,
-        body: Box::new(body),
+        body: crate::ast::Shared::new(body),
         binding_slots: std::sync::OnceLock::new(),
     };
     let positive = || term::binop(BinOp::Gt, a(), i(0));
 
     // f(x) = x + x
     let f = FnId(3);
-    let call_f = |x: super::Term| Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(f), vec![x]));
+    let call_f = |x: super::Term| Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(f), crate::ast::shared::vec(vec![x])));
     let def_f = super::Def {
         fn_id: f,
         name: "__fn_3".into(),
@@ -1331,7 +1331,7 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
 
     // g(xs) = match xs { [] -> 0, [h, ..t] -> g(t) }, so g(xs) = 0.
     let g = FnId(4);
-    let call_g = |x: super::Term| Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(g), vec![x]));
+    let call_g = |x: super::Term| Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(g), crate::ast::shared::vec(vec![x])));
     let cell = |h: &str, t: &str| term::builtin("List.prepend", vec![var(h), var(t)], None);
     let def_g = super::Def {
         fn_id: g,
@@ -1341,14 +1341,14 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
         ret: crate::ast::Type::Int,
         lets: Vec::new(),
         body: Spanned::bare(ResolvedExpr::Match {
-            subject: Box::new(var("xs")),
-            arms: vec![
+            subject: crate::ast::Shared::new(var("xs")),
+            arms: crate::ast::shared::vec(vec![
                 arm(ResolvedPattern::EmptyList, i(0)),
                 arm(
                     ResolvedPattern::Cons("h".into(), "t".into()),
                     call_g(var("t")),
                 ),
-            ],
+            ]),
         }),
     };
     let induct = |claim: i64| {
@@ -1398,11 +1398,11 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
     };
 
     let choose = Spanned::bare(ResolvedExpr::Match {
-        subject: Box::new(term::boolean(true)),
-        arms: vec![
+        subject: crate::ast::Shared::new(term::boolean(true)),
+        arms: crate::ast::shared::vec(vec![
             arm(ResolvedPattern::Literal(Literal::Bool(true)), a()),
             arm(ResolvedPattern::Literal(Literal::Bool(false)), b()),
-        ],
+        ]),
     });
     let pick = |k: u32| {
         script(
@@ -1418,10 +1418,10 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
     };
 
     let record = Spanned::bare(ResolvedExpr::Attr(
-        Box::new(Spanned::bare(ResolvedExpr::RecordCreate {
+        crate::ast::Shared::new(Spanned::bare(ResolvedExpr::RecordCreate {
             type_id: None,
             type_name: "P".into(),
-            fields: vec![("x".into(), a())],
+            fields: crate::ast::shared::vec(vec![("x".into(), a())]),
         })),
         "x".into(),
     ));
@@ -1813,7 +1813,7 @@ mod toward_zero {
         term::int(&n.into())
     }
     pub fn call(args: Vec<Term>) -> Term {
-        Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(F), args))
+        Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(F), crate::ast::shared::vec(args)))
     }
     pub fn div(x: Term, k: Term) -> Term {
         term::intrinsic(BuiltinIntrinsic::IntDivEuclid, vec![x, k])
@@ -1827,7 +1827,7 @@ mod toward_zero {
     pub fn arm(pattern: ResolvedPattern, body: Term) -> ResolvedMatchArm {
         ResolvedMatchArm {
             pattern,
-            body: Box::new(body),
+            body: crate::ast::Shared::new(body),
             binding_slots: std::sync::OnceLock::new(),
         }
     }
@@ -1850,8 +1850,8 @@ mod toward_zero {
             ret: crate::ast::Type::Int,
             lets: Vec::new(),
             body: Spanned::bare(ResolvedExpr::Match {
-                subject: Box::new(subject),
-                arms: vec![arm(when(true), on_true), arm(when(false), on_false)],
+                subject: crate::ast::Shared::new(subject),
+                arms: crate::ast::shared::vec(vec![arm(when(true), on_true), arm(when(false), on_false)]),
             }),
         }
     }
@@ -2031,11 +2031,11 @@ fn an_induction_toward_zero_follows_only_the_descents_the_gate_checked() {
     );
     // n rebound by an inner arm around the call.
     let rebound = halving(Spanned::bare(ResolvedExpr::Match {
-        subject: Box::new(i(5)),
-        arms: vec![arm(
+        subject: crate::ast::Shared::new(i(5)),
+        arms: crate::ast::shared::vec(vec![arm(
             ResolvedPattern::Ident("n".into()),
             call(vec![less(n(), 1)]),
-        )],
+        )]),
     }));
     assert!(super::induct::recursion(&rebound, &[]).is_err());
     refused(
@@ -2234,14 +2234,14 @@ fn an_induction_toward_zero_generalises_what_the_call_changes() {
         &["n", "xs"],
         gt0(n()),
         Spanned::bare(ResolvedExpr::Match {
-            subject: Box::new(var("xs")),
-            arms: vec![
+            subject: crate::ast::Shared::new(var("xs")),
+            arms: crate::ast::shared::vec(vec![
                 arm(ResolvedPattern::EmptyList, i(0)),
                 arm(
                     ResolvedPattern::Cons("h".into(), "t".into()),
                     call(vec![less(n(), 1), var("t")]),
                 ),
-            ],
+            ]),
         }),
         i(0),
     );
@@ -2276,7 +2276,7 @@ fn an_induction_toward_zero_through_another_definition_is_refused() {
     let mut s = trivially(halving(less(n(), 1)), &["ih"], refl(), refl());
     let other = Spanned::bare(crate::ir::hir::ResolvedExpr::Call(
         crate::ir::hir::ResolvedCallee::Fn(FnId(10)),
-        vec![less(n(), 1)],
+        crate::ast::shared::vec(vec![less(n(), 1)]),
     ));
     s.defs[0] = def(&["n"], gt0(n()), other, i(0));
     s.defs.push(super::Def {
@@ -2303,7 +2303,7 @@ fn a_split_on_a_constructor_covers_the_type_with_fresh_names() {
     let one = term::int(&1.into());
     let arm = |pattern: ResolvedPattern, body: super::Term| ResolvedMatchArm {
         pattern,
-        body: Box::new(body),
+        body: crate::ast::Shared::new(body),
         binding_slots: std::sync::OnceLock::new(),
     };
     use crate::ast::Type;
@@ -2315,13 +2315,13 @@ fn a_split_on_a_constructor_covers_the_type_with_fresh_names() {
         ret: Type::Int,
         lets: Vec::new(),
         body: Spanned::bare(ResolvedExpr::Match {
-            subject: Box::new(var("x")),
-            arms,
+            subject: crate::ast::Shared::new(var("x")),
+            arms: crate::ast::shared::vec(arms),
         }),
     };
     let call = Spanned::bare(ResolvedExpr::Call(
         ResolvedCallee::Fn(FnId(0)),
-        vec![var("a")],
+        crate::ast::shared::vec(vec![var("a")]),
     ));
     let ge = |t: super::Term| term::binop(BinOp::Gte, t, zero.clone());
     // `f(a) >= 0` from arm `k` of `f` at `a`, chosen by `h`, giving `value`.
@@ -2463,7 +2463,7 @@ fn a_split_on_a_constructor_covers_the_type_with_fresh_names() {
             arm(ResolvedPattern::Wildcard, one.clone()),
         ],
     );
-    let b_value = Spanned::bare(ResolvedExpr::Ctor(ctor(1, "C.B"), vec![var("n1")]));
+    let b_value = Spanned::bare(ResolvedExpr::Ctor(ctor(1, "C.B"), crate::ast::shared::vec(vec![var("n1")])));
     let b_other = SplitCase {
         proof: case(2, vec![], &one),
         ..b.clone()
@@ -2533,12 +2533,12 @@ fn list_split(both: bool) -> Script {
     let one = term::int(&1.into());
     let arm = |pattern: ResolvedPattern, body: super::Term| ResolvedMatchArm {
         pattern,
-        body: Box::new(body),
+        body: crate::ast::Shared::new(body),
         binding_slots: std::sync::OnceLock::new(),
     };
     let call = Spanned::bare(ResolvedExpr::Call(
         ResolvedCallee::Fn(FnId(0)),
-        vec![var("a")],
+        crate::ast::shared::vec(vec![var("a")]),
     ));
     let ge = |t: super::Term| term::binop(BinOp::Gte, t, zero.clone());
     let case = |k: u32, binders: Vec<&str>, value: &super::Term| Proof::Trans {
@@ -2590,11 +2590,11 @@ fn list_split(both: bool) -> Script {
         ret: crate::ast::Type::Int,
         lets: Vec::new(),
         body: Spanned::bare(ResolvedExpr::Match {
-            subject: Box::new(var("x")),
-            arms: vec![
+            subject: crate::ast::Shared::new(var("x")),
+            arms: crate::ast::shared::vec(vec![
                 arm(ResolvedPattern::EmptyList, zero.clone()),
                 arm(ResolvedPattern::Cons("h".into(), "t".into()), one.clone()),
-            ],
+            ]),
         }),
     }];
     s
@@ -2617,7 +2617,7 @@ fn a_split_on_literal_arms_has_one_case_per_arm() {
     let n = |k: i64| term::int(&k.into());
     let arm = |pattern: ResolvedPattern, body: super::Term| ResolvedMatchArm {
         pattern,
-        body: Box::new(body),
+        body: crate::ast::Shared::new(body),
         binding_slots: std::sync::OnceLock::new(),
     };
     let lit = |k: i64| ResolvedPattern::Literal(Literal::Int(k));
@@ -2629,8 +2629,8 @@ fn a_split_on_literal_arms_has_one_case_per_arm() {
         ret: crate::ast::Type::Int,
         lets: Vec::new(),
         body: Spanned::bare(ResolvedExpr::Match {
-            subject: Box::new(var("x")),
-            arms,
+            subject: crate::ast::Shared::new(var("x")),
+            arms: crate::ast::shared::vec(arms),
         }),
     };
     let f = def(vec![
@@ -2640,7 +2640,7 @@ fn a_split_on_literal_arms_has_one_case_per_arm() {
     ]);
     let call = Spanned::bare(ResolvedExpr::Call(
         ResolvedCallee::Fn(FnId(0)),
-        vec![var("a")],
+        crate::ast::shared::vec(vec![var("a")]),
     ));
     let ge = |t: super::Term| term::binop(BinOp::Gte, t, n(0));
     // `f(a) >= 0` from arm `k` of `f` at `a`, with `binders` and `premise`.
@@ -2767,7 +2767,7 @@ fn a_wildcard_field_takes_its_place_among_the_binders() {
     };
     let arm = |pattern: ResolvedPattern, body: super::Term| ResolvedMatchArm {
         pattern,
-        body: Box::new(body),
+        body: crate::ast::Shared::new(body),
         binding_slots: std::sync::OnceLock::new(),
     };
     let g = Def {
@@ -2781,8 +2781,8 @@ fn a_wildcard_field_takes_its_place_among_the_binders() {
         ret: crate::ast::Type::Int,
         lets: Vec::new(),
         body: Spanned::bare(ResolvedExpr::Match {
-            subject: Box::new(var("x")),
-            arms: vec![
+            subject: crate::ast::Shared::new(var("x")),
+            arms: crate::ast::shared::vec(vec![
                 arm(
                     ResolvedPattern::Ctor(ctor(0, "C.A"), Vec::new()),
                     term::int(&0.into()),
@@ -2791,13 +2791,13 @@ fn a_wildcard_field_takes_its_place_among_the_binders() {
                     ResolvedPattern::Ctor(ctor(1, "C.B"), vec!["_".into(), "m".into()]),
                     var("m"),
                 ),
-            ],
+            ]),
         }),
     };
-    let value = Spanned::bare(ResolvedExpr::Ctor(ctor(1, "C.B"), vec![var("a"), var("b")]));
+    let value = Spanned::bare(ResolvedExpr::Ctor(ctor(1, "C.B"), crate::ast::shared::vec(vec![var("a"), var("b")])));
     let call = Spanned::bare(ResolvedExpr::Call(
         ResolvedCallee::Fn(FnId(0)),
-        vec![value.clone()],
+        crate::ast::shared::vec(vec![value.clone()]),
     ));
     let unfold = Proof::Unfold {
         fn_id: FnId(0),

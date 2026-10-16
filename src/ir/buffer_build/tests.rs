@@ -13,11 +13,11 @@ fn ident(name: &str) -> Spanned<Expr> {
 }
 
 fn dotted(module: &str, member: &str) -> Spanned<Expr> {
-    sp(Expr::Attr(Box::new(ident(module)), member.to_string()))
+    sp(Expr::Attr(crate::ast::Shared::new(ident(module)), member.to_string()))
 }
 
 fn call(callee: Spanned<Expr>, args: Vec<Spanned<Expr>>) -> Spanned<Expr> {
-    sp(Expr::FnCall(Box::new(callee), args))
+    sp(Expr::FnCall(crate::ast::Shared::new(callee), crate::ast::shared::vec(args)))
 }
 
 /// Build a canonical buffer-build fn: takes (col: Int, acc: List<Int>),
@@ -31,30 +31,30 @@ fn canonical_builder(name: &str) -> FnDef {
         args: vec![
             sp(Expr::BinOp(
                 BinOp::Add,
-                Box::new(ident("col")),
-                Box::new(sp(Expr::Literal(Literal::Int(1)))),
+                crate::ast::Shared::new(ident("col")),
+                crate::ast::Shared::new(sp(Expr::Literal(Literal::Int(1)))),
             )),
             prepend,
         ],
     })));
     let match_expr = sp(Expr::Match {
-        subject: Box::new(sp(Expr::BinOp(
+        subject: crate::ast::Shared::new(sp(Expr::BinOp(
             BinOp::Gte,
-            Box::new(ident("col")),
-            Box::new(sp(Expr::Literal(Literal::Int(10)))),
+            crate::ast::Shared::new(ident("col")),
+            crate::ast::Shared::new(sp(Expr::Literal(Literal::Int(10)))),
         ))),
-        arms: vec![
+        arms: crate::ast::shared::vec(vec![
             MatchArm {
                 pattern: Pattern::Literal(Literal::Bool(true)),
-                body: Box::new(true_body),
+                body: crate::ast::Shared::new(true_body),
                 binding_slots: std::sync::OnceLock::new(),
             },
             MatchArm {
                 pattern: Pattern::Literal(Literal::Bool(false)),
-                body: Box::new(false_body),
+                body: crate::ast::Shared::new(false_body),
                 binding_slots: std::sync::OnceLock::new(),
             },
-        ],
+        ]),
     });
     FnDef {
         name: name.to_string(),
@@ -114,7 +114,7 @@ fn rejects_when_false_arm_uses_append_not_prepend() {
         && let Stmt::Expr(spanned) = &mut stmts[0]
         && let Expr::Match { arms, .. } = &mut spanned.node
     {
-        let false_body = arms[1].body.as_mut();
+        let false_body = &mut *arms[1].body;
         if let Expr::TailCall(data) = &mut false_body.node
             && let Expr::FnCall(callee, _) = &mut data.args[1].node
             && let Expr::Attr(_, attr) = &mut callee.node
@@ -136,7 +136,7 @@ fn rejects_tail_call_to_different_fn() {
         && let Stmt::Expr(spanned) = &mut stmts[0]
         && let Expr::Match { arms, .. } = &mut spanned.node
     {
-        let false_body = arms[1].body.as_mut();
+        let false_body = &mut *arms[1].body;
         if let Expr::TailCall(data) = &mut false_body.node {
             data.target = "someone_else".to_string();
         }
@@ -495,29 +495,29 @@ fn detects_acc_param_at_arbitrary_index() {
             prepend,
             sp(Expr::BinOp(
                 BinOp::Add,
-                Box::new(ident("col")),
-                Box::new(sp(Expr::Literal(Literal::Int(1)))),
+                crate::ast::Shared::new(ident("col")),
+                crate::ast::Shared::new(sp(Expr::Literal(Literal::Int(1)))),
             )),
         ],
     })));
     let match_expr = sp(Expr::Match {
-        subject: Box::new(sp(Expr::BinOp(
+        subject: crate::ast::Shared::new(sp(Expr::BinOp(
             BinOp::Gte,
-            Box::new(ident("col")),
-            Box::new(sp(Expr::Literal(Literal::Int(10)))),
+            crate::ast::Shared::new(ident("col")),
+            crate::ast::Shared::new(sp(Expr::Literal(Literal::Int(10)))),
         ))),
-        arms: vec![
+        arms: crate::ast::shared::vec(vec![
             MatchArm {
                 pattern: Pattern::Literal(Literal::Bool(true)),
-                body: Box::new(true_body),
+                body: crate::ast::Shared::new(true_body),
                 binding_slots: std::sync::OnceLock::new(),
             },
             MatchArm {
                 pattern: Pattern::Literal(Literal::Bool(false)),
-                body: Box::new(false_body),
+                body: crate::ast::Shared::new(false_body),
                 binding_slots: std::sync::OnceLock::new(),
             },
-        ],
+        ]),
     });
     let fd = FnDef {
         name: "build".to_string(),
@@ -590,7 +590,7 @@ fn skips_synth_when_no_rewriteable_call_site() {
         desc: None,
         body: Arc::new(FnBody::Block(vec![Stmt::Expr(call(
             ident_expr("build"),
-            vec![sp(Expr::Literal(Literal::Int(0))), sp(Expr::List(vec![]))],
+            vec![sp(Expr::Literal(Literal::Int(0))), sp(Expr::List(crate::ast::shared::vec(vec![])))],
         ))])),
         resolution: None,
     };
@@ -621,19 +621,19 @@ fn external_reverse_pattern_round_trips() {
         args: vec![ident("t"), prepend],
     })));
     let match_expr = sp(Expr::Match {
-        subject: Box::new(ident("xs")),
-        arms: vec![
+        subject: crate::ast::Shared::new(ident("xs")),
+        arms: crate::ast::shared::vec(vec![
             MatchArm {
                 pattern: Pattern::EmptyList,
-                body: Box::new(nil_body),
+                body: crate::ast::Shared::new(nil_body),
                 binding_slots: std::sync::OnceLock::new(),
             },
             MatchArm {
                 pattern: Pattern::Cons("h".to_string(), "t".to_string()),
-                body: Box::new(cons_body),
+                body: crate::ast::Shared::new(cons_body),
                 binding_slots: std::sync::OnceLock::new(),
             },
-        ],
+        ]),
     });
     let sink = FnDef {
         name: "build".to_string(),
@@ -663,7 +663,7 @@ fn external_reverse_pattern_round_trips() {
                 dotted("List", "reverse"),
                 vec![call(
                     ident_expr("build"),
-                    vec![ident("xs"), sp(Expr::List(vec![]))],
+                    vec![ident("xs"), sp(Expr::List(crate::ast::shared::vec(vec![])))],
                 )],
             ),
             sp(Expr::Literal(Literal::Str("\n".to_string()))),

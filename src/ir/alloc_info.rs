@@ -350,7 +350,7 @@ mod tests {
     fn pure_arithmetic_does_not_allocate() {
         let fd = fn_def_pure(
             "addOne",
-            Expr::BinOp(BinOp::Add, Box::new(lit_int(1)), Box::new(lit_int(2))),
+            Expr::BinOp(BinOp::Add, crate::ast::Shared::new(lit_int(1)), crate::ast::Shared::new(lit_int(2))),
         );
         let info = compute_alloc_info(&[&fd], &TestPolicy);
         assert_eq!(info.get("addOne"), Some(&false));
@@ -358,7 +358,7 @@ mod tests {
 
     #[test]
     fn list_literal_allocates() {
-        let fd = fn_def_pure("makeList", Expr::List(vec![lit_int(1), lit_int(2)]));
+        let fd = fn_def_pure("makeList", Expr::List(crate::ast::shared::vec(vec![lit_int(1), lit_int(2)])));
         let info = compute_alloc_info(&[&fd], &TestPolicy);
         assert_eq!(info.get("makeList"), Some(&true));
     }
@@ -367,11 +367,11 @@ mod tests {
     fn allocating_builtin_call_allocates() {
         // String.fromInt(42)
         let call = Expr::FnCall(
-            Box::new(sp(Expr::Attr(
-                Box::new(sp(Expr::Ident("String".into()))),
+            crate::ast::Shared::new(sp(Expr::Attr(
+                crate::ast::Shared::new(sp(Expr::Ident("String".into()))),
                 "fromInt".into(),
             ))),
-            vec![lit_int(42)],
+            crate::ast::shared::vec(vec![lit_int(42)]),
         );
         let fd = fn_def_pure("stringify", call);
         let info = compute_alloc_info(&[&fd], &TestPolicy);
@@ -382,11 +382,11 @@ mod tests {
     fn pure_builtin_call_does_not_allocate() {
         // Int.abs(-5) — Int.abs is not in the test policy's alloc list.
         let call = Expr::FnCall(
-            Box::new(sp(Expr::Attr(
-                Box::new(sp(Expr::Ident("Int".into()))),
+            crate::ast::Shared::new(sp(Expr::Attr(
+                crate::ast::Shared::new(sp(Expr::Ident("Int".into()))),
                 "abs".into(),
             ))),
-            vec![lit_int(-5)],
+            crate::ast::shared::vec(vec![lit_int(-5)]),
         );
         let fd = fn_def_pure("absVal", call);
         let info = compute_alloc_info(&[&fd], &TestPolicy);
@@ -405,9 +405,9 @@ mod tests {
     fn transitive_user_call_propagates() {
         // makeListInner allocates (list literal).
         // wrapperFn calls makeListInner — also allocates by transitivity.
-        let inner = fn_def_pure("makeListInner", Expr::List(vec![lit_int(1)]));
+        let inner = fn_def_pure("makeListInner", Expr::List(crate::ast::shared::vec(vec![lit_int(1)])));
 
-        let call = Expr::FnCall(Box::new(sp(Expr::Ident("makeListInner".into()))), vec![]);
+        let call = Expr::FnCall(crate::ast::Shared::new(sp(Expr::Ident("makeListInner".into()))), crate::ast::shared::vec(vec![]));
         let wrapper = fn_def_pure("wrapperFn", call);
 
         let info = compute_alloc_info(&[&inner, &wrapper], &TestPolicy);
@@ -420,11 +420,11 @@ mod tests {
         // f calls g, g calls f, both pure (no allocation anywhere).
         let f = fn_def_pure(
             "f",
-            Expr::FnCall(Box::new(sp(Expr::Ident("g".into()))), vec![lit_int(1)]),
+            Expr::FnCall(crate::ast::Shared::new(sp(Expr::Ident("g".into()))), crate::ast::shared::vec(vec![lit_int(1)])),
         );
         let g = fn_def_pure(
             "g",
-            Expr::FnCall(Box::new(sp(Expr::Ident("f".into()))), vec![lit_int(2)]),
+            Expr::FnCall(crate::ast::Shared::new(sp(Expr::Ident("f".into()))), crate::ast::shared::vec(vec![lit_int(2)])),
         );
         let info = compute_alloc_info(&[&f, &g], &TestPolicy);
         assert_eq!(info.get("f"), Some(&false));
@@ -436,9 +436,9 @@ mod tests {
         // f calls g, g allocates. Both end up allocating.
         let f = fn_def_pure(
             "f",
-            Expr::FnCall(Box::new(sp(Expr::Ident("g".into()))), vec![lit_int(1)]),
+            Expr::FnCall(crate::ast::Shared::new(sp(Expr::Ident("g".into()))), crate::ast::shared::vec(vec![lit_int(1)])),
         );
-        let g = fn_def_pure("g", Expr::List(vec![lit_int(0)]));
+        let g = fn_def_pure("g", Expr::List(crate::ast::shared::vec(vec![lit_int(0)])));
         let info = compute_alloc_info(&[&f, &g], &TestPolicy);
         assert_eq!(info.get("f"), Some(&true));
         assert_eq!(info.get("g"), Some(&true));

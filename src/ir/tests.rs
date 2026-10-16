@@ -9,10 +9,10 @@ fn sbb(expr: Expr) -> Box<Spanned<Expr>> {
 #[test]
 fn dotted_name_flattens_attr_paths() {
     let expr = Expr::Attr(
-        sbb(Expr::Attr(
-            sbb(Expr::Ident("Data".to_string())),
+        crate::ast::Shared::from(sbb(Expr::Attr(
+            crate::ast::Shared::from(sbb(Expr::Ident("Data".to_string()))),
             "Fib".to_string(),
-        )),
+        ))),
         "fib".to_string(),
     );
     assert_eq!(expr_to_dotted_name(&expr).as_deref(), Some("Data.Fib.fib"));

@@ -777,12 +777,12 @@ mod tests {
                 2,
                 vec![(
                     aver::ast::Spanned::bare(aver::ast::Expr::FnCall(
-                        Box::new(aver::ast::Spanned::bare(aver::ast::Expr::Ident(
+                        crate::ast::Shared::new(aver::ast::Spanned::bare(aver::ast::Expr::Ident(
                             "fib".to_string(),
                         ))),
-                        vec![aver::ast::Spanned::bare(aver::ast::Expr::Literal(
+                        crate::ast::shared::vec(vec![aver::ast::Spanned::bare(aver::ast::Expr::Literal(
                             aver::ast::Literal::Int(5),
-                        ))],
+                        ))]),
                     )),
                     aver::ast::Spanned::bare(aver::ast::Expr::Literal(aver::ast::Literal::Int(8))),
                 )],

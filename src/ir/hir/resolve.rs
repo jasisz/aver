@@ -1144,12 +1144,12 @@ fn alwaysTrue() -> Int
         // this invariant.
         use crate::ast::{Expr as AstExpr, Spanned as AstSpanned};
         let lit = AstSpanned::new(AstExpr::Literal(Literal::Int(7)), 1);
-        let _ = lit.ty.set(crate::ast::Type::Int);
+        let _ = lit.ty.set((crate::ast::Type::Int).into());
         // Build a one-item dummy symbol table — irrelevant for
         // literal stamp propagation, just need a context.
         let symbols = SymbolTable::default();
         let ctx = ResolveCtx::new(&symbols);
         let resolved = resolve_spanned(&ctx, &lit);
-        assert_eq!(resolved.ty.get(), Some(&crate::ast::Type::Int));
+        assert_eq!(resolved.ty(), Some(&crate::ast::Type::Int));
     }
 }

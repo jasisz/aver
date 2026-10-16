@@ -10,7 +10,7 @@ fn law_with_type(ty: &str, sample: &str) -> VerifyLaw {
         .into_iter()
         .find_map(|item| {
             if let TopLevel::Verify(block) = item
-                && let VerifyKind::Law(law) = block.kind
+                && let VerifyKind::Law(law) = crate::ast::Shared::unwrap(block).kind
             {
                 Some(*law)
             } else {

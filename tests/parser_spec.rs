@@ -2078,7 +2078,7 @@ fn unary_minus_int_literal_emits_neg() {
         vec![TopLevel::Stmt(Stmt::Binding(
             "x".to_string(),
             None,
-            Spanned::bare(Expr::Neg(Box::new(Spanned::bare(Expr::Literal(
+            Spanned::bare(Expr::Neg(aver::ast::Shared::new(Spanned::bare(Expr::Literal(
                 Literal::Int(5)
             )))))
         ))]
@@ -2093,7 +2093,7 @@ fn unary_minus_float_literal_emits_neg() {
         vec![TopLevel::Stmt(Stmt::Binding(
             "y".to_string(),
             None,
-            Spanned::bare(Expr::Neg(Box::new(Spanned::bare(Expr::Literal(
+            Spanned::bare(Expr::Neg(aver::ast::Shared::new(Spanned::bare(Expr::Literal(
                 Literal::Float(1.5)
             )))))
         ))]
@@ -2124,7 +2124,7 @@ fn nested_unary_minus_emits_nested_neg() {
         vec![TopLevel::Stmt(Stmt::Binding(
             "z".to_string(),
             None,
-            Spanned::bare(Expr::Neg(Box::new(Spanned::bare(Expr::Neg(Box::new(
+            Spanned::bare(Expr::Neg(aver::ast::Shared::new(Spanned::bare(Expr::Neg(aver::ast::Shared::new(
                 Spanned::bare(Expr::Literal(Literal::Float(1.0)))
             ))))))
         ))]

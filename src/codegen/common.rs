@@ -3506,7 +3506,7 @@ mod tests {
             givens: vec![VerifyGiven {
                 name: "xs".to_string(),
                 type_name: "List<String>".to_string(),
-                domain: VerifyGivenDomain::Explicit(vec![sb(Expr::List(vec![]))]),
+                domain: VerifyGivenDomain::Explicit(vec![sb(Expr::List(crate::ast::shared::vec(vec![])))]),
             }],
             when: None,
             lhs,
@@ -3524,7 +3524,7 @@ mod tests {
         use crate::ast::BinOp;
         let a = || bsb(Expr::Ident("a".to_string()));
         let b = || bsb(Expr::Ident("b".to_string()));
-        let binop = |op, l: Box<Spanned<Expr>>, r: Box<Spanned<Expr>>| sb(Expr::BinOp(op, l, r));
+        let binop = |op, l: Box<Spanned<Expr>>, r: Box<Spanned<Expr>>| sb(Expr::BinOp(op, crate::ast::Shared::from(l), crate::ast::Shared::from(r)));
 
         // `a > b` canonicalizes to `b < a` — operands swapped, STILL strict.
         let canon_gt = canonicalize_comparison(&binop(BinOp::Gt, a(), b()));
@@ -3545,7 +3545,7 @@ mod tests {
             let clause = binop(op, a(), b());
             assert_eq!(canonicalize_comparison(&clause).node, clause.node);
         }
-        let call = sb(Expr::FnCall(a(), vec![sb(Expr::Ident("x".to_string()))]));
+        let call = sb(Expr::FnCall(crate::ast::Shared::from(a()), crate::ast::shared::vec(vec![sb(Expr::Ident("x".to_string()))])));
         assert_eq!(canonicalize_comparison(&call).node, call.node);
     }
 
@@ -3562,11 +3562,11 @@ mod tests {
         // for forward compat with a future classifier that emits
         // canonical names.
         let lhs = sb(Expr::FnCall(
-            bsb(Expr::Attr(
-                bsb(Expr::Ident("Dep".to_string())),
+            crate::ast::Shared::from(bsb(Expr::Attr(
+                crate::ast::Shared::from(bsb(Expr::Ident("Dep".to_string()))),
                 "valuesInOrder".to_string(),
-            )),
-            vec![sb(Expr::Ident("xs".to_string()))],
+            ))),
+            crate::ast::shared::vec(vec![sb(Expr::Ident("xs".to_string()))]),
         ));
         let rhs = sb(Expr::Ident("xs".to_string()));
         let law = law_with(lhs, rhs);
@@ -3639,7 +3639,7 @@ mod tests {
         // `.length`, `.contains`) — a bare `log.trace` is just a
         // record access and stays in normal emit.
         let user_field_lhs = sb(Expr::Attr(
-            bsb(Expr::Ident("log".to_string())),
+            crate::ast::Shared::from(bsb(Expr::Ident("log".to_string()))),
             "trace".to_string(),
         ));
         assert!(
@@ -3649,14 +3649,14 @@ mod tests {
 
         // Real Oracle trace projection: `fn().trace.event(0)`.
         let runtime_trace_lhs = sb(Expr::FnCall(
-            bsb(Expr::Attr(
-                bsb(Expr::Attr(
-                    bsb(Expr::FnCall(bsb(Expr::Ident("fn".to_string())), vec![])),
+            crate::ast::Shared::from(bsb(Expr::Attr(
+                crate::ast::Shared::from(bsb(Expr::Attr(
+                    crate::ast::Shared::from(bsb(Expr::FnCall(crate::ast::Shared::from(bsb(Expr::Ident("fn".to_string()))), crate::ast::shared::vec(vec![])))),
                     "trace".to_string(),
-                )),
+                ))),
                 "event".to_string(),
-            )),
-            vec![sb(Expr::Literal(Literal::Int(0)))],
+            ))),
+            crate::ast::shared::vec(vec![sb(Expr::Literal(Literal::Int(0)))]),
         ));
         assert!(
             law_lhs_has_trace_projection(&runtime_trace_lhs),

@@ -1679,7 +1679,7 @@ mod call_walk_tests {
     use crate::ast::{Expr, Spanned};
 
     fn call(callee: Expr) -> Spanned<Expr> {
-        Spanned::new(Expr::FnCall(Box::new(Spanned::new(callee, 1)), vec![]), 1)
+        Spanned::new(Expr::FnCall(crate::ast::Shared::new(Spanned::new(callee, 1)), crate::ast::shared::vec(vec![])), 1)
     }
 
     fn callee_of(call: &Spanned<Expr>) -> Spanned<Expr> {
@@ -1694,7 +1694,7 @@ mod call_walk_tests {
     #[test]
     fn a_namespaced_builtin_call_is_found_by_its_dotted_path() {
         let namespaced = call(Expr::Attr(
-            Box::new(Spanned::new(Expr::Ident("List".to_string()), 1)),
+            crate::ast::Shared::new(Spanned::new(Expr::Ident("List".to_string()), 1)),
             "contains".to_string(),
         ));
         assert_eq!(

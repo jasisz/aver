@@ -6379,7 +6379,7 @@ mod tests {
 
     fn span_ty<T>(node: T, ty: Type) -> Spanned<T> {
         let stamp = OnceLock::new();
-        let _ = stamp.set(ty);
+        let _ = stamp.set(crate::ast::Shared::new(ty));
         Spanned {
             node,
             line: 0,

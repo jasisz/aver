@@ -280,11 +280,11 @@ mod tests {
     fn pattern_shadowing_leaves_inner_bound_ident_alone() {
         // match Some(2) { Some(x) -> x, None -> 0 } with outer x = 1.
         let e = bare(Expr::Match {
-            subject: Box::new(bare(Expr::Constructor(
+            subject: crate::ast::Shared::new(bare(Expr::Constructor(
                 "Option.Some".to_string(),
-                Some(Box::new(int(2))),
+                Some(crate::ast::Shared::new(int(2))),
             ))),
-            arms: vec![
+            arms: crate::ast::shared::vec(vec![
                 MatchArm::new(
                     Pattern::Constructor("Option.Some".to_string(), vec!["x".to_string()]),
                     ident("x"),
@@ -293,7 +293,7 @@ mod tests {
                     Pattern::Constructor("Option.None".to_string(), vec![]),
                     int(0),
                 ),
-            ],
+            ]),
         });
         let out = rewrite_idents_scoped(&e, |n| if n == "x" { Some(int(1)) } else { None });
         let Expr::Match { arms, .. } = &out.node else {
@@ -309,18 +309,18 @@ mod tests {
     #[test]
     fn tuple_pattern_shadowing() {
         let e = bare(Expr::Match {
-            subject: Box::new(bare(Expr::Tuple(vec![int(1), int(2)]))),
-            arms: vec![MatchArm::new(
+            subject: crate::ast::Shared::new(bare(Expr::Tuple(crate::ast::shared::vec(vec![int(1), int(2)])))),
+            arms: crate::ast::shared::vec(vec![MatchArm::new(
                 Pattern::Tuple(vec![
                     Pattern::Ident("a".to_string()),
                     Pattern::Ident("b".to_string()),
                 ]),
                 bare(Expr::BinOp(
                     BinOp::Add,
-                    Box::new(ident("a")),
-                    Box::new(ident("b")),
+                    crate::ast::Shared::new(ident("a")),
+                    crate::ast::Shared::new(ident("b")),
                 )),
-            )],
+            )]),
         });
         let out = rewrite_idents_scoped(&e, |n| if n == "a" { Some(int(99)) } else { None });
         let Expr::Match { arms, .. } = &out.node else {
@@ -339,8 +339,8 @@ mod tests {
     #[test]
     fn rewrites_in_non_shadowed_arm() {
         let e = bare(Expr::Match {
-            subject: Box::new(int(42)),
-            arms: vec![MatchArm::new(Pattern::Wildcard, ident("x"))],
+            subject: crate::ast::Shared::new(int(42)),
+            arms: crate::ast::shared::vec(vec![MatchArm::new(Pattern::Wildcard, ident("x"))]),
         });
         let out = rewrite_idents_scoped(&e, |n| if n == "x" { Some(int(7)) } else { None });
         let Expr::Match { arms, .. } = &out.node else {
@@ -352,11 +352,11 @@ mod tests {
     #[test]
     fn cons_pattern_shadows_head_and_tail() {
         let e = bare(Expr::Match {
-            subject: Box::new(bare(Expr::List(vec![int(1), int(2)]))),
-            arms: vec![MatchArm::new(
+            subject: crate::ast::Shared::new(bare(Expr::List(crate::ast::shared::vec(vec![int(1), int(2)])))),
+            arms: crate::ast::shared::vec(vec![MatchArm::new(
                 Pattern::Cons("h".to_string(), "t".to_string()),
-                bare(Expr::Tuple(vec![ident("h"), ident("t"), ident("z")])),
-            )],
+                bare(Expr::Tuple(crate::ast::shared::vec(vec![ident("h"), ident("t"), ident("z")]))),
+            )]),
         });
         let out = rewrite_idents_scoped(&e, |n| match n {
             "h" => Some(int(100)),
