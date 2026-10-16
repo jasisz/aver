@@ -24,6 +24,7 @@ pub mod facts;
 pub mod induct;
 pub mod kernel_builtins;
 pub mod linear;
+mod linear_fast;
 pub mod read;
 pub mod ring;
 pub mod rules;

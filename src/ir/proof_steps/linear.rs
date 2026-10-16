@@ -151,6 +151,19 @@ fn substitute_equality(rows: &[(Poly, Vec<BigInt>)]) -> Option<Vec<(Poly, Vec<Bi
 /// Weights, one per inequality, that add up to a contradiction, if
 /// Fourier–Motzkin elimination over the monomials finds them.
 pub fn certificate(ps: &[Poly]) -> Option<Vec<BigInt>> {
+    let fast = super::linear_fast::certificate(ps);
+    if check_fast() {
+        assert_eq!(fast, certificate_by_maps(ps), "AVER_LINEAR_CHECK: certificate");
+    }
+    fast
+}
+
+fn check_fast() -> bool {
+    static CHECK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CHECK.get_or_init(|| std::env::var_os("AVER_LINEAR_CHECK").is_some())
+}
+
+fn certificate_by_maps(ps: &[Poly]) -> Option<Vec<BigInt>> {
     // Each row: the inequality and the weights that build it.
     let n = ps.len();
     let mut rows: Vec<(Poly, Vec<BigInt>)> = ps
@@ -309,6 +322,15 @@ pub fn checks(ps: &[Poly], cert: &Certificate) -> bool {
 /// [`Cut`]), as `omega` normalises its constraints. Only the comparisons
 /// and cuts the contradiction uses keep a weight.
 pub fn integer_certificate(ps: &[Poly]) -> Option<Certificate> {
+    let fast = super::linear_fast::integer_search(ps);
+    if check_fast() {
+        assert_eq!(fast, integer_search_by_maps(ps), "AVER_LINEAR_CHECK: integer");
+    }
+    let (found, cuts) = fast?;
+    finish(ps, found, cuts)
+}
+
+fn integer_search_by_maps(ps: &[Poly]) -> Option<(Vec<BigInt>, Vec<Cut>)> {
     let n = ps.len();
     let mut cuts: Vec<Cut> = Vec::new();
     // A row rounded where that makes it stronger, as a new cut.
@@ -389,6 +411,11 @@ pub fn integer_certificate(ps: &[Poly]) -> Option<Certificate> {
         }
         None
     }?;
+    Some((found, cuts))
+}
+
+fn finish(ps: &[Poly], found: Vec<BigInt>, cuts: Vec<Cut>) -> Option<Certificate> {
+    let n = ps.len();
     let mut weights = found;
     weights.resize(n + cuts.len(), BigInt::zero());
     // Only the cuts the contradiction reaches, the later ones first.
