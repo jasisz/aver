@@ -159,11 +159,16 @@ jobs:
 
       - name: Optimise the build
         # Most of these tests run the `aver` binary, and the slowest ones run
-        # the proof kernel written in Aver inside it. `opt-level = 1` for the
-        # whole graph, and only in CI: the developer `dev` profile in
-        # Cargo.toml stays as it is. Set before the cache step, so the cache
-        # key keeps optimised dependencies apart from unoptimised ones.
-        run: echo CARGO_PROFILE_DEV_OPT_LEVEL=1 >> "$GITHUB_ENV"
+        # the proof kernel written in Aver inside it: unoptimised, one suite
+        # took over ten minutes. `opt-level = 1` for the whole graph, in CI
+        # only: the developer `dev` profile in Cargo.toml stays as it is. The
+        # setting goes into this checkout's Cargo config, not the environment
+        # or the Cargo home, because the tests that build generated projects
+        # run Cargo in temporary directories, and those builds would pay for
+        # optimising their own dependencies. Written before the cache step,
+        # whose key hashes this file, so optimised dependencies are cached
+        # apart from unoptimised ones.
+        run: printf '\n[profile.dev]\nopt-level = 1\n' >> .cargo/config.toml
 
       - uses: Swatinem/rust-cache@v2
 
@@ -270,11 +275,11 @@ jobs:
       - name: Optimise the build
         if: matrix.lane == 'checks'
         # The two ratchets of this lane run the proof kernel written in Aver
-        # and the certificate producer over the whole corpus. `opt-level = 1`
-        # for the whole graph, and only in CI: the developer `dev` profile in
-        # Cargo.toml stays as it is. Set before the cache step, so the cache
-        # key keeps optimised dependencies apart from unoptimised ones.
-        run: echo CARGO_PROFILE_DEV_OPT_LEVEL=1 >> "$GITHUB_ENV"
+        # and the certificate producer over the whole corpus; unoptimised, the
+        # step ratchet alone took nine minutes. Set as in the native test
+        # shards: `opt-level = 1` in this checkout's Cargo config, in CI only,
+        # before the cache step.
+        run: printf '\n[profile.dev]\nopt-level = 1\n' >> .cargo/config.toml
 
       - uses: Swatinem/rust-cache@v2
         with:
