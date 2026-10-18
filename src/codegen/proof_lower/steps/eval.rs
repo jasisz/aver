@@ -3832,7 +3832,7 @@ impl Env<'_> {
         }
         // Hypotheses that contradict each other once read again: list
         // lengths, and normal forms (see [`super::hypotheses`]).
-        if let Some(proof) = self.refute_case(lhs, rhs) {
+        if !experiment_off("REFUTE_CASE") && let Some(proof) = self.refute_case(lhs, rhs) {
             return Ok(Ok(proof));
         }
         // A disjunction in scope: split on its left side, and where
@@ -3847,6 +3847,7 @@ impl Env<'_> {
         // A predicate hypothesis that chooses by a Bool: open it at the
         // arm its guard selects, splitting on the guard when it is open.
         if depth > 0
+            && !experiment_off("OPEN_HYP")
             && let Some(proof) = self.open_hypothesis(lhs, rhs, depth)?
         {
             return Ok(Ok(proof));
@@ -3855,6 +3856,7 @@ impl Env<'_> {
         // list cell or a constructor): evaluated, it contradicts its stated
         // value and closes the case, or its lines are cut in.
         if depth > 0
+            && !experiment_off("EVAL_HYP")
             && let Some(proof) = self.evaluate_hypothesis(lhs, rhs, depth)?
         {
             return Ok(Ok(proof));
@@ -3910,7 +3912,7 @@ impl Env<'_> {
         }
         // Last, rewriting both sides to a normal form with the cited laws
         // and the builtin list facts.
-        if let Some(proof) = self.meet_by_rewriting(&nl, &nr)? {
+        if !experiment_off("REWRITE") && let Some(proof) = self.meet_by_rewriting(&nl, &nr)? {
             return Ok(Ok(proof));
         }
         // Two sides that differ in the order of a `Bool.or` or a `Bool.and`
@@ -3922,6 +3924,7 @@ impl Env<'_> {
         // one position, never rewritten, so this is no search; a split
         // that does not close is undone.
         if depth > 0
+            && !experiment_off("OPEN_ORDER")
             && let Some(proof) = self.split_on_open_order(nl.cur(), nr.cur(), depth)
         {
             let rc = nr.cur().clone();
@@ -3930,8 +3933,9 @@ impl Env<'_> {
         }
         // Nothing closed the case as its hypotheses are stated: evaluate
         // them the way the claim was, and the claim again under them.
-        if let Some(proof) =
-            self.prove_with_evaluated_hypotheses(lhs, rhs, &[nl.cur(), nr.cur()], depth)
+        if !experiment_off("EVALUATED")
+            && let Some(proof) =
+                self.prove_with_evaluated_hypotheses(lhs, rhs, &[nl.cur(), nr.cur()], depth)
         {
             return Ok(Ok(proof));
         }
@@ -5074,6 +5078,11 @@ impl Env<'_> {
             }
         }
     }
+}
+
+/// Prototype measurement only: whether `AVER_STEPS_OFF` names `piece`.
+pub(crate) fn experiment_off(piece: &str) -> bool {
+    std::env::var("AVER_STEPS_OFF").is_ok_and(|v| v.split(',').any(|p| p == piece))
 }
 
 pub(crate) fn empty_script() -> crate::ir::proof_steps::Script {

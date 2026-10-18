@@ -16,11 +16,20 @@
 //! opened definition or a congruence, written as `trans`, `symm`, `congr`,
 //! `hyp`, `law` and `unfold` steps. The comparisons the table knows are
 //! handed to linear arithmetic, with `x != k` read as `x < k` or `x > k`
-//! where a range brings `k` to its edge.
+//! where a range brings `k` to its edge; a sum whose part is joined with
+//! another sum is read as one polynomial (a `ring` step).
 //!
-//! Everything is bounded: terms, rounds, law instances, and the fuel the
-//! table may spend proving premises, which it gives back, so a failed
-//! attempt costs the rest of the proof nothing.
+//! A law instance whose `when` the table cannot show is noted: once its
+//! two sides are known to be different Bool values, its `when` is false
+//! (a case on it, the case where it holds absurd). Where all that does not
+//! close the claim, the table opens a case on a Bool side of the claim, or
+//! on a list variable a known call reads with its `match`, each case a copy
+//! or a table of its own.
+//!
+//! Everything is bounded: terms, rounds, law instances, cases, the size of
+//! the proof handed back, and the fuel the table may spend proving
+//! premises, which it gives back, so a failed attempt costs the rest of the
+//! proof nothing.
 
 use std::collections::{HashMap, HashSet};
 
@@ -41,9 +50,9 @@ const MAX_INSTANCES: usize = 160;
 /// A term that many instances or openings away from the start matches no
 /// law and opens no definition: what an instance writes is matched again
 /// only so far, so laws that feed each other stop.
-const MAX_GEN_DEFAULT: u8 = 3;
+const MAX_GEN: u8 = 3;
 /// The same for opening definitions.
-const MAX_OPEN_GEN_DEFAULT: u8 = 4;
+const MAX_OPEN_GEN: u8 = 4;
 /// Evaluation steps the table may spend proving premises; given back after.
 const TABLE_FUEL: usize = 200;
 /// Most comparisons one round tries to decide by linear arithmetic.
@@ -62,23 +71,6 @@ const MAX_PROOF: usize = 1500;
 const MAX_DISEQ: usize = 8;
 
 type Id = usize;
-
-fn tuned(name: &str, default: u8) -> u8 {
-    std::env::var(name)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
-}
-
-#[allow(non_snake_case)]
-fn MAX_GEN() -> u8 {
-    tuned("AVER_TABLE_GEN", MAX_GEN_DEFAULT)
-}
-
-#[allow(non_snake_case)]
-fn MAX_OPEN_GEN() -> u8 {
-    tuned("AVER_TABLE_OPEN_GEN", MAX_OPEN_GEN_DEFAULT)
-}
 
 /// A premise of a join: a proof built already, or two entries of the table
 /// whose terms it shows equal.
@@ -1121,9 +1113,6 @@ impl Table {
         if let ResolvedExpr::BinOp(BinOp::Eq, a, b) = &t.node {
             let kids = self.nodes[id].kids.clone();
             let equality = is_int(a) || env.beq_is_equality(a);
-            if std::env::var_os("AVER_TABLE_DEBUG_EQ").is_some() && !equality {
-                eprintln!("table: eq untyped {:?} / {:?}: {}", a.ty(), b.ty(), crate::ir::proof_steps::show::term(&t, env.inputs.symbol_table));
-            }
             if equality && self.bool_of(id) == Some(true) && self.fire(id, 5) {
                 self.merge(
                     kids[0],
@@ -1206,7 +1195,7 @@ impl Table {
     fn unfold_round(&mut self, env: &mut Env<'_>) {
         let n = self.nodes.len();
         for id in 0..n {
-            if self.opened[id] || self.full || self.nodes[id].depth >= MAX_OPEN_GEN() {
+            if self.opened[id] || self.full || self.nodes[id].depth >= MAX_OPEN_GEN {
                 continue;
             }
             self.gen_now = self.nodes[id].depth + 1;
@@ -1469,7 +1458,7 @@ impl Table {
                 };
                 let cands = self.by_key.get(&key).cloned().unwrap_or_default();
                 for n in cands {
-                    if self.nodes[n].kids.len() != pkids.len() || self.nodes[n].depth >= MAX_GEN() {
+                    if self.nodes[n].kids.len() != pkids.len() || self.nodes[n].depth >= MAX_GEN {
                         continue;
                     }
                     let mut here = Vec::new();
@@ -1482,7 +1471,7 @@ impl Table {
                             .chain([self.nodes[n].depth])
                             .max()
                             .unwrap_or(0);
-                        if g >= MAX_GEN() && !wall {
+                        if g >= MAX_GEN && !wall {
                             continue;
                         }
                         mine += 1;
@@ -2224,11 +2213,7 @@ impl Table {
             }
         }
         if self.same(l, r) {
-            let p = self.explain(l, r);
-            if p.is_none() && std::env::var_os("AVER_TABLE_DEBUG").is_some() {
-                eprintln!("table: joined but not explained");
-            }
-            return p;
+            return self.explain(l, r);
         }
         if self.same(self.t, self.f) {
             return Some(Proof::Absurd {
