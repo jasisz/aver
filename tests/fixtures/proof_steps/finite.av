@@ -26,6 +26,11 @@ verify next law cyclesInThree
     given l: Light = [Light.Red, Light.Amber, Light.Green]
     next(next(next(l))) => l
 
+verify next law tellsLightsApart
+    given a: Light = [Light.Red, Light.Amber, Light.Green]
+    given b: Light = [Light.Red, Light.Amber, Light.Green]
+    next(a) == next(b) => a == b
+
 fn safe(l: Light) -> Bool
     ? "Whether traffic must stop."
     match l

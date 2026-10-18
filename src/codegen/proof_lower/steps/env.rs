@@ -54,6 +54,10 @@ pub(crate) struct Env<'a> {
     /// The last [`Env::opened_views`], with the hypotheses it read and the
     /// definitions it looked up, in order.
     pub(crate) views_memo: Option<Box<ViewsMemo>>,
+    /// Inside a case of a split on a countdown's guard (see
+    /// `Env::countdown_guard`): another countdown splits there only on a
+    /// guard linear arithmetic decides, so one case closes at once.
+    pub countdown_split: bool,
     pub fuel: usize,
     /// Fuel for evaluating hypotheses to their normal form
     /// ([`Env::normal_fact`]), apart from `fuel`, so stating hypotheses
@@ -305,6 +309,7 @@ impl<'a> Env<'a> {
             auto_laws: Vec::new(),
             hyps: Vec::new(),
             views_memo: None,
+            countdown_split: false,
             fuel: FUEL,
             normal_fuel: 2000,
             next_hyp: 0,

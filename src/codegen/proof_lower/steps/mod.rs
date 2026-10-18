@@ -988,8 +988,21 @@ fn produce(
     hints: &mut Found,
 ) -> Produced {
     // A table of equal terms ([`egraph`]) is built here, where a law is
-    // closed, and not for the hints a law left open is tried again for.
-    egraph::with_tables(|| produce_as(inputs, ir, i, &ir.law_theorems[i], auto, env::FUEL, hints))
+    // closed, and not for the hints a law left open is tried again for;
+    // nor for a law the compiler generated (a name in the `__` namespace),
+    // whose functions the Lean export writes in a shape a table's steps
+    // do not elaborate against.
+    let t = &ir.law_theorems[i];
+    if inputs
+        .symbol_table
+        .fn_entry(t.fn_id)
+        .key
+        .name
+        .starts_with("__")
+    {
+        return produce_as(inputs, ir, i, t, auto, env::FUEL, hints);
+    }
+    egraph::with_tables(|| produce_as(inputs, ir, i, t, auto, env::FUEL, hints))
 }
 
 /// [`produce`] for `t` standing where law `i` stands: law `i` itself, or
