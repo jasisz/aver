@@ -34,10 +34,6 @@ const MAX_NESTING: usize = 96;
 #[cfg(target_family = "wasm")]
 const MAX_NESTING: usize = 24;
 
-/// Rounds of [`Env::meet_by_rewriting`], one rewrite of each side per
-/// round.
-const MAX_REWRITE_ROUNDS: usize = 256;
-
 /// Most earlier laws of the automatic pass that one stopped term is
 /// rewritten with candidates of, in file order.
 pub(crate) const MAX_AUTO_CANDIDATES: usize = 4;
@@ -45,44 +41,6 @@ pub(crate) const MAX_AUTO_CANDIDATES: usize = 4;
 /// Whether `part` occurs in `t`.
 fn holds(t: &Term, part: &Term) -> bool {
     *term::canon_ref(t) == *part || term::children(t).into_iter().any(|c| holds(c, part))
-}
-
-/// The left argument `a` where `l` holds `Bool.or(a, b)` (or `Bool.and`)
-/// at a position where `r` holds it with the arguments the other way
-/// round, the two terms alike everywhere else on the way there.
-fn swapped_connective(l: &Term, r: &Term) -> Option<Term> {
-    fn walk(l: &Term, r: &Term) -> Option<Term> {
-        if l == r {
-            return None;
-        }
-        if let (
-            ResolvedExpr::Call(ResolvedCallee::Builtin(f), xs),
-            ResolvedExpr::Call(ResolvedCallee::Builtin(g), ys),
-        ) = (&l.node, &r.node)
-            && f == g
-            && matches!(f.as_str(), "Bool.or" | "Bool.and")
-            && xs.len() == 2
-            && ys.len() == 2
-            && xs[0] == ys[1]
-            && xs[1] == ys[0]
-        {
-            return Some(xs[0].clone());
-        }
-        let (cl, cr) = (term::children(l), term::children(r));
-        if cl.is_empty() || cl.len() != cr.len() {
-            return None;
-        }
-        // The same head: `l` with the children of `r` is `r`.
-        let mut same = l.clone();
-        for (i, c) in cr.iter().enumerate() {
-            same = term::with_child(&same, i, (*c).clone());
-        }
-        if same != *r {
-            return None;
-        }
-        cl.into_iter().zip(cr).find_map(|(a, b)| walk(a, b))
-    }
-    walk(&canon(l), &canon(r))
 }
 
 /// Complements: `(a P b) = v` decides `(a Q b) = w`.
@@ -673,44 +631,6 @@ fn open_literal_path(t: &Term) -> Option<Vec<usize>> {
             path.insert(0, i);
             Some(path)
         })
-}
-
-/// The position of the first list literal in `t` with an element, closed
-/// or not, outside any `match`.
-fn any_literal_path(t: &Term) -> Option<Vec<usize>> {
-    if matches!(t.node, ResolvedExpr::Match { .. }) {
-        return None;
-    }
-    if let ResolvedExpr::List(xs) = &t.node
-        && !xs.is_empty()
-    {
-        return Some(Vec::new());
-    }
-    term::children(t)
-        .into_iter()
-        .enumerate()
-        .find_map(|(i, c)| {
-            let mut path = any_literal_path(c)?;
-            path.insert(0, i);
-            Some(path)
-        })
-}
-
-/// `t = t'`, where `t'` writes every list literal of `t` with an element,
-/// a closed one too, as cells all the way down (`[1, 2]` as
-/// `List.prepend(1, List.prepend(2, []))`), one [`Proof::Cell`] step per
-/// element; `None` when there is none, or more than 64 elements.
-fn every_literal_as_cells(t: &Term) -> Option<Chain> {
-    let mut chain = Chain::new(&canon(t));
-    while let Some(path) = any_literal_path(chain.cur()) {
-        if chain.len() >= 64 {
-            return None;
-        }
-        let list = term::at(chain.cur(), &path).clone();
-        let cell = term::cell_of(&list)?;
-        chain.push_at(&path, Proof::Cell { list }, &cell);
-    }
-    (!chain.is_empty()).then_some(chain)
 }
 
 /// Whether `t` has, outside any `match`, a list literal with an element or
@@ -3832,7 +3752,7 @@ impl Env<'_> {
         }
         // Hypotheses that contradict each other once read again: list
         // lengths, and normal forms (see [`super::hypotheses`]).
-        if !experiment_off("REFUTE_CASE") && let Some(proof) = self.refute_case(lhs, rhs) {
+        if let Some(proof) = self.refute_case(lhs, rhs) {
             return Ok(Ok(proof));
         }
         // A disjunction in scope: split on its left side, and where
@@ -3847,7 +3767,6 @@ impl Env<'_> {
         // A predicate hypothesis that chooses by a Bool: open it at the
         // arm its guard selects, splitting on the guard when it is open.
         if depth > 0
-            && !experiment_off("OPEN_HYP")
             && let Some(proof) = self.open_hypothesis(lhs, rhs, depth)?
         {
             return Ok(Ok(proof));
@@ -3856,7 +3775,6 @@ impl Env<'_> {
         // list cell or a constructor): evaluated, it contradicts its stated
         // value and closes the case, or its lines are cut in.
         if depth > 0
-            && !experiment_off("EVAL_HYP")
             && let Some(proof) = self.evaluate_hypothesis(lhs, rhs, depth)?
         {
             return Ok(Ok(proof));
@@ -3910,32 +3828,10 @@ impl Env<'_> {
         {
             return Ok(Ok(proof));
         }
-        // Last, rewriting both sides to a normal form with the cited laws
-        // and the builtin list facts.
-        if !experiment_off("REWRITE") && let Some(proof) = self.meet_by_rewriting(&nl, &nr)? {
-            return Ok(Ok(proof));
-        }
-        // Two sides that differ in the order of a `Bool.or` or a `Bool.and`
-        // (`Bool.or(a, b)` and `Bool.or(b, a)`), or a side stopped at a
-        // countdown whose guard is an open Int comparison: split on that
-        // Bool, as a `because` line stating it either way would. With `a`
-        // decided both connectives compute to one term, and the countdown
-        // opens at the arm its guard selects. The sides are compared at
-        // one position, never rewritten, so this is no search; a split
-        // that does not close is undone.
-        if depth > 0
-            && !experiment_off("OPEN_ORDER")
-            && let Some(proof) = self.split_on_open_order(nl.cur(), nr.cur(), depth)
-        {
-            let rc = nr.cur().clone();
-            nl.push(proof, rc);
-            return Ok(Ok(meet(nl, nr)));
-        }
         // Nothing closed the case as its hypotheses are stated: evaluate
         // them the way the claim was, and the claim again under them.
-        if !experiment_off("EVALUATED")
-            && let Some(proof) =
-                self.prove_with_evaluated_hypotheses(lhs, rhs, &[nl.cur(), nr.cur()], depth)
+        if let Some(proof) =
+            self.prove_with_evaluated_hypotheses(lhs, rhs, &[nl.cur(), nr.cur()], depth)
         {
             return Ok(Ok(proof));
         }
@@ -3953,117 +3849,6 @@ impl Env<'_> {
         Err(self.stopped_at(nl.cur(), nr.cur()))
     }
 
-    /// Where evaluation stopped at two different terms: rewrite each side
-    /// toward a normal form with the cited laws and the builtin facts of
-    /// [`crate::ir::proof_steps::facts::NORMALIZING`], one rewrite at a
-    /// time at the outermost-leftmost position (a cited law before a fact,
-    /// the smallest result among several, see [`pick_rewrite`]), each
-    /// followed by evaluation again, so a literal a rewrite leaves behind
-    /// computes and a hypothesis applies to what the rewrite exposed. The
-    /// sides meet or the attempt gives up: when neither side changes, when
-    /// a side would come back to a term it already had, or after
-    /// [`MAX_REWRITE_ROUNDS`] rounds; every rewrite also burns fuel. A
-    /// failed attempt leaves the fuel and the cited laws as it found them,
-    /// for what the caller tries next.
-    fn meet_by_rewriting(&mut self, nl: &Chain, nr: &Chain) -> Result<Option<Proof>, String> {
-        use super::rewrite::Equation;
-        let eqs: Vec<Equation> = self
-            .rewrite_laws
-            .iter()
-            .chain(self.fact_rules.iter())
-            .chain(self.auto_laws.iter())
-            .cloned()
-            .map(|l| Equation::Law(Box::new(l)))
-            .collect();
-        if eqs.is_empty() {
-            return Ok(None);
-        }
-        let (fuel, laws) = (self.fuel, self.laws.clone());
-        match self.rewrite_to_meet(&eqs, nl, nr) {
-            Ok(Some(proof)) => Ok(Some(proof)),
-            _ => {
-                self.fuel = fuel;
-                self.laws = laws;
-                Ok(None)
-            }
-        }
-    }
-
-    fn rewrite_to_meet(
-        &mut self,
-        eqs: &[super::rewrite::Equation],
-        nl: &Chain,
-        nr: &Chain,
-    ) -> Result<Option<Proof>, String> {
-        if let Some(proof) = self.same_up_to_cells(nl, nr) {
-            return Ok(Some(proof));
-        }
-        let mut sides = [nl.clone(), nr.clone()];
-        let mut seen = [vec![canon(nl.cur())], vec![canon(nr.cur())]];
-        for _ in 0..MAX_REWRITE_ROUNDS {
-            let mut changed = false;
-            for i in 0..2 {
-                self.burn()?;
-                let cur = sides[i].cur().clone();
-                let Some((path, proof, to)) = self.rewrite_somewhere(eqs, &cur, &mut Vec::new())?
-                else {
-                    continue;
-                };
-                let mut next = sides[i].clone();
-                next.push_at(&path, proof, &to);
-                let again = self.normalize(&next.cur().clone(), 8)?;
-                if !again.is_empty() {
-                    let (to, proof) = again.finish();
-                    next.push(proof, to);
-                }
-                let now = canon(next.cur());
-                if seen[i].contains(&now) {
-                    continue;
-                }
-                seen[i].push(now);
-                sides[i] = next;
-                changed = true;
-                if let Some(proof) = self.same_up_to_cells(&sides[0], &sides[1]) {
-                    return Ok(Some(proof));
-                }
-            }
-            if !changed {
-                break;
-            }
-        }
-        Ok(None)
-    }
-
-    /// `l` and `r` meet as they stand, or once every list literal in both
-    /// is written as cells and evaluated again: a literal a computation
-    /// gave (`[128]`) against the cell (`List.prepend(128, rest)`) the
-    /// other side built.
-    fn same_up_to_cells(&mut self, l: &Chain, r: &Chain) -> Option<Proof> {
-        if term::canon_eq(l.cur(), r.cur()) {
-            return Some(meet(l.clone(), r.clone()));
-        }
-        let mut sides = [l.clone(), r.clone()];
-        let mut celled = false;
-        for side in sides.iter_mut() {
-            let Some(cells) = every_literal_as_cells(side.cur()) else {
-                continue;
-            };
-            celled = true;
-            let (to, proof) = cells.finish();
-            side.push(proof, to);
-            let again = self.normalize(&side.cur().clone(), 8).ok()?;
-            if !again.is_empty() {
-                let (to, proof) = again.finish();
-                side.push(proof, to);
-            }
-        }
-        if !celled || !term::canon_eq(sides[0].cur(), sides[1].cur()) {
-            return None;
-        }
-        let [l, r] = sides;
-        Some(meet(l, r))
-    }
-
     /// The first Int comparison, not decided by a hypothesis, among the
     /// leaves of the `Bool.and` / `Bool.or` / `Bool.not` tree `t`.
     fn connective_comparison(&self, t: &Term) -> Option<Term> {
@@ -4079,105 +3864,6 @@ impl Env<'_> {
                 b,
             ) if (is_int(a) || is_int(b)) && self.hyp_for(t).is_none() => Some(canon(t)),
             _ => None,
-        }
-    }
-
-    /// [`Env::nothing_to_split`]'s last split: on `a` where the sides
-    /// differ in the order of a connective, else on an open countdown
-    /// guard in a side, or in a hypothesis where the sides are `true` and
-    /// `false` (inside such a split, only on one linear arithmetic
-    /// decides).
-    fn split_on_open_order(&mut self, l: &Term, r: &Term, depth: usize) -> Option<Proof> {
-        if let Some(a) = swapped_connective(l, r)
-            && let Some(proof) = self.split_or_undo(&a, l, r, depth)
-        {
-            return Some(proof);
-        }
-        // A hypothesis is looked at only once the sides are two different
-        // Bools: what is left is to show the case cannot happen.
-        let hyps: Vec<Term> = if is_bool_value(l) && is_bool_value(r) {
-            self.hyps.iter().map(|(_, e)| e.lhs.clone()).collect()
-        } else {
-            Vec::new()
-        };
-        let g = [l, r]
-            .into_iter()
-            .chain(hyps.iter())
-            .find_map(|t| self.countdown_guard(t))?;
-        if self.countdown_split && self.decide_linearly(&g).is_none() {
-            return None;
-        }
-        let outer = std::mem::replace(&mut self.countdown_split, true);
-        let proof = self.split_or_undo(&g, l, r, depth);
-        self.countdown_split = outer;
-        proof
-    }
-
-    /// The guard of the first call in `t` of a countdown (a function
-    /// recursing on an Int towards a `match` on a comparison, `match n <= 0`,
-    /// not a division down to zero) that evaluation left closed because
-    /// nothing in scope decides it.
-    fn countdown_guard(&mut self, t: &Term) -> Option<Term> {
-        if let ResolvedExpr::Call(ResolvedCallee::Fn(id), args) = &t.node
-            && let Some(def) = self.def(*id)
-            && let ResolvedExpr::Match { subject, .. } = &def.body.node
-            && self.counts_down(&def) == (true, false)
-            && let Ok(outer) = def.outer(args)
-            && let Ok(s) = term::subst(subject, &outer)
-            && let s = canon(&s)
-            && let ResolvedExpr::BinOp(
-                BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte | BinOp::Eq | BinOp::Neq,
-                a,
-                b,
-            ) = &s.node
-            && (is_int(a) || is_int(b))
-            && term::eval_closed(&s).is_none()
-            && self.hyp_for(&s).is_none()
-            && self.complement(&s).is_none()
-        {
-            return Some(s);
-        }
-        // A call that is a part of an Int term (`pow2(n) * k`, a quotient)
-        // stays closed: linear arithmetic reads it as an atom, and opening
-        // it trades a call the facts in scope talk about for one they do
-        // not.
-        if is_int(t) && !matches!(t.node, ResolvedExpr::Call(ResolvedCallee::Fn(_), _)) {
-            return None;
-        }
-        term::children(t)
-            .into_iter()
-            .find_map(|c| self.countdown_guard(c))
-    }
-
-    /// `lc = rc` by cases on `g`, each branch evaluated on from `lc` and
-    /// `rc`; `None`, with the fuel, the cited laws and the hypothesis
-    /// names as they were, where a branch does not close.
-    fn split_or_undo(&mut self, g: &Term, lc: &Term, rc: &Term, depth: usize) -> Option<Proof> {
-        if depth == 0 || is_bool_value(g) || self.hyp_for(g).is_some() {
-            return None;
-        }
-        let (fuel, laws, named) = (self.fuel, self.laws.clone(), self.next_hyp_count());
-        let hyp = self.fresh_hyp();
-        let branch = |env: &mut Self, v: bool| -> Result<Proof, String> {
-            env.hyps
-                .push((hyp.clone(), Eqn::new(canon(g), term::boolean(v))));
-            let out = env.prove_by_evaluation(lc, rc, depth - 1);
-            env.hyps.pop();
-            out
-        };
-        match branch(self, true).and_then(|t| Ok((t, branch(self, false)?))) {
-            Ok((if_true, if_false)) => Some(Proof::Cases {
-                on: canon(g),
-                hyp,
-                if_true: Box::new(if_true),
-                if_false: Box::new(if_false),
-            }),
-            Err(_) => {
-                self.fuel = fuel;
-                self.laws = laws;
-                self.rewind_hyp_count(named);
-                None
-            }
         }
     }
 
@@ -5078,11 +4764,6 @@ impl Env<'_> {
             }
         }
     }
-}
-
-/// Prototype measurement only: whether `AVER_STEPS_OFF` names `piece`.
-pub(crate) fn experiment_off(piece: &str) -> bool {
-    std::env::var("AVER_STEPS_OFF").is_ok_and(|v| v.split(',').any(|p| p == piece))
 }
 
 pub(crate) fn empty_script() -> crate::ir::proof_steps::Script {

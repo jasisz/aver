@@ -2196,7 +2196,7 @@ impl Table {
                     None => break,
                 }
             }
-            if let [if_true, if_false] = <[Proof; 2]>::try_from(cases).ok()? {
+            if let Ok([if_true, if_false]) = <[Proof; 2]>::try_from(cases) {
                 return Some(Proof::Cases {
                     on,
                     hyp: h,
