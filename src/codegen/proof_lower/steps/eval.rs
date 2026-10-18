@@ -34,6 +34,10 @@ const MAX_NESTING: usize = 96;
 #[cfg(target_family = "wasm")]
 const MAX_NESTING: usize = 24;
 
+/// Rounds of [`Env::meet_by_rewriting`], one rewrite of each side per
+/// round.
+const MAX_REWRITE_ROUNDS: usize = 256;
+
 /// Most earlier laws of the automatic pass that one stopped term is
 /// rewritten with candidates of, in file order.
 pub(crate) const MAX_AUTO_CANDIDATES: usize = 4;
@@ -671,6 +675,44 @@ fn open_literal_path(t: &Term) -> Option<Vec<usize>> {
         })
 }
 
+/// The position of the first list literal in `t` with an element, closed
+/// or not, outside any `match`.
+fn any_literal_path(t: &Term) -> Option<Vec<usize>> {
+    if matches!(t.node, ResolvedExpr::Match { .. }) {
+        return None;
+    }
+    if let ResolvedExpr::List(xs) = &t.node
+        && !xs.is_empty()
+    {
+        return Some(Vec::new());
+    }
+    term::children(t)
+        .into_iter()
+        .enumerate()
+        .find_map(|(i, c)| {
+            let mut path = any_literal_path(c)?;
+            path.insert(0, i);
+            Some(path)
+        })
+}
+
+/// `t = t'`, where `t'` writes every list literal of `t` with an element,
+/// a closed one too, as cells all the way down (`[1, 2]` as
+/// `List.prepend(1, List.prepend(2, []))`), one [`Proof::Cell`] step per
+/// element; `None` when there is none, or more than 64 elements.
+fn every_literal_as_cells(t: &Term) -> Option<Chain> {
+    let mut chain = Chain::new(&canon(t));
+    while let Some(path) = any_literal_path(chain.cur()) {
+        if chain.len() >= 64 {
+            return None;
+        }
+        let list = term::at(chain.cur(), &path).clone();
+        let cell = term::cell_of(&list)?;
+        chain.push_at(&path, Proof::Cell { list }, &cell);
+    }
+    (!chain.is_empty()).then_some(chain)
+}
+
 /// Whether `t` has, outside any `match`, a list literal with an element or
 /// a call without arguments: what [`as_cells`] and
 /// [`Env::fold_constants`] look for before they change anything.
@@ -844,6 +886,7 @@ impl Env<'_> {
             self.proving_cited_when,
             self.discharging,
             self.wide_linear,
+            super::egraph::tables_on(),
         );
         let kept = memo
             .borrow()
@@ -3866,6 +3909,11 @@ impl Env<'_> {
         {
             return Ok(Ok(proof));
         }
+        // Then rewriting both sides to a normal form with the cited laws
+        // and the builtin list facts.
+        if let Some(proof) = self.meet_by_rewriting(&nl, &nr)? {
+            return Ok(Ok(proof));
+        }
         // Two sides that differ in the order of a `Bool.or` or a `Bool.and`
         // (`Bool.or(a, b)` and `Bool.or(b, a)`), or a side stopped at a
         // countdown whose guard is an open Int comparison: split on that
@@ -3900,6 +3948,117 @@ impl Env<'_> {
             return Ok(Ok(meet(nl, nr)));
         }
         Err(self.stopped_at(nl.cur(), nr.cur()))
+    }
+
+    /// Where evaluation stopped at two different terms: rewrite each side
+    /// toward a normal form with the cited laws and the builtin facts of
+    /// [`crate::ir::proof_steps::facts::NORMALIZING`], one rewrite at a
+    /// time at the outermost-leftmost position (a cited law before a fact,
+    /// the smallest result among several, see [`pick_rewrite`]), each
+    /// followed by evaluation again, so a literal a rewrite leaves behind
+    /// computes and a hypothesis applies to what the rewrite exposed. The
+    /// sides meet or the attempt gives up: when neither side changes, when
+    /// a side would come back to a term it already had, or after
+    /// [`MAX_REWRITE_ROUNDS`] rounds; every rewrite also burns fuel. A
+    /// failed attempt leaves the fuel and the cited laws as it found them,
+    /// for what the caller tries next.
+    fn meet_by_rewriting(&mut self, nl: &Chain, nr: &Chain) -> Result<Option<Proof>, String> {
+        use super::rewrite::Equation;
+        let eqs: Vec<Equation> = self
+            .rewrite_laws
+            .iter()
+            .chain(self.fact_rules.iter())
+            .chain(self.auto_laws.iter())
+            .cloned()
+            .map(|l| Equation::Law(Box::new(l)))
+            .collect();
+        if eqs.is_empty() {
+            return Ok(None);
+        }
+        let (fuel, laws) = (self.fuel, self.laws.clone());
+        match self.rewrite_to_meet(&eqs, nl, nr) {
+            Ok(Some(proof)) => Ok(Some(proof)),
+            _ => {
+                self.fuel = fuel;
+                self.laws = laws;
+                Ok(None)
+            }
+        }
+    }
+
+    fn rewrite_to_meet(
+        &mut self,
+        eqs: &[super::rewrite::Equation],
+        nl: &Chain,
+        nr: &Chain,
+    ) -> Result<Option<Proof>, String> {
+        if let Some(proof) = self.same_up_to_cells(nl, nr) {
+            return Ok(Some(proof));
+        }
+        let mut sides = [nl.clone(), nr.clone()];
+        let mut seen = [vec![canon(nl.cur())], vec![canon(nr.cur())]];
+        for _ in 0..MAX_REWRITE_ROUNDS {
+            let mut changed = false;
+            for i in 0..2 {
+                self.burn()?;
+                let cur = sides[i].cur().clone();
+                let Some((path, proof, to)) = self.rewrite_somewhere(eqs, &cur, &mut Vec::new())?
+                else {
+                    continue;
+                };
+                let mut next = sides[i].clone();
+                next.push_at(&path, proof, &to);
+                let again = self.normalize(&next.cur().clone(), 8)?;
+                if !again.is_empty() {
+                    let (to, proof) = again.finish();
+                    next.push(proof, to);
+                }
+                let now = canon(next.cur());
+                if seen[i].contains(&now) {
+                    continue;
+                }
+                seen[i].push(now);
+                sides[i] = next;
+                changed = true;
+                if let Some(proof) = self.same_up_to_cells(&sides[0], &sides[1]) {
+                    return Ok(Some(proof));
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        Ok(None)
+    }
+
+    /// `l` and `r` meet as they stand, or once every list literal in both
+    /// is written as cells and evaluated again: a literal a computation
+    /// gave (`[128]`) against the cell (`List.prepend(128, rest)`) the
+    /// other side built.
+    fn same_up_to_cells(&mut self, l: &Chain, r: &Chain) -> Option<Proof> {
+        if term::canon_eq(l.cur(), r.cur()) {
+            return Some(meet(l.clone(), r.clone()));
+        }
+        let mut sides = [l.clone(), r.clone()];
+        let mut celled = false;
+        for side in sides.iter_mut() {
+            let Some(cells) = every_literal_as_cells(side.cur()) else {
+                continue;
+            };
+            celled = true;
+            let (to, proof) = cells.finish();
+            side.push(proof, to);
+            let again = self.normalize(&side.cur().clone(), 8).ok()?;
+            if !again.is_empty() {
+                let (to, proof) = again.finish();
+                side.push(proof, to);
+            }
+        }
+        if !celled || !term::canon_eq(sides[0].cur(), sides[1].cur()) {
+            return None;
+        }
+        let [l, r] = sides;
+        Some(meet(l, r))
     }
 
     /// The first Int comparison, not decided by a hypothesis, among the
