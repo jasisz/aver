@@ -52,6 +52,8 @@ const MAX_DECIDE: usize = 24;
 const MAX_FACTS: usize = 32;
 /// Most tables one obligation builds.
 pub(crate) const MAX_TABLES: usize = 48;
+/// Most explanations nested one inside another.
+const MAX_EXPLAIN: usize = 48;
 /// Most cases on a Bool side one table opens, one inside another.
 const MAX_SPLITS: usize = 2;
 /// Largest proof a table hands back.
@@ -231,6 +233,8 @@ pub(crate) struct Table {
     f: Id,
     /// Hypothesis names the explanations have given out.
     names: std::cell::Cell<usize>,
+    /// How many explanations are in progress, one inside another.
+    explaining: std::cell::Cell<usize>,
     /// The generation new terms are added at.
     gen_now: u8,
     /// The comparisons a `match` waits for to open a definition.
@@ -438,6 +442,7 @@ impl Table {
             t: 0,
             f: 0,
             names: std::cell::Cell::new(0),
+            explaining: std::cell::Cell::new(0),
             gen_now: 0,
             guards: Vec::new(),
             decided_at: HashMap::new(),
@@ -638,11 +643,24 @@ impl Table {
         out
     }
 
-    /// `term(a) = term(b)` for two joined entries.
+    /// `term(a) = term(b)` for two joined entries; `None` where the
+    /// explanation nests deeper than [`MAX_EXPLAIN`] (its proof would be
+    /// too big to hand back anyway).
     fn explain(&self, a: Id, b: Id) -> Option<Proof> {
         if a == b {
             return Some(Proof::Refl(self.term(a).clone()));
         }
+        let depth = self.explaining.get();
+        if depth >= MAX_EXPLAIN {
+            return None;
+        }
+        self.explaining.set(depth + 1);
+        let out = self.explain_path(a, b);
+        self.explaining.set(depth);
+        out
+    }
+
+    fn explain_path(&self, a: Id, b: Id) -> Option<Proof> {
         let pa = self.path_up(a);
         let pb = self.path_up(b);
         let lca = *pa.iter().find(|x| pb.contains(x))?;
@@ -2447,6 +2465,13 @@ impl Env<'_> {
         rhs: &Term,
         before: &[(Term, Term, Proof)],
     ) -> Option<Proof> {
+        if std::env::var_os("AVER_TABLE_TRACE").is_some() {
+            eprintln!(
+                "table: start `{}` = `{}`",
+                crate::ir::proof_steps::show::term(lhs, self.inputs.symbol_table),
+                crate::ir::proof_steps::show::term(rhs, self.inputs.symbol_table)
+            );
+        }
         let mut table = Table::new();
         table.names.set(self.table_names);
         table.load_rewrites(self);
