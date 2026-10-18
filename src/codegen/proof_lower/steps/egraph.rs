@@ -14,7 +14,10 @@
 //! Each join remembers why it was made, so the equality of any two terms
 //! of one entry is a path of joins: a hypothesis, a law instance, an
 //! opened definition or a congruence, written as `trans`, `symm`, `congr`,
-//! `hyp`, `law` and `unfold` steps. The comparisons the table knows are
+//! `hyp`, `law` and `unfold` steps. Of all the joins the table was given,
+//! also those of two terms it held equal already, the path taken is the
+//! one whose proof writes the least, each join's own parts explained the
+//! same way by the joins made before it; each explanation is made once. The comparisons the table knows are
 //! handed to linear arithmetic, with `x != k` read as `x < k` or `x > k`
 //! where a range brings `k` to its edge; a sum whose part is joined with
 //! another sum is read as one polynomial (a `ring` step).
@@ -150,6 +153,8 @@ struct Node {
     /// How many law instances and openings stand between the term and the
     /// sides and hypotheses the table started from.
     depth: u8,
+    /// How many parts the term has.
+    parts: usize,
 }
 
 /// A law or rule the table matches: `lhs = rhs` over `vars`, under
@@ -223,6 +228,23 @@ pub(crate) struct Table {
     members: Vec<Vec<Id>>,
     uses: Vec<Vec<Id>>,
     edge: Vec<Option<(Id, Why, bool)>>,
+    /// Every join the table was given, in order, also of two terms it
+    /// held equal already: an explanation takes the lightest path of them.
+    joins: Vec<(Id, Id, Why)>,
+    /// For each entry, the joins it is a side of: the other side and the
+    /// join's place in `joins`.
+    adj: Vec<Vec<(Id, usize)>>,
+    /// The joins an explanation in progress may read: those before this
+    /// place, made before the join it explains.
+    bound: std::cell::Cell<usize>,
+    /// For each join, the weight of its proof with its parts explained the
+    /// lightest way (`usize::MAX` where it has none), as far as computed.
+    join_weights: std::cell::RefCell<Vec<usize>>,
+    /// The explanations made, by their two entries and the joins they read.
+    explained: std::cell::RefCell<HashMap<(Id, Id, usize), Proof>>,
+    /// While a join's weight is measured: the explanations its proof asks
+    /// for, which are not made.
+    asked: std::cell::RefCell<Option<Vec<(Id, Id)>>>,
     pending: Vec<(Id, Id, Why)>,
     fired: HashSet<(Id, u8)>,
     opened: Vec<bool>,
@@ -285,6 +307,11 @@ fn head(t: &Term) -> (String, bool) {
         E::Match { arms, .. } => (format!("m{arms:?}"), true),
         _ => (format!("x{t:?}"), false),
     }
+}
+
+/// How many parts `t` has.
+fn term_parts(t: &Term) -> usize {
+    1 + term::children(t).into_iter().map(term_parts).sum::<usize>()
 }
 
 /// The parts linear arithmetic reads as unknowns in the Int term `t`:
@@ -508,6 +535,12 @@ impl Table {
             members: Vec::new(),
             uses: Vec::new(),
             edge: Vec::new(),
+            joins: Vec::new(),
+            adj: Vec::new(),
+            bound: std::cell::Cell::new(usize::MAX),
+            join_weights: std::cell::RefCell::new(Vec::new()),
+            explained: std::cell::RefCell::new(HashMap::new()),
+            asked: std::cell::RefCell::new(None),
             pending: Vec::new(),
             fired: HashSet::new(),
             opened: Vec::new(),
@@ -588,11 +621,13 @@ impl Table {
             kids: kids.clone(),
             term: t.clone(),
             depth: self.gen_now,
+            parts: term_parts(t),
         });
         self.parent.push(id);
         self.members.push(vec![id]);
         self.uses.push(Vec::new());
         self.edge.push(None);
+        self.adj.push(Vec::new());
         self.opened.push(false);
         self.by_key.entry(key.clone()).or_default().push(id);
         self.exact.insert((key, kids.clone()), id);
@@ -632,7 +667,20 @@ impl Table {
     fn merge(&mut self, a: Id, b: Id, why: Why) {
         if self.root(a) != self.root(b) {
             self.pending.push((a, b, why));
+        } else {
+            self.join(a, b, why);
         }
+    }
+
+    /// Record the join of `a` and `b` for the explanations.
+    fn join(&mut self, a: Id, b: Id, why: Why) {
+        if a == b {
+            return;
+        }
+        let k = self.joins.len();
+        self.joins.push((a, b, why));
+        self.adj[a].push((b, k));
+        self.adj[b].push((a, k));
     }
 
     /// Point the proof tree of `a` at `a`.
@@ -654,6 +702,7 @@ impl Table {
 
     fn process(&mut self) {
         while let Some((a, b, why)) = self.pending.pop() {
+            self.join(a, b, why.clone());
             let (ra, rb) = (self.root(a), self.root(b));
             if ra == rb {
                 continue;
@@ -732,6 +781,14 @@ impl Table {
         if a == b {
             return Some(Proof::Refl(self.term(a).clone()));
         }
+        if let Some(asked) = self.asked.borrow_mut().as_mut() {
+            asked.push((a, b));
+            return Some(Proof::Hyp(String::new()));
+        }
+        let key = (a, b, self.bound.get());
+        if let Some(p) = self.explained.borrow().get(&key) {
+            return Some(p.clone());
+        }
         let depth = self.explaining.get();
         if depth >= MAX_EXPLAIN {
             return None;
@@ -739,10 +796,124 @@ impl Table {
         self.explaining.set(depth + 1);
         let out = self.explain_path(a, b);
         self.explaining.set(depth);
+        if let Some(p) = &out {
+            self.explained.borrow_mut().insert(key, p.clone());
+        }
+        out
+    }
+
+    /// The lightest path of joins from `a` to `b` among those before
+    /// `self.bound`: each join weighs its proof, its parts explained the
+    /// lightest way by the joins before it, and the term it reaches. For
+    /// each join on it, the entry it reaches and its place in `joins`.
+    fn lightest(&self, a: Id, b: Id) -> Option<(usize, Vec<(Id, usize)>)> {
+        use std::cmp::Reverse;
+        let before = self.bound.get().min(self.joins.len());
+        self.weigh_joins(before);
+        let weights = self.join_weights.borrow();
+        let mut dist: HashMap<Id, usize> = HashMap::from([(a, 0)]);
+        let mut prev: HashMap<Id, (Id, usize)> = HashMap::new();
+        let mut heap = std::collections::BinaryHeap::from([Reverse((0usize, a))]);
+        while let Some(Reverse((d, x))) = heap.pop() {
+            if x == b {
+                break;
+            }
+            if dist.get(&x).is_some_and(|&best| d > best) {
+                continue;
+            }
+            for &(y, k) in &self.adj[x] {
+                if k >= before || weights[k] == usize::MAX {
+                    continue;
+                }
+                let next = d + weights[k] + self.nodes[y].parts + 1;
+                if dist.get(&y).is_none_or(|&best| next < best) {
+                    dist.insert(y, next);
+                    prev.insert(y, (x, k));
+                    heap.push(Reverse((next, y)));
+                }
+            }
+        }
+        let total = *dist.get(&b)?;
+        let mut path = Vec::new();
+        let mut cur = b;
+        while cur != a {
+            let &(x, k) = prev.get(&cur)?;
+            path.push((cur, k));
+            cur = x;
+        }
+        path.reverse();
+        Some((total, path))
+    }
+
+    /// The weight of each join before `upto`, in order: each reads only
+    /// the joins before it.
+    fn weigh_joins(&self, upto: usize) {
+        let mut k = self.join_weights.borrow().len();
+        while k < upto {
+            let w = self.weigh_join(k);
+            self.join_weights.borrow_mut().push(w);
+            k += 1;
+        }
+    }
+
+    /// The weight of join `k`'s proof, its parts explained the lightest way.
+    fn weigh_join(&self, k: usize) -> usize {
+        let (p, q, why) = &self.joins[k];
+        let bound = self.bound.replace(k);
+        let asked = self.asked.replace(Some(Vec::new()));
+        let names = self.names.get();
+        let own = match why {
+            Why::Congr => self.congr(*p, *q),
+            _ => self.realize(why, *p, *q),
+        };
+        self.names.set(names);
+        let parts = self.asked.replace(asked).unwrap_or_default();
+        let mut w = own.map_or(usize::MAX, |own| super::weight(&own));
+        for (a, b) in parts {
+            if w == usize::MAX || a == b {
+                continue;
+            }
+            w = match self.lightest(a, b) {
+                Some((d, _)) => w.saturating_add(d),
+                None => usize::MAX,
+            };
+        }
+        self.bound.set(bound);
+        w
+    }
+
+    /// `term(x) = term(y)` by join `k`, its parts explained by the joins
+    /// before it.
+    fn join_proof(&self, x: Id, y: Id, k: usize) -> Option<Proof> {
+        let (p, q, why) = &self.joins[k];
+        let saved = self.bound.replace(k);
+        let out = match why {
+            Why::Congr => self.congr(x, y),
+            _ => {
+                let fwd = (*p, *q) == (x, y);
+                self.realize(why, *p, *q)
+                    .map(|r| if fwd { r } else { Proof::Symm(Box::new(r)) })
+            }
+        };
+        self.bound.set(saved);
         out
     }
 
     fn explain_path(&self, a: Id, b: Id) -> Option<Proof> {
+        if let Some((_, path)) = self.lightest(a, b) {
+            let mut steps = Vec::new();
+            let mut x = a;
+            for (y, k) in path {
+                match self.join_proof(x, y, k) {
+                    Some(p) => steps.push((self.term(y).clone(), p)),
+                    None => break,
+                }
+                x = y;
+            }
+            if x == b {
+                return Some(chain(self.term(a), steps));
+            }
+        }
         let pa = self.path_up(a);
         let pb = self.path_up(b);
         let lca = *pa.iter().find(|x| pb.contains(x))?;
@@ -3142,6 +3313,28 @@ mod tests {
 
     fn explain_alone(t: &Table, a: Id, b: Id) -> Option<Proof> {
         t.explain(a, b)
+    }
+
+    #[test]
+    fn an_explanation_takes_the_lightest_path_not_the_order_of_the_joins() {
+        let vars: Vec<Term> = ["a", "b", "c", "d"].iter().map(|n| int_var(n)).collect();
+        let mut t = Table::new();
+        let ids: Vec<Id> = vars.iter().map(|v| t.add(v).unwrap()).collect();
+        // `a = b = c = d` first, then `a = d` itself, which the table
+        // already holds.
+        for (i, h) in ["h1", "h2", "h3"].iter().enumerate() {
+            t.merge(ids[i], ids[i + 1], Why::Given(Proof::Hyp((*h).into())));
+            t.process();
+        }
+        t.merge(ids[0], ids[3], Why::Given(Proof::Hyp("h4".into())));
+        t.process();
+        assert_eq!(
+            explain_alone(&t, ids[0], ids[3]),
+            Some(Proof::Hyp("h4".into()))
+        );
+        // And the path the joins made where it is the only one.
+        let p = explain_alone(&t, ids[1], ids[2]).unwrap();
+        assert_eq!(p, Proof::Hyp("h2".into()));
     }
 
     /// `f` with an environment that knows no definition and cites no law,
