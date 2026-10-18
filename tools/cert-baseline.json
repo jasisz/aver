@@ -1538,6 +1538,7 @@
    "last": "L1"
   },
   "laws": [
+   "last.lastAppend",
    "last.lastConsNonEmpty",
    "last.lastSnoc"
   ]

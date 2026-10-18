@@ -45,6 +45,7 @@ mod by_plan;
 mod chain;
 mod decls;
 mod divisor;
+mod egraph;
 mod env;
 mod eval;
 mod evaluated;
@@ -762,6 +763,17 @@ fn prove_part(
                 }
             }
         }
+        // A table of equal terms over the claim as stated, its hypotheses,
+        // the cited laws and the facts (see [`egraph`]): where evaluation
+        // ran out of fuel before it stopped anywhere, the table never saw
+        // the claim.
+        if found.is_none() {
+            let mut table_env = fresh();
+            if let Some(proof) = table_env.close_by_table(&canon(&ob.lhs), &canon(&ob.rhs), &[]) {
+                env = table_env;
+                found = Some(proof);
+            }
+        }
         // Last, a split on an open line of a cited law's `when`; the splits
         // share half of one attempt's fuel.
         let mut tried = Vec::new();
@@ -975,7 +987,22 @@ fn produce(
     auto: &[LawRef],
     hints: &mut Found,
 ) -> Produced {
-    produce_as(inputs, ir, i, &ir.law_theorems[i], auto, env::FUEL, hints)
+    // A table of equal terms ([`egraph`]) is built here, where a law is
+    // closed, and not for the hints a law left open is tried again for;
+    // nor for a law the compiler generated (a name in the `__` namespace),
+    // whose functions the Lean export writes in a shape a table's steps
+    // do not elaborate against.
+    let t = &ir.law_theorems[i];
+    if inputs
+        .symbol_table
+        .fn_entry(t.fn_id)
+        .key
+        .name
+        .starts_with("__")
+    {
+        return produce_as(inputs, ir, i, t, auto, env::FUEL, hints);
+    }
+    egraph::with_tables(|| produce_as(inputs, ir, i, t, auto, env::FUEL, hints))
 }
 
 /// [`produce`] for `t` standing where law `i` stands: law `i` itself, or

@@ -165,6 +165,97 @@ pub(crate) struct Env<'a> {
     /// How many such readings are in progress, one inside the claim another
     /// went on to.
     pub reading: usize,
+    /// Whether a table of equal terms is being built ([`super::egraph`]),
+    /// so none is built inside it.
+    pub in_table: bool,
+    /// How many tables this attempt has built.
+    pub table_runs: usize,
+    /// How many hypothesis names the tables' explanations have given out.
+    pub table_names: usize,
+    /// How many evaluations of a claim are in progress, one inside another
+    /// (see `Env::prove_by_evaluation`).
+    pub evaluating: usize,
+    /// How many list splits of tables are in progress (see
+    /// [`super::egraph`]).
+    pub table_splits: usize,
+}
+
+/// Whether `id` sits in a group of definitions that call each other (a
+/// cycle through another definition) in which some member passes two or
+/// more of its own parameters of a list or named type, as they stand, to
+/// the parameter another member chooses by.
+fn fuelled_group(id: FnId, ds: &[Def]) -> bool {
+    use crate::ast::Type;
+    use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
+    use crate::ir::proof_steps::induct::def_callees;
+    // The members: the reachable definitions that reach `id` back.
+    let reaches_back = |d: &Def| -> bool {
+        let mut seen = vec![d.fn_id];
+        let mut todo = vec![d.fn_id];
+        while let Some(at) = todo.pop() {
+            let Some(def) = ds.iter().find(|x| x.fn_id == at) else {
+                continue;
+            };
+            for c in def_callees(def) {
+                if c == id {
+                    return true;
+                }
+                if !seen.contains(&c) {
+                    seen.push(c);
+                    todo.push(c);
+                }
+            }
+        }
+        false
+    };
+    let group: Vec<&Def> = ds.iter().filter(|d| reaches_back(d)).collect();
+    if !group.iter().any(|d| d.fn_id != id) {
+        return false;
+    }
+    // The parameter each member chooses by with its `match`: the one a
+    // measure of the group would count for it.
+    let measured: Vec<(FnId, usize)> = group
+        .iter()
+        .filter_map(|d| {
+            let ResolvedExpr::Match { subject, .. } = &d.body.node else {
+                return None;
+            };
+            let ResolvedExpr::Ident(n) = &subject.node else {
+                return None;
+            };
+            d.params.iter().position(|p| p == n).map(|i| (d.fn_id, i))
+        })
+        .collect();
+    fn handed(t: &Term, measured: &[(FnId, usize)], out: &mut Vec<String>) {
+        if let ResolvedExpr::Call(ResolvedCallee::Fn(f), args) = &t.node {
+            for (i, a) in args.iter().enumerate() {
+                if measured.contains(&(*f, i))
+                    && let ResolvedExpr::Ident(n) = &a.node
+                    && !out.contains(n)
+                {
+                    out.push(n.clone());
+                }
+            }
+        }
+        for c in crate::ir::proof_steps::term::children(t) {
+            handed(c, measured, out);
+        }
+        if let ResolvedExpr::Match { arms, .. } = &t.node {
+            for arm in arms.iter() {
+                handed(&arm.body, measured, out);
+            }
+        }
+    }
+    group.iter().any(|d| {
+        let mut names = Vec::new();
+        handed(&d.body, &measured, &mut names);
+        d.params
+            .iter()
+            .zip(&d.param_types)
+            .filter(|(p, ty)| names.contains(p) && matches!(ty, Type::List(_) | Type::Named { .. }))
+            .count()
+            >= 2
+    })
 }
 
 /// What [`Env::opened_views`] gave for the hypotheses `hyps`.
@@ -255,6 +346,11 @@ impl<'a> Env<'a> {
             hypotheses_as_stated: false,
             read_seen: Vec::new(),
             reading: 0,
+            in_table: false,
+            table_runs: 0,
+            table_names: 0,
+            evaluating: 0,
+            table_splits: 0,
         }
     }
 
@@ -439,6 +535,16 @@ impl<'a> Env<'a> {
             use crate::ir::proof_steps::induct;
             let ds = self.reachable_defs(id);
             if !matches!(induct::recursion(&def, &ds), Ok(Some(_))) && !induct::rooted(&def, &ds) {
+                return None;
+            }
+            // A group of definitions calling each other where one member
+            // hands two of its own parameters of a recursive type into the
+            // group (`collect(l, v, r)` calling `values(l)` and `values(r)`):
+            // the Lean export measures such a group by no single parameter
+            // and writes it with fuel, where opening a member at an arm is
+            // no definitional step. Steps leave it closed, so the kernel
+            // never accepts what Lean cannot check.
+            if fuelled_group(id, &ds) {
                 return None;
             }
             if induct::divides_down(&def, &ds) {

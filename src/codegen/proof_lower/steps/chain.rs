@@ -26,11 +26,6 @@ impl Chain {
         self.steps.is_empty()
     }
 
-    /// How many steps the chain has.
-    pub(crate) fn len(&self) -> usize {
-        self.steps.len()
-    }
-
     /// Record `proof : cur = to`.
     pub(crate) fn push(&mut self, proof: Proof, to: Term) {
         match proof {

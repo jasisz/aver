@@ -771,6 +771,7 @@ fn both_kernels_split_a_finite_given_into_every_value_and_refuse_mutations() {
             "agree.symmetric",
             "lit.offIsDark",
             "next.cyclesInThree",
+            "next.tellsLightsApart",
             "safe.notSafeMeansNextIsAmber",
         ]
     );
@@ -779,7 +780,9 @@ fn both_kernels_split_a_finite_given_into_every_value_and_refuse_mutations() {
         assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
     }
     let cycle = read("next.cyclesInThree");
-    let agree = read("agree.symmetric");
+    // Two givens, split one inside the other: no other step closes it
+    // (`agree.symmetric` the table of equal terms closes by cases).
+    let apart = read("next.tellsLightsApart");
     let safe = read("safe.notSafeMeansNextIsAmber");
     assert!(safe.contains("(absurd "), "{safe}");
     for (kind, text) in [
@@ -788,11 +791,14 @@ fn both_kernels_split_a_finite_given_into_every_value_and_refuse_mutations() {
         ("a case repeated", recase(&cycle, &[0, 1, 1])),
         (
             "the wrong given",
-            mutate_proof(&agree, "(enum b ", "(enum a "),
+            mutate_proof(&apart, "(enum b ", "(enum a "),
         ),
         (
             "a split of a given that is not finite",
-            agree.replace("((a bool) (b bool))", "((a bool) (b _))"),
+            apart.replace(
+                "((a (named Light)) (b (named Light)))",
+                "((a (named Light)) (b _))",
+            ),
         ),
         ("an absurd case that is not", {
             let open = safe.find("(absurd ").unwrap();
@@ -1076,11 +1082,18 @@ fn a_using_list_is_a_set_overlapping_rewrites_take_the_smallest_and_looping_ones
         line("sameLen.negatedAgainstOne").ends_with(" nodes"),
         "{log}"
     );
+    // A law that rewrites a term into one it applies to again is never a
+    // rewrite rule: the claim it would loop on closes by opening the
+    // definition, with at most one instance of it.
     assert!(
-        line("sameLen.negatedAgainstPadded").contains(
-            "law sameLen.commutes rewrites a term into one it applies to again, so rewriting with it never stops"
-        ),
+        line("sameLen.negatedAgainstPadded").ends_with(" nodes"),
         "{log}"
+    );
+    let padded = read("sameLen.negatedAgainstPadded");
+    let padded_proof = &padded[padded.find("\n (proof ").expect("a proof")..];
+    assert!(
+        padded_proof.matches("(law sameLen.commutes ").count() <= 1,
+        "{padded}"
     );
     let _ = fs::remove_dir_all(out);
 }
@@ -4446,12 +4459,13 @@ fn laws_close_by_the_list_facts_they_do_not_cite_and_a_stuck_one_is_hinted() {
     let _ = fs::remove_dir_all(export);
 }
 
-const NORMAL_FORM_LAWS: [&str; 8] = [
+const NORMAL_FORM_LAWS: [&str; 9] = [
     "allOn.isSpec",
     "inc.eitherWay",
     "inc.isFirst",
     "inc.isPadded",
     "incFirst.isInc",
+    "incPadded.goesRound",
     "onto.accumulatorComesFirst",
     "onto.regroupsTheEnd",
     "onto.reverseKeepsTheMark",
@@ -4464,9 +4478,10 @@ const NORMAL_FORM_LAWS: [&str; 8] = [
 /// claim at another accumulator and the facts; a `match` on a Bool the
 /// kernel knows only from the arms is split on `Bool.and(head, true)`.
 /// Each script is the kernel's to accept, a mutated one is refused, and
-/// two cited laws that rewrite each other back leave their law open.
+/// two cited laws that rewrite each other back are never followed round:
+/// their law closes by opening the definitions, applying neither.
 #[test]
-fn both_sides_are_rewritten_to_a_normal_form_and_a_rewrite_loop_stays_open() {
+fn both_sides_are_rewritten_to_a_normal_form_and_a_rewrite_loop_is_not_followed() {
     let out = scratch("normal-form");
     let (result, summary) = aver_backend_json("normal_form.av", &out, None);
     let _ = fs::remove_dir_all(&out);
@@ -4478,7 +4493,6 @@ fn both_sides_are_rewritten_to_a_normal_form_and_a_rewrite_loop_stays_open() {
             format_output(&result)
         );
     }
-    assert_eq!(summary["closed_by"]["incPadded.goesRound"], "open");
     let export = scratch("normal-form-export");
     let files: std::collections::BTreeMap<String, PathBuf> =
         export_steps("normal_form.av", &export)
@@ -4488,6 +4502,11 @@ fn both_sides_are_rewritten_to_a_normal_form_and_a_rewrite_loop_stays_open() {
     let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
     for law in files.keys() {
         assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let round = read("incPadded.goesRound");
+    let round_proof = &round[round.find("\n (proof ").expect("a proof")..];
+    for looping in ["(law inc.isFirst ", "(law incFirst.isInc "] {
+        assert!(!round_proof.contains(looping), "{round}");
     }
     let mark = read("onto.reverseKeepsTheMark");
     assert!(mark.contains("(fact List.reverse.ofConcat "), "{mark}");
@@ -4612,11 +4631,12 @@ fn a_stuck_law_is_hinted_where_the_steps_stopped_and_never_a_false_when() {
     };
     // `List.reverse.involutive` rewrites without being cited.
     assert_eq!(summary["closed_by"]["first.ofTwiceReversed"], "steps");
-    for law in [
-        "tail.neverLonger",
-        "firstTwo.twiceIsOnce",
-        "count.ofReversed",
-    ] {
+    // The table of equal terms reads the builtin fact
+    // `List.len.ofDropAtMost` at `List.drop(xs, n)` without a citation, as
+    // evaluation reads the facts it rewrites with, so this law no longer
+    // needs the hint it was given.
+    assert_eq!(summary["closed_by"]["tail.neverLonger"], "steps");
+    for law in ["firstTwo.twiceIsOnce", "count.ofReversed"] {
         assert_eq!(
             summary["closed_by"][law],
             "open",
@@ -4630,10 +4650,6 @@ fn a_stuck_law_is_hinted_where_the_steps_stopped_and_never_a_false_when() {
             "{law}: {hint}: {summary}"
         )
     };
-    has(
-        "tail.neverLonger",
-        "steps close this law with `using [List.len.ofDropAtMost]`",
-    );
     // Two givens to follow: steps try each, close it and say so.
     assert_eq!(summary["closed_by"]["count.ofJoined"], "steps");
     has(
@@ -4646,9 +4662,9 @@ fn a_stuck_law_is_hinted_where_the_steps_stopped_and_never_a_false_when() {
     );
     // `List.take.nonPositive` needs `2 <= 0` at `List.take(xs, 2)`.
     assert!(hints("firstTwo.twiceIsOnce").is_empty(), "{summary}");
-    // `List.drop.nonPositive` matches `List.drop(xs, n)` too, and the law
-    // does not close with it.
-    assert_eq!(hints("tail.neverLonger").len(), 1, "{summary}");
+    // Only the line the law closes with is hinted: no other earlier law or
+    // fact that matches where the steps stopped.
+    assert_eq!(hints("count.ofReversed").len(), 1, "{summary}");
 }
 
 /// A stuck law is hinted a `using` line only when the steps close it with

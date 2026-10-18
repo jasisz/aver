@@ -409,7 +409,7 @@ impl Env<'_> {
     /// state that type and it is one whose `==` is equality. The kernel
     /// refuses the fact at any other type (a list of Float), so the steps
     /// do not write it there.
-    fn equality_types_fit(&self, law: &LawRef, subst: &[(String, Term)]) -> bool {
+    pub(crate) fn equality_types_fit(&self, law: &LawRef, subst: &[(String, Term)]) -> bool {
         use crate::ast::Type;
         fn bound(expected: &Type, actual: &Type, out: &mut Vec<Type>) {
             match (expected, actual) {
