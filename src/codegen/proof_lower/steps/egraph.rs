@@ -57,7 +57,7 @@ const MAX_EXPLAIN: usize = 48;
 /// Most cases on a Bool side one table opens, one inside another.
 const MAX_SPLITS: usize = 2;
 /// Largest proof a table hands back.
-const MAX_PROOF: usize = 600;
+const MAX_PROOF: usize = 1500;
 /// Most cases on `x <= k` a read of `x != k` opens, one inside another.
 const MAX_DISEQ: usize = 8;
 
@@ -239,6 +239,8 @@ pub(crate) struct Table {
     gen_now: u8,
     /// The comparisons a `match` waits for to open a definition.
     guards: Vec<Id>,
+    /// For each sum read as a polynomial, how many joins the table had then.
+    arith_at: HashMap<Id, usize>,
     /// For each comparison tried by linear arithmetic, how many joins the
     /// table had then: it is tried again only once it knows more.
     decided_at: HashMap<Id, usize>,
@@ -445,6 +447,7 @@ impl Table {
             explaining: std::cell::Cell::new(0),
             gen_now: 0,
             guards: Vec::new(),
+            arith_at: HashMap::new(),
             decided_at: HashMap::new(),
         };
         t.t = t.add(&term::boolean(true)).expect("room for true");
@@ -1917,7 +1920,12 @@ impl Table {
                 .push((name.clone(), Eqn::new(f.term.clone(), term::boolean(f.value))));
             names.push(name);
         }
+        // Also the comparisons inside true conjunctions and that lengths
+        // are not negative, as where a case is read for a contradiction.
+        let wide = env.wide_linear;
+        env.wide_linear = true;
         let found = prove(env, &names);
+        env.wide_linear = wide;
         env.hyps.truncate(base);
         let mut body = found?;
         for (f, name) in facts.iter().zip(&names).rev() {
@@ -1975,9 +1983,17 @@ impl Table {
             self.decided_at.insert(id, self.unions);
             tried += 1;
             let t = self.term(id).clone();
+            let equality = matches!(t.node, ResolvedExpr::BinOp(BinOp::Eq, ..));
             for v in [true, false] {
                 let p = self.with_facts(env, &t, &term::boolean(v), |env, _| {
-                    env.linear_proof(&t, v)
+                    if equality {
+                        // Through the two orders (`int.eq.of_le_ge`, `_lt`, `_gt`).
+                        env.decide_linearly(&t)
+                            .filter(|(_, value)| term::bool_value(value) == Some(v))
+                            .map(|(p, _)| p)
+                    } else {
+                        env.linear_proof(&t, v)
+                    }
                 });
                 if let Some(p) = p {
                     let lit = if v { self.t } else { self.f };
@@ -1985,6 +2001,66 @@ impl Table {
                     break;
                 }
             }
+        }
+        self.process();
+    }
+
+    /// Each sum, difference or product of Ints with a part joined with
+    /// another sum, difference or product: that part written so, and the
+    /// whole read as one polynomial (`(len(t) + 1) - 1` is `len(t)`), the
+    /// two joined by a ring step.
+    fn arith_round(&mut self) {
+        fn arith(t: &Term) -> bool {
+            is_int(t)
+                && matches!(
+                    t.node,
+                    ResolvedExpr::BinOp(BinOp::Add | BinOp::Sub | BinOp::Mul, ..)
+                )
+        }
+        let n = self.nodes.len();
+        let mut done = 0;
+        for id in 0..n {
+            if done >= MAX_DECIDE || self.full {
+                break;
+            }
+            let t = self.term(id).clone();
+            if !arith(&t) || self.value_of(id).is_some() {
+                continue;
+            }
+            if self.arith_at.get(&id) == Some(&self.unions) {
+                continue;
+            }
+            self.arith_at.insert(id, self.unions);
+            let kids = self.nodes[id].kids.clone();
+            let mut variant = t.clone();
+            for (i, k) in kids.iter().enumerate() {
+                let other = self.members[self.root(*k)]
+                    .iter()
+                    .copied()
+                    .find(|&m| m != *k && arith(self.term(m)));
+                if let Some(m) = other {
+                    variant = term::with_child(&variant, i, self.term(m).clone());
+                }
+            }
+            let variant = canon(&variant);
+            let mut atoms = Vec::new();
+            let p = crate::ir::proof_steps::ring::poly(&variant, &mut atoms);
+            let normal = canon(&super::eval::poly_term(&p, &atoms));
+            if normal == variant {
+                continue;
+            }
+            let (Some(vi), Some(ni)) = (self.add(&variant), self.add(&normal)) else {
+                continue;
+            };
+            done += 1;
+            self.merge(
+                vi,
+                ni,
+                Why::Given(Proof::Ring {
+                    lhs: variant,
+                    rhs: normal,
+                }),
+            );
         }
         self.process();
     }
@@ -2002,6 +2078,16 @@ impl Table {
         }
         if splits == 0 || self.full {
             return None;
+        }
+        // A list variable a known call reads with its `match`: that
+        // variable as `[]` and as a cell, each case a table of its own.
+        if splits == MAX_SPLITS && env.table_splits == 0 {
+            let (lt, rt) = (self.term(l).clone(), self.term(r).clone());
+            for v in self.list_split_candidates(env) {
+                if let Some(p) = env.table_list_split(&v, &lt, &rt) {
+                    return Some(p);
+                }
+            }
         }
         let mut cands: Vec<Id> = Vec::new();
         for side in [l, r] {
@@ -2045,6 +2131,52 @@ impl Table {
         None
     }
 
+    /// The list variables a call the table holds a Bool value for reads
+    /// with its `match`.
+    fn list_split_candidates(&self, env: &mut Env<'_>) -> Vec<Term> {
+        let mut out: Vec<Term> = Vec::new();
+        for lit in [self.t, self.f] {
+            for &m in &self.members[self.root(lit)] {
+                let t = self.term(m);
+                let ResolvedExpr::Call(ResolvedCallee::Fn(fid), args) = &t.node else {
+                    continue;
+                };
+                if self.opened[m] {
+                    continue;
+                }
+                let Some(def) = env.def(*fid) else {
+                    continue;
+                };
+                let ResolvedExpr::Match { subject, .. } = &def.body.node else {
+                    continue;
+                };
+                // The subject is a parameter, its argument a variable; the
+                // parameter's type is the variable's.
+                let ResolvedExpr::Ident(p) = &subject.node else {
+                    continue;
+                };
+                let Some(i) = def.params.iter().position(|q| q == p) else {
+                    continue;
+                };
+                let (Some(arg), Some(ty)) = (args.get(i), def.param_types.get(i)) else {
+                    continue;
+                };
+                if !matches!(arg.node, ResolvedExpr::Ident(_))
+                    || !matches!(ty, crate::ast::Type::List(_))
+                {
+                    continue;
+                }
+                let v = canon(arg);
+                v.set_ty(ty.clone());
+                if !out.contains(&v) {
+                    out.push(v);
+                }
+            }
+        }
+        out.truncate(2);
+        out
+    }
+
     fn close_here(&mut self, env: &mut Env<'_>, l: Id, r: Id) -> Option<Proof> {
         let (lt, rt) = (self.term(l).clone(), self.term(r).clone());
         let goal = |s: &Self| s.same(l, r) || s.same(s.t, s.f);
@@ -2055,6 +2187,7 @@ impl Table {
             }
             let before = self.progress();
             self.unfold_round(env);
+            self.arith_round();
             self.saturate(env);
             if goal(self) {
                 break;
@@ -2091,7 +2224,11 @@ impl Table {
             }
         }
         if self.same(l, r) {
-            return self.explain(l, r);
+            let p = self.explain(l, r);
+            if p.is_none() && std::env::var_os("AVER_TABLE_DEBUG").is_some() {
+                eprintln!("table: joined but not explained");
+            }
+            return p;
         }
         if self.same(self.t, self.f) {
             return Some(Proof::Absurd {
@@ -2419,6 +2556,12 @@ impl Env<'_> {
         let debug = std::env::var_os("AVER_STEPS_DEBUG").is_some();
         // A proof bigger than this costs the rest of the law more than the
         // case is worth: the attempt goes on without it.
+        if std::env::var_os("AVER_TABLE_DEBUG").is_some()
+            && let Some(p) = &found
+            && p.size() > MAX_PROOF
+        {
+            eprintln!("table: a proof of {} steps is too big", p.size());
+        }
         let found = found.filter(|p| p.size() <= MAX_PROOF);
         let Some(proof) = found else {
             self.rewind_hyp_count(marks.6);
@@ -2435,7 +2578,13 @@ impl Env<'_> {
                 .chain(self.fact_rules.iter())
                 .chain(self.auto_laws.iter())
                 .find(|l| l.key == key)
-                .cloned();
+                .cloned()
+                .or_else(|| {
+                    crate::ir::proof_steps::facts::all()
+                        .iter()
+                        .find(|f| f.key == key)
+                        .map(crate::ir::proof_steps::facts::Fact::law_ref)
+                });
             match law {
                 Some(law) => self.use_law(law),
                 None => {
@@ -2496,6 +2645,85 @@ impl Env<'_> {
         let out = table.close(self, l, r, MAX_SPLITS);
         self.table_names = table.names.get();
         out
+    }
+}
+
+impl Env<'_> {
+    /// `lhs = rhs` with the list variable `v` as `[]` and as a cell of
+    /// fresh names, in the claim and in the hypotheses, each case closed by
+    /// a table of its own.
+    fn table_list_split(&mut self, v: &Term, lhs: &Term, rhs: &Term) -> Option<Proof> {
+        use crate::ast::Type;
+        let ResolvedExpr::Ident(var) = &v.node else {
+            return None;
+        };
+        let Some(Type::List(elem)) = v.ty().cloned() else {
+            return None;
+        };
+        let mut taken = self.givens.clone();
+        for t in [lhs, rhs] {
+            term::free_vars(t, &mut taken);
+        }
+        for (n, e) in &self.hyps {
+            taken.push(n.clone());
+            term::free_vars(&e.lhs, &mut taken);
+            term::free_vars(&e.rhs, &mut taken);
+        }
+        taken.extend(self.split_binders.iter().cloned());
+        let fresh = |base: &str, taken: &[String]| {
+            (0..)
+                .map(|k| format!("{base}_t{k}"))
+                .find(|c| !taken.contains(c))
+                .expect("an unused name")
+        };
+        let head = fresh(&format!("{var}Head"), &taken);
+        taken.push(head.clone());
+        let tail = fresh(&format!("{var}Tail"), &taken);
+        let (h, t) = (term::var(&head), term::var(&tail));
+        h.set_ty((*elem).clone());
+        t.set_ty(Type::List(elem.clone()));
+        let nil = canon(&term::nil());
+        nil.set_ty(Type::List(elem.clone()));
+        let cell = term::builtin("List.prepend", vec![h, t], Some(Type::List(elem.clone())));
+        let mut proofs = Vec::new();
+        for value in [nil, cell] {
+            let at = [(var.clone(), value)];
+            let saved = self.hyps.clone();
+            let scoped: Option<Vec<(String, Eqn)>> = saved
+                .iter()
+                .map(|(n, e)| {
+                    Some((
+                        n.clone(),
+                        Eqn::new(term::subst(&e.lhs, &at).ok()?, term::subst(&e.rhs, &at).ok()?),
+                    ))
+                })
+                .collect();
+            let (Some(scoped), Ok(l), Ok(r)) =
+                (scoped, term::subst(lhs, &at), term::subst(rhs, &at))
+            else {
+                return None;
+            };
+            self.hyps = scoped;
+            let marks = self.split_binders.len();
+            self.split_binders.extend([head.clone(), tail.clone()]);
+            self.table_splits += 1;
+            let out = self.table_proof(&canon(&l), &canon(&r), &[]);
+            self.table_splits -= 1;
+            self.split_binders.truncate(marks);
+            self.hyps = saved;
+            proofs.push(out?);
+        }
+        let cons = proofs.pop()?;
+        let nil = proofs.pop()?;
+        Some(Proof::ListCases {
+            var: var.clone(),
+            lhs: canon(lhs),
+            rhs: canon(rhs),
+            nil: Box::new(nil),
+            head,
+            tail,
+            cons: Box::new(cons),
+        })
     }
 }
 
@@ -2699,5 +2927,113 @@ mod tests {
 
     fn explain_alone(t: &Table, a: Id, b: Id) -> Option<Proof> {
         t.explain(a, b)
+    }
+
+    /// `f` with an environment that knows no definition and cites no law,
+    /// under the hypothesis `when : premise = true`.
+    fn under_when<R>(premise: &Term, f: impl FnOnce(&mut Env<'_>) -> R) -> R {
+        let symbols = crate::ir::SymbolTable::default();
+        let prefixes = std::collections::HashSet::new();
+        let recursive = std::collections::HashSet::new();
+        let inputs = crate::codegen::proof_lower::ProofLowerInputs {
+            entry_items: &[],
+            dep_modules: &[],
+            module_prefixes: &prefixes,
+            recursive_fns: &recursive,
+            symbol_table: &symbols,
+            program_shape: None,
+            scope: None,
+            plans_root: None,
+            proof_command: false,
+        };
+        let mut env = Env::new(&inputs);
+        env.hyps
+            .push(("when".into(), Eqn::new(premise.clone(), term::boolean(true))));
+        f(&mut env)
+    }
+
+    #[test]
+    fn a_value_left_no_room_by_its_range_and_unequal_literals_is_refuted() {
+        // `0 <= a <= 2`, `a != 0`, `a != 1`, `a != 2`: no Int is left.
+        let a = int_var("a");
+        let k = |n: i64| term::int(&n.into());
+        let not_eq = |n: i64| term::bool_not(term::binop(BinOp::Eq, a.clone(), k(n)));
+        let premise = term::bool_and(
+            term::bool_and(
+                term::binop(BinOp::Lte, k(0), a.clone()),
+                term::binop(BinOp::Lte, a.clone(), k(2)),
+            ),
+            term::bool_and(not_eq(0), term::bool_and(not_eq(1), not_eq(2))),
+        );
+        let (f, t) = (term::boolean(false), term::boolean(true));
+        let proof = under_when(&premise, |env| env.close_by_table(&f, &t, &[]))
+            .expect("the cases on `a <= k` refute every value");
+        kernel(&script(f.clone(), t.clone(), Some(premise.clone()), proof))
+            .expect("the kernel accepts the refutation");
+        // With one value left there is nothing to refute.
+        let open = term::bool_and(
+            term::bool_and(
+                term::binop(BinOp::Lte, k(0), a.clone()),
+                term::binop(BinOp::Lte, a.clone(), k(3)),
+            ),
+            term::bool_and(not_eq(0), term::bool_and(not_eq(1), not_eq(2))),
+        );
+        assert!(under_when(&open, |env| env.close_by_table(&f, &t, &[])).is_none());
+    }
+
+    #[test]
+    fn two_values_a_hypothesis_joins_close_the_case_in_the_kernel() {
+        // `a == 5` and `a + 1 == 3`: `a + 1` computes to 6, and `6 == 3` to
+        // false, joined with true.
+        let a = int_var("a");
+        let k = |n: i64| term::int(&n.into());
+        let premise = term::bool_and(
+            term::binop(BinOp::Eq, a.clone(), k(5)),
+            term::binop(BinOp::Eq, add(a.clone(), k(1)), k(3)),
+        );
+        let (l, r) = (add(a.clone(), term::int(&7.into())), term::int(&0.into()));
+        let proof = under_when(&premise, |env| env.close_by_table(&l, &r, &[]))
+            .expect("the hypotheses contradict each other");
+        kernel(&script(l, r, Some(premise), proof)).expect("the kernel accepts it");
+    }
+
+    #[test]
+    fn a_cell_has_a_positive_length_by_the_length_rule_and_linear_arithmetic() {
+        let list_ty = crate::ast::Type::List(Box::new(crate::ast::Type::Int));
+        let (h, t) = (int_var("a"), var("xs"));
+        t.set_ty(list_ty.clone());
+        let cell = term::builtin("List.prepend", vec![h, t], Some(list_ty));
+        let len = term::builtin("List.len", vec![cell], Some(crate::ast::Type::Int));
+        let goal = term::binop(BinOp::Gt, len.clone(), term::int(&0.into()));
+        let truth = term::boolean(true);
+        let (proof, laws) = under_when(&truth, |env| {
+            (env.close_by_table(&goal, &truth, &[]), env.laws.clone())
+        });
+        let proof = proof.expect("`List.len(List.prepend(a, xs)) = List.len(xs) + 1 > 0`");
+        let mut s = script(goal, truth.clone(), Some(truth), proof);
+        s.laws = laws;
+        s.obligation.givens.push("xs".into());
+        s.obligation.types.push((
+            "xs".into(),
+            crate::ast::Type::List(Box::new(crate::ast::Type::Int)),
+        ));
+        kernel(&s).expect("the kernel accepts it");
+    }
+
+    #[test]
+    fn an_equality_under_a_case_split_comes_out_of_congruence() {
+        // `(a == b) = (a + c == b + c)`: a case on `a == b`; where it holds,
+        // congruence; where not, a case on the other side.
+        let (a, b, c) = (int_var("a"), int_var("b"), int_var("c"));
+        let l = term::binop(BinOp::Eq, a.clone(), b.clone());
+        let r = term::binop(BinOp::Eq, add(a.clone(), c.clone()), add(b.clone(), c.clone()));
+        let truth = term::boolean(true);
+        let found = under_when(&truth, |env| env.close_by_table(&l, &r, &[]));
+        // The false case needs `a + c == b + c` to give `a == b`, which no
+        // congruence shows: the table leaves the claim open rather than
+        // write a wrong step.
+        if let Some(proof) = found {
+            kernel(&script(l, r, Some(truth), proof)).expect("whatever it writes, the kernel accepts");
+        }
     }
 }

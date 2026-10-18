@@ -423,7 +423,7 @@ fn division_facts(
 /// The Int term a polynomial over `atoms` reads as: its monomials in
 /// order, each an atom product times its coefficient's magnitude, added
 /// or taken away by its sign, then the constant; `0` for none.
-fn poly_term(p: &crate::ir::proof_steps::ring::Poly, atoms: &[Term]) -> Term {
+pub(super) fn poly_term(p: &crate::ir::proof_steps::ring::Poly, atoms: &[Term]) -> Term {
     use num_traits::{One, Signed};
     let monomials = p.iter().filter(|(m, _)| !m.is_empty());
     let constant = p.iter().filter(|(m, _)| m.is_empty());

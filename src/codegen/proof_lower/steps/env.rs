@@ -175,6 +175,9 @@ pub(crate) struct Env<'a> {
     /// How many evaluations of a claim are in progress, one inside another
     /// (see `Env::prove_by_evaluation`).
     pub evaluating: usize,
+    /// How many list splits of tables are in progress (see
+    /// [`super::egraph`]).
+    pub table_splits: usize,
 }
 
 /// What [`Env::opened_views`] gave for the hypotheses `hyps`.
@@ -269,6 +272,7 @@ impl<'a> Env<'a> {
             table_runs: 0,
             table_names: 0,
             evaluating: 0,
+            table_splits: 0,
         }
     }
 
