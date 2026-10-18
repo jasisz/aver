@@ -325,6 +325,67 @@ fn builtin_args<'t>(t: &'t Term, name: &str, n: usize) -> Option<&'t [Term]> {
     }
 }
 
+/// `t` with each empty list literal that has no type given the list type
+/// its place reads (`List.prepend(x, [])`, `List.concat(a, [])`, a side
+/// of `==`): a rule's or a law's instance writes `[]` bare, and the Lean
+/// export cannot match on a bare `[]`.
+fn typed_lists(t: &Term, want: Option<&crate::ast::Type>) -> Term {
+    use crate::ast::Type;
+    let list_of = |x: &Term| x.ty().map(|e| Type::List(Box::new(e.clone())));
+    let is_list = |ty: &Option<Type>| matches!(ty, Some(Type::List(_)));
+    if let ResolvedExpr::List(xs) = &t.node
+        && xs.is_empty()
+        && t.ty().is_none()
+    {
+        let out = t.clone();
+        if let Some(ty) = want {
+            out.set_ty(ty.clone());
+        }
+        return out;
+    }
+    let own = t.ty().cloned().filter(|ty| matches!(ty, Type::List(_)));
+    let kids = term::children(t);
+    let wants: Vec<Option<Type>> = match &t.node {
+        ResolvedExpr::Call(ResolvedCallee::Builtin(b), args) => match (b.as_str(), args.len()) {
+            ("List.prepend", 2) => vec![None, own.clone().or_else(|| list_of(&args[0]))],
+            ("List.concat", 2) => {
+                let side = own
+                    .clone()
+                    .or_else(|| args[0].ty().cloned().filter(|_| is_list(&args[0].ty().cloned())))
+                    .or_else(|| args[1].ty().cloned().filter(|_| is_list(&args[1].ty().cloned())));
+                vec![side.clone(), side]
+            }
+            ("List.reverse", 1) | ("List.take", 2) | ("List.drop", 2) => {
+                let mut w = vec![own.clone()];
+                w.resize(args.len(), None);
+                w
+            }
+            ("List.contains", 2) => vec![list_of(&args[1]), None],
+            _ => vec![None; args.len()],
+        },
+        ResolvedExpr::BinOp(BinOp::Eq | BinOp::Neq, a, b) => {
+            let side = a
+                .ty()
+                .cloned()
+                .filter(|ty| matches!(ty, Type::List(_)))
+                .or_else(|| b.ty().cloned().filter(|ty| matches!(ty, Type::List(_))));
+            vec![side.clone(), side]
+        }
+        _ => vec![None; kids.len()],
+    };
+    let mut out = t.clone();
+    let mut changed = false;
+    for (i, c) in kids.iter().enumerate() {
+        let w = wants.get(i).cloned().flatten();
+        let typed = typed_lists(c, w.as_ref());
+        if typed.ty() != c.ty() || !term::exact_eq(&typed, c) {
+            out = term::with_child(&out, i, typed);
+            changed = true;
+        }
+    }
+    if changed { out } else { t.clone() }
+}
+
 /// `from = to` from the steps `(to_i, proof_i)`, each from the term before.
 fn chain(from: &Term, steps: Vec<(Term, Proof)>) -> Proof {
     match steps.len() {
@@ -476,7 +537,7 @@ impl Table {
     /// The entry for `t`, added with its parts where it is new; `None` once
     /// the table is full.
     fn add(&mut self, t: &Term) -> Option<Id> {
-        let t = canon(t);
+        let t = typed_lists(&canon(t), None);
         self.add_canon(&t)
     }
 
@@ -1177,6 +1238,13 @@ impl Table {
         };
         let closed = canon(&closed);
         let v = canon(&v);
+        // The value has the computation's type (a closed `[]` is a list of
+        // what the term holds).
+        if v.ty().is_none()
+            && let Some(ty) = t.ty()
+        {
+            v.set_ty(ty.clone());
+        }
         if closed == v {
             return;
         }

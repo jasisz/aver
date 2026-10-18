@@ -459,6 +459,16 @@ impl<'a> Env<'a> {
             if !matches!(induct::recursion(&def, &ds), Ok(Some(_))) && !induct::rooted(&def, &ds) {
                 return None;
             }
+            // A definition that calls itself back through another one is
+            // written by the Lean export with fuel, where opening it at an
+            // arm is no definitional step: steps leave it closed, so the
+            // kernel never accepts what Lean cannot check.
+            if ds
+                .iter()
+                .any(|d| d.fn_id != id && induct::def_callees(d).contains(&id))
+            {
+                return None;
+            }
             if induct::divides_down(&def, &ds) {
                 if !self.open_halving {
                     return None;

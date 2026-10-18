@@ -564,7 +564,20 @@ pub fn subst(t: &Term, map: &[(String, Term)]) -> Result<Term, String> {
     match &t.node {
         ResolvedExpr::Ident(n) | ResolvedExpr::Resolved { name: n, .. } => {
             Ok(match map.iter().find(|(k, _)| k == n) {
-                Some((_, v)) => v.clone(),
+                Some((_, v)) => {
+                    let v = v.clone();
+                    // An empty list written bare takes the type of the
+                    // variable it stands for, where that type is concrete:
+                    // a `match` on it is read by that type.
+                    if matches!(&v.node, ResolvedExpr::List(xs) if xs.is_empty())
+                        && v.ty().is_none()
+                        && let Some(ty) = t.ty()
+                        && !mentions_type_var(ty)
+                    {
+                        v.set_ty(ty.clone());
+                    }
+                    v
+                }
                 None => canon(t),
             })
         }
@@ -606,6 +619,17 @@ pub fn subst(t: &Term, map: &[(String, Term)]) -> Result<Term, String> {
         }
         ResolvedExpr::TailCall { .. } => subst(&canon(t), map),
         _ => map_children(t, &mut |c| subst(c, map)),
+    }
+}
+
+/// Whether `ty` has a type variable in it.
+fn mentions_type_var(ty: &Type) -> bool {
+    match ty {
+        Type::Var(_) => true,
+        Type::List(a) | Type::Option(a) | Type::Vector(a) => mentions_type_var(a),
+        Type::Map(k, v) | Type::Result(k, v) => mentions_type_var(k) || mentions_type_var(v),
+        Type::Tuple(xs) => xs.iter().any(mentions_type_var),
+        _ => false,
     }
 }
 
