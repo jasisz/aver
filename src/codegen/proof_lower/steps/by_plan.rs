@@ -234,8 +234,14 @@ fn calls(t: &Term, out: &mut Vec<FnId>) {
 /// The goal a plan gets for `ob`: every definition the claim reaches that
 /// steps may open, the module-level bindings they read, the sums they
 /// match on, and the cited laws.
-fn goal(inputs: &ProofLowerInputs, ob: &Obligation, laws: Vec<LawRef>) -> Script {
+fn goal(inputs: &ProofLowerInputs, ob: &Obligation, laws: Vec<LawRef>, hint: bool) -> Script {
     let mut env = Env::new(inputs);
+    // A hint runs every plan on a law no one asked a plan for. It reads the
+    // definitions as written, so a definition with `?` keeps the goal out of
+    // step data and the law out of the search, as before `?` was read as a
+    // match: running the plans over every goal that now reaches one cost more
+    // than they find. A `by` line reads `?` as the match.
+    env.as_written = hint;
     let mut todo = Vec::new();
     calls(&ob.lhs, &mut todo);
     calls(&ob.rhs, &mut todo);
@@ -463,7 +469,7 @@ pub(super) fn produce(
         .by_plan
         .as_deref()
         .expect("a law with a `by` line");
-    prove_with(inputs, ir, i, path, plans)
+    prove_with(inputs, ir, i, path, plans, false)
 }
 
 /// Prove law `i` by plan `path` (`Module.plan`), exactly as a `by` line
@@ -474,6 +480,7 @@ fn prove_with(
     i: usize,
     path: &str,
     plans: &mut Plans,
+    hint: bool,
 ) -> Result<Script, String> {
     let t: &LawTheorem = &ir.law_theorems[i];
     let (module, plan) = split_plan(path)?;
@@ -496,7 +503,7 @@ fn prove_with(
         _ => Vec::new(),
     };
     let ob = super::obligation(inputs, ir, t).map_err(|why| format!("plan {path}: {why}"))?;
-    let goal = goal(inputs, &ob, laws);
+    let goal = goal(inputs, &ob, laws, hint);
     let script_text = crate::ir::proof_steps::sexpr::script(&goal, inputs.symbol_table)
         .map_err(|why| format!("plan {path}: the goal cannot be written as step data: {why}"))?;
     let text = script_text;
@@ -621,7 +628,7 @@ pub(super) fn hints(
     known
         .get_or_insert_with(|| named_plans(ir, root))
         .iter()
-        .filter(|path| prove_with(inputs, ir, i, path, plans).is_ok())
+        .filter(|path| prove_with(inputs, ir, i, path, plans, true).is_ok())
         .map(|path| format!("plan {path} closes this law; add `by {path}`"))
         .collect()
 }

@@ -60,6 +60,9 @@ pub(crate) struct Env<'a> {
     pub countdown_split: bool,
     /// The module of the law being proved; `None` for the entry module.
     pub law_scope: Option<String>,
+    /// Read definitions as written, `?` left as it stands (see
+    /// `by_plan::goal`).
+    pub as_written: bool,
     pub fuel: usize,
     /// Fuel for evaluating hypotheses to their normal form
     /// ([`Env::normal_fact`]), apart from `fuel`, so stating hypotheses
@@ -337,6 +340,7 @@ impl<'a> Env<'a> {
             views_memo: None,
             countdown_split: false,
             law_scope: None,
+            as_written: false,
             fuel: FUEL,
             normal_fuel: 2000,
             next_hyp: 0,
@@ -615,7 +619,9 @@ impl<'a> Env<'a> {
             return None;
         }
         // `?` read as the `match` the Lean export writes too.
-        let expanded = crate::codegen::proof_lower::try_match::expand(&fd.body);
+        let expanded = (!self.as_written)
+            .then(|| crate::codegen::proof_lower::try_match::expand(&fd.body))
+            .flatten();
         let (last, before) = expanded.as_ref().unwrap_or(&fd.body).stmts().split_last()?;
         let Stmt::Expr(body) = last else {
             return None;
