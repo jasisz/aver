@@ -58,6 +58,8 @@ pub(crate) struct Env<'a> {
     /// `Env::countdown_guard`): another countdown splits there only on a
     /// guard linear arithmetic decides, so one case closes at once.
     pub countdown_split: bool,
+    /// The module of the law being proved; `None` for the entry module.
+    pub law_scope: Option<String>,
     pub fuel: usize,
     /// Fuel for evaluating hypotheses to their normal form
     /// ([`Env::normal_fact`]), apart from `fuel`, so stating hypotheses
@@ -178,6 +180,30 @@ pub(crate) struct Env<'a> {
     /// How many list splits of tables are in progress (see
     /// [`super::egraph`]).
     pub table_splits: usize,
+}
+
+/// Whether `t` builds or updates a record of a refined type anywhere, in a
+/// match arm too.
+fn builds_refined(t: &Term, inputs: &ProofLowerInputs) -> bool {
+    use crate::ir::hir::ResolvedExpr;
+    match &t.node {
+        ResolvedExpr::RecordCreate { type_name, .. }
+        | ResolvedExpr::RecordUpdate { type_name, .. } => {
+            let bare = type_name.rsplit('.').next().unwrap_or(type_name);
+            if crate::codegen::common::refinement_info_for(bare, inputs).is_some() {
+                return true;
+            }
+        }
+        ResolvedExpr::Match { arms, .. }
+            if arms.iter().any(|a| builds_refined(&a.body, inputs)) =>
+        {
+            return true;
+        }
+        _ => {}
+    }
+    crate::ir::proof_steps::term::children(t)
+        .into_iter()
+        .any(|c| builds_refined(c, inputs))
 }
 
 /// Whether `id` sits in a group of definitions that call each other (a
@@ -310,6 +336,7 @@ impl<'a> Env<'a> {
             hyps: Vec::new(),
             views_memo: None,
             countdown_split: false,
+            law_scope: None,
             fuel: FUEL,
             normal_fuel: 2000,
             next_hyp: 0,
@@ -527,6 +554,15 @@ impl<'a> Env<'a> {
 
     fn build_def(&self, id: FnId) -> Option<Def> {
         let def = self.raw_def(id)?;
+        // A definition of another module that builds a record of a refined
+        // type, which that module exposes opaque: the law's module cannot see
+        // inside such a record, and Lean states it as a `Subtype` that step
+        // terms do not spell, so steps leave the definition closed.
+        let own = self.inputs.symbol_table.fn_entry(id).key.scope_str();
+        let terms = || def.lets.iter().map(|(_, v)| v).chain([&def.body]);
+        if own != self.law_scope.as_deref() && terms().any(|t| builds_refined(t, self.inputs)) {
+            return None;
+        }
         // A recursive function opens only when its own recursion passes the
         // gate, a descent into a part or a division of an Int down to zero,
         // read through the helpers it calls back through; or when every

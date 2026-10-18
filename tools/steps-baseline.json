@@ -5,7 +5,7 @@
   ]
  },
  "examples/core/result_chain.av": {
-  "tactic": [
+  "steps": [
    "chainQM.equalsManual"
   ]
  },

@@ -497,6 +497,17 @@ fn fresh_env<'a>(
     auto: &[LawRef],
 ) -> Env<'a> {
     let mut env = Env::new(inputs);
+    // `Module.fn.law`, with `.because<k>` or `.implication` for an
+    // obligation of a `because` chain.
+    let mut parts: Vec<&str> = ob.key.split('.').collect();
+    if parts.last().is_some_and(|p| {
+        *p == "implication"
+            || p.strip_prefix("because")
+                .is_some_and(|k| k.parse::<u32>().is_ok())
+    }) {
+        parts.pop();
+    }
+    env.law_scope = (parts.len() > 2).then(|| parts[..parts.len() - 2].join("."));
     env.givens = ob.givens.clone();
     env.finite = ob.finite.iter().map(|(n, _)| n.clone()).collect();
     if let Some(p) = &ob.premise {
