@@ -1674,3 +1674,24 @@ fn taking_a_prefix_agrees_with_the_elements_it_names() {
         }
     }
 }
+
+/// A frame returning a long list flattens it only when it is a chain: a flat
+/// list (a parser handing back the rest of its input) is returned as it
+/// stands. Copying it on every return made such a walk quadratic.
+#[test]
+fn returning_a_flat_list_does_not_copy_it_but_a_chain_is_flattened() {
+    let mut arena = Arena::new();
+    let items: Vec<NanValue> = (0..1_000).map(NanValue::new_int_inline).collect();
+    let flat = NanValue::new_list(arena.push_list(items));
+
+    let before = arena.list_elements_flattened();
+    assert_eq!(arena.flatten_deep_list(flat).bits(), flat.bits());
+    assert_eq!(arena.list_elements_flattened() - before, 0);
+
+    let chain = NanValue::new_list(arena.push_list_prepend(NanValue::new_int_inline(-1), flat));
+    let before = arena.list_elements_flattened();
+    let flattened = arena.flatten_deep_list(chain);
+    assert_ne!(flattened.bits(), chain.bits());
+    assert_eq!(arena.list_elements_flattened() - before, 1_001);
+    assert_eq!(list_contents(&arena, flattened)[..2], [-1, 0]);
+}
