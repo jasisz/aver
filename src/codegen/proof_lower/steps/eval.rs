@@ -3937,7 +3937,11 @@ impl Env<'_> {
         }
         // Last, a table of equal terms over the two sides and the
         // hypotheses (see [`super::egraph`]).
-        if let Some(proof) = self.close_by_table(nl.cur(), nr.cur()) {
+        let before = [
+            (canon(lhs), nl.cur().clone(), nl.clone().finish().1),
+            (canon(rhs), nr.cur().clone(), nr.clone().finish().1),
+        ];
+        if let Some(proof) = self.close_by_table(nl.cur(), nr.cur(), &before) {
             let rc = nr.cur().clone();
             nl.push(proof, rc);
             return Ok(Ok(meet(nl, nr)));
@@ -4198,7 +4202,11 @@ impl Env<'_> {
             if let Some(proof) = self.prove_with_evaluated_hypotheses(lhs, rhs, &stopped, depth) {
                 return Ok(proof);
             }
-            if let Some(proof) = self.close_by_table(l.chain.cur(), r.chain.cur()) {
+            let before = [
+                (canon(lhs), l.chain.cur().clone(), l.chain.clone().finish().1),
+                (canon(rhs), r.chain.cur().clone(), r.chain.clone().finish().1),
+            ];
+            if let Some(proof) = self.close_by_table(l.chain.cur(), r.chain.cur(), &before) {
                 let mut left = l.chain;
                 left.push(proof, r.chain.cur().clone());
                 return Ok(meet(left, r.chain));

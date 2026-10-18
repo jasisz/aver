@@ -22,7 +22,9 @@ type Fields = Vec<(String, Option<Type>)>;
 /// that call, and each constructor with the names its fields take in the
 /// arms (or `x`) and their types.
 pub(crate) struct Stuck {
-    fn_id: FnId,
+    /// The definition whose `match` reads the subject; `None` for a
+    /// `match` that stands in a side as it is.
+    fn_id: Option<FnId>,
     on: Term,
     ctors: Vec<(SplitCtor, Fields)>,
 }
@@ -231,8 +233,8 @@ impl Env<'_> {
     /// subject's own calls before the subject). A recursive definition only
     /// when `recursive`: in a goal, induction is the step for those.
     pub(crate) fn stuck_subject(&mut self, t: &Term, recursive: bool) -> Option<Stuck> {
-        if matches!(t.node, ResolvedExpr::Match { .. }) {
-            return None;
+        if let ResolvedExpr::Match { subject, arms } = &t.node {
+            return self.stuck_match(subject, arms, recursive);
         }
         for c in term::children(t) {
             if let Some(found) = self.stuck_subject(c, recursive) {
@@ -279,7 +281,54 @@ impl Env<'_> {
             return None;
         }
         Some(Stuck {
-            fn_id: *id,
+            fn_id: Some(*id),
+            on,
+            ctors,
+        })
+    }
+
+    /// A `match` standing in a side (a definition opened at an arm whose
+    /// body is itself a `match`), stopped at its subject as it stands: the
+    /// subject's own calls first, then the subject.
+    fn stuck_match(
+        &mut self,
+        subject: &Term,
+        arms: &[crate::ir::hir::ResolvedMatchArm],
+        recursive: bool,
+    ) -> Option<Stuck> {
+        if let Some(inner) = self.stuck_subject(subject, recursive) {
+            return Some(inner);
+        }
+        let on = canon(subject);
+        if on.ty().is_none()
+            && let Some(ty) = subject.ty()
+        {
+            on.set_ty(ty.clone());
+        }
+        // Only a subject of a sum or list type: a comparison is split on by
+        // the Bool splits, and a variable by the list-variable split.
+        if matches!(on.node, ResolvedExpr::Ident(_)) {
+            return None;
+        }
+        let ctors = self.split_ctors(arms, on.ty())?;
+        if ctors
+            .iter()
+            .any(|(c, _)| matches!(c, SplitCtor::Lit(_) | SplitCtor::Other))
+        {
+            return None;
+        }
+        if mentions_any(&on, &self.split_binders) || self.hyp_for(&on).is_some() {
+            return None;
+        }
+        let fuel = self.fuel;
+        let ev = self.whnf(&on);
+        self.fuel = fuel;
+        let ev = ev.ok()?;
+        if !ev.chain.is_empty() || super::eval::select_arm(arms, &on, &self.hyps).is_some() {
+            return None;
+        }
+        Some(Stuck {
+            fn_id: None,
             on,
             ctors,
         })
@@ -438,7 +487,9 @@ impl Env<'_> {
                 ..case
             });
         }
-        self.mark_used(st.fn_id);
+        if let Some(id) = st.fn_id {
+            self.mark_used(id);
+        }
         Ok(Proof::Split {
             on: st.on,
             hyp,

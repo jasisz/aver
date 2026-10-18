@@ -37,7 +37,13 @@ const MAX_NODES: usize = 400;
 /// Most rounds of opening definitions and matching laws.
 const MAX_ROUNDS: usize = 6;
 /// Most law and rule instances one table adds.
-const MAX_INSTANCES: usize = 64;
+const MAX_INSTANCES: usize = 160;
+/// A term that many instances or openings away from the start matches no
+/// law and opens no definition: what an instance writes is matched again
+/// only so far, so laws that feed each other stop.
+const MAX_GEN_DEFAULT: u8 = 3;
+/// The same for opening definitions.
+const MAX_OPEN_GEN_DEFAULT: u8 = 4;
 /// Evaluation steps the table may spend proving premises; given back after.
 const TABLE_FUEL: usize = 200;
 /// Most comparisons one round tries to decide by linear arithmetic.
@@ -46,10 +52,29 @@ const MAX_DECIDE: usize = 24;
 const MAX_FACTS: usize = 32;
 /// Most tables one obligation builds.
 pub(crate) const MAX_TABLES: usize = 48;
+/// Largest proof a table hands back.
+const MAX_PROOF: usize = 600;
 /// Most cases on `x <= k` a read of `x != k` opens, one inside another.
 const MAX_DISEQ: usize = 8;
 
 type Id = usize;
+
+fn tuned(name: &str, default: u8) -> u8 {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
+#[allow(non_snake_case)]
+fn MAX_GEN() -> u8 {
+    tuned("AVER_TABLE_GEN", MAX_GEN_DEFAULT)
+}
+
+#[allow(non_snake_case)]
+fn MAX_OPEN_GEN() -> u8 {
+    tuned("AVER_TABLE_OPEN_GEN", MAX_OPEN_GEN_DEFAULT)
+}
 
 /// A premise of a join: a proof built already, or two entries of the table
 /// whose terms it shows equal.
@@ -93,11 +118,13 @@ enum Why {
         premise: Prem,
         cell: bool,
     },
-    /// `when = false`: the law instance `l = r` it allows would join the
-    /// two Bool values.
+    /// `when = !value`: the instance `l = r` that `when = value` allows
+    /// (a law's `when`, a rule's one premise) would join the two Bool
+    /// values.
     WhenFalse {
         when: Term,
-        law: String,
+        value: bool,
+        step: Step,
         subst: Vec<(String, Term)>,
         l: Id,
         r: Id,
@@ -112,6 +139,9 @@ struct Node {
     key: String,
     kids: Vec<Id>,
     term: Term,
+    /// How many law instances and openings stand between the term and the
+    /// sides and hypotheses the table started from.
+    depth: u8,
 }
 
 /// A law or rule the table matches: `lhs = rhs` over `vars`, under
@@ -129,14 +159,40 @@ enum RewriteKind {
     Wall(WallRule, Vec<Eqn>),
 }
 
-/// A law instance whose `when` is not proved yet.
+/// A law or a rule, by what a step names it with.
+#[derive(Clone, Debug)]
+enum Step {
+    Law(String),
+    Wall(WallRule),
+}
+
+/// An instance whose premise `when = value` is not shown yet: a law's
+/// `when` (`value` true), or a rule's one premise.
 struct Cond {
-    rewrite: usize,
+    step: Step,
     subst: Vec<(String, Term)>,
     l: Id,
     r: Id,
     when: Term,
+    value: bool,
     done: bool,
+}
+
+impl Cond {
+    fn why(&self, premise: Prem) -> Why {
+        match &self.step {
+            Step::Law(law) => Why::Law {
+                law: law.clone(),
+                subst: self.subst.clone(),
+                premise: Some(premise),
+            },
+            Step::Wall(rule) => Why::Rule {
+                rule: *rule,
+                subst: self.subst.clone(),
+                premises: vec![premise],
+            },
+        }
+    }
 }
 
 /// One fact for linear arithmetic: `term = value`, shown by `why`.
@@ -168,6 +224,13 @@ pub(crate) struct Table {
     f: Id,
     /// Hypothesis names the explanations have given out.
     names: std::cell::Cell<usize>,
+    /// The generation new terms are added at.
+    gen_now: u8,
+    /// The comparisons a `match` waits for to open a definition.
+    guards: Vec<Id>,
+    /// For each comparison tried by linear arithmetic, how many joins the
+    /// table had then: it is tried again only once it knows more.
+    decided_at: HashMap<Id, usize>,
 }
 
 /// The head of `t` apart from its parts, and whether its parts are
@@ -203,6 +266,25 @@ fn head(t: &Term) -> (String, bool) {
         ),
         E::Match { arms, .. } => (format!("m{arms:?}"), true),
         _ => (format!("x{t:?}"), false),
+    }
+}
+
+/// The parts linear arithmetic reads as unknowns in the Int term `t`:
+/// everything below sums, differences and products that is not a literal.
+fn atoms(t: &Term, out: &mut Vec<Term>) {
+    match &t.node {
+        _ if term::is_literal(t) => {}
+        ResolvedExpr::BinOp(BinOp::Add | BinOp::Sub | BinOp::Mul, a, b) => {
+            atoms(a, out);
+            atoms(b, out);
+        }
+        ResolvedExpr::Neg(a) => atoms(a, out),
+        _ => {
+            let t = canon(t);
+            if !out.contains(&t) {
+                out.push(t);
+            }
+        }
     }
 }
 
@@ -276,7 +358,7 @@ const WALL: &[WallRule] = &[
 
 /// The parts of `pat` worth matching on their own: calls and constructors
 /// that name every variable.
-fn triggers(lhs: &Term, rhs: &Term, vars: &[String]) -> Vec<Term> {
+fn triggers(lhs: &Term, rhs: &Term, vars: &[String], inner_too: bool) -> Vec<Term> {
     fn covers(t: &Term, vars: &[String]) -> bool {
         let mut free = Vec::new();
         term::free_vars(t, &mut free);
@@ -299,13 +381,20 @@ fn triggers(lhs: &Term, rhs: &Term, vars: &[String]) -> Vec<Term> {
             out.push(side.clone());
         }
     }
-    if out.is_empty() {
+    // The smallest part that names every variable, as a pattern of its
+    // own: a law about `f(m, acc)` applies wherever the table holds such a
+    // call, also where the side around it is not there yet.
+    let mut inner = Vec::new();
+    if inner_too || out.is_empty() {
         for side in [lhs, rhs] {
-            parts(side, vars, &mut out);
+            parts(side, vars, &mut inner);
         }
-        // The smallest first.
-        out.sort_by_key(|t| format!("{t:?}").len());
-        out.truncate(2);
+    }
+    inner.sort_by_key(|t| format!("{t:?}").len());
+    if let Some(small) = inner.into_iter().next()
+        && !out.contains(&small)
+    {
+        out.push(small);
     }
     let mut celled = Vec::new();
     for t in &out {
@@ -342,6 +431,9 @@ impl Table {
             t: 0,
             f: 0,
             names: std::cell::Cell::new(0),
+            gen_now: 0,
+            guards: Vec::new(),
+            decided_at: HashMap::new(),
         };
         t.t = t.add(&term::boolean(true)).expect("room for true");
         t.f = t.add(&term::boolean(false)).expect("room for false");
@@ -400,6 +492,7 @@ impl Table {
             key: key.clone(),
             kids: kids.clone(),
             term: t.clone(),
+            depth: self.gen_now,
         });
         self.parent.push(id);
         self.members.push(vec![id]);
@@ -716,27 +809,38 @@ impl Table {
             },
             Why::WhenFalse {
                 when,
-                law,
+                value,
+                step,
                 subst,
                 l,
                 r,
             } => {
                 let h = self.fresh();
-                let by_law = Proof::Law {
-                    law: law.clone(),
-                    subst: subst.clone(),
-                    premise: Some(Box::new(Proof::Hyp(h.clone()))),
+                let applied = match step {
+                    Step::Law(law) => Proof::Law {
+                        law: law.clone(),
+                        subst: subst.clone(),
+                        premise: Some(Box::new(Proof::Hyp(h.clone()))),
+                    },
+                    Step::Wall(rule) => Proof::Rule {
+                        rule: *rule,
+                        subst: subst.clone(),
+                        premises: vec![Proof::Hyp(h.clone())],
+                    },
                 };
-                let contradiction = self.opposite_values(*l, *r, by_law)?;
+                let contradiction = self.opposite_values(*l, *r, applied)?;
+                let absurd = Box::new(Proof::Absurd {
+                    contradiction: Box::new(contradiction),
+                    lhs: when.clone(),
+                    rhs: term::boolean(!value),
+                });
+                let hyp = Box::new(Proof::Hyp(h.clone()));
+                let (if_true, if_false) = if *value { (absurd, hyp) } else { (hyp, absurd) };
                 Proof::Cases {
                     on: when.clone(),
-                    hyp: h.clone(),
-                    if_true: Box::new(Proof::Absurd {
-                        contradiction: Box::new(contradiction),
-                        lhs: when.clone(),
-                        rhs: term::boolean(false),
-                    }),
-                    if_false: Box::new(Proof::Hyp(h)),
+                    hyp: h,
+                    if_true,
+                    if_false,
                 }
             }
             Why::OrFalse { or, falsity, left } => {
@@ -859,6 +963,7 @@ impl Table {
                     break;
                 }
             }
+            self.gen_now = 0;
             self.process();
             self.retry_conds_cheap();
             self.process();
@@ -873,6 +978,7 @@ impl Table {
     }
 
     fn local_rules(&mut self, env: &mut Env<'_>, id: Id) {
+        self.gen_now = self.nodes[id].depth;
         let t = self.term(id).clone();
         // A list literal with an element is a cell.
         if let ResolvedExpr::List(xs) = &t.node
@@ -987,6 +1093,9 @@ impl Table {
         if let ResolvedExpr::BinOp(BinOp::Eq, a, b) = &t.node {
             let kids = self.nodes[id].kids.clone();
             let equality = is_int(a) || env.beq_is_equality(a);
+            if std::env::var_os("AVER_TABLE_DEBUG_EQ").is_some() && !equality {
+                eprintln!("table: eq untyped {:?} / {:?}: {}", a.ty(), b.ty(), crate::ir::proof_steps::show::term(&t, env.inputs.symbol_table));
+            }
             if equality && self.bool_of(id) == Some(true) && self.fire(id, 5) {
                 self.merge(
                     kids[0],
@@ -1069,9 +1178,10 @@ impl Table {
     fn unfold_round(&mut self, env: &mut Env<'_>) {
         let n = self.nodes.len();
         for id in 0..n {
-            if self.opened[id] || self.full {
+            if self.opened[id] || self.full || self.nodes[id].depth >= MAX_OPEN_GEN() {
                 continue;
             }
+            self.gen_now = self.nodes[id].depth + 1;
             let t = self.term(id).clone();
             match &t.node {
                 ResolvedExpr::Call(ResolvedCallee::Fn(fid), args) => {
@@ -1111,6 +1221,7 @@ impl Table {
                         continue;
                     };
                     let Some((m, k, binders, cell)) = self.pick_arm(arms, sid) else {
+                        self.note_guard(sid);
                         continue;
                     };
                     let Ok((_, body)) = crate::ir::proof_steps::claim::arm_equation(
@@ -1137,6 +1248,7 @@ impl Table {
                 ResolvedExpr::Match { subject, arms } => {
                     let sid = self.nodes[id].kids[0];
                     let Some((m, k, binders, cell)) = self.pick_arm(arms, sid) else {
+                        self.note_guard(sid);
                         continue;
                     };
                     let _ = subject;
@@ -1163,7 +1275,15 @@ impl Table {
                 _ => {}
             }
         }
+        self.gen_now = 0;
         self.process();
+    }
+
+    /// A subject that is an Int comparison: linear arithmetic may decide it.
+    fn note_guard(&mut self, sid: Id) {
+        if int_cmp(self.term(sid)).is_some() && !self.guards.contains(&sid) {
+            self.guards.push(sid);
+        }
     }
 
     /// The arm a term joined with the subject `sid` selects, with that
@@ -1207,7 +1327,7 @@ impl Table {
             }
             keys.push(law.key.clone());
             let (lhs, rhs) = (canon(&law.lhs), canon(&law.rhs));
-            let triggers = triggers(&lhs, &rhs, &law.givens);
+            let triggers = triggers(&lhs, &rhs, &law.givens, law.fact.is_none());
             if triggers.is_empty() {
                 continue;
             }
@@ -1223,9 +1343,10 @@ impl Table {
             let (premises, concl) = rule.schema();
             let vars: Vec<String> = rule.binders().iter().map(|s| s.to_string()).collect();
             let (lhs, rhs) = (canon(&concl.lhs), canon(&concl.rhs));
-            let mut triggers = triggers(&lhs, &rhs, &vars);
-            // A rule is read left to right only.
-            triggers.retain(|t| *t != rhs);
+            let mut triggers = triggers(&lhs, &rhs, &vars, false);
+            // A rule is read left to right, at its whole left side only.
+            let cells = super::eval::as_cells(&lhs).map(|(_, c)| c);
+            triggers.retain(|t| *t == lhs || Some(t) == cells.as_ref());
             if triggers.is_empty() {
                 continue;
             }
@@ -1303,12 +1424,14 @@ impl Table {
 
     /// One round of matching every law and rule against the table.
     fn match_round(&mut self, env: &mut Env<'_>) {
+        // Every match first, then the instances nearest the start first,
+        // so no law takes the whole budget from the others.
+        let mut found: Vec<(u8, usize, Vec<(String, Id)>)> = Vec::new();
         for ri in 0..self.rewrites.len() {
-            if self.instances >= MAX_INSTANCES || self.full {
-                return;
-            }
             let triggers = self.rewrites[ri].triggers.clone();
             let vars = self.rewrites[ri].vars.clone();
+            let wall = matches!(self.rewrites[ri].kind, RewriteKind::Wall(..));
+            let mut mine = 0;
             for trig in &triggers {
                 let (key, has_parts) = head(trig);
                 let pkids: Vec<&Term> = if has_parts {
@@ -1318,21 +1441,41 @@ impl Table {
                 };
                 let cands = self.by_key.get(&key).cloned().unwrap_or_default();
                 for n in cands {
-                    if self.nodes[n].kids.len() != pkids.len() {
+                    if self.nodes[n].kids.len() != pkids.len() || self.nodes[n].depth >= MAX_GEN() {
                         continue;
                     }
-                    let mut found = Vec::new();
+                    let mut here = Vec::new();
                     let kids = self.nodes[n].kids.clone();
-                    self.ematch_kids(&pkids, &kids, &vars, Vec::new(), &mut found);
-                    for b in found {
-                        if self.instances >= MAX_INSTANCES || self.full {
-                            return;
+                    self.ematch_kids(&pkids, &kids, &vars, Vec::new(), &mut here);
+                    for b in here {
+                        let g = b
+                            .iter()
+                            .map(|(_, i)| self.nodes[*i].depth)
+                            .chain([self.nodes[n].depth])
+                            .max()
+                            .unwrap_or(0);
+                        if g >= MAX_GEN() && !wall {
+                            continue;
                         }
-                        self.instance(env, ri, &b);
+                        mine += 1;
+                        found.push((g, ri, b));
+                    }
+                    if mine >= 32 {
+                        break;
                     }
                 }
             }
         }
+        found.sort_by_key(|(g, _, _)| *g);
+        for (g, ri, b) in found {
+            if self.instances >= MAX_INSTANCES || self.full {
+                break;
+            }
+            let wall = matches!(self.rewrites[ri].kind, RewriteKind::Wall(..));
+            self.gen_now = if wall { g } else { g + 1 };
+            self.instance(env, ri, &b);
+        }
+        self.gen_now = 0;
         self.process();
     }
 
@@ -1414,12 +1557,16 @@ impl Table {
                             }
                             return;
                         }
+                        // In the table, so that what decides it joins it
+                        // with a value.
+                        let _ = self.add(&w);
                         self.conds.push(Cond {
-                            rewrite: ri,
+                            step: Step::Law(law.key.clone()),
                             subst,
                             l: li,
                             r: rii,
                             when: w,
+                            value: true,
                             done: false,
                         });
                     }
@@ -1427,6 +1574,7 @@ impl Table {
             }
             RewriteKind::Wall(rule, premises) => {
                 let rule = *rule;
+                let premises = premises.clone();
                 let mut proofs = Vec::new();
                 for p in premises.clone() {
                     let (Ok(pl), Ok(pr)) =
@@ -1459,10 +1607,28 @@ impl Table {
                         proofs.push(Prem::Done(p));
                         continue;
                     }
-                    // Not shown now; the instance may be tried again once
-                    // the premise is known.
-                    let roots: Vec<Id> = ids.iter().map(|i| self.root(*i)).collect();
-                    self.seen.remove(&(ri, roots));
+                    // Not shown now: noted, for when the premise is known
+                    // or the sides are known apart. Only a rule with one
+                    // premise; another is tried again next round.
+                    if premises.len() != 1 {
+                        let roots: Vec<Id> = ids.iter().map(|i| self.root(*i)).collect();
+                        self.seen.remove(&(ri, roots));
+                        return;
+                    }
+                    if let Some(li) = self.add(&l)
+                        && let Some(rii) = self.add(&r)
+                    {
+                        self.instances += 1;
+                        self.conds.push(Cond {
+                            step: Step::Wall(rule),
+                            subst: subst.clone(),
+                            l: li,
+                            r: rii,
+                            when: pl,
+                            value: v,
+                            done: false,
+                        });
+                    }
                     return;
                 }
                 self.instances += 1;
@@ -1485,7 +1651,7 @@ impl Table {
         }
     }
 
-    /// The noted instances whose `when` the table now holds true.
+    /// The noted instances whose premise the table now holds.
     fn retry_conds_cheap(&mut self) {
         for i in 0..self.conds.len() {
             if self.conds[i].done {
@@ -1495,33 +1661,28 @@ impl Table {
             let Some(wi) = self.find(&w) else {
                 continue;
             };
-            if self.bool_of(wi) == Some(true) {
+            let v = self.conds[i].value;
+            if self.bool_of(wi) == Some(v) {
                 self.conds[i].done = true;
-                let c = &self.conds[i];
-                let (l, r) = (c.l, c.r);
-                let RewriteKind::Law(law) = &self.rewrites[c.rewrite].kind else {
-                    continue;
-                };
-                let why = Why::Law {
-                    law: law.key.clone(),
-                    subst: c.subst.clone(),
-                    premise: Some(Prem::Same(wi, self.t)),
-                };
+                let lit = if v { self.t } else { self.f };
+                let why = self.conds[i].why(Prem::Same(wi, lit));
+                let (l, r) = (self.conds[i].l, self.conds[i].r);
                 self.merge(l, r, why);
             }
         }
     }
 
-    /// The noted instances again, with their `when` added to the table,
-    /// then proved by linear arithmetic over what the table knows; one
-    /// whose sides the table holds as different Bool values has its
-    /// `when` false.
+    /// The noted instances again, with their premise added to the table,
+    /// then a law's `when` proved by linear arithmetic over what the table
+    /// knows; one whose sides the table holds as different Bool values has
+    /// its premise the other way round.
     fn retry_conds_deep(&mut self, env: &mut Env<'_>) {
         for i in 0..self.conds.len() {
             if self.conds[i].done || self.full {
                 continue;
             }
             let w = self.conds[i].when.clone();
+            let v = self.conds[i].value;
             let Some(wi) = self.add(&w) else {
                 continue;
             };
@@ -1530,22 +1691,10 @@ impl Table {
                 continue;
             }
             let (l, r) = (self.conds[i].l, self.conds[i].r);
-            let key = match &self.rewrites[self.conds[i].rewrite].kind {
-                RewriteKind::Law(law) => law.key.clone(),
-                RewriteKind::Wall(..) => continue,
-            };
-            if let Some(p) = self.prove_true(env, &w, 2) {
+            if v && let Some(p) = self.prove_true(env, &w, 2) {
                 self.conds[i].done = true;
-                let subst = self.conds[i].subst.clone();
-                self.merge(
-                    l,
-                    r,
-                    Why::Law {
-                        law: key,
-                        subst,
-                        premise: Some(Prem::Done(p)),
-                    },
-                );
+                let why = self.conds[i].why(Prem::Done(p));
+                self.merge(l, r, why);
                 self.process();
                 continue;
             }
@@ -1554,18 +1703,16 @@ impl Table {
                 && self.bool_of(wi).is_none()
             {
                 self.conds[i].done = true;
-                let subst = self.conds[i].subst.clone();
-                self.merge(
-                    wi,
-                    self.f,
-                    Why::WhenFalse {
-                        when: w,
-                        law: key,
-                        subst,
-                        l,
-                        r,
-                    },
-                );
+                let why = Why::WhenFalse {
+                    when: w,
+                    value: v,
+                    step: self.conds[i].step.clone(),
+                    subst: self.conds[i].subst.clone(),
+                    l,
+                    r,
+                };
+                let other = if v { self.f } else { self.t };
+                self.merge(wi, other, why);
                 self.process();
             }
         }
@@ -1609,7 +1756,7 @@ impl Table {
 
     /// The comparisons the table holds true or false, with why, and each
     /// Int part of them the table holds equal to a literal, as two orders.
-    fn facts(&self, env: &Env<'_>) -> Vec<Fact> {
+    fn facts(&self, env: &Env<'_>, goal: &Term) -> Vec<Fact> {
         let mut out: Vec<Fact> = Vec::new();
         for lit in [self.t, self.f] {
             let value = lit == self.t;
@@ -1640,10 +1787,11 @@ impl Table {
                 .filter(|(_, e)| int_cmp(&e.lhs).is_some())
                 .map(|(_, e)| canon(&e.lhs)),
         );
+        cmps.push(canon(goal));
         for c in &cmps {
-            for s in term::children(c) {
-                if !term::is_literal(s) && !parts.contains(s) {
-                    parts.push(canon(s));
+            if int_cmp(c).is_some() {
+                for s in term::children(c) {
+                    atoms(s, &mut parts);
                 }
             }
         }
@@ -1652,6 +1800,27 @@ impl Table {
                 continue;
             };
             let Some(vi) = self.value_of(si) else {
+                // Another Int term the part is joined with, written with
+                // arithmetic (`magnitudeOf(v)` with `0 - v`): two orders
+                // between them.
+                let other = self.members[self.root(si)].iter().copied().find(|&m| {
+                    m != si
+                        && is_int(self.term(m))
+                        && matches!(
+                            self.term(m).node,
+                            ResolvedExpr::BinOp(BinOp::Add | BinOp::Sub | BinOp::Mul, ..)
+                                | ResolvedExpr::Ident(_)
+                        )
+                });
+                if let Some(u) = other {
+                    for op in [BinOp::Lte, BinOp::Gte] {
+                        out.push(Fact {
+                            term: canon(&term::binop(op, s.clone(), self.term(u).clone())),
+                            value: true,
+                            why: Prem::Same(si, u),
+                        });
+                    }
+                }
                 continue;
             };
             let k = self.term(vi).clone();
@@ -1691,9 +1860,13 @@ impl Table {
                             ctx: term::binop(*op, term::hole(), k),
                             inner: Box::new(self.explain(*a, *b)?),
                         },
-                        Proof::Compute {
-                            lhs: at_k,
-                            rhs: term::boolean(true),
+                        if term::is_literal(self.term(*b)) {
+                            Proof::Compute {
+                                lhs: at_k,
+                                rhs: term::boolean(true),
+                            }
+                        } else {
+                            crate::ir::proof_steps::linear::from_hyps(&at_k, true, &[])?
                         },
                     ],
                 })
@@ -1710,7 +1883,7 @@ impl Table {
         gr: &Term,
         prove: impl FnOnce(&mut Env<'_>, &[String]) -> Option<Proof>,
     ) -> Option<Proof> {
-        let facts = self.facts(env);
+        let facts = self.facts(env, gl);
         let base = env.hyps.len();
         let mut names = Vec::new();
         for f in &facts {
@@ -1757,17 +1930,26 @@ impl Table {
     /// Each Int comparison the table holds no value for, decided by linear
     /// arithmetic over what it knows.
     fn decide_round(&mut self, env: &mut Env<'_>) {
+        let ids: Vec<Id> = (0..self.nodes.len())
+            .filter(|&id| int_cmp(self.term(id)).is_some())
+            .collect();
+        self.decide(env, &ids, MAX_DECIDE);
+    }
+
+    /// Each of `ids` the table holds no value for, decided by linear
+    /// arithmetic over what it knows, `most` at a time.
+    fn decide(&mut self, env: &mut Env<'_>, ids: &[Id], most: usize) {
         let mut tried = 0;
-        let n = self.nodes.len();
-        for id in 0..n {
-            if tried >= MAX_DECIDE {
+        for &id in ids {
+            if tried >= most {
                 break;
             }
-            let t = self.term(id).clone();
-            if int_cmp(&t).is_none() || self.bool_of(id).is_some() || !self.fire(id, 7) {
+            if self.bool_of(id).is_some() || self.decided_at.get(&id) == Some(&self.unions) {
                 continue;
             }
+            self.decided_at.insert(id, self.unions);
             tried += 1;
+            let t = self.term(id).clone();
             for v in [true, false] {
                 let p = self.with_facts(env, &t, &term::boolean(v), |env, _| {
                     env.linear_proof(&t, v)
@@ -1791,7 +1973,7 @@ impl Table {
         let (lt, rt) = (self.term(l).clone(), self.term(r).clone());
         let goal = |s: &Self| s.same(l, r) || s.same(s.t, s.f);
         self.saturate(env);
-        for _ in 0..MAX_ROUNDS {
+        for round in 0..MAX_ROUNDS {
             if goal(self) || self.full {
                 break;
             }
@@ -1801,12 +1983,25 @@ impl Table {
             if goal(self) {
                 break;
             }
+            // The guards the openings wait for, then the openings again.
+            let guards = self.guards.clone();
+            let known = self.unions;
+            self.decide(env, &guards, MAX_DECIDE);
+            if self.unions != known {
+                self.saturate(env);
+                self.unfold_round(env);
+                self.saturate(env);
+                if goal(self) {
+                    break;
+                }
+            }
             self.match_round(env);
             self.saturate(env);
             if goal(self) {
                 break;
             }
-            if self.progress() == before {
+            let stalled = self.progress() == before;
+            if stalled || round + 1 == MAX_ROUNDS {
                 self.retry_conds_deep(env);
                 self.saturate(env);
                 if goal(self) {
@@ -1814,7 +2009,7 @@ impl Table {
                 }
                 self.decide_round(env);
                 self.saturate(env);
-                if self.progress() == before {
+                if stalled && self.progress() == before {
                     break;
                 }
             }
@@ -1867,7 +2062,7 @@ impl Table {
             }
         }
         // The facts contradict each other.
-        self.with_facts(env, &lt, &rt, |env, _| {
+        let out = self.with_facts(env, &lt, &rt, |env, _| {
             if let Some(c) = env.refute_linearly() {
                 return Some(Proof::Absurd {
                     contradiction: Box::new(c),
@@ -1876,7 +2071,56 @@ impl Table {
                 });
             }
             diseq_chain(env, &lt, &rt, MAX_DISEQ)
-        })
+        });
+        if out.is_none() && std::env::var_os("AVER_TABLE_DEBUG").is_some() {
+            self.dump(env, l, r);
+        }
+        out
+    }
+
+    /// What the table holds, for a case it leaves open.
+    fn dump(&self, env: &Env<'_>, l: Id, r: Id) {
+        let names = env.inputs.symbol_table;
+        let show = |t: &Term| crate::ir::proof_steps::show::term(t, names);
+        eprintln!(
+            "table: open `{}` = `{}`: {} terms, {} joins, {} instances, {} noted, full {}",
+            show(self.term(l)),
+            show(self.term(r)),
+            self.nodes.len(),
+            self.unions,
+            self.instances,
+            self.conds.iter().filter(|c| !c.done).count(),
+            self.full
+        );
+        for (name, root) in [("left", l), ("right", r)] {
+            let ms: Vec<String> = self.members[self.root(root)]
+                .iter()
+                .map(|m| show(self.term(*m)))
+                .collect();
+            eprintln!("table:   {name}: {}", ms.join("  |  "));
+        }
+        for lit in [self.t, self.f] {
+            let ms: Vec<String> = self.members[self.root(lit)]
+                .iter()
+                .map(|m| show(self.term(*m)))
+                .collect();
+            eprintln!("table:   {}: {}", show(self.term(lit)), ms.join("  |  "));
+        }
+        for c in self.conds.iter().filter(|c| !c.done) {
+            eprintln!("table:   noted when: {}", show(&c.when));
+        }
+        if std::env::var_os("AVER_TABLE_DEBUG_ALL").is_some() {
+            let mut seen = HashSet::new();
+            for id in 0..self.nodes.len() {
+                let r = self.root(id);
+                if !seen.insert(r) || self.members[r].len() < 2 {
+                    continue;
+                }
+                let ms: Vec<String> =
+                    self.members[r].iter().map(|m| show(self.term(*m))).collect();
+                eprintln!("table:   class: {}", ms.join("  |  "));
+            }
+        }
     }
 }
 
@@ -1903,16 +2147,20 @@ fn decide_with_diseqs(env: &mut Env<'_>, goal: &Term, value: bool) -> Option<Pro
     })
 }
 
-/// `x` and the literal `k` of a hypothesis `(x == k) = false`.
-fn diseq<'t>(lhs: &'t Term, rhs: &Term) -> Option<(&'t Term, num_bigint::BigInt)> {
+/// `x` and the literal `k` of a hypothesis `(x == k) = false`, and whether
+/// it is written `k == x`.
+fn diseq<'t>(lhs: &'t Term, rhs: &Term) -> Option<(&'t Term, num_bigint::BigInt, bool)> {
     if term::bool_value(rhs) != Some(false) {
         return None;
     }
-    let ResolvedExpr::BinOp(BinOp::Eq, x, k) = &lhs.node else {
+    let ResolvedExpr::BinOp(BinOp::Eq, a, b) = &lhs.node else {
         return None;
     };
-    let k = term::int_value(k)?;
-    (term::int_value(x).is_none() && is_int(x)).then_some((&**x, k))
+    match (term::int_value(a), term::int_value(b)) {
+        (None, Some(k)) if is_int(a) => Some((&**a, k, false)),
+        (Some(k), None) if is_int(b) => Some((&**b, k, true)),
+        _ => None,
+    }
 }
 
 /// `gl = gr` where the comparisons in scope leave a variable no value: for
@@ -1931,12 +2179,14 @@ fn diseq_chain(env: &mut Env<'_>, gl: &Term, gr: &Term, depth: usize) -> Option<
     if depth == 0 {
         return None;
     }
-    let cands: Vec<(String, Term, num_bigint::BigInt)> = env
+    let cands: Vec<(String, Term, num_bigint::BigInt, bool)> = env
         .hyps
         .iter()
-        .filter_map(|(n, e)| diseq(&e.lhs, &e.rhs).map(|(x, k)| (n.clone(), canon(x), k)))
+        .filter_map(|(n, e)| {
+            diseq(&e.lhs, &e.rhs).map(|(x, k, flipped)| (n.clone(), canon(x), k, flipped))
+        })
         .collect();
-    for (name, x, k) in cands {
+    for (name, x, k, flipped) in cands {
         let kt = term::int(&k);
         for lower in [true, false] {
             // `x >= k` and not `x >= k + 1` (or the same downward).
@@ -1957,18 +2207,34 @@ fn diseq_chain(env: &mut Env<'_>, gl: &Term, gr: &Term, depth: usize) -> Option<
             let split_op = if lower { BinOp::Lte } else { BinOp::Gte };
             let on = canon(&term::binop(split_op, x.clone(), kt.clone()));
             let h = env.fresh_hyp();
-            let premises = if lower {
-                vec![Proof::Hyp(h.clone()), at_bound]
+            // `x <= k` and `x >= k`: one the case states, the other the
+            // bound.
+            let (at_most, at_least) = if lower {
+                (Proof::Hyp(h.clone()), at_bound)
             } else {
-                vec![at_bound, Proof::Hyp(h.clone())]
+                (at_bound, Proof::Hyp(h.clone()))
             };
-            let eq = canon(&term::binop(BinOp::Eq, x.clone(), kt.clone()));
+            // `x == k` from the two orders, or `k == x` from the same two
+            // read from the other side.
+            let (a, b, premises) = if flipped {
+                (
+                    kt.clone(),
+                    x.clone(),
+                    vec![
+                        linear_flip(&x, &kt, BinOp::Gte, at_least)?,
+                        linear_flip(&x, &kt, BinOp::Lte, at_most)?,
+                    ],
+                )
+            } else {
+                (x.clone(), kt.clone(), vec![at_most, at_least])
+            };
+            let eq = canon(&term::binop(BinOp::Eq, a.clone(), b.clone()));
             let contradiction = Proof::Trans {
                 terms: vec![term::boolean(true), eq, term::boolean(false)],
                 steps: vec![
                     Proof::Symm(Box::new(Proof::Rule {
                         rule: WallRule::EqOfLeGe,
-                        subst: vec![("a".into(), x.clone()), ("b".into(), kt.clone())],
+                        subst: vec![("a".into(), a), ("b".into(), b)],
                         premises,
                     })),
                     Proof::Hyp(name.clone()),
@@ -1996,13 +2262,47 @@ fn diseq_chain(env: &mut Env<'_>, gl: &Term, gr: &Term, depth: usize) -> Option<
     None
 }
 
+/// `(k op' x) = true` from `p : (x op k) = true`, the same order read
+/// from the other side (`x >= k` gives `k <= x`): one linear step.
+fn linear_flip(x: &Term, k: &Term, op: BinOp, p: Proof) -> Option<Proof> {
+    let stated = canon(&term::binop(op, x.clone(), k.clone()));
+    let flipped_op = match op {
+        BinOp::Gte => BinOp::Lte,
+        BinOp::Lte => BinOp::Gte,
+        _ => return None,
+    };
+    let goal = canon(&term::binop(flipped_op, k.clone(), x.clone()));
+    let h = "h_flip".to_string();
+    let linear = crate::ir::proof_steps::linear::from_hyps(
+        &goal,
+        true,
+        &[(h.clone(), stated.clone(), true)],
+    )?;
+    Some(Proof::Have {
+        name: h,
+        fact: stated,
+        proof: Box::new(p),
+        body: Box::new(linear),
+    })
+}
+
 impl Env<'_> {
     /// `lhs = rhs` where evaluation stopped at the two, by a table of
     /// equal terms over them and the hypotheses in scope (see the module
     /// documentation). The table spends none of the fuel or budgets the
     /// rest of the proof has; what it opens and cites is recorded only
     /// when it closes.
-    pub(crate) fn close_by_table(&mut self, lhs: &Term, rhs: &Term) -> Option<Proof> {
+    ///
+    /// `before` are the equations evaluation went through on the way
+    /// (`lhs0 = lhs`, with its proof): the terms it read before they
+    /// computed away go into the table too, so a law about one of them
+    /// still applies.
+    pub(crate) fn close_by_table(
+        &mut self,
+        lhs: &Term,
+        rhs: &Term,
+        before: &[(Term, Term, Proof)],
+    ) -> Option<Proof> {
         if self.in_table || self.table_runs >= MAX_TABLES {
             return None;
         }
@@ -2025,7 +2325,7 @@ impl Env<'_> {
         let read_claim_fuel = self.read_claim_fuel;
         self.fuel = fuel.min(TABLE_FUEL);
         self.in_table = true;
-        let found = self.table_proof(lhs, rhs);
+        let found = self.table_proof(lhs, rhs, before);
         self.in_table = false;
         self.fuel = fuel;
         self.ran_dry = ran_dry;
@@ -2041,6 +2341,9 @@ impl Env<'_> {
         self.hyps.truncate(marks.5);
         self.hints.truncate(marks.7);
         let debug = std::env::var_os("AVER_STEPS_DEBUG").is_some();
+        // A proof bigger than this costs the rest of the law more than the
+        // case is worth: the attempt goes on without it.
+        let found = found.filter(|p| p.size() <= MAX_PROOF);
         let Some(proof) = found else {
             self.rewind_hyp_count(marks.6);
             return None;
@@ -2080,10 +2383,24 @@ impl Env<'_> {
         Some(proof)
     }
 
-    fn table_proof(&mut self, lhs: &Term, rhs: &Term) -> Option<Proof> {
+    fn table_proof(
+        &mut self,
+        lhs: &Term,
+        rhs: &Term,
+        before: &[(Term, Term, Proof)],
+    ) -> Option<Proof> {
         let mut table = Table::new();
         table.names.set(self.table_names);
         table.load_rewrites(self);
+        for (from, to, proof) in before {
+            if term::canon_eq(from, to) {
+                continue;
+            }
+            let (Some(a), Some(b)) = (table.add(from), table.add(to)) else {
+                return None;
+            };
+            table.merge(a, b, Why::Given(proof.clone()));
+        }
         for (name, e) in self.hyps.clone() {
             let (Some(a), Some(b)) = (table.add(&e.lhs), table.add(&e.rhs)) else {
                 return None;
