@@ -277,7 +277,23 @@ impl Env<'_> {
         let ev = self.whnf(&on);
         self.fuel = fuel;
         let ev = ev.ok()?;
-        if !ev.chain.is_empty() || super::eval::select_arm(arms, &on, &self.hyps).is_some() {
+        // A subject that evaluates further is left to evaluation, unless it
+        // is a call of a definition that does not recurse and stops at a call
+        // of one that does, which no arm reads: then the subject as it stands
+        // is split on (`x = parse(text)?` over a recursive parser).
+        let recursive_call = |t: &Term| {
+            matches!(&t.node, ResolvedExpr::Call(ResolvedCallee::Fn(f), _)
+                if self.inputs.recursive_fns.contains(f))
+        };
+        let stops_at_recursion = || {
+            matches!(&on.node, ResolvedExpr::Call(ResolvedCallee::Fn(_), _))
+                && !recursive_call(&on)
+                && recursive_call(ev.chain.cur())
+                && super::eval::select_arm(arms, ev.chain.cur(), &self.hyps).is_none()
+        };
+        if (!ev.chain.is_empty() && !stops_at_recursion())
+            || super::eval::select_arm(arms, &on, &self.hyps).is_some()
+        {
             return None;
         }
         Some(Stuck {

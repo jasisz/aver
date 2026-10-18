@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::expr::aver_name_to_lean;
-use super::fn_def::{emit_fn_body_for, lower_pure_question_bang_for_emit};
+use super::fn_def::emit_fn_body_for;
 use super::is_pure_fn;
 use super::render::{emit_doc_comment, emit_fn_params, ret_type_or_unit};
 use crate::ast::*;
@@ -654,13 +654,7 @@ pub(super) fn emit_native_mutual_lex_list_wf_group(
         let fn_name = aver_name_to_lean(&fd.name);
         let params = emit_fn_params(&fd.params);
         let ret_type = ret_type_or_unit(fd);
-        let lowered = lower_pure_question_bang_for_emit(fd);
-        let body_fn = lowered.as_ref().unwrap_or(fd);
-        let body_ast = lowered
-            .as_ref()
-            .map(|l| l.body.as_ref())
-            .unwrap_or(fd.body.as_ref());
-        let body = emit_fn_body_for(body_fn, body_ast, ctx);
+        let body = emit_fn_body_for(fd, &fd.body, ctx);
 
         lines.extend(
             emit_doc_comment(&fd.desc)

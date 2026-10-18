@@ -755,6 +755,10 @@ impl<T: ArenaTypes> Arena<T> {
         if len <= FLATTEN_THRESHOLD {
             return value;
         }
+        // Already one flat entry: there is no chain to flatten.
+        if matches!(self.get_list(value.arena_index()), ArenaList::Flat { .. }) {
+            return value;
+        }
         let elements = self.list_to_vec_value(value);
         let flat = ArenaList::Flat {
             items: Rc::new(ListBody::new(elements)),

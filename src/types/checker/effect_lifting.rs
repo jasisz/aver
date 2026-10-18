@@ -184,9 +184,6 @@ struct OracleCounters {
     arm_dependent: BTreeSet<String>,
     /// Every call this scope could not number the way the run will.
     divergences: Vec<IndexDivergence>,
-    /// Names the `__qm_err_N` bindings the `?` rewrite introduces. A
-    /// generated binding name, not an Oracle coordinate.
-    fresh_bindings: u32,
 }
 
 impl OracleCounters {
@@ -284,12 +281,6 @@ impl OracleCounters {
     /// the branch as well.
     fn absorb_divergences(&mut self, branch: OracleCounters) {
         self.divergences.extend(branch.divergences);
-    }
-
-    fn next_fresh_binding(&mut self) -> u32 {
-        let next = self.fresh_bindings;
-        self.fresh_bindings += 1;
-        next
     }
 }
 
@@ -441,94 +432,9 @@ fn lift_stmts(
             out.push(cps);
             return Ok(out);
         }
-        if let Some(cps) =
-            try_lift_question_op_stmt(stmt, &stmts[i + 1..], cfg, path_expr, counters)?
-        {
-            out.push(cps);
-            return Ok(out);
-        }
         out.push(lift_stmt(stmt, cfg, path_expr, counters)?);
     }
     Ok(out)
-}
-
-/// Lower a bare `?` operator at statement position into a `match` on
-/// the inner expression's `Result` value. Two shapes:
-///   `cmd = parseCommand(line)?; <rest>` becomes
-///     `match parseCommand(line) { Ok(cmd) -> <rest>; Err(e) -> Err(e) }`
-///   `parseCommand(line)?` (tail) becomes
-///     `match parseCommand(line) { Ok(_v) -> Ok(_v); Err(e) -> Err(e) }`
-/// (the tail form is equivalent to the inner expression itself but
-/// going through the match keeps the Result wrapping uniform regardless
-/// of how the surrounding emitter renders it).
-fn try_lift_question_op_stmt(
-    stmt: &Stmt,
-    rest: &[Stmt],
-    cfg: &LiftConfig,
-    path_expr: &Spanned<Expr>,
-    counters: &mut OracleCounters,
-) -> Result<Option<Stmt>, LiftError> {
-    use crate::ast::{MatchArm, Pattern};
-
-    let (bind_name, inner, line, is_tail) = match stmt {
-        Stmt::Binding(name, _, expr) => match &expr.node {
-            Expr::ErrorProp(inner) => (Some(name.clone()), inner.clone(), expr.line, false),
-            _ => return Ok(None),
-        },
-        Stmt::Expr(expr) if rest.is_empty() => match &expr.node {
-            Expr::ErrorProp(inner) => (None, inner.clone(), expr.line, true),
-            _ => return Ok(None),
-        },
-        _ => return Ok(None),
-    };
-
-    let lifted_inner = lift_expr(&inner, cfg, path_expr, counters)?;
-
-    let ok_value_name = bind_name.unwrap_or_else(|| "__qm_value".to_string());
-    let err_name = format!("__qm_err_{}", counters.next_fresh_binding());
-
-    let continuation = if is_tail {
-        spanned(
-            Expr::Constructor(
-                "Result.Ok".to_string(),
-                Some(crate::ast::Shared::new(spanned(
-                    Expr::Ident(ok_value_name.clone()),
-                    line,
-                ))),
-            ),
-            line,
-        )
-    } else {
-        let lifted_rest = lift_stmts(rest, cfg, path_expr, counters)?;
-        stmts_to_let_chain(&lifted_rest, line)
-    };
-
-    let ok_arm = MatchArm::new(
-        Pattern::Constructor("Result.Ok".to_string(), vec![ok_value_name]),
-        continuation,
-    );
-    let err_arm = MatchArm::new(
-        Pattern::Constructor("Result.Err".to_string(), vec![err_name.clone()]),
-        spanned(
-            Expr::Constructor(
-                "Result.Err".to_string(),
-                Some(crate::ast::Shared::new(spanned(
-                    Expr::Ident(err_name),
-                    line,
-                ))),
-            ),
-            line,
-        ),
-    );
-
-    let match_expr = spanned(
-        Expr::Match {
-            subject: crate::ast::Shared::new(lifted_inner),
-            arms: crate::ast::shared::vec(vec![ok_arm, err_arm]),
-        },
-        line,
-    );
-    Ok(Some(Stmt::Expr(match_expr)))
 }
 
 /// If `stmt` is a binding or tail expression whose RHS is
@@ -821,7 +727,7 @@ fn stmts_to_expr(stmts: &[Stmt], line: SourceLine) -> Spanned<Expr> {
 
 /// Nest block stmts as let-chains using Match(Unit, [_ -> body]).
 /// Builds equivalent to `let a = va; let b = vb; tail`.
-fn stmts_to_let_chain(stmts: &[Stmt], line: SourceLine) -> Spanned<Expr> {
+pub(crate) fn stmts_to_let_chain(stmts: &[Stmt], line: SourceLine) -> Spanned<Expr> {
     use crate::ast::{Literal, MatchArm, Pattern};
     // Find the tail expression and the preceding bindings.
     let (tail, bindings) = match stmts.split_last() {
@@ -1503,83 +1409,6 @@ pub fn lift_fn_def_with_registry(
     capabilities: &crate::capability::CapabilityRegistry,
 ) -> Result<Option<FnDef>, LiftError> {
     lift_fn_def_with_helpers_and_registry(fd, &HashMap::new(), capabilities)
-}
-
-/// Lower pure `?!` products to explicit Result matches for proof backends.
-///
-/// Effectful functions use [`lift_fn_def_with_helpers`], which already does
-/// this while replacing classified effects with oracle calls. Pure functions
-/// can still contain `?!` over ordinary `Result`-returning helpers; proof
-/// backends need the same value-level desugaring even though there are no
-/// effects to lift.
-pub fn lower_pure_question_bang_fn(fd: &FnDef) -> Result<Option<FnDef>, LiftError> {
-    if !fd.effects.is_empty() || !body_contains_question_bang(&fd.body) {
-        return Ok(None);
-    }
-
-    let cfg = LiftConfig {
-        path_name: "path".to_string(),
-        oracle_counter_name: None,
-        in_branch_scope: false,
-        oracles: HashMap::new(),
-        fresh_resources: HashMap::new(),
-        effectful_helpers: HashMap::new(),
-        capabilities: Default::default(),
-    };
-    let lowered_body = lift_body(&fd.body, &cfg)?;
-    let mut lowered = fd.clone();
-    lowered.body = Arc::new(lowered_body);
-    Ok(Some(lowered))
-}
-
-fn body_contains_question_bang(body: &FnBody) -> bool {
-    body.stmts().iter().any(|stmt| match stmt {
-        Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => expr_contains_question_bang(expr),
-    })
-}
-
-fn expr_contains_question_bang(expr: &Spanned<Expr>) -> bool {
-    match &expr.node {
-        Expr::IndependentProduct(_, true) => true,
-        Expr::ErrorProp(_) => true,
-        Expr::IndependentProduct(items, false) | Expr::List(items) | Expr::Tuple(items) => {
-            items.iter().any(expr_contains_question_bang)
-        }
-        Expr::FnCall(callee, args) => {
-            expr_contains_question_bang(callee) || args.iter().any(expr_contains_question_bang)
-        }
-        Expr::Attr(base, _) | Expr::Constructor(_, Some(base)) => expr_contains_question_bang(base),
-        Expr::BinOp(_, left, right) => {
-            expr_contains_question_bang(left) || expr_contains_question_bang(right)
-        }
-        Expr::Neg(inner) => expr_contains_question_bang(inner),
-        Expr::Match { subject, arms } => {
-            expr_contains_question_bang(subject)
-                || arms
-                    .iter()
-                    .any(|arm| expr_contains_question_bang(&arm.body))
-        }
-        Expr::InterpolatedStr(parts) => parts.iter().any(|part| match part {
-            crate::ast::StrPart::Parsed(expr) => expr_contains_question_bang(expr),
-            crate::ast::StrPart::Literal(_) => false,
-        }),
-        Expr::MapLiteral(entries) => entries.iter().any(|(key, value)| {
-            expr_contains_question_bang(key) || expr_contains_question_bang(value)
-        }),
-        Expr::RecordCreate { fields, .. } => fields
-            .iter()
-            .any(|(_, value)| expr_contains_question_bang(value)),
-        Expr::RecordUpdate { base, updates, .. } => {
-            expr_contains_question_bang(base)
-                || updates
-                    .iter()
-                    .any(|(_, value)| expr_contains_question_bang(value))
-        }
-        Expr::TailCall(data) => data.args.iter().any(expr_contains_question_bang),
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::Constructor(_, None) => {
-            false
-        }
-    }
 }
 
 /// Oracle v1: lift an effectful fn with a known set of sibling

@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use super::expr::{aver_name_to_lean, emit_expr, resolve_rewrite_output};
-use super::fn_def::{emit_fn_body_for, lower_pure_question_bang_for_emit};
+use super::fn_def::emit_fn_body_for;
 use super::recurrence::{recurrence_nat_helper_name, render_affine_pair_expr};
 use super::render::{
     emit_doc_comment, emit_fn_param_names, emit_fn_params, indent_lines, ret_type_or_unit,
@@ -1642,13 +1642,7 @@ fn emit_measured_group(fns: &[&FnDef], measures: &[NativeMeasure], ctx: &Codegen
         let fn_name = aver_name_to_lean(&fd.name);
         let params = emit_fn_params(&fd.params);
         let ret_type = ret_type_or_unit(fd);
-        let lowered = lower_pure_question_bang_for_emit(fd);
-        let body_fn = lowered.as_ref().unwrap_or(fd);
-        let body_ast = lowered
-            .as_ref()
-            .map(|l| l.body.as_ref())
-            .unwrap_or(fd.body.as_ref());
-        let body = emit_fn_body_for(body_fn, body_ast, ctx);
+        let body = emit_fn_body_for(fd, &fd.body, ctx);
 
         lines.extend(
             emit_doc_comment(&fd.desc)
