@@ -656,6 +656,224 @@ struct Part {
     laws: Vec<LawRef>,
 }
 
+/// The weight of a proof: its steps and the parts of every term it writes,
+/// what checking it reads.
+fn weight(p: &Proof) -> usize {
+    fn parts(t: &Term) -> usize {
+        1 + crate::ir::proof_steps::term::children(t)
+            .into_iter()
+            .map(parts)
+            .sum::<usize>()
+    }
+    let mut n = p.size();
+    p.each_term(&mut |t| n += parts(t));
+    n
+}
+
+/// Where a [`search`] starts (its stage, see there) and what the stages
+/// before it found.
+#[derive(Default)]
+struct Resume {
+    stage: usize,
+    met_halving: bool,
+    pending_whens: Vec<Term>,
+}
+
+/// A proof a [`search`] found, the environment it was found in, the stage
+/// that found it, and whether a table of equal terms closed a part of it.
+struct Closed<'a> {
+    proof: Proof,
+    env: Env<'a>,
+    stage: usize,
+    by_table: bool,
+}
+
+/// What a [`search`] found, or why it found nothing; and what a search
+/// resumed at a later stage needs from the stages before.
+struct Searched<'a> {
+    found: Option<Closed<'a>>,
+    refusal: String,
+    met_halving: bool,
+    pending_whens: Vec<Term>,
+}
+
+/// The attempts of [`prove_part`] in order, from stage `from.stage`:
+/// stages 0 to 3 are the cited laws, evaluation, the cases of the givens
+/// of finite type and induction; 4 to 7 the same with a call that divides
+/// an Int down to zero kept whole, when one was met; 8 a table of equal
+/// terms over the claim as stated; 9 a split on an open line of a cited
+/// `when`; 10 an induction along another function of the claim.
+fn search<'a>(
+    fresh: &dyn Fn() -> Env<'a>,
+    using: &Option<Vec<LawRef>>,
+    ob: &Obligation,
+    induct_on: Option<(crate::ir::identity::FnId, Option<&str>)>,
+    hints: &mut Found,
+    from: Resume,
+) -> Searched<'a> {
+    let Resume {
+        stage: from,
+        mut met_halving,
+        mut pending_whens,
+    } = from;
+    let tables_closed = || egraph::stats().closed;
+    let mut env = fresh();
+    let mut refusals: Vec<String> = Vec::new();
+    // What found the proof: the stage, and whether a table closed a part.
+    let mut found: Option<(Proof, usize, bool)> = None;
+    // The first pass's refusals, kept once the second pass runs.
+    let mut opened: Option<Vec<String>> = None;
+    for stage in from..8 {
+        if stage == 4 {
+            if !met_halving {
+                break;
+            }
+            opened = Some(std::mem::take(&mut refusals));
+        }
+        env.open_halving = stage < 4;
+        let before = tables_closed();
+        let outcome = match stage % 4 {
+            0 => match using {
+                // One instance of a cited law, either way round, first.
+                Some(laws) => match env.direct_equal(&ob.lhs, &ob.rhs) {
+                    Some(proof) => Ok(proof),
+                    None => {
+                        let out = citations(&mut env, laws.clone(), ob);
+                        // A cited law matched where a line of its `when`
+                        // stayed open: split on that line once every
+                        // other attempt has failed.
+                        if out.is_err() && pending_whens.is_empty() {
+                            pending_whens = env
+                                .open_whens
+                                .iter()
+                                .take(MAX_WHEN_SPLITS)
+                                .cloned()
+                                .collect();
+                        }
+                        out
+                    }
+                },
+                None => continue,
+            },
+            1 => env.prove_by_evaluation(&ob.lhs, &ob.rhs, SPLIT_DEPTH),
+            2 if ob.finite.is_empty() => continue,
+            2 => env.prove_by_cases(&ob.finite, &ob.lhs, &ob.rhs, SPLIT_DEPTH),
+            _ => match induct_on {
+                Some((f, named)) => env.prove_by_induction(f, named, ob, SPLIT_DEPTH),
+                None => continue,
+            },
+        };
+        match outcome {
+            Ok(proof) => {
+                found = Some((proof, stage, tables_closed() > before));
+                break;
+            }
+            Err(why) => {
+                refusals.push(why);
+                for h in env.hints.drain(..) {
+                    if !hints.laws.contains(&h) {
+                        hints.laws.push(h);
+                    }
+                }
+                for stop in env.stops.drain(..) {
+                    if hints.stops.len() < env::MAX_STOPS {
+                        hints.stops.push(stop);
+                    }
+                }
+                met_halving |= env.met_halving.get();
+                env = fresh();
+            }
+        }
+    }
+    // A table of equal terms over the claim as stated, its hypotheses, the
+    // cited laws and the facts (see [`egraph`]): where evaluation ran out
+    // of fuel before it stopped anywhere, the table never saw the claim.
+    if found.is_none() && from <= 8 {
+        let mut table_env = fresh();
+        if let Some(proof) = table_env.close_by_table(&canon(&ob.lhs), &canon(&ob.rhs), &[]) {
+            env = table_env;
+            found = Some((proof, 8, true));
+        }
+    }
+    let whens = pending_whens.clone();
+    // Last, a split on an open line of a cited law's `when`; the splits
+    // share half of one attempt's fuel.
+    let mut tried = Vec::new();
+    if found.is_none()
+        && from <= 9
+        && let Some(laws) = using
+    {
+        let mut budget = fresh().fuel / 2;
+        for on in std::mem::take(&mut pending_whens) {
+            if budget == 0 {
+                break;
+            }
+            let mut split_env = fresh();
+            split_env.fuel = budget;
+            let before = tables_closed();
+            let split = split_on_cited_when(&mut split_env, laws.clone(), ob, &on);
+            budget = split_env.fuel;
+            match split {
+                Ok(proof) => {
+                    env = split_env;
+                    found = Some((proof, 9, tables_closed() > before));
+                    break;
+                }
+                Err(e) => tried.push(e),
+            }
+        }
+    }
+    let mut tried = if tried.is_empty() {
+        String::new()
+    } else {
+        format!("; split on a cited `when`: {}", tried.join("; "))
+    };
+    // Last, an induction along another function of the claim, on half of
+    // one attempt's fuel.
+    if found.is_none()
+        && let Some((f, named)) = induct_on
+    {
+        let mut other_env = fresh();
+        other_env.fuel /= 2;
+        let before = tables_closed();
+        match other_env.prove_along_others(f, named, ob, SPLIT_DEPTH) {
+            Ok(proof) => {
+                env = other_env;
+                found = Some((proof, 10, tables_closed() > before));
+            }
+            Err(why) if !why.is_empty() => {
+                for h in other_env.hints.drain(..) {
+                    if !hints.laws.contains(&h) {
+                        hints.laws.push(h);
+                    }
+                }
+                tried.push_str("; ");
+                tried.push_str(&why);
+            }
+            Err(_) => {}
+        }
+    }
+    let refusal = match &opened {
+        Some(first) => format!(
+            "{}; with the call that divides down to zero kept whole: {}{tried}",
+            first.join("; "),
+            refusals.join("; ")
+        ),
+        None => format!("{}{tried}", refusals.join("; ")),
+    };
+    Searched {
+        found: found.map(|(proof, stage, by_table)| Closed {
+            proof,
+            env,
+            stage,
+            by_table,
+        }),
+        refusal,
+        met_halving,
+        pending_whens: whens,
+    }
+}
+
 /// Prove one obligation of the law: `ob` under the hypotheses `known`
 /// besides the `when`.
 /// `induct_on` is the function induction may follow, with the given the
@@ -688,154 +906,34 @@ fn prove_part(
         env.fuel = fuel;
         env
     };
-    let mut env = fresh();
-    let proof = if algebraic {
-        algebra(&mut env, t, ob)?
+    let (proof, mut env) = if algebraic {
+        let mut env = fresh();
+        (algebra(&mut env, t, ob)?, env)
     } else {
-        let mut refusals: Vec<String> = Vec::new();
-        let mut found = None;
-        // The attempts run again with a call that divides an Int down to
-        // zero kept whole, when opening one did not close the part.
-        let mut met_halving = false;
-        // The first pass's refusals, kept once the second pass runs.
-        let mut opened: Option<Vec<String>> = None;
-        // Open lines of cited `when`s the citations attempt met.
-        let mut pending_whens: Vec<Term> = Vec::new();
-        for attempt in 0..8 {
-            if attempt == 4 {
-                if !met_halving {
-                    break;
-                }
-                opened = Some(std::mem::take(&mut refusals));
-            }
-            env.open_halving = attempt < 4;
-            let attempt = attempt % 4;
-            let outcome = match attempt {
-                0 => match using {
-                    // One instance of a cited law, either way round, first.
-                    Some(laws) => match env.direct_equal(&ob.lhs, &ob.rhs) {
-                        Some(proof) => Ok(proof),
-                        None => {
-                            let out = citations(&mut env, laws.clone(), ob);
-                            // A cited law matched where a line of its
-                            // `when` stayed open: split on that line once
-                            // every other attempt has failed.
-                            if out.is_err() && pending_whens.is_empty() {
-                                pending_whens = env
-                                    .open_whens
-                                    .iter()
-                                    .take(MAX_WHEN_SPLITS)
-                                    .cloned()
-                                    .collect();
-                            }
-                            out
-                        }
-                    },
-                    None => continue,
-                },
-                1 => env.prove_by_evaluation(&ob.lhs, &ob.rhs, SPLIT_DEPTH),
-                2 if ob.finite.is_empty() => continue,
-                2 => env.prove_by_cases(&ob.finite, &ob.lhs, &ob.rhs, SPLIT_DEPTH),
-                _ => match induct_on {
-                    Some((f, named)) => env.prove_by_induction(f, named, ob, SPLIT_DEPTH),
-                    None => continue,
-                },
-            };
-            match outcome {
-                Ok(proof) => {
-                    found = Some(proof);
-                    break;
-                }
-                Err(why) => {
-                    refusals.push(why);
-                    for h in env.hints.drain(..) {
-                        if !hints.laws.contains(&h) {
-                            hints.laws.push(h);
-                        }
-                    }
-                    for stop in env.stops.drain(..) {
-                        if hints.stops.len() < env::MAX_STOPS {
-                            hints.stops.push(stop);
-                        }
-                    }
-                    met_halving |= env.met_halving.get();
-                    env = fresh();
+        let first = search(&fresh, using, ob, induct_on, hints, Resume::default());
+        match first.found {
+            // A table may close a part where the attempt that met it, or a
+            // later one, closes the whole without a table, by a smaller
+            // proof: those attempts run again without tables, and the
+            // smaller of the two proofs is kept.
+            Some(found) if found.by_table => {
+                let again = Resume {
+                    stage: found.stage,
+                    met_halving: first.met_halving,
+                    pending_whens: first.pending_whens,
+                };
+                let mut ignored = Found::default();
+                let plain = egraph::without_tables(|| {
+                    search(&fresh, using, ob, induct_on, &mut ignored, again)
+                });
+                match plain.found {
+                    Some(p) if weight(&p.proof) <= weight(&found.proof) => (p.proof, p.env),
+                    _ => (found.proof, found.env),
                 }
             }
+            Some(found) => (found.proof, found.env),
+            None => return Err(first.refusal),
         }
-        // A table of equal terms over the claim as stated, its hypotheses,
-        // the cited laws and the facts (see [`egraph`]): where evaluation
-        // ran out of fuel before it stopped anywhere, the table never saw
-        // the claim.
-        if found.is_none() {
-            let mut table_env = fresh();
-            if let Some(proof) = table_env.close_by_table(&canon(&ob.lhs), &canon(&ob.rhs), &[]) {
-                env = table_env;
-                found = Some(proof);
-            }
-        }
-        // Last, a split on an open line of a cited law's `when`; the splits
-        // share half of one attempt's fuel.
-        let mut tried = Vec::new();
-        if found.is_none()
-            && let Some(laws) = using
-        {
-            let mut budget = fresh().fuel / 2;
-            for on in std::mem::take(&mut pending_whens) {
-                if budget == 0 {
-                    break;
-                }
-                let mut split_env = fresh();
-                split_env.fuel = budget;
-                let split = split_on_cited_when(&mut split_env, laws.clone(), ob, &on);
-                budget = split_env.fuel;
-                match split {
-                    Ok(proof) => {
-                        env = split_env;
-                        found = Some(proof);
-                        break;
-                    }
-                    Err(e) => tried.push(e),
-                }
-            }
-        }
-        let mut tried = if tried.is_empty() {
-            String::new()
-        } else {
-            format!("; split on a cited `when`: {}", tried.join("; "))
-        };
-        // Last, an induction along another function of the claim, on half
-        // of one attempt's fuel.
-        if found.is_none()
-            && let Some((f, named)) = induct_on
-        {
-            let mut other_env = fresh();
-            other_env.fuel /= 2;
-            match other_env.prove_along_others(f, named, ob, SPLIT_DEPTH) {
-                Ok(proof) => {
-                    env = other_env;
-                    found = Some(proof);
-                }
-                Err(why) if !why.is_empty() => {
-                    for h in other_env.hints.drain(..) {
-                        if !hints.laws.contains(&h) {
-                            hints.laws.push(h);
-                        }
-                    }
-                    tried.push_str("; ");
-                    tried.push_str(&why);
-                }
-                Err(_) => {}
-            }
-        }
-        found.ok_or_else(|| match &opened {
-            Some(first) => format!(
-                "{}; with the call that divides down to zero kept whole: {}{tried}",
-                first.join("; "),
-                refusals.join("; ")
-            ),
-            None => format!("{}{tried}", refusals.join("; ")),
-        })?
     };
     // The kernel types a call it splits on by its definition, so a
     // function split on comes with it.
@@ -1002,7 +1100,20 @@ fn produce(
     {
         return produce_as(inputs, ir, i, t, auto, env::FUEL, hints);
     }
-    egraph::with_tables(|| produce_as(inputs, ir, i, t, auto, env::FUEL, hints))
+    let before = egraph::stats();
+    let out = egraph::with_tables(|| produce_as(inputs, ir, i, t, auto, env::FUEL, hints));
+    if std::env::var_os("AVER_STEPS_DEBUG").is_some() {
+        let after = egraph::stats();
+        eprintln!(
+            "tables: {}: {} built, {} closed, {:.1} ms in open ones, {:.1} ms in closed ones",
+            law_key(inputs, t),
+            after.built - before.built,
+            after.closed - before.closed,
+            (after.open_time - before.open_time).as_secs_f64() * 1000.0,
+            (after.closed_time - before.closed_time).as_secs_f64() * 1000.0
+        );
+    }
+    out
 }
 
 /// [`produce`] for `t` standing where law `i` stands: law `i` itself, or

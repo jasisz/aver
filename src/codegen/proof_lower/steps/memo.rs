@@ -8,8 +8,9 @@
 //!   of all its parts), the hypotheses in scope (names and equations),
 //!   whether a definition that divides an Int down to zero may be opened,
 //!   whether the `when` of a cited law is being proved, whether a premise
-//!   is being proved by evaluation, and whether linear arithmetic reads the
-//!   wider facts ([`super::env::Env::wide_linear`]): that is the
+//!   is being proved by evaluation, whether linear arithmetic reads the
+//!   wider facts ([`super::env::Env::wide_linear`]), and whether tables of
+//!   equal terms may be built ([`super::egraph::tables_on`]): that is the
 //!   key, written out in full ([`key`]). The rest it reads is fixed for
 //!   one obligation (the program, the cited laws, the builtin facts, the
 //!   givens of finite type), and a memo lives for one obligation only.
@@ -177,8 +178,9 @@ pub(crate) fn key(
     proving_cited_when: bool,
     discharging: bool,
     wide_linear: bool,
+    tables: bool,
 ) -> String {
     format!(
-        "{t:?}\u{1}{hyps:?}\u{1}{open_halving}\u{1}{proving_cited_when}\u{1}{discharging}\u{1}{wide_linear}"
+        "{t:?}\u{1}{hyps:?}\u{1}{open_halving}\u{1}{proving_cited_when}\u{1}{discharging}\u{1}{wide_linear}\u{1}{tables}"
     )
 }
