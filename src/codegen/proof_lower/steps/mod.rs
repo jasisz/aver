@@ -987,7 +987,9 @@ fn produce(
     auto: &[LawRef],
     hints: &mut Found,
 ) -> Produced {
-    produce_as(inputs, ir, i, &ir.law_theorems[i], auto, env::FUEL, hints)
+    // A table of equal terms ([`egraph`]) is built here, where a law is
+    // closed, and not for the hints a law left open is tried again for.
+    egraph::with_tables(|| produce_as(inputs, ir, i, &ir.law_theorems[i], auto, env::FUEL, hints))
 }
 
 /// [`produce`] for `t` standing where law `i` stands: law `i` itself, or

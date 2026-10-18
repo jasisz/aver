@@ -3910,8 +3910,16 @@ impl Env<'_> {
                 return Ok(proof);
             }
             let before = [
-                (canon(lhs), l.chain.cur().clone(), l.chain.clone().finish().1),
-                (canon(rhs), r.chain.cur().clone(), r.chain.clone().finish().1),
+                (
+                    canon(lhs),
+                    l.chain.cur().clone(),
+                    l.chain.clone().finish().1,
+                ),
+                (
+                    canon(rhs),
+                    r.chain.cur().clone(),
+                    r.chain.clone().finish().1,
+                ),
             ];
             if let Some(proof) = self.close_by_table(l.chain.cur(), r.chain.cur(), &before) {
                 let mut left = l.chain;

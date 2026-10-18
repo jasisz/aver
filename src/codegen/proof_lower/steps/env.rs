@@ -248,9 +248,7 @@ fn fuelled_group(id: FnId, ds: &[Def]) -> bool {
         d.params
             .iter()
             .zip(&d.param_types)
-            .filter(|(p, ty)| {
-                names.contains(p) && matches!(ty, Type::List(_) | Type::Named { .. })
-            })
+            .filter(|(p, ty)| names.contains(p) && matches!(ty, Type::List(_) | Type::Named { .. }))
             .count()
             >= 2
     })

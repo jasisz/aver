@@ -121,6 +121,10 @@ impl Entry {
 #[derive(Default)]
 pub(crate) struct Memo {
     entries: HashMap<String, Entry>,
+    /// The tables of equal terms ([`super::egraph`]) that closed nothing,
+    /// by what they read: built again from the same, one closes nothing
+    /// again.
+    open_tables: std::collections::HashSet<u64>,
 }
 
 impl Memo {
@@ -130,6 +134,14 @@ impl Memo {
 
     pub(crate) fn insert(&mut self, key: String, entry: Entry) {
         self.entries.insert(key, entry);
+    }
+
+    pub(crate) fn table_left_open(&self, key: u64) -> bool {
+        self.open_tables.contains(&key)
+    }
+
+    pub(crate) fn note_open_table(&mut self, key: u64) {
+        self.open_tables.insert(key);
     }
 }
 

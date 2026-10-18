@@ -60,23 +60,27 @@ const MAX_DECIDE: usize = 24;
 /// Most comparisons handed to linear arithmetic at once.
 const MAX_FACTS: usize = 32;
 /// Most tables one obligation builds.
-pub(crate) const MAX_TABLES: usize = 48;
+pub(crate) const MAX_TABLES: usize = 16;
 /// Most explanations nested one inside another.
 const MAX_EXPLAIN: usize = 48;
 /// Most cases on a Bool side one table opens, one inside another.
 const MAX_SPLITS: usize = 2;
 /// Largest proof a table hands back.
-const MAX_PROOF: usize = 1500;
+const MAX_PROOF: usize = 1100;
 /// Most cases on `x <= k` a read of `x != k` opens, one inside another.
 const MAX_DISEQ: usize = 8;
 
 type Id = usize;
 
+/// A match of a law or rule: the generation it is at, the rewrite, and
+/// what each of its variables is bound to.
+type Found = (u8, usize, Vec<(String, Id)>);
+
 /// A premise of a join: a proof built already, or two entries of the table
 /// whose terms it shows equal.
 #[derive(Clone, Debug)]
 enum Prem {
-    Done(Proof),
+    Done(Box<Proof>),
     Same(Id, Id),
 }
 
@@ -126,9 +130,16 @@ enum Why {
         r: Id,
     },
     /// A side of `Bool.or(a, b)` is `false` where the disjunction is.
-    OrFalse { or: Id, falsity: Id, left: bool },
+    OrFalse {
+        or: Id,
+        falsity: Id,
+        left: bool,
+    },
     /// `a = !v` where `Bool.not(a) = v`.
-    NotElim { not: Id, value: Id },
+    NotElim {
+        not: Id,
+        value: Id,
+    },
 }
 
 #[derive(Clone)]
@@ -351,8 +362,18 @@ fn typed_lists(t: &Term, want: Option<&crate::ast::Type>) -> Term {
             ("List.concat", 2) => {
                 let side = own
                     .clone()
-                    .or_else(|| args[0].ty().cloned().filter(|_| is_list(&args[0].ty().cloned())))
-                    .or_else(|| args[1].ty().cloned().filter(|_| is_list(&args[1].ty().cloned())));
+                    .or_else(|| {
+                        args[0]
+                            .ty()
+                            .cloned()
+                            .filter(|_| is_list(&args[0].ty().cloned()))
+                    })
+                    .or_else(|| {
+                        args[1]
+                            .ty()
+                            .cloned()
+                            .filter(|_| is_list(&args[1].ty().cloned()))
+                    });
                 vec![side.clone(), side]
             }
             ("List.reverse", 1) | ("List.take", 2) | ("List.drop", 2) => {
@@ -531,7 +552,10 @@ impl Table {
 
     fn signature(&self, a: Id) -> (String, Vec<Id>) {
         let n = &self.nodes[a];
-        (n.key.clone(), n.kids.iter().map(|k| self.root(*k)).collect())
+        (
+            n.key.clone(),
+            n.kids.iter().map(|k| self.root(*k)).collect(),
+        )
     }
 
     /// The entry for `t`, added with its parts where it is new; `None` once
@@ -686,8 +710,7 @@ impl Table {
     fn value_of(&self, a: Id) -> Option<Id> {
         self.members[self.root(a)].iter().copied().find(|&m| {
             let t = self.term(m);
-            term::is_literal(t)
-                || matches!(&t.node, ResolvedExpr::List(xs) if xs.is_empty())
+            term::is_literal(t) || matches!(&t.node, ResolvedExpr::List(xs) if xs.is_empty())
         })
     }
 
@@ -786,7 +809,7 @@ impl Table {
 
     fn prem(&self, p: &Prem) -> Option<Proof> {
         match p {
-            Prem::Done(p) => Some(p.clone()),
+            Prem::Done(p) => Some((**p).clone()),
             Prem::Same(a, b) => self.explain(*a, *b),
         }
     }
@@ -827,11 +850,7 @@ impl Table {
                 self.term(r).clone(),
                 term::boolean(rv),
             ],
-            steps: vec![
-                self.explain(lit_l, l)?,
-                l_to_r,
-                self.explain(r, lit_r)?,
-            ],
+            steps: vec![self.explain(lit_l, l)?, l_to_r, self.explain(r, lit_r)?],
         };
         Some(if lv { p } else { Proof::Symm(Box::new(p)) })
     }
@@ -1343,9 +1362,13 @@ impl Table {
                         continue;
                     };
                     let _ = subject;
-                    let Ok((_, body)) =
-                        crate::ir::proof_steps::claim::arm_equation(subject, arms, k, &[], &binders)
-                    else {
+                    let Ok((_, body)) = crate::ir::proof_steps::claim::arm_equation(
+                        subject,
+                        arms,
+                        k,
+                        &[],
+                        &binders,
+                    ) else {
                         continue;
                     };
                     self.opened[id] = true;
@@ -1377,9 +1400,10 @@ impl Table {
         if let Some(&known) = self.mutual.get(&f) {
             return known;
         }
-        let found = env.reachable_defs(f).iter().any(|d| {
-            d.fn_id != f && crate::ir::proof_steps::induct::def_callees(d).contains(&f)
-        });
+        let found = env
+            .reachable_defs(f)
+            .iter()
+            .any(|d| d.fn_id != f && crate::ir::proof_steps::induct::def_callees(d).contains(&f));
         self.mutual.insert(f, found);
         found
     }
@@ -1403,7 +1427,9 @@ impl Table {
             let decisive = term::is_literal(v)
                 || matches!(
                     v.node,
-                    ResolvedExpr::Ctor(..) | ResolvedExpr::List(_) | ResolvedExpr::RecordCreate { .. }
+                    ResolvedExpr::Ctor(..)
+                        | ResolvedExpr::List(_)
+                        | ResolvedExpr::RecordCreate { .. }
                 )
                 || builtin_args(v, "List.prepend", 2).is_some();
             if !decisive {
@@ -1531,7 +1557,7 @@ impl Table {
     fn match_round(&mut self, env: &mut Env<'_>) {
         // Every match first, then the instances nearest the start first,
         // so no law takes the whole budget from the others.
-        let mut found: Vec<(u8, usize, Vec<(String, Id)>)> = Vec::new();
+        let mut found: Vec<Found> = Vec::new();
         for ri in 0..self.rewrites.len() {
             let triggers = self.rewrites[ri].triggers.clone();
             let vars = self.rewrites[ri].vars.clone();
@@ -1656,7 +1682,7 @@ impl Table {
                                     Why::Law {
                                         law: law.key.clone(),
                                         subst,
-                                        premise: Some(Prem::Done(p)),
+                                        premise: Some(Prem::Done(Box::new(p))),
                                     },
                                 );
                             }
@@ -1695,7 +1721,7 @@ impl Table {
                         if term::bool_value(&c) != Some(v) {
                             return;
                         }
-                        proofs.push(Prem::Done(Proof::Compute { lhs: pl, rhs: pr }));
+                        proofs.push(Prem::Done(Box::new(Proof::Compute { lhs: pl, rhs: pr })));
                         continue;
                     }
                     let Some(pi) = self.add(&pl) else {
@@ -1709,7 +1735,7 @@ impl Table {
                     if int_cmp(&pl).is_some()
                         && let Some(p) = env.linear_proof(&pl, v)
                     {
-                        proofs.push(Prem::Done(p));
+                        proofs.push(Prem::Done(Box::new(p)));
                         continue;
                     }
                     // Not shown now: noted, for when the premise is known
@@ -1798,7 +1824,7 @@ impl Table {
             let (l, r) = (self.conds[i].l, self.conds[i].r);
             if v && let Some(p) = self.prove_true(env, &w, 2) {
                 self.conds[i].done = true;
-                let why = self.conds[i].why(Prem::Done(p));
+                let why = self.conds[i].why(Prem::Done(Box::new(p)));
                 self.merge(l, r, why);
                 self.process();
                 continue;
@@ -1949,7 +1975,7 @@ impl Table {
     fn fact_proof(&self, f: &Fact) -> Option<Proof> {
         let lit = if f.value { self.t } else { self.f };
         match &f.why {
-            Prem::Done(p) => Some(p.clone()),
+            Prem::Done(p) => Some((**p).clone()),
             Prem::Same(a, b) if *b == lit => self.explain(*a, *b),
             // `x op k`: congruence from `x = k`, then compute `k op k`.
             Prem::Same(a, b) => {
@@ -1993,8 +2019,10 @@ impl Table {
         let mut names = Vec::new();
         for f in &facts {
             let name = env.fresh_hyp();
-            env.hyps
-                .push((name.clone(), Eqn::new(f.term.clone(), term::boolean(f.value))));
+            env.hyps.push((
+                name.clone(),
+                Eqn::new(f.term.clone(), term::boolean(f.value)),
+            ));
             names.push(name);
         }
         // Also the comparisons inside true conjunctions and that lengths
@@ -2166,13 +2194,23 @@ impl Table {
                 }
             }
         }
+        // Only between two Bool sides neither of which is a literal, and
+        // not on an order: a case on a side the other side's literal
+        // already names is the refutation the table tried, and an order
+        // linear arithmetic did not decide stays undecided in both cases.
         let mut cands: Vec<Id> = Vec::new();
-        for side in [l, r] {
-            let t = self.term(side);
-            let boolish = matches!(t.ty(), Some(crate::ast::Type::Bool))
-                || matches!(&t.node, ResolvedExpr::BinOp(op, ..) if is_cmp(*op));
-            if boolish && !term::is_literal(t) && self.bool_of(side).is_none() {
-                cands.push(side);
+        if !term::is_literal(self.term(l)) && !term::is_literal(self.term(r)) {
+            for side in [l, r] {
+                let t = self.term(side);
+                let order = matches!(
+                    &t.node,
+                    ResolvedExpr::BinOp(BinOp::Lt | BinOp::Lte | BinOp::Gt | BinOp::Gte, ..)
+                );
+                let boolish = matches!(t.ty(), Some(crate::ast::Type::Bool))
+                    || matches!(&t.node, ResolvedExpr::BinOp(op, ..) if is_cmp(*op));
+                if boolish && !order && self.bool_of(side).is_none() {
+                    cands.push(side);
+                }
             }
         }
         for c in cands {
@@ -2312,8 +2350,7 @@ impl Table {
         }
         // A comparison with a Bool value: linear arithmetic over the facts.
         for (side, other, flip) in [(l, r, false), (r, l, true)] {
-            let Some(v) = term::bool_value(self.term(other)).or_else(|| self.bool_of(other))
-            else {
+            let Some(v) = term::bool_value(self.term(other)).or_else(|| self.bool_of(other)) else {
                 continue;
             };
             let cands: Vec<Id> = self.members[self.root(side)]
@@ -2338,11 +2375,7 @@ impl Table {
                         term::boolean(v),
                         self.term(other).clone(),
                     ],
-                    steps: vec![
-                        self.explain(side, c)?,
-                        by_linear,
-                        self.explain(lit, other)?,
-                    ],
+                    steps: vec![self.explain(side, c)?, by_linear, self.explain(lit, other)?],
                 };
                 return Some(if flip { Proof::Symm(Box::new(p)) } else { p });
             }
@@ -2402,8 +2435,10 @@ impl Table {
                 if !seen.insert(r) || self.members[r].len() < 2 {
                     continue;
                 }
-                let ms: Vec<String> =
-                    self.members[r].iter().map(|m| show(self.term(*m))).collect();
+                let ms: Vec<String> = self.members[r]
+                    .iter()
+                    .map(|m| show(self.term(*m)))
+                    .collect();
                 eprintln!("table:   class: {}", ms.join("  |  "));
             }
         }
@@ -2414,7 +2449,11 @@ impl Table {
 /// unequal literals in scope: a case on `goal`, the opposite case closed by
 /// [`diseq_chain`].
 fn decide_with_diseqs(env: &mut Env<'_>, goal: &Term, value: bool) -> Option<Proof> {
-    if !env.hyps.iter().any(|(_, e)| diseq(&e.lhs, &e.rhs).is_some()) {
+    if !env
+        .hyps
+        .iter()
+        .any(|(_, e)| diseq(&e.lhs, &e.rhs).is_some())
+    {
         return None;
     }
     let h = env.fresh_hyp();
@@ -2572,6 +2611,20 @@ fn linear_flip(x: &Term, k: &Term, op: BinOp, p: Proof) -> Option<Proof> {
     })
 }
 
+thread_local! {
+    /// Whether tables may be built ([`with_tables`]).
+    static TABLES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `f` with tables of equal terms allowed: the producers close laws inside
+/// it, and the hints for a law left open are worked out outside it.
+pub(crate) fn with_tables<R>(f: impl FnOnce() -> R) -> R {
+    let before = TABLES.with(|t| t.replace(true));
+    let out = f();
+    TABLES.with(|t| t.set(before));
+    out
+}
+
 impl Env<'_> {
     /// `lhs = rhs` where evaluation stopped at the two, by a table of
     /// equal terms over them and the hypotheses in scope (see the module
@@ -2589,7 +2642,29 @@ impl Env<'_> {
         rhs: &Term,
         before: &[(Term, Term, Proof)],
     ) -> Option<Proof> {
-        if self.in_table || self.table_runs >= MAX_TABLES {
+        if !TABLES.with(|t| t.get()) || self.in_table || self.table_runs >= MAX_TABLES {
+            return None;
+        }
+        // Everything a table reads that can change within one obligation:
+        // one built from the same closes nothing again.
+        let key = super::memo::debug_hash(&[
+            lhs,
+            rhs,
+            &before,
+            &self.hyps,
+            &self.split_binders,
+            &self.open_halving,
+            &self.proving_cited_when,
+            &self.discharging,
+            &self.wide_linear,
+            &self.table_splits,
+            &self.cited_all.len(),
+            &self.rewrite_laws.len(),
+            &self.auto_laws.len(),
+        ]);
+        if let Some(memo) = &self.memo
+            && memo.borrow().table_left_open(key)
+        {
             return None;
         }
         self.table_runs += 1;
@@ -2638,6 +2713,9 @@ impl Env<'_> {
         let found = found.filter(|p| p.size() <= MAX_PROOF);
         let Some(proof) = found else {
             self.rewind_hyp_count(marks.6);
+            if let Some(memo) = &self.memo {
+                memo.borrow_mut().note_open_table(key);
+            }
             return None;
         };
         // What the proof opens and cites, carried by the script.
@@ -2767,7 +2845,10 @@ impl Env<'_> {
                 .map(|(n, e)| {
                     Some((
                         n.clone(),
-                        Eqn::new(term::subst(&e.lhs, &at).ok()?, term::subst(&e.rhs, &at).ok()?),
+                        Eqn::new(
+                            term::subst(&e.lhs, &at).ok()?,
+                            term::subst(&e.rhs, &at).ok()?,
+                        ),
                     ))
                 })
                 .collect();
@@ -2875,7 +2956,9 @@ mod tests {
         // The explanation is checked by the kernel under `when : a = b`,
         // stated as the premise `a == b`, read through `int.eq.of_beq`.
         let mut t = Table::new();
-        let eq = t.add(&term::binop(BinOp::Eq, a.clone(), b.clone())).unwrap();
+        let eq = t
+            .add(&term::binop(BinOp::Eq, a.clone(), b.clone()))
+            .unwrap();
         let ab = t.add(&add(a.clone(), c.clone())).unwrap();
         let bc = t.add(&add(b.clone(), c.clone())).unwrap();
         t.merge(eq, t.t, Why::Given(Proof::Hyp("when".into())));
@@ -2936,7 +3019,11 @@ mod tests {
         let two = t.add(&term::int(&2.into())).unwrap();
         let three = t.add(&term::int(&3.into())).unwrap();
         let eq = t
-            .add(&term::binop(BinOp::Eq, term::int(&2.into()), term::int(&3.into())))
+            .add(&term::binop(
+                BinOp::Eq,
+                term::int(&2.into()),
+                term::int(&3.into()),
+            ))
             .unwrap();
         t.fold(eq);
         t.process();
@@ -3020,9 +3107,11 @@ mod tests {
             proof_command: false,
         };
         let mut env = Env::new(&inputs);
-        env.hyps
-            .push(("when".into(), Eqn::new(premise.clone(), term::boolean(true))));
-        f(&mut env)
+        env.hyps.push((
+            "when".into(),
+            Eqn::new(premise.clone(), term::boolean(true)),
+        ));
+        with_tables(|| f(&mut env))
     }
 
     #[test]
@@ -3099,14 +3188,19 @@ mod tests {
         // congruence; where not, a case on the other side.
         let (a, b, c) = (int_var("a"), int_var("b"), int_var("c"));
         let l = term::binop(BinOp::Eq, a.clone(), b.clone());
-        let r = term::binop(BinOp::Eq, add(a.clone(), c.clone()), add(b.clone(), c.clone()));
+        let r = term::binop(
+            BinOp::Eq,
+            add(a.clone(), c.clone()),
+            add(b.clone(), c.clone()),
+        );
         let truth = term::boolean(true);
         let found = under_when(&truth, |env| env.close_by_table(&l, &r, &[]));
         // The false case needs `a + c == b + c` to give `a == b`, which no
         // congruence shows: the table leaves the claim open rather than
         // write a wrong step.
         if let Some(proof) = found {
-            kernel(&script(l, r, Some(truth), proof)).expect("whatever it writes, the kernel accepts");
+            kernel(&script(l, r, Some(truth), proof))
+                .expect("whatever it writes, the kernel accepts");
         }
     }
 }
