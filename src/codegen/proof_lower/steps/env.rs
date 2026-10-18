@@ -165,6 +165,13 @@ pub(crate) struct Env<'a> {
     /// How many such readings are in progress, one inside the claim another
     /// went on to.
     pub reading: usize,
+    /// Whether a table of equal terms is being built ([`super::egraph`]),
+    /// so none is built inside it.
+    pub in_table: bool,
+    /// How many tables this attempt has built.
+    pub table_runs: usize,
+    /// How many hypothesis names the tables' explanations have given out.
+    pub table_names: usize,
 }
 
 /// What [`Env::opened_views`] gave for the hypotheses `hyps`.
@@ -255,6 +262,9 @@ impl<'a> Env<'a> {
             hypotheses_as_stated: false,
             read_seen: Vec::new(),
             reading: 0,
+            in_table: false,
+            table_runs: 0,
+            table_names: 0,
         }
     }
 

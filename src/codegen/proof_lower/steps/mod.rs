@@ -45,6 +45,7 @@ mod by_plan;
 mod chain;
 mod decls;
 mod divisor;
+mod egraph;
 mod env;
 mod eval;
 mod evaluated;

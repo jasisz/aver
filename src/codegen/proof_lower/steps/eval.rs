@@ -845,7 +845,7 @@ pub(crate) struct NormalFact {
 impl Env<'_> {
     /// Whether a true `t == u` makes `t` and `u` the same value, by `t`'s
     /// type (see [`crate::ir::SymbolTable::beq_is_equality`]).
-    fn beq_is_equality(&self, t: &Term) -> bool {
+    pub(super) fn beq_is_equality(&self, t: &Term) -> bool {
         t.ty()
             .is_some_and(|ty| self.inputs.symbol_table.beq_is_equality(ty))
     }
@@ -3935,6 +3935,13 @@ impl Env<'_> {
         {
             return Ok(Ok(proof));
         }
+        // Last, a table of equal terms over the two sides and the
+        // hypotheses (see [`super::egraph`]).
+        if let Some(proof) = self.close_by_table(nl.cur(), nr.cur()) {
+            let rc = nr.cur().clone();
+            nl.push(proof, rc);
+            return Ok(Ok(meet(nl, nr)));
+        }
         Err(self.stopped_at(nl.cur(), nr.cur()))
     }
 
@@ -4190,6 +4197,11 @@ impl Env<'_> {
             let stopped = [l.chain.cur(), r.chain.cur(), &g];
             if let Some(proof) = self.prove_with_evaluated_hypotheses(lhs, rhs, &stopped, depth) {
                 return Ok(proof);
+            }
+            if let Some(proof) = self.close_by_table(l.chain.cur(), r.chain.cur()) {
+                let mut left = l.chain;
+                left.push(proof, r.chain.cur().clone());
+                return Ok(meet(left, r.chain));
             }
             return Err(self.stopped_at(l.chain.cur(), r.chain.cur()));
         }
