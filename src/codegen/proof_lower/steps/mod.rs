@@ -56,6 +56,7 @@ mod lemma;
 mod memo;
 mod nonlinear;
 mod rewrite;
+mod share;
 mod split;
 
 use crate::codegen::proof_lower::ProofLowerInputs;
@@ -1274,7 +1275,7 @@ fn produce_as(
     });
     results.push((last, cuts.len()));
 
-    let check = |script: Script| -> Result<Script, String> {
+    let judge = |script: Script| -> Result<Script, String> {
         if script.proof.size() > MAX_PROOF_NODES {
             return Err(format!(
                 "{} steps is more than a backend should elaborate",
@@ -1295,6 +1296,27 @@ fn produce_as(
             }
         })?;
         Ok(script)
+    };
+    // A part written out twice in one scope is proved once there; should
+    // the kernel refuse that, the script as written is judged instead.
+    let check = |script: Script| -> Result<Script, String> {
+        let shared = share::share(&script, &|ty| inputs.symbol_table.beq_is_equality(ty));
+        if shared == script.proof {
+            return judge(script);
+        }
+        let with = Script {
+            proof: shared,
+            ..script.clone()
+        };
+        judge(with).or_else(|why| {
+            if std::env::var_os("AVER_STEPS_DEBUG").is_some() {
+                eprintln!(
+                    "steps: {}: the shared script is refused: {why}",
+                    script.obligation.key
+                );
+            }
+            judge(script)
+        })
     };
 
     // One script per obligation of a `because` chain.

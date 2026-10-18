@@ -276,7 +276,7 @@ pub(crate) struct Table {
 /// The head of `t` apart from its parts, and whether its parts are
 /// entries of their own (`false` for a literal, a variable, and the terms
 /// the table reads as one opaque entry).
-fn head(t: &Term) -> (String, bool) {
+pub(super) fn head(t: &Term) -> (String, bool) {
     use ResolvedExpr as E;
     if let Some(i) = term::int_value(t) {
         return (format!("i{i}"), false);
