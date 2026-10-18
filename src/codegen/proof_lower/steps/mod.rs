@@ -763,6 +763,17 @@ fn prove_part(
                 }
             }
         }
+        // A table of equal terms over the claim as stated, its hypotheses,
+        // the cited laws and the facts (see [`egraph`]): where evaluation
+        // ran out of fuel before it stopped anywhere, the table never saw
+        // the claim.
+        if found.is_none() {
+            let mut table_env = fresh();
+            if let Some(proof) = table_env.close_by_table(&canon(&ob.lhs), &canon(&ob.rhs), &[]) {
+                env = table_env;
+                found = Some(proof);
+            }
+        }
         // Last, a split on an open line of a cited law's `when`; the splits
         // share half of one attempt's fuel.
         let mut tried = Vec::new();

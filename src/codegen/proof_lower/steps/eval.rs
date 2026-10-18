@@ -4178,13 +4178,30 @@ impl Env<'_> {
     }
 
     /// Prove `lhs = rhs` by evaluating both sides, splitting on the first
-    /// undecided Bool either side stops at.
+    /// undecided Bool either side stops at. Where the fuel ran out before
+    /// evaluation stopped anywhere, the outermost call hands the claim to a
+    /// table of equal terms ([`super::egraph`]), which spends none of it.
     pub(crate) fn prove_by_evaluation(
         &mut self,
         lhs: &Term,
         rhs: &Term,
         depth: usize,
     ) -> Result<Proof, String> {
+        self.evaluating += 1;
+        let out = self.evaluate_to_meet(lhs, rhs, depth);
+        self.evaluating -= 1;
+        match out {
+            Err(why) if self.evaluating == 0 && self.ran_dry => {
+                match self.close_by_table(&canon(lhs), &canon(rhs), &[]) {
+                    Some(proof) => Ok(proof),
+                    None => Err(why),
+                }
+            }
+            out => out,
+        }
+    }
+
+    fn evaluate_to_meet(&mut self, lhs: &Term, rhs: &Term, depth: usize) -> Result<Proof, String> {
         let l = self.whnf(lhs)?;
         let r = self.whnf(rhs)?;
         if term::canon_eq(l.chain.cur(), r.chain.cur()) {

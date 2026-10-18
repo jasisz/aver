@@ -52,6 +52,8 @@ const MAX_DECIDE: usize = 24;
 const MAX_FACTS: usize = 32;
 /// Most tables one obligation builds.
 pub(crate) const MAX_TABLES: usize = 48;
+/// Most cases on a Bool side one table opens, one inside another.
+const MAX_SPLITS: usize = 2;
 /// Largest proof a table hands back.
 const MAX_PROOF: usize = 600;
 /// Most cases on `x <= k` a read of `x != k` opens, one inside another.
@@ -135,6 +137,7 @@ enum Why {
     NotElim { not: Id, value: Id },
 }
 
+#[derive(Clone)]
 struct Node {
     key: String,
     kids: Vec<Id>,
@@ -146,6 +149,7 @@ struct Node {
 
 /// A law or rule the table matches: `lhs = rhs` over `vars`, under
 /// `premises` (each `p = v`).
+#[derive(Clone)]
 struct Rewrite {
     kind: RewriteKind,
     vars: Vec<String>,
@@ -154,6 +158,7 @@ struct Rewrite {
     triggers: Vec<Term>,
 }
 
+#[derive(Clone)]
 enum RewriteKind {
     Law(Box<LawRef>),
     Wall(WallRule, Vec<Eqn>),
@@ -168,6 +173,7 @@ enum Step {
 
 /// An instance whose premise `when = value` is not shown yet: a law's
 /// `when` (`value` true), or a rule's one premise.
+#[derive(Clone)]
 struct Cond {
     step: Step,
     subst: Vec<(String, Term)>,
@@ -202,6 +208,7 @@ struct Fact {
     why: Prem,
 }
 
+#[derive(Clone)]
 pub(crate) struct Table {
     nodes: Vec<Node>,
     exact: HashMap<(String, Vec<Id>), Id>,
@@ -1968,8 +1975,59 @@ impl Table {
         (self.unions, self.nodes.len())
     }
 
-    /// `l = r`, where the table can show it.
-    fn close(&mut self, env: &mut Env<'_>, l: Id, r: Id) -> Option<Proof> {
+    /// `l = r`, where the table can show it, or else by a case on a Bool
+    /// side of the claim that the table holds no value for: each case a
+    /// copy of the table with that side `true` or `false`, `splits` deep.
+    fn close(&mut self, env: &mut Env<'_>, l: Id, r: Id, splits: usize) -> Option<Proof> {
+        if let Some(p) = self.close_here(env, l, r) {
+            return Some(p);
+        }
+        if splits == 0 || self.full {
+            return None;
+        }
+        let mut cands: Vec<Id> = Vec::new();
+        for side in [l, r] {
+            let t = self.term(side);
+            let boolish = matches!(t.ty(), Some(crate::ast::Type::Bool))
+                || matches!(&t.node, ResolvedExpr::BinOp(op, ..) if is_cmp(*op));
+            if boolish && !term::is_literal(t) && self.bool_of(side).is_none() {
+                cands.push(side);
+            }
+        }
+        for c in cands {
+            let on = self.term(c).clone();
+            let h = self.fresh();
+            let mut cases = Vec::new();
+            for v in [true, false] {
+                let mut sub = self.clone();
+                let lit = if v { sub.t } else { sub.f };
+                sub.merge(c, lit, Why::Given(Proof::Hyp(h.clone())));
+                sub.process();
+                env.hyps
+                    .push((h.clone(), Eqn::new(on.clone(), term::boolean(v))));
+                let p = sub.close(env, l, r, splits - 1);
+                env.hyps.pop();
+                if sub.names.get() > self.names.get() {
+                    self.names.set(sub.names.get());
+                }
+                match p {
+                    Some(p) => cases.push(p),
+                    None => break,
+                }
+            }
+            if let [if_true, if_false] = <[Proof; 2]>::try_from(cases).ok()? {
+                return Some(Proof::Cases {
+                    on,
+                    hyp: h,
+                    if_true: Box::new(if_true),
+                    if_false: Box::new(if_false),
+                });
+            }
+        }
+        None
+    }
+
+    fn close_here(&mut self, env: &mut Env<'_>, l: Id, r: Id) -> Option<Proof> {
         let (lt, rt) = (self.term(l).clone(), self.term(r).clone());
         let goal = |s: &Self| s.same(l, r) || s.same(s.t, s.f);
         self.saturate(env);
@@ -2323,7 +2381,7 @@ impl Env<'_> {
         let normal_fuel = self.normal_fuel;
         let read_fuel = self.read_fuel;
         let read_claim_fuel = self.read_claim_fuel;
-        self.fuel = fuel.min(TABLE_FUEL);
+        self.fuel = TABLE_FUEL;
         self.in_table = true;
         let found = self.table_proof(lhs, rhs, before);
         self.in_table = false;
@@ -2410,7 +2468,7 @@ impl Env<'_> {
         let l = table.add(lhs)?;
         let r = table.add(rhs)?;
         table.process();
-        let out = table.close(self, l, r);
+        let out = table.close(self, l, r, MAX_SPLITS);
         self.table_names = table.names.get();
         out
     }

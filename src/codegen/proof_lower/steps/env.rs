@@ -172,6 +172,9 @@ pub(crate) struct Env<'a> {
     pub table_runs: usize,
     /// How many hypothesis names the tables' explanations have given out.
     pub table_names: usize,
+    /// How many evaluations of a claim are in progress, one inside another
+    /// (see `Env::prove_by_evaluation`).
+    pub evaluating: usize,
 }
 
 /// What [`Env::opened_views`] gave for the hypotheses `hyps`.
@@ -265,6 +268,7 @@ impl<'a> Env<'a> {
             in_table: false,
             table_runs: 0,
             table_names: 0,
+            evaluating: 0,
         }
     }
 
