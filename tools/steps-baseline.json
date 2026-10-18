@@ -330,7 +330,10 @@
  "projects/k5_fdiv/domain/awaymodel.av": {
   "obligations": [
    "normalizedValue.carryPreservesValue.because1",
-   "transferredValue.sameRawValue.because1"
+   "normalizedValue.carryPreservesValue.because2",
+   "transferredValue.sameRawValue.because1",
+   "transferredValue.sameRawValue.because3",
+   "transferredValue.sameRawValue.implication"
   ],
   "steps": [
    "rawValuePositive.positivePrecision"
@@ -422,13 +425,13 @@
    "pow2Signed.agreesWithPow2Fraction",
    "pow2SignedAtLeastOne.geOne",
    "pow2SignedDenomPositive.positive",
+   "pow2SignedHomomorphism.signedHomomorphism",
    "pow2SignedPositive.positive",
    "productExpInRange.productExponentBounds"
   ],
   "tactic": [
    "fpMulValue.denotesProduct",
    "fracExpoFromMagnitude.fundamentalExponent",
-   "pow2SignedHomomorphism.signedHomomorphism",
    "pow2SignedLtReflect.fromStrictOrder",
    "pow2SignedMonotone.allExponents"
   ]
@@ -491,8 +494,11 @@
    "normalizedValueExponent.executableExponent.because1",
    "normalizedValueExponent.executableExponent.implication",
    "sameAway.normalizedModel.because2",
+   "sameAway.normalizedModel.because3",
+   "sameAway.normalizedModel.implication",
    "sameSticky.normalizedModel.because2",
    "sameTruncation.normalizedModel.because2",
+   "sameTruncation.normalizedModel.because3",
    "singleBitHalf.normalizedModel.because1",
    "singleBitHalf.normalizedModel.because10",
    "singleBitHalf.normalizedModel.because11",
@@ -501,15 +507,17 @@
    "singleBitHalf.normalizedModel.because3",
    "singleBitHalf.normalizedModel.because4",
    "singleBitHalf.normalizedModel.because5",
+   "singleBitHalf.normalizedModel.because6",
    "singleBitHalf.normalizedModel.because7",
    "singleBitHalf.normalizedModel.because8",
    "singleBitHalf.normalizedModel.because9"
   ],
   "steps": [
+   "awayFormula.knownExponent",
+   "truncationFormula.knownExponent",
    "twoPow.roundingScale"
   ],
   "tactic": [
-   "awayFormula.knownExponent",
    "binadeSig.significandWindow",
    "divide.theorem_2",
    "fracExpo.executableMagnitude",
@@ -529,8 +537,7 @@
    "sameSticky.normalizedModel",
    "sameTruncation.normalizedModel",
    "singleBitHalf.normalizedModel",
-   "stickyFormula.knownExponent",
-   "truncationFormula.knownExponent"
+   "stickyFormula.knownExponent"
   ]
  },
  "projects/k5_fdiv/domain/modelscale.av": {
@@ -540,9 +547,11 @@
    "absoluteValue.normalizedMagnitude.because3",
    "absoluteValue.normalizedMagnitude.because4",
    "modelWindow.normalizedMagnitude.because1",
+   "modelWindow.normalizedMagnitude.because2",
    "modelWindow.normalizedMagnitude.because3",
    "modelWindow.normalizedMagnitude.because4",
    "modelWindow.normalizedMagnitude.because5",
+   "modelWindow.normalizedMagnitude.implication",
    "scaledWindow.normalizedSignificand.because1",
    "scaledWindow.normalizedSignificand.because2",
    "scaledWindow.normalizedSignificand.because3",
@@ -550,18 +559,17 @@
    "scaledWindow.normalizedSignificand.because5",
    "scaledWindow.normalizedSignificand.because6",
    "scaledWindow.normalizedSignificand.implication",
-   "signedDouble.successor.implication",
    "uniqueWindow.uniqueExponent.because1",
    "uniqueWindow.uniqueExponent.implication"
   ],
   "steps": [
-   "nonzeroValue.normalizedValue"
+   "nonzeroValue.normalizedValue",
+   "signedDouble.successor"
   ],
   "tactic": [
    "absoluteValue.normalizedMagnitude",
    "modelWindow.normalizedMagnitude",
    "scaledWindow.normalizedSignificand",
-   "signedDouble.successor",
    "uniqueWindow.uniqueExponent"
   ]
  },
@@ -684,8 +692,10 @@
   ]
  },
  "projects/k5_fdiv/domain/table.av": {
+  "steps": [
+   "bucketErrorOk.bucketErrorIsSeed"
+  ],
   "tactic": [
-   "bucketErrorOk.bucketErrorIsSeed",
    "entryEpsilonOk.tableSeedBound"
   ]
  },
@@ -693,7 +703,8 @@
   "obligations": [
    "scaledQuotient.exactScale.because1",
    "scaledQuotient.exactScale.because2",
-   "scaledQuotient.exactScale.implication"
+   "scaledQuotient.exactScale.implication",
+   "ulpScale.signedExponent.because1"
   ],
   "steps": [
    "signOfProduct.positiveMagnitudes"
@@ -793,9 +804,8 @@
  },
  "proof-corpus/decomposed/isaplanner/prop_60.av": {
   "steps": [
-   "last.lastConsNonEmpty"
-  ],
-  "tactic": [
+   "last.lastAppend",
+   "last.lastConsNonEmpty",
    "last.lastSnoc"
   ]
  },
@@ -837,10 +847,8 @@
  "proof-corpus/decomposed/prod/lemma_05.av": {
   "steps": [
    "drop.dropDropCons",
+   "drop.dropOuterHeadNorm",
    "drop.dropSuccCons"
-  ],
-  "tactic": [
-   "drop.dropOuterHeadNorm"
   ]
  },
  "proof-corpus/decomposed/prod/lemma_09.av": {
@@ -866,10 +874,12 @@
   ]
  },
  "proof-corpus/decomposed/prod/lemma_14.av": {
+  "steps": [
+   "length.lengthAppendTwo"
+  ],
   "tactic": [
    "even.evenLengthAppendTwo",
-   "even.evenSuccSucc",
-   "length.lengthAppendTwo"
+   "even.evenSuccSucc"
   ]
  },
  "proof-corpus/decomposed/prod/lemma_16.av": {
@@ -1418,8 +1428,13 @@
    "dropPair.dropZip"
   ]
  },
+ "proof-corpus/tip/isaplanner/prop_60.av": {
+  "steps": [
+   "last.lastAppend"
+  ]
+ },
  "proof-corpus/tip/isaplanner/prop_61.av": {
-  "tactic": [
+  "steps": [
    "last.lastConcatTwo"
   ]
  },
@@ -1429,7 +1444,7 @@
   ]
  },
  "proof-corpus/tip/isaplanner/prop_64.av": {
-  "tactic": [
+  "steps": [
    "last.lastAppendSingleton"
   ]
  },
@@ -1464,7 +1479,7 @@
   ]
  },
  "proof-corpus/tip/isaplanner/prop_75.av": {
-  "tactic": [
+  "steps": [
    "count.countConsSplit"
   ]
  },
