@@ -578,7 +578,9 @@ impl<'a> Env<'a> {
         if !fd.effects.is_empty() {
             return None;
         }
-        let (last, before) = fd.body.stmts().split_last()?;
+        // `?` read as the `match` the Lean export writes too.
+        let expanded = crate::codegen::proof_lower::try_match::expand(&fd.body);
+        let (last, before) = expanded.as_ref().unwrap_or(&fd.body).stmts().split_last()?;
         let Stmt::Expr(body) = last else {
             return None;
         };

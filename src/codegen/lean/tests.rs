@@ -182,7 +182,7 @@ fn generated_lean_file(out: &crate::codegen::ProjectOutput) -> String {
 }
 
 #[test]
-fn nested_error_prop_lowers_to_monadic_bind_not_with_default() {
+fn nested_error_prop_lowers_to_a_match_not_with_default() {
     let mut ctx = ctx_from_source(
         r#"
 module Nested
@@ -210,8 +210,9 @@ fn nestedArg(n: Int, d: Int) -> Result<Int, String>
         .expect("nestedArg definition should be emitted");
 
     assert!(
-        nested_arg.contains("(<- "),
-        "nested `?` must lower to a monadic bind:\n{lean}"
+        nested_arg.contains("| .ok __qm_value_0 => Except.ok (addOne __qm_value_0)")
+            && !nested_arg.contains("<-"),
+        "nested `?` must lower to the match the steps read:\n{lean}"
     );
     assert!(
         !lean.contains("withDefault default"),
@@ -261,7 +262,7 @@ fn checkedHalf(n: Int) -> Result<Int, String>
 }
 
 #[test]
-fn nested_error_prop_in_match_arm_monadifies_the_branch() {
+fn nested_error_prop_in_match_arm_matches_in_the_branch() {
     let mut ctx = ctx_from_source(
         r#"
 module NestedMatch
@@ -279,8 +280,8 @@ fn divL(n: Int, d: Int) -> Result<Int, String>
     let lean = generated_lean_file(&out);
 
     assert!(
-        lean.contains("(<- (do"),
-        "a `?` inside a match arm needs a nested monadic action:\n{lean}"
+        lean.contains("| .error __qm_err_0 => Except.error __qm_err_0") && !lean.contains("<-"),
+        "a `?` inside a match arm is matched in that arm:\n{lean}"
     );
     assert!(
         !lean.contains("withDefault default"),

@@ -65,12 +65,7 @@ pub fn emit_fn_def(
         "{}def {} {} : {} :=",
         prefix, fn_name, params, ret_type
     ));
-    let lowered = lower_pure_question_bang_for_emit(fd);
-    let body = lowered
-        .as_ref()
-        .map(|lowered_fd| lowered_fd.body.as_ref())
-        .unwrap_or(fd.body.as_ref());
-    lines.push(emit_fn_body_for(fd, body, ctx));
+    lines.push(emit_fn_body_for(fd, &fd.body, ctx));
 
     Some(lines.join("\n"))
 }
@@ -126,12 +121,7 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
             emit_fn_params(&fd.params),
             type_annotation_to_lean(&fd.return_type)
         ));
-        let lowered = lower_pure_question_bang_for_emit(fd);
-        let body = lowered
-            .as_ref()
-            .map(|f| f.body.as_ref())
-            .unwrap_or(fd.body.as_ref());
-        lines.push(emit_fn_body_for(fd, body, ctx));
+        lines.push(emit_fn_body_for(fd, &fd.body, ctx));
         lines.push(format!(
             "termination_by ({} - ({}.length : Int)).toNat",
             aver_name_to_lean(bound),
@@ -213,12 +203,7 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
             type_annotation_to_lean(&fd.return_type)
         };
         lines.push(format!("def {} {} : {} :=", fn_name, params, ret_type));
-        let lowered = lower_pure_question_bang_for_emit(fd);
-        let body = lowered
-            .as_ref()
-            .map(|lowered_fd| lowered_fd.body.as_ref())
-            .unwrap_or(fd.body.as_ref());
-        lines.push(emit_fn_body_for(fd, body, ctx));
+        lines.push(emit_fn_body_for(fd, &fd.body, ctx));
         lines.push(format!("termination_by {}.toNat", aver_name_to_lean(param)));
         lines.push("decreasing_by".to_string());
         if divisions.is_empty() {
@@ -358,12 +343,7 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
         type_annotation_to_lean(&fd.return_type)
     };
     lines.push(format!("def {} {} : {} :=", fn_name, params, ret_type));
-    let lowered = lower_pure_question_bang_for_emit(fd);
-    let body = lowered
-        .as_ref()
-        .map(|lowered_fd| lowered_fd.body.as_ref())
-        .unwrap_or(fd.body.as_ref());
-    lines.push(emit_fn_body_for(fd, body, ctx));
+    lines.push(emit_fn_body_for(fd, &fd.body, ctx));
 
     // termination_by/decreasing_by suffix for the few contract shapes
     // that need explicit Lean termination hints (rest are no-ops —
@@ -441,14 +421,9 @@ fn emit_native_string_pos_skip_fn(fd: &FnDef, ctx: &CodegenContext) -> Option<St
     let s = aver_name_to_lean(&fd.params[0].0);
     let pos = aver_name_to_lean(&fd.params[1].0);
 
-    let lowered = lower_pure_question_bang_for_emit(fd);
-    let body = lowered
-        .as_ref()
-        .map(|lowered_fd| lowered_fd.body.as_ref())
-        .unwrap_or(fd.body.as_ref());
     // Native self-calls (no fuel rewrite); Lean's wf compiler handles the
     // recursion once `termination_by`/`decreasing_by` are supplied.
-    let body_str = emit_fn_body_for(fd, body, ctx);
+    let body_str = emit_fn_body_for(fd, &fd.body, ctx);
     // FAIL-CLOSED: the `decreasing_by` reads `charAtAv s pos = some c` off a
     // named discriminant, so the sole outer `match String.charAtAv` must be
     // renamed to `match hc_scan : String.charAtAv`. Verify the substitution
@@ -488,60 +463,7 @@ fn emit_native_string_pos_skip_fn(fd: &FnDef, ctx: &CodegenContext) -> Option<St
     Some(lines.join("\n"))
 }
 
-pub(super) fn lower_pure_question_bang_for_emit(fd: &FnDef) -> Option<FnDef> {
-    crate::types::checker::effect_lifting::lower_pure_question_bang_fn(fd)
-        .ok()
-        .flatten()
-}
-
-/// Typed-HIR query: does this fn return `Result<_, _>`?
-///
-/// Epic #180 Phase 4 — reads the canonical type stamped on the
-/// resolved fn def directly instead of re-parsing the AST return
-/// type string. The typechecker has already produced the typed
-/// surface; backends just consume it.
-fn fn_returns_result_typed(rfd: &crate::ir::hir::ResolvedFnDef) -> bool {
-    matches!(rfd.return_type, crate::types::Type::Result(_, _))
-}
-
-/// Emit one statement inside a Lean `do` block (used when the fn
-/// body must thread `ErrorProp` through Lean's monadic chain).
-///
-/// The rewrite boundary feeding this renderer has already resolved the whole
-/// body; this helper only unwraps the resolved `ErrorProp` node needed for Lean
-/// `do` notation.
-fn emit_do_stmt(
-    stmt: &crate::ir::hir::ResolvedStmt,
-    ctx: &CodegenContext,
-    is_last: bool,
-) -> String {
-    use crate::ir::hir::ResolvedStmt;
-    let (is_err_prop, target) = match stmt {
-        ResolvedStmt::Binding { value, .. } | ResolvedStmt::Expr(value) => {
-            if let crate::ir::hir::ResolvedExpr::ErrorProp(inner) = &value.node {
-                (true, inner.as_ref())
-            } else {
-                (false, value)
-            }
-        }
-    };
-    let expr_str = super::expr::emit_expr(target, ctx);
-    match (stmt, is_err_prop, is_last) {
-        (ResolvedStmt::Binding { name, .. }, true, _) => {
-            format!("  let {} <- {}", aver_name_to_lean(name), expr_str)
-        }
-        (ResolvedStmt::Binding { name, .. }, false, _) => {
-            format!("  let {} := {}", aver_name_to_lean(name), expr_str)
-        }
-        (ResolvedStmt::Expr(_), true, true) => format!("  {}", expr_str),
-        (ResolvedStmt::Expr(_), true, false) => format!("  let _ <- {}", expr_str),
-        (ResolvedStmt::Expr(_), false, true) => format!("  {}", expr_str),
-        (ResolvedStmt::Expr(_), false, false) => format!("  let _ := {}", expr_str),
-    }
-}
-
-/// Emit a Lean fn body (plain — no `do` notation).
-///
+/// Emit a Lean fn body.
 fn emit_fn_body(body: &crate::ir::hir::ResolvedFnBody, ctx: &CodegenContext) -> String {
     use crate::ir::hir::ResolvedStmt;
     let stmts = body.stmts();
@@ -568,17 +490,6 @@ fn emit_fn_body(body: &crate::ir::hir::ResolvedFnBody, ctx: &CodegenContext) -> 
     lines.join("\n")
 }
 
-fn emit_fn_body_result_do(body: &crate::ir::hir::ResolvedFnBody, ctx: &CodegenContext) -> String {
-    let stmts = body.stmts();
-    let mut lines = vec!["  do".to_string()];
-    ctx.with_lean_do_block(true, || {
-        for (i, stmt) in stmts.iter().enumerate() {
-            lines.push(emit_do_stmt(stmt, ctx, i == stmts.len() - 1));
-        }
-    });
-    lines.join("\n")
-}
-
 pub(super) fn emit_fn_body_for(fd: &FnDef, body: &FnBody, ctx: &CodegenContext) -> String {
     let fn_id = crate::codegen::common::fn_id_for_emitted_decl(ctx, fd)
         .expect("Lean function emission requires a registered FnId");
@@ -587,6 +498,9 @@ pub(super) fn emit_fn_body_for(fd: &FnDef, body: &FnBody, ctx: &CodegenContext) 
         .fn_by_id(fn_id)
         .expect("Lean source declaration requires a resolved-program twin");
 
+    // `?` reaches Lean as the `match` the steps read too.
+    let expanded = crate::codegen::proof_lower::try_match::expand(body);
+    let body = expanded.as_ref().unwrap_or(body);
     let is_canonical_source = ctx
         .fn_defs
         .iter()
@@ -600,13 +514,6 @@ pub(super) fn emit_fn_body_for(fd: &FnDef, body: &FnBody, ctx: &CodegenContext) 
         rewritten_body = ctx.resolve_rewritten_fn_body(body, active.as_deref());
         &rewritten_body
     };
-    let uses_error_prop = resolved_body.stmts().iter().any(|stmt| {
-        let expr = match stmt {
-            crate::ir::hir::ResolvedStmt::Binding { value, .. }
-            | crate::ir::hir::ResolvedStmt::Expr(value) => value,
-        };
-        super::expr::resolved_expr_contains_error_prop(expr)
-    });
     // Named match equations exist for well-founded recursion only: the
     // `decreasing_by` script needs `h_NN : ident = pattern` to relate the
     // recursive argument to the matched constructor. A nonrecursive body is
@@ -618,11 +525,7 @@ pub(super) fn emit_fn_body_for(fd: &FnDef, body: &FnBody, ctx: &CodegenContext) 
     let previous = ctx
         .lean_match_equations
         .replace(ctx.recursive_fns.contains(&fn_id));
-    let emitted = if fn_returns_result_typed(rfd) && uses_error_prop {
-        emit_fn_body_result_do(resolved_body, ctx)
-    } else {
-        emit_fn_body(resolved_body, ctx)
-    };
+    let emitted = emit_fn_body(resolved_body, ctx);
     ctx.lean_match_equations.set(previous);
     emitted
 }

@@ -2,7 +2,7 @@
 //! at and beyond zero: it lets a directly invoked worker return to the guard
 //! without assuming that its caller established the guard's precondition.
 
-use super::fn_def::{emit_fn_body_for, lower_pure_question_bang_for_emit};
+use super::fn_def::emit_fn_body_for;
 use super::render::{emit_fn_params, sanitize_doc};
 use super::{expr::aver_name_to_lean, is_pure_fn, types::type_annotation_to_lean};
 use crate::{ast::FnDef, codegen::CodegenContext, ir::RecursionContract};
@@ -67,10 +67,8 @@ pub(in crate::codegen::lean) fn emit_native_int_phase_group(
                 type_annotation_to_lean(&fd.return_type)
             }
         ));
-        let lowered = lower_pure_question_bang_for_emit(fd);
-        let body_fn = lowered.as_ref().unwrap_or(fd);
         lines.extend(
-            emit_fn_body_for(body_fn, &body_fn.body, ctx)
+            emit_fn_body_for(fd, &fd.body, ctx)
                 .lines()
                 .map(|line| format!("  {line}")),
         );

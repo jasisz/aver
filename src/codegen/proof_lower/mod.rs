@@ -2975,6 +2975,7 @@ mod ring;
 mod simp;
 mod spec_equivalence;
 mod string_escape_roundtrip;
+pub(crate) mod try_match;
 mod wrapper_laws;
 
 pub use packed_sequence::{PackedIntElement, PackedSequenceLayout, packed_sequence_layout_table};
