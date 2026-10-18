@@ -233,6 +233,8 @@ pub(crate) struct Table {
     guards: Vec<Id>,
     /// For each sum read as a polynomial, how many joins the table had then.
     arith_at: HashMap<Id, usize>,
+    /// Which definitions call themselves through another.
+    mutual: HashMap<FnId, bool>,
     /// For each comparison tried by linear arithmetic, how many joins the
     /// table had then: it is tried again only once it knows more.
     decided_at: HashMap<Id, usize>,
@@ -440,6 +442,7 @@ impl Table {
             gen_now: 0,
             guards: Vec::new(),
             arith_at: HashMap::new(),
+            mutual: HashMap::new(),
             decided_at: HashMap::new(),
         };
         t.t = t.add(&term::boolean(true)).expect("room for true");
@@ -1202,6 +1205,9 @@ impl Table {
             let t = self.term(id).clone();
             match &t.node {
                 ResolvedExpr::Call(ResolvedCallee::Fn(fid), args) => {
+                    if self.through_others(env, *fid) {
+                        continue;
+                    }
                     let Some(def) = env.def(*fid) else {
                         continue;
                     };
@@ -1294,6 +1300,20 @@ impl Table {
         }
         self.gen_now = 0;
         self.process();
+    }
+
+    /// Whether `f` calls itself through another definition: the Lean
+    /// export opens such a definition differently, so the table leaves it
+    /// to evaluation.
+    fn through_others(&mut self, env: &Env<'_>, f: FnId) -> bool {
+        if let Some(&known) = self.mutual.get(&f) {
+            return known;
+        }
+        let found = env.reachable_defs(f).iter().any(|d| {
+            d.fn_id != f && crate::ir::proof_steps::induct::def_callees(d).contains(&f)
+        });
+        self.mutual.insert(f, found);
+        found
     }
 
     /// A subject that is an Int comparison: linear arithmetic may decide it.
