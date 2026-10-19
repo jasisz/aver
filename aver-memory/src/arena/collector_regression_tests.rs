@@ -264,3 +264,75 @@ fn alternating_concat_and_prepend_nodes_are_iterative_on_every_collector_path() 
     stable.promote_roots_to_stable(&mut roots, false);
     assert_eq!(stable.list_len_value(roots[0]), CELLS);
 }
+
+/// A frame boundary sizes its relocation table by the region above the mark,
+/// not by the whole lane.
+///
+/// A helper called from a long tail loop returns into a young lane that the
+/// loop keeps filling. A table the size of the whole lane is cleared on every
+/// such return, so each step of the loop costs more than the last one. Here a
+/// lane of `BELOW` settled entries sits under a region of three, and every
+/// table the boundary takes must stay near three.
+#[test]
+fn a_boundary_sizes_its_relocation_table_by_the_region_above_the_mark() {
+    const BELOW: usize = 4096;
+
+    fn settled_lane() -> TestArena {
+        let mut arena = TestArena::new();
+        for i in 0..BELOW {
+            arena.push_string(&format!("settled-{i}"));
+        }
+        arena
+    }
+    fn fresh_pair(arena: &mut TestArena) -> NanValue {
+        let left = NanValue::new_string_value("fresh-left", arena);
+        let right = NanValue::new_string_value("fresh-right", arena);
+        NanValue::new_list(arena.push_list(vec![left, right]))
+    }
+    fn assert_pair(arena: &TestArena, list: NanValue) {
+        let right = arena.list_get_value(list, 1).expect("second element");
+        assert_eq!(arena.get_string_value(right), "fresh-right");
+    }
+
+    for to_handoff in [false, true] {
+        let mut arena = settled_lane();
+        let mark = arena.young_len() as u32;
+        let lane = arena.lane_mark();
+        let mut roots = [fresh_pair(&mut arena)];
+        if to_handoff {
+            arena.promote_young_roots_to_handoff(mark, lane, &mut roots, false);
+        } else {
+            arena.promote_young_roots_to_yard(mark, lane, &mut roots, false);
+        }
+        assert_pair(&arena, roots[0]);
+        assert_eq!(arena.young_len(), mark as usize);
+        assert!(
+            arena.scratch_young.capacity() < 64,
+            "promotion took a table of {} for a region of 3",
+            arena.scratch_young.capacity()
+        );
+    }
+
+    let mut arena = settled_lane();
+    let mark = arena.young_len() as u32;
+    let mut roots = [fresh_pair(&mut arena)];
+    arena.push_string("young-garbage");
+    arena.collect_young_from_roots(mark, &mut roots);
+    assert_pair(&arena, roots[0]);
+    assert_eq!(arena.young_len(), mark as usize + 3);
+    assert!(arena.scratch_young.capacity() < 64);
+
+    let mut arena = TestArena::new();
+    arena.with_alloc_space(AllocSpace::Yard, |arena| {
+        for i in 0..BELOW {
+            arena.push_string(&format!("settled-yard-{i}"));
+        }
+    });
+    let mark = arena.yard_len() as u32;
+    let mut roots = [arena.with_alloc_space(AllocSpace::Yard, fresh_pair)];
+    arena.with_alloc_space(AllocSpace::Yard, |arena| arena.push_string("yard-garbage"));
+    arena.collect_yard_from_roots(mark, &mut roots);
+    assert_pair(&arena, roots[0]);
+    assert_eq!(arena.yard_len(), mark as usize + 3);
+    assert!(arena.scratch_yard.capacity() < 64);
+}

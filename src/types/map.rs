@@ -353,10 +353,21 @@ pub(crate) fn set_nv_owned(
     let (Ok(key_hash) | Err(key_hash)) = key_slot(&old_map, args[1], arena);
     let new_map = old_map.insert_owned(key_hash, (args[1], args[2]));
     let scan_receipt = if let Some((receipt, pair_predates_frame)) = inherited_provenance {
-        if pair_predates_frame {
-            pending_scan_keys.retain(|pending| *pending != key_hash);
-        } else if !pending_scan_keys.contains(&key_hash) {
+        // The remembered set grows by one hash per insert without being read:
+        // a fold that inserts on every step and meets no boundary until it
+        // ends would otherwise search a set as long as the steps it has taken
+        // on every step, which is quadratic. A hash that is remembered twice,
+        // or that a later insert of an older pair made unnecessary, only costs
+        // the boundary one more rewrite of a pair it rewrites anyway; the
+        // boundary drops the repeats before it reads the set. Folding them out
+        // here as well whenever the set outgrows twice the table keeps it no
+        // longer than that between boundaries.
+        if !pair_predates_frame && pending_scan_keys.last() != Some(&key_hash) {
             pending_scan_keys.push(key_hash);
+            if pending_scan_keys.len() > 2 * new_map.len() {
+                pending_scan_keys.sort_unstable();
+                pending_scan_keys.dedup();
+            }
         }
         receipt
     } else {
@@ -883,6 +894,51 @@ mod tests {
             panic!("expected promoted map");
         };
         assert!(pending_scan_keys.is_empty());
+    }
+
+    /// An owned insert remembers its hash without searching the remembered
+    /// set, so the set may name a pair more than once. It must still stay
+    /// within twice the table, and the boundary must rewrite each pair once.
+    #[test]
+    fn a_pair_remembered_twice_is_rewritten_once() {
+        let mut arena = Arena::new();
+        let proof = frame_proof(&arena);
+        let keys = [
+            NanValue::new_string_value("proof-key-first", &mut arena),
+            NanValue::new_string_value("proof-key-second", &mut arena),
+        ];
+        let mut map = NanValue::EMPTY_MAP;
+        for step in 0..9 {
+            let value = NanValue::new_string_value(&format!("proof-value-step-{step}"), &mut arena);
+            map = set_nv_owned(&[map, keys[step % 2], value], &mut arena, Some(proof))
+                .expect("owned insert should remember its fresh pair");
+            let aver_memory::ArenaEntry::Map {
+                pending_scan_keys, ..
+            } = arena.get(map.arena_index())
+            else {
+                panic!("expected owned map result");
+            };
+            assert!(
+                pending_scan_keys.len() <= 4,
+                "a table of two pairs remembers {} hashes",
+                pending_scan_keys.len()
+            );
+        }
+
+        let hashes = keys.map(|key| key.map_key_hash(&arena));
+        let mut roots = [map];
+        arena.promote_young_roots_to_yard(proof.arena_mark, proof.lane_mark, &mut roots, false);
+        assert_eq!(arena.map_entries_scanned(), 2);
+        let table = arena.map_ref_value(roots[0]);
+        let read = |hash: u64| table.get(&hash).expect("pair survived").1;
+        assert_eq!(
+            arena.get_string_value(read(hashes[0])),
+            "proof-value-step-8"
+        );
+        assert_eq!(
+            arena.get_string_value(read(hashes[1])),
+            "proof-value-step-7"
+        );
     }
 
     #[test]
