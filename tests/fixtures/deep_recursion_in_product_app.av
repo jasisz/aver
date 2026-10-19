@@ -1,0 +1,26 @@
+module DeepRecursionInProduct
+    intent = "A deep non-tail recursion runs inside an independent product as deep as it runs in main."
+
+fn depth(n: Int) -> Int
+    ? "Counts down with a call that is not in tail position."
+    match n == 0
+        true -> 0
+        false -> 1 + depth(n - 1)
+
+verify depth
+    depth(0) => 0
+    depth(3) => 3
+
+fn both(n: Int) -> Int
+    ? "Runs two deep recursions as an independent product and adds them."
+    match (depth(n), depth(n))!
+        (a, b) -> a + b
+
+verify both
+    both(3) => 6
+
+fn main() -> Unit
+    ? "Prints the depth on the main thread, then inside the product."
+    ! [Console.print]
+    Console.print("main: {depth(50000)}")
+    Console.print("product: {both(50000)}")

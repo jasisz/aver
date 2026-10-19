@@ -282,6 +282,7 @@ impl JobEngine {
             let engine = Arc::downgrade(self);
             let spawned = std::thread::Builder::new()
                 .name(format!("aver-job-{id}"))
+                .stack_size(crate::THREAD_STACK_BYTES)
                 .spawn(move || {
                     // A body that unwinds must still settle its slot:
                     // otherwise the job stays Running for ever, the limit

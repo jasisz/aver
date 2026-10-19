@@ -192,11 +192,31 @@ use std::sync::Arc as Rc;
 
 // ── par_execute: parallel execution for independent products (?!) ─────────────────
 
+/// Stack size of every thread an Aver program runs on: `main`, the branches
+/// of an independent product and `Work` jobs. A recursion that fits in
+/// `main` must fit in a branch or a job too.
+pub const THREAD_STACK_BYTES: usize = 256 * 1024 * 1024;
+
+/// Spawn a scoped thread with [`THREAD_STACK_BYTES`] of stack instead of
+/// Rust's default of 2 MB.
+pub fn spawn_scoped<'scope, 'env, T: Send + 'scope>(
+    scope: &'scope std::thread::Scope<'scope, 'env>,
+    body: impl FnOnce() -> T + Send + 'scope,
+) -> std::thread::ScopedJoinHandle<'scope, T> {
+    std::thread::Builder::new()
+        .stack_size(THREAD_STACK_BYTES)
+        .spawn_scoped(scope, body)
+        .expect("failed to spawn a thread")
+}
+
 /// Execute tasks in parallel using scoped threads.
 /// All branches run to completion (`complete` mode).
 pub fn par_execute<T: Send>(tasks: Vec<Box<dyn FnOnce() -> T + Send>>) -> Vec<T> {
     std::thread::scope(|s| {
-        let handles: Vec<_> = tasks.into_iter().map(|task| s.spawn(task)).collect();
+        let handles: Vec<_> = tasks
+            .into_iter()
+            .map(|task| spawn_scoped(s, task))
+            .collect();
         handles.into_iter().map(|h| h.join().unwrap()).collect()
     })
 }

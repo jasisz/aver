@@ -548,7 +548,7 @@ fn render_root_main(
             }
             sections.extend(bench_dispatch_lines(has_replay && guest_entry.is_none()));
             sections.push("    let child = std::thread::Builder::new()".to_string());
-            sections.push("        .stack_size(256 * 1024 * 1024)".to_string());
+            sections.push("        .stack_size(aver_rt::THREAD_STACK_BYTES)".to_string());
             if has_replay && guest_entry.is_none() {
                 sections.push("        .spawn(|| {".to_string());
                 sections.push(format!("            let {result} = aver_replay::with_guest_scope(\"main\", serde_json::Value::Null, aver_generated::entry::main);"));
@@ -594,7 +594,7 @@ fn render_root_main(
         if main_fn.is_some() {
             sections.extend(bench_dispatch_lines(has_replay && guest_entry.is_none()));
             sections.push("    let child = std::thread::Builder::new()".to_string());
-            sections.push("        .stack_size(256 * 1024 * 1024)".to_string());
+            sections.push("        .stack_size(aver_rt::THREAD_STACK_BYTES)".to_string());
             if has_replay && guest_entry.is_none() {
                 sections.push("        .spawn(|| aver_replay::with_guest_scope(\"main\", serde_json::Value::Null, || aver_generated::entry::main()))".to_string());
             } else {
@@ -3014,7 +3014,7 @@ fn main() -> Result<Tuple<Int, Int>, String>
 
         assert!(entry.contains("crate::run_cancelable_branch"));
         assert!(entry.contains("capture_parallel_scope_context"));
-        assert!(entry.contains("__s.spawn(move ||"));
+        assert!(entry.contains("aver_rt::spawn_scoped(__s, move ||"));
         assert!(runtime_support.contains("pub fn run_cancelable_branch"));
         assert!(runtime_support.contains("panic_any(AverCancelled)"));
         assert!(replay_support.contains("pub fn capture_parallel_scope_context"));
