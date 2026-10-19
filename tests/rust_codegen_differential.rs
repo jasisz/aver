@@ -369,6 +369,36 @@ fn folded_nan_and_infinity_constants_match_between_rust_and_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A worker that hands its String to another module's indexed helper passes
+/// the index it holds instead of going through the wrapper, which would index
+/// the whole string again on every call. Multibyte characters make the index
+/// a real table; the call on a string of its own keeps the wrapper.
+#[test]
+fn a_cross_module_indexed_call_forwards_the_index_on_rust_and_vm() {
+    let root = repo_root().join("tests/fixtures/string_index_cross_module");
+    let file = root.join("main.av");
+    assert_eq!(
+        run_vm(&file, Some(&root)).expect("vm run"),
+        "ab|😀ą||tail\n10"
+    );
+    assert_plain_parity(
+        "tests/fixtures/string_index_cross_module/main.av",
+        Some("tests/fixtures/string_index_cross_module"),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+
+    let ws = temp_dir("string_index_cross_module");
+    compile_rust(&file, &ws, "p_string_index_cross_module", Some(&root), &[])
+        .expect("compile to Rust");
+    let entry = fs::read_to_string(ws.join("src/aver_generated/entry/mod.rs"))
+        .expect("read the entry module");
+    let _ = fs::remove_dir_all(&ws);
+    assert!(
+        entry.contains("scan::skipTo__indexed(") && entry.contains("scan::skipTo(aver_rt::AverInt"),
+        "the worker forwards its index, the other call keeps the wrapper:\n{entry}"
+    );
+}
+
 /// `Bytes.toHex` builds its string with the list-driven loop that the
 /// deforestation pass now recognises, and BOTH backends now fuse it —
 /// but by different routes. The Rust build reads the dependency out of

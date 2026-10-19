@@ -268,7 +268,11 @@ impl SymbolTable {
                     functions: module
                         .fn_defs
                         .iter()
-                        .filter(|fd| crate::visibility::is_exposed(&fd.name, exposes))
+                        .filter(|fd| {
+                            crate::visibility::is_exposed(&fd.name, exposes)
+                                || crate::ir::indexed_wrapper_of(&fd.name)
+                                    .is_some_and(|w| crate::visibility::is_exposed(w, exposes))
+                        })
                         .map(|fd| fd.name.clone())
                         .collect(),
                     types: module_type_exports

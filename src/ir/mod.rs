@@ -50,8 +50,8 @@ pub use proof_ir::{
     StringEscapeRoundtripPin, UnclassifiedFn, WrapperDriver,
 };
 pub use string_index::{
-    StringIndexPassReport, has_string_index_shape, run_string_index_pass,
-    run_string_index_pass_keeping,
+    StringIndexPassReport, foreign_indexed_wrappers, has_string_index_shape, indexed_wrapper_of,
+    run_string_index_pass, run_string_index_pass_keeping,
 };
 pub use symbol_table::{CtorEntry, FnEntry, ModuleEntry, SymbolTable, TypeEntry};
 
