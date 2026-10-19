@@ -69,6 +69,8 @@ use rewrite::Equation;
 
 /// Split depth of the evaluation producer: at most 2^6 leaves.
 const SPLIT_DEPTH: usize = 6;
+/// Split depth of the attempt made again where the first ran out of fuel.
+const SHALLOW_DEPTH: usize = 2;
 /// Largest proof the producers hand to a backend.
 const MAX_PROOF_NODES: usize = 3000;
 
@@ -766,7 +768,19 @@ fn search<'a>(
                 },
                 None => continue,
             },
-            1 => env.prove_by_evaluation(&ob.lhs, &ob.rhs, SPLIT_DEPTH),
+            1 => {
+                let out = env.prove_by_evaluation(&ob.lhs, &ob.rhs, SPLIT_DEPTH);
+                // Where the splits spent all the fuel, fewer of them: a
+                // shallow case analysis may close what a deep one never
+                // reaches.
+                if out.is_err() && env.ran_dry {
+                    env = fresh();
+                    env.open_halving = stage < 4;
+                    env.prove_by_evaluation(&ob.lhs, &ob.rhs, SHALLOW_DEPTH)
+                } else {
+                    out
+                }
+            }
             2 if ob.finite.is_empty() => continue,
             2 => env.prove_by_cases(&ob.finite, &ob.lhs, &ob.rhs, SPLIT_DEPTH),
             _ => match induct_on {

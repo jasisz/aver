@@ -634,6 +634,18 @@ fn upper_bound(t: &Term, value: bool, a: &Term) -> Option<num_bigint::BigInt> {
     }
 }
 
+/// `List.take(l, n)` or `List.drop(l, n)` whose list `l` is not a list
+/// literal or a cell, so that no value of `n` lets it step.
+pub(super) fn idle_count(t: &Term) -> bool {
+    let ResolvedExpr::Call(ResolvedCallee::Builtin(b), args) = &t.node else {
+        return false;
+    };
+    matches!(b.as_str(), "List.take" | "List.drop")
+        && args.len() == 2
+        && !matches!(args[0].node, ResolvedExpr::List(_))
+        && !matches!(&args[0].node, ResolvedExpr::Call(ResolvedCallee::Builtin(c), _) if c == "List.prepend")
+}
+
 /// Whether `t` builds or updates, anywhere, a record of a type that Lean
 /// states as a value with the proof of its invariant (a refined type),
 /// where a step inside the record would have to carry that proof along.
@@ -1943,7 +1955,14 @@ impl Env<'_> {
     /// settles against the hypotheses.
     fn args_then_settle(&mut self, cur: &Term) -> Result<Step, String> {
         let mut blocked = None;
+        // `List.take(l, n)` or `List.drop(l, n)` over a list that is no list
+        // literal or cell computes nothing: `n` stays as written, and so do
+        // the cases evaluating it would open.
+        let idle = idle_count(cur);
         for i in 0..term::children(cur).len() {
+            if idle && i > 0 {
+                break;
+            }
             match self.child(cur, i)? {
                 Ok(step) => return Ok(step),
                 Err(b) => blocked = blocked.or(b),
