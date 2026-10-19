@@ -267,6 +267,15 @@ fn head(t: &Term) -> (String, bool) {
         E::BinOp(o, ..) => (format!("b{o:?}"), true),
         E::Neg(_) => ("n".into(), true),
         E::Ctor(c, xs) => (format!("k{c:?}/{}", xs.len()), true),
+        // Empty lists of two element types are two values: one entry for
+        // both would hand back either one's type wherever the other stands.
+        E::List(xs) if xs.is_empty() => match t
+            .ty()
+            .filter(|ty| crate::types::checker::type_is_fully_concrete(ty))
+        {
+            Some(ty) => (format!("L0:{ty:?}"), true),
+            None => ("L0".into(), true),
+        },
         E::List(xs) => (format!("L{}", xs.len()), true),
         E::Tuple(xs) => (format!("T{}", xs.len()), true),
         E::RecordCreate {
@@ -325,6 +334,14 @@ fn int_cmp(t: &Term) -> Option<(BinOp, &Term, &Term)> {
         }
         _ => None,
     }
+}
+
+/// Whether a pattern's head matches an entry's: the same head, or an empty
+/// list on one side that has no type of its own.
+fn keys_meet(pattern: &str, entry: &str) -> bool {
+    pattern == entry
+        || (pattern == "L0" && entry.starts_with("L0:"))
+        || (entry == "L0" && pattern.starts_with("L0:"))
 }
 
 fn builtin_args<'t>(t: &'t Term, name: &str, n: usize) -> Option<&'t [Term]> {
@@ -1527,7 +1544,7 @@ impl Table {
             Vec::new()
         };
         for &m in &self.members[self.root(c)] {
-            if self.nodes[m].key != key || self.nodes[m].kids.len() != pkids.len() {
+            if !keys_meet(&key, &self.nodes[m].key) || self.nodes[m].kids.len() != pkids.len() {
                 continue;
             }
             self.ematch_kids(&pkids, &self.nodes[m].kids, vars, bound.clone(), out);

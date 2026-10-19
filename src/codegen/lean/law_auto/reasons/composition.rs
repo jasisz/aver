@@ -307,6 +307,19 @@ pub(super) fn candidate(
         .map(|i| format!("-_fact{i}"))
         .collect::<Vec<_>>()
         .join(", ");
+    // A part with no lemma in it leaves no empty slot in the list.
+    let set = |parts: &[&str]| {
+        parts
+            .iter()
+            .filter(|p| !p.is_empty())
+            .copied()
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let plain_set = set(&[&plain, &excluded]);
+    let staged_set = set(&[&staged_plain, &excluded]);
+    let completion_set = set(&[&completion, &equations, &excluded]);
+    let completed = set(&[&completion, &equations]);
     let rewrite = splices
         .iter()
         .map(|name| format!(" | (conv => rhs; rw [← {name}])"))
@@ -330,26 +343,26 @@ pub(super) fn candidate(
         // before the shared input prefix is known.
         let prefix_cases = if input_match && !definitions.staged_recursion {
             format!(
-                " | ((repeat' first | rfl | (simp_all only [{plain}, {excluded}]) | (symm; split <;> symm)); all_goals (first | rfl | (first{rewrite})))"
+                " | ((repeat' first | rfl | (simp_all only [{plain_set}]) | (symm; split <;> symm)); all_goals (first | rfl | (first{rewrite})))"
             )
         } else if input_match {
             format!(
-                " | ((repeat' first | rfl | (first{rewrite}) | (simp_all{zeta} only [{plain}, {excluded}]) | (symm; split <;> symm)); all_goals (try (first{rewrite})))"
+                " | ((repeat' first | rfl | (first{rewrite}) | (simp_all{zeta} only [{plain_set}]) | (symm; split <;> symm)); all_goals (try (first{rewrite})))"
             )
         } else {
             String::new()
         };
         let step = format!(
-            "all_goals (first | rfl | ((first | (first{rewrite}){prefix_cases}); all_goals (try split); all_goals (try simp_all{zeta} only [{staged_plain}, {excluded}]))); "
+            "all_goals (first | rfl | ((first | (first{rewrite}){prefix_cases}); all_goals (try split); all_goals (try simp_all{zeta} only [{staged_set}]))); "
         );
         format!(
-            " | ({}all_goals (repeat' first | rfl | (simp_all{zeta} [{completion}, {equations}, {excluded}]) | split); done)",
+            " | ({}all_goals (repeat' first | rfl | (simp_all{zeta} [{completion_set}]) | split); done)",
             step.repeat(splices.len())
         )
     };
     let prefix = if input_match {
         format!(
-            " | ((first{opening}); (try simp only [{plain}]); (repeat' first | rfl | (simp_all{zeta} only [{facts}]) | split); all_goals ({reverse}); all_goals (simp_all{zeta} only [{completion}, {equations}]); done)"
+            " | ((first{opening}); (try simp only [{plain}]); (repeat' first | rfl | (simp_all{zeta} only [{facts}]) | split); all_goals ({reverse}); all_goals (simp_all{zeta} only [{completed}]); done)"
         )
     } else {
         String::new()
@@ -357,11 +370,7 @@ pub(super) fn candidate(
     // First open only the law's outer wrappers. Their matches may enclose a
     // computation already summarized by a citation; unfolding its helpers
     // before applying that summary can make a small composition intractable.
-    let shallow_defs = [definitions.heads.as_str(), facts.as_str()]
-        .into_iter()
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join(", ");
+    let shallow_defs = set(&[&definitions.heads, &facts]);
     let shallow = format!(
         "(simp only [{}]; (repeat' first | rfl | (simp_all{zeta} only [{shallow_defs}]) | split); done)",
         definitions.heads
@@ -380,7 +389,8 @@ pub(super) fn candidate(
         format!("{prefix}{staged}")
     };
     Some(format!(
-        "(first | {shallow} | (simp only [Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq, {plain}] at *; simp only [{facts}]; first{composed} | (grind only [{steps}])))"
+        "(first | {shallow} | (simp only [{}] at *; simp only [{facts}]; first{composed} | (grind only [{steps}])))",
+        set(&["Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq", &plain])
     ))
 }
 

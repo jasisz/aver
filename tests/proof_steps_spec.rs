@@ -4571,6 +4571,49 @@ fn lean_closes_the_normal_form_laws_by_their_steps() {
     let _ = fs::remove_dir_all(out);
 }
 
+/// Empty lists of two element types meet in one table of equal terms: each
+/// keeps its own type, so Lean takes every step term the kernel accepted.
+#[test]
+fn lean_keeps_each_empty_list_at_its_own_type() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("empty-list-types-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "empty_list_types.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        summary["steps_rejected"],
+        serde_json::json!([]),
+        "{summary}"
+    );
+    for law in [
+        "withoutEach.oneDeletionCommutes",
+        "withoutEach.oneDeletionCommutes.because1",
+        "withoutEach.oneDeletionCommutes.implication",
+    ] {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
 /// A hint names only a law the stuck law could cite: not a law of a
 /// function its imported module does not expose, and not a law that
 /// already cites the stuck one, which would make a cycle. The automatic
