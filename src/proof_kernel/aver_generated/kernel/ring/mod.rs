@@ -93,15 +93,17 @@ pub fn readPoly(
 ) -> Read {
     crate::proof_kernel::cancel_checkpoint();
     match t.clone() {
-        crate::proof_kernel::aver_generated::kernel::term::Term::TInt(n) => {
+        crate::proof_kernel::aver_generated::kernel::term::Term::TInt(__n_fields) => {
+            let n = __n_fields.0.clone();
             crate::proof_kernel::aver_generated::kernel::ring::Read {
                 poly: crate::proof_kernel::aver_generated::kernel::ring::constant(n),
                 atoms: atoms.clone(),
             }
         }
-        crate::proof_kernel::aver_generated::kernel::term::Term::TOp(__pat0, a, b) => {
-            let a = (*a).clone();
-            let b = (*b).clone();
+        crate::proof_kernel::aver_generated::kernel::term::Term::TOp(____pat0_fields) => {
+            let __pat0 = ____pat0_fields.0.clone();
+            let a = ____pat0_fields.1.clone();
+            let b = ____pat0_fields.2.clone();
             {
                 let __dispatch_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&__pat0));
                 if __dispatch_subject == aver_rt::AverInt::from_i64(43) {
@@ -133,8 +135,8 @@ pub fn readPoly(
                 }
             }
         }
-        crate::proof_kernel::aver_generated::kernel::term::Term::TNeg(a) => {
-            let a = (*a).clone();
+        crate::proof_kernel::aver_generated::kernel::term::Term::TNeg(__a_fields) => {
+            let a = __a_fields.0.clone();
             crate::proof_kernel::aver_generated::kernel::ring::negated(
                 &crate::proof_kernel::aver_generated::kernel::ring::readPoly(&a, atoms),
             )
@@ -454,7 +456,7 @@ pub fn readRows(
 ) -> Option<aver_rt::AverList<aver_rt::AverList<Mono>>> {
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        aver_list_match!(facts, [] => { return Some(rows); }, [f, fs] => { if crate::proof_kernel::aver_generated::kernel::ring::isTruth(&f.rhs) { match crate::proof_kernel::aver_generated::kernel::ring::asNonneg(&f.lhs, (f.rhs == crate::proof_kernel::aver_generated::kernel::term::Term::TBool(true)), &atoms) { None => { return None; }, Some(read @ _) => { {
+        aver_list_match!(facts, [] => { return Some(rows); }, [f, fs] => { if crate::proof_kernel::aver_generated::kernel::ring::isTruth(&f.rhs) { match crate::proof_kernel::aver_generated::kernel::ring::asNonneg(&f.lhs, (f.rhs == crate::proof_kernel::aver_generated::kernel::term::Term::TBool(std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::term::Term__TBool(true)))), &atoms) { None => { return None; }, Some(read @ _) => { {
             let __tco0 = fs;
             let __tco1 = aver_rt::AverList::concat(&rows, &aver_rt::AverList::from_vec(vec![read.poly]));
             let __tco2 = read.atoms;
@@ -575,7 +577,10 @@ pub fn roundedBy(
 pub fn isTruth(t @ _: &crate::proof_kernel::aver_generated::kernel::term::Term) -> bool {
     crate::proof_kernel::cancel_checkpoint();
     match t.clone() {
-        crate::proof_kernel::aver_generated::kernel::term::Term::TBool(b) => true,
+        crate::proof_kernel::aver_generated::kernel::term::Term::TBool(__b_fields) => {
+            let b = __b_fields.0.clone();
+            true
+        }
         _ => false,
     }
 }
@@ -588,9 +593,10 @@ pub fn asNonneg(
 ) -> Option<Read> {
     crate::proof_kernel::cancel_checkpoint();
     match t.clone() {
-        crate::proof_kernel::aver_generated::kernel::term::Term::TOp(__pat0, a, b) => {
-            let a = (*a).clone();
-            let b = (*b).clone();
+        crate::proof_kernel::aver_generated::kernel::term::Term::TOp(____pat0_fields) => {
+            let __pat0 = ____pat0_fields.0.clone();
+            let a = ____pat0_fields.1.clone();
+            let b = ____pat0_fields.2.clone();
             {
                 let __dispatch_subject = __pat0;
                 if &*__dispatch_subject == "<" {
@@ -678,11 +684,13 @@ pub fn difference(
     if value {
         crate::proof_kernel::aver_generated::kernel::ring::lessConstant(
             &crate::proof_kernel::aver_generated::kernel::ring::readPoly(
-                &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
-                    AverStr::from("-"),
-                    std::sync::Arc::new(upper.clone()),
-                    std::sync::Arc::new(lower.clone()),
-                ),
+                &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(std::sync::Arc::new(
+                    crate::proof_kernel::aver_generated::kernel::term::Term__TOp(
+                        AverStr::from("-"),
+                        upper.clone(),
+                        lower.clone(),
+                    ),
+                )),
                 atoms,
             ),
             k,
@@ -690,11 +698,13 @@ pub fn difference(
     } else {
         crate::proof_kernel::aver_generated::kernel::ring::lessConstant(
             &crate::proof_kernel::aver_generated::kernel::ring::readPoly(
-                &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
-                    AverStr::from("-"),
-                    std::sync::Arc::new(otherUpper.clone()),
-                    std::sync::Arc::new(otherLower.clone()),
-                ),
+                &crate::proof_kernel::aver_generated::kernel::term::Term::TOp(std::sync::Arc::new(
+                    crate::proof_kernel::aver_generated::kernel::term::Term__TOp(
+                        AverStr::from("-"),
+                        otherUpper.clone(),
+                        otherLower.clone(),
+                    ),
+                )),
                 atoms,
             ),
             k,

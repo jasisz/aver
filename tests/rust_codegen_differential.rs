@@ -390,6 +390,18 @@ fn fused_stdlib_hex_decoding_matches_between_rust_and_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A recursive sum keeps each constructor's fields behind one shared `Arc`.
+/// The fixture holds the shapes that representation must build and read: a
+/// record on the cycle (which had no fixed size in Rust at all), recursion
+/// through `Option`, a constructor pattern inside a tuple, equality, and one
+/// value used as both fields of a node, 18 levels deep — 262144 leaves, each
+/// level a single allocation.
+#[test]
+fn shared_recursive_sum_matches_between_rust_and_vm() {
+    assert_plain_parity("tests/fixtures/shared_recursive_sum_app.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A two-arm bool `match` whose default arm NAMES the matched value
 /// (`other -> …`) instead of spelling `false` or `_`.
 ///

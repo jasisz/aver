@@ -1,6 +1,7 @@
 use crate::ast::{TypeDef, TypeVariant};
 use crate::codegen::CodegenContext;
 
+use super::representation::{sum_is_shared, variant_field_refs};
 use super::syntax::aver_name_to_rust;
 use super::types::type_annotation_to_rust_scoped;
 
@@ -190,7 +191,9 @@ pub fn emit_replay_value_impl(
         TypeDef::Product { name, fields, .. } => {
             emit_record_impl(name, fields, packed_u8, ctx, scope)
         }
-        TypeDef::Sum { name, variants, .. } => emit_variant_impl(name, variants, ctx, scope),
+        TypeDef::Sum { name, variants, .. } => {
+            emit_variant_impl(name, variants, sum_is_shared(td, ctx), ctx, scope)
+        }
     }
 }
 
@@ -286,6 +289,7 @@ fn emit_record_impl(
 fn emit_variant_impl(
     name: &str,
     variants: &[TypeVariant],
+    shared: bool,
     ctx: &CodegenContext,
     scope: Option<&str>,
 ) -> String {
@@ -297,13 +301,13 @@ fn emit_variant_impl(
     };
     let to_arms = variants
         .iter()
-        .map(|variant| emit_variant_to_arm(name, variant))
+        .map(|variant| emit_variant_to_arm(name, variant, shared))
         .collect::<Vec<_>>()
         .join("\n");
 
     let from_arms = variants
         .iter()
-        .map(|variant| emit_variant_from_arm(name, variant, ctx, scope))
+        .map(|variant| emit_variant_from_arm(name, variant, shared, ctx, scope))
         .collect::<Vec<_>>()
         .join("\n");
 
@@ -344,7 +348,7 @@ fn emit_variant_impl(
     )
 }
 
-fn emit_variant_to_arm(type_name: &str, variant: &TypeVariant) -> String {
+fn emit_variant_to_arm(type_name: &str, variant: &TypeVariant, shared: bool) -> String {
     if variant.fields.is_empty() {
         return format!(
             "            {type_name}::{variant_name} => {{\n                payload.insert(\"name\".to_string(), serde_json::Value::String({variant_name:?}.to_string()));\n                payload.insert(\"fields\".to_string(), serde_json::Value::Array(vec![]));\n                aver_replay::wrap_marker(\"$variant\", serde_json::Value::Object(payload))\n            }}",
@@ -352,10 +356,8 @@ fn emit_variant_to_arm(type_name: &str, variant: &TypeVariant) -> String {
         );
     }
 
-    let bindings = (0..variant.fields.len())
-        .map(|idx| format!("f{}", idx))
-        .collect::<Vec<_>>();
-    let field_json = bindings
+    let (bindings, fields) = variant_field_refs(shared, "f", variant.fields.len());
+    let field_json = fields
         .iter()
         .map(|name| format!("ReplayValue::to_replay_json({})", name))
         .collect::<Vec<_>>()
@@ -364,13 +366,13 @@ fn emit_variant_to_arm(type_name: &str, variant: &TypeVariant) -> String {
     format!(
         "            {type_name}::{variant_name}({bindings}) => {{\n                payload.insert(\"name\".to_string(), serde_json::Value::String({variant_name:?}.to_string()));\n                payload.insert(\"fields\".to_string(), serde_json::Value::Array(vec![{field_json}]));\n                aver_replay::wrap_marker(\"$variant\", serde_json::Value::Object(payload))\n            }}",
         variant_name = variant.name,
-        bindings = bindings.join(", ")
     )
 }
 
 fn emit_variant_from_arm(
     type_name: &str,
     variant: &TypeVariant,
+    shared: bool,
     ctx: &CodegenContext,
     scope: Option<&str>,
 ) -> String {
@@ -388,7 +390,7 @@ fn emit_variant_from_arm(
         .map(|(idx, field_type)| {
             format!(
                 "<{} as ReplayValue>::from_replay_json(fields.get({}).ok_or_else(|| format!(\"$variant {} missing field #{{}}\", {}))?)?",
-                replay_variant_field_type(type_name, field_type, ctx, scope),
+                type_annotation_to_rust_scoped(field_type, ctx, scope),
                 idx,
                 variant.name,
                 idx
@@ -396,25 +398,19 @@ fn emit_variant_from_arm(
         })
         .collect::<Vec<_>>()
         .join(", ");
+    let field_loads = if shared {
+        format!(
+            "std::sync::Arc::new({type_name}__{}({field_loads}))",
+            variant.name
+        )
+    } else {
+        field_loads
+    };
 
     format!(
         "            {variant_name:?} => Ok({type_name}::{variant_name}({field_loads})),",
         variant_name = variant.name
     )
-}
-
-fn replay_variant_field_type(
-    type_name: &str,
-    field_type: &str,
-    ctx: &CodegenContext,
-    scope: Option<&str>,
-) -> String {
-    let rust_ty = type_annotation_to_rust_scoped(field_type, ctx, scope);
-    if field_type == type_name {
-        format!("std::sync::Arc<{rust_ty}>")
-    } else {
-        rust_ty
-    }
 }
 
 fn http_request_type_impls() -> String {

@@ -88,59 +88,49 @@ pub fn rewriteInternalExpr(
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     match expr.clone() {
-        crate::aver_generated::domain::ast::Expr::ExprBoolBranch(cond, thenExpr, elseExpr) => {
-            let cond = (*cond).clone();
-            let thenExpr = (*thenExpr).clone();
-            let elseExpr = (*elseExpr).clone();
-            crate::aver_generated::domain::ast::Expr::ExprBoolBranch(
-                std::sync::Arc::new(
+        crate::aver_generated::domain::ast::Expr::ExprBoolBranch(__cond_fields) => {
+            let cond = __cond_fields.0.clone();
+            let thenExpr = __cond_fields.1.clone();
+            let elseExpr = __cond_fields.2.clone();
+            crate::aver_generated::domain::ast::Expr::ExprBoolBranch(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprBoolBranch(
                     crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&cond),
-                ),
-                std::sync::Arc::new(
                     crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
                         &thenExpr,
                     ),
-                ),
-                std::sync::Arc::new(
                     crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
                         &elseExpr,
                     ),
                 ),
-            )
+            ))
         }
-        crate::aver_generated::domain::ast::Expr::ExprBinopSlotInt(_, _, _) => expr.clone(),
-        crate::aver_generated::domain::ast::Expr::ExprBinopSlots(_, _, _) => expr.clone(),
-        crate::aver_generated::domain::ast::Expr::ExprCmpSlotInt(_, _, _) => expr.clone(),
-        crate::aver_generated::domain::ast::Expr::ExprCmpSlots(_, _, _) => expr.clone(),
-        crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(
-            vecExpr,
-            idxExpr,
-            defaultValue,
-        ) => {
-            let vecExpr = (*vecExpr).clone();
-            let idxExpr = (*idxExpr).clone();
-            crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(
-                std::sync::Arc::new(
+        crate::aver_generated::domain::ast::Expr::ExprBinopSlotInt(_) => expr.clone(),
+        crate::aver_generated::domain::ast::Expr::ExprBinopSlots(_) => expr.clone(),
+        crate::aver_generated::domain::ast::Expr::ExprCmpSlotInt(_) => expr.clone(),
+        crate::aver_generated::domain::ast::Expr::ExprCmpSlots(_) => expr.clone(),
+        crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(__vecExpr_fields) => {
+            let vecExpr = __vecExpr_fields.0.clone();
+            let idxExpr = __vecExpr_fields.1.clone();
+            let defaultValue = __vecExpr_fields.2.clone();
+            crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprVectorGetOrInt(
                     crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&vecExpr),
-                ),
-                std::sync::Arc::new(
                     crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&idxExpr),
+                    defaultValue,
                 ),
-                defaultValue,
-            )
+            ))
         }
-        crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(a, b, defaultValue) => {
-            let a = (*a).clone();
-            let b = (*b).clone();
-            crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(
-                std::sync::Arc::new(
+        crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(__a_fields) => {
+            let a = __a_fields.0.clone();
+            let b = __a_fields.1.clone();
+            let defaultValue = __a_fields.2.clone();
+            crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprIntModOrInt(
                     crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
-                ),
-                std::sync::Arc::new(
                     crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
+                    defaultValue,
                 ),
-                defaultValue,
-            )
+            ))
         }
         _ => crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprAfterLeaf(expr),
     }
@@ -152,96 +142,98 @@ pub fn rewriteInternalExprAfterLeaf(
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     match expr.clone() {
-        crate::aver_generated::domain::ast::Expr::ExprAdd(a, b) => {
-            let a = (*a).clone();
-            let b = (*b).clone();
+        crate::aver_generated::domain::ast::Expr::ExprAdd(__a_fields) => {
+            let a = __a_fields.0.clone();
+            let b = __a_fields.1.clone();
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalBinop(
                 &crate::aver_generated::domain::ast::BinOp::OpAdd,
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
         }
-        crate::aver_generated::domain::ast::Expr::ExprSub(a, b) => {
-            let a = (*a).clone();
-            let b = (*b).clone();
+        crate::aver_generated::domain::ast::Expr::ExprSub(__a_fields) => {
+            let a = __a_fields.0.clone();
+            let b = __a_fields.1.clone();
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalBinop(
                 &crate::aver_generated::domain::ast::BinOp::OpSub,
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
         }
-        crate::aver_generated::domain::ast::Expr::ExprMul(a, b) => {
-            let a = (*a).clone();
-            let b = (*b).clone();
+        crate::aver_generated::domain::ast::Expr::ExprMul(__a_fields) => {
+            let a = __a_fields.0.clone();
+            let b = __a_fields.1.clone();
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalBinop(
                 &crate::aver_generated::domain::ast::BinOp::OpMul,
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
         }
-        crate::aver_generated::domain::ast::Expr::ExprDiv(a, b) => {
-            let a = (*a).clone();
-            let b = (*b).clone();
+        crate::aver_generated::domain::ast::Expr::ExprDiv(__a_fields) => {
+            let a = __a_fields.0.clone();
+            let b = __a_fields.1.clone();
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalBinop(
                 &crate::aver_generated::domain::ast::BinOp::OpDiv,
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
         }
-        crate::aver_generated::domain::ast::Expr::ExprNeg(inner) => {
-            let inner = (*inner).clone();
+        crate::aver_generated::domain::ast::Expr::ExprNeg(__inner_fields) => {
+            let inner = __inner_fields.0.clone();
             crate::aver_generated::domain::ast::Expr::ExprNeg(std::sync::Arc::new(
-                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&inner),
+                crate::aver_generated::domain::ast::Expr__ExprNeg(
+                    crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&inner),
+                ),
             ))
         }
-        crate::aver_generated::domain::ast::Expr::ExprEq(a, b) => {
-            let a = (*a).clone();
-            let b = (*b).clone();
+        crate::aver_generated::domain::ast::Expr::ExprEq(__a_fields) => {
+            let a = __a_fields.0.clone();
+            let b = __a_fields.1.clone();
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmp(
                 &crate::aver_generated::domain::ast::CmpOp::CmpEq,
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
         }
-        crate::aver_generated::domain::ast::Expr::ExprNeq(a, b) => {
-            let a = (*a).clone();
-            let b = (*b).clone();
+        crate::aver_generated::domain::ast::Expr::ExprNeq(__a_fields) => {
+            let a = __a_fields.0.clone();
+            let b = __a_fields.1.clone();
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmp(
                 &crate::aver_generated::domain::ast::CmpOp::CmpNeq,
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
         }
-        crate::aver_generated::domain::ast::Expr::ExprLt(a, b) => {
-            let a = (*a).clone();
-            let b = (*b).clone();
+        crate::aver_generated::domain::ast::Expr::ExprLt(__a_fields) => {
+            let a = __a_fields.0.clone();
+            let b = __a_fields.1.clone();
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmp(
                 &crate::aver_generated::domain::ast::CmpOp::CmpLt,
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
         }
-        crate::aver_generated::domain::ast::Expr::ExprGt(a, b) => {
-            let a = (*a).clone();
-            let b = (*b).clone();
+        crate::aver_generated::domain::ast::Expr::ExprGt(__a_fields) => {
+            let a = __a_fields.0.clone();
+            let b = __a_fields.1.clone();
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmp(
                 &crate::aver_generated::domain::ast::CmpOp::CmpGt,
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
         }
-        crate::aver_generated::domain::ast::Expr::ExprLte(a, b) => {
-            let a = (*a).clone();
-            let b = (*b).clone();
+        crate::aver_generated::domain::ast::Expr::ExprLte(__a_fields) => {
+            let a = __a_fields.0.clone();
+            let b = __a_fields.1.clone();
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmp(
                 &crate::aver_generated::domain::ast::CmpOp::CmpLte,
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
         }
-        crate::aver_generated::domain::ast::Expr::ExprGte(a, b) => {
-            let a = (*a).clone();
-            let b = (*b).clone();
+        crate::aver_generated::domain::ast::Expr::ExprGte(__a_fields) => {
+            let a = __a_fields.0.clone();
+            let b = __a_fields.1.clone();
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmp(
                 &crate::aver_generated::domain::ast::CmpOp::CmpGte,
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
@@ -258,8 +250,9 @@ pub fn rewriteInternalExprAfterArith(
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     match expr.clone() {
-        crate::aver_generated::domain::ast::Expr::ExprMatch(scrutinee, arms) => {
-            let scrutinee = (*scrutinee).clone();
+        crate::aver_generated::domain::ast::Expr::ExprMatch(__scrutinee_fields) => {
+            let scrutinee = __scrutinee_fields.0.clone();
+            let arms = __scrutinee_fields.1.clone();
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalMatch(
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&scrutinee),
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalArms__collected(
@@ -270,101 +263,67 @@ pub fn rewriteInternalExprAfterArith(
                 ),
             )
         }
-        crate::aver_generated::domain::ast::Expr::ExprPropagate(inner) => {
-            let inner = (*inner).clone();
+        crate::aver_generated::domain::ast::Expr::ExprPropagate(__inner_fields) => {
+            let inner = __inner_fields.0.clone();
             crate::aver_generated::domain::ast::Expr::ExprPropagate(std::sync::Arc::new(
-                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&inner),
+                crate::aver_generated::domain::ast::Expr__ExprPropagate(
+                    crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&inner),
+                ),
             ))
         }
-        crate::aver_generated::domain::ast::Expr::ExprConcat(parts) => {
-            crate::aver_generated::domain::ast::Expr::ExprConcat(
-                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs__collected(
-                    parts,
-                    aver_rt::list_builder_new(
-                        (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                    ),
-                ),
-            )
+        crate::aver_generated::domain::ast::Expr::ExprConcat(__parts_fields) => {
+            let parts = __parts_fields.0.clone();
+            crate::aver_generated::domain::ast::Expr::ExprConcat(std::sync::Arc::new(crate::aver_generated::domain::ast::Expr__ExprConcat(crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs__collected(parts, aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0))))))
         }
-        crate::aver_generated::domain::ast::Expr::ExprTuple(exprs) => {
-            crate::aver_generated::domain::ast::Expr::ExprTuple(
-                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs__collected(
-                    exprs,
-                    aver_rt::list_builder_new(
-                        (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                    ),
-                ),
-            )
+        crate::aver_generated::domain::ast::Expr::ExprTuple(__exprs_fields) => {
+            let exprs = __exprs_fields.0.clone();
+            crate::aver_generated::domain::ast::Expr::ExprTuple(std::sync::Arc::new(crate::aver_generated::domain::ast::Expr__ExprTuple(crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs__collected(exprs, aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0))))))
         }
-        crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(exprs, unwrap) => {
-            crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(
-                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs__collected(
-                    exprs,
-                    aver_rt::list_builder_new(
-                        (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                    ),
-                ),
-                unwrap,
-            )
+        crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(__exprs_fields) => {
+            let exprs = __exprs_fields.0.clone();
+            let unwrap = __exprs_fields.1.clone();
+            crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(std::sync::Arc::new(crate::aver_generated::domain::ast::Expr__ExprIndependentProduct(crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs__collected(exprs, aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0))), unwrap)))
         }
-        crate::aver_generated::domain::ast::Expr::ExprList(exprs) => {
-            crate::aver_generated::domain::ast::Expr::ExprList(
-                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs__collected(
-                    exprs,
-                    aver_rt::list_builder_new(
-                        (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                    ),
-                ),
-            )
+        crate::aver_generated::domain::ast::Expr::ExprList(__exprs_fields) => {
+            let exprs = __exprs_fields.0.clone();
+            crate::aver_generated::domain::ast::Expr::ExprList(std::sync::Arc::new(crate::aver_generated::domain::ast::Expr__ExprList(crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs__collected(exprs, aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0))))))
         }
-        crate::aver_generated::domain::ast::Expr::ExprRecord(name, fields) => {
-            crate::aver_generated::domain::ast::Expr::ExprRecord(
-                name,
-                crate::aver_generated::domain::resolver::rewrite::rewriteInternalFields__collected(
-                    fields,
-                    aver_rt::list_builder_new(
-                        (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                    ),
-                ),
-            )
+        crate::aver_generated::domain::ast::Expr::ExprRecord(__name_fields) => {
+            let name = __name_fields.0.clone();
+            let fields = __name_fields.1.clone();
+            crate::aver_generated::domain::ast::Expr::ExprRecord(std::sync::Arc::new(crate::aver_generated::domain::ast::Expr__ExprRecord(name, crate::aver_generated::domain::resolver::rewrite::rewriteInternalFields__collected(fields, aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0))))))
         }
-        crate::aver_generated::domain::ast::Expr::ExprFieldAccess(obj, field) => {
-            let obj = (*obj).clone();
-            crate::aver_generated::domain::ast::Expr::ExprFieldAccess(
-                std::sync::Arc::new(
+        crate::aver_generated::domain::ast::Expr::ExprFieldAccess(__obj_fields) => {
+            let obj = __obj_fields.0.clone();
+            let field = __obj_fields.1.clone();
+            crate::aver_generated::domain::ast::Expr::ExprFieldAccess(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprFieldAccess(
                     crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&obj),
+                    field,
                 ),
-                field,
-            )
+            ))
         }
-        crate::aver_generated::domain::ast::Expr::ExprVar(name) => {
-            crate::aver_generated::domain::ast::Expr::ExprVar(
-                crate::aver_generated::domain::ast::canonicalCtorName(name),
-            )
-        }
-        crate::aver_generated::domain::ast::Expr::ExprCall(name, args) => {
-            crate::aver_generated::domain::ast::Expr::ExprCall(
-                crate::aver_generated::domain::ast::canonicalCtorName(name),
-                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs__collected(
-                    args,
-                    aver_rt::list_builder_new(
-                        (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                    ),
+        crate::aver_generated::domain::ast::Expr::ExprVar(__name_fields) => {
+            let name = __name_fields.0.clone();
+            crate::aver_generated::domain::ast::Expr::ExprVar(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprVar(
+                    crate::aver_generated::domain::ast::canonicalCtorName(name),
                 ),
-            )
+            ))
         }
-        crate::aver_generated::domain::ast::Expr::ExprCallDirect(fnId, args) => {
-            crate::aver_generated::domain::ast::Expr::ExprCallDirect(
-                fnId,
-                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs__collected(
-                    args,
-                    aver_rt::list_builder_new(
-                        (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                    ),
-                ),
-            )
+        crate::aver_generated::domain::ast::Expr::ExprCall(__name_fields) => {
+            let name = __name_fields.0.clone();
+            let args = __name_fields.1.clone();
+            crate::aver_generated::domain::ast::Expr::ExprCall(std::sync::Arc::new(crate::aver_generated::domain::ast::Expr__ExprCall(crate::aver_generated::domain::ast::canonicalCtorName(name), crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs__collected(args, aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0))))))
         }
-        crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(name, args) => {
+        crate::aver_generated::domain::ast::Expr::ExprCallDirect(__fnId_fields) => {
+            let fnId = __fnId_fields.0.clone();
+            let args = __fnId_fields.1.clone();
+            crate::aver_generated::domain::ast::Expr::ExprCallDirect(std::sync::Arc::new(crate::aver_generated::domain::ast::Expr__ExprCallDirect(fnId, crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs__collected(args, aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0))))))
+        }
+        crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(__name_fields) => {
+            let name = __name_fields.0.clone();
+            let args = __name_fields.1.clone();
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalBuiltin(
                 name,
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs__collected(
@@ -375,16 +334,10 @@ pub fn rewriteInternalExprAfterArith(
                 ),
             )
         }
-        crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(id, args) => {
-            crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(
-                id,
-                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs__collected(
-                    args,
-                    aver_rt::list_builder_new(
-                        (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                    ),
-                ),
-            )
+        crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(__id_fields) => {
+            let id = __id_fields.0.clone();
+            let args = __id_fields.1.clone();
+            crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(std::sync::Arc::new(crate::aver_generated::domain::ast::Expr__ExprCallBuiltinId(id, crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs__collected(args, aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0))))))
         }
         _ => expr.clone(),
     }
@@ -504,13 +457,15 @@ pub fn rewriteInternalBinop(
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     match left.clone() {
-        crate::aver_generated::domain::ast::Expr::ExprSlot(slot) => {
+        crate::aver_generated::domain::ast::Expr::ExprSlot(__slot_fields) => {
+            let slot = __slot_fields.0.clone();
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalBinopSlotLeft(
                 op, slot, right,
             )
         }
         _ => match right.clone() {
-            crate::aver_generated::domain::ast::Expr::ExprSlot(slot) => {
+            crate::aver_generated::domain::ast::Expr::ExprSlot(__slot_fields) => {
+                let slot = __slot_fields.0.clone();
                 crate::aver_generated::domain::resolver::rewrite::rewriteInternalBinopSlotRight(
                     op, left, slot,
                 )
@@ -530,15 +485,23 @@ pub fn rewriteInternalBinopSlotLeft(
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     match right.clone() {
-        crate::aver_generated::domain::ast::Expr::ExprInt(n) => {
-            crate::aver_generated::domain::ast::Expr::ExprBinopSlotInt(op.clone(), slot, n)
+        crate::aver_generated::domain::ast::Expr::ExprInt(__n_fields) => {
+            let n = __n_fields.0.clone();
+            crate::aver_generated::domain::ast::Expr::ExprBinopSlotInt(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprBinopSlotInt(op.clone(), slot, n),
+            ))
         }
-        crate::aver_generated::domain::ast::Expr::ExprSlot(rhs) => {
-            crate::aver_generated::domain::ast::Expr::ExprBinopSlots(op.clone(), slot, rhs)
+        crate::aver_generated::domain::ast::Expr::ExprSlot(__rhs_fields) => {
+            let rhs = __rhs_fields.0.clone();
+            crate::aver_generated::domain::ast::Expr::ExprBinopSlots(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprBinopSlots(op.clone(), slot, rhs),
+            ))
         }
         _ => crate::aver_generated::domain::resolver::rewrite::rebuildInternalBinop(
             op,
-            &crate::aver_generated::domain::ast::Expr::ExprSlot(slot),
+            &crate::aver_generated::domain::ast::Expr::ExprSlot(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprSlot(slot),
+            )),
             right,
         ),
     }
@@ -552,24 +515,34 @@ pub fn rewriteInternalBinopSlotRight(
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     match left.clone() {
-        crate::aver_generated::domain::ast::Expr::ExprSlot(lhs) => {
-            crate::aver_generated::domain::ast::Expr::ExprBinopSlots(op.clone(), lhs, slot)
+        crate::aver_generated::domain::ast::Expr::ExprSlot(__lhs_fields) => {
+            let lhs = __lhs_fields.0.clone();
+            crate::aver_generated::domain::ast::Expr::ExprBinopSlots(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprBinopSlots(op.clone(), lhs, slot),
+            ))
         }
-        crate::aver_generated::domain::ast::Expr::ExprInt(n) => {
+        crate::aver_generated::domain::ast::Expr::ExprInt(__n_fields) => {
+            let n = __n_fields.0.clone();
             if crate::aver_generated::domain::resolver::rewrite::binopCanFlip(op) {
-                crate::aver_generated::domain::ast::Expr::ExprBinopSlotInt(op.clone(), slot, n)
+                crate::aver_generated::domain::ast::Expr::ExprBinopSlotInt(std::sync::Arc::new(
+                    crate::aver_generated::domain::ast::Expr__ExprBinopSlotInt(op.clone(), slot, n),
+                ))
             } else {
                 crate::aver_generated::domain::resolver::rewrite::rebuildInternalBinop(
                     op,
                     left,
-                    &crate::aver_generated::domain::ast::Expr::ExprSlot(slot),
+                    &crate::aver_generated::domain::ast::Expr::ExprSlot(std::sync::Arc::new(
+                        crate::aver_generated::domain::ast::Expr__ExprSlot(slot),
+                    )),
                 )
             }
         }
         _ => crate::aver_generated::domain::resolver::rewrite::rebuildInternalBinop(
             op,
             left,
-            &crate::aver_generated::domain::ast::Expr::ExprSlot(slot),
+            &crate::aver_generated::domain::ast::Expr::ExprSlot(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprSlot(slot),
+            )),
         ),
     }
 }
@@ -583,28 +556,24 @@ pub fn rebuildInternalBinop(
     crate::cancel_checkpoint();
     match op {
         crate::aver_generated::domain::ast::BinOp::OpAdd => {
-            crate::aver_generated::domain::ast::Expr::ExprAdd(
-                std::sync::Arc::new(left.clone()),
-                std::sync::Arc::new(right.clone()),
-            )
+            crate::aver_generated::domain::ast::Expr::ExprAdd(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprAdd(left.clone(), right.clone()),
+            ))
         }
         crate::aver_generated::domain::ast::BinOp::OpSub => {
-            crate::aver_generated::domain::ast::Expr::ExprSub(
-                std::sync::Arc::new(left.clone()),
-                std::sync::Arc::new(right.clone()),
-            )
+            crate::aver_generated::domain::ast::Expr::ExprSub(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprSub(left.clone(), right.clone()),
+            ))
         }
         crate::aver_generated::domain::ast::BinOp::OpMul => {
-            crate::aver_generated::domain::ast::Expr::ExprMul(
-                std::sync::Arc::new(left.clone()),
-                std::sync::Arc::new(right.clone()),
-            )
+            crate::aver_generated::domain::ast::Expr::ExprMul(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprMul(left.clone(), right.clone()),
+            ))
         }
         crate::aver_generated::domain::ast::BinOp::OpDiv => {
-            crate::aver_generated::domain::ast::Expr::ExprDiv(
-                std::sync::Arc::new(left.clone()),
-                std::sync::Arc::new(right.clone()),
-            )
+            crate::aver_generated::domain::ast::Expr::ExprDiv(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprDiv(left.clone(), right.clone()),
+            ))
         }
     }
 }
@@ -636,7 +605,9 @@ pub fn rewriteInternalBuiltin(
                     args,
                 )
             } else {
-                crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(name, args.clone())
+                crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(std::sync::Arc::new(
+                    crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(name, args.clone()),
+                ))
             }
         }
     }
@@ -655,17 +626,21 @@ pub fn rewriteInternalOptionWithDefault(
                 if let Some((defaultExpr, ignored)) = aver_rt::list_uncons_cloned(&__list_subject) {
                     crate::aver_generated::domain::resolver::rewrite::rewriteInternalOptionWithDefaultArgs(&optionExpr, &defaultExpr)
                 } else {
-                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                        AverStr::from("Option.withDefault"),
-                        args.clone(),
-                    )
+                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(std::sync::Arc::new(
+                        crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
+                            AverStr::from("Option.withDefault"),
+                            args.clone(),
+                        ),
+                    ))
                 }
             }
         } else {
-            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                AverStr::from("Option.withDefault"),
-                args.clone(),
-            )
+            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
+                    AverStr::from("Option.withDefault"),
+                    args.clone(),
+                ),
+            ))
         }
     }
 }
@@ -677,31 +652,42 @@ pub fn rewriteInternalOptionWithDefaultArgs(
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     match defaultExpr.clone() {
-        crate::aver_generated::domain::ast::Expr::ExprInt(defaultValue) => {
+        crate::aver_generated::domain::ast::Expr::ExprInt(__defaultValue_fields) => {
+            let defaultValue = __defaultValue_fields.0.clone();
             match optionExpr.clone() {
-                crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(name, innerArgs) => {
+                crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(__name_fields) => {
+                    let name = __name_fields.0.clone();
+                    let innerArgs = __name_fields.1.clone();
                     if (&*name == "Vector.get") {
                         crate::aver_generated::domain::resolver::rewrite::rewriteInternalVectorGetOrInt(&innerArgs, defaultValue)
                     } else {
                         crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                            AverStr::from("Option.withDefault"),
-                            aver_rt::AverList::from_vec(vec![
-                                optionExpr.clone(),
-                                defaultExpr.clone(),
-                            ]),
+                            std::sync::Arc::new(
+                                crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
+                                    AverStr::from("Option.withDefault"),
+                                    aver_rt::AverList::from_vec(vec![
+                                        optionExpr.clone(),
+                                        defaultExpr.clone(),
+                                    ]),
+                                ),
+                            ),
                         )
                     }
                 }
                 _ => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                    AverStr::from("Option.withDefault"),
-                    aver_rt::AverList::from_vec(vec![optionExpr.clone(), defaultExpr.clone()]),
+                    std::sync::Arc::new(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
+                        AverStr::from("Option.withDefault"),
+                        aver_rt::AverList::from_vec(vec![optionExpr.clone(), defaultExpr.clone()]),
+                    )),
                 ),
             }
         }
-        _ => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-            AverStr::from("Option.withDefault"),
-            aver_rt::AverList::from_vec(vec![optionExpr.clone(), defaultExpr.clone()]),
-        ),
+        _ => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
+                AverStr::from("Option.withDefault"),
+                aver_rt::AverList::from_vec(vec![optionExpr.clone(), defaultExpr.clone()]),
+            ),
+        )),
     }
 }
 
@@ -719,29 +705,49 @@ pub fn rewriteInternalVectorGetOrInt(
                 if let Some((idxExpr, ignored)) = aver_rt::list_uncons_cloned(&__list_subject) {
                     crate::aver_generated::domain::resolver::rewrite::rewriteInternalVectorGetOrIntArgs(&vecExpr, &idxExpr, defaultValue)
                 } else {
-                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                        AverStr::from("Option.withDefault"),
-                        aver_rt::AverList::from_vec(vec![
-                            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                                AverStr::from("Vector.get"),
-                                args.clone(),
-                            ),
-                            crate::aver_generated::domain::ast::Expr::ExprInt(defaultValue),
-                        ]),
-                    )
+                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(std::sync::Arc::new(
+                        crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
+                            AverStr::from("Option.withDefault"),
+                            aver_rt::AverList::from_vec(vec![
+                                crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+                                    std::sync::Arc::new(
+                                        crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
+                                            AverStr::from("Vector.get"),
+                                            args.clone(),
+                                        ),
+                                    ),
+                                ),
+                                crate::aver_generated::domain::ast::Expr::ExprInt(
+                                    std::sync::Arc::new(
+                                        crate::aver_generated::domain::ast::Expr__ExprInt(
+                                            defaultValue,
+                                        ),
+                                    ),
+                                ),
+                            ]),
+                        ),
+                    ))
                 }
             }
         } else {
-            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                AverStr::from("Option.withDefault"),
-                aver_rt::AverList::from_vec(vec![
-                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                        AverStr::from("Vector.get"),
-                        args.clone(),
-                    ),
-                    crate::aver_generated::domain::ast::Expr::ExprInt(defaultValue),
-                ]),
-            )
+            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
+                    AverStr::from("Option.withDefault"),
+                    aver_rt::AverList::from_vec(vec![
+                        crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+                            std::sync::Arc::new(
+                                crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
+                                    AverStr::from("Vector.get"),
+                                    args.clone(),
+                                ),
+                            ),
+                        ),
+                        crate::aver_generated::domain::ast::Expr::ExprInt(std::sync::Arc::new(
+                            crate::aver_generated::domain::ast::Expr__ExprInt(defaultValue),
+                        )),
+                    ]),
+                ),
+            ))
         }
     }
 }
@@ -755,29 +761,44 @@ pub fn rewriteInternalVectorGetOrIntArgs(
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     if crate::aver_generated::domain::resolver::rewrite::exprHasSlotShape(vecExpr) {
-        crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(
-            std::sync::Arc::new(vecExpr.clone()),
-            std::sync::Arc::new(idxExpr.clone()),
-            defaultValue,
-        )
+        crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr__ExprVectorGetOrInt(
+                vecExpr.clone(),
+                idxExpr.clone(),
+                defaultValue,
+            ),
+        ))
     } else {
         if crate::aver_generated::domain::resolver::rewrite::exprHasSlotShape(idxExpr) {
-            crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(
-                std::sync::Arc::new(vecExpr.clone()),
-                std::sync::Arc::new(idxExpr.clone()),
-                defaultValue,
-            )
+            crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprVectorGetOrInt(
+                    vecExpr.clone(),
+                    idxExpr.clone(),
+                    defaultValue,
+                ),
+            ))
         } else {
-            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                AverStr::from("Option.withDefault"),
-                aver_rt::AverList::from_vec(vec![
-                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                        AverStr::from("Vector.get"),
-                        aver_rt::AverList::from_vec(vec![vecExpr.clone(), idxExpr.clone()]),
-                    ),
-                    crate::aver_generated::domain::ast::Expr::ExprInt(defaultValue),
-                ]),
-            )
+            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
+                    AverStr::from("Option.withDefault"),
+                    aver_rt::AverList::from_vec(vec![
+                        crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+                            std::sync::Arc::new(
+                                crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
+                                    AverStr::from("Vector.get"),
+                                    aver_rt::AverList::from_vec(vec![
+                                        vecExpr.clone(),
+                                        idxExpr.clone(),
+                                    ]),
+                                ),
+                            ),
+                        ),
+                        crate::aver_generated::domain::ast::Expr::ExprInt(std::sync::Arc::new(
+                            crate::aver_generated::domain::ast::Expr__ExprInt(defaultValue),
+                        )),
+                    ]),
+                ),
+            ))
         }
     }
 }
@@ -795,17 +816,21 @@ pub fn rewriteInternalResultWithDefault(
                 if let Some((defaultExpr, ignored)) = aver_rt::list_uncons_cloned(&__list_subject) {
                     crate::aver_generated::domain::resolver::rewrite::rewriteInternalResultWithDefaultArgs(&resultExpr, &defaultExpr)
                 } else {
-                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                        AverStr::from("Result.withDefault"),
-                        args.clone(),
-                    )
+                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(std::sync::Arc::new(
+                        crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
+                            AverStr::from("Result.withDefault"),
+                            args.clone(),
+                        ),
+                    ))
                 }
             }
         } else {
-            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                AverStr::from("Result.withDefault"),
-                args.clone(),
-            )
+            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
+                    AverStr::from("Result.withDefault"),
+                    args.clone(),
+                ),
+            ))
         }
     }
 }
@@ -817,9 +842,12 @@ pub fn rewriteInternalResultWithDefaultArgs(
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     match defaultExpr.clone() {
-        crate::aver_generated::domain::ast::Expr::ExprInt(defaultValue) => {
+        crate::aver_generated::domain::ast::Expr::ExprInt(__defaultValue_fields) => {
+            let defaultValue = __defaultValue_fields.0.clone();
             match resultExpr.clone() {
-                crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(name, innerArgs) => {
+                crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(__name_fields) => {
+                    let name = __name_fields.0.clone();
+                    let innerArgs = __name_fields.1.clone();
                     if (&*name == "Int.mod") {
                         crate::aver_generated::domain::resolver::rewrite::rewriteInternalIntModOrInt(
                             &innerArgs,
@@ -827,24 +855,32 @@ pub fn rewriteInternalResultWithDefaultArgs(
                         )
                     } else {
                         crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                            AverStr::from("Result.withDefault"),
-                            aver_rt::AverList::from_vec(vec![
-                                resultExpr.clone(),
-                                defaultExpr.clone(),
-                            ]),
+                            std::sync::Arc::new(
+                                crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
+                                    AverStr::from("Result.withDefault"),
+                                    aver_rt::AverList::from_vec(vec![
+                                        resultExpr.clone(),
+                                        defaultExpr.clone(),
+                                    ]),
+                                ),
+                            ),
                         )
                     }
                 }
                 _ => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                    AverStr::from("Result.withDefault"),
-                    aver_rt::AverList::from_vec(vec![resultExpr.clone(), defaultExpr.clone()]),
+                    std::sync::Arc::new(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
+                        AverStr::from("Result.withDefault"),
+                        aver_rt::AverList::from_vec(vec![resultExpr.clone(), defaultExpr.clone()]),
+                    )),
                 ),
             }
         }
-        _ => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-            AverStr::from("Result.withDefault"),
-            aver_rt::AverList::from_vec(vec![resultExpr.clone(), defaultExpr.clone()]),
-        ),
+        _ => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
+                AverStr::from("Result.withDefault"),
+                aver_rt::AverList::from_vec(vec![resultExpr.clone(), defaultExpr.clone()]),
+            ),
+        )),
     }
 }
 
@@ -866,29 +902,49 @@ pub fn rewriteInternalIntModOrInt(
                         defaultValue,
                     )
                 } else {
-                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                        AverStr::from("Result.withDefault"),
-                        aver_rt::AverList::from_vec(vec![
-                            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                                AverStr::from("Int.mod"),
-                                args.clone(),
-                            ),
-                            crate::aver_generated::domain::ast::Expr::ExprInt(defaultValue),
-                        ]),
-                    )
+                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(std::sync::Arc::new(
+                        crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
+                            AverStr::from("Result.withDefault"),
+                            aver_rt::AverList::from_vec(vec![
+                                crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+                                    std::sync::Arc::new(
+                                        crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
+                                            AverStr::from("Int.mod"),
+                                            args.clone(),
+                                        ),
+                                    ),
+                                ),
+                                crate::aver_generated::domain::ast::Expr::ExprInt(
+                                    std::sync::Arc::new(
+                                        crate::aver_generated::domain::ast::Expr__ExprInt(
+                                            defaultValue,
+                                        ),
+                                    ),
+                                ),
+                            ]),
+                        ),
+                    ))
                 }
             }
         } else {
-            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                AverStr::from("Result.withDefault"),
-                aver_rt::AverList::from_vec(vec![
-                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                        AverStr::from("Int.mod"),
-                        args.clone(),
-                    ),
-                    crate::aver_generated::domain::ast::Expr::ExprInt(defaultValue),
-                ]),
-            )
+            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
+                    AverStr::from("Result.withDefault"),
+                    aver_rt::AverList::from_vec(vec![
+                        crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+                            std::sync::Arc::new(
+                                crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
+                                    AverStr::from("Int.mod"),
+                                    args.clone(),
+                                ),
+                            ),
+                        ),
+                        crate::aver_generated::domain::ast::Expr::ExprInt(std::sync::Arc::new(
+                            crate::aver_generated::domain::ast::Expr__ExprInt(defaultValue),
+                        )),
+                    ]),
+                ),
+            ))
         }
     }
 }
@@ -902,29 +958,41 @@ pub fn rewriteInternalIntModOrIntArgs(
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     if crate::aver_generated::domain::resolver::rewrite::exprHasSlotShape(a) {
-        crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(
-            std::sync::Arc::new(a.clone()),
-            std::sync::Arc::new(b.clone()),
-            defaultValue,
-        )
+        crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr__ExprIntModOrInt(
+                a.clone(),
+                b.clone(),
+                defaultValue,
+            ),
+        ))
     } else {
         if crate::aver_generated::domain::resolver::rewrite::exprHasSlotShape(b) {
-            crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(
-                std::sync::Arc::new(a.clone()),
-                std::sync::Arc::new(b.clone()),
-                defaultValue,
-            )
+            crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprIntModOrInt(
+                    a.clone(),
+                    b.clone(),
+                    defaultValue,
+                ),
+            ))
         } else {
-            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                AverStr::from("Result.withDefault"),
-                aver_rt::AverList::from_vec(vec![
-                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                        AverStr::from("Int.mod"),
-                        aver_rt::AverList::from_vec(vec![a.clone(), b.clone()]),
-                    ),
-                    crate::aver_generated::domain::ast::Expr::ExprInt(defaultValue),
-                ]),
-            )
+            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
+                    AverStr::from("Result.withDefault"),
+                    aver_rt::AverList::from_vec(vec![
+                        crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+                            std::sync::Arc::new(
+                                crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
+                                    AverStr::from("Int.mod"),
+                                    aver_rt::AverList::from_vec(vec![a.clone(), b.clone()]),
+                                ),
+                            ),
+                        ),
+                        crate::aver_generated::domain::ast::Expr::ExprInt(std::sync::Arc::new(
+                            crate::aver_generated::domain::ast::Expr__ExprInt(defaultValue),
+                        )),
+                    ]),
+                ),
+            ))
         }
     }
 }
@@ -934,12 +1002,12 @@ pub fn exprHasSlotShape(expr @ _: &crate::aver_generated::domain::ast::Expr) -> 
     crate::cancel_checkpoint();
     match expr {
         crate::aver_generated::domain::ast::Expr::ExprSlot(_) => true,
-        crate::aver_generated::domain::ast::Expr::ExprBinopSlotInt(_, _, _) => true,
-        crate::aver_generated::domain::ast::Expr::ExprBinopSlots(_, _, _) => true,
-        crate::aver_generated::domain::ast::Expr::ExprCmpSlotInt(_, _, _) => true,
-        crate::aver_generated::domain::ast::Expr::ExprCmpSlots(_, _, _) => true,
-        crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(_, _, _) => true,
-        crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(_, _, _) => true,
+        crate::aver_generated::domain::ast::Expr::ExprBinopSlotInt(_) => true,
+        crate::aver_generated::domain::ast::Expr::ExprBinopSlots(_) => true,
+        crate::aver_generated::domain::ast::Expr::ExprCmpSlotInt(_) => true,
+        crate::aver_generated::domain::ast::Expr::ExprCmpSlots(_) => true,
+        crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(_) => true,
+        crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(_) => true,
         _ => false,
     }
 }
@@ -952,13 +1020,15 @@ pub fn rewriteInternalCmp(
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     match left.clone() {
-        crate::aver_generated::domain::ast::Expr::ExprSlot(slot) => {
+        crate::aver_generated::domain::ast::Expr::ExprSlot(__slot_fields) => {
+            let slot = __slot_fields.0.clone();
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmpSlotLeft(
                 op, slot, right,
             )
         }
         _ => match right.clone() {
-            crate::aver_generated::domain::ast::Expr::ExprSlot(slot) => {
+            crate::aver_generated::domain::ast::Expr::ExprSlot(__slot_fields) => {
+                let slot = __slot_fields.0.clone();
                 crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmpSlotRight(
                     op, left, slot,
                 )
@@ -978,15 +1048,23 @@ pub fn rewriteInternalCmpSlotLeft(
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     match right.clone() {
-        crate::aver_generated::domain::ast::Expr::ExprInt(n) => {
-            crate::aver_generated::domain::ast::Expr::ExprCmpSlotInt(op.clone(), slot, n)
+        crate::aver_generated::domain::ast::Expr::ExprInt(__n_fields) => {
+            let n = __n_fields.0.clone();
+            crate::aver_generated::domain::ast::Expr::ExprCmpSlotInt(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprCmpSlotInt(op.clone(), slot, n),
+            ))
         }
-        crate::aver_generated::domain::ast::Expr::ExprSlot(rhs) => {
-            crate::aver_generated::domain::ast::Expr::ExprCmpSlots(op.clone(), slot, rhs)
+        crate::aver_generated::domain::ast::Expr::ExprSlot(__rhs_fields) => {
+            let rhs = __rhs_fields.0.clone();
+            crate::aver_generated::domain::ast::Expr::ExprCmpSlots(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprCmpSlots(op.clone(), slot, rhs),
+            ))
         }
         _ => crate::aver_generated::domain::resolver::rewrite::rebuildInternalCmp(
             op,
-            &crate::aver_generated::domain::ast::Expr::ExprSlot(slot),
+            &crate::aver_generated::domain::ast::Expr::ExprSlot(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprSlot(slot),
+            )),
             right,
         ),
     }
@@ -1000,20 +1078,28 @@ pub fn rewriteInternalCmpSlotRight(
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     match left.clone() {
-        crate::aver_generated::domain::ast::Expr::ExprInt(n) => {
-            crate::aver_generated::domain::ast::Expr::ExprCmpSlotInt(
-                crate::aver_generated::domain::resolver::rewrite::flipCmp(op),
-                slot,
-                n,
-            )
+        crate::aver_generated::domain::ast::Expr::ExprInt(__n_fields) => {
+            let n = __n_fields.0.clone();
+            crate::aver_generated::domain::ast::Expr::ExprCmpSlotInt(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprCmpSlotInt(
+                    crate::aver_generated::domain::resolver::rewrite::flipCmp(op),
+                    slot,
+                    n,
+                ),
+            ))
         }
-        crate::aver_generated::domain::ast::Expr::ExprSlot(lhs) => {
-            crate::aver_generated::domain::ast::Expr::ExprCmpSlots(op.clone(), lhs, slot)
+        crate::aver_generated::domain::ast::Expr::ExprSlot(__lhs_fields) => {
+            let lhs = __lhs_fields.0.clone();
+            crate::aver_generated::domain::ast::Expr::ExprCmpSlots(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprCmpSlots(op.clone(), lhs, slot),
+            ))
         }
         _ => crate::aver_generated::domain::resolver::rewrite::rebuildInternalCmp(
             op,
             left,
-            &crate::aver_generated::domain::ast::Expr::ExprSlot(slot),
+            &crate::aver_generated::domain::ast::Expr::ExprSlot(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprSlot(slot),
+            )),
         ),
     }
 }
@@ -1027,40 +1113,34 @@ pub fn rebuildInternalCmp(
     crate::cancel_checkpoint();
     match op {
         crate::aver_generated::domain::ast::CmpOp::CmpEq => {
-            crate::aver_generated::domain::ast::Expr::ExprEq(
-                std::sync::Arc::new(left.clone()),
-                std::sync::Arc::new(right.clone()),
-            )
+            crate::aver_generated::domain::ast::Expr::ExprEq(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprEq(left.clone(), right.clone()),
+            ))
         }
         crate::aver_generated::domain::ast::CmpOp::CmpNeq => {
-            crate::aver_generated::domain::ast::Expr::ExprNeq(
-                std::sync::Arc::new(left.clone()),
-                std::sync::Arc::new(right.clone()),
-            )
+            crate::aver_generated::domain::ast::Expr::ExprNeq(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprNeq(left.clone(), right.clone()),
+            ))
         }
         crate::aver_generated::domain::ast::CmpOp::CmpLt => {
-            crate::aver_generated::domain::ast::Expr::ExprLt(
-                std::sync::Arc::new(left.clone()),
-                std::sync::Arc::new(right.clone()),
-            )
+            crate::aver_generated::domain::ast::Expr::ExprLt(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprLt(left.clone(), right.clone()),
+            ))
         }
         crate::aver_generated::domain::ast::CmpOp::CmpGt => {
-            crate::aver_generated::domain::ast::Expr::ExprGt(
-                std::sync::Arc::new(left.clone()),
-                std::sync::Arc::new(right.clone()),
-            )
+            crate::aver_generated::domain::ast::Expr::ExprGt(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprGt(left.clone(), right.clone()),
+            ))
         }
         crate::aver_generated::domain::ast::CmpOp::CmpLte => {
-            crate::aver_generated::domain::ast::Expr::ExprLte(
-                std::sync::Arc::new(left.clone()),
-                std::sync::Arc::new(right.clone()),
-            )
+            crate::aver_generated::domain::ast::Expr::ExprLte(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprLte(left.clone(), right.clone()),
+            ))
         }
         crate::aver_generated::domain::ast::CmpOp::CmpGte => {
-            crate::aver_generated::domain::ast::Expr::ExprGte(
-                std::sync::Arc::new(left.clone()),
-                std::sync::Arc::new(right.clone()),
-            )
+            crate::aver_generated::domain::ast::Expr::ExprGte(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprGte(left.clone(), right.clone()),
+            ))
         }
     }
 }
@@ -1102,16 +1182,17 @@ pub fn rewriteInternalMatch(
     match crate::aver_generated::domain::resolver::rewrite::rewriteBoolMatchArms(arms) {
         Some(pair @ _) => {
             let (thenExpr, elseExpr) = pair;
-            crate::aver_generated::domain::ast::Expr::ExprBoolBranch(
-                std::sync::Arc::new(scrutinee.clone()),
-                std::sync::Arc::new(thenExpr),
-                std::sync::Arc::new(elseExpr),
-            )
+            crate::aver_generated::domain::ast::Expr::ExprBoolBranch(std::sync::Arc::new(
+                crate::aver_generated::domain::ast::Expr__ExprBoolBranch(
+                    scrutinee.clone(),
+                    thenExpr,
+                    elseExpr,
+                ),
+            ))
         }
-        None => crate::aver_generated::domain::ast::Expr::ExprMatch(
-            std::sync::Arc::new(scrutinee.clone()),
-            arms.clone(),
-        ),
+        None => crate::aver_generated::domain::ast::Expr::ExprMatch(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr__ExprMatch(scrutinee.clone(), arms.clone()),
+        )),
     }
 }
 

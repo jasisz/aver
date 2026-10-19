@@ -4,117 +4,186 @@ use ::aver_rt::aver_list_match;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Proof {
-    PRefl(crate::proof_kernel::aver_generated::kernel::term::Term),
-    PSymm(std::sync::Arc<Proof>),
-    PTrans(
-        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
-        aver_rt::AverList<Proof>,
-    ),
-    PCongr(
-        crate::proof_kernel::aver_generated::kernel::term::Term,
-        std::sync::Arc<Proof>,
-    ),
-    PUnfold(
-        AverStr,
-        aver_rt::AverInt,
-        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
-        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
-        aver_rt::AverList<Proof>,
-    ),
-    PConst(AverStr),
-    PArm(
-        aver_rt::AverInt,
-        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
-        crate::proof_kernel::aver_generated::kernel::term::Term,
-        std::sync::Arc<Proof>,
-    ),
-    PProj(crate::proof_kernel::aver_generated::kernel::term::Term),
-    PCell(crate::proof_kernel::aver_generated::kernel::term::Term),
-    PHyp(AverStr),
-    PRule(
-        AverStr,
-        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
-        aver_rt::AverList<Proof>,
-    ),
-    PLaw(
-        AverStr,
-        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
-        aver_rt::AverList<Proof>,
-    ),
-    PCompute(
-        crate::proof_kernel::aver_generated::kernel::term::Term,
-        crate::proof_kernel::aver_generated::kernel::term::Term,
-    ),
-    PCases(
-        crate::proof_kernel::aver_generated::kernel::term::Term,
-        AverStr,
-        std::sync::Arc<Proof>,
-        std::sync::Arc<Proof>,
-    ),
-    PSplit(
-        crate::proof_kernel::aver_generated::kernel::term::Term,
-        AverStr,
-        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
-        aver_rt::AverList<SplitCase>,
-    ),
-    PHave(
-        AverStr,
-        crate::proof_kernel::aver_generated::kernel::term::Term,
-        std::sync::Arc<Proof>,
-        std::sync::Arc<Proof>,
-    ),
-    PEnum(
-        AverStr,
-        crate::proof_kernel::aver_generated::kernel::term::Term,
-        crate::proof_kernel::aver_generated::kernel::term::Term,
-        aver_rt::AverList<Proof>,
-    ),
-    PAbsurd(
-        std::sync::Arc<Proof>,
-        crate::proof_kernel::aver_generated::kernel::term::Term,
-        crate::proof_kernel::aver_generated::kernel::term::Term,
-    ),
-    PInduct(
-        AverStr,
-        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
-        crate::proof_kernel::aver_generated::kernel::term::Term,
-        crate::proof_kernel::aver_generated::kernel::term::Term,
-        aver_rt::AverList<AverStr>,
-        aver_rt::AverList<Case>,
-    ),
-    PListInduct(
-        AverStr,
-        crate::proof_kernel::aver_generated::kernel::term::Term,
-        crate::proof_kernel::aver_generated::kernel::term::Term,
-        aver_rt::AverList<AverStr>,
-        std::sync::Arc<Proof>,
-        AverStr,
-        AverStr,
-        aver_rt::AverList<AverStr>,
-        aver_rt::AverList<IhAt>,
-        std::sync::Arc<Proof>,
-    ),
-    PListCases(
-        AverStr,
-        crate::proof_kernel::aver_generated::kernel::term::Term,
-        crate::proof_kernel::aver_generated::kernel::term::Term,
-        std::sync::Arc<Proof>,
-        AverStr,
-        AverStr,
-        std::sync::Arc<Proof>,
-    ),
-    PRing(
-        crate::proof_kernel::aver_generated::kernel::term::Term,
-        crate::proof_kernel::aver_generated::kernel::term::Term,
-    ),
-    PLinear(
-        crate::proof_kernel::aver_generated::kernel::term::Term,
-        bool,
-        aver_rt::AverList<AverStr>,
-        aver_rt::AverIntList,
-        aver_rt::AverList<Cut>,
-    ),
+    PRefl(std::sync::Arc<Proof__PRefl>),
+    PSymm(std::sync::Arc<Proof__PSymm>),
+    PTrans(std::sync::Arc<Proof__PTrans>),
+    PCongr(std::sync::Arc<Proof__PCongr>),
+    PUnfold(std::sync::Arc<Proof__PUnfold>),
+    PConst(std::sync::Arc<Proof__PConst>),
+    PArm(std::sync::Arc<Proof__PArm>),
+    PProj(std::sync::Arc<Proof__PProj>),
+    PCell(std::sync::Arc<Proof__PCell>),
+    PHyp(std::sync::Arc<Proof__PHyp>),
+    PRule(std::sync::Arc<Proof__PRule>),
+    PLaw(std::sync::Arc<Proof__PLaw>),
+    PCompute(std::sync::Arc<Proof__PCompute>),
+    PCases(std::sync::Arc<Proof__PCases>),
+    PSplit(std::sync::Arc<Proof__PSplit>),
+    PHave(std::sync::Arc<Proof__PHave>),
+    PEnum(std::sync::Arc<Proof__PEnum>),
+    PAbsurd(std::sync::Arc<Proof__PAbsurd>),
+    PInduct(std::sync::Arc<Proof__PInduct>),
+    PListInduct(std::sync::Arc<Proof__PListInduct>),
+    PListCases(std::sync::Arc<Proof__PListCases>),
+    PRing(std::sync::Arc<Proof__PRing>),
+    PLinear(std::sync::Arc<Proof__PLinear>),
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Proof__PRefl(pub crate::proof_kernel::aver_generated::kernel::term::Term);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Proof__PSymm(pub Proof);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Proof__PTrans(
+    pub aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    pub aver_rt::AverList<Proof>,
+);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Proof__PCongr(
+    pub crate::proof_kernel::aver_generated::kernel::term::Term,
+    pub Proof,
+);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Proof__PUnfold(
+    pub AverStr,
+    pub aver_rt::AverInt,
+    pub aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    pub aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    pub aver_rt::AverList<Proof>,
+);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Proof__PConst(pub AverStr);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Proof__PArm(
+    pub aver_rt::AverInt,
+    pub aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    pub crate::proof_kernel::aver_generated::kernel::term::Term,
+    pub Proof,
+);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Proof__PProj(pub crate::proof_kernel::aver_generated::kernel::term::Term);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Proof__PCell(pub crate::proof_kernel::aver_generated::kernel::term::Term);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Proof__PHyp(pub AverStr);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Proof__PRule(
+    pub AverStr,
+    pub aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
+    pub aver_rt::AverList<Proof>,
+);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Proof__PLaw(
+    pub AverStr,
+    pub aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
+    pub aver_rt::AverList<Proof>,
+);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Proof__PCompute(
+    pub crate::proof_kernel::aver_generated::kernel::term::Term,
+    pub crate::proof_kernel::aver_generated::kernel::term::Term,
+);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Proof__PCases(
+    pub crate::proof_kernel::aver_generated::kernel::term::Term,
+    pub AverStr,
+    pub Proof,
+    pub Proof,
+);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Proof__PSplit(
+    pub crate::proof_kernel::aver_generated::kernel::term::Term,
+    pub AverStr,
+    pub aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    pub aver_rt::AverList<SplitCase>,
+);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Proof__PHave(
+    pub AverStr,
+    pub crate::proof_kernel::aver_generated::kernel::term::Term,
+    pub Proof,
+    pub Proof,
+);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Proof__PEnum(
+    pub AverStr,
+    pub crate::proof_kernel::aver_generated::kernel::term::Term,
+    pub crate::proof_kernel::aver_generated::kernel::term::Term,
+    pub aver_rt::AverList<Proof>,
+);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Proof__PAbsurd(
+    pub Proof,
+    pub crate::proof_kernel::aver_generated::kernel::term::Term,
+    pub crate::proof_kernel::aver_generated::kernel::term::Term,
+);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Proof__PInduct(
+    pub AverStr,
+    pub aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    pub crate::proof_kernel::aver_generated::kernel::term::Term,
+    pub crate::proof_kernel::aver_generated::kernel::term::Term,
+    pub aver_rt::AverList<AverStr>,
+    pub aver_rt::AverList<Case>,
+);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Proof__PListInduct(
+    pub AverStr,
+    pub crate::proof_kernel::aver_generated::kernel::term::Term,
+    pub crate::proof_kernel::aver_generated::kernel::term::Term,
+    pub aver_rt::AverList<AverStr>,
+    pub Proof,
+    pub AverStr,
+    pub AverStr,
+    pub aver_rt::AverList<AverStr>,
+    pub aver_rt::AverList<IhAt>,
+    pub Proof,
+);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Proof__PListCases(
+    pub AverStr,
+    pub crate::proof_kernel::aver_generated::kernel::term::Term,
+    pub crate::proof_kernel::aver_generated::kernel::term::Term,
+    pub Proof,
+    pub AverStr,
+    pub AverStr,
+    pub Proof,
+);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Proof__PRing(
+    pub crate::proof_kernel::aver_generated::kernel::term::Term,
+    pub crate::proof_kernel::aver_generated::kernel::term::Term,
+);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Proof__PLinear(
+    pub crate::proof_kernel::aver_generated::kernel::term::Term,
+    pub bool,
+    pub aver_rt::AverList<AverStr>,
+    pub aver_rt::AverIntList,
+    pub aver_rt::AverList<Cut>,
+);
 
 impl Proof {
     fn aver_key_rank(&self) -> usize {
@@ -159,131 +228,111 @@ impl Ord for Proof {
             return rank;
         }
         match (self, other) {
-            (Proof::PAbsurd(a0, a1, a2), Proof::PAbsurd(b0, b1, b2)) => std::cmp::Ordering::Equal
-                .then_with(|| a0.cmp(b0))
-                .then_with(|| a1.cmp(b1))
-                .then_with(|| a2.cmp(b2)),
-            (Proof::PArm(a0, a1, a2, a3), Proof::PArm(b0, b1, b2, b3)) => std::cmp::Ordering::Equal
-                .then_with(|| a0.cmp(b0))
-                .then_with(|| a1.cmp(b1))
-                .then_with(|| a2.cmp(b2))
-                .then_with(|| a3.cmp(b3)),
-            (Proof::PCases(a0, a1, a2, a3), Proof::PCases(b0, b1, b2, b3)) => {
-                std::cmp::Ordering::Equal
-                    .then_with(|| a0.cmp(b0))
-                    .then_with(|| a1.cmp(b1))
-                    .then_with(|| a2.cmp(b2))
-                    .then_with(|| a3.cmp(b3))
+            (Proof::PAbsurd(a), Proof::PAbsurd(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1)))
+                .then_with(|| (&a.2).cmp((&b.2))),
+            (Proof::PArm(a), Proof::PArm(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1)))
+                .then_with(|| (&a.2).cmp((&b.2)))
+                .then_with(|| (&a.3).cmp((&b.3))),
+            (Proof::PCases(a), Proof::PCases(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1)))
+                .then_with(|| (&a.2).cmp((&b.2)))
+                .then_with(|| (&a.3).cmp((&b.3))),
+            (Proof::PCell(a), Proof::PCell(b)) => {
+                std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Proof::PCell(a0), Proof::PCell(b0)) => {
-                std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
+            (Proof::PCompute(a), Proof::PCompute(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1))),
+            (Proof::PCongr(a), Proof::PCongr(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1))),
+            (Proof::PConst(a), Proof::PConst(b)) => {
+                std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Proof::PCompute(a0, a1), Proof::PCompute(b0, b1)) => std::cmp::Ordering::Equal
-                .then_with(|| a0.cmp(b0))
-                .then_with(|| a1.cmp(b1)),
-            (Proof::PCongr(a0, a1), Proof::PCongr(b0, b1)) => std::cmp::Ordering::Equal
-                .then_with(|| a0.cmp(b0))
-                .then_with(|| a1.cmp(b1)),
-            (Proof::PConst(a0), Proof::PConst(b0)) => {
-                std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
+            (Proof::PEnum(a), Proof::PEnum(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1)))
+                .then_with(|| (&a.2).cmp((&b.2)))
+                .then_with(|| (&a.3).cmp((&b.3))),
+            (Proof::PHave(a), Proof::PHave(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1)))
+                .then_with(|| (&a.2).cmp((&b.2)))
+                .then_with(|| (&a.3).cmp((&b.3))),
+            (Proof::PHyp(a), Proof::PHyp(b)) => {
+                std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Proof::PEnum(a0, a1, a2, a3), Proof::PEnum(b0, b1, b2, b3)) => {
-                std::cmp::Ordering::Equal
-                    .then_with(|| a0.cmp(b0))
-                    .then_with(|| a1.cmp(b1))
-                    .then_with(|| a2.cmp(b2))
-                    .then_with(|| a3.cmp(b3))
+            (Proof::PInduct(a), Proof::PInduct(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1)))
+                .then_with(|| (&a.2).cmp((&b.2)))
+                .then_with(|| (&a.3).cmp((&b.3)))
+                .then_with(|| (&a.4).cmp((&b.4)))
+                .then_with(|| (&a.5).cmp((&b.5))),
+            (Proof::PLaw(a), Proof::PLaw(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1)))
+                .then_with(|| (&a.2).cmp((&b.2))),
+            (Proof::PLinear(a), Proof::PLinear(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1)))
+                .then_with(|| (&a.2).cmp((&b.2)))
+                .then_with(|| (&a.3).cmp((&b.3)))
+                .then_with(|| (&a.4).cmp((&b.4))),
+            (Proof::PListCases(a), Proof::PListCases(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1)))
+                .then_with(|| (&a.2).cmp((&b.2)))
+                .then_with(|| (&a.3).cmp((&b.3)))
+                .then_with(|| (&a.4).cmp((&b.4)))
+                .then_with(|| (&a.5).cmp((&b.5)))
+                .then_with(|| (&a.6).cmp((&b.6))),
+            (Proof::PListInduct(a), Proof::PListInduct(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1)))
+                .then_with(|| (&a.2).cmp((&b.2)))
+                .then_with(|| (&a.3).cmp((&b.3)))
+                .then_with(|| (&a.4).cmp((&b.4)))
+                .then_with(|| (&a.5).cmp((&b.5)))
+                .then_with(|| (&a.6).cmp((&b.6)))
+                .then_with(|| (&a.7).cmp((&b.7)))
+                .then_with(|| (&a.8).cmp((&b.8)))
+                .then_with(|| (&a.9).cmp((&b.9))),
+            (Proof::PProj(a), Proof::PProj(b)) => {
+                std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Proof::PHave(a0, a1, a2, a3), Proof::PHave(b0, b1, b2, b3)) => {
-                std::cmp::Ordering::Equal
-                    .then_with(|| a0.cmp(b0))
-                    .then_with(|| a1.cmp(b1))
-                    .then_with(|| a2.cmp(b2))
-                    .then_with(|| a3.cmp(b3))
+            (Proof::PRefl(a), Proof::PRefl(b)) => {
+                std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Proof::PHyp(a0), Proof::PHyp(b0)) => {
-                std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
+            (Proof::PRing(a), Proof::PRing(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1))),
+            (Proof::PRule(a), Proof::PRule(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1)))
+                .then_with(|| (&a.2).cmp((&b.2))),
+            (Proof::PSplit(a), Proof::PSplit(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1)))
+                .then_with(|| (&a.2).cmp((&b.2)))
+                .then_with(|| (&a.3).cmp((&b.3))),
+            (Proof::PSymm(a), Proof::PSymm(b)) => {
+                std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Proof::PInduct(a0, a1, a2, a3, a4, a5), Proof::PInduct(b0, b1, b2, b3, b4, b5)) => {
-                std::cmp::Ordering::Equal
-                    .then_with(|| a0.cmp(b0))
-                    .then_with(|| a1.cmp(b1))
-                    .then_with(|| a2.cmp(b2))
-                    .then_with(|| a3.cmp(b3))
-                    .then_with(|| a4.cmp(b4))
-                    .then_with(|| a5.cmp(b5))
-            }
-            (Proof::PLaw(a0, a1, a2), Proof::PLaw(b0, b1, b2)) => std::cmp::Ordering::Equal
-                .then_with(|| a0.cmp(b0))
-                .then_with(|| a1.cmp(b1))
-                .then_with(|| a2.cmp(b2)),
-            (Proof::PLinear(a0, a1, a2, a3, a4), Proof::PLinear(b0, b1, b2, b3, b4)) => {
-                std::cmp::Ordering::Equal
-                    .then_with(|| a0.cmp(b0))
-                    .then_with(|| a1.cmp(b1))
-                    .then_with(|| a2.cmp(b2))
-                    .then_with(|| a3.cmp(b3))
-                    .then_with(|| a4.cmp(b4))
-            }
-            (
-                Proof::PListCases(a0, a1, a2, a3, a4, a5, a6),
-                Proof::PListCases(b0, b1, b2, b3, b4, b5, b6),
-            ) => std::cmp::Ordering::Equal
-                .then_with(|| a0.cmp(b0))
-                .then_with(|| a1.cmp(b1))
-                .then_with(|| a2.cmp(b2))
-                .then_with(|| a3.cmp(b3))
-                .then_with(|| a4.cmp(b4))
-                .then_with(|| a5.cmp(b5))
-                .then_with(|| a6.cmp(b6)),
-            (
-                Proof::PListInduct(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9),
-                Proof::PListInduct(b0, b1, b2, b3, b4, b5, b6, b7, b8, b9),
-            ) => std::cmp::Ordering::Equal
-                .then_with(|| a0.cmp(b0))
-                .then_with(|| a1.cmp(b1))
-                .then_with(|| a2.cmp(b2))
-                .then_with(|| a3.cmp(b3))
-                .then_with(|| a4.cmp(b4))
-                .then_with(|| a5.cmp(b5))
-                .then_with(|| a6.cmp(b6))
-                .then_with(|| a7.cmp(b7))
-                .then_with(|| a8.cmp(b8))
-                .then_with(|| a9.cmp(b9)),
-            (Proof::PProj(a0), Proof::PProj(b0)) => {
-                std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
-            }
-            (Proof::PRefl(a0), Proof::PRefl(b0)) => {
-                std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
-            }
-            (Proof::PRing(a0, a1), Proof::PRing(b0, b1)) => std::cmp::Ordering::Equal
-                .then_with(|| a0.cmp(b0))
-                .then_with(|| a1.cmp(b1)),
-            (Proof::PRule(a0, a1, a2), Proof::PRule(b0, b1, b2)) => std::cmp::Ordering::Equal
-                .then_with(|| a0.cmp(b0))
-                .then_with(|| a1.cmp(b1))
-                .then_with(|| a2.cmp(b2)),
-            (Proof::PSplit(a0, a1, a2, a3), Proof::PSplit(b0, b1, b2, b3)) => {
-                std::cmp::Ordering::Equal
-                    .then_with(|| a0.cmp(b0))
-                    .then_with(|| a1.cmp(b1))
-                    .then_with(|| a2.cmp(b2))
-                    .then_with(|| a3.cmp(b3))
-            }
-            (Proof::PSymm(a0), Proof::PSymm(b0)) => {
-                std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
-            }
-            (Proof::PTrans(a0, a1), Proof::PTrans(b0, b1)) => std::cmp::Ordering::Equal
-                .then_with(|| a0.cmp(b0))
-                .then_with(|| a1.cmp(b1)),
-            (Proof::PUnfold(a0, a1, a2, a3, a4), Proof::PUnfold(b0, b1, b2, b3, b4)) => {
-                std::cmp::Ordering::Equal
-                    .then_with(|| a0.cmp(b0))
-                    .then_with(|| a1.cmp(b1))
-                    .then_with(|| a2.cmp(b2))
-                    .then_with(|| a3.cmp(b3))
-                    .then_with(|| a4.cmp(b4))
-            }
+            (Proof::PTrans(a), Proof::PTrans(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1))),
+            (Proof::PUnfold(a), Proof::PUnfold(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1)))
+                .then_with(|| (&a.2).cmp((&b.2)))
+                .then_with(|| (&a.3).cmp((&b.3)))
+                .then_with(|| (&a.4).cmp((&b.4))),
             _ => std::cmp::Ordering::Equal,
         }
     }
@@ -292,165 +341,165 @@ impl Ord for Proof {
 impl aver_rt::AverDisplay for Proof {
     fn aver_display(&self) -> String {
         match self {
-            Proof::PRefl(f0) => format!("PRefl({})", f0.aver_display_inner()),
-            Proof::PSymm(f0) => format!("PSymm({})", f0.aver_display_inner()),
-            Proof::PTrans(f0, f1) => format!(
+            Proof::PRefl(f) => format!("PRefl({})", (&f.0).aver_display_inner()),
+            Proof::PSymm(f) => format!("PSymm({})", (&f.0).aver_display_inner()),
+            Proof::PTrans(f) => format!(
                 "PTrans({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Proof::PCongr(f0, f1) => format!(
+            Proof::PCongr(f) => format!(
                 "PCongr({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Proof::PUnfold(f0, f1, f2, f3, f4) => format!(
+            Proof::PUnfold(f) => format!(
                 "PUnfold({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner(),
-                    f3.aver_display_inner(),
-                    f4.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner(),
+                    (&f.3).aver_display_inner(),
+                    (&f.4).aver_display_inner()
                 ]
                 .join(", ")
             ),
-            Proof::PConst(f0) => format!("PConst({})", f0.aver_display_inner()),
-            Proof::PArm(f0, f1, f2, f3) => format!(
+            Proof::PConst(f) => format!("PConst({})", (&f.0).aver_display_inner()),
+            Proof::PArm(f) => format!(
                 "PArm({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner(),
-                    f3.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner(),
+                    (&f.3).aver_display_inner()
                 ]
                 .join(", ")
             ),
-            Proof::PProj(f0) => format!("PProj({})", f0.aver_display_inner()),
-            Proof::PCell(f0) => format!("PCell({})", f0.aver_display_inner()),
-            Proof::PHyp(f0) => format!("PHyp({})", f0.aver_display_inner()),
-            Proof::PRule(f0, f1, f2) => format!(
+            Proof::PProj(f) => format!("PProj({})", (&f.0).aver_display_inner()),
+            Proof::PCell(f) => format!("PCell({})", (&f.0).aver_display_inner()),
+            Proof::PHyp(f) => format!("PHyp({})", (&f.0).aver_display_inner()),
+            Proof::PRule(f) => format!(
                 "PRule({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner()
                 ]
                 .join(", ")
             ),
-            Proof::PLaw(f0, f1, f2) => format!(
+            Proof::PLaw(f) => format!(
                 "PLaw({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner()
                 ]
                 .join(", ")
             ),
-            Proof::PCompute(f0, f1) => format!(
+            Proof::PCompute(f) => format!(
                 "PCompute({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Proof::PCases(f0, f1, f2, f3) => format!(
+            Proof::PCases(f) => format!(
                 "PCases({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner(),
-                    f3.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner(),
+                    (&f.3).aver_display_inner()
                 ]
                 .join(", ")
             ),
-            Proof::PSplit(f0, f1, f2, f3) => format!(
+            Proof::PSplit(f) => format!(
                 "PSplit({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner(),
-                    f3.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner(),
+                    (&f.3).aver_display_inner()
                 ]
                 .join(", ")
             ),
-            Proof::PHave(f0, f1, f2, f3) => format!(
+            Proof::PHave(f) => format!(
                 "PHave({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner(),
-                    f3.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner(),
+                    (&f.3).aver_display_inner()
                 ]
                 .join(", ")
             ),
-            Proof::PEnum(f0, f1, f2, f3) => format!(
+            Proof::PEnum(f) => format!(
                 "PEnum({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner(),
-                    f3.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner(),
+                    (&f.3).aver_display_inner()
                 ]
                 .join(", ")
             ),
-            Proof::PAbsurd(f0, f1, f2) => format!(
+            Proof::PAbsurd(f) => format!(
                 "PAbsurd({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner()
                 ]
                 .join(", ")
             ),
-            Proof::PInduct(f0, f1, f2, f3, f4, f5) => format!(
+            Proof::PInduct(f) => format!(
                 "PInduct({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner(),
-                    f3.aver_display_inner(),
-                    f4.aver_display_inner(),
-                    f5.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner(),
+                    (&f.3).aver_display_inner(),
+                    (&f.4).aver_display_inner(),
+                    (&f.5).aver_display_inner()
                 ]
                 .join(", ")
             ),
-            Proof::PListInduct(f0, f1, f2, f3, f4, f5, f6, f7, f8, f9) => format!(
+            Proof::PListInduct(f) => format!(
                 "PListInduct({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner(),
-                    f3.aver_display_inner(),
-                    f4.aver_display_inner(),
-                    f5.aver_display_inner(),
-                    f6.aver_display_inner(),
-                    f7.aver_display_inner(),
-                    f8.aver_display_inner(),
-                    f9.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner(),
+                    (&f.3).aver_display_inner(),
+                    (&f.4).aver_display_inner(),
+                    (&f.5).aver_display_inner(),
+                    (&f.6).aver_display_inner(),
+                    (&f.7).aver_display_inner(),
+                    (&f.8).aver_display_inner(),
+                    (&f.9).aver_display_inner()
                 ]
                 .join(", ")
             ),
-            Proof::PListCases(f0, f1, f2, f3, f4, f5, f6) => format!(
+            Proof::PListCases(f) => format!(
                 "PListCases({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner(),
-                    f3.aver_display_inner(),
-                    f4.aver_display_inner(),
-                    f5.aver_display_inner(),
-                    f6.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner(),
+                    (&f.3).aver_display_inner(),
+                    (&f.4).aver_display_inner(),
+                    (&f.5).aver_display_inner(),
+                    (&f.6).aver_display_inner()
                 ]
                 .join(", ")
             ),
-            Proof::PRing(f0, f1) => format!(
+            Proof::PRing(f) => format!(
                 "PRing({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Proof::PLinear(f0, f1, f2, f3, f4) => format!(
+            Proof::PLinear(f) => format!(
                 "PLinear({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner(),
-                    f3.aver_display_inner(),
-                    f4.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner(),
+                    (&f.3).aver_display_inner(),
+                    (&f.4).aver_display_inner()
                 ]
                 .join(", ")
             ),

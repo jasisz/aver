@@ -65,11 +65,10 @@ use crate::types::checker::type_is_fully_concrete;
 
 use super::emit_ctx::{is_copy_type, should_borrow_param};
 use super::expr::{
-    callee_borrow_mask, constructor_boxed_positions, emit_dispatch_table_match, emit_list_match,
-    emit_literal, emit_parallel_result_tuple_unwrap, emit_pattern_rebindings,
-    emit_ref_match_rebindings, emit_result_tuple_unwrap, emit_tuple_from_vars,
-    explicit_binding_pattern, explicit_parameter_pattern, has_list_patterns,
-    has_string_literal_patterns,
+    callee_borrow_mask, emit_dispatch_table_match, emit_list_match, emit_literal,
+    emit_parallel_result_tuple_unwrap, emit_pattern_rebindings, emit_ref_match_rebindings,
+    emit_result_tuple_unwrap, emit_tuple_from_vars, explicit_binding_pattern,
+    explicit_parameter_pattern, has_list_patterns, has_string_literal_patterns,
 };
 use super::ownership::{
     align_equality_operands, emits_direct_borrow, local_of, materialize_borrowed,
@@ -105,7 +104,7 @@ pub struct MirEmitCtx<'a> {
     pub symbol_table: &'a SymbolTable,
     pub module_prefixes: &'a HashSet<String>,
     /// Full codegen context — `Some` only on the production parity
-    /// gate path. `constructor_boxed_positions` /
+    /// gate path. Shared-sum construction /
     /// `callee_borrow_mask` need it; the coverage walk leaves it
     /// `None` (no borrow decisions, just structural reach).
     pub codegen: Option<&'a CodegenContext>,
@@ -1966,12 +1965,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // Built-in ctors emit Result / Option wrappers; user
             // ctors resolve through the symbol table for
             // module-qualified path mangling. Both mirror HIR's
-            // `clone_arg` on every arg; the User-ctor path also
-            // wraps recursive (self-typed) fields in
-            // `std::sync::Arc::new(...)` via
-            // `constructor_boxed_positions` so recursive types
-            // (`Tree.Node(left: Tree, …)`) emit byte-identical to
-            // HIR's `emit_type_constructor_call`.
+            // `clone_arg` on every arg.
             let con = &spanned_ctor.node;
             match con.ctor {
                 MirCtor::Builtin(builtin) => {
@@ -2000,34 +1994,18 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                     // via the symbol table, then route the
                     // qualified type name through
                     // `resolve_module_call` for module-path
-                    // mangling. Mirror of HIR's
-                    // `emit_type_constructor_call`, including the
-                    // boxed-position `Arc::new` on recursive fields
-                    // (queried via `constructor_boxed_positions`,
-                    // keyed by the `Type.Variant` name).
+                    // mangling.
                     let ctor_entry = emit_ctx.symbol_table.ctor_entry(ctor_id);
                     let variant_name = ctor_entry.name.clone();
                     let type_entry = emit_ctx.symbol_table.type_entry(ctor_entry.owning_type);
                     let qualified = type_entry.key.canonical();
-                    let boxed_positions = match emit_ctx.codegen {
-                        Some(cg) => {
-                            let ctor_name = format!("{}.{}", qualified, variant_name);
-                            constructor_boxed_positions(&ctor_name, cg)
-                        }
-                        // Coverage path: no ctx → no boxed-position
-                        // info. The parity gate isn't active here
-                        // (coverage only reads Some/None), so an
-                        // empty set is fine.
-                        None => HashSet::new(),
-                    };
                     let mut args = Vec::with_capacity(con.args.len());
-                    for (idx, a) in con.args.iter().enumerate() {
-                        let arg = mir_clone_arg(emit_mir_expr(a, emit_ctx)?, &a.node, emit_ctx);
-                        if boxed_positions.contains(&idx) {
-                            args.push(format!("std::sync::Arc::new({})", arg));
-                        } else {
-                            args.push(arg);
-                        }
+                    for a in &con.args {
+                        args.push(mir_clone_arg(
+                            emit_mir_expr(a, emit_ctx)?,
+                            &a.node,
+                            emit_ctx,
+                        ));
                     }
                     let args_str = args.join(", ");
                     // HIR emits a nullary variant as a unit variant
@@ -2040,8 +2018,18 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                     } else {
                         qualified
                     };
+                    // A shared sum's fields go into one `Arc` (see
+                    // `representation::sum_is_shared`). The coverage walk has
+                    // no codegen context and only asks whether this renders.
+                    let shared = emit_ctx.codegen.is_some_and(|cg| {
+                        super::representation::type_id_is_shared(ctor_entry.owning_type, cg)
+                    });
                     if con.args.is_empty() {
                         Some(format!("{}::{}", head, variant_name))
+                    } else if shared {
+                        Some(format!(
+                            "{head}::{variant_name}(std::sync::Arc::new({head}__{variant_name}({args_str})))"
+                        ))
                     } else {
                         Some(format!("{}::{}({})", head, variant_name, args_str))
                     }

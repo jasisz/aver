@@ -154,66 +154,83 @@ pub fn freeVars(
     loop {
         crate::proof_std::cancel_checkpoint();
         match t {
-            crate::proof_std::aver_generated::kernel::term::Term::TVar(n) => {
+            crate::proof_std::aver_generated::kernel::term::Term::TVar(__n_fields) => {
+                let n = __n_fields.0.clone();
                 return aver_rt::AverList::from_vec(vec![n]);
             }
             crate::proof_std::aver_generated::kernel::term::Term::THole => {
                 return aver_rt::AverList::from_vec(vec![AverStr::from("□")]);
             }
-            crate::proof_std::aver_generated::kernel::term::Term::TGet(o, f) => {
-                let o = (*o).clone();
+            crate::proof_std::aver_generated::kernel::term::Term::TGet(__o_fields) => {
+                let o = __o_fields.0.clone();
+                let f = __o_fields.1.clone();
                 {
                     let __tco0 = o;
                     t = __tco0;
                     continue;
                 }
             }
-            crate::proof_std::aver_generated::kernel::term::Term::TCall(f, xs) => {
+            crate::proof_std::aver_generated::kernel::term::Term::TCall(__f_fields) => {
+                let f = __f_fields.0.clone();
+                let xs = __f_fields.1.clone();
                 return crate::proof_std::aver_generated::kernel::subst::freeVarsAll(&xs);
             }
-            crate::proof_std::aver_generated::kernel::term::Term::TBi(f, xs) => {
+            crate::proof_std::aver_generated::kernel::term::Term::TBi(__f_fields) => {
+                let f = __f_fields.0.clone();
+                let xs = __f_fields.1.clone();
                 return crate::proof_std::aver_generated::kernel::subst::freeVarsAll(&xs);
             }
-            crate::proof_std::aver_generated::kernel::term::Term::TOp(o, a, b) => {
-                let a = (*a).clone();
-                let b = (*b).clone();
+            crate::proof_std::aver_generated::kernel::term::Term::TOp(__o_fields) => {
+                let o = __o_fields.0.clone();
+                let a = __o_fields.1.clone();
+                let b = __o_fields.2.clone();
                 return aver_rt::AverList::concat(
                     &crate::proof_std::aver_generated::kernel::subst::freeVars(a),
                     &crate::proof_std::aver_generated::kernel::subst::freeVars(b),
                 );
             }
-            crate::proof_std::aver_generated::kernel::term::Term::TNeg(a) => {
-                let a = (*a).clone();
+            crate::proof_std::aver_generated::kernel::term::Term::TNeg(__a_fields) => {
+                let a = __a_fields.0.clone();
                 {
                     let __tco0 = a;
                     t = __tco0;
                     continue;
                 }
             }
-            crate::proof_std::aver_generated::kernel::term::Term::TCtor(c, xs) => {
+            crate::proof_std::aver_generated::kernel::term::Term::TCtor(__c_fields) => {
+                let c = __c_fields.0.clone();
+                let xs = __c_fields.1.clone();
                 return crate::proof_std::aver_generated::kernel::subst::freeVarsAll(&xs);
             }
-            crate::proof_std::aver_generated::kernel::term::Term::TMatch(s, arms) => {
-                let s = (*s).clone();
+            crate::proof_std::aver_generated::kernel::term::Term::TMatch(__s_fields) => {
+                let s = __s_fields.0.clone();
+                let arms = __s_fields.1.clone();
                 return aver_rt::AverList::concat(
                     &crate::proof_std::aver_generated::kernel::subst::freeVars(s),
                     &crate::proof_std::aver_generated::kernel::subst::freeVarsArms(&arms),
                 );
             }
-            crate::proof_std::aver_generated::kernel::term::Term::TParts(xs) => {
+            crate::proof_std::aver_generated::kernel::term::Term::TParts(__xs_fields) => {
+                let xs = __xs_fields.0.clone();
                 return crate::proof_std::aver_generated::kernel::subst::freeVarsAll(&xs);
             }
-            crate::proof_std::aver_generated::kernel::term::Term::TList(xs) => {
+            crate::proof_std::aver_generated::kernel::term::Term::TList(__xs_fields) => {
+                let xs = __xs_fields.0.clone();
                 return crate::proof_std::aver_generated::kernel::subst::freeVarsAll(&xs);
             }
-            crate::proof_std::aver_generated::kernel::term::Term::TTuple(xs) => {
+            crate::proof_std::aver_generated::kernel::term::Term::TTuple(__xs_fields) => {
+                let xs = __xs_fields.0.clone();
                 return crate::proof_std::aver_generated::kernel::subst::freeVarsAll(&xs);
             }
-            crate::proof_std::aver_generated::kernel::term::Term::TRec(n, fs) => {
+            crate::proof_std::aver_generated::kernel::term::Term::TRec(__n_fields) => {
+                let n = __n_fields.0.clone();
+                let fs = __n_fields.1.clone();
                 return crate::proof_std::aver_generated::kernel::subst::freeVarsFields(&fs);
             }
-            crate::proof_std::aver_generated::kernel::term::Term::TUpd(n, b, fs) => {
-                let b = (*b).clone();
+            crate::proof_std::aver_generated::kernel::term::Term::TUpd(__n_fields) => {
+                let n = __n_fields.0.clone();
+                let b = __n_fields.1.clone();
+                let fs = __n_fields.2.clone();
                 return aver_rt::AverList::concat(
                     &crate::proof_std::aver_generated::kernel::subst::freeVars(b),
                     &crate::proof_std::aver_generated::kernel::subst::freeVarsFields(&fs),
@@ -280,57 +297,73 @@ pub fn holeCount(
             crate::proof_std::aver_generated::kernel::term::Term::THole => {
                 return aver_rt::AverInt::from_i64(1);
             }
-            crate::proof_std::aver_generated::kernel::term::Term::TGet(o, f) => {
-                let o = (*o).clone();
+            crate::proof_std::aver_generated::kernel::term::Term::TGet(__o_fields) => {
+                let o = __o_fields.0.clone();
+                let f = __o_fields.1.clone();
                 {
                     let __tco0 = o;
                     t = __tco0;
                     continue;
                 }
             }
-            crate::proof_std::aver_generated::kernel::term::Term::TCall(f, xs) => {
+            crate::proof_std::aver_generated::kernel::term::Term::TCall(__f_fields) => {
+                let f = __f_fields.0.clone();
+                let xs = __f_fields.1.clone();
                 return crate::proof_std::aver_generated::kernel::subst::holeCountAll(&xs);
             }
-            crate::proof_std::aver_generated::kernel::term::Term::TBi(f, xs) => {
+            crate::proof_std::aver_generated::kernel::term::Term::TBi(__f_fields) => {
+                let f = __f_fields.0.clone();
+                let xs = __f_fields.1.clone();
                 return crate::proof_std::aver_generated::kernel::subst::holeCountAll(&xs);
             }
-            crate::proof_std::aver_generated::kernel::term::Term::TOp(o, a, b) => {
-                let a = (*a).clone();
-                let b = (*b).clone();
+            crate::proof_std::aver_generated::kernel::term::Term::TOp(__o_fields) => {
+                let o = __o_fields.0.clone();
+                let a = __o_fields.1.clone();
+                let b = __o_fields.2.clone();
                 return crate::proof_std::aver_generated::kernel::subst::holeCount(a).add(
                     &crate::proof_std::aver_generated::kernel::subst::holeCount(b),
                 );
             }
-            crate::proof_std::aver_generated::kernel::term::Term::TNeg(a) => {
-                let a = (*a).clone();
+            crate::proof_std::aver_generated::kernel::term::Term::TNeg(__a_fields) => {
+                let a = __a_fields.0.clone();
                 {
                     let __tco0 = a;
                     t = __tco0;
                     continue;
                 }
             }
-            crate::proof_std::aver_generated::kernel::term::Term::TCtor(c, xs) => {
+            crate::proof_std::aver_generated::kernel::term::Term::TCtor(__c_fields) => {
+                let c = __c_fields.0.clone();
+                let xs = __c_fields.1.clone();
                 return crate::proof_std::aver_generated::kernel::subst::holeCountAll(&xs);
             }
-            crate::proof_std::aver_generated::kernel::term::Term::TMatch(s, arms) => {
-                let s = (*s).clone();
+            crate::proof_std::aver_generated::kernel::term::Term::TMatch(__s_fields) => {
+                let s = __s_fields.0.clone();
+                let arms = __s_fields.1.clone();
                 return crate::proof_std::aver_generated::kernel::subst::holeCount(s)
                     .add(&crate::proof_std::aver_generated::kernel::subst::holeCountArms(&arms));
             }
-            crate::proof_std::aver_generated::kernel::term::Term::TParts(xs) => {
+            crate::proof_std::aver_generated::kernel::term::Term::TParts(__xs_fields) => {
+                let xs = __xs_fields.0.clone();
                 return crate::proof_std::aver_generated::kernel::subst::holeCountAll(&xs);
             }
-            crate::proof_std::aver_generated::kernel::term::Term::TList(xs) => {
+            crate::proof_std::aver_generated::kernel::term::Term::TList(__xs_fields) => {
+                let xs = __xs_fields.0.clone();
                 return crate::proof_std::aver_generated::kernel::subst::holeCountAll(&xs);
             }
-            crate::proof_std::aver_generated::kernel::term::Term::TTuple(xs) => {
+            crate::proof_std::aver_generated::kernel::term::Term::TTuple(__xs_fields) => {
+                let xs = __xs_fields.0.clone();
                 return crate::proof_std::aver_generated::kernel::subst::holeCountAll(&xs);
             }
-            crate::proof_std::aver_generated::kernel::term::Term::TRec(n, fs) => {
+            crate::proof_std::aver_generated::kernel::term::Term::TRec(__n_fields) => {
+                let n = __n_fields.0.clone();
+                let fs = __n_fields.1.clone();
                 return crate::proof_std::aver_generated::kernel::subst::holeCountFields(&fs);
             }
-            crate::proof_std::aver_generated::kernel::term::Term::TUpd(n, b, fs) => {
-                let b = (*b).clone();
+            crate::proof_std::aver_generated::kernel::term::Term::TUpd(__n_fields) => {
+                let n = __n_fields.0.clone();
+                let b = __n_fields.1.clone();
+                let fs = __n_fields.2.clone();
                 return crate::proof_std::aver_generated::kernel::subst::holeCount(b)
                     .add(&crate::proof_std::aver_generated::kernel::subst::holeCountFields(&fs));
             }
@@ -375,102 +408,137 @@ pub fn subst(
 ) -> Result<crate::proof_std::aver_generated::kernel::term::Term, AverStr> {
     crate::proof_std::cancel_checkpoint();
     match t.clone() {
-        crate::proof_std::aver_generated::kernel::term::Term::TVar(n) => Ok(
-            crate::proof_std::aver_generated::kernel::subst::lookup(n, bs.clone())
-                .unwrap_or(t.clone()),
-        ),
+        crate::proof_std::aver_generated::kernel::term::Term::TVar(__n_fields) => {
+            let n = __n_fields.0.clone();
+            Ok(
+                crate::proof_std::aver_generated::kernel::subst::lookup(n, bs.clone())
+                    .unwrap_or(t.clone()),
+            )
+        }
         crate::proof_std::aver_generated::kernel::term::Term::THole => Ok(
             crate::proof_std::aver_generated::kernel::subst::lookup(AverStr::from("□"), bs.clone())
                 .unwrap_or(t.clone()),
         ),
-        crate::proof_std::aver_generated::kernel::term::Term::TGet(o, f) => {
-            let o = (*o).clone();
+        crate::proof_std::aver_generated::kernel::term::Term::TGet(__o_fields) => {
+            let o = __o_fields.0.clone();
+            let f = __o_fields.1.clone();
             Ok(crate::proof_std::aver_generated::kernel::term::Term::TGet(
-                std::sync::Arc::new(crate::proof_std::aver_generated::kernel::subst::subst(
-                    &o, bs,
-                )?),
-                f,
+                std::sync::Arc::new(crate::proof_std::aver_generated::kernel::term::Term__TGet(
+                    crate::proof_std::aver_generated::kernel::subst::subst(&o, bs)?,
+                    f,
+                )),
             ))
         }
-        crate::proof_std::aver_generated::kernel::term::Term::TCall(f, xs) => {
+        crate::proof_std::aver_generated::kernel::term::Term::TCall(__f_fields) => {
+            let f = __f_fields.0.clone();
+            let xs = __f_fields.1.clone();
             Ok(crate::proof_std::aver_generated::kernel::term::Term::TCall(
-                f,
-                crate::proof_std::aver_generated::kernel::subst::substAll(&xs, bs)?,
+                std::sync::Arc::new(crate::proof_std::aver_generated::kernel::term::Term__TCall(
+                    f,
+                    crate::proof_std::aver_generated::kernel::subst::substAll(&xs, bs)?,
+                )),
             ))
         }
-        crate::proof_std::aver_generated::kernel::term::Term::TBi(f, xs) => {
+        crate::proof_std::aver_generated::kernel::term::Term::TBi(__f_fields) => {
+            let f = __f_fields.0.clone();
+            let xs = __f_fields.1.clone();
             Ok(crate::proof_std::aver_generated::kernel::term::Term::TBi(
-                f,
-                crate::proof_std::aver_generated::kernel::subst::substAll(&xs, bs)?,
+                std::sync::Arc::new(crate::proof_std::aver_generated::kernel::term::Term__TBi(
+                    f,
+                    crate::proof_std::aver_generated::kernel::subst::substAll(&xs, bs)?,
+                )),
             ))
         }
-        crate::proof_std::aver_generated::kernel::term::Term::TOp(o, a, b) => {
-            let a = (*a).clone();
-            let b = (*b).clone();
+        crate::proof_std::aver_generated::kernel::term::Term::TOp(__o_fields) => {
+            let o = __o_fields.0.clone();
+            let a = __o_fields.1.clone();
+            let b = __o_fields.2.clone();
             Ok(crate::proof_std::aver_generated::kernel::term::Term::TOp(
-                o,
-                std::sync::Arc::new(crate::proof_std::aver_generated::kernel::subst::subst(
-                    &a, bs,
-                )?),
-                std::sync::Arc::new(crate::proof_std::aver_generated::kernel::subst::subst(
-                    &b, bs,
-                )?),
+                std::sync::Arc::new(crate::proof_std::aver_generated::kernel::term::Term__TOp(
+                    o,
+                    crate::proof_std::aver_generated::kernel::subst::subst(&a, bs)?,
+                    crate::proof_std::aver_generated::kernel::subst::subst(&b, bs)?,
+                )),
             ))
         }
-        crate::proof_std::aver_generated::kernel::term::Term::TNeg(a) => {
-            let a = (*a).clone();
+        crate::proof_std::aver_generated::kernel::term::Term::TNeg(__a_fields) => {
+            let a = __a_fields.0.clone();
             Ok(crate::proof_std::aver_generated::kernel::term::Term::TNeg(
-                std::sync::Arc::new(crate::proof_std::aver_generated::kernel::subst::subst(
-                    &a, bs,
-                )?),
+                std::sync::Arc::new(crate::proof_std::aver_generated::kernel::term::Term__TNeg(
+                    crate::proof_std::aver_generated::kernel::subst::subst(&a, bs)?,
+                )),
             ))
         }
-        crate::proof_std::aver_generated::kernel::term::Term::TCtor(c, xs) => {
+        crate::proof_std::aver_generated::kernel::term::Term::TCtor(__c_fields) => {
+            let c = __c_fields.0.clone();
+            let xs = __c_fields.1.clone();
             Ok(crate::proof_std::aver_generated::kernel::term::Term::TCtor(
-                c,
-                crate::proof_std::aver_generated::kernel::subst::substAll(&xs, bs)?,
+                std::sync::Arc::new(crate::proof_std::aver_generated::kernel::term::Term__TCtor(
+                    c,
+                    crate::proof_std::aver_generated::kernel::subst::substAll(&xs, bs)?,
+                )),
             ))
         }
-        crate::proof_std::aver_generated::kernel::term::Term::TMatch(s, arms) => {
-            let s = (*s).clone();
+        crate::proof_std::aver_generated::kernel::term::Term::TMatch(__s_fields) => {
+            let s = __s_fields.0.clone();
+            let arms = __s_fields.1.clone();
             Ok(
-                crate::proof_std::aver_generated::kernel::term::Term::TMatch(
-                    std::sync::Arc::new(crate::proof_std::aver_generated::kernel::subst::subst(
-                        &s, bs,
-                    )?),
-                    crate::proof_std::aver_generated::kernel::subst::substArms(&arms, bs)?,
-                ),
+                crate::proof_std::aver_generated::kernel::term::Term::TMatch(std::sync::Arc::new(
+                    crate::proof_std::aver_generated::kernel::term::Term__TMatch(
+                        crate::proof_std::aver_generated::kernel::subst::subst(&s, bs)?,
+                        crate::proof_std::aver_generated::kernel::subst::substArms(&arms, bs)?,
+                    ),
+                )),
             )
         }
-        crate::proof_std::aver_generated::kernel::term::Term::TParts(xs) => Ok(
-            crate::proof_std::aver_generated::kernel::term::Term::TParts(
-                crate::proof_std::aver_generated::kernel::subst::substAll(&xs, bs)?,
-            ),
-        ),
-        crate::proof_std::aver_generated::kernel::term::Term::TList(xs) => {
+        crate::proof_std::aver_generated::kernel::term::Term::TParts(__xs_fields) => {
+            let xs = __xs_fields.0.clone();
+            Ok(
+                crate::proof_std::aver_generated::kernel::term::Term::TParts(std::sync::Arc::new(
+                    crate::proof_std::aver_generated::kernel::term::Term__TParts(
+                        crate::proof_std::aver_generated::kernel::subst::substAll(&xs, bs)?,
+                    ),
+                )),
+            )
+        }
+        crate::proof_std::aver_generated::kernel::term::Term::TList(__xs_fields) => {
+            let xs = __xs_fields.0.clone();
             Ok(crate::proof_std::aver_generated::kernel::term::Term::TList(
-                crate::proof_std::aver_generated::kernel::subst::substAll(&xs, bs)?,
+                std::sync::Arc::new(crate::proof_std::aver_generated::kernel::term::Term__TList(
+                    crate::proof_std::aver_generated::kernel::subst::substAll(&xs, bs)?,
+                )),
             ))
         }
-        crate::proof_std::aver_generated::kernel::term::Term::TTuple(xs) => Ok(
-            crate::proof_std::aver_generated::kernel::term::Term::TTuple(
-                crate::proof_std::aver_generated::kernel::subst::substAll(&xs, bs)?,
-            ),
-        ),
-        crate::proof_std::aver_generated::kernel::term::Term::TRec(n, fs) => {
+        crate::proof_std::aver_generated::kernel::term::Term::TTuple(__xs_fields) => {
+            let xs = __xs_fields.0.clone();
+            Ok(
+                crate::proof_std::aver_generated::kernel::term::Term::TTuple(std::sync::Arc::new(
+                    crate::proof_std::aver_generated::kernel::term::Term__TTuple(
+                        crate::proof_std::aver_generated::kernel::subst::substAll(&xs, bs)?,
+                    ),
+                )),
+            )
+        }
+        crate::proof_std::aver_generated::kernel::term::Term::TRec(__n_fields) => {
+            let n = __n_fields.0.clone();
+            let fs = __n_fields.1.clone();
             Ok(crate::proof_std::aver_generated::kernel::term::Term::TRec(
-                n,
-                crate::proof_std::aver_generated::kernel::subst::substFields(&fs, bs)?,
+                std::sync::Arc::new(crate::proof_std::aver_generated::kernel::term::Term__TRec(
+                    n,
+                    crate::proof_std::aver_generated::kernel::subst::substFields(&fs, bs)?,
+                )),
             ))
         }
-        crate::proof_std::aver_generated::kernel::term::Term::TUpd(n, b, fs) => {
-            let b = (*b).clone();
+        crate::proof_std::aver_generated::kernel::term::Term::TUpd(__n_fields) => {
+            let n = __n_fields.0.clone();
+            let b = __n_fields.1.clone();
+            let fs = __n_fields.2.clone();
             Ok(crate::proof_std::aver_generated::kernel::term::Term::TUpd(
-                n,
-                std::sync::Arc::new(crate::proof_std::aver_generated::kernel::subst::subst(
-                    &b, bs,
-                )?),
-                crate::proof_std::aver_generated::kernel::subst::substFields(&fs, bs)?,
+                std::sync::Arc::new(crate::proof_std::aver_generated::kernel::term::Term__TUpd(
+                    n,
+                    crate::proof_std::aver_generated::kernel::subst::subst(&b, bs)?,
+                    crate::proof_std::aver_generated::kernel::subst::substFields(&fs, bs)?,
+                )),
             ))
         }
         _ => Ok(t.clone()),

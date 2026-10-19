@@ -55,7 +55,7 @@ pub fn builtinResultOk(
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     Ok(crate::aver_generated::domain::value::Val::ValOk(
-        std::sync::Arc::new(v),
+        std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValOk(v)),
     ))
 }
 
@@ -66,7 +66,7 @@ pub fn builtinResultErr(
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     Ok(crate::aver_generated::domain::value::Val::ValErr(
-        std::sync::Arc::new(v),
+        std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValErr(v)),
     ))
 }
 
@@ -79,8 +79,8 @@ pub fn builtinResultWithDefault(
     {
         let (resV, defV) = pair;
         match resV {
-            crate::aver_generated::domain::value::Val::ValOk(inner) => {
-                let inner = (*inner).clone();
+            crate::aver_generated::domain::value::Val::ValOk(__inner_fields) => {
+                let inner = __inner_fields.0.clone();
                 Ok(inner)
             }
             crate::aver_generated::domain::value::Val::ValErr(_) => Ok(defV),
@@ -96,7 +96,7 @@ pub fn builtinOptionSome(
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     Ok(crate::aver_generated::domain::value::Val::ValSome(
-        std::sync::Arc::new(v),
+        std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValSome(v)),
     ))
 }
 
@@ -109,8 +109,8 @@ pub fn builtinOptionWithDefault(
     {
         let (optV, defV) = pair;
         match optV {
-            crate::aver_generated::domain::value::Val::ValSome(inner) => {
-                let inner = (*inner).clone();
+            crate::aver_generated::domain::value::Val::ValSome(__inner_fields) => {
+                let inner = __inner_fields.0.clone();
                 Ok(inner)
             }
             crate::aver_generated::domain::value::Val::ValNone => Ok(defV),
@@ -128,15 +128,17 @@ pub fn callResultFromOption(
     {
         let (optV, errV) = pair;
         match optV {
-            crate::aver_generated::domain::value::Val::ValSome(inner) => {
-                let inner = (*inner).clone();
+            crate::aver_generated::domain::value::Val::ValSome(__inner_fields) => {
+                let inner = __inner_fields.0.clone();
                 Ok(crate::aver_generated::domain::value::Val::ValOk(
-                    std::sync::Arc::new(inner),
+                    std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValOk(inner)),
                 ))
             }
-            crate::aver_generated::domain::value::Val::ValNone => Ok(
-                crate::aver_generated::domain::value::Val::ValErr(std::sync::Arc::new(errV)),
-            ),
+            crate::aver_generated::domain::value::Val::ValNone => {
+                Ok(crate::aver_generated::domain::value::Val::ValErr(
+                    std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValErr(errV)),
+                ))
+            }
             _ => Err(AverStr::from("Result.fromOption requires Option value")),
         }
     }

@@ -1613,6 +1613,67 @@ fn helper(n: Int) -> Int
         );
     }
 
+    /// A value of a recursive sum used as both fields of a new node is one
+    /// allocation: the constructor's fields share one `Arc`, and copying the
+    /// value copies the pointer, so the node holds two pointers to the one
+    /// `x` instead of two fresh copies of it. A record on the cycle (`E`
+    /// holds `Node`, `Node` holds `E`) gets its fixed size from the same
+    /// pointer, and a sum that recurses only through a list keeps its fields
+    /// inline.
+    #[test]
+    fn recursive_sum_fields_share_one_arc() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+type T
+    Leaf(Int)
+    Pair(T, T)
+
+record E
+    node: Node
+    hash: Int
+
+type Node
+    Atom(Int)
+    App(E, E)
+
+type Rose
+    Rose(Int, List<Rose>)
+
+fn twice(x: T) -> T
+    T.Pair(x, x)
+
+fn left(t: T) -> T
+    match t
+        T.Pair(a, _) -> a
+        T.Leaf(_) -> t
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        for expected in [
+            "Pair(std::sync::Arc<T__Pair>),",
+            "pub struct T__Pair(pub T, pub T);",
+            "T::Pair(std::sync::Arc::new(T__Pair(x.clone(), x.clone())))",
+            "T::Pair(__a_fields) => {",
+            "let a = __a_fields.0.clone();",
+            "pub node: Node,",
+            "App(std::sync::Arc<Node__App>),",
+            "pub struct Node__App(pub E, pub E);",
+            "Rose(aver_rt::AverInt, aver_rt::AverList<Rose>),",
+        ] {
+            assert!(entry.contains(expected), "missing `{expected}`:\n{entry}");
+        }
+        assert!(
+            !entry.contains("Arc::new(x.clone())"),
+            "a field copies its value into a fresh Arc:\n{entry}"
+        );
+    }
+
     #[test]
     fn mutual_tco_variant_for_keyword_named_fn_is_an_identifier() {
         // A function whose Aver name is a Rust keyword takes part in a

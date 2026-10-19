@@ -131,13 +131,16 @@ fn emit_constructor_pattern(
             qualified_type_name,
             variant_name,
         } => {
-            if let Some((prefix, bare_type_name)) = resolve_module_call(&qualified_type_name, ctx) {
-                let module_path = module_prefix_to_rust_path(prefix);
-                let rust_name = format!("{module_path}::{bare_type_name}::{variant_name}");
-                emit_tuple_like_constructor_pattern(&rust_name, bindings)
-            } else {
-                let rust_name = format!("{qualified_type_name}::{variant_name}");
-                emit_tuple_like_constructor_pattern(&rust_name, bindings)
+            let rust_name = match resolve_module_call(&qualified_type_name, ctx) {
+                Some((prefix, bare_type_name)) => format!(
+                    "{}::{bare_type_name}::{variant_name}",
+                    module_prefix_to_rust_path(prefix)
+                ),
+                None => format!("{qualified_type_name}::{variant_name}"),
+            };
+            match shared_fields_binder(ctor, bindings, ctx) {
+                Some(binder) => format!("{rust_name}({binder})"),
+                None => emit_tuple_like_constructor_pattern(&rust_name, bindings),
             }
         }
         SemanticConstructor::Unknown(name) => {
@@ -153,6 +156,29 @@ fn emit_constructor_pattern(
             emit_tuple_like_constructor_pattern(&rust_name, bindings)
         }
     }
+}
+
+/// The one binder a constructor pattern of a shared sum writes for the `Arc`
+/// that holds its fields (see `representation::sum_is_shared`), or `None`
+/// when the constructor keeps its fields inline. It is named after the first
+/// field the arm binds, so two constructors in one tuple pattern get two
+/// names; an arm that binds no field matches `_`.
+pub(super) fn shared_fields_binder(
+    ctor: &ResolvedCtor,
+    bindings: &[String],
+    ctx: &CodegenContext,
+) -> Option<String> {
+    let ResolvedCtor::User { type_id, .. } = ctor else {
+        return None;
+    };
+    if bindings.is_empty() || !super::representation::type_id_is_shared(*type_id, ctx) {
+        return None;
+    }
+    Some(match bindings.iter().find(|b| *b != "_") {
+        // Composed from the raw name: inside a longer word it needs no escape.
+        Some(first) => format!("__{first}_fields"),
+        None => "_".to_string(),
+    })
 }
 
 fn emit_tuple_like_constructor_pattern(name: &str, bindings: &[String]) -> String {
