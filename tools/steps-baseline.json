@@ -740,12 +740,10 @@
  "projects/song/wave.av": {
   "steps": [
    "clamp16.fitsSixteenBits",
+   "header.dataLengthIsLast",
+   "header.riffLengthCoversTheRest",
    "header.sizeIsFortyFour",
    "readLe16.roundTrip"
-  ],
-  "tactic": [
-   "header.dataLengthIsLast",
-   "header.riffLengthCoversTheRest"
   ]
  },
  "proof-corpus/decomposed/handwritten/all_zero_sum.av": {

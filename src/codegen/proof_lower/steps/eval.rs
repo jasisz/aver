@@ -1924,6 +1924,15 @@ impl Env<'_> {
                     None => self.settle(cur, blocked),
                 }
             }
+            // A cell is a value once its head is: its tail stays as written,
+            // so a cited law about a call that builds it (`littleEndian(v, 4)`
+            // behind a marker byte) still matches where the cell is read.
+            ResolvedExpr::Call(ResolvedCallee::Builtin(name), _) if name == "List.prepend" => {
+                match self.child(cur, 0)? {
+                    Ok(step) => Ok(step),
+                    Err(_) => Ok(Step::Done),
+                }
+            }
             ResolvedExpr::Call(..) | ResolvedExpr::BinOp(..) | ResolvedExpr::Neg(_) => {
                 self.args_then_settle(cur)
             }
