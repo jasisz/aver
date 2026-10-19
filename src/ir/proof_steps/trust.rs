@@ -46,7 +46,7 @@ impl Trust {
 
 /// The trust base of a step script, from its text.
 pub fn of_script(text: &str) -> Result<Trust, String> {
-    let sx = parse(text)?;
+    let sx = super::shared::expand(parse(text)?)?;
     let Sx::List(parts) = &sx else {
         return Err("not a step script".into());
     };

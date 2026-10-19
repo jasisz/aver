@@ -14,6 +14,8 @@ fn verdict(text: String) -> Result<String, String>
 verify verdict
     verdict("(steps 16 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl (i 1))))") => Result.Ok("k")
     verdict("(steps 16 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (hyp h)))") => Result.Err("step proof: hypothesis h is not in scope")
+    verdict("(shared ((#a (op + (v a) (i 1)))) (steps 16 (obligation k ((a int)) (none) #a #a) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl #a))))") => Result.Ok("k")
+    verdict("(shared ((#a (op + (v a) (i 1)))) (steps 16 (obligation k ((a int)) (none) #a #a) (defs) (consts) (sums) (recs) (sigs) (laws) (proof (refl #b))))") => Result.Err("#b is not defined before its use")
     verdict("(steps 16 (obligation k () (none) (v base) (i 40)) (defs) (consts (const base int (i 40))) (sums) (recs) (sigs) (laws) (proof (const base)))") => Result.Ok("k")
     verdict("(steps 16 (obligation k () (none) (v base) (i 41)) (defs) (consts (const base int (i 40))) (sums) (recs) (sigs) (laws) (proof (const base)))") => Result.Err("step proof: the proof ends at a different equation than the claim")
     verdict("(steps 16 (obligation k ((a int)) (none) (call f (v a)) (op + (v a) (i 1))) (defs (def f ((x int)) int ((y (op + (v x) (i 1)))) (v y))) (consts) (sums) (recs) (sigs) (laws) (proof (unfold f 0 ((v a)) ())))") => Result.Ok("k")

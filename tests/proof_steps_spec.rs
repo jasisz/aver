@@ -32,7 +32,20 @@ fn scratch(name: &str) -> PathBuf {
 
 /// Export a fixture's proof project (statements only, so no Lean runs) and
 /// return the step files it wrote, by law.
+/// The step scripts of a fixture, each with its shared parts written out
+/// (`aver::ir::proof_steps::shared::unshare`), so a test can mutate one
+/// place of a script; the kernel reads either text the same.
 fn export_steps(fixture: &str, out: &Path) -> Vec<(String, PathBuf)> {
+    let files = export_shared_steps(fixture, out);
+    for (_, p) in &files {
+        let text = fs::read_to_string(p).unwrap();
+        fs::write(p, aver::ir::proof_steps::shared::unshare(&text).unwrap()).unwrap();
+    }
+    files
+}
+
+/// The step scripts of a fixture as the compiler writes them.
+fn export_shared_steps(fixture: &str, out: &Path) -> Vec<(String, PathBuf)> {
     let dir = repo_root().join(FIXTURES);
     let result = aver_in(
         &dir,
@@ -519,7 +532,8 @@ fn the_aver_backend_reports_what_each_closed_law_stands_on() {
 /// order the kernel keeps them in.
 fn canonical(text: &str) -> String {
     use aver::ir::proof_steps::read::{Sx, parse};
-    let Sx::List(mut parts) = parse(text).unwrap() else {
+    let Sx::List(mut parts) = aver::ir::proof_steps::shared::expand(parse(text).unwrap()).unwrap()
+    else {
         panic!("not a script: {text}");
     };
     for part in &mut parts {
@@ -561,7 +575,7 @@ fn the_kernel_reads_back_each_script_as_the_compiler_wrote_it() {
         "vectors.av",
     ] {
         written.extend(
-            export_steps(fixture, &out.join(fixture))
+            export_shared_steps(fixture, &out.join(fixture))
                 .into_iter()
                 .map(|(_, p)| p),
         );
@@ -569,6 +583,12 @@ fn the_kernel_reads_back_each_script_as_the_compiler_wrote_it() {
     written.push(repo_root().join(FIXTURES).join("list_cases.steps"));
     let size = |p: &PathBuf| fs::metadata(p).unwrap().len();
     let mut sample: Vec<PathBuf> = Vec::new();
+    let shared = written
+        .iter()
+        .filter(|p| fs::read_to_string(p).unwrap().contains("(shared ("))
+        .min_by_key(|p| size(p))
+        .expect("no script names a shared part");
+    sample.push(shared.clone());
     for kind in [
         "refl",
         "symm",
@@ -7653,9 +7673,10 @@ fn closed_and_open(
         .unwrap()
         .map(|e| e.unwrap().path())
         .map(|p| {
+            let text = fs::read_to_string(&p).unwrap();
             (
                 p.file_stem().unwrap().to_string_lossy().to_string(),
-                fs::read_to_string(&p).unwrap(),
+                aver::ir::proof_steps::shared::unshare(&text).unwrap_or(text),
             )
         })
         .collect();
