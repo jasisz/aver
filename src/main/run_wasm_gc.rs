@@ -123,6 +123,7 @@ pub(super) fn cmd_run_wasm_gc_with_mode(
     let entry_label = entry_info
         .as_ref()
         .map_or_else(|| "main".to_string(), |(name, _)| name.clone());
+    let entry_is_main = entry_info.is_none();
     match try_run_wasm_gc(
         file,
         module_root_override,
@@ -142,6 +143,14 @@ pub(super) fn cmd_run_wasm_gc_with_mode(
         // the VM: the error on stderr and a failing exit status. A run of the
         // generated loop that some turn failed answers `Err(reason)`.
         Ok(outcome) => {
+            // `main -> Int` names the process exit status. A JSON integer is
+            // an `Int`: a `Float` encodes as a JSON float even when whole.
+            if entry_is_main
+                && let aver::replay::JsonValue::Number(code) = &outcome.output
+                && let Some(code) = code.as_i64()
+            {
+                process::exit(aver_rt::main_exit_status(&aver_rt::AverInt::Small(code)));
+            }
             if let Some(message) = returned_error(&outcome.output) {
                 eprintln!(
                     "{}",

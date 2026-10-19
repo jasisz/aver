@@ -373,7 +373,12 @@ fn the_vm_adopts_string_index_workers_from_a_dependency() {
         "examples/data",
         "--profile",
     ]);
-    assert_success("aver run Json benchmark --profile", &run);
+    // The benchmark's `main` answers the document's length, which is its
+    // exit status, so only the profile says whether the run went through.
+    assert!(
+        run.status.code().is_some(),
+        "aver run Json benchmark was killed"
+    );
     let profile = format!(
         "{}{}",
         String::from_utf8_lossy(&run.stdout),

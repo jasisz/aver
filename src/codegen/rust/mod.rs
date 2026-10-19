@@ -601,7 +601,14 @@ fn render_root_main(
                 sections.push("        .spawn(|| aver_generated::entry::main())".to_string());
             }
             sections.push("        .expect(\"thread spawn\");".to_string());
-            sections.push("    child.join().expect(\"thread join\");".to_string());
+            if main_fn.is_some_and(|fd| fd.return_type == Type::Int) {
+                // `main -> Int` names the process exit status.
+                sections.push("    let code = child.join().expect(\"thread join\");".to_string());
+                sections
+                    .push("    std::process::exit(aver_rt::main_exit_status(&code));".to_string());
+            } else {
+                sections.push("    child.join().expect(\"thread join\");".to_string());
+            }
         }
     }
     sections.push("}".to_string());

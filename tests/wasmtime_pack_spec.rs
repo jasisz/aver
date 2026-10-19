@@ -22,10 +22,16 @@ const STANDARD_SOURCE: &str = r#"module StandardPack
     intent = "Prove a compiler-shipped provider travels in the Wasmtime pack."
     effects [Console.print]
 
-fn main() -> Unit
+fn main() -> Int
     ! [Console.print]
     Console.print("standard-pack-ok")
+    3
 "#;
+
+/// The standard program's `main` returns 3, and the host ends with it.
+fn assert_ran(output: &Output) {
+    assert_eq!(output.status.code(), Some(3), "{}", report(output));
+}
 
 fn report(output: &Output) -> String {
     format!(
@@ -198,14 +204,14 @@ fn emitted_standard_and_custom_hosts_are_toolchain_free_and_cache_isolated() {
     assert!(help.status.success(), "{}", report(&help));
     assert!(String::from_utf8_lossy(&help.stdout).contains("--artifact aot|canonical|optimized"));
     let standard_run = run_host(&standard_pack);
-    assert!(standard_run.status.success(), "{}", report(&standard_run));
+    assert_ran(&standard_run);
     assert_eq!(
         String::from_utf8_lossy(&standard_run.stdout).trim(),
         "standard-pack-ok"
     );
     for artifact in ["canonical", "optimized"] {
         let selected = run_host_artifact(&standard_pack, artifact);
-        assert!(selected.status.success(), "{}", report(&selected));
+        assert_ran(&selected);
         assert_eq!(
             String::from_utf8_lossy(&selected.stdout).trim(),
             "standard-pack-ok"
@@ -257,7 +263,7 @@ fn emitted_standard_and_custom_hosts_are_toolchain_free_and_cache_isolated() {
         report(&tampered)
     );
     let isolated = run_host_artifact(&standard_pack, "optimized");
-    assert!(isolated.status.success(), "{}", report(&isolated));
+    assert_ran(&isolated);
     fs::write(&wasm_path, original_wasm).expect("restore packed wasm");
 
     let optimized_path = standard_pack.join("main.optimized.wasm");
@@ -277,7 +283,7 @@ fn emitted_standard_and_custom_hosts_are_toolchain_free_and_cache_isolated() {
         report(&tampered)
     );
     let isolated = run_host_artifact(&standard_pack, "canonical");
-    assert!(isolated.status.success(), "{}", report(&isolated));
+    assert_ran(&isolated);
     fs::write(&optimized_path, original_optimized).expect("restore optimized wasm");
 
     // A precompiled image is native code and must never reach Wasmtime's
@@ -299,7 +305,7 @@ fn emitted_standard_and_custom_hosts_are_toolchain_free_and_cache_isolated() {
     );
     for artifact in ["canonical", "optimized"] {
         let isolated = run_host_artifact(&standard_pack, artifact);
-        assert!(isolated.status.success(), "{}", report(&isolated));
+        assert_ran(&isolated);
     }
     fs::write(&precompiled_path, original_precompiled).expect("restore precompiled module");
 
@@ -354,7 +360,7 @@ fn emitted_standard_and_custom_hosts_are_toolchain_free_and_cache_isolated() {
     );
     assert!(cached.status.success(), "{}", report(&cached));
     let cached_run = run_host(&standard_pack_again);
-    assert!(cached_run.status.success(), "{}", report(&cached_run));
+    assert_ran(&cached_run);
     assert_eq!(
         String::from_utf8_lossy(&cached_run.stdout).trim(),
         "standard-pack-ok"

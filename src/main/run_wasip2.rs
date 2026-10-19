@@ -369,15 +369,19 @@ fn run_component(
     super::wasip2_provider_host::install(&mut linker, capability_wit_plan, providers)?;
     let command = Command::instantiate(&mut store, &component, &linker)?;
     // wasi:cli/run.run() -> result<_, _>; Ok(()) on success, Err(())
-    // when the guest signalled failure via `i32.const 1`. Aver's
-    // entry doesn't yet wire a return-code path, so Err here means
-    // the wasm-gc emitter produced a non-zero — surface as exit 1.
-    match command.wasi_cli_run().call_run(&mut store)? {
-        Ok(()) => Ok(()),
-        Err(()) => {
+    // when the guest signalled failure via `i32.const 1`. A `main` that
+    // returns `Int` ends through `exit-with-code`, which reaches the host
+    // as an `I32Exit` error carrying the status.
+    match command.wasi_cli_run().call_run(&mut store) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(())) => {
             eprintln!("{}", "--wasip2: program returned non-zero exit code".red());
             std::process::exit(1);
         }
+        Err(error) => match error.downcast_ref::<wasmtime_wasi::I32Exit>() {
+            Some(exit) => std::process::exit(exit.0),
+            None => Err(error),
+        },
     }
 }
 

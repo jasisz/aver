@@ -270,6 +270,7 @@ fn fetchUser(id: String) -> Result<Http.Response, String>
 - effects can be declared per method: `Http.get`, `Disk.readText`, `Console.print`
 - top-level functions are values and can be passed where `Fn(...)` is expected
 - `main` often returns `Unit`, but `Result<Unit, String>` is also common; `aver run` treats a `Result.Err(...)` returned from `main` as a runtime failure
+- what `main` returns sets the process exit status, the same on the VM, the compiled Rust binary, `--wasm-gc` (also its `--pack wasmtime` host) and `--wasip2`: `Unit` ends in 0, `Result.Err(e)` ends in 1 with the error on stderr, and an `Int` is the status itself. An `Int` outside 0..255 ends in 1 and says so on stderr instead of being cut to its low byte, so 256 never reads as success. On wasip2 the status goes through `wasi:cli/exit.exit-with-code` (unstable in WASI 0.2.4, stable from 0.2.12), and an out-of-range value ends the run as a plain failure with no message from the component. An entry chosen with `-e` does not set the status, and `aver verify` and the tests are unaffected
 - function bodies use indentation
 - the last expression in a function body is the return value
 

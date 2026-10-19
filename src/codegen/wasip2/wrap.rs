@@ -246,6 +246,14 @@ fn compile_to_component_bytes_with_capabilities(
     // the user world `include`s `wasi:cli/command` or
     // `wasi:http/proxy`, so wasi:* packages must be available first.
     let mut resolve = Resolve::default();
+    // `exit-with-code` is unstable in WASI 0.2.4 (stable from 0.2.12). Only a
+    // core that calls it, a command whose `main` returns `Int`, turns the
+    // feature on, so every other component keeps its exact bytes.
+    if core_imports_any(core_wasm, |module, name| {
+        module == "wasi:cli/exit@0.2.4" && name == "exit-with-code"
+    }) {
+        resolve.features.insert("cli-exit-with-code".to_string());
+    }
     super::wasi_bundle::push_wasi_packages(&mut resolve)?;
 
     // Inspect the core module's imports to decide whether the
@@ -260,7 +268,7 @@ fn compile_to_component_bytes_with_capabilities(
     // includes `wasi:http/types` + `outgoing-handler` transitively via
     // `include wasi:http/proxy@0.2.4`, so the bit only matters for
     // the CLI command path.
-    let needs_http = core_imports_use_wasi_http(core_wasm);
+    let needs_http = core_imports_any(core_wasm, |module, _| module.starts_with("wasi:http/"));
 
     let wit_source = super::wit::emit_world_wit_with_capabilities(world, needs_http, capabilities);
 
@@ -345,7 +353,7 @@ fn module_has_aver_user_core_marker(module: &[u8]) -> bool {
 /// avoids re-decoding the full module the way `Module::new` would,
 /// and treats malformed bytes as "no http imports" (the encoder
 /// later rejects malformed input with a clearer message).
-fn core_imports_use_wasi_http(core_wasm: &[u8]) -> bool {
+fn core_imports_any(core_wasm: &[u8], wanted: impl Fn(&str, &str) -> bool) -> bool {
     use wasmparser::{Parser, Payload};
     for payload in Parser::new(0).parse_all(core_wasm).flatten() {
         if let Payload::ImportSection(reader) = payload {
@@ -353,7 +361,7 @@ fn core_imports_use_wasi_http(core_wasm: &[u8]) -> bool {
             // (Single / Compact1 / Compact2) into a per-item iterator
             // of `Import` values, each with its own `module` field.
             for import in reader.into_imports().flatten() {
-                if import.module.starts_with("wasi:http/") {
+                if wanted(import.module, import.name) {
                     return true;
                 }
             }

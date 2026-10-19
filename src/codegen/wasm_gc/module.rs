@@ -1002,6 +1002,15 @@ pub(super) fn emit_module_with(
                 wasip2_imports.register(Wasip2ImportSlot::IoStreamsResourceDropOutputStream);
                 wasip2_imports.register(Wasip2ImportSlot::HttpTypesResponseOutparamSet);
             }
+            // A command whose `main` returns `Int` ends with the status it
+            // names, which only `exit-with-code` can report.
+            if !proxy_mode
+                && main_idx.is_some_and(|idx| {
+                    fn_defs[idx].name == "main" && fn_defs[idx].return_type.trim() == "Int"
+                })
+            {
+                wasip2_imports.register(super::wasip2_imports::Wasip2ImportSlot::CliExitWithCode);
+            }
             wasip2_imports.assign_slots(&mut next_type_idx);
             for slot in wasip2_imports.iter() {
                 let p = slot.params();
@@ -3770,12 +3779,83 @@ pub(super) fn emit_module_with(
             &indices, &helpers,
         ));
     } else {
-        let mut start = Function::new([]);
+        let exit_with_code_fn = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::CliExitWithCode);
+        // `main`'s Int result: the scalar `i64`, or `$AverInt` when the
+        // program carries the bignum representation.
+        let main_int_result = match (exit_with_code_fn, main_idx) {
+            (Some(_), Some(idx)) => {
+                let repr = mir_program
+                    .fn_by_id(resolved_fn_defs[idx].fn_id)
+                    .map(|mf| &mf.repr)
+                    .unwrap_or(&default_repr);
+                return_results_with_repr(
+                    &fn_defs[idx].return_type,
+                    Some(&registry),
+                    repr.bare_return,
+                )?
+                .first()
+                .copied()
+            }
+            _ => None,
+        };
+        let mut start = match main_int_result {
+            Some(boxed @ ValType::Ref(_)) => Function::new([(1, ValType::I64), (1, boxed)]),
+            Some(_) => Function::new([(1, ValType::I64)]),
+            None => Function::new([]),
+        };
         // A command whose `main` answers `Err` fails the `wasi:cli/run`
         // call, so the component exits non-zero the way the VM, a native
         // binary and the wasm-gc runner do.
         let mut exit_code_on_stack = false;
-        if let Some(idx) = main_idx {
+        if let (Some(exit_fn), Some(int_result), Some(idx)) =
+            (exit_with_code_fn, main_int_result, main_idx)
+        {
+            // `main -> Int` names the exit status: 0 is `Ok`, 1..=255 goes
+            // through `exit-with-code`, and any other value (a Big
+            // included) fails the run with status 1.
+            start.instruction(&Instruction::Call(import_count + 1 + (idx as u32)));
+            if matches!(int_result, ValType::Ref(_)) {
+                let aint = registry.aint_struct_idx.ok_or_else(|| {
+                    WasmGcError::Validation("boxed Int main requires the $AverInt slot".into())
+                })?;
+                start.instruction(&Instruction::LocalTee(1));
+                start.instruction(&Instruction::StructGet {
+                    struct_type_index: aint,
+                    field_index: 1,
+                });
+                start.instruction(&Instruction::RefIsNull);
+                start.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
+                    ValType::I64,
+                )));
+                start.instruction(&Instruction::LocalGet(1));
+                start.instruction(&Instruction::StructGet {
+                    struct_type_index: aint,
+                    field_index: 0,
+                });
+                start.instruction(&Instruction::Else);
+                start.instruction(&Instruction::I64Const(-1));
+                start.instruction(&Instruction::End);
+            }
+            start.instruction(&Instruction::LocalTee(0));
+            start.instruction(&Instruction::I64Eqz);
+            start.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
+                ValType::I32,
+            )));
+            start.instruction(&Instruction::I32Const(0));
+            start.instruction(&Instruction::Else);
+            start.instruction(&Instruction::LocalGet(0));
+            start.instruction(&Instruction::I64Const(255));
+            start.instruction(&Instruction::I64LeU);
+            start.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+            start.instruction(&Instruction::LocalGet(0));
+            start.instruction(&Instruction::I32WrapI64);
+            start.instruction(&Instruction::Call(exit_fn));
+            start.instruction(&Instruction::End);
+            start.instruction(&Instruction::I32Const(1));
+            start.instruction(&Instruction::End);
+            exit_code_on_stack = true;
+        } else if let Some(idx) = main_idx {
             let main_idx_wasm = import_count + 1 + (idx as u32);
             let return_type = fn_defs[idx].return_type.trim();
             let main_returns_value = !return_type.eq("Unit");

@@ -58,6 +58,12 @@ fn write_program(dir: &std::path::Path, name: &str, source: &str) -> PathBuf {
 }
 
 fn record_via_cli(prog: &PathBuf, rec_dir: &PathBuf) -> PathBuf {
+    record_via_cli_ending_in(prog, rec_dir, 0)
+}
+
+/// As [`record_via_cli`], for a program whose `main -> Int` names the exit
+/// status `status`.
+fn record_via_cli_ending_in(prog: &PathBuf, rec_dir: &PathBuf, status: i32) -> PathBuf {
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let out = Command::new(aver_bin)
         .arg("run")
@@ -67,8 +73,9 @@ fn record_via_cli(prog: &PathBuf, rec_dir: &PathBuf) -> PathBuf {
         .arg(prog)
         .output()
         .expect("spawn aver run --wasm-gc --record");
-    assert!(
-        out.status.success(),
+    assert_eq!(
+        out.status.code(),
+        Some(status),
         "record run failed:\n{}",
         format_output(&out)
     );
@@ -237,7 +244,7 @@ fn wasm_gc_record_persists_int_main_return() {
     );
     let rec_dir = temp_dir("aver-wasm-gc-rec-int-traces");
 
-    let rec_path = record_via_cli(&prog, &rec_dir);
+    let rec_path = record_via_cli_ending_in(&prog, &rec_dir, 42);
     let raw = fs::read_to_string(&rec_path).expect("read recording");
     // The actual return value (42) round-trips through the typed
     // decoder into `output: { kind: value, value: 42 }`.
@@ -268,7 +275,7 @@ fn wasm_gc_replay_detects_tampered_output() {
          _ = Time.unixMs()\n    42\n",
     );
     let rec_dir = temp_dir("aver-wasm-gc-rec-tamper-traces");
-    let rec_path = record_via_cli(&prog, &rec_dir);
+    let rec_path = record_via_cli_ending_in(&prog, &rec_dir, 42);
 
     // Swap the recorded `42` for `999`. Replay decodes the live
     // wasm-gc return as 42 and the comparison against

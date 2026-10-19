@@ -197,6 +197,20 @@ use std::sync::Arc as Rc;
 /// `main` must fit in a branch or a job too.
 pub const THREAD_STACK_BYTES: usize = 256 * 1024 * 1024;
 
+/// The process exit status of a `main` that returns `Int`: the value itself
+/// when it lies in 0..=255, the range every platform reports. Any other value
+/// is said on stderr and ends in status 1, so a truncated status never reads
+/// as success. Every backend asks this one function.
+pub fn main_exit_status(code: &AverInt) -> i32 {
+    match code.to_i64() {
+        Some(status @ 0..=255) => status as i32,
+        _ => {
+            eprintln!("main returned exit code {code}, outside 0..255");
+            1
+        }
+    }
+}
+
 /// Spawn a scoped thread with [`THREAD_STACK_BYTES`] of stack instead of
 /// Rust's default of 2 MB.
 pub fn spawn_scoped<'scope, 'env, T: Send + 'scope>(

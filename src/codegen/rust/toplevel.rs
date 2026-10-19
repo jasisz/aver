@@ -1353,10 +1353,13 @@ fn emit_main_with_visibility(
     // expression into a value-dropping statement. Unit mains already end in
     // `()` / a statement (no-op), and `Result<…>` mains keep their tail (it
     // flows into the `-> Result<…>` return), so neither needs the discard.
-    let discard_main_tail =
-        main_fn.is_some_and(|fd| !matches!(fd.return_type, Type::Unit | Type::Result(_, _)));
+    // `main -> Int` keeps its tail too: the root `fn main` turns it into the
+    // process exit status.
+    let returns_int = main_fn.is_some_and(|fd| fd.return_type == Type::Int);
+    let discard_main_tail = main_fn
+        .is_some_and(|fd| !matches!(fd.return_type, Type::Unit | Type::Result(_, _) | Type::Int));
 
-    if returns_result {
+    if returns_result || returns_int {
         let ret_type = super::types::type_to_rust_scoped(&main_fn.unwrap().return_type, ctx, None);
         writeln!(out, "{}fn main() -> {} {{", visibility, ret_type).unwrap();
     } else {

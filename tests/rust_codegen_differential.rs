@@ -699,6 +699,64 @@ fn a_type_in_an_unimported_module_does_not_break_the_generated_crate() {
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// What `main` returns is the exit status of the compiled binary, as on the
+/// other runners (`main_exit_status_spec.rs`): an `Int` in 0..=255 is the
+/// status, any other `Int` is 1 with the reason on stderr, and `Result.Err`
+/// is 1. Only a real build runs the generated `fn main`.
+#[test]
+fn main_return_is_the_exit_status_of_the_compiled_binary() {
+    const ARG_INT: &str = "module ExitArg\n    intent = \"main returns the status it reads\"\n    effects [Args.get]\n\nfn fromArg(arg: String) -> Int\n    ? \"The argument as an Int, 99 when it is not one.\"\n    match Int.fromString(arg)\n        Result.Ok(n) -> n\n        Result.Err(_) -> 99\n\nfn main() -> Int\n    ! [Args.get]\n    match Args.get()\n        [] -> 3\n        [arg, ..rest] -> fromArg(arg)\n";
+    const ERR: &str = "module ExitErr\n    intent = \"main returns an error\"\n\nfn main() -> Result<Unit, String>\n    Result.Err(\"boom\")\n";
+    let ws = temp_dir("main_exit_status");
+    let result = (|| {
+        let mut binaries = Vec::new();
+        for (name, source) in [("p_exit_int", ARG_INT), ("p_exit_err", ERR)] {
+            let file = ws.join(format!("{name}.av"));
+            fs::write(&file, source).expect("write program");
+            let project = ws.join(name);
+            fs::create_dir_all(&project).expect("create project dir");
+            compile_rust(&file, &project, name, Some(&ws), &[])?;
+            binaries.push(cargo_build(&project, name)?);
+        }
+        let status = |bin: &Path, args: &[&str]| -> Result<(Option<i32>, String), String> {
+            let out = Command::new(bin)
+                .args(args)
+                .output()
+                .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+            Ok((
+                out.status.code(),
+                String::from_utf8_lossy(&out.stderr).into_owned(),
+            ))
+        };
+        let expected: [(&[&str], i32); 5] = [
+            (&[], 3),
+            (&["0"], 0),
+            (&["255"], 255),
+            (&["256"], 1),
+            (&["-1"], 1),
+        ];
+        for (args, code) in expected {
+            let (got, stderr) = status(&binaries[0], args)?;
+            if got != Some(code) {
+                return Err(format!(
+                    "args {args:?}: exit {got:?}, expected {code}\n{stderr}"
+                ));
+            }
+        }
+        let (_, stderr) = status(&binaries[0], &["100000000000000000000"])?;
+        if !stderr.contains("main returned exit code 100000000000000000000, outside 0..255") {
+            return Err(format!("a Big status does not say why:\n{stderr}"));
+        }
+        let (got, stderr) = status(&binaries[1], &[])?;
+        if got != Some(1) {
+            return Err(format!("Result.Err: exit {got:?}, expected 1\n{stderr}"));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// Every `.rs` file under `dir`, as (display path, contents).
 fn walk_rust_sources(dir: &Path) -> Vec<(String, String)> {
     let mut out = Vec::new();
@@ -1461,14 +1519,15 @@ fn main() -> Unit
         assert_eq!(vm, rust, "{name}: Rust backend diverged from the VM");
     }
 
-    // The reported shape verbatim: no descriptions, no output, `main`
-    // itself returning the bound Int. Nothing is printed, so the whole
-    // assertion is that the emitted crate builds and runs at all.
+    // The reported shape: no descriptions, no output, `main` itself
+    // returning the bound Int. Nothing is printed, so the whole assertion is
+    // that the emitted crate builds and runs at all. The Int is 0 because it
+    // is the exit status.
     let reported = r#"module P
 
 fn main() -> Int
     ! []
-    n = 1
+    n = 0
     n
 "#;
     let vm = run_vm_inline("bare_int_reported", reported).unwrap_or_else(|e| panic!("{e}"));

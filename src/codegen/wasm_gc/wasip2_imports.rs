@@ -175,6 +175,11 @@ define_wasip2_import_slots! {
     /// around its wait read it, in a program that reads `Run.lastTurn`.
     /// Canonical-ABI signature: `() -> i64`.
     ClocksMonotonicNow,
+    /// `wasi:cli/exit.exit-with-code: func(status-code: u8)`, unstable
+    /// (`cli-exit-with-code`) in 0.2.4. Imported only by a command whose
+    /// `main` returns `Int`, to end with the status it names.
+    /// Canonical-ABI signature: `(status: i32) -> ()`.
+    CliExitWithCode,
     /// `wasi:io/poll.poll: func(in: list<borrow<pollable>>) ->
     /// list<u32>` — the synchronous wait primitive of WASI 0.2.
     /// Blocks until at least one of the supplied pollables is
@@ -875,6 +880,7 @@ impl Wasip2ImportSlot {
                 ("wasi:clocks/monotonic-clock@0.2.4", "subscribe-duration")
             }
             Wasip2ImportSlot::ClocksMonotonicNow => ("wasi:clocks/monotonic-clock@0.2.4", "now"),
+            Wasip2ImportSlot::CliExitWithCode => ("wasi:cli/exit@0.2.4", "exit-with-code"),
             Wasip2ImportSlot::IoPollPoll => ("wasi:io/poll@0.2.4", "poll"),
             Wasip2ImportSlot::IoPollResourceDropPollable => {
                 ("wasi:io/poll@0.2.4", "[resource-drop]pollable")
@@ -1122,7 +1128,9 @@ impl Wasip2ImportSlot {
             }
             // `now: () -> datetime` — datetime exceeds 8-byte flat
             // limit, so it returns via retptr supplied by the guest.
-            Wasip2ImportSlot::ClocksWallClockNow => vec![ValType::I32],
+            Wasip2ImportSlot::ClocksWallClockNow | Wasip2ImportSlot::CliExitWithCode => {
+                vec![ValType::I32]
+            }
             // `get-arguments: () -> list<string>` — list lowered via
             // retptr (8 bytes: list_ptr i32 + list_len i32). Host
             // also calls `cabi_realloc` to allocate the backing
@@ -1454,7 +1462,8 @@ impl Wasip2ImportSlot {
             | Wasip2ImportSlot::FilesystemTypesAppendViaStream
             | Wasip2ImportSlot::FilesystemTypesReadDirectory
             | Wasip2ImportSlot::FilesystemTypesDirectoryEntryStreamReadDirectoryEntry
-            | Wasip2ImportSlot::FilesystemTypesResourceDropDirectoryEntryStream => Vec::new(),
+            | Wasip2ImportSlot::FilesystemTypesResourceDropDirectoryEntryStream
+            | Wasip2ImportSlot::CliExitWithCode => Vec::new(),
             // u64 return — fits in flat representation, no retptr.
             Wasip2ImportSlot::RandomGetRandomU64 | Wasip2ImportSlot::ClocksMonotonicNow => {
                 vec![ValType::I64]
@@ -1614,14 +1623,20 @@ mod tests {
     }
 
     /// The monotonic clock is imported only by a program that reads
-    /// `Run.lastTurn`, and the verifier does not admit it yet: such a
-    /// component is refused at the certificate envelope, fail-closed, the way
-    /// a wasm-gc module that calls `Run.fail` is.
+    /// `Run.lastTurn`, and `exit-with-code` only by a command whose `main`
+    /// returns `Int`. The verifier admits neither yet: such a component is
+    /// refused at the certificate envelope, fail-closed, the way a wasm-gc
+    /// module that calls `Run.fail` is.
     #[test]
     fn emitted_import_registry_matches_the_verifier_owned_format() {
         let emitted = Wasip2ImportSlot::ALL
             .iter()
-            .filter(|slot| **slot != Wasip2ImportSlot::ClocksMonotonicNow)
+            .filter(|slot| {
+                !matches!(
+                    slot,
+                    Wasip2ImportSlot::ClocksMonotonicNow | Wasip2ImportSlot::CliExitWithCode
+                )
+            })
             .map(|slot| slot.module_field_pair())
             .collect::<Vec<_>>();
         assert_eq!(emitted.as_slice(), aver_cert::format::WASIP2_CAPABILITIES);
