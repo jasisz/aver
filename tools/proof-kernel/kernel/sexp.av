@@ -3,6 +3,7 @@ module Sexp
         "The reader for proof-step data: S-expressions of atoms, quoted texts and lists."
         "The compiler writes the data (src/ir/proof_steps/sexpr.rs); this reads it back."
         "A `;` starts a comment to the end of the line: the record of which proof plan wrote a script, for audit only."
+        "(shared ((#NAME S)…) BODY) names repeated parts once; the reader writes each one out again before anything else sees the data."
     exposes [Sexp, readAll]
     effects []
 
@@ -12,11 +13,11 @@ type Sexp
     Node(List<Sexp>)
 
 fn readAll(text: String) -> Result<Sexp, String>
-    ? "One S-expression and nothing after it but blanks."
+    ? "One S-expression and nothing after it but blanks, its shared parts written out."
     match readOne(skipBlank(String.chars(text)))
         Result.Err(e) -> Result.Err(e)
         Result.Ok((s, rest)) -> match skipBlank(rest)
-            [] -> Result.Ok(s)
+            [] -> expand(s)
             _ -> Result.Err("text after the S-expression")
 
 verify readAll
@@ -25,6 +26,81 @@ verify readAll
     readAll("(a") => Result.Err("unexpected end of data")
     readAll("a b") => Result.Err("text after the S-expression")
     readAll("; by R.rule sha256:00\n(a)") => Result.Ok(Sexp.Node([Sexp.Atom("a")]))
+    readAll("(shared ((#a (v x)) (#b (op + #a #a))) (refl #b))") => readAll("(refl (op + (v x) (v x)))")
+    readAll("(shared ((#a (v x))) (refl #b))") => Result.Err("#b is not defined before its use")
+    readAll("(shared ((#a (f #b)) (#b (v x))) #a)") => Result.Err("#b is not defined before its use")
+    readAll("(shared ((#a (f #a))) #a)") => Result.Err("#a is not defined before its use")
+    readAll("(shared ((#a (v x)) (#a (v y))) #a)") => Result.Err("#a is defined twice")
+    readAll("(shared ((a (v x))) a)") => Result.Err("a shared name starts with #: a")
+    readAll("(shared ((#a)) #a)") => Result.Err("malformed shared part")
+    readAll("(shared ((#0 (x x)) (#1 (#0 #0)) (#2 (#1 #1)) (#3 (#2 #2)) (#4 (#3 #3)) (#5 (#4 #4)) (#6 (#5 #5)) (#7 (#6 #6)) (#8 (#7 #7)) (#9 (#8 #8)) (#10 (#9 #9)) (#11 (#10 #10)) (#12 (#11 #11)) (#13 (#12 #12)) (#14 (#13 #13)) (#15 (#14 #14)) (#16 (#15 #15)) (#17 (#16 #16)) (#18 (#17 #17)) (#19 (#18 #18)) (#20 (#19 #19)) (#21 (#20 #20))) #21)") => Result.Err("a shared part stands for more than 4194304 items")
+
+fn expand(s: Sexp) -> Result<Sexp, String>
+    ? "(shared ((#NAME S)…) BODY) is BODY with every #NAME written out as its S; each S may use only the names before it. Anything else is itself."
+    match s
+        Sexp.Node([Sexp.Atom("shared"), Sexp.Node(parts), body]) -> match bounded(within(body, define(parts, {})?)?)?
+            (b, n) -> Result.Ok(b)
+        _ -> Result.Ok(s)
+
+verify expand
+    expand(Sexp.Atom("a")) => Result.Ok(Sexp.Atom("a"))
+    expand(Sexp.Node([Sexp.Atom("shared"), Sexp.Node([]), Sexp.Atom("#x")])) => Result.Err("#x is not defined before its use")
+
+fn define(parts: List<Sexp>, table: Map<String, Tuple<Sexp, Int>>) -> Result<Map<String, Tuple<Sexp, Int>>, String>
+    ? "Each (#NAME S) in order, its S written out with the names before it."
+    match parts
+        [] -> Result.Ok(table)
+        [Sexp.Node([Sexp.Atom(n), s]), ..rest] -> define(rest, Map.set(table, fresh(n, table)?, bounded(within(s, table)?)?))
+        _ -> Result.Err("malformed shared part")
+
+verify define
+    define([], {}) => Result.Ok({})
+
+fn fresh(n: String, table: Map<String, Tuple<Sexp, Int>>) -> Result<String, String>
+    ? "A new shared name: it starts with # and is not defined yet."
+    match String.startsWith(n, "#")
+        false -> Result.Err("a shared name starts with #: {n}")
+        true -> match Map.has(table, n)
+            true -> Result.Err("{n} is defined twice")
+            false -> Result.Ok(n)
+
+verify fresh
+    fresh("#a", {}) => Result.Ok("#a")
+    fresh("a", {}) => Result.Err("a shared name starts with #: a")
+
+fn bounded(r: Tuple<Sexp, Int>) -> Result<Tuple<Sexp, Int>, String>
+    ? "A written-out part of at most 4194304 atoms, texts and lists: a short script may not stand for an enormous one."
+    match r
+        (s, n) -> match n > 4194304
+            true -> Result.Err("a shared part stands for more than 4194304 items")
+            false -> Result.Ok(r)
+
+verify bounded
+    bounded((Sexp.Atom("a"), 1)) => Result.Ok((Sexp.Atom("a"), 1))
+    bounded((Sexp.Atom("a"), 4194305)) => Result.Err("a shared part stands for more than 4194304 items")
+
+fn within(s: Sexp, table: Map<String, Tuple<Sexp, Int>>) -> Result<Tuple<Sexp, Int>, String>
+    ? "The S-expression with every #NAME written out, and how many atoms, texts and lists that is; a written-out part is the very value the table holds, not a copy."
+    match s
+        Sexp.Atom(a) -> match String.startsWith(a, "#")
+            true -> Result.fromOption(Map.get(table, a), "{a} is not defined before its use")
+            false -> Result.Ok((s, 1))
+        Sexp.Text(t) -> Result.Ok((s, 1))
+        Sexp.Node(xs) -> withinAll(xs, table, [], 1)
+
+verify within
+    within(Sexp.Text("#a"), {}) => Result.Ok((Sexp.Text("#a"), 1))
+    within(Sexp.Atom("#a"), {}) => Result.Err("#a is not defined before its use")
+
+fn withinAll(xs: List<Sexp>, table: Map<String, Tuple<Sexp, Int>>, acc: List<Sexp>, size: Int) -> Result<Tuple<Sexp, Int>, String>
+    ? "The items of a list written out, then the list and its size."
+    match xs
+        [] -> Result.Ok((Sexp.Node(List.reverse(acc)), size))
+        [x, ..rest] -> match within(x, table)?
+            (y, n) -> withinAll(rest, table, List.prepend(y, acc), size + n)
+
+verify withinAll
+    withinAll([Sexp.Atom("a")], {}, [], 1) => Result.Ok((Sexp.Node([Sexp.Atom("a")]), 2))
 
 fn readOne(cs: List<String>) -> Result<Tuple<Sexp, List<String>>, String>
     ? "Read one S-expression from the front of the characters."

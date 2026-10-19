@@ -16,6 +16,7 @@
 //!                          (fact KEY (GIVEN…) PREMISE TERM TERM PROOF)…)
 //!   a fact comes after the facts its proof cites, and may cite only them
 //!                    (proof PROOF))
+//!          | [; …] (shared ((#NAME PART)…) SCRIPT)  ; a part written twice, named once ([`super::shared`])
 //! GIVEN   := (NAME TYPE)              ; a variable with its type
 //! TYPE    := int | bool | str | float | unit | (list TYPE) | (option TYPE)
 //!          | (result TYPE TYPE) | (map TYPE TYPE) | (vector TYPE)
@@ -826,7 +827,7 @@ pub fn script(s: &Script, names: &dyn Names) -> Result<String, String> {
         ));
     }
     out.push_str(&format!(")\n (proof {}))\n", proof(&s.proof, names)?));
-    Ok(out)
+    Ok(super::shared::share(&out))
 }
 
 /// The hypotheses of an induction step: `(NAME (TERM…) (PROOF…))…`.

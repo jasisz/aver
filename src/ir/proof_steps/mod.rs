@@ -29,6 +29,7 @@ pub mod read;
 pub mod ring;
 pub mod rules;
 pub mod sexpr;
+pub mod shared;
 pub mod show;
 pub mod term;
 pub mod trust;
