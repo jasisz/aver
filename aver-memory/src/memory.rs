@@ -81,9 +81,9 @@ impl<T: ArenaTypes> Arena<T> {
         }
         self.begin_lane_rewrite(INVALID_LANE_MARK);
 
-        let mut relocated =
-            Self::take_u32_scratch(&mut self.scratch_young, self.young_entries.len());
-        let mut compacted = Vec::with_capacity(self.young_entries.len() - mark as usize);
+        let region = self.young_entries.len() - mark as usize;
+        let mut relocated = Self::take_u32_scratch(&mut self.scratch_young, region);
+        let mut compacted = Vec::with_capacity(region);
 
         for root in roots {
             *root = self.relocate_young_root(*root, mark, &mut relocated, &mut compacted);
@@ -556,6 +556,12 @@ impl<T: ArenaTypes> Arena<T> {
         }
         if self.lane_receipt_can_skip(scan_receipt) {
             if !pending_scan_keys.is_empty() {
+                // An owned insert remembers a hash without checking whether it
+                // already has, and a pair must not be rewritten twice: the
+                // second rewrite would read the first one's new index as an
+                // old one.
+                pending_scan_keys.sort_unstable();
+                pending_scan_keys.dedup();
                 for key in pending_scan_keys.drain(..) {
                     let found = map.rewrite_value_mut(&key, |pair| {
                         pair.0 = rewrite(self, pair.0);
@@ -1548,7 +1554,7 @@ impl<T: ArenaTypes> Arena<T> {
             return value;
         }
 
-        let relocation_slot = raw_index as usize;
+        let relocation_slot = (raw_index - mark) as usize;
         let relocated_index = relocated[relocation_slot];
         if relocated_index != u32::MAX {
             return value.with_heap_index(relocated_index);
@@ -1704,8 +1710,10 @@ impl<T: ArenaTypes> Arena<T> {
         self.begin_lane_rewrite(lane_mark);
         self.rewrite_out_of_region_roots = rewrite_out_of_region_roots;
 
-        let mut relocated =
-            Self::take_u32_scratch(&mut self.scratch_young, self.young_entries.len());
+        let mut relocated = Self::take_u32_scratch(
+            &mut self.scratch_young,
+            self.young_entries.len() - mark as usize,
+        );
 
         for root in roots {
             *root = self.promote_region_root_to_yard(*root, mark, &mut relocated);
@@ -1732,8 +1740,10 @@ impl<T: ArenaTypes> Arena<T> {
         self.begin_lane_rewrite(lane_mark);
         self.rewrite_out_of_region_roots = rewrite_out_of_region_roots;
 
-        let mut relocated =
-            Self::take_u32_scratch(&mut self.scratch_young, self.young_entries.len());
+        let mut relocated = Self::take_u32_scratch(
+            &mut self.scratch_young,
+            self.young_entries.len() - mark as usize,
+        );
 
         for root in roots {
             *root = self.promote_region_root_to_handoff(*root, mark, &mut relocated);
@@ -1805,8 +1815,9 @@ impl<T: ArenaTypes> Arena<T> {
         }
         self.begin_lane_rewrite(INVALID_LANE_MARK);
 
-        let mut relocated = Self::take_u32_scratch(&mut self.scratch_yard, self.yard_entries.len());
-        let mut compacted = Vec::with_capacity(self.yard_entries.len() - mark as usize);
+        let region = self.yard_entries.len() - mark as usize;
+        let mut relocated = Self::take_u32_scratch(&mut self.scratch_yard, region);
+        let mut compacted = Vec::with_capacity(region);
 
         for root in roots {
             *root = self.relocate_yard_root(*root, mark, &mut relocated, &mut compacted);
@@ -1884,7 +1895,7 @@ impl<T: ArenaTypes> Arena<T> {
         let (space, raw_index) = Self::decode_index(index);
 
         if matches!(space, HeapSpace::Young) && raw_index >= mark {
-            let relocation_slot = raw_index as usize;
+            let relocation_slot = (raw_index - mark) as usize;
             let relocated_index = relocated[relocation_slot];
             if relocated_index != u32::MAX {
                 return PromoteTailStep::Done(value.with_heap_index(relocated_index));
@@ -2211,7 +2222,7 @@ impl<T: ArenaTypes> Arena<T> {
             return value;
         }
 
-        let relocation_slot = raw_index as usize;
+        let relocation_slot = (raw_index - mark) as usize;
         let relocated_index = relocated[relocation_slot];
         if relocated_index != u32::MAX {
             return value.with_heap_index(relocated_index);
@@ -2743,7 +2754,7 @@ impl<T: ArenaTypes> Arena<T> {
             return value;
         }
 
-        let relocation_slot = raw_index as usize;
+        let relocation_slot = (raw_index - mark) as usize;
         let relocated_index = relocated[relocation_slot];
         if relocated_index != u32::MAX {
             return value.with_heap_index(relocated_index);
