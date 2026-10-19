@@ -1,0 +1,16 @@
+module FloatSpecialConstants
+    intent = "Float constants folded at compile time to NaN or an infinity still compile to Rust."
+
+fn isNan(x: Float) -> Bool
+    ? "True only for NaN, the one value not equal to itself."
+    x != x
+
+verify isNan
+    isNan(1.0) => false
+
+fn main() -> Unit
+    ? "Prints a folded NaN and both folded infinities."
+    ! [Console.print]
+    Console.print("nan: {isNan(0.0 / 0.0)}")
+    Console.print("up: {1.0 / 0.0 > 1000000.0}")
+    Console.print("down: {-1.0 / 0.0 < -1000000.0}")
