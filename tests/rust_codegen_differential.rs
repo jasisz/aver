@@ -747,12 +747,32 @@ fn total(text: String) -> String
     ? "Decode a whole string, or point at the first bad character."
     decode(String.chars(text), 0)
 
+fn zeros(chars: List<String>, n: Int) -> Int
+    ? "The bound head is only matched, so the peel reads its code."
+    match chars
+        [] -> n
+        [c, ..rest] -> match c
+            "0" -> zeros(rest, n + 1)
+            "k" -> zeros(rest, n + 100)
+            _ -> zeros(rest, n)
+
+fn foldedZeros(chars: List<String>, n: Int) -> Int
+    ? "The same, matched behind a case fold of the code."
+    match chars
+        [] -> n
+        [c, ..rest] -> match String.toLower(c)
+            "0" -> foldedZeros(rest, n + 1)
+            "k" -> foldedZeros(rest, n + 10)
+            _ -> foldedZeros(rest, n)
+
 fn main() -> Unit
     ? "Print every shape so a backend that drifts shows a diff, not a pass."
     ! [Console.print]
     Console.print("{shape("")} {shape("abc")} {shape("\u{e9}x")} {shape("\u{1F980}ab")}")
     Console.print("{value("0")}{value("9")}/{value("A")}{value("f")}/{value("\u{212A}")}/{value("\u{130}")}/{value("ab")}/{value("")}")
     Console.print("{total("09af")}|{total("")}|{total("0x9")}|{total("\u{e9}0")}|{total("9\u{1F980}")}|{total("\u{212A}")}")
+    mixed = "a0\u{212A}0\u{e9}\u{1F980}k\u{130}"
+    Console.print("{zeros(String.chars(mixed), 0)}/{foldedZeros(String.chars(mixed), 0)}/{zeros(String.chars(""), 0)}")
 "#
     .replace("\\u{e9}", "\u{e9}")
     .replace("\\u{1F980}", "\u{1F980}")
@@ -766,7 +786,7 @@ fn main() -> Unit
     // error message still prints the character the loop was on —
     // multibyte characters included — so a cursor that re-read the
     // wrong offset shows up as a changed message.
-    let expected = "0:0: 3:1:ab-c? 2:0:éx 3:1:🦀a-b?\n09/1015/20/-1/-1/-1\nok:34|ok:0|bad 'x' after 0|bad 'é' after 0|bad '🦀' after 9|ok:20";
+    let expected = "0:0: 3:1:ab-c? 2:0:éx 3:1:🦀a-b?\n09/1015/20/-1/-1/-1\nok:34|ok:0|bad 'x' after 0|bad 'é' after 0|bad '🦀' after 9|ok:20\n102/22/0";
     let vm = run_vm_inline("chars_fusion", &src).expect("vm run");
     let rust =
         build_run_rust_inline("chars_fusion", &src).expect("rust compile + cargo build + run");

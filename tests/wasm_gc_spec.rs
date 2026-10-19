@@ -3495,12 +3495,19 @@ fn upperWalk(chars: List<String>, n: Int) -> Int
         [] -> n
         [head, ..tail] -> upperWalk(tail, n * 10 + upperValue(head))
 
+fn inlineWalk(chars: List<String>, n: Int) -> Int
+    match chars
+        [] -> n
+        [head, ..tail] -> match String.toLower(head)
+            "k" -> inlineWalk(tail, n * 10 + 1)
+            _ -> inlineWalk(tail, n * 10 + 9)
+
 fn main() -> Int
-    lowerWalk(String.chars("KKİ"), 0) * 1000 + upperWalk(String.chars("aſß"), 0)
+    inlineWalk(String.chars("KKİ"), 0) * 1000000 + lowerWalk(String.chars("KKİ"), 0) * 1000 + upperWalk(String.chars("aſß"), 0)
 "#;
-    assert_eq!(run_int_with_chars_fusion(source), 119_129);
+    assert_eq!(run_int_with_chars_fusion(source), 119_119_129);
     #[cfg(feature = "runtime")]
-    assert_eq!(run_int_on_vm(source), 119_129);
+    assert_eq!(run_int_on_vm(source), 119_119_129);
 }
 
 #[test]
