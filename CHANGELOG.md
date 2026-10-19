@@ -45,6 +45,7 @@ A 0.30 `--gate` baseline with `bounded` laws has to be recorded again.
 - **`aver proof --backend aver` no longer counts as closed** two laws that cite each other, a split on a value that is not a Bool, or a Float `==` read as equality.
 - **A `Map` on the VM keeps apart two keys with the same internal hash.**
 - **A tail loop on the VM no longer slows down as it runs** when it files what a helper returns into a `Map`: 320,000 steps take 0.1 s instead of 4.9 s.
+- **Compiled to Rust, small `Int` arithmetic is about twice as fast**: `+`, `-`, `*`, `Int.div` and `Int.mod` on values that fit in 64 bits no longer go through a function call.
 - **wasm-gc and Rust compile more programs**: generic builtins on an empty literal (`List.len([])`, `{}`), values whose type no signature names, a `match` on a tuple with a `String` literal, a recursive field bound inside a tuple pattern, module-level bindings read from any function.
 - **A `match` ends with its arms**; a line starting with `(` or `-` after them is no longer read as part of the last arm.
 - **`aver verify` no longer crashes** when a dependency fails its own check, and `aver proof` no longer overflows the stack on a deep proof.

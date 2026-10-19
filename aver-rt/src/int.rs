@@ -236,33 +236,36 @@ impl AverInt {
     // `Small`.
 
     /// `self + rhs` over ℤ (never wraps).
+    #[inline]
     pub fn add(&self, rhs: &AverInt) -> AverInt {
         if let (AverInt::Small(a), AverInt::Small(b)) = (self, rhs) {
             if let Some(s) = a.checked_add(*b) {
                 return AverInt::Small(s);
             }
         }
-        AverInt::from_bigint(self.to_bigint() + rhs.to_bigint())
+        add_slow(self, rhs)
     }
 
     /// `self - rhs` over ℤ (never wraps).
+    #[inline]
     pub fn sub(&self, rhs: &AverInt) -> AverInt {
         if let (AverInt::Small(a), AverInt::Small(b)) = (self, rhs) {
             if let Some(s) = a.checked_sub(*b) {
                 return AverInt::Small(s);
             }
         }
-        AverInt::from_bigint(self.to_bigint() - rhs.to_bigint())
+        sub_slow(self, rhs)
     }
 
     /// `self * rhs` over ℤ (never wraps).
+    #[inline]
     pub fn mul(&self, rhs: &AverInt) -> AverInt {
         if let (AverInt::Small(a), AverInt::Small(b)) = (self, rhs) {
             if let Some(s) = a.checked_mul(*b) {
                 return AverInt::Small(s);
             }
         }
-        AverInt::from_bigint(self.to_bigint() * rhs.to_bigint())
+        mul_slow(self, rhs)
     }
 
     /// `-self` over ℤ (never wraps; `-i64::MIN` promotes to `Big`).
@@ -281,6 +284,7 @@ impl AverInt {
     /// `[0, |rhs|)`. Returns `None` when `rhs == 0`. Over ℤ there is no
     /// `i64::MIN / -1` overflow edge — it is just `i64::MAX + 1`, returned as
     /// a `Big`.
+    #[inline]
     pub fn div_euclid(&self, rhs: &AverInt) -> Option<AverInt> {
         if rhs.is_zero() {
             return None;
@@ -292,14 +296,14 @@ impl AverInt {
                 return Some(AverInt::Small(q));
             }
         }
-        let (q, _r) = euclid_div_rem(&self.to_bigint(), &rhs.to_bigint());
-        Some(AverInt::from_bigint(q))
+        Some(div_euclid_slow(self, rhs))
     }
 
     /// Euclidean remainder `self - rhs * div_euclid(self, rhs)`, matching
     /// `i64::rem_euclid` and the Lean `Int.emod` model. Returns `None`
     /// when `rhs == 0`. The result is always non-negative and in `[0, |rhs|)`,
     /// independent of the sign of either operand.
+    #[inline]
     pub fn rem_euclid(&self, rhs: &AverInt) -> Option<AverInt> {
         if rhs.is_zero() {
             return None;
@@ -309,8 +313,7 @@ impl AverInt {
                 return Some(AverInt::Small(r));
             }
         }
-        let (_q, r) = euclid_div_rem(&self.to_bigint(), &rhs.to_bigint());
-        Some(AverInt::from_bigint(r))
+        Some(rem_euclid_slow(self, rhs))
     }
 
     /// Truncating quotient (rounds toward zero), the semantics of the raw
@@ -631,7 +634,43 @@ impl PartialEq for AverInt {
 
 impl Eq for AverInt {}
 
+// The `BigInt` paths of the arithmetic above, kept out of line so the
+// inlined `Small` fast path stays a few instructions at every call site.
+
+#[cold]
+#[inline(never)]
+fn add_slow(a: &AverInt, b: &AverInt) -> AverInt {
+    AverInt::from_bigint(a.to_bigint() + b.to_bigint())
+}
+
+#[cold]
+#[inline(never)]
+fn sub_slow(a: &AverInt, b: &AverInt) -> AverInt {
+    AverInt::from_bigint(a.to_bigint() - b.to_bigint())
+}
+
+#[cold]
+#[inline(never)]
+fn mul_slow(a: &AverInt, b: &AverInt) -> AverInt {
+    AverInt::from_bigint(a.to_bigint() * b.to_bigint())
+}
+
+#[cold]
+#[inline(never)]
+fn div_euclid_slow(a: &AverInt, b: &AverInt) -> AverInt {
+    let (q, _r) = euclid_div_rem(&a.to_bigint(), &b.to_bigint());
+    AverInt::from_bigint(q)
+}
+
+#[cold]
+#[inline(never)]
+fn rem_euclid_slow(a: &AverInt, b: &AverInt) -> AverInt {
+    let (_q, r) = euclid_div_rem(&a.to_bigint(), &b.to_bigint());
+    AverInt::from_bigint(r)
+}
+
 impl Ord for AverInt {
+    #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
         match (self, other) {
             (AverInt::Small(a), AverInt::Small(b)) => a.cmp(b),
