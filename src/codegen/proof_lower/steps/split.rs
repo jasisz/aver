@@ -236,7 +236,11 @@ impl Env<'_> {
         if let ResolvedExpr::Match { subject, arms } = &t.node {
             return self.stuck_match(subject, arms, recursive);
         }
-        for c in term::children(t) {
+        let idle = super::eval::idle_count(t);
+        for (i, c) in term::children(t).into_iter().enumerate() {
+            if idle && i > 0 {
+                break;
+            }
             if let Some(found) = self.stuck_subject(c, recursive) {
                 return Some(found);
             }
