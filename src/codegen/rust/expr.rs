@@ -154,9 +154,12 @@ pub(super) fn emit_literal(lit: &Literal) -> String {
         Literal::BigInt(s) => format!("{:?}.parse::<aver_rt::AverInt>().unwrap()", s),
         // A folded constant can be NaN or infinite, which have no literal.
         Literal::Float(f) if f.is_nan() => "f64::NAN".to_string(),
-        Literal::Float(f) if f.is_infinite() => {
-            if *f > 0.0 { "f64::INFINITY" } else { "f64::NEG_INFINITY" }.to_string()
+        Literal::Float(f) if f.is_infinite() => if *f > 0.0 {
+            "f64::INFINITY"
+        } else {
+            "f64::NEG_INFINITY"
         }
+        .to_string(),
         Literal::Float(f) => {
             let s = f.to_string();
             if s.contains('.') || s.contains('e') || s.contains('E') {
