@@ -713,19 +713,6 @@ fn every_literal_as_cells(t: &Term) -> Option<Chain> {
     (!chain.is_empty()).then_some(chain)
 }
 
-/// Whether `t` has, outside any `match`, a list literal with an element or
-/// a call without arguments: what [`as_cells`] and
-/// [`Env::fold_constants`] look for before they change anything.
-fn may_cell_or_fold(t: &Term) -> bool {
-    match &t.node {
-        ResolvedExpr::Match { .. } => false,
-        ResolvedExpr::List(xs) if !xs.is_empty() => true,
-        ResolvedExpr::Call(ResolvedCallee::Fn(_), args) if args.is_empty() => true,
-        ResolvedExpr::TailCall { args, .. } if args.is_empty() => true,
-        _ => term::children(t).into_iter().any(may_cell_or_fold),
-    }
-}
-
 /// `t = t'`, where `t'` writes every list literal of `t` with an open
 /// element as cells, one [`Proof::Cell`] step each; `None` when there is
 /// none.
@@ -1018,9 +1005,6 @@ impl Env<'_> {
         if let Some(step) = self.split_bool(cur) {
             return Ok(Some(step));
         }
-        if let Some(step) = self.hyp_as_cells(cur) {
-            return Ok(Some(step));
-        }
         if let Some(step) = self.hyp_up_to_ring(cur) {
             return Ok(Some(step));
         }
@@ -1046,44 +1030,6 @@ impl Env<'_> {
             return Ok(Some(Step::Progress(Box::new((proof, to)))));
         }
         Ok(None)
-    }
-
-    /// A hypothesis whose left side is `cur` once its list literals with an
-    /// open element are written as cells, the way evaluation writes them
-    /// (`[d]` as `List.prepend(d, [])`): an induction hypothesis states the
-    /// claim as written, while the case has evaluated it.
-    ///
-    /// Also a hypothesis that names a constant (a definition without
-    /// parameters whose body computes to a value, `capBytes()`) where `cur`
-    /// has its value.
-    fn hyp_as_cells(&mut self, cur: &Term) -> Option<Step> {
-        let t = canon(cur);
-        for (name, e) in self.hyps.clone().into_iter().rev() {
-            // Neither a list literal nor a call without arguments: writing
-            // it as cells and folding its constants changes nothing and
-            // looks up no definition.
-            if !may_cell_or_fold(&e.lhs) {
-                continue;
-            }
-            let lhs = canon(&e.lhs);
-            let mut chain = Chain::new(&lhs);
-            if let Some((p, to)) = as_cells(&lhs) {
-                chain.push(p, to);
-            }
-            if let Some((p, to)) = self.fold_constants(&chain.cur().clone()) {
-                chain.push(p, to);
-            }
-            if chain.is_empty() || *chain.cur() != t {
-                continue;
-            }
-            let (_, bridge) = chain.finish();
-            let proof = Proof::Trans {
-                terms: vec![t.clone(), lhs, canon(&e.rhs)],
-                steps: vec![Proof::Symm(Box::new(bridge)), Proof::Hyp(name)],
-            };
-            return Some(Step::Progress(Box::new((proof, canon(&e.rhs)))));
-        }
-        None
     }
 
     /// A hypothesis whose left side is a call that `cur` is once its Int
