@@ -186,11 +186,6 @@ fn main() -> Unit
 fn large_file_write_read_roundtrip() {
     let dir = tempdir("large");
     let src = r#"
-fn second_or(items: List<String>, dflt: String) -> String
-    match items
-        [] -> dflt
-        [_, ..rest] -> first_or(rest, dflt)
-
 fn first_or(items: List<String>, dflt: String) -> String
     match items
         [] -> dflt
@@ -199,7 +194,7 @@ fn first_or(items: List<String>, dflt: String) -> String
 fn main() -> Unit
     ! [Args.get, Disk.writeText, Disk.readText, Disk.delete, Console.print]
     args: List<String> = Args.get()
-    payload: String = second_or(args, "x")
+    payload: String = first_or(args, "x")
     write_len: Int = String.len(payload)
     match Disk.writeText("big.txt", payload)
         Result.Ok(_) -> Console.print("write ok")
@@ -360,11 +355,6 @@ fn main() -> Unit
 fn large_console_print() {
     let dir = tempdir("print");
     let src = r#"
-fn second_or(items: List<String>, dflt: String) -> String
-    match items
-        [] -> dflt
-        [_, ..rest] -> first_or(rest, dflt)
-
 fn first_or(items: List<String>, dflt: String) -> String
     match items
         [] -> dflt
@@ -373,7 +363,7 @@ fn first_or(items: List<String>, dflt: String) -> String
 fn main() -> Unit
     ! [Args.get, Console.print]
     args: List<String> = Args.get()
-    payload: String = second_or(args, "default")
+    payload: String = first_or(args, "default")
     Console.print(payload)
 "#;
     let fixture = write_fixture(&dir, "print.av", src);
