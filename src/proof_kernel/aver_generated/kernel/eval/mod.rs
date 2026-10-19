@@ -56,7 +56,7 @@ impl aver_rt::AverDisplay for Val {
 /// The value of a closed term, if it is one this evaluator knows.
 pub fn evalClosed(t @ _: &crate::proof_kernel::aver_generated::kernel::term::Term) -> Option<Val> {
     crate::proof_kernel::cancel_checkpoint();
-    match t.clone() {
+    match t {
         crate::proof_kernel::aver_generated::kernel::term::Term::TInt(__n_fields) => {
             let n = __n_fields.0.clone();
             Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(n))
@@ -69,11 +69,11 @@ pub fn evalClosed(t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ter
             let o = __o_fields.0.clone();
             let a = __o_fields.1.clone();
             let b = __o_fields.2.clone();
-            match a.clone() {
+            match &a {
                 crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(__c_fields) => {
                     let c = __c_fields.0.clone();
                     let xs = __c_fields.1.clone();
-                    match b.clone() {
+                    match &b {
                         crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(
                             __d_fields,
                         ) => {
@@ -198,15 +198,18 @@ pub fn listOf(vs @ _: &aver_rt::AverList<Option<Val>>) -> Option<Val> {
 /// v in front of a list value.
 pub fn consOnto(v @ _: &Val, rest @ _: &Option<Val>) -> Option<Val> {
     crate::proof_kernel::cancel_checkpoint();
-    match rest.clone() {
-        Some(__pat0) => match __pat0 {
-            crate::proof_kernel::aver_generated::kernel::eval::Val::VList(vs) => Some(
-                crate::proof_kernel::aver_generated::kernel::eval::Val::VList(
-                    aver_rt::AverList::prepend(v.clone(), &vs),
+    match rest {
+        Some(__pat0) => {
+            let __pat0 = __pat0.clone();
+            match __pat0 {
+                crate::proof_kernel::aver_generated::kernel::eval::Val::VList(vs) => Some(
+                    crate::proof_kernel::aver_generated::kernel::eval::Val::VList(
+                        aver_rt::AverList::prepend(v.clone(), &vs),
+                    ),
                 ),
-            ),
-            _ => None,
-        },
+                _ => None,
+            }
+        }
         _ => None,
     }
 }
@@ -214,15 +217,18 @@ pub fn consOnto(v @ _: &Val, rest @ _: &Option<Val>) -> Option<Val> {
 /// The negation of an Int value.
 pub fn negated(a @ _: &Option<Val>) -> Option<Val> {
     crate::proof_kernel::cancel_checkpoint();
-    match a.clone() {
-        Some(__pat0) => match __pat0 {
-            crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(x) => Some(
-                crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(
-                    aver_rt::AverInt::from_i64(0).sub(&x),
+    match a {
+        Some(__pat0) => {
+            let __pat0 = __pat0.clone();
+            match __pat0 {
+                crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(x) => Some(
+                    crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(
+                        aver_rt::AverInt::from_i64(0).sub(&x),
+                    ),
                 ),
-            ),
-            _ => None,
-        },
+                _ => None,
+            }
+        }
         _ => None,
     }
 }
@@ -579,13 +585,16 @@ pub fn both(a @ _: &Option<Val>, b @ _: &Option<Val>, isAnd @ _: bool) -> Option
 /// Bool.not of a value.
 pub fn negate(a @ _: &Option<Val>) -> Option<Val> {
     crate::proof_kernel::cancel_checkpoint();
-    match a.clone() {
-        Some(__pat0) => match __pat0 {
-            crate::proof_kernel::aver_generated::kernel::eval::Val::VBool(x) => {
-                Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VBool((!x)))
+    match a {
+        Some(__pat0) => {
+            let __pat0 = __pat0.clone();
+            match __pat0 {
+                crate::proof_kernel::aver_generated::kernel::eval::Val::VBool(x) => {
+                    Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VBool((!x)))
+                }
+                _ => None,
             }
-            _ => None,
-        },
+        }
         _ => None,
     }
 }
@@ -890,15 +899,18 @@ pub fn concatenated(a @ _: &Option<Val>, b @ _: &Option<Val>) -> Option<Val> {
 /// How many elements.
 pub fn lengthOf(l @ _: &Option<Val>) -> Option<Val> {
     crate::proof_kernel::cancel_checkpoint();
-    match l.clone() {
-        Some(__pat0) => match __pat0 {
-            crate::proof_kernel::aver_generated::kernel::eval::Val::VList(vs) => Some(
-                crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(
-                    aver_rt::AverInt::from_i64(vs.len() as i64),
+    match l {
+        Some(__pat0) => {
+            let __pat0 = __pat0.clone();
+            match __pat0 {
+                crate::proof_kernel::aver_generated::kernel::eval::Val::VList(vs) => Some(
+                    crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(
+                        aver_rt::AverInt::from_i64(vs.len() as i64),
+                    ),
                 ),
-            ),
-            _ => None,
-        },
+                _ => None,
+            }
+        }
         _ => None,
     }
 }
@@ -906,13 +918,16 @@ pub fn lengthOf(l @ _: &Option<Val>) -> Option<Val> {
 /// The elements backwards.
 pub fn reversed(l @ _: &Option<Val>) -> Option<Val> {
     crate::proof_kernel::cancel_checkpoint();
-    match l.clone() {
-        Some(__pat0) => match __pat0 {
-            crate::proof_kernel::aver_generated::kernel::eval::Val::VList(vs) => {
-                Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VList(vs.reverse()))
+    match l {
+        Some(__pat0) => {
+            let __pat0 = __pat0.clone();
+            match __pat0 {
+                crate::proof_kernel::aver_generated::kernel::eval::Val::VList(vs) => Some(
+                    crate::proof_kernel::aver_generated::kernel::eval::Val::VList(vs.reverse()),
+                ),
+                _ => None,
             }
-            _ => None,
-        },
+        }
         _ => None,
     }
 }

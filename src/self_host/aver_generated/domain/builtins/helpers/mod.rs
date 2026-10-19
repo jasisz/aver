@@ -63,7 +63,7 @@ pub fn expectList(
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<aver_rt::AverList<crate::aver_generated::domain::value::Val>, AverStr> {
     crate::cancel_checkpoint();
-    match v.clone() {
+    match v {
         crate::aver_generated::domain::value::Val::ValList(__items_fields) => {
             let items = __items_fields.0.clone();
             Ok(items)
@@ -77,7 +77,7 @@ pub fn expectInt(
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<aver_rt::AverInt, AverStr> {
     crate::cancel_checkpoint();
-    match v.clone() {
+    match v {
         crate::aver_generated::domain::value::Val::ValInt(__n_fields) => {
             let n = __n_fields.0.clone();
             Ok(n)
@@ -89,7 +89,7 @@ pub fn expectInt(
 /// Extract string from Val or error.
 pub fn expectStr(v @ _: &crate::aver_generated::domain::value::Val) -> Result<AverStr, AverStr> {
     crate::cancel_checkpoint();
-    match v.clone() {
+    match v {
         crate::aver_generated::domain::value::Val::ValStr(__s_fields) => {
             let s = __s_fields.0.clone();
             Ok(s)
@@ -103,7 +103,7 @@ pub fn expectBytes(
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<aver_rt::AverIntList, AverStr> {
     crate::cancel_checkpoint();
-    match v.clone() {
+    match v {
         crate::aver_generated::domain::value::Val::ValRecord(__name_fields) => {
             let name = __name_fields.0.clone();
             let fields = __name_fields.1.clone();

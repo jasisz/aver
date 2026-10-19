@@ -1721,8 +1721,9 @@ pub fn processAfterNewlineToken(
     stack @ _: &aver_rt::AverIntList,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    match t.clone() {
+    match t {
         crate::aver_generated::domain::token::Token::TkInt(n) => {
+            let n = n.clone();
             if (n < aver_rt::AverInt::from_i64(0)) {
                 crate::aver_generated::domain::lexer::emitIndentChange(
                     aver_rt::AverInt::from_i64(0)

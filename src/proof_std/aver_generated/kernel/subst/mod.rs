@@ -104,21 +104,27 @@ pub fn patNames(
     p @ _: &crate::proof_std::aver_generated::kernel::term::Pat,
 ) -> aver_rt::AverList<AverStr> {
     crate::proof_std::cancel_checkpoint();
-    match p.clone() {
+    match p {
         crate::proof_std::aver_generated::kernel::term::Pat::PVar(n) => {
+            let n = n.clone();
             crate::proof_std::aver_generated::kernel::subst::dropWild(aver_rt::AverList::from_vec(
                 vec![n],
             ))
         }
         crate::proof_std::aver_generated::kernel::term::Pat::PCons(h, t) => {
+            let h = h.clone();
+            let t = t.clone();
             crate::proof_std::aver_generated::kernel::subst::dropWild(aver_rt::AverList::from_vec(
                 vec![h, t],
             ))
         }
         crate::proof_std::aver_generated::kernel::term::Pat::PCtor(c, ns) => {
+            let c = c.clone();
+            let ns = ns.clone();
             crate::proof_std::aver_generated::kernel::subst::dropWild(ns)
         }
         crate::proof_std::aver_generated::kernel::term::Pat::PTuple(ps) => {
+            let ps = ps.clone();
             crate::proof_std::aver_generated::kernel::subst::patNamesAll(&ps)
         }
         _ => aver_rt::AverList::empty(),
@@ -403,28 +409,25 @@ pub fn holeCountArms(
 
 /// Replace free variables (and the hole, bound under the name of the hole) by terms.
 pub fn subst(
-    t @ _: &crate::proof_std::aver_generated::kernel::term::Term,
+    mut t @ _: crate::proof_std::aver_generated::kernel::term::Term,
     bs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding>,
 ) -> Result<crate::proof_std::aver_generated::kernel::term::Term, AverStr> {
     crate::proof_std::cancel_checkpoint();
-    match t.clone() {
+    match &t {
         crate::proof_std::aver_generated::kernel::term::Term::TVar(__n_fields) => {
             let n = __n_fields.0.clone();
-            Ok(
-                crate::proof_std::aver_generated::kernel::subst::lookup(n, bs.clone())
-                    .unwrap_or(t.clone()),
-            )
+            Ok(crate::proof_std::aver_generated::kernel::subst::lookup(n, bs.clone()).unwrap_or(t))
         }
         crate::proof_std::aver_generated::kernel::term::Term::THole => Ok(
             crate::proof_std::aver_generated::kernel::subst::lookup(AverStr::from("□"), bs.clone())
-                .unwrap_or(t.clone()),
+                .unwrap_or(t),
         ),
         crate::proof_std::aver_generated::kernel::term::Term::TGet(__o_fields) => {
             let o = __o_fields.0.clone();
             let f = __o_fields.1.clone();
             Ok(crate::proof_std::aver_generated::kernel::term::Term::TGet(
                 std::sync::Arc::new(crate::proof_std::aver_generated::kernel::term::Term__TGet(
-                    crate::proof_std::aver_generated::kernel::subst::subst(&o, bs)?,
+                    crate::proof_std::aver_generated::kernel::subst::subst(o, bs)?,
                     f,
                 )),
             ))
@@ -456,8 +459,8 @@ pub fn subst(
             Ok(crate::proof_std::aver_generated::kernel::term::Term::TOp(
                 std::sync::Arc::new(crate::proof_std::aver_generated::kernel::term::Term__TOp(
                     o,
-                    crate::proof_std::aver_generated::kernel::subst::subst(&a, bs)?,
-                    crate::proof_std::aver_generated::kernel::subst::subst(&b, bs)?,
+                    crate::proof_std::aver_generated::kernel::subst::subst(a, bs)?,
+                    crate::proof_std::aver_generated::kernel::subst::subst(b, bs)?,
                 )),
             ))
         }
@@ -465,7 +468,7 @@ pub fn subst(
             let a = __a_fields.0.clone();
             Ok(crate::proof_std::aver_generated::kernel::term::Term::TNeg(
                 std::sync::Arc::new(crate::proof_std::aver_generated::kernel::term::Term__TNeg(
-                    crate::proof_std::aver_generated::kernel::subst::subst(&a, bs)?,
+                    crate::proof_std::aver_generated::kernel::subst::subst(a, bs)?,
                 )),
             ))
         }
@@ -485,7 +488,7 @@ pub fn subst(
             Ok(
                 crate::proof_std::aver_generated::kernel::term::Term::TMatch(std::sync::Arc::new(
                     crate::proof_std::aver_generated::kernel::term::Term__TMatch(
-                        crate::proof_std::aver_generated::kernel::subst::subst(&s, bs)?,
+                        crate::proof_std::aver_generated::kernel::subst::subst(s, bs)?,
                         crate::proof_std::aver_generated::kernel::subst::substArms(&arms, bs)?,
                     ),
                 )),
@@ -536,12 +539,12 @@ pub fn subst(
             Ok(crate::proof_std::aver_generated::kernel::term::Term::TUpd(
                 std::sync::Arc::new(crate::proof_std::aver_generated::kernel::term::Term__TUpd(
                     n,
-                    crate::proof_std::aver_generated::kernel::subst::subst(&b, bs)?,
+                    crate::proof_std::aver_generated::kernel::subst::subst(b, bs)?,
                     crate::proof_std::aver_generated::kernel::subst::substFields(&fs, bs)?,
                 )),
             ))
         }
-        _ => Ok(t.clone()),
+        _ => Ok(t),
     }
 }
 
@@ -552,7 +555,7 @@ pub fn substAll(
     bs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding>,
 ) -> Result<aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>, AverStr> {
     crate::proof_std::cancel_checkpoint();
-    aver_list_match!(xs.clone(), [] => Ok(aver_rt::AverList::empty()), [x, rest] => Ok(aver_rt::AverList::prepend(crate::proof_std::aver_generated::kernel::subst::subst(&x, bs)?, &crate::proof_std::aver_generated::kernel::subst::substAll(&rest, bs)?)))
+    aver_list_match!(xs.clone(), [] => Ok(aver_rt::AverList::empty()), [x, rest] => Ok(aver_rt::AverList::prepend(crate::proof_std::aver_generated::kernel::subst::subst(x, bs)?, &crate::proof_std::aver_generated::kernel::subst::substAll(&rest, bs)?)))
 }
 
 /// Substitute in record fields.
@@ -562,7 +565,7 @@ pub fn substFields(
     bs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding>,
 ) -> Result<aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Field>, AverStr> {
     crate::proof_std::cancel_checkpoint();
-    aver_list_match!(fs.clone(), [] => Ok(aver_rt::AverList::empty()), [f, rest] => Ok(aver_rt::AverList::prepend(crate::proof_std::aver_generated::kernel::term::Field { name: f.name, value: crate::proof_std::aver_generated::kernel::subst::subst(&f.value, bs)? }, &crate::proof_std::aver_generated::kernel::subst::substFields(&rest, bs)?)))
+    aver_list_match!(fs.clone(), [] => Ok(aver_rt::AverList::empty()), [f, rest] => Ok(aver_rt::AverList::prepend(crate::proof_std::aver_generated::kernel::term::Field { name: f.name, value: crate::proof_std::aver_generated::kernel::subst::subst(f.value, bs)? }, &crate::proof_std::aver_generated::kernel::subst::substFields(&rest, bs)?)))
 }
 
 /// Substitute under each arm, minus the names the arm binds.
@@ -572,12 +575,12 @@ pub fn substArms(
     bs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding>,
 ) -> Result<aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Arm>, AverStr> {
     crate::proof_std::cancel_checkpoint();
-    aver_list_match!(arms.clone(), [] => Ok(aver_rt::AverList::empty()), [a, rest] => Ok(aver_rt::AverList::prepend(crate::proof_std::aver_generated::kernel::subst::substArm(&a, bs)?, &crate::proof_std::aver_generated::kernel::subst::substArms(&rest, bs)?)))
+    aver_list_match!(arms.clone(), [] => Ok(aver_rt::AverList::empty()), [a, rest] => Ok(aver_rt::AverList::prepend(crate::proof_std::aver_generated::kernel::subst::substArm(a, bs)?, &crate::proof_std::aver_generated::kernel::subst::substArms(&rest, bs)?)))
 }
 
 /// Substitute in one arm, refusing a capture.
 pub fn substArm(
-    a @ _: &crate::proof_std::aver_generated::kernel::term::Arm,
+    mut a @ _: crate::proof_std::aver_generated::kernel::term::Arm,
     bs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding>,
 ) -> Result<crate::proof_std::aver_generated::kernel::term::Arm, AverStr> {
     crate::proof_std::cancel_checkpoint();
@@ -590,8 +593,8 @@ pub fn substArm(
         &bound,
     )?;
     Ok(crate::proof_std::aver_generated::kernel::term::Arm {
-        pattern: a.pattern.clone(),
-        body: crate::proof_std::aver_generated::kernel::subst::subst(&a.body, &inner)?,
+        pattern: a.pattern,
+        body: crate::proof_std::aver_generated::kernel::subst::subst(a.body, &inner)?,
     })
 }
 

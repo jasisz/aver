@@ -681,7 +681,7 @@ pub fn builtinMapRemoveInner(
     keyV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match mapV.clone() {
+    match mapV {
         crate::aver_generated::domain::value::Val::ValMap(__m_fields) => {
             let m = __m_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValMap(
@@ -1218,7 +1218,7 @@ pub fn builtinTerminalPrint(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
-    match v.clone() {
+    match &v {
         crate::aver_generated::domain::value::Val::ValStr(__s_fields) => {
             let s = __s_fields.0.clone();
             crate::aver_generated::domain::builtins::termPrintStr(s)
@@ -1775,10 +1775,10 @@ pub fn builtinBoolOrInner(
     bV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match aV.clone() {
+    match aV {
         crate::aver_generated::domain::value::Val::ValBool(__a_fields) => {
             let a = __a_fields.0.clone();
-            match bV.clone() {
+            match bV {
                 crate::aver_generated::domain::value::Val::ValBool(__b_fields) => {
                     let b = __b_fields.0.clone();
                     if a {
@@ -1820,10 +1820,10 @@ pub fn builtinBoolAndInner(
     bV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match aV.clone() {
+    match aV {
         crate::aver_generated::domain::value::Val::ValBool(__a_fields) => {
             let a = __a_fields.0.clone();
-            match bV.clone() {
+            match bV {
                 crate::aver_generated::domain::value::Val::ValBool(__b_fields) => {
                     let b = __b_fields.0.clone();
                     if a {
@@ -1908,7 +1908,7 @@ pub fn builtinMapSetInner(
     valV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match mapV.clone() {
+    match mapV {
         crate::aver_generated::domain::value::Val::ValMap(__m_fields) => {
             let m = __m_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValMap(
@@ -1942,7 +1942,7 @@ pub fn builtinMapGetInner(
     keyV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match mapV.clone() {
+    match mapV {
         crate::aver_generated::domain::value::Val::ValMap(__m_fields) => {
             let m = __m_fields.0.clone();
             match m
@@ -1977,7 +1977,7 @@ pub fn builtinMapHasInner(
     keyV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match mapV.clone() {
+    match mapV {
         crate::aver_generated::domain::value::Val::ValMap(__m_fields) => {
             let m = __m_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValBool(
@@ -2626,7 +2626,7 @@ pub fn builtinTcpConnectInner(
     } {
         Ok(conn @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValOk(
-                crate::aver_generated::domain::builtins::tcpConnToVal(&conn),
+                crate::aver_generated::domain::builtins::tcpConnToVal(conn),
             )),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
@@ -2641,11 +2641,11 @@ pub fn builtinTcpConnectInner(
 
 /// Preserve an opaque host Tcp.Connection resource inside Val.
 pub fn tcpConnToVal(
-    conn @ _: &crate::aver_generated::tcp::Connection,
+    mut conn @ _: crate::aver_generated::tcp::Connection,
 ) -> crate::aver_generated::domain::value::Val {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::value::Val::ValTcpConnection(std::sync::Arc::new(
-        crate::aver_generated::domain::value::Val__ValTcpConnection(conn.clone()),
+        crate::aver_generated::domain::value::Val__ValTcpConnection(conn),
     ))
 }
 
@@ -2654,7 +2654,7 @@ pub fn valToTcpConn(
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::tcp::Connection, AverStr> {
     crate::cancel_checkpoint();
-    match v.clone() {
+    match v {
         crate::aver_generated::domain::value::Val::ValTcpConnection(__conn_fields) => {
             let conn = __conn_fields.0.clone();
             Ok(conn)
@@ -2732,7 +2732,7 @@ pub fn valToTcpDial(
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::tcp::Dial, AverStr> {
     crate::cancel_checkpoint();
-    match v.clone() {
+    match v {
         crate::aver_generated::domain::value::Val::ValTcpDial(__dial_fields) => {
             let dial = __dial_fields.0.clone();
             Ok(dial)
@@ -2782,7 +2782,7 @@ pub fn builtinTcpDialled(
                 std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValOk(
                     crate::aver_generated::domain::value::Val::ValSome(std::sync::Arc::new(
                         crate::aver_generated::domain::value::Val__ValSome(
-                            crate::aver_generated::domain::builtins::tcpConnToVal(&conn),
+                            crate::aver_generated::domain::builtins::tcpConnToVal(conn),
                         ),
                     )),
                 )),
@@ -2869,7 +2869,7 @@ pub fn valToTcpListener(
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::tcp::Listener, AverStr> {
     crate::cancel_checkpoint();
-    match v.clone() {
+    match v {
         crate::aver_generated::domain::value::Val::ValTcpListener(__listener_fields) => {
             let listener = __listener_fields.0.clone();
             Ok(listener)
@@ -2919,7 +2919,7 @@ pub fn builtinTcpAccept(
                 std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValOk(
                     crate::aver_generated::domain::value::Val::ValSome(std::sync::Arc::new(
                         crate::aver_generated::domain::value::Val__ValSome(
-                            crate::aver_generated::domain::builtins::tcpConnToVal(&conn),
+                            crate::aver_generated::domain::builtins::tcpConnToVal(conn),
                         ),
                     )),
                 )),
@@ -2986,7 +2986,7 @@ pub fn valToTcpSocket(
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::tcp::Socket, AverStr> {
     crate::cancel_checkpoint();
-    match v.clone() {
+    match v {
         crate::aver_generated::domain::value::Val::ValVariant(__name_fields) => {
             let name = __name_fields.1.clone();
             let fields = __name_fields.2.clone();

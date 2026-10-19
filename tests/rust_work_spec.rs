@@ -674,6 +674,63 @@ fn a_nested_update_moves_the_rest_of_the_inner_record() {
     result.unwrap_or_else(|error| panic!("{error}"));
 }
 
+/// A match that binds fields of a borrowed value, or of a value read again
+/// later, matches on a reference and clones only the fields its arm binds,
+/// not the whole value. A param that a function only returns or stores into
+/// a record, constructor, tuple or list is taken by value and moved, so a Map
+/// inside it keeps one owner and `chain` inserts in place; a caller that still
+/// reads the value afterwards clones it at the call.
+#[test]
+fn a_matched_or_handed_on_value_is_not_cloned_whole() {
+    let name = "rust_borrowed_match_and_hand_on";
+    let ws = temp_dir(name);
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let args = ["3000", "1000"];
+    let result = (|| {
+        compile_rust(name, &project, name, &[])?;
+        let entry = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
+            .map_err(|error| format!("read the generated entry module: {error}"))?;
+        for expected in [
+            "pub fn weightOf(s @ _: &Shape) -> aver_rt::AverInt {\n    crate::cancel_checkpoint();\n    match s {",
+            "Shape::Box(a, b, _) => {\n            let a = a.clone();\n            let b = b.clone();",
+            "pub fn hashOf(t @ _: &Tree) -> aver_rt::AverInt {\n    crate::cancel_checkpoint();\n    match t {",
+            "pub fn leftOf(mut t @ _: Tree) -> Tree {\n    crate::cancel_checkpoint();\n    match &t {",
+            "pub fn pairWeight(p @ _: &(Shape, aver_rt::AverInt)) -> aver_rt::AverInt {\n    crate::cancel_checkpoint();\n    match p {",
+            "pub fn same(mut r @ _: R) -> R {",
+            "pub fn wrap(mut r @ _: R) -> W {",
+            "pub fn yes(mut r @ _: R) -> Result<W, AverStr> {",
+            "pub fn pick(mut r @ _: R, ",
+            "match yes(wrap(grow(same(r), ",
+            "let copy @ _ = same(r.clone());",
+        ] {
+            if !entry.contains(expected) {
+                return Err(format!(
+                    "{name}: missing `{expected}` in the generated entry module:\n{entry}"
+                ));
+            }
+        }
+        if entry.contains(".clone() {\n        Shape::")
+            || entry.contains(".clone() {\n        Tree::")
+        {
+            return Err(format!(
+                "{name}: a match clones its whole subject:\n{entry}"
+            ));
+        }
+        let vm = run_vm_with(name, &args)?;
+        let bin = cargo_build(&project, name)?;
+        let rust = run_binary_with(&bin, &args)?;
+        if vm != rust {
+            return Err(format!(
+                "{name}: stdout mismatch\n--- VM ---\n{vm}\n--- Rust ---\n{rust}"
+            ));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
 /// An update that replaces a field read earlier builds, and the read moves.
 ///
 /// `progress = flight.progress` followed by

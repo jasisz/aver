@@ -1,0 +1,149 @@
+module Main
+    intent = "Matches that bind fields of a borrowed value, and params that a function only returns or stores."
+    effects [Args.get, Console.print]
+
+type Shape
+    Dot(Int)
+    Box(String, String, Int)
+
+type Tree
+    Leaf(Int)
+    Node(Tree, Tree, String, Int)
+
+record R
+    m: Map<Int, Int>
+    n: Int
+
+record W
+    ok: Bool
+    r: R
+
+fn weightOf(s: Shape) -> Int
+    ? "The Int field of either variant."
+    match s
+        Shape.Dot(i) -> i
+        Shape.Box(_, _, w) -> w
+
+verify weightOf
+    weightOf(Shape.Dot(3)) => 3
+    weightOf(Shape.Box("a", "b", 7)) => 7
+
+fn labelOf(s: Shape) -> String
+    ? "Both labels of a box, or the dot's weight as text."
+    match s
+        Shape.Dot(i) -> "dot {i}"
+        Shape.Box(a, b, _) -> "{a}{b}"
+
+verify labelOf
+    labelOf(Shape.Box("a", "b", 7)) => "ab"
+
+fn hashOf(t: Tree) -> Int
+    ? "The Int field of either variant of a recursive type."
+    match t
+        Tree.Leaf(i) -> i
+        Tree.Node(_, _, _, h) -> h
+
+verify hashOf
+    hashOf(Tree.Node(Tree.Leaf(1), Tree.Leaf(2), "n", 7)) => 7
+
+fn leftOf(t: Tree) -> Tree
+    ? "The left child of a node, or the leaf itself."
+    match t
+        Tree.Leaf(_) -> t
+        Tree.Node(l, _, _, _) -> l
+
+verify leftOf
+    hashOf(leftOf(Tree.Node(Tree.Leaf(1), Tree.Leaf(2), "n", 7))) => 1
+
+fn pairWeight(p: Tuple<Shape, Int>) -> Int
+    ? "A constructor inside a borrowed tuple."
+    match p
+        (Shape.Dot(i), k) -> i + k
+        (other, k) -> weightOf(other) * k
+
+verify pairWeight
+    pairWeight((Shape.Dot(2), 3)) => 5
+    pairWeight((Shape.Box("a", "b", 2), 3)) => 6
+
+fn weighLoop(s: Shape, t: Tree, k: Int, acc: Int) -> Int
+    ? "Reads the fields of s and t k times."
+    match k == 0
+        true -> acc
+        false -> weighLoop(s, t, k - 1, acc + weightOf(s) + hashOf(t) + hashOf(leftOf(t)) + pairWeight((s, k)))
+
+verify weighLoop
+    weighLoop(Shape.Dot(2), Tree.Leaf(1), 2, 0) => 15
+
+fn same(r: R) -> R
+    ? "Returns r."
+    r
+
+verify same
+    same(R(m = {}, n = 1)).n => 1
+
+fn wrap(r: R) -> W
+    ? "Stores r in a record."
+    W(ok = true, r = r)
+
+verify wrap
+    wrap(R(m = {}, n = 1)).ok => true
+
+fn yes(r: R) -> Result<W, String>
+    ? "Stores r in a record inside a constructor."
+    Result.Ok(W(ok = true, r = r))
+
+verify yes
+    yes(R(m = {}, n = 1)) => Result.Ok(W(ok = true, r = R(m = {}, n = 1)))
+
+fn pick(r: R, keep: Bool) -> Tuple<R, Bool>
+    ? "Hands r on in a tuple in one branch only."
+    match keep
+        true -> (r, true)
+        false -> (R(m = {}, n = 0), false)
+
+verify pick
+    pick(R(m = {}, n = 1), false) => (R(m = {}, n = 0), false)
+    pick(R(m = {}, n = 1), true) => (R(m = {}, n = 1), true)
+
+fn grow(r: R, k: Int) -> R
+    ? "Adds one key to r's map."
+    R.update(r, m = Map.set(r.m, k, k))
+
+verify grow
+    Map.len(grow(R(m = {}, n = 1), 2).m) => 1
+
+fn chain(r: R, k: Int) -> R
+    ? "Grows r k times, each time through same, wrap, yes and pick."
+    match k == 0
+        true -> r
+        false -> match yes(wrap(grow(same(r), k)).r)
+            Result.Ok(w) -> match pick(w.r, true)
+                (next, _) -> chain(next, k - 1)
+            Result.Err(_) -> R(m = {}, n = 0)
+
+verify chain
+    Map.len(chain(R(m = {}, n = 1), 3).m) => 3
+
+fn kept(r: R, k: Int) -> Int
+    ? "Hands r to same and still reads it afterwards."
+    copy = same(r)
+    Map.len(grow(copy, k).m) + Map.len(r.m)
+
+verify kept
+    kept(R(m = {}, n = 1), 2) => 1
+
+fn arg(index: Int, fallback: Int) -> Int
+    ? "The index-th argument as an Int, or the fallback."
+    ! [Args.get]
+    match Vector.get(Vector.fromList(Args.get()), index)
+        Option.Some(text) -> Result.withDefault(Int.fromString(text), fallback)
+        Option.None -> fallback
+
+fn main() -> Unit
+    ! [Args.get, Console.print]
+    keys = arg(0, 100)
+    reads = arg(1, 100)
+    grown = chain(R(m = {}, n = 1), keys)
+    Console.print("{Map.len(grown.m)} {kept(grown, 0 - 1)}")
+    Console.print(labelOf(Shape.Box("x", "y", 1)))
+    Console.print("{weighLoop(Shape.Box("a", "b", 2), Tree.Node(Tree.Leaf(1), Tree.Leaf(2), "n", 7), reads, 0)}")

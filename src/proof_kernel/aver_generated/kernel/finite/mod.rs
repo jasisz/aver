@@ -7,7 +7,7 @@ pub fn values(
     f @ _: &crate::proof_kernel::aver_generated::kernel::term::Fin,
 ) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> {
     crate::proof_kernel::cancel_checkpoint();
-    match f.clone() {
+    match f {
         crate::proof_kernel::aver_generated::kernel::term::Fin::FBool => {
             aver_rt::AverList::from_vec(vec![
                 crate::proof_kernel::aver_generated::kernel::term::Term::TBool(
@@ -23,9 +23,12 @@ pub fn values(
             ])
         }
         crate::proof_kernel::aver_generated::kernel::term::Fin::FSum(cs) => {
+            let cs = cs.clone();
             crate::proof_kernel::aver_generated::kernel::finite::ctorValues(&cs)
         }
         crate::proof_kernel::aver_generated::kernel::term::Fin::FRec(n, fs) => {
+            let n = n.clone();
+            let fs = fs.clone();
             crate::proof_kernel::aver_generated::kernel::finite::recValues(
                 n,
                 &crate::proof_kernel::aver_generated::kernel::finite::fieldNames(&fs),
@@ -35,6 +38,7 @@ pub fn values(
             )
         }
         crate::proof_kernel::aver_generated::kernel::term::Fin::FTuple(ts) => {
+            let ts = ts.clone();
             crate::proof_kernel::aver_generated::kernel::finite::tupleValues(
                 &crate::proof_kernel::aver_generated::kernel::finite::product(
                     &crate::proof_kernel::aver_generated::kernel::finite::partValues(&ts),

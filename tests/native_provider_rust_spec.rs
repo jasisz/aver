@@ -290,8 +290,8 @@ fn main() {{
     let (left, right) = generated::aver_generated::entry::openPair();
     let left_token = left.expect("left token");
     let right_token = right.expect("right token");
-    let boxed = generated::aver_generated::entry::boxToken(&left_token);
-    let bagged = generated::aver_generated::entry::bagToken(&left_token);
+    let boxed = generated::aver_generated::entry::boxToken(left_token.clone());
+    let bagged = generated::aver_generated::entry::bagToken(left_token.clone());
     assert_eq!(boxed, boxed.clone());
     assert_eq!(bagged, bagged.clone());
     assert_eq!(boxed.aver_display(), "TokenBox(token: Vault.Token(<resource>))");

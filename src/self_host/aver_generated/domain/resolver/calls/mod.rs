@@ -89,22 +89,27 @@ pub fn resolveCallsInStmt(
     fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::Stmt {
     crate::cancel_checkpoint();
-    match s.clone() {
+    match s {
         crate::aver_generated::domain::ast::Stmt::StmtBind(name, expr) => {
+            let name = name.clone();
+            let expr = expr.clone();
             crate::aver_generated::domain::ast::Stmt::StmtBind(
                 name,
-                crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&expr, fnMap),
+                crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(expr, fnMap),
             )
         }
         crate::aver_generated::domain::ast::Stmt::StmtBindSlot(slot, expr) => {
+            let slot = slot.clone();
+            let expr = expr.clone();
             crate::aver_generated::domain::ast::Stmt::StmtBindSlot(
                 slot,
-                crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&expr, fnMap),
+                crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(expr, fnMap),
             )
         }
         crate::aver_generated::domain::ast::Stmt::StmtExpr(expr) => {
+            let expr = expr.clone();
             crate::aver_generated::domain::ast::Stmt::StmtExpr(
-                crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&expr, fnMap),
+                crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(expr, fnMap),
             )
         }
     }
@@ -112,25 +117,23 @@ pub fn resolveCallsInStmt(
 
 /// Replace ExprCall with ExprCallDirect for known user functions.
 pub fn resolveCallsInExpr(
-    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    mut expr @ _: crate::aver_generated::domain::ast::Expr,
     fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
-    match expr.clone() {
+    match &expr {
         crate::aver_generated::domain::ast::Expr::ExprBoolBranch(__cond_fields) => {
             let cond = __cond_fields.0.clone();
             let thenExpr = __cond_fields.1.clone();
             let elseExpr = __cond_fields.2.clone();
             crate::aver_generated::domain::ast::Expr::ExprBoolBranch(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprBoolBranch(
+                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(cond, fnMap),
                     crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                        &cond, fnMap,
+                        thenExpr, fnMap,
                     ),
                     crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                        &thenExpr, fnMap,
-                    ),
-                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                        &elseExpr, fnMap,
+                        elseExpr, fnMap,
                     ),
                 ),
             ))
@@ -185,15 +188,15 @@ pub fn resolveCallsInExpr(
 
 /// Continue direct-call linking for specialized internal and arithmetic forms.
 pub fn resolveCallsInExprInternal(
-    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    mut expr @ _: crate::aver_generated::domain::ast::Expr,
     fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
-    match expr.clone() {
-        crate::aver_generated::domain::ast::Expr::ExprBinopSlotInt(_) => expr.clone(),
-        crate::aver_generated::domain::ast::Expr::ExprBinopSlots(_) => expr.clone(),
-        crate::aver_generated::domain::ast::Expr::ExprCmpSlotInt(_) => expr.clone(),
-        crate::aver_generated::domain::ast::Expr::ExprCmpSlots(_) => expr.clone(),
+    match &expr {
+        crate::aver_generated::domain::ast::Expr::ExprBinopSlotInt(_) => expr,
+        crate::aver_generated::domain::ast::Expr::ExprBinopSlots(_) => expr,
+        crate::aver_generated::domain::ast::Expr::ExprCmpSlotInt(_) => expr,
+        crate::aver_generated::domain::ast::Expr::ExprCmpSlots(_) => expr,
         crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(__vecExpr_fields) => {
             let vecExpr = __vecExpr_fields.0.clone();
             let idxExpr = __vecExpr_fields.1.clone();
@@ -201,10 +204,10 @@ pub fn resolveCallsInExprInternal(
             crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprVectorGetOrInt(
                     crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                        &vecExpr, fnMap,
+                        vecExpr, fnMap,
                     ),
                     crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                        &idxExpr, fnMap,
+                        idxExpr, fnMap,
                     ),
                     defaultValue,
                 ),
@@ -216,8 +219,8 @@ pub fn resolveCallsInExprInternal(
             let defaultValue = __a_fields.2.clone();
             crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprIntModOrInt(
-                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&a, fnMap),
-                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&b, fnMap),
+                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(a, fnMap),
+                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(b, fnMap),
                     defaultValue,
                 ),
             ))
@@ -227,8 +230,8 @@ pub fn resolveCallsInExprInternal(
             let b = __a_fields.1.clone();
             crate::aver_generated::domain::ast::Expr::ExprAdd(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprAdd(
-                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&a, fnMap),
-                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&b, fnMap),
+                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(a, fnMap),
+                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(b, fnMap),
                 ),
             ))
         }
@@ -237,8 +240,8 @@ pub fn resolveCallsInExprInternal(
             let b = __a_fields.1.clone();
             crate::aver_generated::domain::ast::Expr::ExprSub(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprSub(
-                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&a, fnMap),
-                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&b, fnMap),
+                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(a, fnMap),
+                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(b, fnMap),
                 ),
             ))
         }
@@ -247,8 +250,8 @@ pub fn resolveCallsInExprInternal(
             let b = __a_fields.1.clone();
             crate::aver_generated::domain::ast::Expr::ExprMul(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprMul(
-                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&a, fnMap),
-                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&b, fnMap),
+                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(a, fnMap),
+                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(b, fnMap),
                 ),
             ))
         }
@@ -257,8 +260,8 @@ pub fn resolveCallsInExprInternal(
             let b = __a_fields.1.clone();
             crate::aver_generated::domain::ast::Expr::ExprDiv(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprDiv(
-                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&a, fnMap),
-                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&b, fnMap),
+                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(a, fnMap),
+                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(b, fnMap),
                 ),
             ))
         }
@@ -267,7 +270,7 @@ pub fn resolveCallsInExprInternal(
             crate::aver_generated::domain::ast::Expr::ExprNeg(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprNeg(
                     crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                        &inner, fnMap,
+                        inner, fnMap,
                     ),
                 ),
             ))
@@ -278,18 +281,18 @@ pub fn resolveCallsInExprInternal(
 
 /// Finish direct-call linking for comparisons, aggregates, and product forms.
 pub fn resolveCallsInExprTail(
-    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    mut expr @ _: crate::aver_generated::domain::ast::Expr,
     fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
-    match expr.clone() {
+    match &expr {
         crate::aver_generated::domain::ast::Expr::ExprEq(__a_fields) => {
             let a = __a_fields.0.clone();
             let b = __a_fields.1.clone();
             crate::aver_generated::domain::ast::Expr::ExprEq(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprEq(
-                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&a, fnMap),
-                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&b, fnMap),
+                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(a, fnMap),
+                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(b, fnMap),
                 ),
             ))
         }
@@ -298,8 +301,8 @@ pub fn resolveCallsInExprTail(
             let b = __a_fields.1.clone();
             crate::aver_generated::domain::ast::Expr::ExprNeq(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprNeq(
-                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&a, fnMap),
-                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&b, fnMap),
+                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(a, fnMap),
+                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(b, fnMap),
                 ),
             ))
         }
@@ -308,8 +311,8 @@ pub fn resolveCallsInExprTail(
             let b = __a_fields.1.clone();
             crate::aver_generated::domain::ast::Expr::ExprLt(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprLt(
-                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&a, fnMap),
-                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&b, fnMap),
+                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(a, fnMap),
+                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(b, fnMap),
                 ),
             ))
         }
@@ -318,8 +321,8 @@ pub fn resolveCallsInExprTail(
             let b = __a_fields.1.clone();
             crate::aver_generated::domain::ast::Expr::ExprGt(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprGt(
-                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&a, fnMap),
-                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&b, fnMap),
+                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(a, fnMap),
+                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(b, fnMap),
                 ),
             ))
         }
@@ -328,8 +331,8 @@ pub fn resolveCallsInExprTail(
             let b = __a_fields.1.clone();
             crate::aver_generated::domain::ast::Expr::ExprLte(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprLte(
-                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&a, fnMap),
-                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&b, fnMap),
+                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(a, fnMap),
+                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(b, fnMap),
                 ),
             ))
         }
@@ -338,8 +341,8 @@ pub fn resolveCallsInExprTail(
             let b = __a_fields.1.clone();
             crate::aver_generated::domain::ast::Expr::ExprGte(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprGte(
-                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&a, fnMap),
-                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&b, fnMap),
+                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(a, fnMap),
+                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(b, fnMap),
                 ),
             ))
         }
@@ -348,9 +351,7 @@ pub fn resolveCallsInExprTail(
             let arms = __subj_fields.1.clone();
             crate::aver_generated::domain::ast::Expr::ExprMatch(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprMatch(
-                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                        &subj, fnMap,
-                    ),
+                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(subj, fnMap),
                     crate::aver_generated::domain::resolver::calls::resolveCallsInArms__collected(
                         arms,
                         fnMap.clone(),
@@ -366,7 +367,7 @@ pub fn resolveCallsInExprTail(
             crate::aver_generated::domain::ast::Expr::ExprPropagate(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprPropagate(
                     crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                        &inner, fnMap,
+                        inner, fnMap,
                     ),
                 ),
             ))
@@ -450,12 +451,12 @@ pub fn resolveCallsInExprTail(
             let field = __obj_fields.1.clone();
             crate::aver_generated::domain::ast::Expr::ExprFieldAccess(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprFieldAccess(
-                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&obj, fnMap),
+                    crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(obj, fnMap),
                     field,
                 ),
             ))
         }
-        _ => expr.clone(),
+        _ => expr,
     }
 }
 
@@ -577,7 +578,7 @@ pub fn isNonzeroIntLiteralDivisor(
 /// Whether an expression is a nonzero integer literal under at most one unary minus.
 pub fn isNonzeroIntLiteral(expr @ _: &crate::aver_generated::domain::ast::Expr) -> bool {
     crate::cancel_checkpoint();
-    match expr.clone() {
+    match expr {
         crate::aver_generated::domain::ast::Expr::ExprInt(__k_fields) => {
             let k = __k_fields.0.clone();
             (k != aver_rt::AverInt::from_i64(0))
@@ -593,7 +594,7 @@ pub fn isNonzeroIntLiteral(expr @ _: &crate::aver_generated::domain::ast::Expr) 
 /// Whether an expression is a bare nonzero integer literal, with no unary minus of its own.
 pub fn isBareNonzeroIntLiteral(expr @ _: &crate::aver_generated::domain::ast::Expr) -> bool {
     crate::cancel_checkpoint();
-    match expr.clone() {
+    match expr {
         crate::aver_generated::domain::ast::Expr::ExprInt(__k_fields) => {
             let k = __k_fields.0.clone();
             (k != aver_rt::AverInt::from_i64(0))
@@ -773,7 +774,7 @@ pub fn resolveCallsInExprs(
         crate::cancel_checkpoint();
         aver_list_match!(exprs, [] => { return acc.reverse(); }, [e, rest] => { {
             let __tco0 = rest;
-            let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&e, &*fnMap), &acc);
+            let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(e, &*fnMap), &acc);
             exprs = __tco0;
             acc = __tco2;
             continue;
@@ -793,7 +794,7 @@ pub fn resolveCallsInArms(
         crate::cancel_checkpoint();
         aver_list_match!(arms, [] => { return acc.reverse(); }, [arm, rest] => { {
             let __tco0 = rest;
-            let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern, body: crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&arm.body, &*fnMap), bindingSlots: arm.bindingSlots }, &acc);
+            let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern, body: crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(arm.body, &*fnMap), bindingSlots: arm.bindingSlots }, &acc);
             arms = __tco0;
             acc = __tco2;
             continue;
@@ -813,7 +814,7 @@ pub fn resolveCallsInFields(
         crate::cancel_checkpoint();
         aver_list_match!(fields, [] => { return acc.reverse(); }, [pair, rest] => { { let (name, expr) = pair; {
             let __tco0 = rest;
-            let __tco2 = aver_rt::AverList::prepend((name, crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&expr, &*fnMap)), &acc);
+            let __tco2 = aver_rt::AverList::prepend((name, crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(expr, &*fnMap)), &acc);
             fields = __tco0;
             acc = __tco2;
             continue;
@@ -853,7 +854,7 @@ pub fn resolveCallsInExprs__collected(
         crate::cancel_checkpoint();
         aver_list_match!(exprs, [] => { return aver_rt::list_builder_finalize(acc); }, [e, rest] => { {
             let __tco0 = rest;
-            let __tco2 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&e, &*fnMap));
+            let __tco2 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(e, &*fnMap));
             exprs = __tco0;
             acc = __tco2;
             continue;
@@ -873,7 +874,7 @@ pub fn resolveCallsInArms__collected(
         crate::cancel_checkpoint();
         aver_list_match!(arms, [] => { return aver_rt::list_builder_finalize(acc); }, [arm, rest] => { {
             let __tco0 = rest;
-            let __tco2 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern, body: crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&arm.body, &*fnMap), bindingSlots: arm.bindingSlots });
+            let __tco2 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern, body: crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(arm.body, &*fnMap), bindingSlots: arm.bindingSlots });
             arms = __tco0;
             acc = __tco2;
             continue;
@@ -893,7 +894,7 @@ pub fn resolveCallsInFields__collected(
         crate::cancel_checkpoint();
         aver_list_match!(fields, [] => { return aver_rt::list_builder_finalize(acc); }, [pair, rest] => { { let (name, expr) = pair; {
             let __tco0 = rest;
-            let __tco2 = aver_rt::list_builder_push(acc, (name, crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&expr, &*fnMap)));
+            let __tco2 = aver_rt::list_builder_push(acc, (name, crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(expr, &*fnMap)));
             fields = __tco0;
             acc = __tco2;
             continue;

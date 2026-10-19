@@ -141,10 +141,10 @@ pub fn builtinVectorSetInner(
     valV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match vecV.clone() {
+    match vecV {
         crate::aver_generated::domain::value::Val::ValVector(__vec_fields) => {
             let vec = __vec_fields.0.clone();
-            match idxV.clone() {
+            match idxV {
                 crate::aver_generated::domain::value::Val::ValInt(__idx_fields) => {
                     let idx = __idx_fields.0.clone();
                     if (idx < aver_rt::AverInt::from_i64(0)) {

@@ -521,53 +521,65 @@ impl aver_replay::ReplayValue for Token {
 /// Debug representation of a token.
 pub fn tokenRepr(t @ _: &Token) -> AverStr {
     crate::cancel_checkpoint();
-    match t.clone() {
-        crate::aver_generated::domain::token::Token::TkInt(n) => aver_rt::AverStr::from({
-            let mut __b = {
+    match t {
+        crate::aver_generated::domain::token::Token::TkInt(n) => {
+            let n = n.clone();
+            aver_rt::AverStr::from({
                 let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity(
-                        (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
-                    );
-                    __b.push_str(&AverStr::from("Int("));
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
+                        );
+                        __b.push_str(&AverStr::from("Int("));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                __b.push_str(&AverStr::from(")"));
                 __b
-            };
-            __b.push_str(&AverStr::from(")"));
-            __b
-        }),
-        crate::aver_generated::domain::token::Token::TkFloat(f) => AverStr::from("Float"),
-        crate::aver_generated::domain::token::Token::TkStr(s) => aver_rt::AverStr::from({
-            let mut __b = {
+            })
+        }
+        crate::aver_generated::domain::token::Token::TkFloat(f) => {
+            let f = f.clone();
+            AverStr::from("Float")
+        }
+        crate::aver_generated::domain::token::Token::TkStr(s) => {
+            let s = s.clone();
+            aver_rt::AverStr::from({
                 let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity(
-                        (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
-                    );
-                    __b.push_str(&AverStr::from("Str("));
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
+                        );
+                        __b.push_str(&AverStr::from("Str("));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(s))));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(s))));
+                __b.push_str(&AverStr::from(")"));
                 __b
-            };
-            __b.push_str(&AverStr::from(")"));
-            __b
-        }),
-        crate::aver_generated::domain::token::Token::TkIdent(s) => aver_rt::AverStr::from({
-            let mut __b = {
+            })
+        }
+        crate::aver_generated::domain::token::Token::TkIdent(s) => {
+            let s = s.clone();
+            aver_rt::AverStr::from({
                 let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity(
-                        (aver_rt::AverInt::from_i64(23)).to_usize().unwrap_or(0),
-                    );
-                    __b.push_str(&AverStr::from("Ident("));
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(23)).to_usize().unwrap_or(0),
+                        );
+                        __b.push_str(&AverStr::from("Ident("));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(s))));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(s))));
+                __b.push_str(&AverStr::from(")"));
                 __b
-            };
-            __b.push_str(&AverStr::from(")"));
-            __b
-        }),
+            })
+        }
         crate::aver_generated::domain::token::Token::TkTrue => AverStr::from("True"),
         crate::aver_generated::domain::token::Token::TkFalse => AverStr::from("False"),
         crate::aver_generated::domain::token::Token::TkPlus => AverStr::from("Plus"),

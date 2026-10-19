@@ -644,19 +644,28 @@ pub fn parsePattern(
     crate::cancel_checkpoint();
     let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
     let t @ _ = crate::aver_generated::domain::parser_match::tokenAt(tokens, pos);
-    match t.clone() {
-        crate::aver_generated::domain::token::Token::TkInt(n) => Ok((
-            crate::aver_generated::domain::ast::Pattern::PatInt(n),
-            nextPos,
-        )),
-        crate::aver_generated::domain::token::Token::TkFloat(f) => Ok((
-            crate::aver_generated::domain::ast::Pattern::PatFloat(f),
-            nextPos,
-        )),
-        crate::aver_generated::domain::token::Token::TkStr(s) => Ok((
-            crate::aver_generated::domain::ast::Pattern::PatStr(s),
-            nextPos,
-        )),
+    match &t {
+        crate::aver_generated::domain::token::Token::TkInt(n) => {
+            let n = n.clone();
+            Ok((
+                crate::aver_generated::domain::ast::Pattern::PatInt(n),
+                nextPos,
+            ))
+        }
+        crate::aver_generated::domain::token::Token::TkFloat(f) => {
+            let f = f.clone();
+            Ok((
+                crate::aver_generated::domain::ast::Pattern::PatFloat(f),
+                nextPos,
+            ))
+        }
+        crate::aver_generated::domain::token::Token::TkStr(s) => {
+            let s = s.clone();
+            Ok((
+                crate::aver_generated::domain::ast::Pattern::PatStr(s),
+                nextPos,
+            ))
+        }
         crate::aver_generated::domain::token::Token::TkTrue => Ok((
             crate::aver_generated::domain::ast::Pattern::PatBool(true),
             nextPos,
@@ -672,6 +681,7 @@ pub fn parsePattern(
             crate::aver_generated::domain::parser_match::parseTuplePattern(tokens, nextPos)
         }
         crate::aver_generated::domain::token::Token::TkIdent(s) => {
+            let s = s.clone();
             crate::aver_generated::domain::parser_match::parseIdentPattern(tokens, nextPos, s)
         }
         _ => Err(aver_rt::AverStr::from({
