@@ -23,7 +23,7 @@ example : tripleSum 1 2 3 = (6 : Int) := by decide +kernel
 -- aver:law-class tripleSum_law_mirror universal tripleSum.mirror
 theorem tripleSum_law_mirror : ∀ (a : Int) (b : Int) (c : Int), tripleSum a b c = tripleSum c b a := by
   first
-  | (intro a b c; have __aver_unfold_0 : ∀ (x0 : Int) (x1 : Int) (x2 : Int), (tripleSum x0 x1 x2) = (((x0 + x1) + x2)) := (by intro x0 x1 x2; (conv => lhs; unfold tripleSum); all_goals (first | rfl | (dsimp only; (repeat' split) <;> first | contradiction | simp_all))); exact (show (tripleSum a b c) = (tripleSum c b a) from (Eq.trans (show (tripleSum a b c) = (((a + b) + c)) from __aver_unfold_0 (a) (b) (c)) (Eq.trans (show (((a + b) + c)) = (((c + b) + a)) from by omega) (show (((c + b) + a)) = (tripleSum c b a) from Eq.symm (show (tripleSum c b a) = (((c + b) + a)) from __aver_unfold_0 (c) (b) (a)))))))
+  | (intro a b c; have __aver_unfold_0 : ∀ (x0 : Int) (x1 : Int) (x2 : Int), (tripleSum x0 x1 x2) = (((x0 + x1) + x2)) := (by intro x0 x1 x2; (conv => lhs; unfold tripleSum); all_goals (first | rfl | (dsimp only; (repeat' split) <;> first | contradiction | simp_all))); exact (show (tripleSum a b c) = (tripleSum c b a) from (Eq.trans (__aver_unfold_0 (a) (b) (c)) (Eq.trans (show (((a + b) + c)) = (((c + b) + a)) from by omega) (Eq.symm (__aver_unfold_0 (c) (b) (a)))))))
   | (
     trace "AVER_STEPS_REJECTED:tripleSum.mirror"
     intro a b c

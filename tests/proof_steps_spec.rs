@@ -374,10 +374,7 @@ fn lean_accepts_the_step_terms_and_refuses_mutated_ones() {
         format!("{lemmas}{}", term.replacen(from, to, 1))
     };
     let mutants = [
-        (
-            "wrong premise",
-            first_replaced("from h_steps2)", "from h_steps1)"),
-        ),
+        ("wrong premise", first_replaced("(h_steps2)", "(h_steps1)")),
         ("wrong literal", first_replaced("500000000", "500000001")),
         (
             "wrong arm number",
@@ -385,7 +382,7 @@ fn lean_accepts_the_step_terms_and_refuses_mutated_ones() {
         ),
         (
             "hypothesis out of scope",
-            first_replaced("from h_steps3)", "from h_steps7)"),
+            first_replaced("(h_steps3)", "(h_steps7)"),
         ),
     ];
     for (kind, mutated) in mutants {
@@ -1711,7 +1708,7 @@ fn lean_inducts_on_a_list_under_a_carried_when_and_refuses_mutations() {
     .to_string();
     // The recursor's motive is the claim under the carried `when`, and the
     // recursor is applied to the `when` itself at the end.
-    let carried = " xs (show (allPos xs : Bool) = (true : Bool) from h_when))";
+    let carried = " xs (h_when))";
     assert!(
         line.contains("List.rec (motive := fun xs => (allPos xs : Bool) = (true : Bool) → ")
             && line.contains(carried),
@@ -4898,7 +4895,7 @@ fn lean_inducts_through_a_split_arm_and_under_a_carried_when() {
     let line = exact_line(&lean, "double_law_keepsPositive").to_string();
     // The recursor's motive is the claim under the carried `when`, and the
     // recursor is applied to the `when` itself at the end.
-    let carried = " xs (show (allPos xs : Bool) = (true : Bool) from h_when))";
+    let carried = " xs (h_when))";
     assert!(
         line.contains("List.rec (motive := fun xs => (allPos xs : Bool) = (true : Bool) → ")
             && line.contains(carried),
