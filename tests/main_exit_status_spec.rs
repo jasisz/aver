@@ -20,8 +20,7 @@ fn main() -> Int
 "#;
 
 /// The status comes from the command line, so one program covers 0, a
-/// status in range, and values outside 0..=255 (a Big among them). It reads
-/// the last argument: wasip2 puts the program name first.
+/// status in range, and values outside 0..=255 (a Big among them).
 const ARG_INT: &str = r#"module ExitArg
     intent = "main returns the exit status it reads from the command line"
     effects [Args.get]
@@ -34,9 +33,19 @@ fn fromArg(arg: String) -> Int
 
 fn main() -> Int
     ! [Args.get]
-    match List.reverse(Args.get())
+    match Args.get()
         [] -> 98
         [arg, ..rest] -> fromArg(arg)
+"#;
+
+/// `Args.get` is only what follows `--`: no program name, no `run` or file.
+const ARG_COUNT: &str = r#"module ExitArgCount
+    intent = "main returns how many arguments it was given"
+    effects [Args.get]
+
+fn main() -> Int
+    ! [Args.get]
+    List.len(Args.get())
 "#;
 
 const UNIT: &str = r#"module ExitUnit
@@ -99,6 +108,12 @@ fn assert_exit_statuses(mode: &[&str], out_of_range_says_why: bool) {
             );
         }
     }
+    assert_eq!(run(mode, ARG_COUNT, &[]).0, Some(0), "{mode:?} no args");
+    assert_eq!(
+        run(mode, ARG_COUNT, &["a", "b"]).0,
+        Some(2),
+        "{mode:?} two args"
+    );
     assert_eq!(run(mode, UNIT, &[]).0, Some(0), "{mode:?} Unit");
     let (code, stderr) = run(mode, ERR, &[]);
     assert_eq!(code, Some(1), "{mode:?} Err: {stderr}");
