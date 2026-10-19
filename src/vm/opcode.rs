@@ -351,11 +351,12 @@ pub const MATCH_DISPATCH: u8 = 0x7A;
 /// Emitted when ALL dispatchable arms have constant bodies (literals).
 pub const MATCH_DISPATCH_CONST: u8 = 0x7B;
 
-/// Tail-call self for thin frames: no arena finalization needed.
+/// Tail-call self for thin frames.
 /// The compiler emits this instead of TAIL_CALL_SELF when the function
 /// is known to be "thin" (no heap allocations within the frame).
-/// Skips finalize_frame_locals_for_tail_call entirely — just copies
-/// args in-place and resets ip.
+/// Skips finalize_frame_locals_for_tail_call while the frame's regions
+/// stay as small as that finalizer would leave them; a builtin or helper
+/// that allocates still gets the boundary.
 pub const TAIL_CALL_SELF_THIN: u8 = 0x45; // argc:u8
 
 /// Inline Option.withDefault: pop default, pop option → push inner or default.

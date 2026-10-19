@@ -691,6 +691,7 @@ impl VM {
             handoff_mark,
             lane_base: lane_mark,
             lane_mark,
+            yard_budget: 0,
             globals_dirty: false,
             yard_dirty: false,
             handoff_dirty: false,

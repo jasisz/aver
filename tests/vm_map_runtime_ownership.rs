@@ -315,10 +315,13 @@ fn interpolated_map_keys_rebase_only_the_new_entries() {
     assert_eq!(run.answer, 10_200);
     assert_eq!(run.copied, 0);
     assert!(
-        // One terminal pass may still inspect the completed table. Above that,
-        // the budget leaves O(1) work for each fresh heap-backed key, not one
-        // pass over every older entry.
-        run.scanned <= 10_700,
+        // One terminal pass may still inspect the completed table, and the
+        // loop's own compactions from its yard base read it again each time
+        // the yard has grown by several times what the last one cost, under
+        // the final table again in all. Above that, the budget leaves O(1)
+        // work for each fresh heap-backed key, not one pass over every older
+        // entry.
+        run.scanned <= 3 * 10_200 + 500,
         "interpolated keys made tail-call evacuation rescan old map entries: \
          n=10200 scanned {}",
         run.scanned,

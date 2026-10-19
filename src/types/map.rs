@@ -288,7 +288,11 @@ impl OwnedMapFrameProof {
             })
     }
 
-    fn receipt_for_owned_source(self, source: NanValue, arena: &Arena) -> Option<LaneMark> {
+    pub(crate) fn receipt_for_owned_source(
+        self,
+        source: NanValue,
+        arena: &Arena,
+    ) -> Option<LaneMark> {
         if self.inplace_write_escaped || !arena.lane_mark_is_valid(self.lane_mark) {
             return None;
         }

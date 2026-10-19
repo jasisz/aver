@@ -68,6 +68,10 @@ pub struct CallFrame {
     /// receipts at or below this watermark cannot contain allocations owned by
     /// that iteration; destructive tail boundaries rebase it with `yard_mark`.
     pub lane_mark: LaneMark,
+    /// How far the yard above `yard_base` may grow before a tail-call boundary
+    /// compacts it from `yard_base` again: what the last such compaction kept,
+    /// plus a multiple of what it kept and read. Zero until the first one.
+    pub yard_budget: u32,
     /// Whether this frame stored a young-region value into globals.
     pub globals_dirty: bool,
     /// Whether ordinary returns introduced caller-yard survivors that should

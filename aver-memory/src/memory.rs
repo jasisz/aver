@@ -176,6 +176,7 @@ impl<T: ArenaTypes> Arena<T> {
         }
         if has_work {
             self.begin_lane_rewrite(lane_mark);
+            self.active_lane_hands_to_caller = matches!(young_target, AllocSpace::Handoff);
         }
         self.rewrite_out_of_region_roots = rewrite_out_of_region_roots;
         if rewrite_out_of_region_roots {
@@ -562,17 +563,33 @@ impl<T: ArenaTypes> Arena<T> {
                 // old one.
                 pending_scan_keys.sort_unstable();
                 pending_scan_keys.dedup();
-                for key in pending_scan_keys.drain(..) {
-                    let found = map.rewrite_value_mut(&key, |pair| {
+                for key in &pending_scan_keys {
+                    let found = map.rewrite_value_mut(key, |pair| {
                         pair.0 = rewrite(self, pair.0);
                         pair.1 = rewrite(self, pair.1);
                     });
                     self.note_map_entries_scanned(usize::from(found));
                 }
+                // Survivors handed to the caller land in the caller's region,
+                // which the caller's own boundary still has to rewrite. A fresh
+                // receipt would be younger than the caller's mark and make that
+                // boundary read the whole table, so the table keeps its old
+                // receipt and the remembered pairs stay remembered. A loop that
+                // inserts on every step drops them at its own tail boundary,
+                // which renews below; a set that has grown to half the table
+                // is renewed here too, since reading it costs as much.
+                let keep =
+                    self.active_lane_hands_to_caller && 2 * pending_scan_keys.len() <= map.len();
+                let scan_receipt = if keep {
+                    scan_receipt
+                } else {
+                    pending_scan_keys.clear();
+                    self.renewed_lane_receipt()
+                };
                 return ArenaEntry::Map {
                     map,
                     all_immediate: false,
-                    scan_receipt: self.renewed_lane_receipt(),
+                    scan_receipt,
                     pending_scan_keys,
                     holder_count,
                 };
@@ -1738,6 +1755,7 @@ impl<T: ArenaTypes> Arena<T> {
             return;
         }
         self.begin_lane_rewrite(lane_mark);
+        self.active_lane_hands_to_caller = true;
         self.rewrite_out_of_region_roots = rewrite_out_of_region_roots;
 
         let mut relocated = Self::take_u32_scratch(

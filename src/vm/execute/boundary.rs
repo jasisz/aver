@@ -109,21 +109,35 @@ impl VM {
     /// `lane_mark`. An unrelated epoch bump, such as promotion of dirty globals,
     /// is not enough: the caller may only rebase the mark when the frame's own
     /// young/yard/handoff suffix was evacuated or promoted.
-    // One over the limit, and the one over is `inplace_write_escaped`, which
-    // the evacuation below needs.
-    #[allow(clippy::too_many_arguments)]
+    ///
+    /// Each boundary moves the step's survivors above `yard_mark` and the
+    /// caller then advances the mark past them, so what a later step drops
+    /// stays below the mark until the frame returns. Every so often the
+    /// boundary therefore compacts from `yard_base` instead, keeping only what
+    /// the carried arguments still reach. It waits until the yard has grown by
+    /// a multiple of what the last such compaction cost, so the loop pays a
+    /// bounded amount per entry it allocates. The multiple is at least two and
+    /// grows with how little that compaction dropped: a loop whose values all
+    /// stay live gains little from compacting, and compacting it whenever it
+    /// doubled made it twice as slow, while one that drops what it carries
+    /// still holds no more than about three times what is live.
     pub(super) fn finalize_frame_locals_for_tail_call(
         &mut self,
-        arena_mark: u32,
-        yard_mark: u32,
-        handoff_mark: u32,
-        lane_mark: LaneMark,
-        globals_dirty: bool,
-        yard_dirty: bool,
-        inplace_write_escaped: bool,
         frame_roots: &mut [NanValue],
     ) -> bool {
-        let _ = yard_dirty;
+        let frame = self.frames.last().expect("tail call runs in a frame");
+        let CallFrame {
+            arena_mark,
+            yard_base,
+            yard_mark,
+            handoff_mark,
+            lane_base,
+            lane_mark,
+            globals_dirty,
+            inplace_write_escaped,
+            yard_budget,
+            ..
+        } = *frame;
         if globals_dirty {
             self.arena.promote_roots_to_stable(&mut self.globals, false);
         }
@@ -131,6 +145,38 @@ impl VM {
         let has_local_young = self.arena.young_len() > arena_mark as usize;
         let has_local_yard = self.arena.yard_len() > yard_mark as usize;
         let has_local_handoff = self.arena.handoff_len() > handoff_mark as usize;
+
+        const FULL_COMPACTION_SLACK: usize = 64;
+        if yard_mark > yard_base
+            && self.arena.yard_len() - yard_base as usize
+                > yard_budget as usize + FULL_COMPACTION_SLACK
+        {
+            let reads = |arena: &crate::nan_value::Arena| {
+                arena.map_entries_scanned()
+                    + arena.list_elements_scanned()
+                    + arena.vector_elements_scanned()
+            };
+            let reads_before = reads(&self.arena);
+            let held = self.arena.young_len() - arena_mark as usize + self.arena.yard_len()
+                - yard_base as usize
+                + self.arena.handoff_len()
+                - handoff_mark as usize;
+            self.arena.evacuate_frame_to_yard(
+                arena_mark,
+                yard_base,
+                handoff_mark,
+                lane_base,
+                frame_roots,
+                inplace_write_escaped,
+            );
+            let live = self.arena.yard_len() - yard_base as usize;
+            let work = live as u64 + reads(&self.arena) - reads_before;
+            let dropped = held.saturating_sub(live).max(1);
+            let multiple = (4 * live / dropped).clamp(2, 64) as u64;
+            let frame = self.frames.last_mut().expect("tail call runs in a frame");
+            frame.yard_budget = u32::try_from(live as u64 + multiple * work).unwrap_or(u32::MAX);
+            return true;
+        }
 
         if has_local_yard || has_local_handoff {
             self.arena.evacuate_frame_to_yard(

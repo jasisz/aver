@@ -16,6 +16,7 @@ impl<T: ArenaTypes> Arena<T> {
             lane_serial: 1,
             lane_clock_exhausted: false,
             active_lane_source_mark: INVALID_LANE_MARK,
+            active_lane_hands_to_caller: false,
             list_elements_copied: 0,
             list_elements_scanned: 0,
             list_elements_flattened: SharedCount::default(),
@@ -72,6 +73,7 @@ impl<T: ArenaTypes> Arena<T> {
             lane_serial: self.lane_serial,
             lane_clock_exhausted: self.lane_clock_exhausted,
             active_lane_source_mark: INVALID_LANE_MARK,
+            active_lane_hands_to_caller: false,
             list_elements_copied: 0,
             list_elements_scanned: 0,
             list_elements_flattened: SharedCount::default(),
@@ -132,6 +134,7 @@ impl<T: ArenaTypes> Arena<T> {
     #[inline]
     pub(crate) fn finish_lane_rewrite(&mut self) {
         self.active_lane_source_mark = INVALID_LANE_MARK;
+        self.active_lane_hands_to_caller = false;
     }
 
     /// Whether `receipt` proves that this immutable collection was complete by
