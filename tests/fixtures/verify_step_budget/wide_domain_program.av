@@ -16,8 +16,8 @@ verify identity law fixpoint
     identity(n) => n
 
 fn main() -> Int
-    ? "The entry hands back one point of the domain."
-    identity(1)
+    ? "The entry hands back one point of the domain, which is its exit status."
+    identity(0)
 
 verify main
-    main() => 1
+    main() => 0

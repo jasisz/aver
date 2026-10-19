@@ -1026,8 +1026,10 @@ fn the_environment_switch_puts_every_declined_write_back_on_the_copying_path() {
             cmd.env("AVER_NO_RUNTIME_MAP_OWNERSHIP", "1");
         }
         let out = cmd.output().expect("spawn aver run");
-        assert!(
-            out.status.success(),
+        // `main` answers 41, which is the process exit status.
+        assert_eq!(
+            out.status.code(),
+            Some(41),
             "`aver run --profile` failed: {}",
             String::from_utf8_lossy(&out.stderr)
         );

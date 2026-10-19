@@ -455,6 +455,7 @@ jobs:
           set -euo pipefail
           for test in \
             stdlib_spec \
+            main_exit_status_spec \
             wasip2_codegen_regression \
             wasip2_coordinator_spec \
             wasip2_http \

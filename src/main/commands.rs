@@ -1389,6 +1389,11 @@ pub(super) fn cmd_run_vm(
         .as_ref()
         .map(|(n, _)| n.clone())
         .unwrap_or_else(|| "main".to_string());
+    // `main -> Int` names the process exit status; an `--expr` entry does not.
+    let main_returns_int = entry_info.is_none()
+        && items.iter().any(|item| {
+            matches!(item, TopLevel::FnDef(fd) if fd.name == "main" && fd.return_type.trim() == "Int")
+        });
 
     let run_result = if let Some((fn_name, args)) = &entry_info {
         // Initialise top-level globals, then invoke the requested function.
@@ -1588,6 +1593,11 @@ pub(super) fn cmd_run_vm(
 
     match run_result {
         Ok(result) => {
+            if main_returns_int
+                && let aver::value::Value::Int(code) = result.to_value(&machine.arena)
+            {
+                process::exit(aver_rt::main_exit_status(&code));
+            }
             if result.is_err() {
                 let inner = result.wrapper_inner(&machine.arena);
                 let msg = inner.repr(&machine.arena);

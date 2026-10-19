@@ -17,4 +17,6 @@ fn main() -> Int
     diskProbe = match Disk.exists("aver-target-disk-probe.absent")
         true -> 1
         _ -> 0
-    String.len(stamp) + roll + diskProbe
+    match String.len(stamp) + roll + diskProbe > 0
+        true -> 0
+        false -> 1

@@ -702,7 +702,7 @@ fn run_bundle(
         })?;
     let project_config = aver::config::ProjectConfig::parse(&manifest.runtime_policy_toml)?;
     let tcp_settings = project_config.tcp_settings.native();
-    execute_wasm_gc_module(
+    let outcome = execute_wasm_gc_module(
         &engine,
         &module,
         &program_args,
@@ -716,8 +716,14 @@ fn run_bundle(
             providers,
         }),
     )
-    .map(|_| ())
-    .map_err(|error| format!("WASM execution error: {error}"))
+    .map_err(|error| format!("WASM execution error: {error}"))?;
+    // `main -> Int` names the process exit status.
+    if return_type == Type::Int
+        && let Some(code) = outcome.output.as_i64()
+    {
+        std::process::exit(aver_rt::main_exit_status(&aver_rt::AverInt::Small(code)));
+    }
+    Ok(())
 }
 
 fn is_program_work(plan: &CapabilityWasmGcPlan, name: &str) -> bool {
