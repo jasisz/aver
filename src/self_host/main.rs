@@ -57,7 +57,7 @@ fn main() {
         std::process::exit(0);
     }
     let child = std::thread::Builder::new()
-        .stack_size(256 * 1024 * 1024)
+        .stack_size(aver_rt::THREAD_STACK_BYTES)
         .spawn(|| {
             let __result = aver_generated::entry::main();
             __result.map_err(|e| e.to_string())

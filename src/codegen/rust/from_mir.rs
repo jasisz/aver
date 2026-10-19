@@ -2912,7 +2912,7 @@ fn emit_mir_independent_product(
 /// sibling captures.
 ///
 /// Returns whether a capture block was opened; the caller closes either
-/// `scope.spawn(…) };` or the capture-free `scope.spawn(…);` shape. Keeping the old
+/// `aver_rt::spawn_scoped(scope, …) };` or the capture-free `aver_rt::spawn_scoped(scope, …);` shape. Keeping the old
 /// shape for capture-free branches avoids churn in generated Rust.
 fn emit_parallel_capture_bindings(
     code: &mut String,
@@ -2925,7 +2925,7 @@ fn emit_parallel_capture_bindings(
     let thread_scope = generated_ident("s");
     code.push_str(&format!("let {handle} = "));
     if captures.is_empty() {
-        code.push_str(&format!("{thread_scope}.spawn(move || "));
+        code.push_str(&format!("aver_rt::spawn_scoped({thread_scope}, move || "));
         return false;
     }
 
@@ -2936,7 +2936,7 @@ fn emit_parallel_capture_bindings(
         let capture = materialize_scoped_thread_capture(rust_name.clone(), local, ctx);
         code.push_str(&format!("let {rust_name} = {capture}; "));
     }
-    code.push_str(&format!("{thread_scope}.spawn(move || "));
+    code.push_str(&format!("aver_rt::spawn_scoped({thread_scope}, move || "));
     true
 }
 
@@ -7061,8 +7061,8 @@ mod tests {
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("bare product should emit");
         assert_eq!(
             emit,
-            "std::thread::scope(|__s| { let __h0 = __s.spawn(move || aver_rt::AverInt::from_i64(7)); \
-             let __h1 = __s.spawn(move || aver_rt::AverInt::from_i64(9)); let __r0 = __h0.join().unwrap(); \
+            "std::thread::scope(|__s| { let __h0 = aver_rt::spawn_scoped(__s, move || aver_rt::AverInt::from_i64(7)); \
+             let __h1 = aver_rt::spawn_scoped(__s, move || aver_rt::AverInt::from_i64(9)); let __r0 = __h0.join().unwrap(); \
              let __r1 = __h1.join().unwrap(); (__r0, __r1) }) "
         );
     }
@@ -7132,11 +7132,15 @@ mod tests {
             "every move closure needs a capture cloned outside the closure: {emit}"
         );
         assert!(
-            emit.contains("let __h0 = { let height = height.clone(); __s.spawn(move ||"),
+            emit.contains(
+                "let __h0 = { let height = height.clone(); aver_rt::spawn_scoped(__s, move ||"
+            ),
             "branch 0 capture must be scoped to its spawn: {emit}"
         );
         assert!(
-            emit.contains("let __h1 = { let height = height.clone(); __s.spawn(move ||"),
+            emit.contains(
+                "let __h1 = { let height = height.clone(); aver_rt::spawn_scoped(__s, move ||"
+            ),
             "branch 1 capture must be scoped to its spawn: {emit}"
         );
     }

@@ -352,6 +352,15 @@ fn fast_plain_stdout_parity_with_vm() {
     );
 }
 
+/// The branches of an independent product run on threads of their own. They
+/// must get the stack `main` gets: on Rust's default 2 MB a recursion that
+/// `main` survives aborts the whole process inside a branch.
+#[test]
+fn deep_recursion_in_a_product_branch_matches_main_on_rust_and_vm() {
+    assert_plain_parity("tests/fixtures/deep_recursion_in_product_app.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// `Bytes.toHex` builds its string with the list-driven loop that the
 /// deforestation pass now recognises, and BOTH backends now fuse it —
 /// but by different routes. The Rust build reads the dependency out of
