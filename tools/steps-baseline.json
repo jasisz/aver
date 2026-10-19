@@ -159,6 +159,11 @@
    "sizeAfterInsert.nonEmptyAfterInsert"
   ]
  },
+ "examples/formal/opaque_result_split.av": {
+  "steps": [
+   "fitsLimit.negativeLimitRefuses"
+  ]
+ },
  "examples/formal/oracle_independent_products.av": {
   "tactic": [
    "pickPair.branchPathLaw"

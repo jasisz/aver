@@ -1,0 +1,40 @@
+module OpaqueResultSplit
+    intent =
+        "A law over a function that decodes its input with Bytes.fromHex before"
+        "it looks at anything else. Bytes is exposed opaque: outside its module"
+        "a value of it cannot be looked into, and fromHex builds one through"
+        "fromList. The law holds whatever fromHex returns, so its proof splits"
+        "on that result as it stands, Ok or Err, without opening fromHex."
+    exposes [fitsLimit, refused]
+    depends [Bytes]
+    effects []
+
+fn fitsLimit(hex: String, limit: Int) -> Result<Bool, String>
+    ? "Whether the decoded bytes fit under a limit; no limit below zero fits anything."
+    bytes = Bytes.fromHex(hex)?
+    match limit < 0
+        true -> Result.Ok(false)
+        false -> Result.Ok(Bytes.len(bytes) <= limit)
+
+verify fitsLimit
+    fitsLimit("abcd", 2) => Result.Ok(true)
+    fitsLimit("abcd", 1) => Result.Ok(false)
+    fitsLimit("abcd", -1) => Result.Ok(false)
+    fitsLimit("zz", 2) => Result.Err("Bytes.fromHex: invalid hexadecimal character 'z'")
+
+fn refused(fits: Result<Bool, String>) -> Bool
+    ? "Not under the limit, or not even hexadecimal."
+    match fits
+        Result.Ok(yes) -> Bool.not(yes)
+        Result.Err(_) -> true
+
+verify refused
+    refused(Result.Ok(false)) => true
+    refused(Result.Ok(true)) => false
+    refused(Result.Err("no")) => true
+
+verify fitsLimit law negativeLimitRefuses
+    given hex: String = ["", "abcd", "zz"]
+    given limit: Int = [-2, -1, 0, 3]
+    when limit < 0
+    refused(fitsLimit(hex, limit)) => true
