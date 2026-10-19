@@ -1,0 +1,70 @@
+module EmptyListTypes
+    intent = "Empty lists of two element types in one claim: each `[]` of a step keeps the type of the place it stands in."
+    exposes [withoutEach]
+    effects []
+
+fn retained(ops: List<Int>, target: Int) -> List<Int>
+    ? "Every op but the target, in order."
+    match ops
+        [] -> []
+        [head, ..tail] -> match head == target
+            true -> retained(tail, target)
+            false -> List.prepend(head, retained(tail, target))
+
+verify retained
+    retained([1, 2, 1], 1) => [2]
+
+verify retained law commutes
+    given ops: List<Int> = [[], [1], [1, 2]]
+    given left: Int = [1, 2]
+    given right: Int = [1, 3]
+    retained(retained(ops, left), right) => retained(retained(ops, right), left)
+
+fn without(ops: List<Int>, target: Int, acc: List<Int>) -> List<Int>
+    ? "The accumulator, then every op but the target."
+    List.concat(List.reverse(acc), retained(ops, target))
+
+verify without
+    without([1, 2, 1], 1, []) => [2]
+
+verify without law emptyAcc
+    given ops: List<Int> = [[], [1], [1, 2]]
+    given target: Int = [1, 2]
+    without(ops, target, []) => retained(ops, target)
+
+verify without law deletionCommutes
+    given ops: List<Int> = [[], [1], [1, 2]]
+    given left: Int = [1, 2]
+    given right: Int = [1, 3]
+    using [without.emptyAcc, retained.commutes]
+    without(without(ops, left, []), right, []) => without(without(ops, right, []), left, [])
+
+fn withoutEach(ops: List<Int>, items: List<List<Int>>) -> List<Int>
+    ? "One item's length deleted, then the next, over what the last one left."
+    match items
+        [] -> ops
+        [head, ..tail] -> withoutEach(without(ops, List.len(head), []), tail)
+
+verify withoutEach
+    withoutEach([1, 2], [[0]]) => [2]
+
+fn onePastManyReason(ops: List<Int>, items: List<List<Int>>, target: Int) -> Bool
+    ? "Move one deletion past a list of deletions, one item at a time."
+    match items
+        [] -> withoutEach(without(ops, target, []), items) == without(withoutEach(ops, items), target, [])
+        [head, ..tail] -> Bool.and(onePastManyReason(without(ops, List.len(head), []), tail, target), withoutEach(without(ops, target, []), items) == without(withoutEach(ops, items), target, []))
+
+verify onePastManyReason
+    onePastManyReason([1, 2], [[0]], 2) => true
+
+// The table of equal terms meets `[]` as a `List<Int>` (the accumulator)
+// and as a `List<List<Int>>` (the items): a step proof that opens
+// `withoutEach` at no items states that `[]` at the items' type.
+
+verify withoutEach law oneDeletionCommutes
+    given ops: List<Int> = [[], [1], [1, 2]]
+    given items: List<List<Int>> = [[], [[]], [[0], [0, 0]]]
+    given target: Int = [1, 2]
+    because onePastManyReason(ops, items, target)
+    using [without.deletionCommutes]
+    withoutEach(without(ops, target, []), items) => without(withoutEach(ops, items), target, [])
