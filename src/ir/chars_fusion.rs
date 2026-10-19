@@ -208,9 +208,10 @@ pub struct CharsFusionPassReport {
     /// Matches over single-character string literals rewritten to a
     /// codepoint comparison.
     pub codepoint_matches: usize,
-    /// Classifier calls inside synthesized cursor variants rewritten
-    /// from `f(<head>)` to `f__code(<code>)` — the head's codepoint
-    /// crosses the call boundary instead of a one-character string.
+    /// Head reads inside synthesized cursor variants moved onto the
+    /// head's codepoint: classifier calls rewritten from `f(<head>)` to
+    /// `f__code(<code>)`, and `__str_code1*(<head>)` decodes answered by
+    /// the code itself — no one-character string either way.
     pub codepoint_calls: usize,
     /// Per-fn codepoint-match counts, alphabetised.
     pub codepoint_matches_by_fn: BTreeMap<String, usize>,
@@ -1169,6 +1170,37 @@ enum CodeFold {
     Upper,
 }
 
+impl CodeFold {
+    /// The fold of a `__str_code1*` intrinsic, `None` for any other name.
+    fn of(intrinsic: &str) -> Option<Self> {
+        match intrinsic {
+            "__str_code1" => Some(Self::Bare),
+            "__str_code1_lower" => Some(Self::Lower),
+            "__str_code1_upper" => Some(Self::Upper),
+            _ => None,
+        }
+    }
+
+    /// What `__str_code1*` of a one-character string answers, computed
+    /// from the character's code instead: the code itself, or its fold.
+    /// `-1` folds to `-1`, so the past-the-end code stays exact too.
+    fn apply(self, code: Spanned<Expr>, line: crate::ast::SourceLine) -> Spanned<Expr> {
+        let intrinsic = match self {
+            Self::Bare => return code,
+            Self::Lower => "__str_fold_lower",
+            Self::Upper => "__str_fold_upper",
+        };
+        sp_typed(
+            Expr::FnCall(
+                crate::ast::Shared::new(sp(Expr::Ident(intrinsic.to_string()), line)),
+                crate::ast::shared::vec(vec![code]),
+            ),
+            line,
+            crate::types::Type::Int,
+        )
+    }
+}
+
 /// Detect qualifying classifiers, rewrite the peels of this run's
 /// cursor variants to bind the codepoint, and append a `<fn>__code`
 /// variant for every classifier a rewrite actually reached.
@@ -1195,10 +1227,6 @@ fn rewrite_codepoint_calls(
             callees.insert(fd.name.clone(), fold);
         }
     }
-    if callees.is_empty() {
-        return;
-    }
-
     let callee_names: HashSet<String> = callees.keys().cloned().collect();
     let cursor_names: HashSet<String> = report.synthesized.iter().cloned().collect();
     let mut used: HashSet<String> = HashSet::new();
@@ -1278,12 +1306,7 @@ fn qualifies_as_code_callee(fd: &FnDef) -> Option<CodeFold> {
     let Expr::Ident(intrinsic) = &callee.node else {
         return None;
     };
-    let fold = match intrinsic.as_str() {
-        "__str_code1" => CodeFold::Bare,
-        "__str_code1_lower" => CodeFold::Lower,
-        "__str_code1_upper" => CodeFold::Upper,
-        _ => return None,
-    };
+    let fold = CodeFold::of(intrinsic)?;
     if args.len() != 1 || !matches!(&args[0].node, Expr::Ident(n) if n == param) {
         return None;
     }
@@ -1331,24 +1354,7 @@ fn build_code_variant(fd: &FnDef, fold: CodeFold, new_name: &str) -> FnDef {
         line,
         crate::types::Type::Int,
     );
-    let new_subject = match fold {
-        CodeFold::Bare => code_read,
-        CodeFold::Lower | CodeFold::Upper => {
-            let intrinsic = if fold == CodeFold::Lower {
-                "__str_fold_lower"
-            } else {
-                "__str_fold_upper"
-            };
-            sp_typed(
-                Expr::FnCall(
-                    crate::ast::Shared::new(sp(Expr::Ident(intrinsic.to_string()), line)),
-                    crate::ast::shared::vec(vec![code_read]),
-                ),
-                line,
-                crate::types::Type::Int,
-            )
-        }
-    };
+    let new_subject = fold.apply(code_read, line);
     let new_match = sp(
         Expr::Match {
             subject: crate::ast::Shared::new(new_subject),
@@ -1431,6 +1437,15 @@ struct CodeCaller<'a> {
     calls: usize,
 }
 
+/// How one peel's head is read: handed to a classifier, decoded in place
+/// by `__str_code1*`, or needed as the string itself.
+#[derive(Default)]
+struct HeadReads {
+    calls: usize,
+    decodes: usize,
+    cold: usize,
+}
+
 /// The offset a peel's head binding reads, when `subject` is exactly
 /// the emitted `__str_cursor_head(__cur_s, <idx>)`.
 fn head_bind_offset(subject: &Spanned<Expr>) -> Option<String> {
@@ -1493,11 +1508,12 @@ impl CodeCaller<'_> {
         let code_name = format!("{CODE_BIND_PREFIX}{}", self.fresh);
 
         // Analyze and rewrite one clone of the arm body; commit only
-        // when at least one read actually crossed a call boundary —
-        // otherwise binding the code buys nothing and the head binding
-        // stays.
+        // when a read crossed a call boundary, or when the only reads
+        // were decodes — otherwise binding the code buys nothing (or
+        // trades one head for several re-materialised ones) and the
+        // head binding stays.
         let mut body = (*arms[0].body).clone();
-        let mut hot = 0usize;
+        let mut hot = HeadReads::default();
         let mut shadows: Vec<String> = Vec::new();
         let mut pending: HashSet<String> = HashSet::new();
         self.rewrite_reads(
@@ -1509,13 +1525,13 @@ impl CodeCaller<'_> {
             &mut hot,
             &mut pending,
         )?;
-        if hot == 0 {
+        if hot.calls == 0 && (hot.decodes == 0 || hot.cold > 0) {
             return Ok(());
         }
         **subject = cursor_call("__str_cursor_code", &idx, line);
         arms[0].pattern = Pattern::Ident(code_name);
         *arms[0].body = body;
-        self.calls += hot;
+        self.calls += hot.calls + hot.decodes;
         self.used_local.extend(pending);
         Ok(())
     }
@@ -1532,7 +1548,7 @@ impl CodeCaller<'_> {
         idx: &str,
         code_name: &str,
         shadows: &mut Vec<String>,
-        hot: &mut usize,
+        hot: &mut HeadReads,
         pending: &mut HashSet<String>,
     ) -> Result<(), CharsFusionDecline> {
         let line = expr.line;
@@ -1547,7 +1563,20 @@ impl CodeCaller<'_> {
             callee.node = Expr::Ident(variant.clone());
             args[0].node = Expr::Ident(code_name.to_string());
             pending.insert(variant);
-            *hot += 1;
+            hot.calls += 1;
+            return Ok(());
+        }
+        if let Some(fold) = decoded_head(&expr.node, h) {
+            if shadows.iter().any(|n| n == code_name) {
+                return Err(CharsFusionDecline::CodeBindShadowed);
+            }
+            let code = sp_typed(
+                Expr::Ident(code_name.to_string()),
+                line,
+                crate::types::Type::Int,
+            );
+            *expr = fold.apply(code, line);
+            hot.decodes += 1;
             return Ok(());
         }
         if matches!(&expr.node, Expr::Ident(x) if x == h) {
@@ -1555,6 +1584,7 @@ impl CodeCaller<'_> {
                 return Err(CharsFusionDecline::CodeBindShadowed);
             }
             *expr = cursor_call("__str_cursor_head", idx, line);
+            hot.cold += 1;
             return Ok(());
         }
         if let Expr::Match { subject, arms } = &mut expr.node {
@@ -1583,6 +1613,21 @@ impl CodeCaller<'_> {
         });
         result
     }
+}
+
+/// The fold of a `__str_code1*(h)` decode of the head itself — the
+/// subject a `match h "0" -> …` became in the codepoint rewrite, which
+/// the code bound at the peel answers without a string.
+fn decoded_head(expr: &Expr, h: &str) -> Option<CodeFold> {
+    let Expr::FnCall(callee, args) = expr else {
+        return None;
+    };
+    let Expr::Ident(intrinsic) = &callee.node else {
+        return None;
+    };
+    let fold = CodeFold::of(intrinsic)?;
+    matches!(args.as_slice(), [arg] if matches!(&arg.node, Expr::Ident(x) if x == h))
+        .then_some(fold)
 }
 
 /// Does any identifier read or tail-call target under `expr` carry
@@ -1854,10 +1899,17 @@ fn count(text: String) -> Int
         let variant = rendered_fn(&items, "digitCount__cursor");
         assert!(
             variant.contains("__str_cursor_end")
-                && variant.contains("__str_cursor_head")
+                && variant.contains("__str_cursor_code")
                 && variant.contains("__str_cursor_next"),
             "the variant walks a cursor:\n{variant}"
         );
+        // The head is only matched against single characters, so the
+        // peel binds its code and no one-character string is left.
+        assert!(
+            !variant.contains("__str_cursor_head") && !variant.contains("__str_code1"),
+            "the matched head is read as a code:\n{variant}"
+        );
+        assert_eq!(report.codepoint_calls, 1, "{report:?}");
         assert!(
             !variant.contains("EmptyList") && !variant.contains("Cons("),
             "no list pattern survives in the variant:\n{variant}"
@@ -1918,6 +1970,50 @@ fn value(digit: String) -> Int
                 && !value.contains("toLower")
                 && value.contains("Int(97)"),
             "toLower folds into the intrinsic instead of building a string:\n{value}"
+        );
+    }
+
+    /// A folded match on the head reads the folded code; a head that is
+    /// also read as a string keeps its one string instead of decoding
+    /// at the peel and rebuilding it in the arm.
+    #[test]
+    fn a_matched_head_is_decoded_only_when_nothing_needs_its_string() {
+        let source = |default: &str| {
+            format!(
+                r#"module Head
+    intent =
+        "Counts hex letters."
+    exposes [run]
+    effects []
+
+fn walk(chars: List<String>, acc: String) -> String
+    match chars
+        [] -> acc
+        [c, ..rest] -> match String.toUpper(c)
+            "A" -> walk(rest, acc + "x")
+            _ -> walk(rest, {default})
+
+fn run(text: String) -> String
+    walk(String.chars(text), "")
+"#
+            )
+        };
+        let (items, report) = fused(&source("acc"));
+        assert_eq!(report.codepoint_calls, 1, "{report:?}");
+        let variant = rendered_fn(&items, "walk__cursor");
+        assert!(
+            variant.contains("__str_cursor_code")
+                && variant.contains("__str_fold_upper")
+                && !variant.contains("__str_cursor_head"),
+            "the head is read and folded as a code:\n{variant}"
+        );
+
+        let (items, report) = fused(&source("acc + c"));
+        assert_eq!(report.codepoint_calls, 0, "{report:?}");
+        let variant = rendered_fn(&items, "walk__cursor");
+        assert!(
+            variant.contains("__str_code1_upper") && !variant.contains("__str_cursor_code"),
+            "a head read as a string stays one string:\n{variant}"
         );
     }
 
