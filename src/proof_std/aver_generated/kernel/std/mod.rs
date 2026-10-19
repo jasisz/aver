@@ -188,12 +188,21 @@ impl aver_rt::AverDisplay for Origin {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Node {
     pub goal: crate::proof_std::aver_generated::kernel::proof::Goal,
     pub path: AverStr,
     pub from: aver_rt::AverList<Origin>,
     pub depth: aver_rt::AverInt,
+}
+
+impl PartialEq for Node {
+    fn eq(&self, other: &Self) -> bool {
+        self.path == other.path
+            && self.depth == other.depth
+            && self.goal == other.goal
+            && self.from == other.from
+    }
 }
 
 impl PartialOrd for Node {

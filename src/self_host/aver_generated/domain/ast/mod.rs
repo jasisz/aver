@@ -74,11 +74,23 @@ pub struct Expr__ExprCmpSlotInt(pub CmpOp, pub aver_rt::AverInt, pub aver_rt::Av
 #[derive(Clone, Debug, PartialEq)]
 pub struct Expr__ExprCmpSlots(pub CmpOp, pub aver_rt::AverInt, pub aver_rt::AverInt);
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Expr__ExprVectorGetOrInt(pub Expr, pub Expr, pub aver_rt::AverInt);
 
-#[derive(Clone, Debug, PartialEq)]
+impl PartialEq for Expr__ExprVectorGetOrInt {
+    fn eq(&self, other: &Self) -> bool {
+        self.2 == other.2 && self.0 == other.0 && self.1 == other.1
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct Expr__ExprIntModOrInt(pub Expr, pub Expr, pub aver_rt::AverInt);
+
+impl PartialEq for Expr__ExprIntModOrInt {
+    fn eq(&self, other: &Self) -> bool {
+        self.2 == other.2 && self.0 == other.0 && self.1 == other.1
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Expr__ExprAdd(pub Expr, pub Expr);
@@ -125,8 +137,14 @@ pub struct Expr__ExprList(pub aver_rt::AverList<Expr>);
 #[derive(Clone, Debug, PartialEq)]
 pub struct Expr__ExprRecord(pub AverStr, pub aver_rt::AverList<(AverStr, Expr)>);
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Expr__ExprFieldAccess(pub Expr, pub AverStr);
+
+impl PartialEq for Expr__ExprFieldAccess {
+    fn eq(&self, other: &Self) -> bool {
+        self.1 == other.1 && self.0 == other.0
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Expr__ExprCall(pub AverStr, pub aver_rt::AverList<Expr>);
@@ -146,8 +164,14 @@ pub struct Expr__ExprMatch(pub Expr, pub aver_rt::AverList<MatchArm>);
 #[derive(Clone, Debug, PartialEq)]
 pub struct Expr__ExprPropagate(pub Expr);
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Expr__ExprIndependentProduct(pub aver_rt::AverList<Expr>, pub bool);
+
+impl PartialEq for Expr__ExprIndependentProduct {
+    fn eq(&self, other: &Self) -> bool {
+        self.1 == other.1 && self.0 == other.0
+    }
+}
 
 impl aver_rt::AverDisplay for Expr {
     fn aver_display(&self) -> String {
@@ -2623,7 +2647,7 @@ impl aver_replay::ReplayValue for FnFastPath {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct FnDef {
     pub name: AverStr,
     pub params: aver_rt::AverList<AverStr>,
@@ -2632,6 +2656,18 @@ pub struct FnDef {
     pub slotMap: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     pub fastPath: FnFastPath,
     pub tailLoop: bool,
+}
+
+impl PartialEq for FnDef {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.slotCount == other.slotCount
+            && self.tailLoop == other.tailLoop
+            && self.params == other.params
+            && self.body == other.body
+            && self.slotMap == other.slotMap
+            && self.fastPath == other.fastPath
+    }
 }
 
 impl aver_rt::AverDisplay for FnDef {

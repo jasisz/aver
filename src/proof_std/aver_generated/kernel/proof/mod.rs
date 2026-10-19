@@ -96,7 +96,7 @@ pub struct Proof__PCompute(
     pub crate::proof_std::aver_generated::kernel::term::Term,
 );
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Proof__PCases(
     pub crate::proof_std::aver_generated::kernel::term::Term,
     pub AverStr,
@@ -104,13 +104,25 @@ pub struct Proof__PCases(
     pub Proof,
 );
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+impl PartialEq for Proof__PCases {
+    fn eq(&self, other: &Self) -> bool {
+        self.1 == other.1 && self.0 == other.0 && self.2 == other.2 && self.3 == other.3
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Proof__PSplit(
     pub crate::proof_std::aver_generated::kernel::term::Term,
     pub AverStr,
     pub aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
     pub aver_rt::AverList<SplitCase>,
 );
+
+impl PartialEq for Proof__PSplit {
+    fn eq(&self, other: &Self) -> bool {
+        self.1 == other.1 && self.0 == other.0 && self.2 == other.2 && self.3 == other.3
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Proof__PHave(
@@ -145,7 +157,7 @@ pub struct Proof__PInduct(
     pub aver_rt::AverList<Case>,
 );
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Proof__PListInduct(
     pub AverStr,
     pub crate::proof_std::aver_generated::kernel::term::Term,
@@ -159,7 +171,22 @@ pub struct Proof__PListInduct(
     pub Proof,
 );
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+impl PartialEq for Proof__PListInduct {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+            && self.5 == other.5
+            && self.6 == other.6
+            && self.1 == other.1
+            && self.2 == other.2
+            && self.3 == other.3
+            && self.4 == other.4
+            && self.7 == other.7
+            && self.8 == other.8
+            && self.9 == other.9
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Proof__PListCases(
     pub AverStr,
     pub crate::proof_std::aver_generated::kernel::term::Term,
@@ -170,13 +197,25 @@ pub struct Proof__PListCases(
     pub Proof,
 );
 
+impl PartialEq for Proof__PListCases {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+            && self.4 == other.4
+            && self.5 == other.5
+            && self.1 == other.1
+            && self.2 == other.2
+            && self.3 == other.3
+            && self.6 == other.6
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Proof__PRing(
     pub crate::proof_std::aver_generated::kernel::term::Term,
     pub crate::proof_std::aver_generated::kernel::term::Term,
 );
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Proof__PLinear(
     pub crate::proof_std::aver_generated::kernel::term::Term,
     pub bool,
@@ -184,6 +223,16 @@ pub struct Proof__PLinear(
     pub aver_rt::AverIntList,
     pub aver_rt::AverList<Cut>,
 );
+
+impl PartialEq for Proof__PLinear {
+    fn eq(&self, other: &Self) -> bool {
+        self.1 == other.1
+            && self.0 == other.0
+            && self.2 == other.2
+            && self.3 == other.3
+            && self.4 == other.4
+    }
+}
 
 impl Proof {
     fn aver_key_rank(&self) -> usize {

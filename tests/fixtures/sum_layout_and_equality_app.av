@@ -1,0 +1,121 @@
+module SumLayoutAndEqualityApp
+    intent =
+        "Fixture: a sum with one large constructor, and equality on nodes"
+        "that declare their scalar fields after their children."
+    effects [Console.print]
+
+type Shape
+    Dot(Int)
+    Label(String, String, String, Int, Int, Int)
+    Blank
+
+type Tree
+    Leaf(Int)
+    Node(Tree, Tree, Int)
+
+type Mark
+    Plain
+    Bold
+
+type Cell
+    Cell(List<Int>, Float, Mark)
+    Empty
+
+record Item
+    parts: List<Int>
+    weight: Float
+    mark: Mark
+
+fn area(s: Shape) -> Int
+    ? "Reads a field of whichever constructor s is."
+    match s
+        Shape.Dot(n) -> n
+        Shape.Label(_, _, _, w, h, _) -> w * h
+        Shape.Blank -> 0
+
+verify area
+    area(Shape.Label("a", "b", "c", 2, 3, 4)) => 6
+
+fn shapes(n: Int, acc: List<Shape>) -> List<Shape>
+    ? "n shapes, every third one a label."
+    match n <= 0
+        true -> acc
+        false -> shapes(n - 1, List.prepend(shapeAt(n), acc))
+
+verify shapes
+    List.len(shapes(3, [])) => 3
+
+fn shapeAt(n: Int) -> Shape
+    ? "The shape at position n."
+    match Int.mod(n, 3) == 0
+        true -> Shape.Label("w", "{n}", "h", n, 2, 0)
+        false -> Shape.Dot(n)
+
+verify shapeAt
+    area(shapeAt(3)) => 6
+
+fn total(xs: List<Shape>, acc: Int) -> Int
+    ? "Adds the areas of xs."
+    match xs
+        [] -> acc
+        [x, ..rest] -> total(rest, acc + area(x))
+
+verify total
+    total([Shape.Dot(2), Shape.Blank], 0) => 2
+
+fn lookup(m: Map<Shape, Int>, k: Shape) -> Int
+    ? "The value under k, or -1."
+    match Map.get(m, k)
+        Option.Some(v) -> v
+        Option.None -> -1
+
+verify lookup
+    lookup(Map.fromList([(Shape.Dot(1), 2)]), Shape.Blank) => -1
+
+fn firstKey(ks: List<Shape>) -> Shape
+    ? "The first key, or Blank."
+    match ks
+        [] -> Shape.Blank
+        [k, .._] -> k
+
+verify firstKey
+    firstKey([]) => Shape.Blank
+
+fn spine(n: Int, seed: Int) -> Tree
+    ? "A spine of n nodes over Leaf(seed), its hash in the last field."
+    match n == 0
+        true -> Tree.Leaf(seed)
+        false -> node(Tree.Leaf(n), spine(n - 1, seed))
+
+verify spine
+    hash(spine(0, 7)) => 7
+
+fn node(a: Tree, b: Tree) -> Tree
+    ? "A node with the hash of its children."
+    Tree.Node(a, b, Int.mod(hash(a) * 31 + hash(b), 1000000007))
+
+verify node
+    hash(node(Tree.Leaf(0), Tree.Leaf(1))) => 1
+
+fn hash(t: Tree) -> Int
+    ? "The hash of a tree."
+    match t
+        Tree.Leaf(i) -> i
+        Tree.Node(_, _, h) -> h
+
+verify hash
+    hash(Tree.Leaf(3)) => 3
+
+fn main() -> Unit
+    ! [Console.print]
+    xs = shapes(30000, [])
+    Console.print("shapes {List.len(xs)} area {total(xs, 0)}")
+    Console.print("labels {Shape.Label("a", "b", "c", 1, 2, 3) == Shape.Label("a", "b", "c", 1, 2, 3)} {Shape.Label("a", "b", "c", 1, 2, 3) == Shape.Label("a", "b", "d", 1, 2, 3)} {Shape.Dot(1) == Shape.Blank}")
+    m = Map.fromList([(Shape.Label("z", "", "", 0, 0, 0), 1), (Shape.Dot(5), 2)])
+    Console.print("map {lookup(m, Shape.Label("z", "", "", 0, 0, 0))} {lookup(m, Shape.Dot(5))} {List.len(Map.keys(m))} first {area(firstKey(Map.keys(m)))}")
+    a = spine(2000, 1)
+    Console.print("trees {a == spine(2000, 1)} {a == spine(2000, 2)} {a == a}")
+    zero = Float.fromInt(List.len(xs) - 30000)
+    nan = zero / zero
+    Console.print("cells {Cell.Cell([1, 2], 1.5, Mark.Bold) == Cell.Cell([1, 2], 1.5, Mark.Bold)} {Cell.Cell([1], nan, Mark.Bold) == Cell.Cell([1], nan, Mark.Bold)} {Cell.Cell([1], 1.5, Mark.Plain) == Cell.Cell([1], 1.5, Mark.Bold)} {Cell.Empty == Cell.Empty}")
+    Console.print("items {Item(parts = [3], weight = 2.0, mark = Mark.Plain) == Item(parts = [3], weight = 2.0, mark = Mark.Plain)} {Item(parts = [3], weight = nan, mark = Mark.Plain) == Item(parts = [3], weight = nan, mark = Mark.Plain)} {Item(parts = [4], weight = 2.0, mark = Mark.Plain) == Item(parts = [3], weight = 2.0, mark = Mark.Plain)}")

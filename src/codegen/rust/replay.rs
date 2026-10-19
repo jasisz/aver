@@ -1,7 +1,7 @@
 use crate::ast::{TypeDef, TypeVariant};
 use crate::codegen::CodegenContext;
 
-use super::representation::{sum_is_shared, variant_field_refs};
+use super::representation::{shared_variants, variant_field_refs};
 use super::syntax::aver_name_to_rust;
 use super::types::type_annotation_to_rust_scoped;
 
@@ -192,7 +192,7 @@ pub fn emit_replay_value_impl(
             emit_record_impl(name, fields, packed_u8, ctx, scope)
         }
         TypeDef::Sum { name, variants, .. } => {
-            emit_variant_impl(name, variants, sum_is_shared(td, ctx), ctx, scope)
+            emit_variant_impl(name, variants, &shared_variants(td, ctx), ctx, scope)
         }
     }
 }
@@ -289,7 +289,7 @@ fn emit_record_impl(
 fn emit_variant_impl(
     name: &str,
     variants: &[TypeVariant],
-    shared: bool,
+    shared: &[bool],
     ctx: &CodegenContext,
     scope: Option<&str>,
 ) -> String {
@@ -301,13 +301,15 @@ fn emit_variant_impl(
     };
     let to_arms = variants
         .iter()
-        .map(|variant| emit_variant_to_arm(name, variant, shared))
+        .zip(shared)
+        .map(|(variant, &shared)| emit_variant_to_arm(name, variant, shared))
         .collect::<Vec<_>>()
         .join("\n");
 
     let from_arms = variants
         .iter()
-        .map(|variant| emit_variant_from_arm(name, variant, shared, ctx, scope))
+        .zip(shared)
+        .map(|(variant, &shared)| emit_variant_from_arm(name, variant, shared, ctx, scope))
         .collect::<Vec<_>>()
         .join("\n");
 

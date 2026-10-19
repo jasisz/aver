@@ -85,23 +85,127 @@ pub(super) fn type_def_contract(td: &TypeDef, ctx: &CodegenContext) -> Represent
     }
 }
 
-/// Whether a sum type keeps each constructor's fields behind one shared
-/// `Arc` (`T::Pair(Arc<T__Pair>)`). That is every sum a value of which can
-/// hold a value of the same type with no collection in between: directly,
-/// or through records, other sums, `Option`, `Result` or tuples. Such a
-/// type has a fixed size only through a pointer somewhere on the cycle, and
-/// with the pointer on the constructor a value used in many places is one
-/// allocation: copying it, or putting it into another constructor, copies
-/// the pointer. Recursion through `List`, `Vector` or `Map` already goes
-/// through the heap, so those types keep their fields inline.
-pub(super) fn sum_is_shared(td: &TypeDef, ctx: &CodegenContext) -> bool {
-    matches!(td, TypeDef::Sum { .. })
-        && reaches_inline(
-            td,
-            &crate::codegen::common::backend_type_def_key(ctx, td),
-            ctx,
-            &mut HashSet::new(),
-        )
+/// How much larger than every other constructor of a sum that is not
+/// recursive one must be to go behind an `Arc` (see [`shared_variants`]).
+/// The pointer costs a value of the large constructor an allocation when it
+/// is built and about 48 bytes (pointer, counts, allocator rounding); at a
+/// 64-byte difference a value of a small one saves as much, so the shared
+/// layout takes less memory whenever fewer than half the values are large.
+/// Measured on lists of two million values: building only large ones is 8%
+/// slower, only small ones 12% faster; at 32 bytes the large ones were 18%
+/// slower and the memory broke even at a quarter of them.
+const LARGE_VARIANT_BYTES: usize = 64;
+
+/// Which constructors of a sum keep their fields in one shared `Arc`
+/// (`T::Pair(Arc<T__Pair>)`), one entry per variant in declaration order.
+///
+/// Every constructor does in a sum a value of which can hold a value of the
+/// same type with no collection in between: directly, or through records,
+/// other sums, `Option`, `Result` or tuples. Such a type has a fixed size
+/// only through a pointer somewhere on the cycle, and with the pointer on the
+/// constructor a value used in many places is one allocation: copying it, or
+/// putting it into another constructor, copies the pointer. Recursion through
+/// `List`, `Vector` or `Map` already goes through the heap.
+///
+/// In any other sum only a constructor at least [`LARGE_VARIANT_BYTES`]
+/// larger than every other one does, since a value of a sum takes the room
+/// of its largest constructor: without the pointer a value of a small one
+/// would carry that room unused.
+pub(super) fn shared_variants(td: &TypeDef, ctx: &CodegenContext) -> Vec<bool> {
+    let TypeDef::Sum { variants, .. } = td else {
+        return Vec::new();
+    };
+    let key = crate::codegen::common::backend_type_def_key(ctx, td);
+    if reaches_inline(td, &key, ctx, &mut HashSet::new()) {
+        return vec![true; variants.len()];
+    }
+    let scope = crate::codegen::common::type_key_for_decl(ctx, td);
+    let sizes: Vec<usize> = variants
+        .iter()
+        .map(|variant| {
+            variant
+                .fields
+                .iter()
+                .map(|field| {
+                    inline_size(
+                        &parse_type_str(field),
+                        ctx,
+                        scope.scope_str(),
+                        &mut HashSet::from([key.clone()]),
+                    )
+                })
+                .sum()
+        })
+        .collect();
+    let largest = (0..sizes.len()).max_by_key(|&i| sizes[i]);
+    (0..sizes.len())
+        .map(|i| {
+            Some(i) == largest
+                && sizes.len() > 1
+                && sizes
+                    .iter()
+                    .enumerate()
+                    .all(|(j, &size)| j == i || size + LARGE_VARIANT_BYTES <= sizes[i])
+        })
+        .collect()
+}
+
+/// The bytes a value of `ty` takes inline in the Rust it is lowered to, as
+/// near as the size of the runtime's carriers allows: the measure
+/// [`shared_variants`] compares constructors by.
+fn inline_size(
+    ty: &Type,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+    seen: &mut HashSet<String>,
+) -> usize {
+    const WORD: usize = std::mem::size_of::<usize>();
+    match ty {
+        Type::Unit => 0,
+        Type::Bool => 1,
+        Type::Float | Type::Map(..) | Type::Vector(_) => WORD,
+        Type::Int | Type::Str | Type::Fn(..) => 2 * WORD,
+        Type::List(_) => 3 * WORD,
+        Type::Option(inner) => inline_size(inner, ctx, scope, seen) + WORD,
+        Type::Result(ok, err) => {
+            inline_size(ok, ctx, scope, seen).max(inline_size(err, ctx, scope, seen)) + WORD
+        }
+        Type::Tuple(items) => items
+            .iter()
+            .map(|item| inline_size(item, ctx, scope, seen))
+            .sum(),
+        Type::Named { id, name } => {
+            let Some(td) = named_type_def(*id, name, ctx, scope) else {
+                return 2 * WORD;
+            };
+            let key = crate::codegen::common::backend_type_def_key(ctx, td);
+            if !seen.insert(key.clone()) {
+                return WORD;
+            }
+            let decl = crate::codegen::common::type_key_for_decl(ctx, td);
+            let mut field_size =
+                |field: &String| inline_size(&parse_type_str(field), ctx, decl.scope_str(), seen);
+            let size = match td {
+                TypeDef::Product { fields, .. } => fields.iter().map(|(_, f)| field_size(f)).sum(),
+                TypeDef::Sum { variants, .. } => {
+                    let shared = shared_variants(td, ctx);
+                    variants
+                        .iter()
+                        .zip(shared)
+                        .map(|(variant, shared)| match shared {
+                            true => WORD,
+                            false => variant.fields.iter().map(&mut field_size).sum(),
+                        })
+                        .max()
+                        .unwrap_or(0)
+                        + WORD
+                }
+            };
+            seen.remove(&key);
+            size
+        }
+        Type::Var(_) | Type::Invalid => WORD,
+    }
 }
 
 /// What a match on `&self` writes after a constructor, and a reference to
@@ -117,9 +221,74 @@ pub(super) fn variant_field_refs(shared: bool, stem: &str, count: usize) -> (Str
     }
 }
 
-/// [`sum_is_shared`] for the type a resolved constructor belongs to.
-pub(super) fn type_id_is_shared(id: crate::ir::TypeId, ctx: &CodegenContext) -> bool {
-    named_type_def(Some(id), "", ctx, None).is_some_and(|td| sum_is_shared(td, ctx))
+/// The order a generated `==` compares the fields `types` of one record or
+/// constructor in, when it is not the declared one: the fields that compare
+/// at once (scalars, strings, and anything built only from them, such as a
+/// sum whose constructors have no fields) first, then the ones that walk a
+/// collection or a value of a sum with fields. A node that keeps its hash
+/// after its children then tells two different nodes apart at the hash
+/// instead of after walking both subtrees. Every field is still compared and
+/// none has an effect, so the answer is the one in declared order.
+pub(super) fn cheap_fields_first(
+    types: &[&str],
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> Option<Vec<usize>> {
+    let cheap: Vec<bool> = types
+        .iter()
+        .map(|ty| compares_at_once(&parse_type_str(ty), ctx, scope, &mut HashSet::new()))
+        .collect();
+    let order: Vec<usize> = (0..types.len())
+        .filter(|&i| cheap[i])
+        .chain((0..types.len()).filter(|&i| !cheap[i]))
+        .collect();
+    order
+        .iter()
+        .enumerate()
+        .any(|(i, &f)| i != f)
+        .then_some(order)
+}
+
+fn compares_at_once(
+    ty: &Type,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+    seen: &mut HashSet<String>,
+) -> bool {
+    match ty {
+        Type::Int | Type::Float | Type::Bool | Type::Unit | Type::Str => true,
+        Type::Option(inner) => compares_at_once(inner, ctx, scope, seen),
+        Type::Result(ok, err) => {
+            compares_at_once(ok, ctx, scope, seen) && compares_at_once(err, ctx, scope, seen)
+        }
+        Type::Tuple(items) => items
+            .iter()
+            .all(|item| compares_at_once(item, ctx, scope, seen)),
+        Type::Named { id, name } => named_type_def(*id, name, ctx, scope).is_some_and(|td| {
+            let key = crate::codegen::common::backend_type_def_key(ctx, td);
+            if !seen.insert(key.clone()) {
+                return false;
+            }
+            let decl = crate::codegen::common::type_key_for_decl(ctx, td);
+            let cheap = fields_of(td)
+                .all(|field| compares_at_once(&parse_type_str(field), ctx, decl.scope_str(), seen));
+            seen.remove(&key);
+            cheap
+        }),
+        Type::List(_) | Type::Vector(_) | Type::Map(..) | Type::Fn(..) => false,
+        Type::Var(_) | Type::Invalid => false,
+    }
+}
+
+/// [`shared_variants`] for one constructor of the type `id`.
+pub(super) fn ctor_is_shared(id: crate::ir::TypeId, variant: &str, ctx: &CodegenContext) -> bool {
+    named_type_def(Some(id), "", ctx, None).is_some_and(|td| match td {
+        TypeDef::Sum { variants, .. } => variants
+            .iter()
+            .zip(shared_variants(td, ctx))
+            .any(|(v, shared)| shared && v.name == variant),
+        TypeDef::Product { .. } => false,
+    })
 }
 
 fn reaches_inline(

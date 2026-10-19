@@ -2018,11 +2018,15 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                     } else {
                         qualified
                     };
-                    // A shared sum's fields go into one `Arc` (see
-                    // `representation::sum_is_shared`). The coverage walk has
-                    // no codegen context and only asks whether this renders.
+                    // A shared constructor's fields go into one `Arc` (see
+                    // `representation::shared_variants`). The coverage walk
+                    // has no codegen context and only asks whether this renders.
                     let shared = emit_ctx.codegen.is_some_and(|cg| {
-                        super::representation::type_id_is_shared(ctor_entry.owning_type, cg)
+                        super::representation::ctor_is_shared(
+                            ctor_entry.owning_type,
+                            &variant_name,
+                            cg,
+                        )
                     });
                     if con.args.is_empty() {
                         Some(format!("{}::{}", head, variant_name))

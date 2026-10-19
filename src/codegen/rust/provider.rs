@@ -541,7 +541,7 @@ pub(super) fn emit_represented_type_codec(
         TypeDef::Sum { name, variants, .. } => emit_sum_codec(
             name,
             variants,
-            super::representation::sum_is_shared(type_def, ctx),
+            &super::representation::shared_variants(type_def, ctx),
             &canonical,
             &field_type,
         ),
@@ -619,20 +619,21 @@ fn emit_record_codec(
 fn emit_sum_codec(
     name: &str,
     variants: &[TypeVariant],
-    shared: bool,
+    shared: &[bool],
     canonical: &str,
     field_type: &dyn Fn(&str) -> String,
 ) -> String {
     let encode_arms = variants
         .iter()
-        .map(|variant| {
+        .zip(shared)
+        .map(|(variant, &shared)| {
             let (bindings, fields) = variant_field_refs(shared, "field", variant.fields.len());
             let pattern = if fields.is_empty() {
                 format!("Self::{}", variant.name)
             } else {
                 format!("Self::{}({bindings})", variant.name)
             };
-            // A shared sum's fields sit behind the constructor's `Arc`.
+            // A shared constructor's fields sit behind the constructor's `Arc`.
             let fields = match shared {
                 true => fields.iter().map(|f| format!("{f}.clone()")).collect(),
                 false => fields,
@@ -651,7 +652,8 @@ fn emit_sum_codec(
         .join("\n");
     let decode_arms = variants
         .iter()
-        .map(|variant| {
+        .zip(shared)
+        .map(|(variant, &shared)| {
             let decoded = variant
                 .fields
                 .iter()

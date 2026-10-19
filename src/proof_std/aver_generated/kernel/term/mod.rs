@@ -222,8 +222,14 @@ pub struct Term__TStr(pub AverStr);
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Term__TVar(pub AverStr);
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Term__TGet(pub Term, pub AverStr);
+
+impl PartialEq for Term__TGet {
+    fn eq(&self, other: &Self) -> bool {
+        self.1 == other.1 && self.0 == other.0
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Term__TCall(pub AverStr, pub aver_rt::AverList<Term>);

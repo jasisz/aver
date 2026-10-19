@@ -1,8 +1,8 @@
 use super::emit_ctx::{EmitCtx, should_borrow_param};
 use super::expr::{aver_name_to_rust, classify_thin_fn_def_for_rust, explicit_parameter_pattern};
 use super::representation::{
-    RepresentationCapabilities, RepresentationContract, sum_is_shared, type_def_contract,
-    variant_field_refs,
+    RepresentationCapabilities, RepresentationContract, cheap_fields_first, shared_variants,
+    type_def_contract, variant_field_refs,
 };
 use super::types::type_annotation_to_rust_scoped;
 use crate::ast::*;
@@ -84,7 +84,7 @@ fn emit_type_def_with_visibility(td: &TypeDef, public: bool, ctx: &CodegenContex
             ctx,
             scope,
             representation,
-            sum_is_shared(td, ctx),
+            &shared_variants(td, ctx),
         ),
         TypeDef::Product { name, fields, .. } => emit_product_type(
             name,
@@ -116,6 +116,37 @@ fn derive_line(capabilities: RepresentationCapabilities) -> String {
     format!("#[derive({})]", traits.join(", "))
 }
 
+/// `capabilities` with `PartialEq` left out of the derive when the type gets
+/// its own `impl PartialEq` instead (it still promises it).
+fn without_derived_eq(
+    capabilities: RepresentationCapabilities,
+    own_impl: bool,
+) -> RepresentationCapabilities {
+    RepresentationCapabilities {
+        partial_eq: capabilities.partial_eq && !own_impl,
+        ..capabilities
+    }
+}
+
+/// `a(i) == b(i) && ...` over the fields in `order`.
+fn fields_equal(
+    order: &[usize],
+    a: impl Fn(usize) -> String,
+    b: impl Fn(usize) -> String,
+) -> String {
+    let tests: Vec<String> = order
+        .iter()
+        .map(|&i| format!("{} == {}", a(i), b(i)))
+        .collect();
+    tests.join(" && ")
+}
+
+fn partial_eq_impl(name: &str, test: &str) -> String {
+    format!(
+        "\nimpl PartialEq for {name} {{\n    fn eq(&self, other: &Self) -> bool {{\n        {test}\n    }}\n}}\n"
+    )
+}
+
 fn emit_sum_type(
     name: &str,
     variants: &[TypeVariant],
@@ -123,19 +154,34 @@ fn emit_sum_type(
     ctx: &CodegenContext,
     scope: Option<&str>,
     representation: RepresentationContract,
-    shared: bool,
+    shared: &[bool],
 ) -> String {
     let mut out = String::new();
     let visibility = visibility_prefix(public);
     let capabilities = representation.capabilities;
-    // A shared sum keeps each constructor's fields in one
-    // `{name}__{variant}` struct behind an `Arc` (see `sum_is_shared`).
+    // A shared constructor keeps its fields in one `{name}__{variant}`
+    // struct behind an `Arc` (see `shared_variants`).
     let mut payloads = String::new();
-    writeln!(out, "{}", derive_line(capabilities)).unwrap();
-    writeln!(out, "{}enum {} {{", visibility, name).unwrap();
-    for v in variants {
+    // The order `==` compares each constructor's fields in, where it is not
+    // the declared one (see `cheap_fields_first`).
+    let eq_orders: Vec<Option<Vec<usize>>> = variants
+        .iter()
+        .map(|v| {
+            let types: Vec<&str> = v.fields.iter().map(String::as_str).collect();
+            capabilities
+                .partial_eq
+                .then(|| cheap_fields_first(&types, ctx, scope))
+                .flatten()
+        })
+        .collect();
+    let inline_eq = shared
+        .iter()
+        .zip(&eq_orders)
+        .any(|(shared, order)| !shared && order.is_some());
+    let mut body = String::new();
+    for ((v, &shared), order) in variants.iter().zip(shared).zip(&eq_orders) {
         if v.fields.is_empty() {
-            writeln!(out, "    {},", v.name).unwrap();
+            writeln!(body, "    {},", v.name).unwrap();
             continue;
         }
         let field_types: Vec<String> = v
@@ -145,24 +191,64 @@ fn emit_sum_type(
             .collect();
         if shared {
             let payload = format!("{name}__{}", v.name);
-            writeln!(out, "    {}(std::sync::Arc<{payload}>),", v.name).unwrap();
+            writeln!(body, "    {}(std::sync::Arc<{payload}>),", v.name).unwrap();
             let fields: Vec<String> = field_types
                 .iter()
                 .map(|ty| format!("{visibility}{ty}"))
                 .collect();
-            writeln!(payloads, "\n{}", derive_line(capabilities)).unwrap();
+            let derived = derive_line(without_derived_eq(capabilities, order.is_some()));
+            writeln!(payloads, "\n{derived}").unwrap();
             writeln!(
                 payloads,
                 "{visibility}struct {payload}({});",
                 fields.join(", ")
             )
             .unwrap();
+            if let Some(order) = order {
+                let test = fields_equal(order, |i| format!("self.{i}"), |i| format!("other.{i}"));
+                payloads.push_str(&partial_eq_impl(&payload, &test));
+            }
         } else {
-            writeln!(out, "    {}({}),", v.name, field_types.join(", ")).unwrap();
+            writeln!(body, "    {}({}),", v.name, field_types.join(", ")).unwrap();
         }
     }
-    writeln!(out, "}}").unwrap();
+    let derived = derive_line(without_derived_eq(capabilities, inline_eq));
+    writeln!(out, "{derived}\n{visibility}enum {name} {{\n{body}}}").unwrap();
     out.push_str(&payloads);
+    if inline_eq {
+        let mut arms = String::new();
+        for ((v, &shared), order) in variants.iter().zip(shared).zip(&eq_orders) {
+            // A shared constructor compares its one `Arc`, equal at once
+            // when both sides are the same allocation.
+            let order = match (shared, order) {
+                _ if v.fields.is_empty() => Vec::new(),
+                (true, _) => vec![0],
+                (false, Some(order)) => order.clone(),
+                (false, None) => (0..v.fields.len()).collect(),
+            };
+            let binds = |stem: &str| match order.len() {
+                0 => String::new(),
+                count => {
+                    let names: Vec<String> = (0..count).map(|i| format!("{stem}{i}")).collect();
+                    format!("({})", names.join(", "))
+                }
+            };
+            let test = match order.len() {
+                0 => "true".to_string(),
+                _ => fields_equal(&order, |i| format!("a{i}"), |i| format!("b{i}")),
+            };
+            writeln!(
+                arms,
+                "            ({name}::{0}{1}, {name}::{0}{2}) => {test},",
+                v.name,
+                binds("a"),
+                binds("b")
+            )
+            .unwrap();
+        }
+        let test = format!("match (self, other) {{\n{arms}            _ => false,\n        }}");
+        out.push_str(&partial_eq_impl(name, &test));
+    }
 
     // A variant can key a map, and a map iterates sorted by key. The order is
     // by CONSTRUCTOR NAME and then by payload, not by the order the
@@ -171,13 +257,14 @@ fn emit_sum_type(
     // ordering by it would make reordering two constructors change how every
     // map on this key iterates.
     if capabilities.eq && capabilities.hash && representation.orderable {
-        let mut by_name: Vec<&TypeVariant> = variants.iter().collect();
-        by_name.sort_by(|a, b| a.name.cmp(&b.name));
+        let mut by_name: Vec<(&TypeVariant, bool)> =
+            variants.iter().zip(shared.iter().copied()).collect();
+        by_name.sort_by(|(a, _), (b, _)| a.name.cmp(&b.name));
         writeln!(out).unwrap();
         writeln!(out, "impl {} {{", name).unwrap();
         writeln!(out, "    fn aver_key_rank(&self) -> usize {{").unwrap();
         writeln!(out, "        match self {{").unwrap();
-        for (rank, v) in by_name.iter().enumerate() {
+        for (rank, (v, _)) in by_name.iter().enumerate() {
             if v.fields.is_empty() {
                 writeln!(out, "            {}::{} => {},", name, v.name, rank).unwrap();
             } else {
@@ -213,7 +300,7 @@ fn emit_sum_type(
         writeln!(out, "            return rank;").unwrap();
         writeln!(out, "        }}").unwrap();
         writeln!(out, "        match (self, other) {{").unwrap();
-        for v in &by_name {
+        for &(v, shared) in &by_name {
             if v.fields.is_empty() {
                 continue;
             }
@@ -243,7 +330,7 @@ fn emit_sum_type(
         writeln!(out, "impl aver_rt::AverDisplay for {} {{", name).unwrap();
         writeln!(out, "    fn aver_display(&self) -> String {{").unwrap();
         writeln!(out, "        match self {{").unwrap();
-        for v in variants {
+        for (v, &shared) in variants.iter().zip(shared) {
             if v.fields.is_empty() {
                 writeln!(
                     out,
@@ -304,7 +391,13 @@ fn emit_product_type(
     let mut out = String::new();
     let visibility = visibility_prefix(public);
     let capabilities = representation.capabilities;
-    writeln!(out, "{}", derive_line(capabilities)).unwrap();
+    let types: Vec<&str> = fields.iter().map(|(_, ty)| ty.as_str()).collect();
+    let eq_order = capabilities
+        .partial_eq
+        .then(|| cheap_fields_first(&types, ctx, scope))
+        .flatten();
+    let derived = without_derived_eq(capabilities, eq_order.is_some());
+    writeln!(out, "{}", derive_line(derived)).unwrap();
     writeln!(out, "{}struct {} {{", visibility, name).unwrap();
     for (field_name, field_type) in fields {
         let rust_type = if packed_u8 {
@@ -324,6 +417,15 @@ fn emit_product_type(
         .unwrap();
     }
     writeln!(out, "}}").unwrap();
+    if let Some(order) = eq_order {
+        let field = |i: usize| aver_name_to_rust(&fields[i].0);
+        let test = fields_equal(
+            &order,
+            |i| format!("self.{}", field(i)),
+            |i| format!("other.{}", field(i)),
+        );
+        out.push_str(&partial_eq_impl(name, &test));
+    }
 
     // A record can key a map, and a map iterates sorted by key, so the
     // generated type needs the same order the VM and the proof model state.

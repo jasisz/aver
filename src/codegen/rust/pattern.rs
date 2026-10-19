@@ -158,8 +158,8 @@ fn emit_constructor_pattern(
     }
 }
 
-/// The one binder a constructor pattern of a shared sum writes for the `Arc`
-/// that holds its fields (see `representation::sum_is_shared`), or `None`
+/// The one binder a constructor pattern writes for the `Arc` that holds its
+/// fields (see `representation::shared_variants`), or `None`
 /// when the constructor keeps its fields inline. It is named after the first
 /// field the arm binds, so two constructors in one tuple pattern get two
 /// names; an arm that binds no field matches `_`.
@@ -168,10 +168,14 @@ pub(super) fn shared_fields_binder(
     bindings: &[String],
     ctx: &CodegenContext,
 ) -> Option<String> {
-    let ResolvedCtor::User { type_id, .. } = ctor else {
+    let ResolvedCtor::User {
+        type_id, ctor_id, ..
+    } = ctor
+    else {
         return None;
     };
-    if bindings.is_empty() || !super::representation::type_id_is_shared(*type_id, ctx) {
+    let variant = &ctx.symbol_table.ctor_entry(*ctor_id).name;
+    if bindings.is_empty() || !super::representation::ctor_is_shared(*type_id, variant, ctx) {
         return None;
     }
     Some(match bindings.iter().find(|b| *b != "_") {
