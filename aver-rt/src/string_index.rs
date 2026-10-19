@@ -22,15 +22,22 @@ pub struct StringIndex {
 
 #[derive(Clone, Debug)]
 enum Boundaries {
+    /// Every scalar value is one byte, so position `i` is byte `i`.
+    Ascii(usize),
     U32(Arc<[u32]>),
     Usize(Arc<[usize]>),
 }
 
 impl StringIndex {
-    /// Build the codepoint-to-byte table in one UTF-8 pass.
+    /// Build the codepoint-to-byte table in one UTF-8 pass; an ASCII string
+    /// needs no table.
     pub fn new(text: &str) -> Self {
-        if u32::try_from(text.len()).is_ok() {
-            let mut boundaries = Vec::new();
+        if text.is_ascii() {
+            Self {
+                boundaries: Boundaries::Ascii(text.len()),
+            }
+        } else if u32::try_from(text.len()).is_ok() {
+            let mut boundaries = Vec::with_capacity(text.len() + 1);
             boundaries.extend(text.char_indices().map(|(byte, _)| {
                 u32::try_from(byte).expect("byte offset is bounded by the checked string length")
             }));
@@ -41,7 +48,7 @@ impl StringIndex {
                 boundaries: Boundaries::U32(boundaries.into()),
             }
         } else {
-            let mut boundaries = Vec::new();
+            let mut boundaries = Vec::with_capacity(text.len() + 1);
             boundaries.extend(text.char_indices().map(|(byte, _)| byte));
             boundaries.push(text.len());
             Self {
@@ -53,6 +60,7 @@ impl StringIndex {
     /// Number of Unicode scalar values in the indexed string.
     pub fn char_len(&self) -> usize {
         match &self.boundaries {
+            Boundaries::Ascii(len) => *len,
             Boundaries::U32(items) => items.len().saturating_sub(1),
             Boundaries::Usize(items) => items.len().saturating_sub(1),
         }
@@ -61,6 +69,7 @@ impl StringIndex {
     /// UTF-8 byte boundary for a clamped codepoint position.
     fn boundary(&self, index: usize) -> usize {
         match &self.boundaries {
+            Boundaries::Ascii(_) => index,
             Boundaries::U32(items) => items[index] as usize,
             Boundaries::Usize(items) => items[index],
         }
