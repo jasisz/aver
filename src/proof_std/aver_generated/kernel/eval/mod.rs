@@ -57,19 +57,28 @@ impl aver_rt::AverDisplay for Val {
 pub fn evalClosed(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) -> Option<Val> {
     crate::proof_std::cancel_checkpoint();
     match t.clone() {
-        crate::proof_std::aver_generated::kernel::term::Term::TInt(n) => {
+        crate::proof_std::aver_generated::kernel::term::Term::TInt(__n_fields) => {
+            let n = __n_fields.0.clone();
             Some(crate::proof_std::aver_generated::kernel::eval::Val::VInt(n))
         }
-        crate::proof_std::aver_generated::kernel::term::Term::TBool(b) => Some(
-            crate::proof_std::aver_generated::kernel::eval::Val::VBool(b),
-        ),
-        crate::proof_std::aver_generated::kernel::term::Term::TOp(o, a, b) => {
-            let a = (*a).clone();
-            let b = (*b).clone();
+        crate::proof_std::aver_generated::kernel::term::Term::TBool(__b_fields) => {
+            let b = __b_fields.0.clone();
+            Some(crate::proof_std::aver_generated::kernel::eval::Val::VBool(
+                b,
+            ))
+        }
+        crate::proof_std::aver_generated::kernel::term::Term::TOp(__o_fields) => {
+            let o = __o_fields.0.clone();
+            let a = __o_fields.1.clone();
+            let b = __o_fields.2.clone();
             match a.clone() {
-                crate::proof_std::aver_generated::kernel::term::Term::TCtor(c, xs) => {
+                crate::proof_std::aver_generated::kernel::term::Term::TCtor(__c_fields) => {
+                    let c = __c_fields.0.clone();
+                    let xs = __c_fields.1.clone();
                     match b.clone() {
-                        crate::proof_std::aver_generated::kernel::term::Term::TCtor(d, ys) => {
+                        crate::proof_std::aver_generated::kernel::term::Term::TCtor(__d_fields) => {
+                            let d = __d_fields.0.clone();
+                            let ys = __d_fields.1.clone();
                             crate::proof_std::aver_generated::kernel::eval::ctorOp(
                                 o,
                                 &crate::proof_std::aver_generated::kernel::eval::sameCtor(
@@ -94,18 +103,21 @@ pub fn evalClosed(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) 
                 ),
             }
         }
-        crate::proof_std::aver_generated::kernel::term::Term::TNeg(a) => {
-            let a = (*a).clone();
+        crate::proof_std::aver_generated::kernel::term::Term::TNeg(__a_fields) => {
+            let a = __a_fields.0.clone();
             crate::proof_std::aver_generated::kernel::eval::negated(
                 &crate::proof_std::aver_generated::kernel::eval::evalClosed(&a),
             )
         }
-        crate::proof_std::aver_generated::kernel::term::Term::TList(xs) => {
+        crate::proof_std::aver_generated::kernel::term::Term::TList(__xs_fields) => {
+            let xs = __xs_fields.0.clone();
             crate::proof_std::aver_generated::kernel::eval::listOf(
                 &crate::proof_std::aver_generated::kernel::eval::evalAll(&xs),
             )
         }
-        crate::proof_std::aver_generated::kernel::term::Term::TBi(name, args) => {
+        crate::proof_std::aver_generated::kernel::term::Term::TBi(__name_fields) => {
+            let name = __name_fields.0.clone();
+            let args = __name_fields.1.clone();
             crate::proof_std::aver_generated::kernel::eval::evalBuiltin(name, &args)
         }
         _ => None,

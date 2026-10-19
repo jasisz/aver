@@ -9,17 +9,44 @@ pub enum Ty {
     TyStr,
     TyFloat,
     TyUnit,
-    TyList(std::sync::Arc<Ty>),
-    TyOption(std::sync::Arc<Ty>),
-    TyResult(std::sync::Arc<Ty>, std::sync::Arc<Ty>),
-    TyMap(std::sync::Arc<Ty>, std::sync::Arc<Ty>),
-    TyVector(std::sync::Arc<Ty>),
-    TyTuple(aver_rt::AverList<Ty>),
-    TyNamed(AverStr),
+    TyList(std::sync::Arc<Ty__TyList>),
+    TyOption(std::sync::Arc<Ty__TyOption>),
+    TyResult(std::sync::Arc<Ty__TyResult>),
+    TyMap(std::sync::Arc<Ty__TyMap>),
+    TyVector(std::sync::Arc<Ty__TyVector>),
+    TyTuple(std::sync::Arc<Ty__TyTuple>),
+    TyNamed(std::sync::Arc<Ty__TyNamed>),
     TyAny,
-    TyVar(AverStr, bool),
-    TyRigid(AverStr, bool),
+    TyVar(std::sync::Arc<Ty__TyVar>),
+    TyRigid(std::sync::Arc<Ty__TyRigid>),
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Ty__TyList(pub Ty);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Ty__TyOption(pub Ty);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Ty__TyResult(pub Ty, pub Ty);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Ty__TyMap(pub Ty, pub Ty);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Ty__TyVector(pub Ty);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Ty__TyTuple(pub aver_rt::AverList<Ty>);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Ty__TyNamed(pub AverStr);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Ty__TyVar(pub AverStr, pub bool);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Ty__TyRigid(pub AverStr, pub bool);
 
 impl Ty {
     fn aver_key_rank(&self) -> usize {
@@ -56,30 +83,32 @@ impl Ord for Ty {
             return rank;
         }
         match (self, other) {
-            (Ty::TyList(a0), Ty::TyList(b0)) => std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0)),
-            (Ty::TyMap(a0, a1), Ty::TyMap(b0, b1)) => std::cmp::Ordering::Equal
-                .then_with(|| a0.cmp(b0))
-                .then_with(|| a1.cmp(b1)),
-            (Ty::TyNamed(a0), Ty::TyNamed(b0)) => {
-                std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
+            (Ty::TyList(a), Ty::TyList(b)) => {
+                std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Ty::TyOption(a0), Ty::TyOption(b0)) => {
-                std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
+            (Ty::TyMap(a), Ty::TyMap(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1))),
+            (Ty::TyNamed(a), Ty::TyNamed(b)) => {
+                std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Ty::TyResult(a0, a1), Ty::TyResult(b0, b1)) => std::cmp::Ordering::Equal
-                .then_with(|| a0.cmp(b0))
-                .then_with(|| a1.cmp(b1)),
-            (Ty::TyRigid(a0, a1), Ty::TyRigid(b0, b1)) => std::cmp::Ordering::Equal
-                .then_with(|| a0.cmp(b0))
-                .then_with(|| a1.cmp(b1)),
-            (Ty::TyTuple(a0), Ty::TyTuple(b0)) => {
-                std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
+            (Ty::TyOption(a), Ty::TyOption(b)) => {
+                std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Ty::TyVar(a0, a1), Ty::TyVar(b0, b1)) => std::cmp::Ordering::Equal
-                .then_with(|| a0.cmp(b0))
-                .then_with(|| a1.cmp(b1)),
-            (Ty::TyVector(a0), Ty::TyVector(b0)) => {
-                std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
+            (Ty::TyResult(a), Ty::TyResult(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1))),
+            (Ty::TyRigid(a), Ty::TyRigid(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1))),
+            (Ty::TyTuple(a), Ty::TyTuple(b)) => {
+                std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
+            }
+            (Ty::TyVar(a), Ty::TyVar(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1))),
+            (Ty::TyVector(a), Ty::TyVector(b)) => {
+                std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
             _ => std::cmp::Ordering::Equal,
         }
@@ -94,27 +123,27 @@ impl aver_rt::AverDisplay for Ty {
             Ty::TyStr => "TyStr".to_string(),
             Ty::TyFloat => "TyFloat".to_string(),
             Ty::TyUnit => "TyUnit".to_string(),
-            Ty::TyList(f0) => format!("TyList({})", f0.aver_display_inner()),
-            Ty::TyOption(f0) => format!("TyOption({})", f0.aver_display_inner()),
-            Ty::TyResult(f0, f1) => format!(
+            Ty::TyList(f) => format!("TyList({})", (&f.0).aver_display_inner()),
+            Ty::TyOption(f) => format!("TyOption({})", (&f.0).aver_display_inner()),
+            Ty::TyResult(f) => format!(
                 "TyResult({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Ty::TyMap(f0, f1) => format!(
+            Ty::TyMap(f) => format!(
                 "TyMap({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Ty::TyVector(f0) => format!("TyVector({})", f0.aver_display_inner()),
-            Ty::TyTuple(f0) => format!("TyTuple({})", f0.aver_display_inner()),
-            Ty::TyNamed(f0) => format!("TyNamed({})", f0.aver_display_inner()),
+            Ty::TyVector(f) => format!("TyVector({})", (&f.0).aver_display_inner()),
+            Ty::TyTuple(f) => format!("TyTuple({})", (&f.0).aver_display_inner()),
+            Ty::TyNamed(f) => format!("TyNamed({})", (&f.0).aver_display_inner()),
             Ty::TyAny => "TyAny".to_string(),
-            Ty::TyVar(f0, f1) => format!(
+            Ty::TyVar(f) => format!(
                 "TyVar({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Ty::TyRigid(f0, f1) => format!(
+            Ty::TyRigid(f) => format!(
                 "TyRigid({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
         }
     }
@@ -161,25 +190,73 @@ impl aver_rt::AverDisplay for TypedVar {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Term {
-    TInt(aver_rt::AverInt),
-    TBool(bool),
-    TStr(AverStr),
+    TInt(std::sync::Arc<Term__TInt>),
+    TBool(std::sync::Arc<Term__TBool>),
+    TStr(std::sync::Arc<Term__TStr>),
     TUnit,
-    TVar(AverStr),
+    TVar(std::sync::Arc<Term__TVar>),
     THole,
-    TGet(std::sync::Arc<Term>, AverStr),
-    TCall(AverStr, aver_rt::AverList<Term>),
-    TBi(AverStr, aver_rt::AverList<Term>),
-    TOp(AverStr, std::sync::Arc<Term>, std::sync::Arc<Term>),
-    TNeg(std::sync::Arc<Term>),
-    TCtor(AverStr, aver_rt::AverList<Term>),
-    TMatch(std::sync::Arc<Term>, aver_rt::AverList<Arm>),
-    TParts(aver_rt::AverList<Term>),
-    TList(aver_rt::AverList<Term>),
-    TTuple(aver_rt::AverList<Term>),
-    TRec(AverStr, aver_rt::AverList<Field>),
-    TUpd(AverStr, std::sync::Arc<Term>, aver_rt::AverList<Field>),
+    TGet(std::sync::Arc<Term__TGet>),
+    TCall(std::sync::Arc<Term__TCall>),
+    TBi(std::sync::Arc<Term__TBi>),
+    TOp(std::sync::Arc<Term__TOp>),
+    TNeg(std::sync::Arc<Term__TNeg>),
+    TCtor(std::sync::Arc<Term__TCtor>),
+    TMatch(std::sync::Arc<Term__TMatch>),
+    TParts(std::sync::Arc<Term__TParts>),
+    TList(std::sync::Arc<Term__TList>),
+    TTuple(std::sync::Arc<Term__TTuple>),
+    TRec(std::sync::Arc<Term__TRec>),
+    TUpd(std::sync::Arc<Term__TUpd>),
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Term__TInt(pub aver_rt::AverInt);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Term__TBool(pub bool);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Term__TStr(pub AverStr);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Term__TVar(pub AverStr);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Term__TGet(pub Term, pub AverStr);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Term__TCall(pub AverStr, pub aver_rt::AverList<Term>);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Term__TBi(pub AverStr, pub aver_rt::AverList<Term>);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Term__TOp(pub AverStr, pub Term, pub Term);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Term__TNeg(pub Term);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Term__TCtor(pub AverStr, pub aver_rt::AverList<Term>);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Term__TMatch(pub Term, pub aver_rt::AverList<Arm>);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Term__TParts(pub aver_rt::AverList<Term>);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Term__TList(pub aver_rt::AverList<Term>);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Term__TTuple(pub aver_rt::AverList<Term>);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Term__TRec(pub AverStr, pub aver_rt::AverList<Field>);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Term__TUpd(pub AverStr, pub Term, pub aver_rt::AverList<Field>);
 
 impl Term {
     fn aver_key_rank(&self) -> usize {
@@ -219,48 +296,56 @@ impl Ord for Term {
             return rank;
         }
         match (self, other) {
-            (Term::TBi(a0, a1), Term::TBi(b0, b1)) => std::cmp::Ordering::Equal
-                .then_with(|| a0.cmp(b0))
-                .then_with(|| a1.cmp(b1)),
-            (Term::TBool(a0), Term::TBool(b0)) => {
-                std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
+            (Term::TBi(a), Term::TBi(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1))),
+            (Term::TBool(a), Term::TBool(b)) => {
+                std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Term::TCall(a0, a1), Term::TCall(b0, b1)) => std::cmp::Ordering::Equal
-                .then_with(|| a0.cmp(b0))
-                .then_with(|| a1.cmp(b1)),
-            (Term::TCtor(a0, a1), Term::TCtor(b0, b1)) => std::cmp::Ordering::Equal
-                .then_with(|| a0.cmp(b0))
-                .then_with(|| a1.cmp(b1)),
-            (Term::TGet(a0, a1), Term::TGet(b0, b1)) => std::cmp::Ordering::Equal
-                .then_with(|| a0.cmp(b0))
-                .then_with(|| a1.cmp(b1)),
-            (Term::TInt(a0), Term::TInt(b0)) => std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0)),
-            (Term::TList(a0), Term::TList(b0)) => {
-                std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
+            (Term::TCall(a), Term::TCall(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1))),
+            (Term::TCtor(a), Term::TCtor(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1))),
+            (Term::TGet(a), Term::TGet(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1))),
+            (Term::TInt(a), Term::TInt(b)) => {
+                std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Term::TMatch(a0, a1), Term::TMatch(b0, b1)) => std::cmp::Ordering::Equal
-                .then_with(|| a0.cmp(b0))
-                .then_with(|| a1.cmp(b1)),
-            (Term::TNeg(a0), Term::TNeg(b0)) => std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0)),
-            (Term::TOp(a0, a1, a2), Term::TOp(b0, b1, b2)) => std::cmp::Ordering::Equal
-                .then_with(|| a0.cmp(b0))
-                .then_with(|| a1.cmp(b1))
-                .then_with(|| a2.cmp(b2)),
-            (Term::TParts(a0), Term::TParts(b0)) => {
-                std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
+            (Term::TList(a), Term::TList(b)) => {
+                std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Term::TRec(a0, a1), Term::TRec(b0, b1)) => std::cmp::Ordering::Equal
-                .then_with(|| a0.cmp(b0))
-                .then_with(|| a1.cmp(b1)),
-            (Term::TStr(a0), Term::TStr(b0)) => std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0)),
-            (Term::TTuple(a0), Term::TTuple(b0)) => {
-                std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
+            (Term::TMatch(a), Term::TMatch(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1))),
+            (Term::TNeg(a), Term::TNeg(b)) => {
+                std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Term::TUpd(a0, a1, a2), Term::TUpd(b0, b1, b2)) => std::cmp::Ordering::Equal
-                .then_with(|| a0.cmp(b0))
-                .then_with(|| a1.cmp(b1))
-                .then_with(|| a2.cmp(b2)),
-            (Term::TVar(a0), Term::TVar(b0)) => std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0)),
+            (Term::TOp(a), Term::TOp(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1)))
+                .then_with(|| (&a.2).cmp((&b.2))),
+            (Term::TParts(a), Term::TParts(b)) => {
+                std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
+            }
+            (Term::TRec(a), Term::TRec(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1))),
+            (Term::TStr(a), Term::TStr(b)) => {
+                std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
+            }
+            (Term::TTuple(a), Term::TTuple(b)) => {
+                std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
+            }
+            (Term::TUpd(a), Term::TUpd(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1)))
+                .then_with(|| (&a.2).cmp((&b.2))),
+            (Term::TVar(a), Term::TVar(b)) => {
+                std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
+            }
             _ => std::cmp::Ordering::Equal,
         }
     }
@@ -269,55 +354,55 @@ impl Ord for Term {
 impl aver_rt::AverDisplay for Term {
     fn aver_display(&self) -> String {
         match self {
-            Term::TInt(f0) => format!("TInt({})", f0.aver_display_inner()),
-            Term::TBool(f0) => format!("TBool({})", f0.aver_display_inner()),
-            Term::TStr(f0) => format!("TStr({})", f0.aver_display_inner()),
+            Term::TInt(f) => format!("TInt({})", (&f.0).aver_display_inner()),
+            Term::TBool(f) => format!("TBool({})", (&f.0).aver_display_inner()),
+            Term::TStr(f) => format!("TStr({})", (&f.0).aver_display_inner()),
             Term::TUnit => "TUnit".to_string(),
-            Term::TVar(f0) => format!("TVar({})", f0.aver_display_inner()),
+            Term::TVar(f) => format!("TVar({})", (&f.0).aver_display_inner()),
             Term::THole => "THole".to_string(),
-            Term::TGet(f0, f1) => format!(
+            Term::TGet(f) => format!(
                 "TGet({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Term::TCall(f0, f1) => format!(
+            Term::TCall(f) => format!(
                 "TCall({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Term::TBi(f0, f1) => format!(
+            Term::TBi(f) => format!(
                 "TBi({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Term::TOp(f0, f1, f2) => format!(
+            Term::TOp(f) => format!(
                 "TOp({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner()
                 ]
                 .join(", ")
             ),
-            Term::TNeg(f0) => format!("TNeg({})", f0.aver_display_inner()),
-            Term::TCtor(f0, f1) => format!(
+            Term::TNeg(f) => format!("TNeg({})", (&f.0).aver_display_inner()),
+            Term::TCtor(f) => format!(
                 "TCtor({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Term::TMatch(f0, f1) => format!(
+            Term::TMatch(f) => format!(
                 "TMatch({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Term::TParts(f0) => format!("TParts({})", f0.aver_display_inner()),
-            Term::TList(f0) => format!("TList({})", f0.aver_display_inner()),
-            Term::TTuple(f0) => format!("TTuple({})", f0.aver_display_inner()),
-            Term::TRec(f0, f1) => format!(
+            Term::TParts(f) => format!("TParts({})", (&f.0).aver_display_inner()),
+            Term::TList(f) => format!("TList({})", (&f.0).aver_display_inner()),
+            Term::TTuple(f) => format!("TTuple({})", (&f.0).aver_display_inner()),
+            Term::TRec(f) => format!(
                 "TRec({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Term::TUpd(f0, f1, f2) => format!(
+            Term::TUpd(f) => format!(
                 "TUpd({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner()
                 ]
                 .join(", ")
             ),
