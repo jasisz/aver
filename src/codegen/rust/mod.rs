@@ -1658,7 +1658,7 @@ fn left(t: T) -> T
         for expected in [
             "Pair(std::sync::Arc<T__Pair>),",
             "pub struct T__Pair(pub T, pub T);",
-            "T::Pair(std::sync::Arc::new(T__Pair(x.clone(), x.clone())))",
+            "T::Pair(std::sync::Arc::new(T__Pair(x.clone(), x)))",
             "T::Pair(__a_fields) => {",
             "let a = __a_fields.0.clone();",
             "pub node: Node,",
@@ -2455,7 +2455,7 @@ fn getName(user: User) -> String
     }
 
     #[test]
-    fn provider_resource_return_clones_the_opaque_handle() {
+    fn a_returned_provider_resource_moves_and_a_borrowed_one_clones_its_handle() {
         let mut ctx = ctx_from_source(
             r#"
 module Demo
@@ -2470,12 +2470,10 @@ fn keep(connection: Tcp.Connection) -> Tcp.Connection
         let entry = generated_rust_entry_file(&out);
 
         assert!(
-            entry.contains("pub fn keep(connection @ _: &Tcp_Connection) -> Tcp_Connection"),
-            "provider resource parameter was not borrowed:\n{entry}"
-        );
-        assert!(
-            entry.contains("connection.clone()"),
-            "returning a provider resource must clone its handle token:\n{entry}"
+            entry.contains(
+                "pub fn keep(mut connection @ _: Tcp_Connection) -> Tcp_Connection {\n    crate::cancel_checkpoint();\n    connection\n}"
+            ),
+            "a provider resource the function only returns is not moved through:\n{entry}"
         );
 
         let keep = ctx
@@ -2733,8 +2731,8 @@ fn area(sh: Shape) -> Float
         let entry = generated_rust_entry_file(&out);
 
         assert!(
-            entry.contains("match sh.clone() {"),
-            "generic user-sum match should emit a native Rust match on the cloned subject: {entry}"
+            entry.contains("match sh {"),
+            "generic user-sum match should emit a native Rust match on the borrowed subject: {entry}"
         );
         assert!(entry.contains("Shape::Circle(r) =>"));
         assert!(entry.contains("Shape::Square(s) =>"));

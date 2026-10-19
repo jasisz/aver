@@ -185,6 +185,13 @@ pub(super) fn materialize_scoped_thread_capture(
     }
 }
 
+/// Whether an owning consumer of this owned place (a local or a field read)
+/// clones it, because the place is read again later.
+pub(super) fn owned_read_clones(expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> bool {
+    let facts = value_facts(expr, ctx);
+    facts.mode == RustValueMode::Owned && !facts.can_move
+}
+
 /// Whether the expression text itself has Rust type `&T`. Used by match
 /// lowering when it can safely pattern-match directly on a shared reference.
 pub(super) fn emits_direct_borrow(expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> bool {

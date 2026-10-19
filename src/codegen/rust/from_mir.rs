@@ -66,13 +66,13 @@ use crate::types::checker::type_is_fully_concrete;
 use super::emit_ctx::{is_copy_type, should_borrow_param};
 use super::expr::{
     callee_borrow_mask, emit_dispatch_table_match, emit_list_match, emit_literal,
-    emit_parallel_result_tuple_unwrap, emit_pattern_rebindings, emit_ref_match_rebindings,
-    emit_result_tuple_unwrap, emit_tuple_from_vars, explicit_binding_pattern,
-    explicit_parameter_pattern, has_list_patterns, has_string_literal_patterns,
+    emit_parallel_result_tuple_unwrap, emit_pattern_rebindings, emit_result_tuple_unwrap,
+    emit_tuple_from_vars, explicit_binding_pattern, explicit_parameter_pattern, has_list_patterns,
+    has_string_literal_patterns,
 };
 use super::ownership::{
     align_equality_operands, emits_direct_borrow, local_of, materialize_borrowed,
-    materialize_owned, materialize_scoped_thread_capture, projection_root_local,
+    materialize_owned, materialize_scoped_thread_capture, owned_read_clones, projection_root_local,
 };
 use super::pattern::{emit_pattern, emit_pattern_with_guard};
 use super::syntax::{aver_name_to_rust, generated_ident};
@@ -535,9 +535,9 @@ impl MirFnEmitPolicy {
 
     /// Apply the MIR ownership facts to this policy. A `Vector`/`Map` param
     /// graduates when `own_param` cleared its alias bit. A named record param
-    /// graduates when its returned successor is a `RecordUpdate` rooted in
-    /// that param: Rust can move the record and its replaced field while the
-    /// caller still clones at a non-last-use call site.
+    /// graduates when the result hands it on (see [`result_hands_on`]):
+    /// Rust can move the record while the caller still clones at a
+    /// non-last-use call site.
     ///
     /// SOUNDNESS (the #383 corruption class): a collection param graduates
     /// only when `own_param` clears its bit after seeing every call site.
@@ -559,8 +559,8 @@ impl MirFnEmitPolicy {
             let Some(ty) = self.local_types.get(&rust_name) else {
                 continue;
             };
-            let returned_record_successor = matches!(ty, Type::Named { .. })
-                && (result_contains_record_successor_of(&mir_fn.body.node, param.local)
+            let hands_on_record = matches!(ty, Type::Named { .. })
+                && (result_hands_on(&mir_fn.body.node, param.local)
                     || consumed.and_then(|owned| owned.get(i)).copied() == Some(true));
             // `own_param`'s `prone`/clearing both index `aliased_slots`
             // by PARAM POSITION `i` (its `(0..nparams).filter(|&i| …)`),
@@ -572,7 +572,7 @@ impl MirFnEmitPolicy {
             // existing borrow-by-default decision (do not graduate).
             let collection_graduated = is_owned_collection_candidate(ty)
                 && !mir_fn.aliased_slots.get(i).copied().unwrap_or(true);
-            if !collection_graduated && !returned_record_successor {
+            if !collection_graduated && !hands_on_record {
                 continue;
             }
             // Graduate: owned-by-value. On the borrow-by-default path the
@@ -595,14 +595,19 @@ fn is_owned_collection_candidate(ty: &Type) -> bool {
     matches!(ty, Type::Vector(_) | Type::Map(_, _))
 }
 
-/// Does a function result contain a record successor whose base is `slot`?
+/// Does a function result hand on the value in `slot`: the local itself at
+/// its last use, or a record successor whose base is `slot`?
 ///
 /// Only result positions are transparent. A record update in a `let` value or
 /// call argument does not qualify because moving its base could invalidate a
 /// later read in the same function. `Construct` covers `Result.Ok(update)`;
-/// branches and the body side of `Let` preserve result position.
-fn result_contains_record_successor_of(expr: &MirExpr, slot: LocalId) -> bool {
+/// branches and the body side of `Let` preserve result position. A function
+/// that hands its param on in its result takes it by value: borrowed, it
+/// would clone the value while the caller still holds it, so every Map and
+/// Vector inside has two owners and the next in-place update copies it.
+fn result_hands_on(expr: &MirExpr, slot: LocalId) -> bool {
     match expr {
+        MirExpr::Local(local) => local.node.slot == slot && local.node.last_use,
         MirExpr::RecordUpdate(update) => {
             local_of(&update.node.base.node).is_some_and(|base| base.slot == slot)
         }
@@ -620,31 +625,27 @@ fn result_contains_record_successor_of(expr: &MirExpr, slot: LocalId) -> bool {
                 base.slot == slot && base.last_use && project.node.field == field.name
             })
         }),
-        MirExpr::Let(let_expr) => {
-            result_contains_record_successor_of(&let_expr.node.body.node, slot)
-        }
+        MirExpr::Let(let_expr) => result_hands_on(&let_expr.node.body.node, slot),
         MirExpr::Match(match_expr) => match_expr
             .node
             .arms
             .iter()
-            .any(|arm| result_contains_record_successor_of(&arm.body.node, slot)),
+            .any(|arm| result_hands_on(&arm.body.node, slot)),
         MirExpr::IfThenElse(branches) => {
-            result_contains_record_successor_of(&branches.node.then_branch.node, slot)
-                || result_contains_record_successor_of(&branches.node.else_branch.node, slot)
+            result_hands_on(&branches.node.then_branch.node, slot)
+                || result_hands_on(&branches.node.else_branch.node, slot)
         }
         MirExpr::Return(inner)
         | MirExpr::Try(inner)
         | MirExpr::Box(inner)
         | MirExpr::Unbox(inner)
-        | MirExpr::Neg(inner) => result_contains_record_successor_of(&inner.node, slot),
+        | MirExpr::Neg(inner) => result_hands_on(&inner.node, slot),
         MirExpr::Construct(construct) => construct
             .node
             .args
             .iter()
-            .any(|arg| result_contains_record_successor_of(&arg.node, slot)),
-        MirExpr::Tuple(items) => items
-            .iter()
-            .any(|item| result_contains_record_successor_of(&item.node, slot)),
+            .any(|arg| result_hands_on(&arg.node, slot)),
+        MirExpr::Tuple(items) => items.iter().any(|item| result_hands_on(&item.node, slot)),
         _ => false,
     }
 }
@@ -666,13 +667,15 @@ pub(super) fn owned_collection_param_names(
     let consumed = ctx.rust_owned_record_params.get(&mir_fn.fn_id);
     let mut out = HashSet::new();
     for (i, (name, ty)) in param_types.iter().enumerate() {
-        let returned_record_successor = matches!(ty, Type::Named { .. })
-            && (mir_fn.params.get(i).is_some_and(|param| {
-                result_contains_record_successor_of(&mir_fn.body.node, param.local)
-            }) || consumed.and_then(|owned| owned.get(i)).copied() == Some(true));
+        let hands_on_record = matches!(ty, Type::Named { .. })
+            && (mir_fn
+                .params
+                .get(i)
+                .is_some_and(|param| result_hands_on(&mir_fn.body.node, param.local))
+                || consumed.and_then(|owned| owned.get(i)).copied() == Some(true));
         let collection_graduated = is_owned_collection_candidate(ty)
             && !mir_fn.aliased_slots.get(i).copied().unwrap_or(true);
-        if !collection_graduated && !returned_record_successor {
+        if !collection_graduated && !hands_on_record {
             continue;
         }
         out.insert(aver_name_to_rust(name));
@@ -850,9 +853,9 @@ struct Consumption<'a> {
 /// record update that reads it for the last time, passes it at its last use
 /// to a callee position `owned` says is by value, or moves a field out of it
 /// into a by-value record param, a Map/Vector param updated in place, or the
-/// target of `Map.set`, `Map.remove` or `Vector.set`. Returning it bare is not a
-/// consumption: a function that only hands its param back keeps borrowing
-/// it.
+/// target of `Map.set`, `Map.remove` or `Vector.set`, or stores it at its
+/// last use into a record, constructor, tuple or list. A param returned bare
+/// is taken by value before this runs (see [`result_hands_on`]).
 fn consumes_local(expr: &MirExpr, cx: &Consumption<'_>) -> bool {
     let slot = cx.slot;
     let last_use_of =
@@ -924,9 +927,16 @@ fn consumes_local(expr: &MirExpr, cx: &Consumption<'_>) -> bool {
                     .any(|field| consumes_local(&field.value.node, cx))
         }
         _ => {
+            let stores = matches!(
+                expr,
+                MirExpr::RecordCreate(_)
+                    | MirExpr::Construct(_)
+                    | MirExpr::Tuple(_)
+                    | MirExpr::List(_)
+            );
             let mut found = false;
             crate::ir::mir::expr::walk_children(expr, &mut |child| {
-                found = found || consumes_local(child, cx);
+                found = found || (stores && last_use_of(child)) || consumes_local(child, cx);
             });
             found
         }
@@ -3319,15 +3329,25 @@ fn emit_mir_match_with(
         .iter()
         .any(|arm| pattern_needs_guard_chain(&arm.pattern));
 
-    // ── 2. Borrowed-param subject → match on the reference. ──
-    // Mirror of `emit_match`'s `match_on_ref` special case: only when
-    // no arm has pattern bindings AND no arm has an Int-literal subpattern.
+    let dispatch_plan = classify_match_dispatch_plan_resolved(&arms);
+
+    // ── 2. Match on a reference to a subject that is borrowed, or that
+    // would be cloned because it is read again later. ──
+    // Never with an Int-literal subpattern. An arm that binds something
+    // binds `&Inner` then, so only the generic `match` below takes it, and
+    // clones just the fields an arm binds instead of the whole subject.
     let no_bindings = arms
         .iter()
         .all(|arm| crate::ir::vars::resolved_pattern_bindings(&arm.pattern).is_empty());
-    let match_on_ref = no_bindings
-        && !any_int_literal_pattern
+    let generic = !any_int_literal_pattern
+        && !has_list_patterns(&arms)
+        && !matches!(dispatch_plan.as_ref(), Some(MatchDispatchPlan::Table(_)));
+    let borrowed_subject = ((no_bindings && !any_int_literal_pattern) || generic)
         && mir_expr_is_borrowed_param_read(&m.subject.node, emit_ctx);
+    let kept_subject = generic
+        && !has_string_literal_patterns(&arms)
+        && owned_read_clones(&m.subject.node, emit_ctx);
+    let match_on_ref = borrowed_subject || kept_subject;
 
     // Int unboxing: a bare-`i64` subject (a proven-bare counter) is `Copy`,
     // so it is read by value WITHOUT `.clone()` and the Int-literal guards
@@ -3337,8 +3357,10 @@ fn emit_mir_match_with(
     let subj = if subject_is_bare {
         // A bare i64 subject: emit the plain value (no clone — Copy).
         emit_bare_i64(&m.subject).or_else(|| emit_mir_expr(&m.subject, emit_ctx))?
-    } else if match_on_ref {
+    } else if borrowed_subject {
         emit_mir_expr(&m.subject, emit_ctx)?
+    } else if kept_subject {
+        format!("&{}", emit_mir_expr(&m.subject, emit_ctx)?)
     } else {
         mir_clone_arg(
             emit_mir_expr(&m.subject, emit_ctx)?,
@@ -3346,8 +3368,6 @@ fn emit_mir_match_with(
             emit_ctx,
         )
     };
-
-    let dispatch_plan = classify_match_dispatch_plan_resolved(&arms);
 
     // Bool match → if/else is unreachable here: the MIR optimizer
     // already rewrote two-arm bool matches into `IfThenElse`. If a
@@ -3419,13 +3439,7 @@ fn emit_mir_match_with(
             None => pat,
         };
         let body = arm_bodies[idx].clone();
-        let mut rebindings = emit_pattern_rebindings(&arm.pattern, codegen);
-        if match_on_ref {
-            let ref_rebinds = emit_ref_match_rebindings(&arm.pattern);
-            if !ref_rebinds.is_empty() {
-                rebindings = format!("{}{}", ref_rebinds, rebindings);
-            }
-        }
+        let rebindings = emit_pattern_rebindings(&arm.pattern, codegen, match_on_ref);
         arm_strs.push(format!(
             "        {} => {{\n            {}{}\n        }}",
             pat, rebindings, body

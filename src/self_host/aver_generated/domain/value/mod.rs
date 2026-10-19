@@ -553,7 +553,7 @@ pub fn valListRepr(
 /// Display representation of a runtime value.
 pub fn valRepr(v @ _: &Val) -> AverStr {
     crate::cancel_checkpoint();
-    match v.clone() {
+    match v {
         crate::aver_generated::domain::value::Val::ValInt(__n_fields) => {
             let n = __n_fields.0.clone();
             (n.to_string()).into_aver()
@@ -733,7 +733,7 @@ pub fn valRepr(v @ _: &Val) -> AverStr {
 /// Display representation for nested values. Strings are quoted inside containers and wrappers.
 pub fn valReprInner(v @ _: &Val) -> AverStr {
     crate::cancel_checkpoint();
-    match v.clone() {
+    match v {
         crate::aver_generated::domain::value::Val::ValStr(__s_fields) => {
             let s = __s_fields.0.clone();
             ((AverStr::from("\"") + &s) + &AverStr::from("\""))
@@ -829,7 +829,7 @@ pub fn valMapRepr(
 /// Stable repr for map keys. Keeps common scalar keys off the general valRepr path.
 pub fn mapKeyRepr(v @ _: &Val) -> AverStr {
     crate::cancel_checkpoint();
-    match v.clone() {
+    match v {
         crate::aver_generated::domain::value::Val::ValInt(__n_fields) => {
             let n = __n_fields.0.clone();
             (n.to_string()).into_aver()

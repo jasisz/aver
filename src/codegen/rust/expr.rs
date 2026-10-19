@@ -10,7 +10,6 @@ use crate::ir::hir::{
     ResolvedFnDef, ResolvedMatchArm, ResolvedPattern, ResolvedThinBodyPlan,
     classify_list_match_shape_resolved, classify_thin_fn_def_resolved,
 };
-use crate::ir::vars::resolved_pattern_bindings;
 use crate::ir::{
     DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan, DispatchLiteral, DispatchTableShape,
     ListMatchShape, SemanticDispatchPattern, WrapperKind,
@@ -635,7 +634,7 @@ where
 }
 
 fn emit_list_arm_body(arm: &ResolvedMatchArm, ctx: &CodegenContext, body: String) -> String {
-    let rebindings = emit_pattern_rebindings(&arm.pattern, ctx);
+    let rebindings = emit_pattern_rebindings(&arm.pattern, ctx, false);
     if rebindings.is_empty() {
         body
     } else {
@@ -643,29 +642,19 @@ fn emit_list_arm_body(arm: &ResolvedMatchArm, ctx: &CodegenContext, body: String
     }
 }
 
-/// When matching on a reference (`&T`), pattern bindings are `&Inner`.
-/// Emit `let b = b.clone();` for each binding to produce owned values.
-pub(super) fn emit_ref_match_rebindings(pattern: &ResolvedPattern) -> String {
-    let bindings = resolved_pattern_bindings(pattern);
-    if bindings.is_empty() {
-        return String::new();
-    }
-    let mut lines = Vec::new();
-    for b in &bindings {
-        let rb = super::syntax::aver_name_to_rust(b);
-        lines.push(format!("let {} = {}.clone();", rb, rb));
-    }
-    format!("{}\n            ", lines.join("\n            "))
-}
-
 /// A constructor of a shared sum binds the one `Arc` that holds its fields
 /// (see `pattern::shared_fields_binder`), so an arm that uses a field needs
 /// it out of there. Emit `let b = __b_fields.1.clone();` for each such field,
 /// wherever in the pattern its constructor stands: at the top or inside a
-/// tuple, at any depth.
-pub(super) fn emit_pattern_rebindings(pattern: &ResolvedPattern, ctx: &CodegenContext) -> String {
+/// tuple, at any depth. A match on a reference (`by_ref`) binds `&Inner`, so
+/// every other binder is cloned too: `let b = b.clone();`.
+pub(super) fn emit_pattern_rebindings(
+    pattern: &ResolvedPattern,
+    ctx: &CodegenContext,
+    by_ref: bool,
+) -> String {
     let mut lines = Vec::new();
-    collect_pattern_rebindings(pattern, ctx, &mut lines);
+    collect_pattern_rebindings(pattern, ctx, by_ref, &mut lines);
     if lines.is_empty() {
         String::new()
     } else {
@@ -680,21 +669,29 @@ pub(super) fn emit_pattern_rebindings(pattern: &ResolvedPattern, ctx: &CodegenCo
 fn collect_pattern_rebindings(
     pattern: &ResolvedPattern,
     ctx: &CodegenContext,
+    by_ref: bool,
     lines: &mut Vec<String>,
 ) {
     match pattern {
         ResolvedPattern::Tuple(items) => {
             for item in items {
-                collect_pattern_rebindings(item, ctx, lines);
+                collect_pattern_rebindings(item, ctx, by_ref, lines);
             }
         }
         ResolvedPattern::Ctor(ctor, bindings) => {
-            if let Some(fields) = super::pattern::shared_fields_binder(ctor, bindings, ctx) {
-                for (idx, b) in bindings.iter().enumerate().filter(|(_, b)| *b != "_") {
-                    let b = aver_name_to_rust(b);
-                    lines.push(format!("let {b} = {fields}.{idx}.clone();"));
+            let fields = super::pattern::shared_fields_binder(ctor, bindings, ctx);
+            for (idx, b) in bindings.iter().enumerate().filter(|(_, b)| *b != "_") {
+                let b = aver_name_to_rust(b);
+                match &fields {
+                    Some(fields) => lines.push(format!("let {b} = {fields}.{idx}.clone();")),
+                    None if by_ref => lines.push(format!("let {b} = {b}.clone();")),
+                    None => {}
                 }
             }
+        }
+        ResolvedPattern::Ident(name) if by_ref => {
+            let name = aver_name_to_rust(name);
+            lines.push(format!("let {name} = {name}.clone();"));
         }
         ResolvedPattern::Wildcard
         | ResolvedPattern::Literal(_)

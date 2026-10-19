@@ -128,7 +128,7 @@ pub fn withGiven(
 /// A type in the step grammar; a type the grammar cannot state is _.
 pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> AverStr {
     crate::proof_std::cancel_checkpoint();
-    match t.clone() {
+    match t {
         crate::proof_std::aver_generated::kernel::term::Ty::TyInt => AverStr::from("int"),
         crate::proof_std::aver_generated::kernel::term::Ty::TyBool => AverStr::from("bool"),
         crate::proof_std::aver_generated::kernel::term::Ty::TyStr => AverStr::from("str"),
@@ -495,7 +495,7 @@ pub fn headed(head @ _: AverStr, xs @ _: &aver_rt::AverList<AverStr>) -> AverStr
 /// One term in the step grammar.
 pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) -> AverStr {
     crate::proof_std::cancel_checkpoint();
-    match t.clone() {
+    match t {
         crate::proof_std::aver_generated::kernel::term::Term::TInt(__i_fields) => {
             let i = __i_fields.0.clone();
             aver_rt::AverStr::from({
@@ -840,42 +840,50 @@ pub fn armTexts(
 /// One pattern in the step grammar.
 pub fn patText(p @ _: &crate::proof_std::aver_generated::kernel::term::Pat) -> AverStr {
     crate::proof_std::cancel_checkpoint();
-    match p.clone() {
+    match p {
         crate::proof_std::aver_generated::kernel::term::Pat::PWild => AverStr::from("(pw)"),
-        crate::proof_std::aver_generated::kernel::term::Pat::PVar(n) => aver_rt::AverStr::from({
-            let mut __b = {
+        crate::proof_std::aver_generated::kernel::term::Pat::PVar(n) => {
+            let n = n.clone();
+            aver_rt::AverStr::from({
                 let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity(
-                        (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
-                    );
-                    __b.push_str(&AverStr::from("(pv "));
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
+                        );
+                        __b.push_str(&AverStr::from("(pv "));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                __b.push_str(&AverStr::from(")"));
                 __b
-            };
-            __b.push_str(&AverStr::from(")"));
-            __b
-        }),
-        crate::proof_std::aver_generated::kernel::term::Pat::PLit(t) => aver_rt::AverStr::from({
-            let mut __b = {
+            })
+        }
+        crate::proof_std::aver_generated::kernel::term::Pat::PLit(t) => {
+            let t = t.clone();
+            aver_rt::AverStr::from({
                 let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity(
-                        (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
-                    );
-                    __b.push_str(&AverStr::from("(pl "));
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
+                        );
+                        __b.push_str(&AverStr::from("(pl "));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        &(crate::proof_std::aver_generated::kernel::wire::termText(&t)),
+                    )));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                    &(crate::proof_std::aver_generated::kernel::wire::termText(&t)),
-                )));
+                __b.push_str(&AverStr::from(")"));
                 __b
-            };
-            __b.push_str(&AverStr::from(")"));
-            __b
-        }),
+            })
+        }
         crate::proof_std::aver_generated::kernel::term::Pat::PNil => AverStr::from("(pnil)"),
         crate::proof_std::aver_generated::kernel::term::Pat::PCons(h, t) => {
+            let h = h.clone();
+            let t = t.clone();
             aver_rt::AverStr::from({
                 let mut __b = {
                     let mut __b = {
@@ -901,6 +909,7 @@ pub fn patText(p @ _: &crate::proof_std::aver_generated::kernel::term::Pat) -> A
             })
         }
         crate::proof_std::aver_generated::kernel::term::Pat::PTuple(ps) => {
+            let ps = ps.clone();
             aver_rt::AverStr::from({
                 let mut __b = {
                     let mut __b = {
@@ -922,6 +931,8 @@ pub fn patText(p @ _: &crate::proof_std::aver_generated::kernel::term::Pat) -> A
             })
         }
         crate::proof_std::aver_generated::kernel::term::Pat::PCtor(c, ns) => {
+            let c = c.clone();
+            let ns = ns.clone();
             crate::proof_std::aver_generated::kernel::wire::headed(
                 aver_rt::AverStr::from({
                     let mut __b = {
@@ -988,7 +999,7 @@ pub fn bindingTexts(
 /// One proof in the step grammar.
 pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof) -> AverStr {
     crate::proof_std::cancel_checkpoint();
-    match p.clone() {
+    match p {
         crate::proof_std::aver_generated::kernel::proof::Proof::PRefl(__t_fields) => {
             let t = __t_fields.0.clone();
             aver_rt::AverStr::from({

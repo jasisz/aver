@@ -35,7 +35,7 @@ fn __mutual_tco_trampoline_1(
             ) => {
                 crate::cancel_checkpoint();
                 let bindings @ _ =
-                    crate::aver_generated::domain::match_mod::matchPattern(&pat, &item)?;
+                    crate::aver_generated::domain::match_mod::matchPattern(&pat, item)?;
                 __MutualTco1::MatchPatTupleItemsAcc(
                     restPats,
                     restItems,
@@ -71,42 +71,55 @@ pub fn matchPatTupleOne(
 /// Try to match a value against a pattern. Returns bindings on success.
 pub fn matchPattern(
     pat @ _: &crate::aver_generated::domain::ast::Pattern,
-    v @ _: &crate::aver_generated::domain::value::Val,
+    mut v @ _: crate::aver_generated::domain::value::Val,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
-    match pat.clone() {
+    match pat {
         crate::aver_generated::domain::ast::Pattern::PatWild => Ok(aver_rt::AverList::empty()),
         crate::aver_generated::domain::ast::Pattern::PatInt(n) => {
-            crate::aver_generated::domain::match_mod::matchPatInt(n, v)
+            let n = n.clone();
+            crate::aver_generated::domain::match_mod::matchPatInt(n, &v)
         }
         crate::aver_generated::domain::ast::Pattern::PatFloat(f) => {
-            crate::aver_generated::domain::match_mod::matchPatFloat(f, v)
+            let f = f.clone();
+            crate::aver_generated::domain::match_mod::matchPatFloat(f, &v)
         }
         crate::aver_generated::domain::ast::Pattern::PatBool(b) => {
-            crate::aver_generated::domain::match_mod::matchPatBool(b, v)
+            let b = b.clone();
+            crate::aver_generated::domain::match_mod::matchPatBool(b, &v)
         }
         crate::aver_generated::domain::ast::Pattern::PatStr(s) => {
-            crate::aver_generated::domain::match_mod::matchPatStr(s, v)
+            let s = s.clone();
+            crate::aver_generated::domain::match_mod::matchPatStr(s, &v)
         }
         crate::aver_generated::domain::ast::Pattern::PatEmpty => {
-            crate::aver_generated::domain::match_mod::matchPatEmpty(v)
+            crate::aver_generated::domain::match_mod::matchPatEmpty(&v)
         }
         crate::aver_generated::domain::ast::Pattern::PatCons(h, t) => {
-            crate::aver_generated::domain::match_mod::matchPatCons(h, t, v)
+            let h = h.clone();
+            let t = t.clone();
+            crate::aver_generated::domain::match_mod::matchPatCons(h, t, &v)
         }
         crate::aver_generated::domain::ast::Pattern::PatConstructor(ctorName, bindings) => {
-            crate::aver_generated::domain::match_mod::matchPatConstructor(ctorName, &bindings, v)
+            let ctorName = ctorName.clone();
+            let bindings = bindings.clone();
+            crate::aver_generated::domain::match_mod::matchPatConstructor(ctorName, &bindings, &v)
         }
         crate::aver_generated::domain::ast::Pattern::PatConstructorId(tag, ctorName, bindings) => {
+            let tag = tag.clone();
+            let ctorName = ctorName.clone();
+            let bindings = bindings.clone();
             crate::aver_generated::domain::match_mod::matchPatConstructorById(
-                tag, ctorName, &bindings, v,
+                tag, ctorName, &bindings, &v,
             )
         }
         crate::aver_generated::domain::ast::Pattern::PatTuple(pats) => {
-            crate::aver_generated::domain::match_mod::matchPatTuple(&pats, v)
+            let pats = pats.clone();
+            crate::aver_generated::domain::match_mod::matchPatTuple(&pats, &v)
         }
         crate::aver_generated::domain::ast::Pattern::PatVar(name) => {
-            Ok(aver_rt::AverList::from_vec(vec![(name, v.clone())]))
+            let name = name.clone();
+            Ok(aver_rt::AverList::from_vec(vec![(name, v)]))
         }
     }
 }
@@ -117,7 +130,7 @@ pub fn matchPatInt(
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
-    match v.clone() {
+    match v {
         crate::aver_generated::domain::value::Val::ValInt(__m_fields) => {
             let m = __m_fields.0.clone();
             if (n == m) {
@@ -136,7 +149,7 @@ pub fn matchPatFloat(
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
-    match v.clone() {
+    match v {
         crate::aver_generated::domain::value::Val::ValFloat(__vf_fields) => {
             let vf = __vf_fields.0.clone();
             if (f == vf) {
@@ -155,7 +168,7 @@ pub fn matchPatBool(
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
-    match v.clone() {
+    match v {
         crate::aver_generated::domain::value::Val::ValBool(__vb_fields) => {
             let vb = __vb_fields.0.clone();
             if (b == vb) {
@@ -174,7 +187,7 @@ pub fn matchPatStr(
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
-    match v.clone() {
+    match v {
         crate::aver_generated::domain::value::Val::ValStr(__vs_fields) => {
             let vs = __vs_fields.0.clone();
             if (s == vs) {
@@ -192,7 +205,7 @@ pub fn matchPatEmpty(
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
-    match v.clone() {
+    match v {
         crate::aver_generated::domain::value::Val::ValList(__items_fields) => {
             let items = __items_fields.0.clone();
             {
@@ -215,7 +228,7 @@ pub fn matchPatCons(
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
-    match v.clone() {
+    match v {
         crate::aver_generated::domain::value::Val::ValList(__items_fields) => {
             let items = __items_fields.0.clone();
             aver_list_match!(items, [] => Err(AverStr::from("no match")), [head, tail] => Ok(aver_rt::AverList::from_vec(vec![(h, head), (t, crate::aver_generated::domain::value::Val::ValList(std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValList(tail))))])))
@@ -274,7 +287,7 @@ pub fn matchPatTuple(
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
-    match v.clone() {
+    match v {
         crate::aver_generated::domain::value::Val::ValTuple(__items_fields) => {
             let items = __items_fields.0.clone();
             crate::aver_generated::domain::match_mod::matchPatTupleItems(pats, &items)
@@ -303,7 +316,7 @@ pub fn matchGenericConstructor(
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
-    match v.clone() {
+    match v {
         crate::aver_generated::domain::value::Val::ValVariant(__fullName_fields) => {
             let fullName = __fullName_fields.1.clone();
             let fields = __fullName_fields.2.clone();
@@ -389,7 +402,7 @@ pub fn matchWrapperPatDirect(
     {
         let __dispatch_subject = tag;
         if __dispatch_subject == aver_rt::AverInt::from_i64(1) {
-            match v.clone() {
+            match v {
                 crate::aver_generated::domain::value::Val::ValOk(__inner_fields) => {
                     let inner = __inner_fields.0.clone();
                     Ok(crate::aver_generated::domain::match_mod::zipBindings(
@@ -401,7 +414,7 @@ pub fn matchWrapperPatDirect(
             }
         } else {
             if __dispatch_subject == aver_rt::AverInt::from_i64(2) {
-                match v.clone() {
+                match v {
                     crate::aver_generated::domain::value::Val::ValErr(__inner_fields) => {
                         let inner = __inner_fields.0.clone();
                         Ok(crate::aver_generated::domain::match_mod::zipBindings(
@@ -413,7 +426,7 @@ pub fn matchWrapperPatDirect(
                 }
             } else {
                 if __dispatch_subject == aver_rt::AverInt::from_i64(3) {
-                    match v.clone() {
+                    match v {
                         crate::aver_generated::domain::value::Val::ValSome(__inner_fields) => {
                             let inner = __inner_fields.0.clone();
                             Ok(crate::aver_generated::domain::match_mod::zipBindings(
@@ -439,7 +452,7 @@ pub fn matchGenericCtorById(
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
-    match v.clone() {
+    match v {
         crate::aver_generated::domain::value::Val::ValVariant(__vTag_fields) => {
             let vTag = __vTag_fields.0.clone();
             let fullName = __vTag_fields.1.clone();
@@ -482,7 +495,7 @@ pub fn matchWrapperPat(
     {
         let __dispatch_subject = tag;
         if &*__dispatch_subject == "Ok" {
-            match v.clone() {
+            match v {
                 crate::aver_generated::domain::value::Val::ValOk(__inner_fields) => {
                     let inner = __inner_fields.0.clone();
                     Ok(crate::aver_generated::domain::match_mod::zipBindings(
@@ -494,7 +507,7 @@ pub fn matchWrapperPat(
             }
         } else {
             if &*__dispatch_subject == "Err" {
-                match v.clone() {
+                match v {
                     crate::aver_generated::domain::value::Val::ValErr(__inner_fields) => {
                         let inner = __inner_fields.0.clone();
                         Ok(crate::aver_generated::domain::match_mod::zipBindings(
@@ -506,7 +519,7 @@ pub fn matchWrapperPat(
                 }
             } else {
                 if &*__dispatch_subject == "Some" {
-                    match v.clone() {
+                    match v {
                         crate::aver_generated::domain::value::Val::ValSome(__inner_fields) => {
                             let inner = __inner_fields.0.clone();
                             Ok(crate::aver_generated::domain::match_mod::zipBindings(

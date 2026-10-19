@@ -666,7 +666,7 @@ pub fn parseStmtExprFromAdd(
     let ar @ _ = crate::aver_generated::domain::parser::expr::parseAddExprTail(tokens, pos, expr)?;
     {
         let (expr2, pos2) = ar;
-        crate::aver_generated::domain::parser::parseStmtExprFromCmp(tokens, pos2, &expr2)
+        crate::aver_generated::domain::parser::parseStmtExprFromCmp(tokens, pos2, expr2)
     }
 }
 
@@ -674,14 +674,14 @@ pub fn parseStmtExprFromAdd(
 pub fn parseStmtExprFromCmp(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    mut expr @ _: crate::aver_generated::domain::ast::Expr,
 ) -> Result<(crate::aver_generated::domain::ast::Stmt, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     let cr @ _ = crate::aver_generated::domain::parser::expr::parseCmpExprTail(tokens, pos, expr)?;
     {
         let (expr2, pos2) = cr;
         Ok(crate::aver_generated::domain::parser::parseStmtExprFromQ(
-            tokens, pos2, &expr2,
+            tokens, pos2, expr2,
         ))
     }
 }
@@ -690,7 +690,7 @@ pub fn parseStmtExprFromCmp(
 pub fn parseStmtExprFromQ(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    mut expr @ _: crate::aver_generated::domain::ast::Expr,
 ) -> (crate::aver_generated::domain::ast::Stmt, aver_rt::AverInt) {
     crate::cancel_checkpoint();
     let qr @ _ =

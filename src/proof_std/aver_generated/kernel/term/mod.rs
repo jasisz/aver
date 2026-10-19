@@ -747,19 +747,16 @@ pub fn isHole(t @ _: &Term) -> bool {
 }
 
 /// One substitution entry.
-pub fn bind(name @ _: AverStr, value @ _: &Term) -> Binding {
+pub fn bind(name @ _: AverStr, mut value @ _: Term) -> Binding {
     crate::proof_std::cancel_checkpoint();
     crate::proof_std::aver_generated::kernel::term::Binding {
         name: name,
-        value: value.clone(),
+        value: value,
     }
 }
 
 /// A variable with its type.
-pub fn typed(name @ _: AverStr, ty @ _: &Ty) -> TypedVar {
+pub fn typed(name @ _: AverStr, mut ty @ _: Ty) -> TypedVar {
     crate::proof_std::cancel_checkpoint();
-    crate::proof_std::aver_generated::kernel::term::TypedVar {
-        name: name,
-        ty: ty.clone(),
-    }
+    crate::proof_std::aver_generated::kernel::term::TypedVar { name: name, ty: ty }
 }

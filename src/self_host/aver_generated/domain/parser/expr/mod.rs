@@ -1462,7 +1462,7 @@ pub fn parseExpr(
     let r @ _ = crate::aver_generated::domain::parser::expr::parseCmpExpr(tokens, pos)?;
     {
         let (expr, pos2) = r;
-        Ok(crate::aver_generated::domain::parser::expr::parsePostfixQuestion(tokens, pos2, &expr))
+        Ok(crate::aver_generated::domain::parser::expr::parsePostfixQuestion(tokens, pos2, expr))
     }
 }
 
@@ -1470,17 +1470,17 @@ pub fn parseExpr(
 pub fn parsePostfixQuestion(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    mut expr @ _: crate::aver_generated::domain::ast::Expr,
 ) -> (crate::aver_generated::domain::ast::Expr, aver_rt::AverInt) {
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::parser_match::continuationAt(tokens, pos.clone()) {
         crate::aver_generated::domain::token::Token::TkQuestion => (
             crate::aver_generated::domain::ast::Expr::ExprPropagate(std::sync::Arc::new(
-                crate::aver_generated::domain::ast::Expr__ExprPropagate(expr.clone()),
+                crate::aver_generated::domain::ast::Expr__ExprPropagate(expr),
             )),
             pos.add(&aver_rt::AverInt::from_i64(1)),
         ),
-        _ => (expr.clone(), pos),
+        _ => (expr, pos),
     }
 }
 
@@ -1493,7 +1493,7 @@ pub fn parseCmpExpr(
     let r @ _ = crate::aver_generated::domain::parser::expr::parseAddExpr(tokens, pos)?;
     {
         let (left, pos2) = r;
-        crate::aver_generated::domain::parser::expr::parseCmpExprTail(tokens, pos2, &left)
+        crate::aver_generated::domain::parser::expr::parseCmpExprTail(tokens, pos2, left)
     }
 }
 
@@ -1501,7 +1501,7 @@ pub fn parseCmpExpr(
 pub fn parseCmpExprTail(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    left @ _: &crate::aver_generated::domain::ast::Expr,
+    mut left @ _: crate::aver_generated::domain::ast::Expr,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
@@ -1554,7 +1554,7 @@ pub fn parseCmpExprTail(
                 aver_rt::AverInt::from_i64(5),
             )
         }
-        _ => Ok((left.clone(), pos)),
+        _ => Ok((left, pos)),
     }
 }
 
@@ -1562,22 +1562,22 @@ pub fn parseCmpExprTail(
 pub fn parseCmpExprRight(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    left @ _: &crate::aver_generated::domain::ast::Expr,
+    mut left @ _: crate::aver_generated::domain::ast::Expr,
     op @ _: aver_rt::AverInt,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     let r @ _ = crate::aver_generated::domain::parser::expr::parseAddExpr(tokens, pos)?;
     {
         let (right, pos2) = r;
-        crate::aver_generated::domain::parser::expr::buildCmpExpr(left, &right, pos2, op)
+        crate::aver_generated::domain::parser::expr::buildCmpExpr(left, right, pos2, op)
     }
 }
 
 /// Build comparison AST node from op code.
 #[inline(always)]
 pub fn buildCmpExpr(
-    left @ _: &crate::aver_generated::domain::ast::Expr,
-    right @ _: &crate::aver_generated::domain::ast::Expr,
+    mut left @ _: crate::aver_generated::domain::ast::Expr,
+    mut right @ _: crate::aver_generated::domain::ast::Expr,
     pos @ _: aver_rt::AverInt,
     op @ _: aver_rt::AverInt,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
@@ -1587,7 +1587,7 @@ pub fn buildCmpExpr(
         if __dispatch_subject == aver_rt::AverInt::from_i64(0) {
             Ok((
                 crate::aver_generated::domain::ast::Expr::ExprEq(std::sync::Arc::new(
-                    crate::aver_generated::domain::ast::Expr__ExprEq(left.clone(), right.clone()),
+                    crate::aver_generated::domain::ast::Expr__ExprEq(left, right),
                 )),
                 pos,
             ))
@@ -1595,10 +1595,7 @@ pub fn buildCmpExpr(
             if __dispatch_subject == aver_rt::AverInt::from_i64(1) {
                 Ok((
                     crate::aver_generated::domain::ast::Expr::ExprNeq(std::sync::Arc::new(
-                        crate::aver_generated::domain::ast::Expr__ExprNeq(
-                            left.clone(),
-                            right.clone(),
-                        ),
+                        crate::aver_generated::domain::ast::Expr__ExprNeq(left, right),
                     )),
                     pos,
                 ))
@@ -1606,10 +1603,7 @@ pub fn buildCmpExpr(
                 if __dispatch_subject == aver_rt::AverInt::from_i64(2) {
                     Ok((
                         crate::aver_generated::domain::ast::Expr::ExprLt(std::sync::Arc::new(
-                            crate::aver_generated::domain::ast::Expr__ExprLt(
-                                left.clone(),
-                                right.clone(),
-                            ),
+                            crate::aver_generated::domain::ast::Expr__ExprLt(left, right),
                         )),
                         pos,
                     ))
@@ -1617,10 +1611,7 @@ pub fn buildCmpExpr(
                     if __dispatch_subject == aver_rt::AverInt::from_i64(3) {
                         Ok((
                             crate::aver_generated::domain::ast::Expr::ExprGt(std::sync::Arc::new(
-                                crate::aver_generated::domain::ast::Expr__ExprGt(
-                                    left.clone(),
-                                    right.clone(),
-                                ),
+                                crate::aver_generated::domain::ast::Expr__ExprGt(left, right),
                             )),
                             pos,
                         ))
@@ -1630,8 +1621,7 @@ pub fn buildCmpExpr(
                                 crate::aver_generated::domain::ast::Expr::ExprLte(
                                     std::sync::Arc::new(
                                         crate::aver_generated::domain::ast::Expr__ExprLte(
-                                            left.clone(),
-                                            right.clone(),
+                                            left, right,
                                         ),
                                     ),
                                 ),
@@ -1643,8 +1633,7 @@ pub fn buildCmpExpr(
                                     crate::aver_generated::domain::ast::Expr::ExprGte(
                                         std::sync::Arc::new(
                                             crate::aver_generated::domain::ast::Expr__ExprGte(
-                                                left.clone(),
-                                                right.clone(),
+                                                left, right,
                                             ),
                                         ),
                                     ),
@@ -1695,23 +1684,30 @@ pub fn parseAtom(
     crate::cancel_checkpoint();
     let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
     let t @ _ = crate::aver_generated::domain::parser_match::tokenAt(tokens, pos);
-    match t.clone() {
+    match &t {
         crate::aver_generated::domain::token::Token::TkMinus => {
             crate::aver_generated::domain::parser::expr::parseNegAtom(tokens, nextPos)
         }
-        crate::aver_generated::domain::token::Token::TkInt(n) => Ok((
-            crate::aver_generated::domain::ast::Expr::ExprInt(std::sync::Arc::new(
-                crate::aver_generated::domain::ast::Expr__ExprInt(n),
-            )),
-            nextPos,
-        )),
-        crate::aver_generated::domain::token::Token::TkFloat(f) => Ok((
-            crate::aver_generated::domain::ast::Expr::ExprFloat(std::sync::Arc::new(
-                crate::aver_generated::domain::ast::Expr__ExprFloat(f),
-            )),
-            nextPos,
-        )),
+        crate::aver_generated::domain::token::Token::TkInt(n) => {
+            let n = n.clone();
+            Ok((
+                crate::aver_generated::domain::ast::Expr::ExprInt(std::sync::Arc::new(
+                    crate::aver_generated::domain::ast::Expr__ExprInt(n),
+                )),
+                nextPos,
+            ))
+        }
+        crate::aver_generated::domain::token::Token::TkFloat(f) => {
+            let f = f.clone();
+            Ok((
+                crate::aver_generated::domain::ast::Expr::ExprFloat(std::sync::Arc::new(
+                    crate::aver_generated::domain::ast::Expr__ExprFloat(f),
+                )),
+                nextPos,
+            ))
+        }
         crate::aver_generated::domain::token::Token::TkStr(s) => {
+            let s = s.clone();
             crate::aver_generated::domain::parser::expr::parseStringOrInterp(tokens, nextPos, s)
         }
         crate::aver_generated::domain::token::Token::TkTrue => Ok((
@@ -1739,6 +1735,7 @@ pub fn parseAtom(
             crate::aver_generated::domain::parser::expr::parseMatchExpr(tokens, nextPos)
         }
         crate::aver_generated::domain::token::Token::TkIdent(name) => {
+            let name = name.clone();
             crate::aver_generated::domain::parser::expr::parseIdentOrCall(tokens, nextPos, name)
         }
         _ => Err(aver_rt::AverStr::from({

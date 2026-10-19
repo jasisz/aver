@@ -160,12 +160,12 @@ pub fn applyCmpFloat(
 
 /// Apply binary op to two evaluated values.
 pub fn evalBinopVals(
-    va @ _: &crate::aver_generated::domain::value::Val,
-    vb @ _: &crate::aver_generated::domain::value::Val,
+    mut va @ _: crate::aver_generated::domain::value::Val,
+    mut vb @ _: crate::aver_generated::domain::value::Val,
     op @ _: &crate::aver_generated::domain::ast::BinOp,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match (va.clone(), vb.clone()) {
+    match (va, vb) {
         (
             crate::aver_generated::domain::value::Val::ValInt(__x_fields),
             crate::aver_generated::domain::value::Val::ValInt(__y_fields),
@@ -222,7 +222,7 @@ pub fn evalNegVals(
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match v.clone() {
+    match v {
         crate::aver_generated::domain::value::Val::ValInt(__n_fields) => {
             let n = __n_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValInt(
@@ -245,12 +245,12 @@ pub fn evalNegVals(
 
 /// Apply comparison to two evaluated values (Int, Float, or String).
 pub fn evalCmpVals(
-    va @ _: &crate::aver_generated::domain::value::Val,
-    vb @ _: &crate::aver_generated::domain::value::Val,
+    mut va @ _: crate::aver_generated::domain::value::Val,
+    mut vb @ _: crate::aver_generated::domain::value::Val,
     op @ _: &crate::aver_generated::domain::ast::CmpOp,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match (va.clone(), vb.clone()) {
+    match (va, vb) {
         (
             crate::aver_generated::domain::value::Val::ValInt(__x_fields),
             crate::aver_generated::domain::value::Val::ValInt(__y_fields),
@@ -479,10 +479,10 @@ pub fn evalIntModOrIntVals(
     defaultValue @ _: aver_rt::AverInt,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match aV.clone() {
+    match aV {
         crate::aver_generated::domain::value::Val::ValInt(__a_fields) => {
             let a = __a_fields.0.clone();
-            match bV.clone() {
+            match bV {
                 crate::aver_generated::domain::value::Val::ValInt(__b_fields) => {
                     let b = __b_fields.0.clone();
                     if (b == aver_rt::AverInt::from_i64(0)) {
@@ -518,10 +518,10 @@ pub fn evalVectorSetMaybeDefault(
     valueV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<Option<crate::aver_generated::domain::value::Val>, AverStr> {
     crate::cancel_checkpoint();
-    match vecV.clone() {
+    match vecV {
         crate::aver_generated::domain::value::Val::ValVector(__vec_fields) => {
             let vec = __vec_fields.0.clone();
-            match idxV.clone() {
+            match idxV {
                 crate::aver_generated::domain::value::Val::ValInt(__idx_fields) => {
                     let idx = __idx_fields.0.clone();
                     if (idx < aver_rt::AverInt::from_i64(0)) {
@@ -559,10 +559,10 @@ pub fn evalVectorGetMaybeDefault(
     idxV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<Option<crate::aver_generated::domain::value::Val>, AverStr> {
     crate::cancel_checkpoint();
-    match vecV.clone() {
+    match vecV {
         crate::aver_generated::domain::value::Val::ValVector(__vec_fields) => {
             let vec = __vec_fields.0.clone();
-            match idxV.clone() {
+            match idxV {
                 crate::aver_generated::domain::value::Val::ValInt(__idx_fields) => {
                     let idx = __idx_fields.0.clone();
                     match (idx).to_usize().and_then(|__i| vec.get(__i).cloned()) {

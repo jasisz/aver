@@ -98,7 +98,7 @@ pub fn applyRecordUpdate(
     namedFields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match baseVal.clone() {
+    match baseVal {
         crate::aver_generated::domain::value::Val::ValRecord(__typeName_fields) => {
             let typeName = __typeName_fields.0.clone();
             let existingFields = __typeName_fields.1.clone();
@@ -161,7 +161,7 @@ pub fn mergeRecordFieldsAcc(
 #[inline(always)]
 pub fn mergeOneField(
     k @ _: AverStr,
-    v @ _: &crate::aver_generated::domain::value::Val,
+    mut v @ _: crate::aver_generated::domain::value::Val,
     rest @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
     overrides @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
     acc @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
@@ -176,7 +176,7 @@ pub fn mergeOneField(
         None => crate::aver_generated::domain::eval::records::mergeRecordFieldsAcc(
             rest.clone(),
             overrides.clone(),
-            aver_rt::AverList::prepend((k, v.clone()), &acc.clone()),
+            aver_rt::AverList::prepend((k, v), &acc.clone()),
         ),
     }
 }

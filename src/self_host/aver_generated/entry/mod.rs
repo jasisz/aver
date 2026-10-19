@@ -164,7 +164,7 @@ pub fn runGuestCliProgram(
                 || {
                     crate::cancel_checkpoint();
                     match runGuestProgram(prog.clone(), moduleFns, guestArgs) {
-                        Ok(result @ _) => finishCliRun(localFns, &result),
+                        Ok(result @ _) => finishCliRun(localFns, result),
                         Err(e @ _) => Err((AverStr::from("Runtime error: ") + &e)),
                     }
                 },
@@ -309,7 +309,7 @@ pub fn shiftFnIdsInFns(
         crate::cancel_checkpoint();
         aver_list_match!(fns, [] => { return acc.reverse(); }, [fd, rest] => { {
             let __tco0 = rest;
-            let __tco2 = aver_rt::AverList::prepend(shiftFnIdsInFn(&fd, offset.clone()), &acc);
+            let __tco2 = aver_rt::AverList::prepend(shiftFnIdsInFn(fd, offset.clone()), &acc);
             fns = __tco0;
             acc = __tco2;
             continue;
@@ -340,39 +340,41 @@ pub fn shiftFnIdsInProgram(
 
 /// Shift all embedded direct-call ids in one function definition.
 pub fn shiftFnIdsInFn(
-    fd @ _: &crate::aver_generated::domain::ast::FnDef,
+    mut fd @ _: crate::aver_generated::domain::ast::FnDef,
     offset @ _: aver_rt::AverInt,
 ) -> crate::aver_generated::domain::ast::FnDef {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::ast::FnDef {
-        name: fd.name.clone(),
-        params: fd.params.clone(),
+        name: fd.name,
+        params: fd.params,
         body: shiftFnIdsInStmts__collected(
-            fd.body.clone(),
+            fd.body,
             offset.clone(),
             aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
         ),
-        slotCount: fd.slotCount.clone(),
-        slotMap: fd.slotMap.clone(),
-        fastPath: shiftFnIdsInFastPath(&fd.fastPath, offset),
+        slotCount: fd.slotCount,
+        slotMap: fd.slotMap,
+        fastPath: shiftFnIdsInFastPath(fd.fastPath, offset),
         tailLoop: fd.tailLoop,
     }
 }
 
 /// Shift fast-path target ids that were resolved against a module-local function list.
 pub fn shiftFnIdsInFastPath(
-    path @ _: &crate::aver_generated::domain::ast::FnFastPath,
+    mut path @ _: crate::aver_generated::domain::ast::FnFastPath,
     offset @ _: aver_rt::AverInt,
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
-    match path.clone() {
+    match &path {
         crate::aver_generated::domain::ast::FnFastPath::FastForwardCall(targetId, slotArgs) => {
+            let targetId = targetId.clone();
+            let slotArgs = slotArgs.clone();
             crate::aver_generated::domain::ast::FnFastPath::FastForwardCall(
                 targetId.add(&offset),
                 slotArgs,
             )
         }
-        _ => path.clone(),
+        _ => path,
     }
 }
 
@@ -401,41 +403,43 @@ pub fn shiftFnIdsInStmt(
     offset @ _: aver_rt::AverInt,
 ) -> crate::aver_generated::domain::ast::Stmt {
     crate::cancel_checkpoint();
-    match stmt.clone() {
+    match stmt {
         crate::aver_generated::domain::ast::Stmt::StmtBind(name, expr) => {
-            crate::aver_generated::domain::ast::Stmt::StmtBind(
-                name,
-                shiftFnIdsInExpr(&expr, offset),
-            )
+            let name = name.clone();
+            let expr = expr.clone();
+            crate::aver_generated::domain::ast::Stmt::StmtBind(name, shiftFnIdsInExpr(expr, offset))
         }
         crate::aver_generated::domain::ast::Stmt::StmtBindSlot(slot, expr) => {
+            let slot = slot.clone();
+            let expr = expr.clone();
             crate::aver_generated::domain::ast::Stmt::StmtBindSlot(
                 slot,
-                shiftFnIdsInExpr(&expr, offset),
+                shiftFnIdsInExpr(expr, offset),
             )
         }
         crate::aver_generated::domain::ast::Stmt::StmtExpr(expr) => {
-            crate::aver_generated::domain::ast::Stmt::StmtExpr(shiftFnIdsInExpr(&expr, offset))
+            let expr = expr.clone();
+            crate::aver_generated::domain::ast::Stmt::StmtExpr(shiftFnIdsInExpr(expr, offset))
         }
     }
 }
 
 /// Shift direct-call ids in one expression tree.
 pub fn shiftFnIdsInExpr(
-    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    mut expr @ _: crate::aver_generated::domain::ast::Expr,
     offset @ _: aver_rt::AverInt,
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
-    match expr.clone() {
+    match &expr {
         crate::aver_generated::domain::ast::Expr::ExprBoolBranch(__cond_fields) => {
             let cond = __cond_fields.0.clone();
             let thenExpr = __cond_fields.1.clone();
             let elseExpr = __cond_fields.2.clone();
             crate::aver_generated::domain::ast::Expr::ExprBoolBranch(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprBoolBranch(
-                    shiftFnIdsInExpr(&cond, offset.clone()),
-                    shiftFnIdsInExpr(&thenExpr, offset.clone()),
-                    shiftFnIdsInExpr(&elseExpr, offset),
+                    shiftFnIdsInExpr(cond, offset.clone()),
+                    shiftFnIdsInExpr(thenExpr, offset.clone()),
+                    shiftFnIdsInExpr(elseExpr, offset),
                 ),
             ))
         }
@@ -445,8 +449,8 @@ pub fn shiftFnIdsInExpr(
             let defaultValue = __vecExpr_fields.2.clone();
             crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprVectorGetOrInt(
-                    shiftFnIdsInExpr(&vecExpr, offset.clone()),
-                    shiftFnIdsInExpr(&idxExpr, offset),
+                    shiftFnIdsInExpr(vecExpr, offset.clone()),
+                    shiftFnIdsInExpr(idxExpr, offset),
                     defaultValue,
                 ),
             ))
@@ -457,8 +461,8 @@ pub fn shiftFnIdsInExpr(
             let defaultValue = __a_fields.2.clone();
             crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprIntModOrInt(
-                    shiftFnIdsInExpr(&a, offset.clone()),
-                    shiftFnIdsInExpr(&b, offset),
+                    shiftFnIdsInExpr(a, offset.clone()),
+                    shiftFnIdsInExpr(b, offset),
                     defaultValue,
                 ),
             ))
@@ -468,8 +472,8 @@ pub fn shiftFnIdsInExpr(
             let b = __a_fields.1.clone();
             crate::aver_generated::domain::ast::Expr::ExprAdd(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprAdd(
-                    shiftFnIdsInExpr(&a, offset.clone()),
-                    shiftFnIdsInExpr(&b, offset),
+                    shiftFnIdsInExpr(a, offset.clone()),
+                    shiftFnIdsInExpr(b, offset),
                 ),
             ))
         }
@@ -478,8 +482,8 @@ pub fn shiftFnIdsInExpr(
             let b = __a_fields.1.clone();
             crate::aver_generated::domain::ast::Expr::ExprSub(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprSub(
-                    shiftFnIdsInExpr(&a, offset.clone()),
-                    shiftFnIdsInExpr(&b, offset),
+                    shiftFnIdsInExpr(a, offset.clone()),
+                    shiftFnIdsInExpr(b, offset),
                 ),
             ))
         }
@@ -488,8 +492,8 @@ pub fn shiftFnIdsInExpr(
             let b = __a_fields.1.clone();
             crate::aver_generated::domain::ast::Expr::ExprMul(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprMul(
-                    shiftFnIdsInExpr(&a, offset.clone()),
-                    shiftFnIdsInExpr(&b, offset),
+                    shiftFnIdsInExpr(a, offset.clone()),
+                    shiftFnIdsInExpr(b, offset),
                 ),
             ))
         }
@@ -498,8 +502,8 @@ pub fn shiftFnIdsInExpr(
             let b = __a_fields.1.clone();
             crate::aver_generated::domain::ast::Expr::ExprDiv(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprDiv(
-                    shiftFnIdsInExpr(&a, offset.clone()),
-                    shiftFnIdsInExpr(&b, offset),
+                    shiftFnIdsInExpr(a, offset.clone()),
+                    shiftFnIdsInExpr(b, offset),
                 ),
             ))
         }
@@ -508,8 +512,8 @@ pub fn shiftFnIdsInExpr(
             let b = __a_fields.1.clone();
             crate::aver_generated::domain::ast::Expr::ExprEq(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprEq(
-                    shiftFnIdsInExpr(&a, offset.clone()),
-                    shiftFnIdsInExpr(&b, offset),
+                    shiftFnIdsInExpr(a, offset.clone()),
+                    shiftFnIdsInExpr(b, offset),
                 ),
             ))
         }
@@ -518,8 +522,8 @@ pub fn shiftFnIdsInExpr(
             let b = __a_fields.1.clone();
             crate::aver_generated::domain::ast::Expr::ExprNeq(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprNeq(
-                    shiftFnIdsInExpr(&a, offset.clone()),
-                    shiftFnIdsInExpr(&b, offset),
+                    shiftFnIdsInExpr(a, offset.clone()),
+                    shiftFnIdsInExpr(b, offset),
                 ),
             ))
         }
@@ -529,18 +533,18 @@ pub fn shiftFnIdsInExpr(
 
 /// Finish shifting direct-call ids through the remaining aggregate forms.
 pub fn shiftFnIdsInExprTail(
-    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    mut expr @ _: crate::aver_generated::domain::ast::Expr,
     offset @ _: aver_rt::AverInt,
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
-    match expr.clone() {
+    match &expr {
         crate::aver_generated::domain::ast::Expr::ExprLt(__a_fields) => {
             let a = __a_fields.0.clone();
             let b = __a_fields.1.clone();
             crate::aver_generated::domain::ast::Expr::ExprLt(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprLt(
-                    shiftFnIdsInExpr(&a, offset.clone()),
-                    shiftFnIdsInExpr(&b, offset),
+                    shiftFnIdsInExpr(a, offset.clone()),
+                    shiftFnIdsInExpr(b, offset),
                 ),
             ))
         }
@@ -549,8 +553,8 @@ pub fn shiftFnIdsInExprTail(
             let b = __a_fields.1.clone();
             crate::aver_generated::domain::ast::Expr::ExprGt(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprGt(
-                    shiftFnIdsInExpr(&a, offset.clone()),
-                    shiftFnIdsInExpr(&b, offset),
+                    shiftFnIdsInExpr(a, offset.clone()),
+                    shiftFnIdsInExpr(b, offset),
                 ),
             ))
         }
@@ -559,8 +563,8 @@ pub fn shiftFnIdsInExprTail(
             let b = __a_fields.1.clone();
             crate::aver_generated::domain::ast::Expr::ExprLte(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprLte(
-                    shiftFnIdsInExpr(&a, offset.clone()),
-                    shiftFnIdsInExpr(&b, offset),
+                    shiftFnIdsInExpr(a, offset.clone()),
+                    shiftFnIdsInExpr(b, offset),
                 ),
             ))
         }
@@ -569,8 +573,8 @@ pub fn shiftFnIdsInExprTail(
             let b = __a_fields.1.clone();
             crate::aver_generated::domain::ast::Expr::ExprGte(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprGte(
-                    shiftFnIdsInExpr(&a, offset.clone()),
-                    shiftFnIdsInExpr(&b, offset),
+                    shiftFnIdsInExpr(a, offset.clone()),
+                    shiftFnIdsInExpr(b, offset),
                 ),
             ))
         }
@@ -632,17 +636,17 @@ pub fn shiftFnIdsInExprTail(
 
 /// Finish shifting direct-call ids through access, call, and match forms.
 pub fn shiftFnIdsInExprCalls(
-    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    mut expr @ _: crate::aver_generated::domain::ast::Expr,
     offset @ _: aver_rt::AverInt,
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
-    match expr.clone() {
+    match &expr {
         crate::aver_generated::domain::ast::Expr::ExprFieldAccess(__obj_fields) => {
             let obj = __obj_fields.0.clone();
             let field = __obj_fields.1.clone();
             crate::aver_generated::domain::ast::Expr::ExprFieldAccess(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprFieldAccess(
-                    shiftFnIdsInExpr(&obj, offset),
+                    shiftFnIdsInExpr(obj, offset),
                     field,
                 ),
             ))
@@ -716,7 +720,7 @@ pub fn shiftFnIdsInExprCalls(
             let arms = __scrutinee_fields.1.clone();
             crate::aver_generated::domain::ast::Expr::ExprMatch(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprMatch(
-                    shiftFnIdsInExpr(&scrutinee, offset.clone()),
+                    shiftFnIdsInExpr(scrutinee, offset.clone()),
                     shiftFnIdsInArms__collected(
                         arms,
                         offset,
@@ -731,7 +735,7 @@ pub fn shiftFnIdsInExprCalls(
             let inner = __inner_fields.0.clone();
             crate::aver_generated::domain::ast::Expr::ExprPropagate(std::sync::Arc::new(
                 crate::aver_generated::domain::ast::Expr__ExprPropagate(shiftFnIdsInExpr(
-                    &inner, offset,
+                    inner, offset,
                 )),
             ))
         }
@@ -751,7 +755,7 @@ pub fn shiftFnIdsInExprCalls(
                 ),
             ))
         }
-        _ => expr.clone(),
+        _ => expr,
     }
 }
 
@@ -766,7 +770,7 @@ pub fn shiftFnIdsInExprs(
         crate::cancel_checkpoint();
         aver_list_match!(exprs, [] => { return acc.reverse(); }, [expr, rest] => { {
             let __tco0 = rest;
-            let __tco2 = aver_rt::AverList::prepend(shiftFnIdsInExpr(&expr, offset.clone()), &acc);
+            let __tco2 = aver_rt::AverList::prepend(shiftFnIdsInExpr(expr, offset.clone()), &acc);
             exprs = __tco0;
             acc = __tco2;
             continue;
@@ -785,7 +789,7 @@ pub fn shiftFnIdsInFields(
         crate::cancel_checkpoint();
         aver_list_match!(fields, [] => { return acc.reverse(); }, [pair, rest] => { { let (name, expr) = pair; {
             let __tco0 = rest;
-            let __tco2 = aver_rt::AverList::prepend((name, shiftFnIdsInExpr(&expr, offset.clone())), &acc);
+            let __tco2 = aver_rt::AverList::prepend((name, shiftFnIdsInExpr(expr, offset.clone())), &acc);
             fields = __tco0;
             acc = __tco2;
             continue;
@@ -804,7 +808,7 @@ pub fn shiftFnIdsInArms(
         crate::cancel_checkpoint();
         aver_list_match!(arms, [] => { return acc.reverse(); }, [arm, rest] => { {
             let __tco0 = rest;
-            let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern, body: shiftFnIdsInExpr(&arm.body, offset.clone()), bindingSlots: arm.bindingSlots }, &acc);
+            let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern, body: shiftFnIdsInExpr(arm.body, offset.clone()), bindingSlots: arm.bindingSlots }, &acc);
             arms = __tco0;
             acc = __tco2;
             continue;
@@ -919,28 +923,28 @@ pub fn runCliFile(
 #[inline(always)]
 pub fn finishCliRun(
     localFns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
-    result @ _: &crate::aver_generated::domain::value::Val,
+    mut result @ _: crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     if hasLocalMain(localFns.clone()) {
         finishCliMainResult(result)
     } else {
-        Ok(result.clone())
+        Ok(result)
     }
 }
 
 /// Convert a guest main() return value into CLI success or failure. Successful returns propagate the live Val so the replay scope can serialise it as recording.output.
 pub fn finishCliMainResult(
-    result @ _: &crate::aver_generated::domain::value::Val,
+    mut result @ _: crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match result.clone() {
+    match &result {
         crate::aver_generated::domain::value::Val::ValErr(__err_fields) => {
             let err = __err_fields.0.clone();
             Err((AverStr::from("Main returned error: ")
                 + &crate::aver_generated::domain::value::valRepr(&err)))
         }
-        _ => Ok(result.clone()),
+        _ => Ok(result),
     }
 }
 
@@ -1447,7 +1451,7 @@ pub fn shiftFnIdsInFns__collected(
         crate::cancel_checkpoint();
         aver_list_match!(fns, [] => { return aver_rt::list_builder_finalize(acc); }, [fd, rest] => { {
             let __tco0 = rest;
-            let __tco2 = aver_rt::list_builder_push(acc, shiftFnIdsInFn(&fd, offset.clone()));
+            let __tco2 = aver_rt::list_builder_push(acc, shiftFnIdsInFn(fd, offset.clone()));
             fns = __tco0;
             acc = __tco2;
             continue;
@@ -1485,7 +1489,7 @@ pub fn shiftFnIdsInExprs__collected(
         crate::cancel_checkpoint();
         aver_list_match!(exprs, [] => { return aver_rt::list_builder_finalize(acc); }, [expr, rest] => { {
             let __tco0 = rest;
-            let __tco2 = aver_rt::list_builder_push(acc, shiftFnIdsInExpr(&expr, offset.clone()));
+            let __tco2 = aver_rt::list_builder_push(acc, shiftFnIdsInExpr(expr, offset.clone()));
             exprs = __tco0;
             acc = __tco2;
             continue;
@@ -1504,7 +1508,7 @@ pub fn shiftFnIdsInFields__collected(
         crate::cancel_checkpoint();
         aver_list_match!(fields, [] => { return aver_rt::list_builder_finalize(acc); }, [pair, rest] => { { let (name, expr) = pair; {
             let __tco0 = rest;
-            let __tco2 = aver_rt::list_builder_push(acc, (name, shiftFnIdsInExpr(&expr, offset.clone())));
+            let __tco2 = aver_rt::list_builder_push(acc, (name, shiftFnIdsInExpr(expr, offset.clone())));
             fields = __tco0;
             acc = __tco2;
             continue;
@@ -1523,7 +1527,7 @@ pub fn shiftFnIdsInArms__collected(
         crate::cancel_checkpoint();
         aver_list_match!(arms, [] => { return aver_rt::list_builder_finalize(acc); }, [arm, rest] => { {
             let __tco0 = rest;
-            let __tco2 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern, body: shiftFnIdsInExpr(&arm.body, offset.clone()), bindingSlots: arm.bindingSlots });
+            let __tco2 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern, body: shiftFnIdsInExpr(arm.body, offset.clone()), bindingSlots: arm.bindingSlots });
             arms = __tco0;
             acc = __tco2;
             continue;

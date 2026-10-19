@@ -118,7 +118,7 @@ pub fn readAll(text @ _: AverStr) -> Result<Sexp, AverStr> {
                 let __list_subject =
                     crate::proof_kernel::aver_generated::kernel::sexp::skipBlank(rest);
                 if __list_subject.is_empty() {
-                    crate::proof_kernel::aver_generated::kernel::sexp::expand(&s)
+                    crate::proof_kernel::aver_generated::kernel::sexp::expand(s)
                 } else {
                     Err(AverStr::from("text after the S-expression"))
                 }
@@ -128,42 +128,45 @@ pub fn readAll(text @ _: AverStr) -> Result<Sexp, AverStr> {
 }
 
 /// (shared ((#NAME S)…) BODY) is BODY with every #NAME written out as its S; each S may use only the names before it. Anything else is itself.
-pub fn expand(s @ _: &Sexp) -> Result<Sexp, AverStr> {
+pub fn expand(mut s @ _: Sexp) -> Result<Sexp, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    match s.clone() {
+    match &s {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat0) => {
-            let __list_subject = __pat0;
-            if let Some((__pat1, __pat2)) = aver_rt::list_uncons_cloned(&__list_subject) {
-                match __pat1 {
-                    crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(__pat3) => {
-                        match &*__pat3 {
-                            "shared" => {
-                                let __list_subject = __pat2;
-                                if let Some((__pat4, __pat5)) =
-                                    aver_rt::list_uncons_cloned(&__list_subject)
-                                {
-                                    match __pat4 {
+            let __pat0 = __pat0.clone();
+            {
+                let __list_subject = __pat0;
+                if let Some((__pat1, __pat2)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                    match __pat1 {
+                        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(__pat3) => {
+                            match &*__pat3 {
+                                "shared" => {
+                                    let __list_subject = __pat2;
+                                    if let Some((__pat4, __pat5)) =
+                                        aver_rt::list_uncons_cloned(&__list_subject)
+                                    {
+                                        match __pat4 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(parts) => {
-            { let __list_subject = __pat5; if let Some((body, __pat6)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat6; if __list_subject.is_empty() { { let (b, n) = crate::proof_kernel::aver_generated::kernel::sexp::bounded(&crate::proof_kernel::aver_generated::kernel::sexp::within(&body, &crate::proof_kernel::aver_generated::kernel::sexp::define(parts, HashMap::new())?)?)?; Ok(b) } } else { Ok(s.clone()) } } } else { Ok(s.clone()) } }
+            { let __list_subject = __pat5; if let Some((body, __pat6)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat6; if __list_subject.is_empty() { { let (b, n) = crate::proof_kernel::aver_generated::kernel::sexp::bounded(&crate::proof_kernel::aver_generated::kernel::sexp::within(body, &crate::proof_kernel::aver_generated::kernel::sexp::define(parts, HashMap::new())?)?)?; Ok(b) } } else { Ok(s) } } } else { Ok(s) } }
         },
         _ => {
-            Ok(s.clone())
+            Ok(s)
         }
     }
-                                } else {
-                                    Ok(s.clone())
+                                    } else {
+                                        Ok(s)
+                                    }
                                 }
+                                _ => Ok(s),
                             }
-                            _ => Ok(s.clone()),
                         }
+                        _ => Ok(s),
                     }
-                    _ => Ok(s.clone()),
+                } else {
+                    Ok(s)
                 }
-            } else {
-                Ok(s.clone())
             }
         }
-        _ => Ok(s.clone()),
+        _ => Ok(s),
     }
 }
 
@@ -181,7 +184,7 @@ pub fn define(
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(n) => {
             { let __list_subject = __pat3; if let Some((s, __pat4)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat4; if __list_subject.is_empty() { {
             let __tco0 = rest;
-            let __tco1 = table.clone().insert_owned(crate::proof_kernel::aver_generated::kernel::sexp::fresh(n, &table)?, crate::proof_kernel::aver_generated::kernel::sexp::bounded(&crate::proof_kernel::aver_generated::kernel::sexp::within(&s, &table)?)?);
+            let __tco1 = table.clone().insert_owned(crate::proof_kernel::aver_generated::kernel::sexp::fresh(n, &table)?, crate::proof_kernel::aver_generated::kernel::sexp::bounded(&crate::proof_kernel::aver_generated::kernel::sexp::within(s, &table)?)?);
             parts = __tco0;
             table = __tco1;
             continue;
@@ -254,12 +257,13 @@ pub fn bounded(r @ _: &(Sexp, aver_rt::AverInt)) -> Result<(Sexp, aver_rt::AverI
 
 /// The S-expression with every #NAME written out, and how many atoms, texts and lists that is; a written-out part is the very value the table holds, not a copy.
 pub fn within(
-    s @ _: &Sexp,
+    mut s @ _: Sexp,
     table @ _: &aver_rt::AverMap<AverStr, (Sexp, aver_rt::AverInt)>,
 ) -> Result<(Sexp, aver_rt::AverInt), AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    match s.clone() {
+    match &s {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(a) => {
+            let a = a.clone();
             if a.starts_with("#") {
                 table.get(&a).cloned().ok_or(aver_rt::AverStr::from({
                     let mut __b = {
@@ -273,13 +277,15 @@ pub fn within(
                     __b
                 }))
             } else {
-                Ok((s.clone(), aver_rt::AverInt::from_i64(1)))
+                Ok((s, aver_rt::AverInt::from_i64(1)))
             }
         }
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Text(t) => {
-            Ok((s.clone(), aver_rt::AverInt::from_i64(1)))
+            let t = t.clone();
+            Ok((s, aver_rt::AverInt::from_i64(1)))
         }
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(xs) => {
+            let xs = xs.clone();
             crate::proof_kernel::aver_generated::kernel::sexp::withinAll(
                 xs,
                 table.clone(),
@@ -301,7 +307,7 @@ pub fn withinAll(
     let table @ _ = std::sync::Arc::new(table);
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        aver_list_match!(xs, [] => { return Ok((crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(acc.reverse()), size)); }, [x, rest] => { { let (y, n) = crate::proof_kernel::aver_generated::kernel::sexp::within(&x, &*table)?; {
+        aver_list_match!(xs, [] => { return Ok((crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(acc.reverse()), size)); }, [x, rest] => { { let (y, n) = crate::proof_kernel::aver_generated::kernel::sexp::within(x, &*table)?; {
             let __tco0 = rest;
             let __tco2 = aver_rt::AverList::prepend(y, &acc);
             let __tco3 = size.add(&n);
