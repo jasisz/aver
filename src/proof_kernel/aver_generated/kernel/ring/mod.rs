@@ -2,10 +2,16 @@
 use crate::proof_kernel::*;
 use ::aver_rt::aver_list_match;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Mono {
     pub atoms: aver_rt::AverIntList,
     pub coef: aver_rt::AverInt,
+}
+
+impl PartialEq for Mono {
+    fn eq(&self, other: &Self) -> bool {
+        self.coef == other.coef && self.atoms == other.atoms
+    }
 }
 
 impl PartialOrd for Mono {
