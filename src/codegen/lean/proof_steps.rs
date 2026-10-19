@@ -6,8 +6,9 @@
 //! lemmas live in the prelude, proved once), and law → theorem name.
 //! Definitions are opened through `__aver_unfold_<n>` lemmas stated next
 //! to the law, one per (function, arm), never through Lean's own equation
-//! numbering. Every intermediate equation is stated with `show`, so the
-//! kernel checks the data and elaboration never searches.
+//! numbering. An intermediate equation is stated with `show` where its
+//! term does not already say it, so the kernel checks the data and
+//! elaboration never searches.
 
 use std::collections::BTreeMap;
 
@@ -447,6 +448,9 @@ struct Renderer<'a> {
     /// Hypotheses the theorem introduces whose term is a bare comparison:
     /// Lean states them `(a < b) = true`, an equation of Props.
     prop_hyps: Vec<String>,
+    /// The next step rendered states its equation: the whole proof, and
+    /// the step inside a congruence whose hole has no type.
+    state_next: bool,
 }
 
 /// `t` with every empty list that has no type typed `List α`.
@@ -1212,6 +1216,26 @@ impl Renderer<'_> {
         expected: Option<&Eqn>,
     ) -> Result<String, String> {
         let eq = super::step_types::equation(&self.concl(p, hyps)?, expected);
+        // A step whose term already says what it proves is not stated
+        // again: a lemma or a hypothesis applied to its arguments, and the
+        // chains, flips and congruences built from such terms. Stating each
+        // one wrote the terms of the equation out at every level, which Lean
+        // parsed and elaborated again each time. What proves by evaluation or
+        // by a tactic, and the whole proof, keep their `show`.
+        let stated = std::mem::replace(&mut self.state_next, false);
+        let mut says_itself = !stated
+            && match p {
+                Proof::Symm(_)
+                | Proof::Trans { .. }
+                | Proof::Congr { .. }
+                | Proof::Unfold { .. } => true,
+                Proof::Rule { rule, .. } => lemma(*rule) != "rfl",
+                Proof::Hyp(n) => !self.prop_hyps.contains(n),
+                Proof::Law { law, .. } => self.script.law(law).is_none_or(|l| {
+                    l.fact.is_some() || !(is_prop_comparison(&l.lhs) || is_prop_comparison(&l.rhs))
+                }),
+                _ => false,
+            };
         let body = match p {
             // A module-level binding is a Lean `def` with no parameters;
             // its value is its definitional unfolding.
@@ -1257,7 +1281,13 @@ impl Renderer<'_> {
                     .filter(|ty| crate::types::checker::type_is_fully_concrete(ty))
                 {
                     Some(ty) => format!("({HOLE} : {})", super::types::term_type_to_lean(ty)),
-                    None => HOLE.to_string(),
+                    // Without its type the hole is read off the step
+                    // inside, so that step and this one are stated.
+                    None => {
+                        says_itself = false;
+                        self.state_next = true;
+                        HOLE.to_string()
+                    }
                 };
                 let body = self.expr(ctx);
                 format!(
@@ -1906,6 +1936,9 @@ impl Renderer<'_> {
                 )
             }
         };
+        if says_itself {
+            return Ok(format!("({body})"));
+        }
         Ok(format!("(show {} from {body})", self.eqn(&eq)))
     }
 
@@ -2312,6 +2345,7 @@ pub(crate) fn render_cited_facts(body: &str, ctx: &CodegenContext) -> Result<Str
             support: Vec::new(),
             generic: true,
             prop_hyps: Vec::new(),
+            state_next: true,
         };
         let ob = &script.obligation;
         let statement = r.eqn(&Eqn::new(ob.lhs.clone(), ob.rhs.clone()));
@@ -2812,6 +2846,7 @@ fn render_with(
         support: Vec::new(),
         generic: false,
         prop_hyps: Vec::new(),
+        state_next: true,
     };
     let mut hyps = Hyps::new();
     if let Some(p) = &script.obligation.premise {
@@ -2842,46 +2877,49 @@ fn render_with(
 }
 
 /// A cited law's theorem states a comparison as a Prop; the steps read it
-/// as an equation of Bools, every comparison through `decide`.
+/// as an equation of Bools, every comparison through `decide`. The citation
+/// is written once and named, since both directions read it.
 fn from_statement(lhs: &Term, rhs: &Term, h: String) -> String {
-    match (is_prop_comparison(lhs), is_prop_comparison(rhs)) {
-        (false, false) => h,
+    let both = match (is_prop_comparison(lhs), is_prop_comparison(rhs)) {
+        (false, false) => return h,
         // `decide A = R` from `A = (R = true)`.
-        (true, false) => format!(
-            "(Bool.eq_iff_iff.mpr ⟨fun d => Eq.mp {h} (of_decide_eq_true d), fun r => decide_eq_true (Eq.mpr {h} r)⟩)"
-        ),
+        (true, false) => {
+            "fun d => Eq.mp h (of_decide_eq_true d), fun r => decide_eq_true (Eq.mpr h r)"
+        }
         // `L = decide B` from `(L = true) = B`.
-        (false, true) => format!(
-            "(Bool.eq_iff_iff.mpr ⟨fun l => decide_eq_true (Eq.mp {h} l), fun d => Eq.mpr {h} (of_decide_eq_true d)⟩)"
-        ),
+        (false, true) => {
+            "fun l => decide_eq_true (Eq.mp h l), fun d => Eq.mpr h (of_decide_eq_true d)"
+        }
         // `decide A = decide B` from `A = B`.
-        (true, true) => format!(
-            "(Bool.eq_iff_iff.mpr ⟨fun d => decide_eq_true (Eq.mp {h} (of_decide_eq_true d)), fun d => decide_eq_true (Eq.mpr {h} (of_decide_eq_true d))⟩)"
-        ),
-    }
+        (true, true) => {
+            "fun d => decide_eq_true (Eq.mp h (of_decide_eq_true d)), fun d => decide_eq_true (Eq.mpr h (of_decide_eq_true d))"
+        }
+    };
+    format!("(have h := {h}; Bool.eq_iff_iff.mpr ⟨{both}⟩)")
 }
 
 /// The step term proves the claim as an equation of Bools, every Int
 /// comparison read through `decide`. Lean states a comparison as a Prop, so
 /// a claim with a comparison on one side, or on both, is an equation of
-/// Props: carry the proof across, under a name no given of the law can
-/// have, so the step term inside still reads the givens.
+/// Props: carry the proof across, written once and named `__aver_steps`, a
+/// name no given of the law can have.
 fn to_statement(ob: &crate::ir::proof_steps::Obligation, t: String) -> String {
-    match (is_prop_comparison(&ob.lhs), is_prop_comparison(&ob.rhs)) {
-        (false, false) => t,
+    let both = match (is_prop_comparison(&ob.lhs), is_prop_comparison(&ob.rhs)) {
+        (false, false) => return t,
         // `A = (R = true)` from `decide A = R`.
-        (true, false) => format!(
-            "(propext ⟨fun __aver_side => ({t}).symm.trans (decide_eq_true __aver_side), fun __aver_side => of_decide_eq_true (({t}).trans __aver_side)⟩)"
-        ),
+        (true, false) => {
+            "fun s => __aver_steps.symm.trans (decide_eq_true s), fun s => of_decide_eq_true (__aver_steps.trans s)"
+        }
         // `(L = true) = B` from `L = decide B`.
-        (false, true) => format!(
-            "(propext ⟨fun __aver_side => of_decide_eq_true (({t}).symm.trans __aver_side), fun __aver_side => ({t}).trans (decide_eq_true __aver_side)⟩)"
-        ),
+        (false, true) => {
+            "fun s => of_decide_eq_true (__aver_steps.symm.trans s), fun s => __aver_steps.trans (decide_eq_true s)"
+        }
         // `A = B` from `decide A = decide B`.
-        (true, true) => format!(
-            "(propext ⟨fun __aver_side => of_decide_eq_true (({t}).symm.trans (decide_eq_true __aver_side)), fun __aver_side => of_decide_eq_true (({t}).trans (decide_eq_true __aver_side))⟩)"
-        ),
-    }
+        (true, true) => {
+            "fun s => of_decide_eq_true (__aver_steps.symm.trans (decide_eq_true s)), fun s => of_decide_eq_true (__aver_steps.trans (decide_eq_true s))"
+        }
+    };
+    format!("(have __aver_steps := {t}; propext ⟨{both}⟩)")
 }
 
 /// Closes `body = body'` where both write the same matches, elaborated
