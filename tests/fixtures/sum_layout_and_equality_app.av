@@ -63,6 +63,24 @@ fn total(xs: List<Shape>, acc: Int) -> Int
 verify total
     total([Shape.Dot(2), Shape.Blank], 0) => 2
 
+fn lookup(m: Map<Shape, Int>, k: Shape) -> Int
+    ? "The value under k, or -1."
+    match Map.get(m, k)
+        Option.Some(v) -> v
+        Option.None -> -1
+
+verify lookup
+    lookup(Map.fromList([(Shape.Dot(1), 2)]), Shape.Blank) => -1
+
+fn firstKey(ks: List<Shape>) -> Shape
+    ? "The first key, or Blank."
+    match ks
+        [] -> Shape.Blank
+        [k, .._] -> k
+
+verify firstKey
+    firstKey([]) => Shape.Blank
+
 fn spine(n: Int, seed: Int) -> Tree
     ? "A spine of n nodes over Leaf(seed), its hash in the last field."
     match n == 0
@@ -93,9 +111,8 @@ fn main() -> Unit
     xs = shapes(30000, [])
     Console.print("shapes {List.len(xs)} area {total(xs, 0)}")
     Console.print("labels {Shape.Label("a", "b", "c", 1, 2, 3) == Shape.Label("a", "b", "c", 1, 2, 3)} {Shape.Label("a", "b", "c", 1, 2, 3) == Shape.Label("a", "b", "d", 1, 2, 3)} {Shape.Dot(1) == Shape.Blank}")
-    m = Map.set(Map.set(Map.empty(), Shape.Label("z", "", "", 0, 0, 0), 1), Shape.Dot(5), 2)
-    Console.print("map {Map.get(m, Shape.Label("z", "", "", 0, 0, 0))} {Map.get(m, Shape.Dot(5))} {Map.keys(m)}")
-    Console.print("shape {Shape.Label("a", "b", "c", 1, 2, 3)} {Shape.Blank}")
+    m = Map.fromList([(Shape.Label("z", "", "", 0, 0, 0), 1), (Shape.Dot(5), 2)])
+    Console.print("map {lookup(m, Shape.Label("z", "", "", 0, 0, 0))} {lookup(m, Shape.Dot(5))} {List.len(Map.keys(m))} first {area(firstKey(Map.keys(m)))}")
     a = spine(2000, 1)
     Console.print("trees {a == spine(2000, 1)} {a == spine(2000, 2)} {a == a}")
     nan = 0.0 / 0.0

@@ -402,6 +402,17 @@ fn shared_recursive_sum_matches_between_rust_and_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A constructor much larger than the others in a sum that is not recursive
+/// goes behind an `Arc`, and `==` compares a node's scalar fields before its
+/// children. The fixture builds, matches, compares and keys a map on the
+/// large constructor, and compares nodes that declare their hash, a `Float`
+/// (NaN included) or a field-less sum after a list or a subtree.
+#[test]
+fn large_constructors_and_equality_order_match_between_rust_and_vm() {
+    assert_plain_parity("tests/fixtures/sum_layout_and_equality_app.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A two-arm bool `match` whose default arm NAMES the matched value
 /// (`other -> …`) instead of spelling `false` or `_`.
 ///

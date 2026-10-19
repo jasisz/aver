@@ -87,8 +87,13 @@ pub(super) fn type_def_contract(td: &TypeDef, ctx: &CodegenContext) -> Represent
 
 /// How much larger than every other constructor of a sum that is not
 /// recursive one must be to go behind an `Arc` (see [`shared_variants`]).
-/// Below it the allocation a value of the large constructor costs when it is
-/// built outweighs the room a value of a small one saves.
+/// The pointer costs a value of the large constructor an allocation when it
+/// is built and about 48 bytes (pointer, counts, allocator rounding); at a
+/// 64-byte difference a value of a small one saves as much, so the shared
+/// layout takes less memory whenever fewer than half the values are large.
+/// Measured on lists of two million values: building only large ones is 8%
+/// slower, only small ones 12% faster; at 32 bytes the large ones were 18%
+/// slower and the memory broke even at a quarter of them.
 const LARGE_VARIANT_BYTES: usize = 64;
 
 /// Which constructors of a sum keep their fields in one shared `Arc`

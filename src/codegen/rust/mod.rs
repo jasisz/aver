@@ -1674,6 +1674,82 @@ fn left(t: T) -> T
         );
     }
 
+    /// In a sum that is not recursive only a constructor much larger than
+    /// every other one goes behind an `Arc`, so a value of a small one does
+    /// not carry its room; a sum of small constructors keeps them all inline.
+    /// `==` compares the fields that answer at once (scalars, strings,
+    /// field-less sums) before a subtree or a list, whatever order they are
+    /// declared in, and is derived where the declared order already is that.
+    #[test]
+    fn large_constructor_boxed_and_cheap_fields_compared_first() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+type Shape
+    Dot(Int)
+    Label(String, String, String, Int, Int, Int)
+    Blank
+
+type Pair
+    One(Int)
+    Two(Int, Int)
+
+type Tree
+    Leaf(Int)
+    Node(Tree, Tree, Int)
+
+type Mark
+    Plain
+    Bold
+
+type Cell
+    Cell(List<Int>, Float, Mark)
+    Empty
+
+record Item
+    parts: List<Int>
+    weight: Float
+
+record Point
+    x: Int
+    tags: List<Int>
+
+fn label(n: Int) -> Shape
+    Shape.Label("a", "b", "c", n, n, n)
+
+fn width(s: Shape) -> Int
+    match s
+        Shape.Label(_, _, _, w, _, _) -> w
+        Shape.Dot(n) -> n
+        Shape.Blank -> 0
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        for expected in [
+            "    Dot(aver_rt::AverInt),\n    Label(std::sync::Arc<Shape__Label>),\n    Blank,",
+            "Shape::Label(std::sync::Arc::new(Shape__Label(",
+            "Shape::Label(__w_fields) => {",
+            "    One(aver_rt::AverInt),\n    Two(aver_rt::AverInt, aver_rt::AverInt),",
+            "#[derive(Clone, Debug, Eq, Hash)]\npub struct Tree__Node(pub Tree, pub Tree, pub aver_rt::AverInt);",
+            "impl PartialEq for Tree__Node {\n    fn eq(&self, other: &Self) -> bool {\n        self.2 == other.2 && self.0 == other.0 && self.1 == other.1\n    }\n}",
+            "(Cell::Cell(a0, a1, a2), Cell::Cell(b0, b1, b2)) => a1 == b1 && a2 == b2 && a0 == b0,",
+            "(Cell::Empty, Cell::Empty) => true,",
+            "self.weight == other.weight && self.parts == other.parts",
+            "#[derive(Clone, Debug, PartialEq, Eq, Hash)]\npub struct Point {",
+        ] {
+            assert!(entry.contains(expected), "missing `{expected}`:\n{entry}");
+        }
+        assert!(
+            !entry.contains("impl PartialEq for Point") && !entry.contains("impl PartialEq for Shape"),
+            "an equality already in cheap-first order is not hand-written:\n{entry}"
+        );
+    }
+
     #[test]
     fn mutual_tco_variant_for_keyword_named_fn_is_an_identifier() {
         // A function whose Aver name is a Rust keyword takes part in a
