@@ -77,7 +77,66 @@ struct FlowFacts {
 /// with two tracked String parameters, or any generated-name collision,
 /// leaves the complete source component untouched.
 pub fn run_string_index_pass(items: &mut Vec<TopLevel>) -> StringIndexPassReport {
-    run_string_index_pass_keeping(items, &HashSet::new())
+    run_string_index_pass_keeping(items, &HashSet::new(), &BTreeMap::new())
+}
+
+/// The indexed workers other modules already carry, as the dotted name of
+/// each ABI-preserving wrapper (`Scan.skipTo`) and the position of the String
+/// parameter its index is built from. A worker of this module that hands that
+/// same String to one of them forwards the index it holds instead of letting
+/// the wrapper build another. Read off the lowered dependency items, so a
+/// door whose dependencies grew no workers simply finds none.
+pub fn foreign_indexed_wrappers(modules: &[crate::codegen::ModuleInfo]) -> BTreeMap<String, usize> {
+    let mut out = BTreeMap::new();
+    for module in modules {
+        for fd in &module.fn_defs {
+            let Some(index) = wrapper_string_param(fd) else {
+                continue;
+            };
+            let worker = format!("{}{WORKER_SUFFIX}", fd.name);
+            if module.fn_defs.iter().any(|w| w.name == worker) {
+                out.insert(format!("{}.{}", module.prefix, fd.name), index);
+            }
+        }
+    }
+    out
+}
+
+/// The wrapper an indexed worker stands behind, when `name` is one. The
+/// worker crosses the module boundary with its wrapper: another module's
+/// worker calls it with the index it already holds (see
+/// [`foreign_indexed_wrappers`]); source cannot spell the name.
+pub fn indexed_wrapper_of(name: &str) -> Option<&str> {
+    name.strip_suffix(WORKER_SUFFIX)
+}
+
+/// The String parameter a wrapper written by [`wrapper_body`] indexes, or
+/// `None` for any other body.
+fn wrapper_string_param(fd: &FnDef) -> Option<usize> {
+    let [Stmt::Expr(body)] = fd.body.stmts() else {
+        return None;
+    };
+    let Expr::FnCall(callee, args) = &body.node else {
+        return None;
+    };
+    let worker = format!("{}{WORKER_SUFFIX}", fd.name);
+    if !is_ident(&callee.node, &worker) || args.len() != fd.params.len() + 1 {
+        return None;
+    }
+    let Expr::FnCall(build, built) = &args.last()?.node else {
+        return None;
+    };
+    if !is_ident(&build.node, "__str_index_build") {
+        return None;
+    }
+    let [source] = built.as_slice() else {
+        return None;
+    };
+    let index = fd
+        .params
+        .iter()
+        .position(|(name, _)| is_ident(&source.node, name))?;
+    (canonical(&fd.params[index].1) == "String").then_some(index)
 }
 
 /// [`run_string_index_pass`] for a pipeline whose chars fusion left the
@@ -85,9 +144,13 @@ pub fn run_string_index_pass(items: &mut Vec<TopLevel>) -> StringIndexPassReport
 /// classifier's `<fn>__code` variant is discovered from its codepoint-rewritten
 /// copy, as it would have been had chars fusion rewritten it, so indexed
 /// workers keep reading one codepoint while the classifier keeps its body.
+///
+/// `foreign` names the wrappers of other modules this module's workers may
+/// call with the index they already hold (see [`foreign_indexed_wrappers`]).
 pub fn run_string_index_pass_keeping(
     items: &mut Vec<TopLevel>,
     kept: &HashSet<String>,
+    foreign: &BTreeMap<String, usize>,
 ) -> StringIndexPassReport {
     let signatures: HashMap<String, Vec<String>> = fn_defs(items)
         .map(|fd| {
@@ -181,6 +244,7 @@ pub fn run_string_index_pass_keeping(
             string_param,
             &worker_name,
             &accepted,
+            foreign,
             &code_classifiers,
             &mut used_code_classifiers,
         );
@@ -437,6 +501,7 @@ fn build_worker(
     string_param: usize,
     worker_name: &str,
     accepted: &BTreeMap<String, usize>,
+    foreign: &BTreeMap<String, usize>,
     code_classifiers: &BTreeMap<String, usize>,
     used_code_classifiers: &mut BTreeSet<String>,
 ) -> (FnDef, usize, usize) {
@@ -447,6 +512,7 @@ fn build_worker(
         source_name: &source_name,
         worker_name,
         accepted,
+        foreign,
         code_classifiers,
         bound_names,
         used_code_classifiers,
@@ -498,6 +564,8 @@ struct WorkerTransformer<'a> {
     source_name: &'a str,
     worker_name: &'a str,
     accepted: &'a BTreeMap<String, usize>,
+    /// Other modules' wrappers, by dotted name; see [`foreign_indexed_wrappers`].
+    foreign: &'a BTreeMap<String, usize>,
     code_classifiers: &'a BTreeMap<String, usize>,
     bound_names: HashSet<String>,
     used_code_classifiers: &'a mut BTreeSet<String>,
@@ -546,6 +614,23 @@ impl WorkerTransformer<'_> {
                         .is_some_and(|arg| is_ident(&arg.node, self.source_name))
                 {
                     lowered_callee = ident(&format!("{target}{WORKER_SUFFIX}"), line);
+                    lowered_args.push(typed_ident(
+                        INDEX_PARAM,
+                        line,
+                        crate::types::Type::named(INDEX_TYPE),
+                    ));
+                } else if source_live
+                    && let Expr::Attr(module, wrapper) = &callee.node
+                    && let Some(target) = crate::ir::calls::expr_to_dotted_name(&callee.node)
+                    && let Some(&target_param) = self.foreign.get(&target)
+                    && args
+                        .get(target_param)
+                        .is_some_and(|arg| is_ident(&arg.node, self.source_name))
+                {
+                    lowered_callee = sp(
+                        Expr::Attr(module.clone(), format!("{wrapper}{WORKER_SUFFIX}")),
+                        line,
+                    );
                     lowered_args.push(typed_ident(
                         INDEX_PARAM,
                         line,
@@ -1407,7 +1492,7 @@ fn step(c: String) -> Int
             };
             let original_step = rendered_fn(&items, "step");
             crate::ir::run_chars_fusion_pass_keeping(&mut items, &kept);
-            let report = run_string_index_pass_keeping(&mut items, &kept);
+            let report = run_string_index_pass_keeping(&mut items, &kept, &BTreeMap::new());
             (items, report, original_step)
         };
         let (fused, fused_report, _) = run(false);

@@ -1442,11 +1442,11 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
     if cfg.run_string_index {
         // A kept classifier still grows the `__code` variant chars fusion
         // would have given it; without chars fusion there is none to match.
-        let report = if cfg.run_chars_fusion {
-            crate::ir::run_string_index_pass_keeping(items, &kept)
-        } else {
-            string_index(items)
-        };
+        // Workers the dependencies grew can take this module's index.
+        let foreign = crate::ir::foreign_indexed_wrappers(cfg.dep_modules);
+        let none = std::collections::HashSet::new();
+        let kept_here = if cfg.run_chars_fusion { &kept } else { &none };
+        let report = crate::ir::run_string_index_pass_keeping(items, kept_here, &foreign);
         result.pass_diagnostics.push(diag_for_string_index(&report));
         result.string_index = Some(report);
         fire(&mut cfg, PipelineStage::StringIndex, items);

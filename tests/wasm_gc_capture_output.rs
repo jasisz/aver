@@ -927,3 +927,29 @@ fn wasm_gc_tuple_match_with_list_literal_and_option_elements_matches_vm() {
         "a tuple-subject match with list, literal and Option arms must take the same arm on wasm-gc as on the VM"
     );
 }
+
+/// A worker that hands its String to another module's indexed helper passes
+/// the index it holds; wasm-gc must take the same tokens as the VM.
+#[test]
+fn wasm_gc_cross_module_indexed_call_matches_the_vm() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/string_index_cross_module");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_aver"))
+        .arg("run")
+        .arg(root.join("main.av"))
+        .arg("--module-root")
+        .arg(&root)
+        .arg("--wasm-gc")
+        .env("AVER_WASMGC_REQUIRE_MIR", "1")
+        .output()
+        .expect("run aver --wasm-gc");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "ab|😀ą||tail\n10\n"
+    );
+}

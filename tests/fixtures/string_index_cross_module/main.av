@@ -1,0 +1,26 @@
+module Main
+    intent = "A string walked token by token with a helper from another module, which takes the index the caller already holds."
+    depends [Scan]
+
+fn tokens(s: String, i: Int, acc: List<String>) -> List<String>
+    ? "Collects the quoted tokens, letting Scan find each closing quote."
+    match String.charAt(s, i)
+        Option.None -> List.reverse(acc)
+        Option.Some("\"") -> token(s, i + 1, Scan.skipTo(i + 1, s), acc)
+        Option.Some(_) -> tokens(s, i + 1, acc)
+
+verify tokens
+    tokens("x\"ab\"y", 0, []) => ["ab"]
+
+fn token(s: String, start: Int, end: Int, acc: List<String>) -> List<String>
+    ? "Keeps one token and walks on past its closing quote."
+    tokens(s, end + 1, List.prepend(String.slice(s, start, end), acc))
+
+verify token
+    token("\"ab\"", 1, 3, []) => ["ab"]
+
+fn main() -> Unit
+    ? "Prints the tokens of a line with multibyte characters, and one call that indexes a string of its own."
+    ! [Console.print]
+    Console.print(String.join(tokens("é\"ab\"x\"😀ą\"\"\"\"tail", 0, []), "|"))
+    Console.print("{Scan.skipTo(0, "no quote ł")}")

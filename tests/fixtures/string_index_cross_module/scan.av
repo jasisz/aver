@@ -1,0 +1,13 @@
+module Scan
+    intent = "A helper that walks a string by character index, its String not the first parameter."
+    exposes [skipTo]
+
+fn skipTo(i: Int, s: String) -> Int
+    ? "The index of the next quote at or after i, or the length."
+    match String.charAt(s, i)
+        Option.None -> i
+        Option.Some("\"") -> i
+        Option.Some(_) -> skipTo(i + 1, s)
+
+verify skipTo
+    skipTo(0, "ab\"c") => 2
