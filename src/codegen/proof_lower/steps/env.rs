@@ -561,10 +561,19 @@ impl<'a> Env<'a> {
         // A definition of another module that builds a record of a refined
         // type, which that module exposes opaque: the law's module cannot see
         // inside such a record, and Lean states it as a `Subtype` that step
-        // terms do not spell, so steps leave the definition closed.
-        let own = self.inputs.symbol_table.fn_entry(id).key.scope_str();
-        let terms = || def.lets.iter().map(|(_, v)| v).chain([&def.body]);
-        if own != self.law_scope.as_deref() && terms().any(|t| builds_refined(t, self.inputs)) {
+        // terms do not spell, so steps leave the definition closed: one that
+        // builds it through a definition of its own module too (`fromHex`
+        // through `fromList`), which a case then splits on as it stands.
+        let scope = |f: FnId| self.inputs.symbol_table.fn_entry(f).key.scope_str();
+        let own = scope(id);
+        if own != self.law_scope.as_deref()
+            && self.reachable_defs(id).iter().any(|d| {
+                scope(d.fn_id) == own
+                    && (d.lets.iter().map(|(_, v)| v))
+                        .chain([&d.body])
+                        .any(|t| builds_refined(t, self.inputs))
+            })
+        {
             return None;
         }
         // A recursive function opens only when its own recursion passes the
