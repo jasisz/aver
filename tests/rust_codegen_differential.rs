@@ -361,6 +361,14 @@ fn deep_recursion_in_a_product_branch_matches_main_on_rust_and_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// Constant folding can turn `0.0 / 0.0` or `1.0 / 0.0` into NaN or an
+/// infinity, which have no Rust literal; they emit as the `f64` constants.
+#[test]
+fn folded_nan_and_infinity_constants_match_between_rust_and_vm() {
+    assert_plain_parity("tests/fixtures/float_special_constants_app.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// `Bytes.toHex` builds its string with the list-driven loop that the
 /// deforestation pass now recognises, and BOTH backends now fuse it —
 /// but by different routes. The Rust build reads the dependency out of
