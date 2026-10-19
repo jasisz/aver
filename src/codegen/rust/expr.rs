@@ -1,24 +1,21 @@
 use super::emit_ctx::{EmitCtx, should_borrow_param};
 use super::pattern::emit_pattern;
+/// Aver expressions → Rust expression strings.
+pub use super::syntax::aver_name_to_rust;
+pub(super) use super::syntax::{generated_ident, has_list_patterns, has_string_literal_patterns};
 use crate::ast::{Literal, TypeDef};
 use crate::codegen::CodegenContext;
 use crate::codegen::common::resolve_module_call;
 use crate::ir::hir::{
     ResolvedFnDef, ResolvedMatchArm, ResolvedPattern, ResolvedThinBodyPlan,
     classify_list_match_shape_resolved, classify_thin_fn_def_resolved,
-    semantic_constructor_from_resolved_ctor,
 };
 use crate::ir::vars::resolved_pattern_bindings;
 use crate::ir::{
     DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan, DispatchLiteral, DispatchTableShape,
-    ListMatchShape, SemanticConstructor, SemanticDispatchPattern, WrapperKind,
+    ListMatchShape, SemanticDispatchPattern, WrapperKind,
 };
 use crate::types::{self, Type};
-/// Aver expressions → Rust expression strings.
-use std::collections::HashSet;
-
-pub use super::syntax::aver_name_to_rust;
-pub(super) use super::syntax::{generated_ident, has_list_patterns, has_string_literal_patterns};
 
 /// Render an identifier in a Rust pattern as an explicit binding.
 ///
@@ -638,153 +635,6 @@ fn emit_list_arm_body(arm: &ResolvedMatchArm, ctx: &CodegenContext, body: String
     }
 }
 
-/// Recursive-position detection for a record/variant constructor:
-/// returns the indices of constructor fields whose declared type is
-/// the constructor's owning type itself (the boxed-positions a
-/// `Tree.Node(left: Tree, value: Int, right: Tree)` lowers under in
-/// the Rust backend via `Arc::new(...)` to keep the type sized).
-///
-/// #180 Phase 7: routes through `find_ctor_owning_type` (which walks
-/// `ctx.symbol_table` + `ctx.items` / `ctx.modules`) instead of the
-/// legacy `ctx.fn_sigs` keyed by dotted source name. Identity-safe
-/// across cross-module same-bare-name twins via `TypeId` equality.
-pub(super) fn constructor_boxed_positions(name: &str, ctx: &CodegenContext) -> HashSet<usize> {
-    let mut out = HashSet::new();
-    let Some(decl) = find_ctor_owning_type(name, ctx) else {
-        return out;
-    };
-    // Bare-name suffix of the owning type — for a dep-module type like
-    // `ast.Expr` the field annotation in the .av source is `Expr`, not
-    // `ast.Expr`, so the id-less fallback must compare against the
-    // bare suffix as well.
-    let owning_full = decl.owning_type_name.as_deref();
-    let owning_bare = owning_full.map(|n| n.rsplit_once('.').map(|(_, b)| b).unwrap_or(n));
-    for (idx, field_str) in decl.field_type_strs.iter().enumerate() {
-        // A field is a recursive (boxed) position iff its declared type is
-        // EXACTLY the owning type — a bare nominal reference, not a generic
-        // wrapping it (`left: Tree` is boxed, `kids: List<Tree>` is not).
-        // Comparing the annotation string directly against the owning type's
-        // full + bare names is equivalent to the old parse-then-`named_name`
-        // round-trip (a bare nominal annotation IS its name), and
-        // `parse_type_str` never resolved a `TypeId` here, so the parse was
-        // pure name-extraction.
-        let f = field_str.trim();
-        if Some(f) == owning_full || Some(f) == owning_bare {
-            out.insert(idx);
-        }
-    }
-    out
-}
-
-/// Constructor declaration view — the constructor's field types +
-/// the canonical identity of the type the constructor belongs to.
-/// Built by walking `TypeDef`s in `ctx.items` and dep modules.
-struct CtorDecl {
-    /// Raw field type annotation strings in declaration order, straight
-    /// from the source `TypeDef`. Recursive-field detection (the only
-    /// consumer) compares these by name against the owning type, so no
-    /// `parse_type_str` round-trip is needed.
-    field_type_strs: Vec<String>,
-    /// Owning type's canonical name — the identity used for
-    /// recursive-field detection (full + bare-suffix forms).
-    owning_type_name: Option<String>,
-}
-
-fn find_ctor_owning_type(name: &str, ctx: &CodegenContext) -> Option<CtorDecl> {
-    use crate::ast::{TopLevel, TypeDef};
-
-    let consider = |type_name: &str, fields: Vec<String>| -> CtorDecl {
-        CtorDecl {
-            field_type_strs: fields,
-            owning_type_name: Some(type_name.to_string()),
-        }
-    };
-
-    // Constructor name shapes the source may produce:
-    //   - `Shape.Circle` (entry sum type)
-    //   - `MyModule.Shape.Circle` (module sum type — dotted parent)
-    //   - `Box` (entry product / single-ctor type)
-    //   - `MyModule.Box` (module product)
-    //
-    // Walk every typedef across entry + dep modules and match either
-    // the bare-name product form or the `parent.variant` sum form.
-    let walk_one = |td: &TypeDef, scope: Option<&str>| -> Option<CtorDecl> {
-        match td {
-            TypeDef::Sum {
-                name: parent,
-                variants,
-                ..
-            } => {
-                let parent_full = match scope {
-                    Some(prefix) => format!("{prefix}.{parent}"),
-                    None => parent.clone(),
-                };
-                for v in variants {
-                    let bare_form = format!("{parent}.{}", v.name);
-                    let full_form = format!("{parent_full}.{}", v.name);
-                    if name == bare_form || name == full_form {
-                        return Some(consider(&parent_full, v.fields.clone()));
-                    }
-                }
-                None
-            }
-            TypeDef::Product {
-                name: parent,
-                fields,
-                ..
-            } => {
-                let parent_full = match scope {
-                    Some(prefix) => format!("{prefix}.{parent}"),
-                    None => parent.clone(),
-                };
-                if name == parent || name == parent_full {
-                    let fts = fields.iter().map(|(_, t)| t.clone()).collect();
-                    return Some(consider(&parent_full, fts));
-                }
-                None
-            }
-        }
-    };
-
-    for item in &ctx.items {
-        if let TopLevel::TypeDef(td) = item
-            && let Some(decl) = walk_one(td, None)
-        {
-            return Some(decl);
-        }
-    }
-    for m in &ctx.modules {
-        for td in &m.type_defs {
-            if let Some(decl) = walk_one(td, Some(&m.prefix)) {
-                return Some(decl);
-            }
-        }
-    }
-    None
-}
-
-pub(super) fn constructor_boxed_bindings(
-    name: &str,
-    bindings: &[String],
-    ctx: &CodegenContext,
-) -> Vec<String> {
-    // `constructor_boxed_positions` walks `TypeDef`s directly post-#180
-    // Phase 7, so the dotted-vs-bare ambiguity is resolved by the type
-    // walker rather than by canonicalising the constructor name here.
-    let boxed = constructor_boxed_positions(name, ctx);
-    bindings
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, b)| {
-            if b != "_" && boxed.contains(&idx) {
-                Some(b.clone())
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
 /// When matching on a reference (`&T`), pattern bindings are `&Inner`.
 /// Emit `let b = b.clone();` for each binding to produce owned values.
 pub(super) fn emit_ref_match_rebindings(pattern: &ResolvedPattern) -> String {
@@ -800,10 +650,11 @@ pub(super) fn emit_ref_match_rebindings(pattern: &ResolvedPattern) -> String {
     format!("{}\n            ", lines.join("\n            "))
 }
 
-/// A pattern binding that holds a recursive field is `Arc`-boxed in the
-/// generated type, so an arm that uses it as a value needs the inner value.
-/// Emit `let b = (*b).clone();` for each such binding, wherever in the
-/// pattern its constructor stands: at the top or inside a tuple, at any depth.
+/// A constructor of a shared sum binds the one `Arc` that holds its fields
+/// (see `pattern::shared_fields_binder`), so an arm that uses a field needs
+/// it out of there. Emit `let b = __b_fields.1.clone();` for each such field,
+/// wherever in the pattern its constructor stands: at the top or inside a
+/// tuple, at any depth.
 pub(super) fn emit_pattern_rebindings(pattern: &ResolvedPattern, ctx: &CodegenContext) -> String {
     let mut lines = Vec::new();
     collect_pattern_rebindings(pattern, ctx, &mut lines);
@@ -830,25 +681,10 @@ fn collect_pattern_rebindings(
             }
         }
         ResolvedPattern::Ctor(ctor, bindings) => {
-            // Constructor bindings: only Box-wrapped fields (recursive types) need deref.
-            // Look up the canonical "Type.Variant" name from the resolved ctor and feed it
-            // to constructor_boxed_bindings, which queries fn_sigs.
-            let semantic = semantic_constructor_from_resolved_ctor(ctor, &ctx.symbol_table);
-            let ctor_name = match semantic {
-                SemanticConstructor::TypeConstructor {
-                    qualified_type_name,
-                    variant_name,
-                } => format!("{}.{}", qualified_type_name, variant_name),
-                SemanticConstructor::Wrapper(_) | SemanticConstructor::NoneValue => {
-                    // Wrapper / None ctors never carry Box-wrapped recursive fields.
-                    String::new()
-                }
-                SemanticConstructor::Unknown(name) => name,
-            };
-            if !ctor_name.is_empty() {
-                for b in constructor_boxed_bindings(&ctor_name, bindings, ctx) {
-                    let b = aver_name_to_rust(&b);
-                    lines.push(format!("let {} = (*{}).clone();", b, b));
+            if let Some(fields) = super::pattern::shared_fields_binder(ctor, bindings, ctx) {
+                for (idx, b) in bindings.iter().enumerate().filter(|(_, b)| *b != "_") {
+                    let b = aver_name_to_rust(b);
+                    lines.push(format!("let {b} = {fields}.{idx}.clone();"));
                 }
             }
         }

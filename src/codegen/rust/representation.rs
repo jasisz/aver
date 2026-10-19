@@ -85,6 +85,79 @@ pub(super) fn type_def_contract(td: &TypeDef, ctx: &CodegenContext) -> Represent
     }
 }
 
+/// Whether a sum type keeps each constructor's fields behind one shared
+/// `Arc` (`T::Pair(Arc<T__Pair>)`). That is every sum a value of which can
+/// hold a value of the same type with no collection in between: directly,
+/// or through records, other sums, `Option`, `Result` or tuples. Such a
+/// type has a fixed size only through a pointer somewhere on the cycle, and
+/// with the pointer on the constructor a value used in many places is one
+/// allocation: copying it, or putting it into another constructor, copies
+/// the pointer. Recursion through `List`, `Vector` or `Map` already goes
+/// through the heap, so those types keep their fields inline.
+pub(super) fn sum_is_shared(td: &TypeDef, ctx: &CodegenContext) -> bool {
+    matches!(td, TypeDef::Sum { .. })
+        && reaches_inline(
+            td,
+            &crate::codegen::common::backend_type_def_key(ctx, td),
+            ctx,
+            &mut HashSet::new(),
+        )
+}
+
+/// What a match on `&self` writes after a constructor, and a reference to
+/// each of its fields: `T::Pair(f0, f1)` reads `f0` and `f1`, a shared sum's
+/// `T::Pair(f)` reads `(&f.0)` and `(&f.1)`.
+pub(super) fn variant_field_refs(shared: bool, stem: &str, count: usize) -> (String, Vec<String>) {
+    if shared {
+        let refs = (0..count).map(|i| format!("(&{stem}.{i})")).collect();
+        (stem.to_string(), refs)
+    } else {
+        let names: Vec<String> = (0..count).map(|i| format!("{stem}{i}")).collect();
+        (names.join(", "), names)
+    }
+}
+
+/// [`sum_is_shared`] for the type a resolved constructor belongs to.
+pub(super) fn type_id_is_shared(id: crate::ir::TypeId, ctx: &CodegenContext) -> bool {
+    named_type_def(Some(id), "", ctx, None).is_some_and(|td| sum_is_shared(td, ctx))
+}
+
+fn reaches_inline(
+    td: &TypeDef,
+    target: &str,
+    ctx: &CodegenContext,
+    seen: &mut HashSet<String>,
+) -> bool {
+    let scope = crate::codegen::common::type_key_for_decl(ctx, td);
+    fields_of(td).any(|field| {
+        inline_type_reaches(&parse_type_str(field), target, ctx, scope.scope_str(), seen)
+    })
+}
+
+fn inline_type_reaches(
+    ty: &Type,
+    target: &str,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+    seen: &mut HashSet<String>,
+) -> bool {
+    match ty {
+        Type::Option(inner) => inline_type_reaches(inner, target, ctx, scope, seen),
+        Type::Result(ok, err) => {
+            inline_type_reaches(ok, target, ctx, scope, seen)
+                || inline_type_reaches(err, target, ctx, scope, seen)
+        }
+        Type::Tuple(items) => items
+            .iter()
+            .any(|item| inline_type_reaches(item, target, ctx, scope, seen)),
+        Type::Named { id, name } => named_type_def(*id, name, ctx, scope).is_some_and(|next| {
+            let key = crate::codegen::common::backend_type_def_key(ctx, next);
+            key == target || (seen.insert(key) && reaches_inline(next, target, ctx, seen))
+        }),
+        _ => false,
+    }
+}
+
 fn capabilities_for_def(
     td: &TypeDef,
     ctx: &CodegenContext,

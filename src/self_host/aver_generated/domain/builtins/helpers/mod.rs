@@ -64,7 +64,10 @@ pub fn expectList(
 ) -> Result<aver_rt::AverList<crate::aver_generated::domain::value::Val>, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
-        crate::aver_generated::domain::value::Val::ValList(items) => Ok(items),
+        crate::aver_generated::domain::value::Val::ValList(__items_fields) => {
+            let items = __items_fields.0.clone();
+            Ok(items)
+        }
         _ => Err(AverStr::from("expected list argument")),
     }
 }
@@ -75,7 +78,10 @@ pub fn expectInt(
 ) -> Result<aver_rt::AverInt, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
-        crate::aver_generated::domain::value::Val::ValInt(n) => Ok(n),
+        crate::aver_generated::domain::value::Val::ValInt(__n_fields) => {
+            let n = __n_fields.0.clone();
+            Ok(n)
+        }
         _ => Err(AverStr::from("expected int argument")),
     }
 }
@@ -84,7 +90,10 @@ pub fn expectInt(
 pub fn expectStr(v @ _: &crate::aver_generated::domain::value::Val) -> Result<AverStr, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
-        crate::aver_generated::domain::value::Val::ValStr(s) => Ok(s),
+        crate::aver_generated::domain::value::Val::ValStr(__s_fields) => {
+            let s = __s_fields.0.clone();
+            Ok(s)
+        }
         _ => Err(AverStr::from("expected string argument")),
     }
 }
@@ -95,7 +104,9 @@ pub fn expectBytes(
 ) -> Result<aver_rt::AverIntList, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
-        crate::aver_generated::domain::value::Val::ValRecord(name, fields) => {
+        crate::aver_generated::domain::value::Val::ValRecord(__name_fields) => {
+            let name = __name_fields.0.clone();
+            let fields = __name_fields.1.clone();
             if (&*name == "Bytes") {
                 crate::aver_generated::domain::builtins::helpers::expectBytesFields(fields)
             } else {
@@ -114,7 +125,8 @@ pub fn expectBytesFields(
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(fields, [] => { return Err(AverStr::from("expected Bytes argument")); }, [field, rest] => { { let (name, value) = field; if (&*name == "values") { match value {
-        crate::aver_generated::domain::value::Val::ValList(items) => {
+        crate::aver_generated::domain::value::Val::ValList(__items_fields) => {
+            let items = __items_fields.0.clone();
             return crate::aver_generated::domain::builtins::helpers::expectByteItems__collected(items, aver_rt::int_list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)));
         },
         _ => {
@@ -137,7 +149,8 @@ pub fn expectByteItems(
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(items, [] => { return Ok(acc.reverse()); }, [item, rest] => { match item {
-        crate::aver_generated::domain::value::Val::ValInt(value) => {
+        crate::aver_generated::domain::value::Val::ValInt(__value_fields) => {
+            let value = __value_fields.0.clone();
             {
             let __tco0 = rest;
             let __tco1 = aver_rt::AverIntList::prepend(value, &acc);
@@ -162,7 +175,8 @@ pub fn expectByteItems__collected(
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(items, [] => { return Ok(aver_rt::int_list_builder_finalize(acc)); }, [item, rest] => { match item {
-        crate::aver_generated::domain::value::Val::ValInt(value) => {
+        crate::aver_generated::domain::value::Val::ValInt(__value_fields) => {
+            let value = __value_fields.0.clone();
             {
             let __tco0 = rest;
             let __tco1 = aver_rt::int_list_builder_push(acc, value);

@@ -9,16 +9,24 @@ pub fn runFastLeafSlot(
     crate::cancel_checkpoint();
     match leaf.clone() {
         crate::aver_generated::domain::ast::FastLeaf::LeafConstInt(n) => {
-            Ok(crate::aver_generated::domain::value::Val::ValInt(n))
+            Ok(crate::aver_generated::domain::value::Val::ValInt(
+                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValInt(n)),
+            ))
         }
         crate::aver_generated::domain::ast::FastLeaf::LeafConstFloat(f) => {
-            Ok(crate::aver_generated::domain::value::Val::ValFloat(f))
+            Ok(crate::aver_generated::domain::value::Val::ValFloat(
+                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValFloat(f)),
+            ))
         }
         crate::aver_generated::domain::ast::FastLeaf::LeafConstStr(s) => {
-            Ok(crate::aver_generated::domain::value::Val::ValStr(s))
+            Ok(crate::aver_generated::domain::value::Val::ValStr(
+                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValStr(s)),
+            ))
         }
         crate::aver_generated::domain::ast::FastLeaf::LeafConstBool(b) => {
-            Ok(crate::aver_generated::domain::value::Val::ValBool(b))
+            Ok(crate::aver_generated::domain::value::Val::ValBool(
+                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValBool(b)),
+            ))
         }
         crate::aver_generated::domain::ast::FastLeaf::LeafSlot(slot) => {
             crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slot)
@@ -77,7 +85,8 @@ pub fn fastBoolSlotBranch(
     crate::cancel_checkpoint();
     let slotV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slot)?;
     match slotV {
-        crate::aver_generated::domain::value::Val::ValBool(cond) => {
+        crate::aver_generated::domain::value::Val::ValBool(__cond_fields) => {
+            let cond = __cond_fields.0.clone();
             crate::aver_generated::domain::eval::fast::selectFastLeaf(
                 cond, thenLeaf, elseLeaf, calleeEnv,
             )
@@ -97,7 +106,8 @@ pub fn fastEqIntBranch(
     crate::cancel_checkpoint();
     let slotV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slot)?;
     match slotV {
-        crate::aver_generated::domain::value::Val::ValInt(actual) => {
+        crate::aver_generated::domain::value::Val::ValInt(__actual_fields) => {
+            let actual = __actual_fields.0.clone();
             crate::aver_generated::domain::eval::fast::selectFastLeaf(
                 (actual == expected),
                 thenLeaf,
@@ -120,7 +130,8 @@ pub fn fastEqStringBranch(
     crate::cancel_checkpoint();
     let slotV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slot)?;
     match slotV {
-        crate::aver_generated::domain::value::Val::ValStr(actual) => {
+        crate::aver_generated::domain::value::Val::ValStr(__actual_fields) => {
+            let actual = __actual_fields.0.clone();
             crate::aver_generated::domain::eval::fast::selectFastLeaf(
                 (actual == expected),
                 thenLeaf,
@@ -144,17 +155,21 @@ pub fn fastLtIntSlotsBranch(
     let lhsV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, lhsSlot)?;
     let rhsV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, rhsSlot)?;
     match lhsV {
-        crate::aver_generated::domain::value::Val::ValInt(lhs) => match rhsV {
-            crate::aver_generated::domain::value::Val::ValInt(rhs) => {
-                crate::aver_generated::domain::eval::fast::selectFastLeaf(
-                    (lhs < rhs),
-                    thenLeaf,
-                    elseLeaf,
-                    calleeEnv,
-                )
+        crate::aver_generated::domain::value::Val::ValInt(__lhs_fields) => {
+            let lhs = __lhs_fields.0.clone();
+            match rhsV {
+                crate::aver_generated::domain::value::Val::ValInt(__rhs_fields) => {
+                    let rhs = __rhs_fields.0.clone();
+                    crate::aver_generated::domain::eval::fast::selectFastLeaf(
+                        (lhs < rhs),
+                        thenLeaf,
+                        elseLeaf,
+                        calleeEnv,
+                    )
+                }
+                _ => Err(AverStr::from("fast lt branch expects Int rhs slot")),
             }
-            _ => Err(AverStr::from("fast lt branch expects Int rhs slot")),
-        },
+        }
         _ => Err(AverStr::from("fast lt branch expects Int lhs slot")),
     }
 }
@@ -187,7 +202,8 @@ pub fn fastListSlotBranch(
     crate::cancel_checkpoint();
     let listV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slot)?;
     match listV {
-        crate::aver_generated::domain::value::Val::ValList(items) => {
+        crate::aver_generated::domain::value::Val::ValList(__items_fields) => {
+            let items = __items_fields.0.clone();
             crate::aver_generated::domain::eval::fast::fastListSlotBranchItems(
                 &items, calleeEnv, emptyLeaf, headSlot, tailSlot, consLeaf,
             )
@@ -207,7 +223,7 @@ pub fn fastListSlotBranchItems(
     consLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    aver_list_match!(items.clone(), [] => crate::aver_generated::domain::eval::fast::runFastLeafSlot(emptyLeaf, calleeEnv), [head, tail] => crate::aver_generated::domain::eval::fast::runFastLeafSlot(consLeaf, &crate::aver_generated::domain::eval::slots::setSlot(&crate::aver_generated::domain::eval::slots::setSlot(calleeEnv, headSlot, &head), tailSlot, &crate::aver_generated::domain::value::Val::ValList(tail))))
+    aver_list_match!(items.clone(), [] => crate::aver_generated::domain::eval::fast::runFastLeafSlot(emptyLeaf, calleeEnv), [head, tail] => crate::aver_generated::domain::eval::fast::runFastLeafSlot(consLeaf, &crate::aver_generated::domain::eval::slots::setSlot(&crate::aver_generated::domain::eval::slots::setSlot(calleeEnv, headSlot, &head), tailSlot, &crate::aver_generated::domain::value::Val::ValList(std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValList(tail))))))
 }
 
 /// Read a record field directly from a resolved slot.
@@ -219,7 +235,8 @@ pub fn fastFieldAccessSlot(
     crate::cancel_checkpoint();
     let recordV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slot)?;
     match recordV {
-        crate::aver_generated::domain::value::Val::ValRecord(_, fields) => {
+        crate::aver_generated::domain::value::Val::ValRecord(__fields_fields) => {
+            let fields = __fields_fields.1.clone();
             crate::aver_generated::domain::eval::common::lookupField(fields, field)
         }
         _ => Err(AverStr::from("field access on non-record")),
@@ -245,13 +262,14 @@ pub fn fastMapGetSlotInner(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match mapV.clone() {
-        crate::aver_generated::domain::value::Val::ValMap(m) => {
+        crate::aver_generated::domain::value::Val::ValMap(__m_fields) => {
+            let m = __m_fields.0.clone();
             match m
                 .get(&crate::aver_generated::domain::value::mapKeyRepr(keyV))
                 .cloned()
             {
                 Some(v @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
-                    std::sync::Arc::new(v),
+                    std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValSome(v)),
                 )),
                 None => Ok(crate::aver_generated::domain::value::Val::ValNone),
             }
@@ -282,12 +300,17 @@ pub fn fastMapSetSlotInner(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match mapV.clone() {
-        crate::aver_generated::domain::value::Val::ValMap(m) => Ok(
-            crate::aver_generated::domain::value::Val::ValMap(m.insert_owned(
-                crate::aver_generated::domain::value::mapKeyRepr(keyV),
-                valueV.clone(),
-            )),
-        ),
+        crate::aver_generated::domain::value::Val::ValMap(__m_fields) => {
+            let m = __m_fields.0.clone();
+            Ok(crate::aver_generated::domain::value::Val::ValMap(
+                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValMap(
+                    m.insert_owned(
+                        crate::aver_generated::domain::value::mapKeyRepr(keyV),
+                        valueV.clone(),
+                    ),
+                )),
+            ))
+        }
         _ => Err(AverStr::from("Map.set requires a Map")),
     }
 }
@@ -310,15 +333,20 @@ pub fn fastVectorNewSlotInner(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match sizeV.clone() {
-        crate::aver_generated::domain::value::Val::ValInt(size) => {
+        crate::aver_generated::domain::value::Val::ValInt(__size_fields) => {
+            let size = __size_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValVector(
-                match aver_rt::checked_vector_size(&(size)) {
-                    Some(__n) => Ok(aver_rt::AverVector::new(
-                        __n,
-                        crate::aver_generated::domain::value::Val::ValInt(fill),
-                    )),
-                    None => Err(aver_rt::AverStr::from(aver_rt::vector_size_error_message())),
-                }?,
+                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValVector(
+                    match aver_rt::checked_vector_size(&(size)) {
+                        Some(__n) => Ok(aver_rt::AverVector::new(
+                            __n,
+                            crate::aver_generated::domain::value::Val::ValInt(std::sync::Arc::new(
+                                crate::aver_generated::domain::value::Val__ValInt(fill),
+                            )),
+                        )),
+                        None => Err(aver_rt::AverStr::from(aver_rt::vector_size_error_message())),
+                    }?,
+                )),
             ))
         }
         _ => Err(AverStr::from("Vector.new size must be Int")),
@@ -350,17 +378,23 @@ pub fn fastVectorGetOrIntSlotInner(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match vecV.clone() {
-        crate::aver_generated::domain::value::Val::ValVector(vec) => match idxV.clone() {
-            crate::aver_generated::domain::value::Val::ValInt(idx) => {
-                match (idx).to_usize().and_then(|__i| vec.get(__i).cloned()) {
-                    Some(v @ _) => Ok(v),
-                    None => Ok(crate::aver_generated::domain::value::Val::ValInt(
-                        defaultValue,
-                    )),
+        crate::aver_generated::domain::value::Val::ValVector(__vec_fields) => {
+            let vec = __vec_fields.0.clone();
+            match idxV.clone() {
+                crate::aver_generated::domain::value::Val::ValInt(__idx_fields) => {
+                    let idx = __idx_fields.0.clone();
+                    match (idx).to_usize().and_then(|__i| vec.get(__i).cloned()) {
+                        Some(v @ _) => Ok(v),
+                        None => Ok(crate::aver_generated::domain::value::Val::ValInt(
+                            std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValInt(
+                                defaultValue,
+                            )),
+                        )),
+                    }
                 }
+                _ => Err(AverStr::from("Vector.get index must be Int")),
             }
-            _ => Err(AverStr::from("Vector.get index must be Int")),
-        },
+        }
         _ => Err(AverStr::from("Vector.get expects a Vector")),
     }
 }
@@ -375,9 +409,12 @@ pub fn fastMapHasSlot(
     let mapV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, mapSlot)?;
     let keyV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, keySlot)?;
     match mapV {
-        crate::aver_generated::domain::value::Val::ValMap(m) => {
+        crate::aver_generated::domain::value::Val::ValMap(__m_fields) => {
+            let m = __m_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValBool(
-                m.contains_key(&crate::aver_generated::domain::value::mapKeyRepr(&keyV)),
+                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValBool(
+                    m.contains_key(&crate::aver_generated::domain::value::mapKeyRepr(&keyV)),
+                )),
             ))
         }
         _ => Err(AverStr::from("Map.has requires a Map")),
@@ -394,9 +431,12 @@ pub fn fastMapRemoveSlot(
     let mapV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, mapSlot)?;
     let keyV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, keySlot)?;
     match mapV {
-        crate::aver_generated::domain::value::Val::ValMap(m) => {
+        crate::aver_generated::domain::value::Val::ValMap(__m_fields) => {
+            let m = __m_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValMap(
-                m.remove_owned(&crate::aver_generated::domain::value::mapKeyRepr(&keyV)),
+                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValMap(
+                    m.remove_owned(&crate::aver_generated::domain::value::mapKeyRepr(&keyV)),
+                )),
             ))
         }
         _ => Err(AverStr::from("Map.remove requires a Map")),
@@ -411,9 +451,12 @@ pub fn fastVectorLenSlot(
     crate::cancel_checkpoint();
     let vecV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, vecSlot)?;
     match vecV {
-        crate::aver_generated::domain::value::Val::ValVector(vec) => {
+        crate::aver_generated::domain::value::Val::ValVector(__vec_fields) => {
+            let vec = __vec_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValInt(
-                aver_rt::AverInt::from_i64(vec.len() as i64),
+                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValInt(
+                    aver_rt::AverInt::from_i64(vec.len() as i64),
+                )),
             ))
         }
         _ => Err(AverStr::from("Vector.len expects a Vector")),

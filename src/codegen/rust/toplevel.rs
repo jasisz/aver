@@ -1,7 +1,8 @@
 use super::emit_ctx::{EmitCtx, should_borrow_param};
 use super::expr::{aver_name_to_rust, classify_thin_fn_def_for_rust, explicit_parameter_pattern};
 use super::representation::{
-    RepresentationCapabilities, RepresentationContract, type_def_contract,
+    RepresentationCapabilities, RepresentationContract, sum_is_shared, type_def_contract,
+    variant_field_refs,
 };
 use super::types::type_annotation_to_rust_scoped;
 use crate::ast::*;
@@ -76,9 +77,15 @@ fn emit_type_def_with_visibility(td: &TypeDef, public: bool, ctx: &CodegenContex
     // instead. jasisz/aver#1134.
     let representation = type_def_contract(td, ctx);
     match td {
-        TypeDef::Sum { name, variants, .. } => {
-            emit_sum_type(name, variants, public, ctx, scope, representation)
-        }
+        TypeDef::Sum { name, variants, .. } => emit_sum_type(
+            name,
+            variants,
+            public,
+            ctx,
+            scope,
+            representation,
+            sum_is_shared(td, ctx),
+        ),
         TypeDef::Product { name, fields, .. } => emit_product_type(
             name,
             fields,
@@ -116,33 +123,46 @@ fn emit_sum_type(
     ctx: &CodegenContext,
     scope: Option<&str>,
     representation: RepresentationContract,
+    shared: bool,
 ) -> String {
     let mut out = String::new();
     let visibility = visibility_prefix(public);
     let capabilities = representation.capabilities;
+    // A shared sum keeps each constructor's fields in one
+    // `{name}__{variant}` struct behind an `Arc` (see `sum_is_shared`).
+    let mut payloads = String::new();
     writeln!(out, "{}", derive_line(capabilities)).unwrap();
     writeln!(out, "{}enum {} {{", visibility, name).unwrap();
     for v in variants {
         if v.fields.is_empty() {
             writeln!(out, "    {},", v.name).unwrap();
-        } else {
-            let field_types: Vec<String> = v
-                .fields
+            continue;
+        }
+        let field_types: Vec<String> = v
+            .fields
+            .iter()
+            .map(|f| type_annotation_to_rust_scoped(f, ctx, scope))
+            .collect();
+        if shared {
+            let payload = format!("{name}__{}", v.name);
+            writeln!(out, "    {}(std::sync::Arc<{payload}>),", v.name).unwrap();
+            let fields: Vec<String> = field_types
                 .iter()
-                .map(|f| {
-                    let rust_ty = type_annotation_to_rust_scoped(f, ctx, scope);
-                    if f == name {
-                        // Recursive field: Rc<T> instead of Box<T> — clone is O(1) refcount bump
-                        format!("std::sync::Arc<{}>", rust_ty)
-                    } else {
-                        rust_ty
-                    }
-                })
+                .map(|ty| format!("{visibility}{ty}"))
                 .collect();
+            writeln!(payloads, "\n{}", derive_line(capabilities)).unwrap();
+            writeln!(
+                payloads,
+                "{visibility}struct {payload}({});",
+                fields.join(", ")
+            )
+            .unwrap();
+        } else {
             writeln!(out, "    {}({}),", v.name, field_types.join(", ")).unwrap();
         }
     }
     writeln!(out, "}}").unwrap();
+    out.push_str(&payloads);
 
     // A variant can key a map, and a map iterates sorted by key. The order is
     // by CONSTRUCTOR NAME and then by payload, not by the order the
@@ -197,19 +217,18 @@ fn emit_sum_type(
             if v.fields.is_empty() {
                 continue;
             }
-            let binds_a: Vec<String> = (0..v.fields.len()).map(|i| format!("a{i}")).collect();
-            let binds_b: Vec<String> = (0..v.fields.len()).map(|i| format!("b{i}")).collect();
+            let (binds_a, refs_a) = variant_field_refs(shared, "a", v.fields.len());
+            let (binds_b, refs_b) = variant_field_refs(shared, "b", v.fields.len());
             writeln!(
                 out,
                 "            ({0}::{1}({2}), {0}::{1}({3})) => std::cmp::Ordering::Equal",
-                name,
-                v.name,
-                binds_a.join(", "),
-                binds_b.join(", ")
+                name, v.name, binds_a, binds_b
             )
             .unwrap();
-            let chain: Vec<String> = (0..v.fields.len())
-                .map(|i| format!("                .then_with(|| a{i}.cmp(b{i}))"))
+            let chain: Vec<String> = refs_a
+                .iter()
+                .zip(&refs_b)
+                .map(|(a, b)| format!("                .then_with(|| {a}.cmp({b}))"))
                 .collect();
             writeln!(out, "{},", chain.join("\n")).unwrap();
         }
@@ -233,9 +252,8 @@ fn emit_sum_type(
                 )
                 .unwrap();
             } else {
-                let bindings: Vec<String> =
-                    (0..v.fields.len()).map(|i| format!("f{}", i)).collect();
-                let display_parts: Vec<String> = bindings
+                let (bindings, fields) = variant_field_refs(shared, "f", v.fields.len());
+                let display_parts: Vec<String> = fields
                     .iter()
                     .map(|b| format!("{}.aver_display_inner()", b))
                     .collect();
@@ -244,7 +262,7 @@ fn emit_sum_type(
                     writeln!(
                         out,
                         "            {}::{}({}) => format!(\"{}({{}})\", {}),",
-                        name, v.name, bindings[0], v.name, display_parts[0]
+                        name, v.name, bindings, v.name, display_parts[0]
                     )
                     .unwrap();
                 } else {
@@ -253,7 +271,7 @@ fn emit_sum_type(
                         "            {}::{}({}) => format!(\"{}({{}})\", vec![{}].join(\", \")),",
                         name,
                         v.name,
-                        bindings.join(", "),
+                        bindings,
                         v.name,
                         display_parts.join(", ")
                     )

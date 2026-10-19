@@ -3,196 +3,300 @@ use crate::*;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expr {
-    ExprInt(aver_rt::AverInt),
-    ExprFloat(f64),
-    ExprStr(AverStr),
-    ExprBool(bool),
-    ExprBoolBranch(
-        std::sync::Arc<Expr>,
-        std::sync::Arc<Expr>,
-        std::sync::Arc<Expr>,
-    ),
-    ExprVar(AverStr),
-    ExprSlot(aver_rt::AverInt),
-    ExprBinopSlotInt(BinOp, aver_rt::AverInt, aver_rt::AverInt),
-    ExprBinopSlots(BinOp, aver_rt::AverInt, aver_rt::AverInt),
-    ExprCmpSlotInt(CmpOp, aver_rt::AverInt, aver_rt::AverInt),
-    ExprCmpSlots(CmpOp, aver_rt::AverInt, aver_rt::AverInt),
-    ExprVectorGetOrInt(std::sync::Arc<Expr>, std::sync::Arc<Expr>, aver_rt::AverInt),
-    ExprIntModOrInt(std::sync::Arc<Expr>, std::sync::Arc<Expr>, aver_rt::AverInt),
-    ExprAdd(std::sync::Arc<Expr>, std::sync::Arc<Expr>),
-    ExprSub(std::sync::Arc<Expr>, std::sync::Arc<Expr>),
-    ExprMul(std::sync::Arc<Expr>, std::sync::Arc<Expr>),
-    ExprDiv(std::sync::Arc<Expr>, std::sync::Arc<Expr>),
-    ExprNeg(std::sync::Arc<Expr>),
-    ExprEq(std::sync::Arc<Expr>, std::sync::Arc<Expr>),
-    ExprNeq(std::sync::Arc<Expr>, std::sync::Arc<Expr>),
-    ExprLt(std::sync::Arc<Expr>, std::sync::Arc<Expr>),
-    ExprGt(std::sync::Arc<Expr>, std::sync::Arc<Expr>),
-    ExprLte(std::sync::Arc<Expr>, std::sync::Arc<Expr>),
-    ExprGte(std::sync::Arc<Expr>, std::sync::Arc<Expr>),
-    ExprConcat(aver_rt::AverList<Expr>),
-    ExprTuple(aver_rt::AverList<Expr>),
-    ExprList(aver_rt::AverList<Expr>),
-    ExprRecord(AverStr, aver_rt::AverList<(AverStr, Expr)>),
-    ExprFieldAccess(std::sync::Arc<Expr>, AverStr),
-    ExprCall(AverStr, aver_rt::AverList<Expr>),
-    ExprCallDirect(aver_rt::AverInt, aver_rt::AverList<Expr>),
-    ExprCallBuiltin(AverStr, aver_rt::AverList<Expr>),
-    ExprCallBuiltinId(aver_rt::AverInt, aver_rt::AverList<Expr>),
-    ExprMatch(std::sync::Arc<Expr>, aver_rt::AverList<MatchArm>),
-    ExprPropagate(std::sync::Arc<Expr>),
-    ExprIndependentProduct(aver_rt::AverList<Expr>, bool),
+    ExprInt(std::sync::Arc<Expr__ExprInt>),
+    ExprFloat(std::sync::Arc<Expr__ExprFloat>),
+    ExprStr(std::sync::Arc<Expr__ExprStr>),
+    ExprBool(std::sync::Arc<Expr__ExprBool>),
+    ExprBoolBranch(std::sync::Arc<Expr__ExprBoolBranch>),
+    ExprVar(std::sync::Arc<Expr__ExprVar>),
+    ExprSlot(std::sync::Arc<Expr__ExprSlot>),
+    ExprBinopSlotInt(std::sync::Arc<Expr__ExprBinopSlotInt>),
+    ExprBinopSlots(std::sync::Arc<Expr__ExprBinopSlots>),
+    ExprCmpSlotInt(std::sync::Arc<Expr__ExprCmpSlotInt>),
+    ExprCmpSlots(std::sync::Arc<Expr__ExprCmpSlots>),
+    ExprVectorGetOrInt(std::sync::Arc<Expr__ExprVectorGetOrInt>),
+    ExprIntModOrInt(std::sync::Arc<Expr__ExprIntModOrInt>),
+    ExprAdd(std::sync::Arc<Expr__ExprAdd>),
+    ExprSub(std::sync::Arc<Expr__ExprSub>),
+    ExprMul(std::sync::Arc<Expr__ExprMul>),
+    ExprDiv(std::sync::Arc<Expr__ExprDiv>),
+    ExprNeg(std::sync::Arc<Expr__ExprNeg>),
+    ExprEq(std::sync::Arc<Expr__ExprEq>),
+    ExprNeq(std::sync::Arc<Expr__ExprNeq>),
+    ExprLt(std::sync::Arc<Expr__ExprLt>),
+    ExprGt(std::sync::Arc<Expr__ExprGt>),
+    ExprLte(std::sync::Arc<Expr__ExprLte>),
+    ExprGte(std::sync::Arc<Expr__ExprGte>),
+    ExprConcat(std::sync::Arc<Expr__ExprConcat>),
+    ExprTuple(std::sync::Arc<Expr__ExprTuple>),
+    ExprList(std::sync::Arc<Expr__ExprList>),
+    ExprRecord(std::sync::Arc<Expr__ExprRecord>),
+    ExprFieldAccess(std::sync::Arc<Expr__ExprFieldAccess>),
+    ExprCall(std::sync::Arc<Expr__ExprCall>),
+    ExprCallDirect(std::sync::Arc<Expr__ExprCallDirect>),
+    ExprCallBuiltin(std::sync::Arc<Expr__ExprCallBuiltin>),
+    ExprCallBuiltinId(std::sync::Arc<Expr__ExprCallBuiltinId>),
+    ExprMatch(std::sync::Arc<Expr__ExprMatch>),
+    ExprPropagate(std::sync::Arc<Expr__ExprPropagate>),
+    ExprIndependentProduct(std::sync::Arc<Expr__ExprIndependentProduct>),
 }
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprInt(pub aver_rt::AverInt);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprFloat(pub f64);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprStr(pub AverStr);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprBool(pub bool);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprBoolBranch(pub Expr, pub Expr, pub Expr);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprVar(pub AverStr);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprSlot(pub aver_rt::AverInt);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprBinopSlotInt(pub BinOp, pub aver_rt::AverInt, pub aver_rt::AverInt);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprBinopSlots(pub BinOp, pub aver_rt::AverInt, pub aver_rt::AverInt);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprCmpSlotInt(pub CmpOp, pub aver_rt::AverInt, pub aver_rt::AverInt);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprCmpSlots(pub CmpOp, pub aver_rt::AverInt, pub aver_rt::AverInt);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprVectorGetOrInt(pub Expr, pub Expr, pub aver_rt::AverInt);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprIntModOrInt(pub Expr, pub Expr, pub aver_rt::AverInt);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprAdd(pub Expr, pub Expr);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprSub(pub Expr, pub Expr);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprMul(pub Expr, pub Expr);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprDiv(pub Expr, pub Expr);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprNeg(pub Expr);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprEq(pub Expr, pub Expr);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprNeq(pub Expr, pub Expr);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprLt(pub Expr, pub Expr);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprGt(pub Expr, pub Expr);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprLte(pub Expr, pub Expr);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprGte(pub Expr, pub Expr);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprConcat(pub aver_rt::AverList<Expr>);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprTuple(pub aver_rt::AverList<Expr>);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprList(pub aver_rt::AverList<Expr>);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprRecord(pub AverStr, pub aver_rt::AverList<(AverStr, Expr)>);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprFieldAccess(pub Expr, pub AverStr);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprCall(pub AverStr, pub aver_rt::AverList<Expr>);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprCallDirect(pub aver_rt::AverInt, pub aver_rt::AverList<Expr>);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprCallBuiltin(pub AverStr, pub aver_rt::AverList<Expr>);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprCallBuiltinId(pub aver_rt::AverInt, pub aver_rt::AverList<Expr>);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprMatch(pub Expr, pub aver_rt::AverList<MatchArm>);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprPropagate(pub Expr);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expr__ExprIndependentProduct(pub aver_rt::AverList<Expr>, pub bool);
 
 impl aver_rt::AverDisplay for Expr {
     fn aver_display(&self) -> String {
         match self {
-            Expr::ExprInt(f0) => format!("ExprInt({})", f0.aver_display_inner()),
-            Expr::ExprFloat(f0) => format!("ExprFloat({})", f0.aver_display_inner()),
-            Expr::ExprStr(f0) => format!("ExprStr({})", f0.aver_display_inner()),
-            Expr::ExprBool(f0) => format!("ExprBool({})", f0.aver_display_inner()),
-            Expr::ExprBoolBranch(f0, f1, f2) => format!(
+            Expr::ExprInt(f) => format!("ExprInt({})", (&f.0).aver_display_inner()),
+            Expr::ExprFloat(f) => format!("ExprFloat({})", (&f.0).aver_display_inner()),
+            Expr::ExprStr(f) => format!("ExprStr({})", (&f.0).aver_display_inner()),
+            Expr::ExprBool(f) => format!("ExprBool({})", (&f.0).aver_display_inner()),
+            Expr::ExprBoolBranch(f) => format!(
                 "ExprBoolBranch({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner()
                 ]
                 .join(", ")
             ),
-            Expr::ExprVar(f0) => format!("ExprVar({})", f0.aver_display_inner()),
-            Expr::ExprSlot(f0) => format!("ExprSlot({})", f0.aver_display_inner()),
-            Expr::ExprBinopSlotInt(f0, f1, f2) => format!(
+            Expr::ExprVar(f) => format!("ExprVar({})", (&f.0).aver_display_inner()),
+            Expr::ExprSlot(f) => format!("ExprSlot({})", (&f.0).aver_display_inner()),
+            Expr::ExprBinopSlotInt(f) => format!(
                 "ExprBinopSlotInt({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner()
                 ]
                 .join(", ")
             ),
-            Expr::ExprBinopSlots(f0, f1, f2) => format!(
+            Expr::ExprBinopSlots(f) => format!(
                 "ExprBinopSlots({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner()
                 ]
                 .join(", ")
             ),
-            Expr::ExprCmpSlotInt(f0, f1, f2) => format!(
+            Expr::ExprCmpSlotInt(f) => format!(
                 "ExprCmpSlotInt({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner()
                 ]
                 .join(", ")
             ),
-            Expr::ExprCmpSlots(f0, f1, f2) => format!(
+            Expr::ExprCmpSlots(f) => format!(
                 "ExprCmpSlots({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner()
                 ]
                 .join(", ")
             ),
-            Expr::ExprVectorGetOrInt(f0, f1, f2) => format!(
+            Expr::ExprVectorGetOrInt(f) => format!(
                 "ExprVectorGetOrInt({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner()
                 ]
                 .join(", ")
             ),
-            Expr::ExprIntModOrInt(f0, f1, f2) => format!(
+            Expr::ExprIntModOrInt(f) => format!(
                 "ExprIntModOrInt({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner()
                 ]
                 .join(", ")
             ),
-            Expr::ExprAdd(f0, f1) => format!(
+            Expr::ExprAdd(f) => format!(
                 "ExprAdd({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Expr::ExprSub(f0, f1) => format!(
+            Expr::ExprSub(f) => format!(
                 "ExprSub({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Expr::ExprMul(f0, f1) => format!(
+            Expr::ExprMul(f) => format!(
                 "ExprMul({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Expr::ExprDiv(f0, f1) => format!(
+            Expr::ExprDiv(f) => format!(
                 "ExprDiv({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Expr::ExprNeg(f0) => format!("ExprNeg({})", f0.aver_display_inner()),
-            Expr::ExprEq(f0, f1) => format!(
+            Expr::ExprNeg(f) => format!("ExprNeg({})", (&f.0).aver_display_inner()),
+            Expr::ExprEq(f) => format!(
                 "ExprEq({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Expr::ExprNeq(f0, f1) => format!(
+            Expr::ExprNeq(f) => format!(
                 "ExprNeq({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Expr::ExprLt(f0, f1) => format!(
+            Expr::ExprLt(f) => format!(
                 "ExprLt({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Expr::ExprGt(f0, f1) => format!(
+            Expr::ExprGt(f) => format!(
                 "ExprGt({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Expr::ExprLte(f0, f1) => format!(
+            Expr::ExprLte(f) => format!(
                 "ExprLte({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Expr::ExprGte(f0, f1) => format!(
+            Expr::ExprGte(f) => format!(
                 "ExprGte({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Expr::ExprConcat(f0) => format!("ExprConcat({})", f0.aver_display_inner()),
-            Expr::ExprTuple(f0) => format!("ExprTuple({})", f0.aver_display_inner()),
-            Expr::ExprList(f0) => format!("ExprList({})", f0.aver_display_inner()),
-            Expr::ExprRecord(f0, f1) => format!(
+            Expr::ExprConcat(f) => format!("ExprConcat({})", (&f.0).aver_display_inner()),
+            Expr::ExprTuple(f) => format!("ExprTuple({})", (&f.0).aver_display_inner()),
+            Expr::ExprList(f) => format!("ExprList({})", (&f.0).aver_display_inner()),
+            Expr::ExprRecord(f) => format!(
                 "ExprRecord({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Expr::ExprFieldAccess(f0, f1) => format!(
+            Expr::ExprFieldAccess(f) => format!(
                 "ExprFieldAccess({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Expr::ExprCall(f0, f1) => format!(
+            Expr::ExprCall(f) => format!(
                 "ExprCall({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Expr::ExprCallDirect(f0, f1) => format!(
+            Expr::ExprCallDirect(f) => format!(
                 "ExprCallDirect({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Expr::ExprCallBuiltin(f0, f1) => format!(
+            Expr::ExprCallBuiltin(f) => format!(
                 "ExprCallBuiltin({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Expr::ExprCallBuiltinId(f0, f1) => format!(
+            Expr::ExprCallBuiltinId(f) => format!(
                 "ExprCallBuiltinId({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Expr::ExprMatch(f0, f1) => format!(
+            Expr::ExprMatch(f) => format!(
                 "ExprMatch({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Expr::ExprPropagate(f0) => format!("ExprPropagate({})", f0.aver_display_inner()),
-            Expr::ExprIndependentProduct(f0, f1) => format!(
+            Expr::ExprPropagate(f) => format!("ExprPropagate({})", (&f.0).aver_display_inner()),
+            Expr::ExprIndependentProduct(f) => format!(
                 "ExprIndependentProduct({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
         }
     }
@@ -209,51 +313,51 @@ impl aver_replay::ReplayValue for Expr {
             serde_json::Value::String("Domain.Ast.Expr".to_string()),
         );
         match self {
-            Expr::ExprInt(f0) => {
+            Expr::ExprInt(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprInt".to_string()),
                 );
                 payload.insert(
                     "fields".to_string(),
-                    serde_json::Value::Array(vec![ReplayValue::to_replay_json(f0)]),
+                    serde_json::Value::Array(vec![ReplayValue::to_replay_json((&f.0))]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprFloat(f0) => {
+            Expr::ExprFloat(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprFloat".to_string()),
                 );
                 payload.insert(
                     "fields".to_string(),
-                    serde_json::Value::Array(vec![ReplayValue::to_replay_json(f0)]),
+                    serde_json::Value::Array(vec![ReplayValue::to_replay_json((&f.0))]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprStr(f0) => {
+            Expr::ExprStr(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprStr".to_string()),
                 );
                 payload.insert(
                     "fields".to_string(),
-                    serde_json::Value::Array(vec![ReplayValue::to_replay_json(f0)]),
+                    serde_json::Value::Array(vec![ReplayValue::to_replay_json((&f.0))]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprBool(f0) => {
+            Expr::ExprBool(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprBool".to_string()),
                 );
                 payload.insert(
                     "fields".to_string(),
-                    serde_json::Value::Array(vec![ReplayValue::to_replay_json(f0)]),
+                    serde_json::Value::Array(vec![ReplayValue::to_replay_json((&f.0))]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprBoolBranch(f0, f1, f2) => {
+            Expr::ExprBoolBranch(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprBoolBranch".to_string()),
@@ -261,36 +365,36 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
-                        ReplayValue::to_replay_json(f2),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
+                        ReplayValue::to_replay_json((&f.2)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprVar(f0) => {
+            Expr::ExprVar(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprVar".to_string()),
                 );
                 payload.insert(
                     "fields".to_string(),
-                    serde_json::Value::Array(vec![ReplayValue::to_replay_json(f0)]),
+                    serde_json::Value::Array(vec![ReplayValue::to_replay_json((&f.0))]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprSlot(f0) => {
+            Expr::ExprSlot(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprSlot".to_string()),
                 );
                 payload.insert(
                     "fields".to_string(),
-                    serde_json::Value::Array(vec![ReplayValue::to_replay_json(f0)]),
+                    serde_json::Value::Array(vec![ReplayValue::to_replay_json((&f.0))]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprBinopSlotInt(f0, f1, f2) => {
+            Expr::ExprBinopSlotInt(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprBinopSlotInt".to_string()),
@@ -298,14 +402,14 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
-                        ReplayValue::to_replay_json(f2),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
+                        ReplayValue::to_replay_json((&f.2)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprBinopSlots(f0, f1, f2) => {
+            Expr::ExprBinopSlots(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprBinopSlots".to_string()),
@@ -313,14 +417,14 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
-                        ReplayValue::to_replay_json(f2),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
+                        ReplayValue::to_replay_json((&f.2)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprCmpSlotInt(f0, f1, f2) => {
+            Expr::ExprCmpSlotInt(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprCmpSlotInt".to_string()),
@@ -328,14 +432,14 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
-                        ReplayValue::to_replay_json(f2),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
+                        ReplayValue::to_replay_json((&f.2)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprCmpSlots(f0, f1, f2) => {
+            Expr::ExprCmpSlots(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprCmpSlots".to_string()),
@@ -343,14 +447,14 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
-                        ReplayValue::to_replay_json(f2),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
+                        ReplayValue::to_replay_json((&f.2)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprVectorGetOrInt(f0, f1, f2) => {
+            Expr::ExprVectorGetOrInt(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprVectorGetOrInt".to_string()),
@@ -358,14 +462,14 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
-                        ReplayValue::to_replay_json(f2),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
+                        ReplayValue::to_replay_json((&f.2)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprIntModOrInt(f0, f1, f2) => {
+            Expr::ExprIntModOrInt(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprIntModOrInt".to_string()),
@@ -373,14 +477,14 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
-                        ReplayValue::to_replay_json(f2),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
+                        ReplayValue::to_replay_json((&f.2)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprAdd(f0, f1) => {
+            Expr::ExprAdd(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprAdd".to_string()),
@@ -388,13 +492,13 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprSub(f0, f1) => {
+            Expr::ExprSub(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprSub".to_string()),
@@ -402,13 +506,13 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprMul(f0, f1) => {
+            Expr::ExprMul(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprMul".to_string()),
@@ -416,13 +520,13 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprDiv(f0, f1) => {
+            Expr::ExprDiv(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprDiv".to_string()),
@@ -430,24 +534,24 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprNeg(f0) => {
+            Expr::ExprNeg(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprNeg".to_string()),
                 );
                 payload.insert(
                     "fields".to_string(),
-                    serde_json::Value::Array(vec![ReplayValue::to_replay_json(f0)]),
+                    serde_json::Value::Array(vec![ReplayValue::to_replay_json((&f.0))]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprEq(f0, f1) => {
+            Expr::ExprEq(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprEq".to_string()),
@@ -455,13 +559,13 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprNeq(f0, f1) => {
+            Expr::ExprNeq(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprNeq".to_string()),
@@ -469,13 +573,13 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprLt(f0, f1) => {
+            Expr::ExprLt(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprLt".to_string()),
@@ -483,13 +587,13 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprGt(f0, f1) => {
+            Expr::ExprGt(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprGt".to_string()),
@@ -497,13 +601,13 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprLte(f0, f1) => {
+            Expr::ExprLte(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprLte".to_string()),
@@ -511,13 +615,13 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprGte(f0, f1) => {
+            Expr::ExprGte(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprGte".to_string()),
@@ -525,46 +629,46 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprConcat(f0) => {
+            Expr::ExprConcat(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprConcat".to_string()),
                 );
                 payload.insert(
                     "fields".to_string(),
-                    serde_json::Value::Array(vec![ReplayValue::to_replay_json(f0)]),
+                    serde_json::Value::Array(vec![ReplayValue::to_replay_json((&f.0))]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprTuple(f0) => {
+            Expr::ExprTuple(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprTuple".to_string()),
                 );
                 payload.insert(
                     "fields".to_string(),
-                    serde_json::Value::Array(vec![ReplayValue::to_replay_json(f0)]),
+                    serde_json::Value::Array(vec![ReplayValue::to_replay_json((&f.0))]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprList(f0) => {
+            Expr::ExprList(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprList".to_string()),
                 );
                 payload.insert(
                     "fields".to_string(),
-                    serde_json::Value::Array(vec![ReplayValue::to_replay_json(f0)]),
+                    serde_json::Value::Array(vec![ReplayValue::to_replay_json((&f.0))]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprRecord(f0, f1) => {
+            Expr::ExprRecord(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprRecord".to_string()),
@@ -572,13 +676,13 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprFieldAccess(f0, f1) => {
+            Expr::ExprFieldAccess(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprFieldAccess".to_string()),
@@ -586,13 +690,13 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprCall(f0, f1) => {
+            Expr::ExprCall(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprCall".to_string()),
@@ -600,13 +704,13 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprCallDirect(f0, f1) => {
+            Expr::ExprCallDirect(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprCallDirect".to_string()),
@@ -614,13 +718,13 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprCallBuiltin(f0, f1) => {
+            Expr::ExprCallBuiltin(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprCallBuiltin".to_string()),
@@ -628,13 +732,13 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprCallBuiltinId(f0, f1) => {
+            Expr::ExprCallBuiltinId(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprCallBuiltinId".to_string()),
@@ -642,13 +746,13 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprMatch(f0, f1) => {
+            Expr::ExprMatch(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprMatch".to_string()),
@@ -656,24 +760,24 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprPropagate(f0) => {
+            Expr::ExprPropagate(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprPropagate".to_string()),
                 );
                 payload.insert(
                     "fields".to_string(),
-                    serde_json::Value::Array(vec![ReplayValue::to_replay_json(f0)]),
+                    serde_json::Value::Array(vec![ReplayValue::to_replay_json((&f.0))]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            Expr::ExprIndependentProduct(f0, f1) => {
+            Expr::ExprIndependentProduct(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("ExprIndependentProduct".to_string()),
@@ -681,8 +785,8 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
@@ -715,59 +819,65 @@ impl aver_replay::ReplayValue for Expr {
             "$variant.fields",
         )?;
         match variant_name {
-            "ExprInt" => Ok(Expr::ExprInt(
+            "ExprInt" => Ok(Expr::ExprInt(std::sync::Arc::new(Expr__ExprInt(
                 <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprInt missing field #{}", 0))?,
                 )?,
-            )),
-            "ExprFloat" => Ok(Expr::ExprFloat(<f64 as ReplayValue>::from_replay_json(
-                fields
-                    .get(0)
-                    .ok_or_else(|| format!("$variant ExprFloat missing field #{}", 0))?,
-            )?)),
-            "ExprStr" => Ok(Expr::ExprStr(<AverStr as ReplayValue>::from_replay_json(
-                fields
-                    .get(0)
-                    .ok_or_else(|| format!("$variant ExprStr missing field #{}", 0))?,
-            )?)),
-            "ExprBool" => Ok(Expr::ExprBool(<bool as ReplayValue>::from_replay_json(
-                fields
-                    .get(0)
-                    .ok_or_else(|| format!("$variant ExprBool missing field #{}", 0))?,
-            )?)),
-            "ExprBoolBranch" => Ok(Expr::ExprBoolBranch(
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+            )))),
+            "ExprFloat" => Ok(Expr::ExprFloat(std::sync::Arc::new(Expr__ExprFloat(
+                <f64 as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
-                        .ok_or_else(|| format!("$variant ExprBoolBranch missing field #{}", 0))?,
+                        .ok_or_else(|| format!("$variant ExprFloat missing field #{}", 0))?,
                 )?,
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+            )))),
+            "ExprStr" => Ok(Expr::ExprStr(std::sync::Arc::new(Expr__ExprStr(
+                <AverStr as ReplayValue>::from_replay_json(
                     fields
-                        .get(1)
-                        .ok_or_else(|| format!("$variant ExprBoolBranch missing field #{}", 1))?,
+                        .get(0)
+                        .ok_or_else(|| format!("$variant ExprStr missing field #{}", 0))?,
                 )?,
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+            )))),
+            "ExprBool" => Ok(Expr::ExprBool(std::sync::Arc::new(Expr__ExprBool(
+                <bool as ReplayValue>::from_replay_json(
                     fields
-                        .get(2)
-                        .ok_or_else(|| format!("$variant ExprBoolBranch missing field #{}", 2))?,
+                        .get(0)
+                        .ok_or_else(|| format!("$variant ExprBool missing field #{}", 0))?,
                 )?,
-            )),
-            "ExprVar" => Ok(Expr::ExprVar(<AverStr as ReplayValue>::from_replay_json(
-                fields
-                    .get(0)
-                    .ok_or_else(|| format!("$variant ExprVar missing field #{}", 0))?,
-            )?)),
-            "ExprSlot" => Ok(Expr::ExprSlot(
+            )))),
+            "ExprBoolBranch" => {
+                Ok(Expr::ExprBoolBranch(std::sync::Arc::new(
+                    Expr__ExprBoolBranch(
+                        <Expr as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(
+                            || format!("$variant ExprBoolBranch missing field #{}", 0),
+                        )?)?,
+                        <Expr as ReplayValue>::from_replay_json(fields.get(1).ok_or_else(
+                            || format!("$variant ExprBoolBranch missing field #{}", 1),
+                        )?)?,
+                        <Expr as ReplayValue>::from_replay_json(fields.get(2).ok_or_else(
+                            || format!("$variant ExprBoolBranch missing field #{}", 2),
+                        )?)?,
+                    ),
+                )))
+            }
+            "ExprVar" => Ok(Expr::ExprVar(std::sync::Arc::new(Expr__ExprVar(
+                <AverStr as ReplayValue>::from_replay_json(
+                    fields
+                        .get(0)
+                        .ok_or_else(|| format!("$variant ExprVar missing field #{}", 0))?,
+                )?,
+            )))),
+            "ExprSlot" => Ok(Expr::ExprSlot(std::sync::Arc::new(Expr__ExprSlot(
                 <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprSlot missing field #{}", 0))?,
                 )?,
-            )),
-            "ExprBinopSlotInt" => {
-                Ok(Expr::ExprBinopSlotInt(
+            )))),
+            "ExprBinopSlotInt" => Ok(Expr::ExprBinopSlotInt(std::sync::Arc::new(
+                Expr__ExprBinopSlotInt(
                     <BinOp as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(|| {
                         format!("$variant ExprBinopSlotInt missing field #{}", 0)
                     })?)?,
@@ -781,43 +891,47 @@ impl aver_replay::ReplayValue for Expr {
                             format!("$variant ExprBinopSlotInt missing field #{}", 2)
                         })?,
                     )?,
-                ))
+                ),
+            ))),
+            "ExprBinopSlots" => {
+                Ok(Expr::ExprBinopSlots(std::sync::Arc::new(
+                    Expr__ExprBinopSlots(
+                        <BinOp as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(
+                            || format!("$variant ExprBinopSlots missing field #{}", 0),
+                        )?)?,
+                        <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                            fields.get(1).ok_or_else(|| {
+                                format!("$variant ExprBinopSlots missing field #{}", 1)
+                            })?,
+                        )?,
+                        <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                            fields.get(2).ok_or_else(|| {
+                                format!("$variant ExprBinopSlots missing field #{}", 2)
+                            })?,
+                        )?,
+                    ),
+                )))
             }
-            "ExprBinopSlots" => Ok(Expr::ExprBinopSlots(
-                <BinOp as ReplayValue>::from_replay_json(
-                    fields
-                        .get(0)
-                        .ok_or_else(|| format!("$variant ExprBinopSlots missing field #{}", 0))?,
-                )?,
-                <aver_rt::AverInt as ReplayValue>::from_replay_json(
-                    fields
-                        .get(1)
-                        .ok_or_else(|| format!("$variant ExprBinopSlots missing field #{}", 1))?,
-                )?,
-                <aver_rt::AverInt as ReplayValue>::from_replay_json(
-                    fields
-                        .get(2)
-                        .ok_or_else(|| format!("$variant ExprBinopSlots missing field #{}", 2))?,
-                )?,
-            )),
-            "ExprCmpSlotInt" => Ok(Expr::ExprCmpSlotInt(
-                <CmpOp as ReplayValue>::from_replay_json(
-                    fields
-                        .get(0)
-                        .ok_or_else(|| format!("$variant ExprCmpSlotInt missing field #{}", 0))?,
-                )?,
-                <aver_rt::AverInt as ReplayValue>::from_replay_json(
-                    fields
-                        .get(1)
-                        .ok_or_else(|| format!("$variant ExprCmpSlotInt missing field #{}", 1))?,
-                )?,
-                <aver_rt::AverInt as ReplayValue>::from_replay_json(
-                    fields
-                        .get(2)
-                        .ok_or_else(|| format!("$variant ExprCmpSlotInt missing field #{}", 2))?,
-                )?,
-            )),
-            "ExprCmpSlots" => Ok(Expr::ExprCmpSlots(
+            "ExprCmpSlotInt" => {
+                Ok(Expr::ExprCmpSlotInt(std::sync::Arc::new(
+                    Expr__ExprCmpSlotInt(
+                        <CmpOp as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(
+                            || format!("$variant ExprCmpSlotInt missing field #{}", 0),
+                        )?)?,
+                        <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                            fields.get(1).ok_or_else(|| {
+                                format!("$variant ExprCmpSlotInt missing field #{}", 1)
+                            })?,
+                        )?,
+                        <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                            fields.get(2).ok_or_else(|| {
+                                format!("$variant ExprCmpSlotInt missing field #{}", 2)
+                            })?,
+                        )?,
+                    ),
+                )))
+            }
+            "ExprCmpSlots" => Ok(Expr::ExprCmpSlots(std::sync::Arc::new(Expr__ExprCmpSlots(
                 <CmpOp as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
@@ -833,190 +947,186 @@ impl aver_replay::ReplayValue for Expr {
                         .get(2)
                         .ok_or_else(|| format!("$variant ExprCmpSlots missing field #{}", 2))?,
                 )?,
-            )),
-            "ExprVectorGetOrInt" => Ok(Expr::ExprVectorGetOrInt(
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
-                    fields.get(0).ok_or_else(|| {
+            )))),
+            "ExprVectorGetOrInt" => Ok(Expr::ExprVectorGetOrInt(std::sync::Arc::new(
+                Expr__ExprVectorGetOrInt(
+                    <Expr as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(|| {
                         format!("$variant ExprVectorGetOrInt missing field #{}", 0)
-                    })?,
-                )?,
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
-                    fields.get(1).ok_or_else(|| {
+                    })?)?,
+                    <Expr as ReplayValue>::from_replay_json(fields.get(1).ok_or_else(|| {
                         format!("$variant ExprVectorGetOrInt missing field #{}", 1)
-                    })?,
-                )?,
-                <aver_rt::AverInt as ReplayValue>::from_replay_json(
-                    fields.get(2).ok_or_else(|| {
-                        format!("$variant ExprVectorGetOrInt missing field #{}", 2)
-                    })?,
-                )?,
-            )),
-            "ExprIntModOrInt" => Ok(Expr::ExprIntModOrInt(
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
-                    fields
-                        .get(0)
-                        .ok_or_else(|| format!("$variant ExprIntModOrInt missing field #{}", 0))?,
-                )?,
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
-                    fields
-                        .get(1)
-                        .ok_or_else(|| format!("$variant ExprIntModOrInt missing field #{}", 1))?,
-                )?,
-                <aver_rt::AverInt as ReplayValue>::from_replay_json(
-                    fields
-                        .get(2)
-                        .ok_or_else(|| format!("$variant ExprIntModOrInt missing field #{}", 2))?,
-                )?,
-            )),
-            "ExprAdd" => Ok(Expr::ExprAdd(
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+                    })?)?,
+                    <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                        fields.get(2).ok_or_else(|| {
+                            format!("$variant ExprVectorGetOrInt missing field #{}", 2)
+                        })?,
+                    )?,
+                ),
+            ))),
+            "ExprIntModOrInt" => Ok(Expr::ExprIntModOrInt(std::sync::Arc::new(
+                Expr__ExprIntModOrInt(
+                    <Expr as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(|| {
+                        format!("$variant ExprIntModOrInt missing field #{}", 0)
+                    })?)?,
+                    <Expr as ReplayValue>::from_replay_json(fields.get(1).ok_or_else(|| {
+                        format!("$variant ExprIntModOrInt missing field #{}", 1)
+                    })?)?,
+                    <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                        fields.get(2).ok_or_else(|| {
+                            format!("$variant ExprIntModOrInt missing field #{}", 2)
+                        })?,
+                    )?,
+                ),
+            ))),
+            "ExprAdd" => Ok(Expr::ExprAdd(std::sync::Arc::new(Expr__ExprAdd(
+                <Expr as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprAdd missing field #{}", 0))?,
                 )?,
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+                <Expr as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant ExprAdd missing field #{}", 1))?,
                 )?,
-            )),
-            "ExprSub" => Ok(Expr::ExprSub(
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+            )))),
+            "ExprSub" => Ok(Expr::ExprSub(std::sync::Arc::new(Expr__ExprSub(
+                <Expr as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprSub missing field #{}", 0))?,
                 )?,
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+                <Expr as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant ExprSub missing field #{}", 1))?,
                 )?,
-            )),
-            "ExprMul" => Ok(Expr::ExprMul(
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+            )))),
+            "ExprMul" => Ok(Expr::ExprMul(std::sync::Arc::new(Expr__ExprMul(
+                <Expr as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprMul missing field #{}", 0))?,
                 )?,
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+                <Expr as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant ExprMul missing field #{}", 1))?,
                 )?,
-            )),
-            "ExprDiv" => Ok(Expr::ExprDiv(
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+            )))),
+            "ExprDiv" => Ok(Expr::ExprDiv(std::sync::Arc::new(Expr__ExprDiv(
+                <Expr as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprDiv missing field #{}", 0))?,
                 )?,
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+                <Expr as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant ExprDiv missing field #{}", 1))?,
                 )?,
-            )),
-            "ExprNeg" => Ok(Expr::ExprNeg(
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+            )))),
+            "ExprNeg" => Ok(Expr::ExprNeg(std::sync::Arc::new(Expr__ExprNeg(
+                <Expr as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprNeg missing field #{}", 0))?,
                 )?,
-            )),
-            "ExprEq" => Ok(Expr::ExprEq(
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+            )))),
+            "ExprEq" => Ok(Expr::ExprEq(std::sync::Arc::new(Expr__ExprEq(
+                <Expr as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprEq missing field #{}", 0))?,
                 )?,
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+                <Expr as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant ExprEq missing field #{}", 1))?,
                 )?,
-            )),
-            "ExprNeq" => Ok(Expr::ExprNeq(
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+            )))),
+            "ExprNeq" => Ok(Expr::ExprNeq(std::sync::Arc::new(Expr__ExprNeq(
+                <Expr as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprNeq missing field #{}", 0))?,
                 )?,
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+                <Expr as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant ExprNeq missing field #{}", 1))?,
                 )?,
-            )),
-            "ExprLt" => Ok(Expr::ExprLt(
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+            )))),
+            "ExprLt" => Ok(Expr::ExprLt(std::sync::Arc::new(Expr__ExprLt(
+                <Expr as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprLt missing field #{}", 0))?,
                 )?,
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+                <Expr as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant ExprLt missing field #{}", 1))?,
                 )?,
-            )),
-            "ExprGt" => Ok(Expr::ExprGt(
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+            )))),
+            "ExprGt" => Ok(Expr::ExprGt(std::sync::Arc::new(Expr__ExprGt(
+                <Expr as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprGt missing field #{}", 0))?,
                 )?,
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+                <Expr as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant ExprGt missing field #{}", 1))?,
                 )?,
-            )),
-            "ExprLte" => Ok(Expr::ExprLte(
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+            )))),
+            "ExprLte" => Ok(Expr::ExprLte(std::sync::Arc::new(Expr__ExprLte(
+                <Expr as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprLte missing field #{}", 0))?,
                 )?,
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+                <Expr as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant ExprLte missing field #{}", 1))?,
                 )?,
-            )),
-            "ExprGte" => Ok(Expr::ExprGte(
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+            )))),
+            "ExprGte" => Ok(Expr::ExprGte(std::sync::Arc::new(Expr__ExprGte(
+                <Expr as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprGte missing field #{}", 0))?,
                 )?,
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+                <Expr as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant ExprGte missing field #{}", 1))?,
                 )?,
-            )),
-            "ExprConcat" => Ok(Expr::ExprConcat(
+            )))),
+            "ExprConcat" => Ok(Expr::ExprConcat(std::sync::Arc::new(Expr__ExprConcat(
                 <aver_rt::AverList<Expr> as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprConcat missing field #{}", 0))?,
                 )?,
-            )),
-            "ExprTuple" => Ok(Expr::ExprTuple(
+            )))),
+            "ExprTuple" => Ok(Expr::ExprTuple(std::sync::Arc::new(Expr__ExprTuple(
                 <aver_rt::AverList<Expr> as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprTuple missing field #{}", 0))?,
                 )?,
-            )),
-            "ExprList" => Ok(Expr::ExprList(
+            )))),
+            "ExprList" => Ok(Expr::ExprList(std::sync::Arc::new(Expr__ExprList(
                 <aver_rt::AverList<Expr> as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprList missing field #{}", 0))?,
                 )?,
-            )),
-            "ExprRecord" => Ok(Expr::ExprRecord(
+            )))),
+            "ExprRecord" => Ok(Expr::ExprRecord(std::sync::Arc::new(Expr__ExprRecord(
                 <AverStr as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
@@ -1027,20 +1137,18 @@ impl aver_replay::ReplayValue for Expr {
                         .get(1)
                         .ok_or_else(|| format!("$variant ExprRecord missing field #{}", 1))?,
                 )?,
-            )),
-            "ExprFieldAccess" => {
-                Ok(Expr::ExprFieldAccess(
-                    <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
-                        fields.get(0).ok_or_else(|| {
-                            format!("$variant ExprFieldAccess missing field #{}", 0)
-                        })?,
-                    )?,
+            )))),
+            "ExprFieldAccess" => Ok(Expr::ExprFieldAccess(std::sync::Arc::new(
+                Expr__ExprFieldAccess(
+                    <Expr as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(|| {
+                        format!("$variant ExprFieldAccess missing field #{}", 0)
+                    })?)?,
                     <AverStr as ReplayValue>::from_replay_json(fields.get(1).ok_or_else(
                         || format!("$variant ExprFieldAccess missing field #{}", 1),
                     )?)?,
-                ))
-            }
-            "ExprCall" => Ok(Expr::ExprCall(
+                ),
+            ))),
+            "ExprCall" => Ok(Expr::ExprCall(std::sync::Arc::new(Expr__ExprCall(
                 <AverStr as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
@@ -1051,21 +1159,23 @@ impl aver_replay::ReplayValue for Expr {
                         .get(1)
                         .ok_or_else(|| format!("$variant ExprCall missing field #{}", 1))?,
                 )?,
-            )),
-            "ExprCallDirect" => Ok(Expr::ExprCallDirect(
-                <aver_rt::AverInt as ReplayValue>::from_replay_json(
-                    fields
-                        .get(0)
-                        .ok_or_else(|| format!("$variant ExprCallDirect missing field #{}", 0))?,
-                )?,
-                <aver_rt::AverList<Expr> as ReplayValue>::from_replay_json(
-                    fields
-                        .get(1)
-                        .ok_or_else(|| format!("$variant ExprCallDirect missing field #{}", 1))?,
-                )?,
-            )),
-            "ExprCallBuiltin" => {
-                Ok(Expr::ExprCallBuiltin(
+            )))),
+            "ExprCallDirect" => Ok(Expr::ExprCallDirect(std::sync::Arc::new(
+                Expr__ExprCallDirect(
+                    <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                        fields.get(0).ok_or_else(|| {
+                            format!("$variant ExprCallDirect missing field #{}", 0)
+                        })?,
+                    )?,
+                    <aver_rt::AverList<Expr> as ReplayValue>::from_replay_json(
+                        fields.get(1).ok_or_else(|| {
+                            format!("$variant ExprCallDirect missing field #{}", 1)
+                        })?,
+                    )?,
+                ),
+            ))),
+            "ExprCallBuiltin" => Ok(Expr::ExprCallBuiltin(std::sync::Arc::new(
+                Expr__ExprCallBuiltin(
                     <AverStr as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(
                         || format!("$variant ExprCallBuiltin missing field #{}", 0),
                     )?)?,
@@ -1074,22 +1184,24 @@ impl aver_replay::ReplayValue for Expr {
                             format!("$variant ExprCallBuiltin missing field #{}", 1)
                         })?,
                     )?,
-                ))
-            }
-            "ExprCallBuiltinId" => Ok(Expr::ExprCallBuiltinId(
-                <aver_rt::AverInt as ReplayValue>::from_replay_json(
-                    fields.get(0).ok_or_else(|| {
-                        format!("$variant ExprCallBuiltinId missing field #{}", 0)
-                    })?,
-                )?,
-                <aver_rt::AverList<Expr> as ReplayValue>::from_replay_json(
-                    fields.get(1).ok_or_else(|| {
-                        format!("$variant ExprCallBuiltinId missing field #{}", 1)
-                    })?,
-                )?,
-            )),
-            "ExprMatch" => Ok(Expr::ExprMatch(
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+                ),
+            ))),
+            "ExprCallBuiltinId" => Ok(Expr::ExprCallBuiltinId(std::sync::Arc::new(
+                Expr__ExprCallBuiltinId(
+                    <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                        fields.get(0).ok_or_else(|| {
+                            format!("$variant ExprCallBuiltinId missing field #{}", 0)
+                        })?,
+                    )?,
+                    <aver_rt::AverList<Expr> as ReplayValue>::from_replay_json(
+                        fields.get(1).ok_or_else(|| {
+                            format!("$variant ExprCallBuiltinId missing field #{}", 1)
+                        })?,
+                    )?,
+                ),
+            ))),
+            "ExprMatch" => Ok(Expr::ExprMatch(std::sync::Arc::new(Expr__ExprMatch(
+                <Expr as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprMatch missing field #{}", 0))?,
@@ -1099,24 +1211,26 @@ impl aver_replay::ReplayValue for Expr {
                         .get(1)
                         .ok_or_else(|| format!("$variant ExprMatch missing field #{}", 1))?,
                 )?,
-            )),
-            "ExprPropagate" => Ok(Expr::ExprPropagate(
-                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+            )))),
+            "ExprPropagate" => Ok(Expr::ExprPropagate(std::sync::Arc::new(
+                Expr__ExprPropagate(<Expr as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprPropagate missing field #{}", 0))?,
-                )?,
-            )),
-            "ExprIndependentProduct" => Ok(Expr::ExprIndependentProduct(
-                <aver_rt::AverList<Expr> as ReplayValue>::from_replay_json(
-                    fields.get(0).ok_or_else(|| {
-                        format!("$variant ExprIndependentProduct missing field #{}", 0)
-                    })?,
-                )?,
-                <bool as ReplayValue>::from_replay_json(fields.get(1).ok_or_else(|| {
-                    format!("$variant ExprIndependentProduct missing field #{}", 1)
-                })?)?,
-            )),
+                )?),
+            ))),
+            "ExprIndependentProduct" => Ok(Expr::ExprIndependentProduct(std::sync::Arc::new(
+                Expr__ExprIndependentProduct(
+                    <aver_rt::AverList<Expr> as ReplayValue>::from_replay_json(
+                        fields.get(0).ok_or_else(|| {
+                            format!("$variant ExprIndependentProduct missing field #{}", 0)
+                        })?,
+                    )?,
+                    <bool as ReplayValue>::from_replay_json(fields.get(1).ok_or_else(|| {
+                        format!("$variant ExprIndependentProduct missing field #{}", 1)
+                    })?)?,
+                ),
+            ))),
             _ => Err(format!(
                 "unknown variant '{}' for Domain.Ast.Expr",
                 variant_name

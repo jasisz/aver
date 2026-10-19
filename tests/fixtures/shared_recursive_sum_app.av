@@ -1,0 +1,65 @@
+module SharedRecursiveSumApp
+    intent =
+        "Fixture: a record inside a recursive sum, recursion through Option,"
+        "and one value used as both fields of a node."
+    effects [Console.print]
+
+record E
+    node: Node
+    hash: Int
+
+type Node
+    Leaf(Int)
+    App(E, E)
+
+type T
+    Tip(Int)
+    Pair(T, T)
+    Wrap(Option<T>)
+
+fn size(e: E) -> Int
+    ? "Counts the leaves under e."
+    match e.node
+        Node.Leaf(_) -> 1
+        Node.App(f, a) -> size(f) + size(a)
+
+verify size
+    size(E(node = Node.App(E(node = Node.Leaf(1), hash = 1), E(node = Node.Leaf(2), hash = 2)), hash = 3)) => 2
+
+fn nest(e: E, n: Int) -> E
+    ? "Puts e under n applications that hold it on both sides."
+    match n <= 0
+        true -> e
+        false -> nest(E(node = Node.App(e, e), hash = n), n - 1)
+
+verify nest
+    size(nest(E(node = Node.Leaf(1), hash = 0), 3)) => 8
+
+fn sides(t: T) -> Int
+    ? "Adds the tips of a pair, or reads through a wrapper."
+    match t
+        T.Tip(n) -> n
+        T.Pair(a, b) -> sides(a) + sides(b)
+        T.Wrap(Option.Some(inner)) -> sides(inner)
+        T.Wrap(Option.None) -> 0
+
+verify sides
+    sides(T.Pair(T.Tip(1), T.Wrap(Option.Some(T.Tip(2))))) => 3
+
+fn tips(a: T, b: T) -> Int
+    ? "Reads two tips at once."
+    match (a, b)
+        (T.Tip(x), T.Tip(y)) -> x * 10 + y
+        _ -> 0
+
+verify tips
+    tips(T.Tip(1), T.Tip(2)) => 12
+
+fn main() -> Unit
+    ! [Console.print]
+    big = nest(E(node = Node.Leaf(7), hash = 0), 18)
+    Console.print("size {size(big)} hash {big.hash}")
+    t = T.Pair(T.Tip(4), T.Wrap(Option.Some(T.Tip(5))))
+    Console.print("sides {sides(t)} tips {tips(T.Tip(3), T.Tip(8))}")
+    Console.print("equal {T.Pair(t, t) == T.Pair(t, T.Pair(T.Tip(4), T.Wrap(Option.Some(T.Tip(5)))))}")
+    Console.print("differ {T.Pair(t, t) == T.Pair(t, T.Tip(4))}")

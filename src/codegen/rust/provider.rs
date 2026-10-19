@@ -9,6 +9,7 @@ use crate::ast::{TypeDef, TypeVariant};
 use crate::capability::CapabilityRegistry;
 use crate::provider::required_capability_operations;
 
+use super::representation::variant_field_refs;
 use super::syntax::aver_name_to_rust;
 use super::types::type_annotation_to_rust_scoped;
 
@@ -537,9 +538,13 @@ pub(super) fn emit_represented_type_codec(
         TypeDef::Product { name, fields, .. } => {
             emit_record_codec(name, fields, &canonical, &field_type)
         }
-        TypeDef::Sum { name, variants, .. } => {
-            emit_sum_codec(name, variants, &canonical, &field_type)
-        }
+        TypeDef::Sum { name, variants, .. } => emit_sum_codec(
+            name,
+            variants,
+            super::representation::sum_is_shared(type_def, ctx),
+            &canonical,
+            &field_type,
+        ),
     };
     format!(
         "{codec}\n\n#[allow(non_camel_case_types)]\npub type {} = {bare};",
@@ -611,37 +616,28 @@ fn emit_record_codec(
     )
 }
 
-fn sum_field_rust_type(
-    owner: &str,
-    source_type: &str,
-    field_type: &dyn Fn(&str) -> String,
-) -> String {
-    let rust_type = field_type(source_type);
-    if source_type == owner {
-        format!("std::sync::Arc<{rust_type}>")
-    } else {
-        rust_type
-    }
-}
-
 fn emit_sum_codec(
     name: &str,
     variants: &[TypeVariant],
+    shared: bool,
     canonical: &str,
     field_type: &dyn Fn(&str) -> String,
 ) -> String {
     let encode_arms = variants
         .iter()
         .map(|variant| {
-            let bindings = (0..variant.fields.len())
-                .map(|index| format!("field{index}"))
-                .collect::<Vec<_>>();
-            let pattern = if bindings.is_empty() {
+            let (bindings, fields) = variant_field_refs(shared, "field", variant.fields.len());
+            let pattern = if fields.is_empty() {
                 format!("Self::{}", variant.name)
             } else {
-                format!("Self::{}({})", variant.name, bindings.join(", "))
+                format!("Self::{}({bindings})", variant.name)
             };
-            let encoded = bindings
+            // A shared sum's fields sit behind the constructor's `Arc`.
+            let fields = match shared {
+                true => fields.iter().map(|f| format!("{f}.clone()")).collect(),
+                false => fields,
+            };
+            let encoded = fields
                 .iter()
                 .map(|field| format!("{field}.into_provider_value(registry, capability)?"))
                 .collect::<Vec<_>>()
@@ -661,7 +657,7 @@ fn emit_sum_codec(
                 .iter()
                 .enumerate()
                 .map(|(index, source_type)| {
-                    let rust_type = sum_field_rust_type(name, source_type, field_type);
+                    let rust_type = field_type(source_type);
                     format!(
                         "<{rust_type} as aver_rt::provider::ProviderCodec>::from_provider_value(fields.next().expect(\"validated variant arity\"), registry, capability, minted_resource)?"
                     )
@@ -670,6 +666,13 @@ fn emit_sum_codec(
                 .collect::<Vec<_>>();
             let constructor = if decoded.is_empty() {
                 format!("Self::{}", variant.name)
+            } else if shared {
+                let payload = format!("{name}__{}", variant.name);
+                format!(
+                    "Self::{}(std::sync::Arc::new({payload}({})))",
+                    variant.name,
+                    decoded.join(", ")
+                )
             } else {
                 format!("Self::{}({})", variant.name, decoded.join(", "))
             };
