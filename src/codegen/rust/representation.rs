@@ -242,7 +242,11 @@ pub(super) fn cheap_fields_first(
         .filter(|&i| cheap[i])
         .chain((0..types.len()).filter(|&i| !cheap[i]))
         .collect();
-    order.iter().enumerate().any(|(i, &f)| i != f).then_some(order)
+    order
+        .iter()
+        .enumerate()
+        .any(|(i, &f)| i != f)
+        .then_some(order)
 }
 
 fn compares_at_once(

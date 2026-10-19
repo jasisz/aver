@@ -1745,7 +1745,8 @@ fn width(s: Shape) -> Int
             assert!(entry.contains(expected), "missing `{expected}`:\n{entry}");
         }
         assert!(
-            !entry.contains("impl PartialEq for Point") && !entry.contains("impl PartialEq for Shape"),
+            !entry.contains("impl PartialEq for Point")
+                && !entry.contains("impl PartialEq for Shape"),
             "an equality already in cheap-first order is not hand-written:\n{entry}"
         );
     }

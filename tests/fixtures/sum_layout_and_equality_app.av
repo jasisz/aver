@@ -115,6 +115,7 @@ fn main() -> Unit
     Console.print("map {lookup(m, Shape.Label("z", "", "", 0, 0, 0))} {lookup(m, Shape.Dot(5))} {List.len(Map.keys(m))} first {area(firstKey(Map.keys(m)))}")
     a = spine(2000, 1)
     Console.print("trees {a == spine(2000, 1)} {a == spine(2000, 2)} {a == a}")
-    nan = 0.0 / 0.0
+    zero = Float.fromInt(List.len(xs) - 30000)
+    nan = zero / zero
     Console.print("cells {Cell.Cell([1, 2], 1.5, Mark.Bold) == Cell.Cell([1, 2], 1.5, Mark.Bold)} {Cell.Cell([1], nan, Mark.Bold) == Cell.Cell([1], nan, Mark.Bold)} {Cell.Cell([1], 1.5, Mark.Plain) == Cell.Cell([1], 1.5, Mark.Bold)} {Cell.Empty == Cell.Empty}")
     Console.print("items {Item(parts = [3], weight = 2.0, mark = Mark.Plain) == Item(parts = [3], weight = 2.0, mark = Mark.Plain)} {Item(parts = [3], weight = nan, mark = Mark.Plain) == Item(parts = [3], weight = nan, mark = Mark.Plain)} {Item(parts = [4], weight = 2.0, mark = Mark.Plain) == Item(parts = [3], weight = 2.0, mark = Mark.Plain)}")
