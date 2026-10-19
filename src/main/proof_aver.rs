@@ -78,8 +78,14 @@ pub(super) fn run(
     // What each checked script stands on, read off the text the kernel
     // checked; reported for the laws and obligations that close.
     let mut trust: BTreeMap<String, aver::ir::proof_steps::trust::Trust> = BTreeMap::new();
+    let mut checked = check_all(&ctx.proof_ir.law_theorems, &ctx.symbol_table).into_iter();
     for theorem in &ctx.proof_ir.law_theorems {
         let key = law_key(&ctx.symbol_table, theorem);
+        let Checked {
+            law: law_checked,
+            obligations: mut obligations_checked,
+            spent,
+        } = checked.next().unwrap_or_default();
         if theorem.steps.is_some() && !theorem.steps_auto_using.is_empty() {
             automatic.insert(key.clone(), theorem.steps_auto_using.clone());
         }
@@ -94,16 +100,15 @@ pub(super) fn run(
         if !theorem.steps_hints.is_empty() {
             hints.insert(key.clone(), theorem.steps_hints.clone());
         }
-        let kernel_before = aver::proof_kernel::spent().0;
-        let verdict = match &theorem.steps {
-            None => Verdict::Open(theorem.steps_refusal.clone()),
-            Some(script) => match aver::ir::proof_steps::sexpr::script(script, &ctx.symbol_table) {
+        let verdict = match (&theorem.steps, law_checked) {
+            (None, _) | (_, None) => Verdict::Open(theorem.steps_refusal.clone()),
+            (Some(_), Some(found)) => match found {
                 Err(why) => Verdict::Refused(why),
-                Ok(text) => {
+                Ok((text, judged)) => {
                     if std::fs::create_dir_all(&steps_dir).is_ok() {
                         let _ = std::fs::write(steps_dir.join(format!("{key}.steps")), &text);
                     }
-                    match aver::proof_kernel::verdict(&text) {
+                    match judged {
                         Ok(proved) if proved == key => {
                             if check_json
                                 && let Ok(t) = aver::ir::proof_steps::trust::of_script(&text)
@@ -120,34 +125,30 @@ pub(super) fn run(
         };
         verdicts.insert(key.clone(), verdict);
         for ob in &theorem.obligation_steps {
-            let verdict = match &ob.script {
-                None => Verdict::Open(ob.refusal.clone()),
-                Some(script) => {
-                    match aver::ir::proof_steps::sexpr::script(script, &ctx.symbol_table) {
-                        Err(why) => Verdict::Refused(why),
-                        Ok(text) => {
-                            if std::fs::create_dir_all(&steps_dir).is_ok() {
-                                let _ = std::fs::write(
-                                    steps_dir.join(format!("{}.steps", ob.key)),
-                                    &text,
-                                );
-                            }
-                            match aver::proof_kernel::verdict(&text) {
-                                Ok(proved) if proved == ob.key => {
-                                    if check_json
-                                        && let Ok(t) =
-                                            aver::ir::proof_steps::trust::of_script(&text)
-                                    {
-                                        trust.insert(ob.key.clone(), t);
-                                    }
-                                    Verdict::Steps
+            let found = obligations_checked.next().flatten();
+            let verdict = match (&ob.script, found) {
+                (None, _) | (_, None) => Verdict::Open(ob.refusal.clone()),
+                (Some(_), Some(found)) => match found {
+                    Err(why) => Verdict::Refused(why),
+                    Ok((text, judged)) => {
+                        if std::fs::create_dir_all(&steps_dir).is_ok() {
+                            let _ =
+                                std::fs::write(steps_dir.join(format!("{}.steps", ob.key)), &text);
+                        }
+                        match judged {
+                            Ok(proved) if proved == ob.key => {
+                                if check_json
+                                    && let Ok(t) = aver::ir::proof_steps::trust::of_script(&text)
+                                {
+                                    trust.insert(ob.key.clone(), t);
                                 }
-                                Ok(other) => Verdict::Refused(format!("the script proves {other}")),
-                                Err(why) => Verdict::Refused(why),
+                                Verdict::Steps
                             }
+                            Ok(other) => Verdict::Refused(format!("the script proves {other}")),
+                            Err(why) => Verdict::Refused(why),
                         }
                     }
-                }
+                },
             };
             obligation_verdicts.insert(ob.key.clone(), verdict);
             if let Some(script) = &ob.script {
@@ -162,7 +163,7 @@ pub(super) fn run(
                 );
             }
         }
-        final_kernel.insert(key, aver::proof_kernel::spent().0 - kernel_before);
+        final_kernel.insert(key, spent);
     }
     // Credit composes: a law whose script cites a law this backend did not
     // close is not closed either (Lean gets the same from its axiom audit).
@@ -414,6 +415,78 @@ pub(super) fn run(
     if checking && !passed {
         std::process::exit(1);
     }
+}
+
+/// One script serialised and judged by the kernel: its text and the
+/// kernel's verdict, or why it could not be written out.
+type Judged = Result<(String, Result<String, String>), String>;
+
+/// A law's checks: its own script's, each obligation's in order (`None`
+/// where it has no script), and the time the kernel took on them.
+#[derive(Default)]
+struct Checked {
+    law: Option<Judged>,
+    obligations: std::vec::IntoIter<Option<Judged>>,
+    spent: std::time::Duration,
+}
+
+/// Every law's scripts, written out and judged by the kernel, side by side
+/// on as many threads as there are cores: each check reads its script
+/// alone, so what each finds is what it finds one after another.
+fn check_all(theorems: &[LawTheorem], symbols: &aver::ir::SymbolTable) -> Vec<Checked> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let judge = |script: &aver::ir::proof_steps::Script| -> Judged {
+        let text = aver::ir::proof_steps::sexpr::script(script, symbols)?;
+        let verdict = aver::proof_kernel::verdict(&text);
+        Ok((text, verdict))
+    };
+    let check = |t: &LawTheorem| -> Checked {
+        let before = aver::proof_kernel::spent().0;
+        let law = t.steps.as_ref().map(judge);
+        let obligations: Vec<Option<Judged>> = t
+            .obligation_steps
+            .iter()
+            .map(|ob| ob.script.as_ref().map(judge))
+            .collect();
+        Checked {
+            law,
+            obligations: obligations.into_iter(),
+            spent: aver::proof_kernel::spent().0 - before,
+        }
+    };
+    let workers = std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .min(theorems.len());
+    let slots: Vec<std::sync::Mutex<Option<Checked>>> = theorems
+        .iter()
+        .map(|_| std::sync::Mutex::new(None))
+        .collect();
+    if workers > 1 {
+        let next = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                let (next, slots, check) = (&next, &slots, &check);
+                scope.spawn(move || {
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        if i >= theorems.len() {
+                            break;
+                        }
+                        let done = check(&theorems[i]);
+                        if let Ok(mut slot) = slots[i].lock() {
+                            *slot = Some(done);
+                        }
+                    }
+                });
+            }
+        });
+    }
+    // A law no thread reached is checked here.
+    slots
+        .into_iter()
+        .zip(theorems)
+        .map(|(slot, t)| slot.into_inner().ok().flatten().unwrap_or_else(|| check(t)))
+        .collect()
 }
 
 /// Where the run spent its time, per law and summed by phase: the front end

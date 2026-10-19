@@ -2614,15 +2614,57 @@ fn linear_flip(x: &Term, k: &Term, op: BinOp, p: Proof) -> Option<Proof> {
 thread_local! {
     /// Whether tables may be built ([`with_tables`]).
     static TABLES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// What the tables built on this thread cost ([`Stats`]).
+    static STATS: std::cell::Cell<Stats> = const { std::cell::Cell::new(Stats::ZERO) };
+}
+
+/// How many tables were built and how many closed what they were built
+/// for, and the time each kind took: what `AVER_STEPS_DEBUG` reports per
+/// law.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Stats {
+    pub built: usize,
+    pub closed: usize,
+    pub open_time: std::time::Duration,
+    pub closed_time: std::time::Duration,
+}
+
+impl Stats {
+    const ZERO: Stats = Stats {
+        built: 0,
+        closed: 0,
+        open_time: std::time::Duration::ZERO,
+        closed_time: std::time::Duration::ZERO,
+    };
+}
+
+/// The tables built on this thread so far.
+pub(crate) fn stats() -> Stats {
+    STATS.with(|s| s.get())
 }
 
 /// `f` with tables of equal terms allowed: the producers close laws inside
 /// it, and the hints for a law left open are worked out outside it.
 pub(crate) fn with_tables<R>(f: impl FnOnce() -> R) -> R {
-    let before = TABLES.with(|t| t.replace(true));
+    tables_set(true, f)
+}
+
+/// `f` with no table built: the attempts as they are without tables.
+pub(crate) fn without_tables<R>(f: impl FnOnce() -> R) -> R {
+    tables_set(false, f)
+}
+
+fn tables_set<R>(on: bool, f: impl FnOnce() -> R) -> R {
+    let before = TABLES.with(|t| t.replace(on));
     let out = f();
     TABLES.with(|t| t.set(before));
     out
+}
+
+/// Whether tables may be built here: evaluation reads it, so the memo
+/// keys on it.
+pub(crate) fn tables_on() -> bool {
+    TABLES.with(|t| t.get())
 }
 
 impl Env<'_> {
@@ -2686,7 +2728,20 @@ impl Env<'_> {
         let read_claim_fuel = self.read_claim_fuel;
         self.fuel = TABLE_FUEL;
         self.in_table = true;
+        let started = std::time::Instant::now();
         let found = self.table_proof(lhs, rhs, before);
+        let spent = started.elapsed();
+        STATS.with(|s| {
+            let mut st = s.get();
+            st.built += 1;
+            if found.as_ref().is_some_and(|p| p.size() <= MAX_PROOF) {
+                st.closed += 1;
+                st.closed_time += spent;
+            } else {
+                st.open_time += spent;
+            }
+            s.set(st);
+        });
         self.in_table = false;
         self.fuel = fuel;
         self.ran_dry = ran_dry;
