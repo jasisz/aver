@@ -159,9 +159,6 @@ impl ProviderRegistry {
     /// Give the compiler-installed Args provider the guest argument vector.
     /// Explicit host bindings remain authoritative and are never replaced.
     pub fn configure_standard_args(&mut self, args: Vec<String>) -> Result<(), String> {
-        if self.standard_args == args {
-            return Ok(());
-        }
         let Some(binding) = self.binding("Args") else {
             self.standard_args = args;
             return Ok(());

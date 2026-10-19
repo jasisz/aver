@@ -353,6 +353,31 @@ pub(super) fn emit_args_get_wasip2(
     func.instruction(&Instruction::LocalGet(retptr_local));
     func.instruction(&Instruction::Call(get_arguments));
 
+    // The host lists the program name first, as POSIX argv does; Aver's
+    // `Args.get` is only what follows it. Step the (list_ptr, list_len)
+    // pair past that entry (8 bytes: str_ptr, str_len) when there is one.
+    let mem4 = |offset| wasm_encoder::MemArg {
+        offset,
+        align: 2,
+        memory_index: 0,
+    };
+    func.instruction(&Instruction::LocalGet(retptr_local));
+    func.instruction(&Instruction::I32Load(mem4(4)));
+    func.instruction(&Instruction::If(BlockType::Empty));
+    func.instruction(&Instruction::LocalGet(retptr_local));
+    func.instruction(&Instruction::LocalGet(retptr_local));
+    func.instruction(&Instruction::I32Load(mem4(0)));
+    func.instruction(&Instruction::I32Const(8));
+    func.instruction(&Instruction::I32Add);
+    func.instruction(&Instruction::I32Store(mem4(0)));
+    func.instruction(&Instruction::LocalGet(retptr_local));
+    func.instruction(&Instruction::LocalGet(retptr_local));
+    func.instruction(&Instruction::I32Load(mem4(4)));
+    func.instruction(&Instruction::I32Const(1));
+    func.instruction(&Instruction::I32Sub);
+    func.instruction(&Instruction::I32Store(mem4(4)));
+    func.instruction(&Instruction::End);
+
     // Decoder pushes the materialised List<String> onto the stack.
     func.instruction(&Instruction::LocalGet(retptr_local));
     func.instruction(&Instruction::Call(decoder));

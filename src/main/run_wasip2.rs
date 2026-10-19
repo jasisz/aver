@@ -285,9 +285,8 @@ fn run_component(
     let mut ctx_builder = WasiCtxBuilder::new();
     ctx_builder.inherit_stdio();
     // First arg is the program name by convention (matches POSIX
-    // argv[0]). `aver run --wasip2 file.av -- a b c` populates
-    // wasi-cli args as `[file.av, a, b, c]` so guests reading
-    // `Args.get` see the same shape they'd see on the VM target.
+    // argv[0]); the guest's `Args.get` drops it, so
+    // `aver run --wasip2 file.av -- a b c` reads `[a, b, c]` as on the VM.
     ctx_builder.arg(std::path::Path::new("aver-wasip2").display().to_string());
     for a in program_args {
         ctx_builder.arg(a);
