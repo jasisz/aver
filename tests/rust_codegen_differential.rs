@@ -4652,8 +4652,10 @@ fn recursive_independent_product_owns_each_shared_capture() {
                     "{mode}: recursive independent product lost scoped-thread emission:\n{emitted}"
                 ));
             }
+            // Each branch binds its own capture before spawn: the first clones,
+            // the second holds the final read and moves the original.
             for capture in ["height", "blockId"] {
-                let binding = format!("let {capture} = {capture}.clone();");
+                let binding = format!("let {capture} = {capture}");
                 if emitted.matches(&binding).count() < 2 {
                     return Err(format!(
                         "{mode}: every branch must own `{capture}` before spawn:\n{emitted}"
@@ -4682,6 +4684,131 @@ fn recursive_independent_product_owns_each_shared_capture() {
                     "{mode}: shared-capture output mismatch\n--- VM ---\n{vm_stdout}\n--- Rust ---\n{rust_stdout}"
                 ));
             }
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// A branch of `(a, b)!` takes a local it reads for the last time by move,
+/// the way a call at its last use does. Cloning it left the original alive
+/// in the enclosing frame for the whole branch, so the first `Map.set` in the
+/// branch copied the whole map. A local read after the product is still
+/// cloned, and a local read by both branches is cloned for the first and
+/// moved into the second.
+#[test]
+fn independent_product_moves_a_branch_argument_at_its_last_use() {
+    let ws = temp_dir("ip_last_use_move");
+    let source = ws.join("main.av");
+    fs::write(
+        &source,
+        r#"module ProductLastUse
+    intent = "Independent-product branches take the locals they read for the last time."
+    effects [Console]
+
+record Tables
+    entries: Map<String, Int>
+
+fn build(n: Int) -> Map<String, Int>
+    ? "A map with n entries."
+    match n == 0
+        true -> {}
+        false -> Map.set(build(n - 1), "k{n}", n)
+
+fn grow(tables: Tables, key: String) -> Tables
+    ? "The tables with one more entry."
+    Tables.update(tables, entries = Map.set(tables.entries, key, 100))
+
+fn size(tables: Tables) -> Int
+    ? "Count the entries."
+    Map.len(tables.entries)
+
+fn movedAtLastUse(n: Int) -> Int
+    ? "Both branch arguments are read for the last time here."
+    table = Tables(entries = build(n))
+    other = Tables(entries = build(2))
+    match (grow(table, "z"), size(other))!
+        (a, b) -> size(a) * 10 + b
+
+fn readAfter(n: Int) -> Int
+    ? "The tables are read again after the product."
+    kept = Tables(entries = build(n))
+    match (grow(kept, "z"), size(Tables(entries = build(1))))!
+        (a, b) -> size(a) * 100 + b * 10 + size(kept)
+
+fn readByBoth(n: Int) -> Int
+    ? "Both branches read the same tables."
+    shared = Tables(entries = build(n))
+    match (grow(shared, "x"), grow(shared, "k1"))!
+        (a, b) -> size(a) * 10 + size(b)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("moved: {movedAtLastUse(3)}")
+    Console.print("after: {readAfter(3)}")
+    Console.print("both: {readByBoth(3)}")
+"#,
+    )
+    .expect("write last-use product source");
+
+    let vm_stdout = run_vm(&source, None).unwrap_or_else(|e| panic!("VM run failed: {e}"));
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+
+    let result = (|| -> Result<(), String> {
+        compile_rust(&source, &project, "ip_last_use_move", None, &[])?;
+        let emitted = fs::read_to_string(
+            project
+                .join("src")
+                .join("aver_generated")
+                .join("entry")
+                .join("mod.rs"),
+        )
+        .map_err(|e| format!("read emitted entry module: {e}"))?;
+        if emitted.matches("std::thread::scope").count() < 3 {
+            return Err(format!(
+                "probe did not emit the three parallel products:\n{emitted}"
+            ));
+        }
+        let count = |needle: &str| emitted.matches(needle).count();
+        let expectations = [
+            ("let table = table.clone();", 0),
+            ("let table = table;", 1),
+            // The branch hands the moved tables on, so `Map.set` updates
+            // them in place.
+            ("grow(table, ", 1),
+            ("let other = other.clone();", 0),
+            ("let kept = kept.clone();", 1),
+            ("let kept = kept;", 0),
+            ("let shared = shared.clone();", 1),
+            ("let shared = shared;", 1),
+        ];
+        for (needle, expected) in expectations {
+            if count(needle) != expected {
+                return Err(format!(
+                    "expected `{needle}` {expected} time(s), found {}:\n{emitted}",
+                    count(needle)
+                ));
+            }
+        }
+
+        let bin = cargo_build(&project, "ip_last_use_move")?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("failed to run last-use product binary: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "last-use product binary exited non-zero:\n{}",
+                format_output(&out)
+            ));
+        }
+        let rust_stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if rust_stdout != vm_stdout {
+            return Err(format!(
+                "last-use product output mismatch\n--- VM ---\n{vm_stdout}\n--- Rust ---\n{rust_stdout}"
+            ));
         }
         Ok(())
     })();

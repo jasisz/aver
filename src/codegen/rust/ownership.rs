@@ -166,8 +166,9 @@ pub(super) fn materialize_borrowed(code: String, expr: &MirExpr, ctx: &MirEmitCt
 /// Every branch needs an independent carrier, but that carrier is not always
 /// an owned `T`: ordinary borrowed params and mutual-TCO invariants are `&T`
 /// and can be copied, while self-TCO invariants are `Arc<T>` and must clone the
-/// wrapper. Owned values are cloned because sibling branches may capture the
-/// same local regardless of this occurrence's `last_use` annotation.
+/// wrapper. An owned value moves when `local` carries the branch's final read
+/// (the caller marks it so only for the last branch reading the local, with no
+/// read after the product) and is cloned otherwise.
 pub(super) fn materialize_scoped_thread_capture(
     code: String,
     local: &MirLocal,
@@ -181,6 +182,7 @@ pub(super) fn materialize_scoped_thread_capture(
         {
             code
         }
+        RustValueMode::Owned if facts.can_move => code,
         RustValueMode::Borrowed | RustValueMode::Owned => format!("{code}.clone()"),
     }
 }
