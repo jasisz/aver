@@ -5674,15 +5674,36 @@ fn emit_mir_builtin_call(
         };
     }
 
+    // The fallback of a `withDefault` or a `fromOption` goes in a closure
+    // when it may run only when the value is missing (see
+    // `MirProgram::fallback_runs_only_when_missing`).
+    let lazy_fallback = || {
+        ctx.codegen
+            .and_then(|codegen| codegen.mir_program.as_ref())
+            .zip(args.get(1))
+            .is_some_and(|(program, fallback)| {
+                program.fallback_runs_only_when_missing(&fallback.node)
+            })
+    };
+
     let result = match name {
         // ---- Result ----
         "Result.Ok" => format!("Ok({})", clone!(0)),
         "Result.Err" => format!("Err({})", clone!(0)),
+        "Result.withDefault" if lazy_fallback() => {
+            format!("{}.unwrap_or_else(|_| {})", clone!(0), clone!(1))
+        }
         "Result.withDefault" => format!("{}.unwrap_or({})", clone!(0), clone!(1)),
 
         // ---- Option ----
         "Option.Some" => format!("Some({})", clone!(0)),
+        "Option.withDefault" if lazy_fallback() => {
+            format!("{}.unwrap_or_else(|| {})", clone!(0), clone!(1))
+        }
         "Option.withDefault" => format!("{}.unwrap_or({})", clone!(0), clone!(1)),
+        "Result.fromOption" if lazy_fallback() => {
+            format!("{}.ok_or_else(|| {})", clone!(0), clone!(1))
+        }
         "Result.fromOption" => format!("{}.ok_or({})", clone!(0), clone!(1)),
 
         // ---- Int ----

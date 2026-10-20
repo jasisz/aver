@@ -1,0 +1,74 @@
+module LazyFallbackApp
+    intent =
+        "A fallback that only computes runs when the value is missing; one with an effect still runs first."
+
+fn fresh() -> Int
+    ? "Builds a large vector: the work a present value should skip."
+    Vector.len(Vector.new(65536, 1))
+
+verify fresh
+    fresh() => 65536
+
+fn pick(o: Option<Int>) -> Int
+    ? "The value, or the length of a fresh vector."
+    Option.withDefault(o, fresh())
+
+verify pick
+    pick(Option.Some(3)) => 3
+    pick(Option.None) => 65536
+
+fn pickOk(r: Result<Int, String>) -> Int
+    ? "The value, or the length of a fresh vector."
+    Result.withDefault(r, fresh())
+
+verify pickOk
+    pickOk(Result.Ok(4)) => 4
+    pickOk(Result.Err("no")) => 65536
+
+fn found(o: Option<Int>) -> Result<Int, String>
+    ? "The value, or the length of a fresh vector as the error."
+    Result.fromOption(o, String.fromInt(fresh()))
+
+verify found
+    found(Option.Some(5)) => Result.Ok(5)
+    found(Option.None) => Result.Err("65536")
+
+fn show(r: Result<Int, String>) -> String
+    ? "Ok or Err with its payload."
+    match r
+        Result.Ok(n) -> "ok {n}"
+        Result.Err(message) -> "err {message}"
+
+verify show
+    show(Result.Ok(1)) => "ok 1"
+    show(Result.Err("e")) => "err e"
+
+fn noisy(n: Int) -> Int
+    ? "Says it ran and returns n."
+    ! [Console.print]
+    Console.print("fallback {n} ran")
+    n
+
+fn pickNoisy(o: Option<Int>) -> Int
+    ? "The value, or n after saying so: the effect runs either way."
+    ! [Console.print]
+    Option.withDefault(o, noisy(7))
+
+fn total(n: Int, acc: Int) -> Int
+    ? "Adds pick(Some(i)) for i below n."
+    match n
+        0 -> acc
+        _ -> total(n - 1, acc + pick(Option.Some(n)))
+
+verify total
+    total(3, 0) => 6
+
+fn main() -> Unit
+    ? "Prints every fallback's result, and the effect of the noisy one each time."
+    ! [Console.print]
+    Console.print("pick {pick(Option.Some(3))} {pick(Option.None)}")
+    Console.print("pickOk {pickOk(Result.Ok(4))} {pickOk(Result.Err("no"))}")
+    Console.print("found {show(found(Option.Some(5)))} {show(found(Option.None))}")
+    Console.print("noisy {pickNoisy(Option.Some(1))}")
+    Console.print("noisy {pickNoisy(Option.None)}")
+    Console.print("total {total(20, 0)}")

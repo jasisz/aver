@@ -663,3 +663,28 @@ fn a_jump_over_a_function_body_larger_than_32k_lands_correctly() {
     assert_eq!(run_mir(&src, "listSize", &[1]), Value::int(0));
     assert_eq!(run_mir(&src, "listSize", &[0]), Value::int(n as i64));
 }
+
+/// A fallback that only computes (`pick`'s `fresh()`) runs after the value
+/// is found missing — `MATCH_UNWRAP` and a jump — instead of before
+/// `UNWRAP_OR`, so a present value never builds it. A fallback with an effect
+/// (`pickNoisy`'s `noisy(7)`) still runs first, as it always has. The
+/// fixture's outputs, the same on Rust, are pinned in
+/// `rust_codegen_differential.rs`.
+#[test]
+fn a_computed_fallback_runs_only_when_the_value_is_missing() {
+    let src = std::fs::read_to_string("tests/fixtures/lazy_fallback_app.av")
+        .expect("tests/fixtures/lazy_fallback_app.av should exist");
+    let cs = compile_mir(&src);
+    for name in ["pick", "pickOk", "found"] {
+        let code = fn_code(&cs, name);
+        assert!(
+            code.contains(&opcode::MATCH_UNWRAP) && !code.contains(&opcode::UNWRAP_OR),
+            "{name} must run its fallback only when the value is missing; code={code:?}"
+        );
+    }
+    let code = fn_code(&cs, "pickNoisy");
+    assert!(
+        code.contains(&opcode::UNWRAP_OR),
+        "pickNoisy must run its effectful fallback first; code={code:?}"
+    );
+}

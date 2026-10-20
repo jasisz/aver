@@ -103,6 +103,45 @@ impl MirProgram {
         self.builtins.push(name.to_string());
         id
     }
+
+    /// Whether the fallback of `Option.withDefault`, `Result.withDefault` or
+    /// `Result.fromOption` may run only when the value is missing instead of
+    /// before the call. It may when it calls something, so there is work to
+    /// skip, and nothing in it has an effect or leaves the function (`?`,
+    /// `return`): then skipping it changes nothing but the time it takes.
+    /// A call to a function this program does not hold counts as an effect.
+    pub fn fallback_runs_only_when_missing(&self, fallback: &MirExpr) -> bool {
+        let mut calls = false;
+        self.fallback_is_quiet(fallback, &mut calls) && calls
+    }
+
+    fn fallback_is_quiet(&self, expr: &MirExpr, calls: &mut bool) -> bool {
+        use super::expr::MirCallee;
+        let quiet = match expr {
+            MirExpr::Call(call) => {
+                *calls = true;
+                match &call.node.callee {
+                    MirCallee::Fn(id) => self.fn_by_id(*id).is_some_and(|f| f.effects.is_empty()),
+                    MirCallee::Builtin(id) => {
+                        crate::codegen::builtins::recognize_builtin(self.builtin_name(*id))
+                            .is_some()
+                    }
+                    MirCallee::Intrinsic(_) => true,
+                    MirCallee::LocalSlot { .. } => false,
+                }
+            }
+            MirExpr::TailCall(_)
+            | MirExpr::Try(_)
+            | MirExpr::Return(_)
+            | MirExpr::IndependentProduct(_) => false,
+            _ => true,
+        };
+        let mut children = true;
+        super::expr::walk_children(expr, &mut |child| {
+            children = children && self.fallback_is_quiet(child, calls);
+        });
+        quiet && children
+    }
 }
 
 /// One function in Core MIR. Body is a single `MirExpr` — MIR is

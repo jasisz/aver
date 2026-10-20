@@ -460,6 +460,40 @@ fn large_constructors_and_equality_order_match_between_rust_and_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A fallback that only computes goes in a closure (`unwrap_or_else`,
+/// `ok_or_else`), so a present value never builds it, and a fallback with an
+/// effect still runs first: `fallback 7 ran` prints for the present value
+/// too. The closure has to pass the borrow check, so the program is built and
+/// run; the VM's side of the same fixture is pinned in `mir_vm_codegen.rs`.
+#[test]
+fn a_computed_fallback_runs_only_when_missing_on_rust_and_vm() {
+    let relative = "tests/fixtures/lazy_fallback_app.av";
+    let file = repo_root().join(relative);
+    assert_eq!(
+        run_vm(&file, None).expect("vm run"),
+        "pick 3 65536\npickOk 4 65536\nfound ok 5 err 65536\nfallback 7 ran\nnoisy 1\n\
+         fallback 7 ran\nnoisy 7\ntotal 210"
+    );
+    assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
+
+    let ws = temp_dir("lazy_fallback");
+    compile_rust(&file, &ws, "p_lazy_fallback", None, &[]).expect("compile to Rust");
+    let entry = fs::read_to_string(ws.join("src/aver_generated/entry/mod.rs"))
+        .expect("read the entry module");
+    let _ = fs::remove_dir_all(&ws);
+    for lazy in [
+        "unwrap_or_else(|| fresh())",
+        "unwrap_or_else(|_| fresh())",
+        "ok_or_else(|| ",
+    ] {
+        assert!(entry.contains(lazy), "missing `{lazy}`:\n{entry}");
+    }
+    assert!(
+        entry.contains("unwrap_or(noisy("),
+        "the effectful fallback runs first:\n{entry}"
+    );
+}
+
 /// A two-arm bool `match` whose default arm NAMES the matched value
 /// (`other -> …`) instead of spelling `false` or `_`.
 ///
