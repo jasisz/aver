@@ -850,6 +850,11 @@ impl WorkerTransformer<'_> {
                 {
                     none_body = Some((*arm.body).clone());
                 }
+                // After a `Some(c)` arm, which takes every `Some`, a
+                // wildcard can only match `None`.
+                Pattern::Wildcard if some.is_some() && none_body.is_none() => {
+                    none_body = Some((*arm.body).clone());
+                }
                 Pattern::Constructor(name, bindings)
                     if name == "Option.Some" && bindings.len() == 1 && some.is_none() =>
                 {
@@ -1579,6 +1584,38 @@ fn count(text: String) -> Int
         assert!(
             classifier.contains("Int(48)") && !classifier.contains("__str_code1"),
             "classifier variant must consume the code directly: {classifier}"
+        );
+    }
+
+    #[test]
+    fn a_wildcard_after_the_some_arm_dispatches_on_the_codepoint_like_none() {
+        let mut items = prepared(
+            r#"module IndexedWildcard
+    intent = "A wildcard after Some(c) can only be None."
+    effects []
+
+fn digit(c: String) -> Int
+    match c
+        "0" -> 1
+        _ -> 0
+
+fn walk(text: String, pos: Int, acc: Int) -> Int
+    match String.charAt(text, pos)
+        Option.Some(c) -> walk(text, pos + 1, acc + digit(c))
+        _ -> acc
+
+fn count(text: String) -> Int
+    walk(text, 0, 0)
+"#,
+        );
+        crate::ir::chars_fusion::run_chars_fusion_pass(&mut items);
+        let report = run_string_index_pass(&mut items);
+
+        assert_eq!(report.codepoint_accesses, 1);
+        let worker = rendered_fn(&items, "walk__indexed");
+        assert!(
+            worker.contains("__str_index_code_at") && !worker.contains("__str_index_char_at"),
+            "a wildcard None arm must take the codepoint dispatch: {worker}"
         );
     }
 
