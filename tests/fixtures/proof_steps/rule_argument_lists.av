@@ -1,0 +1,115 @@
+module RuleArgumentLists
+    intent = "A field read back after four little-endian bytes and the rest: the steps rewrite lists that start empty, and Lean reads each such list as a list of Int."
+    exposes [littleEndian, readLittleEndian, wide]
+    effects []
+
+record Count
+    value: Int
+    rest: List<Int>
+    width: Int
+
+fn littleEndian(value: Int, width: Int) -> List<Int>
+    ? "value as width little-endian bytes."
+    littleEndianInto(value, width, [])
+
+verify littleEndian
+    littleEndian(258, 2) => [2, 1]
+    littleEndian(1, 4) => [1, 0, 0, 0]
+
+verify littleEndian law lowDigitStep
+    given value: Int = [0, 1, 256, 65535]
+    given width: Int = [1, 2, 4, 8]
+    when Bool.and(width > 0, width <= 8)
+    using [littleEndianInto.accumulatorPrefix]
+    littleEndian(value, width) => List.prepend(Int.mod(value, 256), littleEndian(Int.div(value, 256), width - 1))
+
+verify littleEndian law fixedWidth
+    given value: Int = [-1, 0, 1, 65535]
+    given width: Int = [0, 1, 2, 8]
+    when Bool.and(width >= 0, width <= 8)
+    using [littleEndianInto.fixedWidth]
+    List.len(littleEndian(value, width)) => width
+
+verify littleEndian law fourBytesReadBack
+    given value: Int = [0, 1, 4294967295]
+    when Bool.and(0 <= value, value < 4294967296)
+    using [littleEndian.lowDigitStep, readLittleEndian.lowDigitStep, readLittleEndianFrom.emptyKeepsAccumulator]
+    readLittleEndian(littleEndian(value, 4)) => value
+
+fn littleEndianInto(value: Int, width: Int, acc: List<Int>) -> List<Int>
+    ? "The low byte first, then the rest of value."
+    match width <= 0
+        true -> List.reverse(acc)
+        false -> littleEndianInto(Int.div(value, 256), width - 1, List.prepend(Int.mod(value, 256), acc))
+
+verify littleEndianInto
+    littleEndianInto(258, 2, []) => [2, 1]
+    littleEndianInto(0, 0, [7]) => [7]
+
+verify littleEndianInto law accumulatorPrefix
+    given value: Int = [0, 1, 65535]
+    given width: Int = [-1, 0, 1, 2, 8]
+    given acc: List<Int> = [[], [7], [1, 2]]
+    when width <= 8
+    littleEndianInto(value, width, acc) => List.concat(List.reverse(acc), littleEndianInto(value, width, []))
+
+verify littleEndianInto law fixedWidth
+    given value: Int = [-1, 0, 1, 65535]
+    given width: Int = [0, 1, 2, 8]
+    given acc: List<Int> = [[], [7], [1, 2]]
+    when width <= 8
+    List.len(littleEndianInto(value, width, acc)) => match width <= 0
+        true -> List.len(acc)
+        false -> List.len(acc) + width
+
+fn readLittleEndian(bytes: List<Int>) -> Int
+    ? "Little-endian bytes back to the value."
+    readLittleEndianFrom(List.reverse(bytes), 0)
+
+verify readLittleEndian
+    readLittleEndian([2, 1]) => 258
+
+verify readLittleEndian law lowDigitStep
+    given tail: List<Int> = [[], [0], [1, 2]]
+    given digit: Int = [-1, 0, 255]
+    using [readLittleEndianFrom.finalDigit]
+    readLittleEndian(List.prepend(digit, tail)) => readLittleEndian(tail) * 256 + digit
+
+fn readLittleEndianFrom(reversed: List<Int>, acc: Int) -> Int
+    ? "The most significant byte first."
+    match reversed
+        [] -> acc
+        [head, ..tail] -> readLittleEndianFrom(tail, acc * 256 + head)
+
+verify readLittleEndianFrom
+    readLittleEndianFrom([1, 2], 0) => 258
+    readLittleEndianFrom([], 5) => 5
+
+verify readLittleEndianFrom law finalDigit
+    given prefix: List<Int> = [[], [0], [1, 2]]
+    given acc: Int = [-1, 0, 5]
+    given digit: Int = [-1, 0, 255]
+    readLittleEndianFrom(List.concat(prefix, [digit]), acc) => readLittleEndianFrom(prefix, acc) * 256 + digit
+
+verify readLittleEndianFrom law emptyKeepsAccumulator
+    given acc: Int = [-1, 0, 5]
+    readLittleEndianFrom([], acc) => acc
+
+fn wide(width: Int, tail: List<Int>) -> Count
+    ? "The field of width bytes at the front of tail, what follows it, and the width with its marker."
+    Count(value = readLittleEndian(List.take(tail, width)), rest = List.drop(tail, width), width = width + 1)
+
+verify wide
+    wide(2, [2, 1, 9]) => Count(value = 258, rest = [9], width = 3)
+
+verify wide law wholeField
+    given bytes: List<Int> = [[], [0], [1, 2]]
+    given rest: List<Int> = [[], [9], [253, 0, 0]]
+    wide(List.len(bytes), List.concat(bytes, rest)) => Count(value = readLittleEndian(bytes), rest = rest, width = List.len(bytes) + 1)
+
+verify wide law fourBytes
+    given value: Int = [0, 1, 4294967295]
+    given rest: List<Int> = [[], [9], [253, 0, 0]]
+    when Bool.and(0 <= value, value < 4294967296)
+    using [wide.wholeField, littleEndian.fixedWidth, littleEndian.fourBytesReadBack]
+    wide(4, List.concat(littleEndian(value, 4), rest)) => Count(value = value, rest = rest, width = 5)

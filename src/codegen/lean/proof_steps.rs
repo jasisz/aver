@@ -1467,7 +1467,11 @@ impl Renderer<'_> {
             } => {
                 let (name, extra, unequal) = self.unfold_lemma(*fn_id, *arm, binders)?;
                 let mut s = name;
-                for a in args.iter().chain(&extra) {
+                for (i, a) in args.iter().enumerate() {
+                    s.push(' ');
+                    s.push_str(&self.expr(&super::step_types::call_argument(a, i, &eq.lhs)));
+                }
+                for a in &extra {
                     s.push(' ');
                     s.push_str(&self.expr(a));
                 }
@@ -1541,9 +1545,10 @@ impl Renderer<'_> {
                 premises,
             } => {
                 let mut s = lemma(*rule).to_string();
-                for (_, v) in subst {
+                let (_, schema) = rule.schema();
+                for (name, v) in subst {
                     s.push(' ');
-                    s.push_str(&self.expr(v));
+                    s.push_str(&self.expr(&super::step_types::argument(v, name, &schema, &eq)));
                 }
                 for p in premises {
                     s.push(' ');
