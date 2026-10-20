@@ -859,6 +859,7 @@ impl Env<'_> {
             ));
         }
         if self.nesting == 0
+            && self.reading_body.is_none()
             && let Some(memo) = self.memo.clone()
         {
             return self.whnf_remembered(t, &memo);
@@ -886,6 +887,7 @@ impl Env<'_> {
             self.discharging,
             self.wide_linear,
             super::egraph::tables_on(),
+            self.read_bodies,
         );
         let kept = memo
             .borrow()
@@ -1727,7 +1729,8 @@ impl Env<'_> {
         if matches!(
             cur.node,
             ResolvedExpr::Call(ResolvedCallee::Fn(_), _) | ResolvedExpr::BinOp(..)
-        ) && let Some(step) = self.known(cur)?
+        ) && self.reading_body.as_ref() != Some(&*term::canon_ref(cur))
+            && let Some(step) = self.known(cur)?
         {
             return Ok(step);
         }
@@ -4564,6 +4567,12 @@ impl Env<'_> {
     /// itself): when it ends at the other Bool, the case cannot happen;
     /// when it ends elsewhere and `b` is true, its `Bool.and` lines are cut
     /// in as hypotheses. `None` when no hypothesis evaluates further.
+    ///
+    /// An evaluation that ends at `b` itself was answered by what states
+    /// `b` already: the whole of a `when` the hypothesis is a line of, or a
+    /// cited law. It says nothing new; where the search reads bodies (its
+    /// last attempt), the call is opened by its definition instead
+    /// ([`Self::read_body`]) and the lines of its body are cut in.
     fn evaluate_hypothesis(
         &mut self,
         lhs: &Term,
@@ -4611,6 +4620,17 @@ impl Env<'_> {
                     opened
                 }
             };
+            // One that ends at its stated value was answered by what states
+            // it already (the whole of a `when` it is a line of, a cited
+            // law): where the search reads bodies, its call is opened by
+            // its definition instead, to the lines that value stands for.
+            let ev = match ev {
+                Some(c) if term::bool_value(c.cur()) == Some(said) => {
+                    self.met_answered.set(true);
+                    Some(self.read_body(&fact).unwrap_or(c))
+                }
+                other => other,
+            };
             self.hyps.insert(i, held);
             let Some(ev) = ev.filter(|c| !c.is_empty()) else {
                 self.barren.push(fact);
@@ -4649,6 +4669,26 @@ impl Env<'_> {
             return body.map(Some);
         }
         Ok(None)
+    }
+
+    /// `fact` evaluated with its call opened by its definition, not by a
+    /// hypothesis or law that states its value, within [`HYPOTHESIS_FUEL`]
+    /// steps of the claim's fuel: `None` unless the search reads bodies, or
+    /// when the body evaluates to a Bool too.
+    fn read_body(&mut self, fact: &Term) -> Option<Chain> {
+        if !self.read_bodies {
+            return None;
+        }
+        let fuel = self.fuel;
+        let cap = fuel.min(HYPOTHESIS_FUEL);
+        self.fuel = cap;
+        let outer = self.reading_body.replace(fact.clone());
+        let body = self.whnf(fact);
+        self.reading_body = outer;
+        self.fuel = fuel - (cap - self.fuel);
+        body.ok()
+            .map(|b| b.chain)
+            .filter(|c| !c.is_empty() && term::bool_value(c.cur()).is_none())
     }
 
     /// `t` with its head opened while it is a call of a user function:

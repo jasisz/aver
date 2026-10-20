@@ -171,6 +171,7 @@ pub(crate) fn debug_hash(parts: &[&dyn std::fmt::Debug]) -> u64 {
 /// Everything an evaluation of `t` reads that can change within one
 /// obligation. `Debug` writes each part with its type and line, which
 /// structural equality of terms ignores.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn key(
     t: &Term,
     hyps: &[(String, crate::ir::proof_steps::Eqn)],
@@ -179,8 +180,9 @@ pub(crate) fn key(
     discharging: bool,
     wide_linear: bool,
     tables: bool,
+    read_bodies: bool,
 ) -> String {
     format!(
-        "{t:?}\u{1}{hyps:?}\u{1}{open_halving}\u{1}{proving_cited_when}\u{1}{discharging}\u{1}{wide_linear}\u{1}{tables}"
+        "{t:?}\u{1}{hyps:?}\u{1}{open_halving}\u{1}{proving_cited_when}\u{1}{discharging}\u{1}{wide_linear}\u{1}{tables}\u{1}{read_bodies}"
     )
 }

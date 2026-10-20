@@ -1,0 +1,101 @@
+module HypothesisBody
+    intent =
+        "A law that closes only once a hypothesis is read through its body: a line of a `when` of"
+        "two lines evaluates to `true` by the whole `when`, which states it too, and says nothing;"
+        "read through its body, it gives the line its claim needs. A false law of the same shape"
+        "must stay open."
+    exposes [Op, parse, bytesOf, readsExactly, readsReversed, parseReason, validOctets]
+    effects []
+
+type Op
+    Code(Int)
+
+fn bytesOf(ops: List<Op>) -> List<Int>
+    ? "The bytes the ops stand for."
+    match ops
+        [] -> []
+        [op, ..rest] -> match op
+            Op.Code(c) -> List.prepend(c, bytesOf(rest))
+
+verify bytesOf
+    bytesOf([Op.Code(1)]) => [1]
+
+fn parse(bytes: List<Int>) -> Result<List<Op>, String>
+    ? "Every op, in order."
+    from(bytes, [])
+
+verify parse
+    parse([]) => Result.Ok([])
+    parse([3]) => Result.Ok([Op.Code(3)])
+
+fn from(bytes: List<Int>, acc: List<Op>) -> Result<List<Op>, String>
+    ? "Accumulator form, turned round at the end; a byte over 200 is refused."
+    match bytes
+        [] -> Result.Ok(List.reverse(acc))
+        [head, ..tail] -> match head > 200
+            true -> Result.Err("too big")
+            false -> from(tail, List.prepend(Op.Code(head), acc))
+
+verify from
+    from([], []) => Result.Ok([])
+    from([250], []) => Result.Err("too big")
+
+fn parsedBytesMatch(bytes: List<Int>, acc: List<Op>) -> Bool
+    ? "A successful parse keeps the accumulated ops and every remaining byte."
+    match from(bytes, acc)
+        Result.Err(_) -> true
+        Result.Ok(ops) -> bytesOf(ops) == List.concat(bytesOf(List.reverse(acc)), bytes)
+
+verify parsedBytesMatch
+    parsedBytesMatch([1], []) => true
+
+fn parseReason(bytes: List<Int>, acc: List<Op>) -> Bool
+    ? "Follow the parser over the remaining bytes."
+    continuation = match bytes
+        [] -> true
+        [code, ..tail] -> parseReason(tail, List.prepend(Op.Code(code), acc))
+    Bool.and(continuation, parsedBytesMatch(bytes, acc))
+
+verify parseReason
+    parseReason([1, 2], []) => true
+
+fn validOctets(bytes: List<Int>) -> Bool
+    ? "Every integer is one byte."
+    match bytes
+        [] -> true
+        [head, ..tail] -> Bool.and(Bool.and(head >= 0, head <= 255), validOctets(tail))
+
+verify validOctets
+    validOctets([1]) => true
+    validOctets([256]) => false
+
+fn readsExactly(bytes: List<Int>) -> Bool
+    ? "A parsed byte list serializes back to itself."
+    match parse(bytes)
+        Result.Err(_) -> true
+        Result.Ok(ops) -> bytesOf(ops) == bytes
+
+verify readsExactly
+    readsExactly([1, 2]) => true
+
+fn readsReversed(bytes: List<Int>) -> Bool
+    ? "A parsed byte list serializes back to itself turned round, which holds only for short ones."
+    match parse(bytes)
+        Result.Err(_) -> true
+        Result.Ok(ops) -> bytesOf(ops) == List.reverse(bytes)
+
+verify readsReversed
+    readsReversed([1]) => true
+    readsReversed([1, 2]) => false
+
+verify parse law exactUnderBoth
+    given bytes: List<Int> = [[], [0], [1, 170], [250]]
+    when validOctets(bytes)
+    when parseReason(bytes, [])
+    readsExactly(bytes) holds
+
+verify parse law reversedUnderBoth
+    given bytes: List<Int> = [[], [0], [250]]
+    when validOctets(bytes)
+    when parseReason(bytes, [])
+    readsReversed(bytes) holds

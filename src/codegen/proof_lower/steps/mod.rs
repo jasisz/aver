@@ -717,7 +717,9 @@ struct Searched<'a> {
 /// of finite type and induction; 4 to 7 the same with a call that divides
 /// an Int down to zero kept whole, when one was met; 8 a table of equal
 /// terms over the claim as stated; 9 a split on an open line of a cited
-/// `when`; 10 an induction along another function of the claim.
+/// `when`; 10 an induction along another function of the claim; 11
+/// evaluation again with the hypotheses that what states their value
+/// answered read through their bodies, where an attempt met one.
 fn search<'a>(
     fresh: &dyn Fn() -> Env<'a>,
     using: &Option<Vec<LawRef>>,
@@ -738,6 +740,9 @@ fn search<'a>(
     let mut found: Option<(Proof, usize, bool)> = None;
     // The first pass's refusals, kept once the second pass runs.
     let mut opened: Option<Vec<String>> = None;
+    // Whether an attempt met a hypothesis answered by what states its
+    // value; a search resumed at the last stage makes that attempt again.
+    let mut met_answered = from == 11;
     for stage in from..8 {
         if stage == 4 {
             if !met_halving {
@@ -808,6 +813,7 @@ fn search<'a>(
                     }
                 }
                 met_halving |= env.met_halving.get();
+                met_answered |= env.met_answered.get();
                 env = fresh();
             }
         }
@@ -878,6 +884,20 @@ fn search<'a>(
                 tried.push_str(&why);
             }
             Err(_) => {}
+        }
+    }
+    // Last, evaluation again where a hypothesis evaluated only to the
+    // value stated for it, because something else states that value too:
+    // each such hypothesis is read through its body instead (see
+    // `Env::evaluate_hypothesis`).
+    if found.is_none() && met_answered {
+        let mut body_env = fresh();
+        body_env.fuel /= 2;
+        body_env.read_bodies = true;
+        let before = tables_closed();
+        if let Ok(proof) = body_env.prove_by_evaluation(&ob.lhs, &ob.rhs, SPLIT_DEPTH) {
+            env = body_env;
+            found = Some((proof, 11, tables_closed() > before));
         }
     }
     let refusal = match &opened {
