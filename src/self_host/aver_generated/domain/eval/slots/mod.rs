@@ -33,7 +33,7 @@ pub fn buildSlotEnvLoop(
         crate::cancel_checkpoint();
         aver_list_match!(args, [] => { return acc; }, [a, rest] => { {
             let __tco0 = rest;
-            let __tco1 = { let __vec = acc.clone(); match (idx).to_usize() { Some(__idx) if __idx < __vec.len() => __vec.set_unchecked(__idx, a), _ => __vec } };
+            let __tco1 = { let __vec = acc; match (idx).to_usize() { Some(__idx) if __idx < __vec.len() => __vec.set_unchecked(__idx, a), _ => __vec } };
             let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
             args = __tco0;
             acc = __tco1;
@@ -71,13 +71,13 @@ pub fn lookupSlot(
 /// Set slot value. O(1).
 #[inline(always)]
 pub fn setSlot(
-    env @ _: &aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
+    mut env @ _: aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
     slot @ _: aver_rt::AverInt,
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> aver_rt::AverVector<crate::aver_generated::domain::value::Val> {
     crate::cancel_checkpoint();
     {
-        let __vec = env.clone();
+        let __vec = env;
         match (slot).to_usize() {
             Some(__idx) if __idx < __vec.len() => __vec.set_unchecked(__idx, v.clone()),
             _ => __vec,

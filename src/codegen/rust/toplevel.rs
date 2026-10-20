@@ -694,13 +694,14 @@ fn emit_fn_def_with_visibility(
             match &guest_args_name {
                 Some(guest_args) => {
                     // If the guest_args param is borrowed (&T), it's already a reference
-                    let is_borrowed = ectx.is_borrowed_param(
-                        &fd.params
-                            .iter()
-                            .find(|(n, _)| aver_name_to_rust(n) == *guest_args)
-                            .map(|(n, _)| n.clone())
-                            .unwrap_or_default(),
-                    );
+                    let is_borrowed = !owned_collection_params.contains(guest_args)
+                        && ectx.is_borrowed_param(
+                            &fd.params
+                                .iter()
+                                .find(|(n, _)| aver_name_to_rust(n) == *guest_args)
+                                .map(|(n, _)| n.clone())
+                                .unwrap_or_default(),
+                        );
                     let ref_prefix = if is_borrowed { "" } else { "&" };
                     lines.push(format!(
                         "    let {replay_input} = aver_replay::ReplayValue::to_replay_json({}{});",

@@ -3191,6 +3191,95 @@ fn rust_map_helper_result_preserves_the_owned_move() {
     );
 }
 
+/// A bare Map or Vector param that the function updates at its last use is
+/// taken by value even when one caller keeps its own copy. `keep` reads its
+/// map after calling `grow`, so `own_param` cannot prove every caller hands
+/// over an owned map; before this, `grow` borrowed the map and every
+/// `Map.set` copied the whole table. Now the loop in `fill` moves its map
+/// through `grow`, and `keep` pays the one clone at its call instead of
+/// `grow` paying it inside. The same holds for the self-keep `Vector.set`,
+/// and a function value keeps calling the by-value item directly.
+#[test]
+fn rust_bare_collection_param_updated_at_last_use_is_taken_by_value() {
+    let src = r#"module OwnedBareMap
+    intent = "A bare Map param set at its last use, with one caller that keeps its map"
+    depends []
+    effects [Console.print]
+
+fn grow(table: Map<String, Int>, key: String) -> Map<String, Int>
+    ? "Insert one key."
+    Map.set(table, key, 100)
+
+fn fill(table: Map<String, Int>, n: Int) -> Map<String, Int>
+    ? "Tail loop adding n keys through grow."
+    match n == 0
+        true -> table
+        false -> fill(grow(table, "k{n}"), n - 1)
+
+fn keep(table: Map<String, Int>) -> String
+    ? "Grow a copy, then read the original."
+    grown = grow(table, "extra")
+    "{Map.len(grown)}/{Map.len(table)}"
+
+fn poke(v: Vector<Int>, i: Int) -> Vector<Int>
+    ? "Self-keep vector update."
+    Option.withDefault(Vector.set(v, i, 7), v)
+
+fn apply(f: Fn(Map<String, Int>, String) -> Map<String, Int>, m: Map<String, Int>) -> Map<String, Int>
+    ? "Call a function value."
+    f(m, "viaValue")
+
+fn main() -> Unit
+    ! [Console.print]
+    built = fill({}, 1000)
+    v = poke(Vector.new(3, 0), 1)
+    kept = poke(v, 2)
+    viaFn = apply(grow, built)
+    Console.print("{Map.len(built)} {keep(built)} {Map.len(viaFn)} {Option.withDefault(Vector.get(v, 2), 9)} {Option.withDefault(Vector.get(kept, 2), 9)}")
+"#;
+    let expected = "1000 1001/1000 1001 0 7";
+    let vm = run_vm_inline("owned_bare_map", src).expect("vm run");
+    assert_eq!(vm, expected, "VM result");
+    let rust = build_run_rust_inline("owned_bare_map", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+
+    let ws = temp_dir("owned_bare_map_emit");
+    let f = ws.join("owned_bare_map.av");
+    fs::write(&f, src).expect("write");
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("project dir");
+    compile_rust(&f, &project, "owned_bare_map", None, &[]).expect("compile rust");
+    let emitted = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
+        .expect("read generated entry module");
+    let _ = fs::remove_dir_all(&ws);
+    assert!(
+        emitted.contains("pub fn grow(mut table @ _: aver_rt::AverMap"),
+        "grow must take its Map by value:\n{emitted}"
+    );
+    assert!(
+        emitted.contains("table.insert_owned(key, ")
+            && !emitted.contains("table.clone().insert_owned"),
+        "grow must update the owned Map without cloning it:\n{emitted}"
+    );
+    assert!(
+        emitted.contains("= grow(table, "),
+        "the fill loop must move its map into grow:\n{emitted}"
+    );
+    assert!(
+        emitted.contains("grow(table.clone(), AverStr::from(\"extra\"))"),
+        "keep reads its map later, so it clones once at the call:\n{emitted}"
+    );
+    assert!(
+        emitted.contains("pub fn poke(mut v @ _: aver_rt::AverVector")
+            && emitted.contains("let __vec = v;"),
+        "poke must take its Vector by value and update it in place:\n{emitted}"
+    );
+    assert!(
+        emitted.contains("apply(grow, "),
+        "a function value passes the by-value item without a borrowing adapter:\n{emitted}"
+    );
+}
+
 /// Issue #1196 end to end: a Map owned by a mutual-TCO trampoline crosses a
 /// module boundary into a normal helper, returns inside `Result<Tuple<...>>`,
 /// and is destructured before the next trampoline state. The pattern-bound

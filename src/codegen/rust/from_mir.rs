@@ -534,10 +534,10 @@ impl MirFnEmitPolicy {
     }
 
     /// Apply the MIR ownership facts to this policy. A `Vector`/`Map` param
-    /// graduates when `own_param` cleared its alias bit. A named record param
-    /// graduates when the result hands it on (see [`result_hands_on`]):
-    /// Rust can move the record while the caller still clones at a
-    /// non-last-use call site.
+    /// graduates when `own_param` cleared its alias bit. A named record or
+    /// `Vector`/`Map` param also graduates when the function hands it on
+    /// (see [`param_handed_on`]): Rust can move the value while the caller
+    /// still clones at a non-last-use call site.
     ///
     /// SOUNDNESS (the #383 corruption class): a collection param graduates
     /// only when `own_param` clears its bit after seeing every call site.
@@ -559,9 +559,7 @@ impl MirFnEmitPolicy {
             let Some(ty) = self.local_types.get(&rust_name) else {
                 continue;
             };
-            let hands_on_record = matches!(ty, Type::Named { .. })
-                && (result_hands_on(&mir_fn.body.node, param.local)
-                    || consumed.and_then(|owned| owned.get(i)).copied() == Some(true));
+            let hands_on = param_handed_on(ty, mir_fn, i, consumed);
             // `own_param`'s `prone`/clearing both index `aliased_slots`
             // by PARAM POSITION `i` (its `(0..nparams).filter(|&i| …)`),
             // matching `MirParam.local = LocalId(i)`; match that exactly.
@@ -572,7 +570,7 @@ impl MirFnEmitPolicy {
             // existing borrow-by-default decision (do not graduate).
             let collection_graduated = is_owned_collection_candidate(ty)
                 && !mir_fn.aliased_slots.get(i).copied().unwrap_or(true);
-            if !collection_graduated && !hands_on_record {
+            if !collection_graduated && !hands_on {
                 continue;
             }
             // Graduate: owned-by-value. On the borrow-by-default path the
@@ -593,6 +591,26 @@ impl MirFnEmitPolicy {
 /// clone is cheap and is NOT flagged by RULE 1, so it stays borrowed.)
 fn is_owned_collection_candidate(ty: &Type) -> bool {
     matches!(ty, Type::Vector(_) | Type::Map(_, _))
+}
+
+/// Whether the Rust ABI takes param `index` of `mir_fn` by value because the
+/// function hands the value on: its result is the param (or a record
+/// successor of it, see [`result_hands_on`]), or `consumed` (the
+/// [`compute_owned_record_params`] facts) says the body consumes it. Only a
+/// named record or a `Vector`/`Map` param qualifies: those are the values
+/// whose in-place update copies everything while a second owner lives.
+fn param_handed_on(
+    ty: &Type,
+    mir_fn: &crate::ir::mir::MirFn,
+    index: usize,
+    consumed: Option<&Vec<bool>>,
+) -> bool {
+    (matches!(ty, Type::Named { .. }) || is_owned_collection_candidate(ty))
+        && (mir_fn
+            .params
+            .get(index)
+            .is_some_and(|param| result_hands_on(&mir_fn.body.node, param.local))
+            || consumed.and_then(|owned| owned.get(index)).copied() == Some(true))
 }
 
 /// Does a function result hand on the value in `slot`: the local itself at
@@ -650,9 +668,11 @@ fn result_hands_on(expr: &MirExpr, slot: LocalId) -> bool {
     }
 }
 
-/// The Rust-mangled names of a fn's `Vector`/`Map` params that
-/// `own_param` proved can use the owned Rust ABI (cleared `aliased_slots` bit) — the
-/// set the non-TCO SIGNATURE emits owned-by-value (`mut p: T`). The
+/// The Rust-mangled names of a fn's params that use the owned Rust ABI:
+/// `Vector`/`Map` params `own_param` proved (cleared `aliased_slots` bit)
+/// and record or `Vector`/`Map` params the function hands on
+/// ([`param_handed_on`]) — the set the non-TCO SIGNATURE emits
+/// owned-by-value (`mut p: T`). The
 /// `param_types` are the `ResolvedFnDef` param `(name, Type)` pairs (real
 /// `Type`, not the `MirParam.ty` Debug string); the `mir_fn` supplies the
 /// optimized `aliased_slots`. Computed exactly as
@@ -667,15 +687,10 @@ pub(super) fn owned_collection_param_names(
     let consumed = ctx.rust_owned_record_params.get(&mir_fn.fn_id);
     let mut out = HashSet::new();
     for (i, (name, ty)) in param_types.iter().enumerate() {
-        let hands_on_record = matches!(ty, Type::Named { .. })
-            && (mir_fn
-                .params
-                .get(i)
-                .is_some_and(|param| result_hands_on(&mir_fn.body.node, param.local))
-                || consumed.and_then(|owned| owned.get(i)).copied() == Some(true));
+        let hands_on = param_handed_on(ty, mir_fn, i, consumed);
         let collection_graduated = is_owned_collection_candidate(ty)
             && !mir_fn.aliased_slots.get(i).copied().unwrap_or(true);
-        if !collection_graduated && !hands_on_record {
+        if !collection_graduated && !hands_on {
             continue;
         }
         out.insert(aver_name_to_rust(name));
@@ -683,18 +698,22 @@ pub(super) fn owned_collection_param_names(
     out
 }
 
-/// Which record params of every function the Rust backend takes by value.
+/// Which record and `Vector`/`Map` params of every function the Rust backend
+/// takes by value.
 ///
-/// A record param is borrowed by default, so a function that consumes it
+/// Such a param is borrowed by default, so a function that consumes it
 /// clones it first, and while that clone is alive the caller's copy still
-/// holds every Map and Vector the record carries. A later in-place update of
-/// one of them then copies it whole. A function consumes a param when it
-/// updates it at its last use, hands it at its last use to a callee that
-/// takes it by value, or moves a field out of it into such a callee or into
-/// an in-place collection update (see [`consumes_local`]); taking such a
-/// param by value lets a chain
-/// of calls move one record from caller to callee, which is what keeps the
-/// state a generated loop hands an answer module uniquely owned.
+/// holds the Map or Vector (or every Map and Vector the record carries). A
+/// later in-place update of one of them then copies it whole. A function
+/// consumes a param when it updates it at its last use (a record update, or
+/// the target of `Map.set`, `Map.remove` or `Vector.set`), hands it at its
+/// last use to a callee that takes it by value, or moves a field out of it
+/// into such a callee or into an in-place collection update (see
+/// [`consumes_local`]); taking such a param by value lets a chain of calls
+/// move one value from caller to callee, which is what keeps the state a
+/// generated loop hands an answer module uniquely owned. A caller that still
+/// reads the value afterwards clones it at the call instead of the callee
+/// cloning it inside, which costs the same.
 ///
 /// The facts are a least fixpoint over the program: a callee taking a param
 /// by value is what makes passing it at the last use a consumption. A
@@ -726,7 +745,10 @@ pub(super) fn compute_owned_record_params(
         let mut open = Vec::new();
         for (i, (name, ty)) in resolved.params.iter().enumerate() {
             let taken = !should_borrow_param(ty) || by_value.contains(&aver_name_to_rust(name));
-            if !taken && matches!(ty, Type::Named { .. }) && mir_fn.params.get(i).is_some() {
+            if !taken
+                && (matches!(ty, Type::Named { .. }) || is_owned_collection_candidate(ty))
+                && mir_fn.params.get(i).is_some()
+            {
                 open.push(i);
             }
             abi.push(taken);
@@ -851,11 +873,14 @@ struct Consumption<'a> {
 
 /// Whether `expr` consumes the local in `slot`: updates it as the base of a
 /// record update that reads it for the last time, passes it at its last use
-/// to a callee position `owned` says is by value, or moves a field out of it
-/// into a by-value record param, a Map/Vector param updated in place, or the
-/// target of `Map.set`, `Map.remove` or `Vector.set`, or stores it at its
-/// last use into a record, constructor, tuple or list. A param returned bare
-/// is taken by value before this runs (see [`result_hands_on`]).
+/// as the target of `Map.set`, `Map.remove` or `Vector.set` (including the
+/// self-keep `Option.withDefault(Vector.set(v, ..), v)`) or to a callee
+/// position `owned` says is by value (for a Map/Vector, one the callee also
+/// updates in place), or moves a field out of it into a by-value record
+/// param, a Map/Vector param updated in place, or the target of `Map.set`,
+/// `Map.remove` or `Vector.set`, or stores it at its last use into a record,
+/// constructor, tuple or list. A param returned bare is taken by value
+/// before this runs (see [`result_hands_on`]).
 fn consumes_local(expr: &MirExpr, cx: &Consumption<'_>) -> bool {
     let slot = cx.slot;
     let last_use_of =
@@ -883,22 +908,65 @@ fn consumes_local(expr: &MirExpr, cx: &Consumption<'_>) -> bool {
         }
         _ => false,
     };
+    // The local itself, at its last use, is worth handing to a by-value
+    // record param; a Map/Vector param must also be updated in place, for
+    // the same reason as a field above.
+    let takes_local = |callee, index: usize, arg: &Spanned<MirExpr>| match arg.ty() {
+        Some(Type::Map(..) | Type::Vector(_)) => {
+            fact(cx.owned, callee, index) && fact(cx.in_place, callee, index)
+        }
+        _ => fact(cx.owned, callee, index),
+    };
     let hands_over = |callee: crate::ir::FnId, args: &[Spanned<MirExpr>]| {
         args.iter().enumerate().any(|(index, arg)| {
-            (last_use_of(&arg.node) && fact(cx.owned, callee, index))
+            (last_use_of(&arg.node) && takes_local(callee, index, arg))
                 || (moves_field(arg) && takes_field(callee, index, arg))
         })
+    };
+    let builtin = |callee: &MirCallee| match callee {
+        MirCallee::Builtin(id) => cx.builtins.get(id.0 as usize).map(String::as_str),
+        _ => None,
     };
     match expr {
         MirExpr::Call(call) => {
             let handed = match call.node.callee {
                 MirCallee::Fn(callee) => hands_over(callee, &call.node.args),
-                MirCallee::Builtin(id) => {
-                    matches!(
-                        cx.builtins.get(id.0 as usize).map(String::as_str),
-                        Some("Map.set" | "Map.remove" | "Vector.set")
-                    ) && call.node.args.first().is_some_and(moves_field)
-                }
+                MirCallee::Builtin(_) => match builtin(&call.node.callee) {
+                    Some("Map.set" | "Map.remove" | "Vector.set") => call
+                        .node
+                        .args
+                        .first()
+                        .is_some_and(|target| moves_field(target) || last_use_of(&target.node)),
+                    // The self-keep fusion `Option.withDefault(Vector.set(v,
+                    // ..), v)` updates `v` in place and reads it last in the
+                    // default, so the update's own read is not the last one.
+                    Some("Option.withDefault") => {
+                        // `Some(last_use)` when `arg` reads the local.
+                        let reads_slot = |arg: &MirExpr| {
+                            local_of(arg)
+                                .filter(|local| local.slot == slot)
+                                .map(|local| local.last_use)
+                        };
+                        match call.node.args.as_slice() {
+                            [update, default] => match &update.node {
+                                MirExpr::Call(inner)
+                                    if builtin(&inner.node.callee) == Some("Vector.set") =>
+                                {
+                                    match (
+                                        inner.node.args.first().and_then(|t| reads_slot(&t.node)),
+                                        reads_slot(&default.node),
+                                    ) {
+                                        (Some(target), Some(kept)) => target || kept,
+                                        _ => false,
+                                    }
+                                }
+                                _ => false,
+                            },
+                            _ => false,
+                        }
+                    }
+                    _ => false,
+                },
                 _ => false,
             };
             handed
@@ -2463,12 +2531,13 @@ fn adapt_first_class_fn_ref(name: &str, static_ref: String, ctx: &MirEmitCtx<'_>
         return static_ref;
     }
 
-    let borrow_mask: Vec<bool> = resolved
+    let mut borrow_mask: Vec<bool> = resolved
         .params
         .iter()
         .enumerate()
         .map(|(i, (_, ty))| should_borrow_param(ty) && !mutual_param_by_value(cg, fn_id, i))
         .collect();
+    super::expr::clear_owned_param_borrows_of(fn_id, resolved, &mut borrow_mask, cg);
     if !borrow_mask.iter().any(|borrowed| *borrowed) {
         return static_ref;
     }
@@ -2584,6 +2653,9 @@ pub(super) fn emit_mir_guest_entry_body(
     let mir_fn = ctx.mir_program.as_ref()?.fn_by_id(resolved_fd.fn_id)?;
     let mut policy =
         MirFnEmitPolicy::from_resolved(resolved_fd, scope, /* borrow_by_default */ true);
+    // The non-TCO signature takes the owned params by value, so the body
+    // must read them as owned values too.
+    policy.apply_own_param(mir_fn, ctx);
     policy.apply_bare_i64(resolved_fd.fn_id, ctx);
     let emit_ctx = MirEmitCtx::for_fn(ctx, &policy);
     emit_mir_fn_body(&mir_fn.body, &emit_ctx)
@@ -5391,6 +5463,7 @@ fn try_emit_mir_fusion(
                     ctx.owned_params.contains(sv.name.as_str())
                         && !ctx.is_borrowed_param(&sv.name)
                         && !ctx.is_rc_wrapped(&sv.name)
+                        && !ctx.is_loop_carried_param(&sv.name)
                         && (sv.last_use || dv.last_use)
                 }
                 _ => false,
