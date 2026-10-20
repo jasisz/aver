@@ -56,8 +56,18 @@ pub type Call = (Vec<Term>, Vec<String>);
 /// its own, so the reading grows with the number of paths, not of
 /// helpers.
 pub fn self_calls(t: &Term, f: FnId, ds: &[Def]) -> Result<Vec<Call>, String> {
-    let calls_back = calling_back(f, ds);
-    if let Some(h) = helper_cycle(t, ds, &calls_back) {
+    let mut called = Vec::new();
+    callees(t, &mut called);
+    // Without a call of another definition of `ds` no helper is read.
+    let calls_back = if called
+        .iter()
+        .any(|g| *g != f && ds.iter().any(|d| d.fn_id == *g))
+    {
+        calling_back(f, ds)
+    } else {
+        Vec::new()
+    };
+    if let Some(h) = helper_cycle(&called, ds, &calls_back) {
         return Err(cycle_refusal(f, h, ds));
     }
     let mut read = Reading {
@@ -106,11 +116,11 @@ fn calling_back(f: FnId, ds: &[Def]) -> Vec<FnId> {
     found
 }
 
-/// A helper `t` reaches that lies on a cycle of helpers calling back
-/// into the definition checked without passing it: reading through it
-/// goes round that cycle until the fuel runs out, which refuses the
-/// recursion, so it is refused at once.
-fn helper_cycle(t: &Term, ds: &[Def], calls_back: &[FnId]) -> Option<FnId> {
+/// A helper reached from `called`, the functions a term calls, that lies
+/// on a cycle of helpers calling back into the definition checked without
+/// passing it: reading through it goes round that cycle until the fuel
+/// runs out, which refuses the recursion, so it is refused at once.
+fn helper_cycle(called: &[FnId], ds: &[Def], calls_back: &[FnId]) -> Option<FnId> {
     let edges = |g: FnId| -> Vec<FnId> {
         ds.iter()
             .find(|d| d.fn_id == g)
@@ -120,11 +130,9 @@ fn helper_cycle(t: &Term, ds: &[Def], calls_back: &[FnId]) -> Option<FnId> {
             .filter(|h| calls_back.contains(h))
             .collect()
     };
-    let mut starts = Vec::new();
-    callees(t, &mut starts);
     // `false` while a helper's callees are being followed, `true` once done.
     let mut done: std::collections::HashMap<FnId, bool> = std::collections::HashMap::new();
-    for s in starts.into_iter().filter(|g| calls_back.contains(g)) {
+    for &s in called.iter().filter(|g| calls_back.contains(g)) {
         if done.contains_key(&s) {
             continue;
         }
