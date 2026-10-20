@@ -499,7 +499,8 @@ fn render_root_main(
         sections.push("mod verify;".to_string());
     }
 
-    // Spawn main on a thread with 256 MB stack to avoid overflow in deep recursion.
+    // Every shape of `main` runs on a thread with `aver_rt::THREAD_STACK_BYTES`
+    // of stack, so deep recursion has the same room whatever `main` returns.
     sections.push(String::new());
     let returns_result = main_fn.is_some_and(|fd| matches!(&fd.return_type, Type::Result(_, _)));
     let result_unit_string = main_fn.is_some_and(|fd| {
@@ -577,14 +578,18 @@ fn render_root_main(
                 sections.push("    bootstrap_provider_bindings().unwrap_or_else(|error| panic!(\"{}\", error));".to_string());
             }
             sections.extend(bench_dispatch_lines(has_replay && guest_entry.is_none()));
+            // The same big-stack thread as every other `main`; the result
+            // crosses back and is returned as before.
+            sections.push("    std::thread::Builder::new()".to_string());
+            sections.push("        .stack_size(aver_rt::THREAD_STACK_BYTES)".to_string());
             if has_replay && guest_entry.is_none() {
-                sections.push(
-                    "    aver_replay::with_guest_scope(\"main\", serde_json::Value::Null, aver_generated::entry::main)"
-                        .to_string(),
-                );
+                sections.push("        .spawn(|| aver_replay::with_guest_scope(\"main\", serde_json::Value::Null, aver_generated::entry::main))".to_string());
             } else {
-                sections.push("    aver_generated::entry::main()".to_string());
+                sections.push("        .spawn(aver_generated::entry::main)".to_string());
             }
+            sections.push("        .expect(\"thread spawn\")".to_string());
+            sections.push("        .join()".to_string());
+            sections.push("        .expect(\"thread join\")".to_string());
         }
     } else {
         sections.push("fn main() {".to_string());

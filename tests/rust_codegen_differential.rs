@@ -361,6 +361,15 @@ fn deep_recursion_in_a_product_branch_matches_main_on_rust_and_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A `main` returning a `Result` other than `Result<Unit, String>` runs on
+/// the same big-stack thread as every other `main`, not on the process's
+/// own 8 MB main thread, where this recursion overflows.
+#[test]
+fn deep_recursion_under_a_result_int_main_matches_vm() {
+    assert_plain_parity("tests/fixtures/deep_recursion_in_result_main_app.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// Constant folding can turn `0.0 / 0.0` or `1.0 / 0.0` into NaN or an
 /// infinity, which have no Rust literal; they emit as the `f64` constants.
 #[test]
