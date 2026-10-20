@@ -7233,6 +7233,65 @@ const EVALUATED_HYPOTHESIS_ROOM: [(&str, &str, &[&str]); 10] = [
     ),
 ];
 
+/// A line of a `when` of two lines that the whole `when` answers is read
+/// through its body, as a last attempt: the law of `hypothesis_body.av`
+/// closes by the lines that body gives, which both the kernel and the
+/// replayer check; taking the wrong line of the body is refused, and a false
+/// law of the same shape stays open.
+#[test]
+fn a_hypothesis_its_restatement_answers_is_read_through_its_body() {
+    let out = scratch("hypothesis-body");
+    let (result, summary) = aver_backend_json("hypothesis_body.av", &out, None);
+    let _ = fs::remove_dir_all(&out);
+    assert_eq!(
+        summary["closed_by"]["parse.exactUnderBoth"],
+        "steps",
+        "{}",
+        format_output(&result)
+    );
+    assert_eq!(
+        summary["closed_by"]["parse.reversedUnderBoth"], "open",
+        "{summary}"
+    );
+    let export = scratch("hypothesis-body-export");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("hypothesis_body.av", &export)
+            .into_iter()
+            .collect();
+    let script = fs::read_to_string(&files["parse.exactUnderBoth"]).unwrap();
+    assert_eq!(
+        aver::proof_kernel::verdict(&script),
+        Ok("parse.exactUnderBoth".to_string())
+    );
+    // The body of `parseReason`, opened at the call `when2` states, gives
+    // its two lines, cut in by the `Bool.and` eliminations.
+    let read = script
+        .find("(have h_steps1 ")
+        .unwrap_or_else(|| panic!("{script}"));
+    assert!(
+        script[read..].contains("(unfold parseReason 0 ((v bytes) (list))"),
+        "{script}"
+    );
+    let at = read + script[read..].find("(rule bool.and.elim_l ").unwrap();
+    let mutant = format!(
+        "{}(rule bool.and.elim_r {}",
+        &script[..at],
+        &script[at + "(rule bool.and.elim_l ".len()..]
+    );
+    let refused = aver::proof_kernel::verdict(&mutant);
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|why| why.starts_with("step proof")),
+        "{refused:?}"
+    );
+    let path = export.join("mutant.steps");
+    fs::write(&path, &mutant).unwrap();
+    let replayed = replay(std::slice::from_ref(&path));
+    assert!(!replayed.status.success(), "{}", format_output(&replayed));
+    let _ = fs::remove_dir_all(export);
+}
+
 /// The budgets for evaluating hypotheses have room: every law those
 /// readings close still closes with each budget at half its size
 /// (`AVER_STEPS_READ_BUDGET_PERCENT=50`). A change that makes a reading

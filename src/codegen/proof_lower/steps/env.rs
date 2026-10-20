@@ -99,6 +99,16 @@ pub(crate) struct Env<'a> {
     /// Predicate hypotheses whose evaluation gave nothing new in this
     /// attempt, so none is evaluated again.
     pub barren: Vec<Term>,
+    /// Whether a hypothesis is read through its body where what states
+    /// its value already answers its evaluation (see
+    /// `Env::evaluate_hypothesis`): the last attempt of a search, made only
+    /// where an earlier one met such a hypothesis.
+    pub read_bodies: bool,
+    /// Whether an attempt met such a hypothesis.
+    pub met_answered: std::cell::Cell<bool>,
+    /// The hypothesis being read through its body: evaluation opens this
+    /// call by its definition, not by what states its value.
+    pub reading_body: Option<Term>,
     /// Whether the `when` of a cited law is being proved, so that a cited
     /// law with a `when` is not offered again inside it.
     pub proving_cited_when: bool,
@@ -434,6 +444,9 @@ impl<'a> Env<'a> {
             open_premises: Vec::new(),
             opened: Vec::new(),
             barren: Vec::new(),
+            read_bodies: false,
+            met_answered: std::cell::Cell::new(false),
+            reading_body: None,
             proving_cited_when: false,
             open_halving: true,
             met_halving: std::cell::Cell::new(false),
