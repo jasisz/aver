@@ -156,6 +156,10 @@ pub struct VM {
     /// [`VM::vector_ownership_stats`]). Maintained everywhere, release
     /// included, for the same reason as `runtime_ownership`.
     vector_ownership: VmRuntimeOwnershipStats,
+    /// Operand-stack cells the holder walks have visited, for the tests that
+    /// pin what those walks may cost.
+    #[cfg(test)]
+    stack_cells_walked: std::sync::atomic::AtomicU64,
 }
 
 /// One pooled byte builder: the octets collected so far, and the first
@@ -249,6 +253,8 @@ impl VM {
             slot_uniqueness: VmSlotUniquenessStats::default(),
             runtime_ownership: VmRuntimeOwnershipStats::default(),
             vector_ownership: VmRuntimeOwnershipStats::default(),
+            #[cfg(test)]
+            stack_cells_walked: std::sync::atomic::AtomicU64::new(0),
         }
     }
 

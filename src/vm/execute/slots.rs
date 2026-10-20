@@ -360,6 +360,7 @@ impl VM {
     /// [`VM::runtime_confirms_fused_vector_grant`]. `None` counts every cell,
     /// which is what every other caller wants.
     pub(super) fn stack_holders_excluding(&self, index: u32, exempt: Option<usize>) -> u32 {
+        self.note_stack_cells_walked(self.stack.len());
         self.stack
             .iter()
             .enumerate()
@@ -391,9 +392,20 @@ impl VM {
         let Some(index) = value.heap_index() else {
             return false;
         };
-        !self.stack.iter().enumerate().rev().any(|(i, cell)| {
+        let holder = self.stack.iter().enumerate().rposition(|(i, cell)| {
             Some(i) != exempt && cell.may_hold_heap_index() && cell.heap_index() == Some(index)
-        })
+        });
+        self.note_stack_cells_walked(self.stack.len() - holder.unwrap_or(0));
+        holder.is_none()
+    }
+
+    /// Operand-stack cells the two walks above have visited over this VM's
+    /// lifetime, for the tests that pin what a walk may cost.
+    #[inline(always)]
+    fn note_stack_cells_walked(&self, _cells: usize) {
+        #[cfg(test)]
+        self.stack_cells_walked
+            .fetch_add(_cells as u64, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Total live references the operand stack holds across every arena slot.
@@ -666,13 +678,53 @@ impl VM {
     }
 
     /// Whether exactly `holders` operand-stack cells hold `record`, which has
-    /// just been popped or read out of another record. Zero asks the cheaper
-    /// question [`VM::slot_is_unheld`] answers.
-    pub(super) fn record_stack_holders_are(&self, record: NanValue, holders: u8) -> bool {
+    /// just been popped or read out of another record, so that `field` may be
+    /// taken out of it. Zero asks the cheaper question [`VM::slot_is_unheld`]
+    /// answers.
+    ///
+    /// The walk is bounded the way a map write's is, by what the take can save
+    /// a later write: [`VM::release_worth`] of `field`. Past that the answer is
+    /// no without looking, and the field is read where it is. Unbounded, a
+    /// recursion taking a field at every level paid a walk over every frame
+    /// below it at each one, which is quadratic in the depth.
+    pub(super) fn record_stack_holders_are(
+        &self,
+        record: NanValue,
+        holders: u8,
+        field: NanValue,
+    ) -> bool {
+        let depth = self.stack.len();
+        if depth > WALK_SLACK && depth > self.release_worth(field, 0) + WALK_SLACK {
+            return false;
+        }
         match (holders, record.heap_index()) {
             (0, _) => self.slot_is_unheld(record),
             (_, Some(index)) => self.stack_holders_excluding(index, None) == u32::from(holders),
             (_, None) => false,
+        }
+    }
+
+    /// The value a `RECORD_TAKE_PATH` would take, read without taking
+    /// anything, for [`VM::record_stack_holders_are`] to weigh the walks on
+    /// the way down against. `levels` is the operand bytes after the first
+    /// field, `(detach:u8, holders:u8, field:u32)` per record below `record`.
+    /// Unit when the path does not resolve: the take raises that error itself.
+    pub(super) fn record_path_end(
+        &self,
+        mut record: NanValue,
+        mut field_symbol_id: u32,
+        levels: &[u8],
+    ) -> NanValue {
+        for [_, _, f0, f1, f2, f3] in levels.as_chunks::<6>().0 {
+            let Ok(field_idx) = self.record_field_index(record, field_symbol_id) else {
+                return NanValue::UNIT;
+            };
+            record = self.arena.get_record(record.arena_index()).1[field_idx];
+            field_symbol_id = u32::from_be_bytes([*f0, *f1, *f2, *f3]);
+        }
+        match self.record_field_index(record, field_symbol_id) {
+            Ok(field_idx) => self.arena.get_record(record.arena_index()).1[field_idx],
+            Err(_) => NanValue::UNIT,
         }
     }
 
@@ -995,8 +1047,10 @@ impl VM {
         };
         // Counted with the index and the value still on the stack: a value
         // that holds the record is one more cell, or makes the record held
-        // elsewhere.
-        let takes = !self.arena.record_is_held_elsewhere(record)
+        // elsewhere. Not counted at all where the in-place write below would
+        // be refused for its walk anyway, once those two are popped.
+        let takes = len - 3 <= len_of_vec + WALK_SLACK
+            && !self.arena.record_is_held_elsewhere(record)
             && record.heap_index().is_some_and(|record_index| {
                 self.stack_holders_excluding(record_index, None) == u32::from(holders) + 1
             });

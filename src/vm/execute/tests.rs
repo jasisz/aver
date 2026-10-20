@@ -1,8 +1,8 @@
 use super::VM;
 use crate::nan_value::{Arena, ArenaEntry, ArenaList, ArenaSymbol, NanValue, NanValueConvert};
 use crate::vm::opcode::{
-    CALL_LEAF, CONCAT, LOAD_CONST, LOAD_LOCAL, RETURN, TAIL_CALL_SELF_THIN, VECTOR_SET_OR_KEEP,
-    opcode_operand_width,
+    CALL_LEAF, CONCAT, LOAD_CONST, LOAD_LOCAL, RECORD_TAKE_NAMED, RECORD_TAKE_PATH, RETURN,
+    TAIL_CALL_SELF_THIN, VECTOR_SET_OR_KEEP, opcode_operand_width,
 };
 use crate::vm::types::{CallFrame, CodeStore, FnChunk};
 use crate::{lexer::Lexer, parser::Parser, vm};
@@ -1301,6 +1301,59 @@ fn a_term_wrapped_in_a_fresh_node_is_not_reread_by_every_return() {
         2 * large <= 5 * small + READ_BUDGET_PER_STEP,
         "doubling the wrapping steps more than 2.5x'd the reads: n=200 read \
          {small}, n=400 read {large}",
+    );
+}
+
+/// Operand-stack cells the holder walks visit while `down` recurses `n`
+/// levels and, at every level, takes the fields of its record argument into
+/// the record it passes on: `s.a` and `s.b` one level down, `s.w.x` and
+/// `s.w.y` two.
+///
+/// Nothing else holds `s`, so a walk asking who does finds no one and visits
+/// every cell below the take, which is every frame still waiting to add its
+/// `1`. Before the walk was bounded by what the take saves, that made the
+/// recursion quadratic in its depth.
+fn deep_field_take_cells_walked(n: i64) -> u64 {
+    let src = format!(
+        "record W\n    x: Int\n    y: Int\n\nrecord S\n    w: W\n    a: Int\n    b: Int\n\nfn down(n: Int, s: S) -> Int\n    match n <= 0\n        true -> s.a + s.w.x\n        false -> 1 + down(n - 1, S(w = W(x = s.w.x + 1, y = s.w.y), a = s.a + 1, b = s.b))\n\nfn main() -> Int\n    down({n}, S(w = W(x = 0, y = 0), a = 0, b = 0))\n"
+    );
+    let mut vm = compile_vm_with_ownership(&src);
+    let down = &vm.code.functions[vm.code.fn_index["down"] as usize];
+    let (mut named, mut path) = (false, false);
+    let mut ip = 0;
+    while ip < down.code.len() {
+        let op = down.code[ip];
+        named |= op == RECORD_TAKE_NAMED;
+        path |= op == RECORD_TAKE_PATH;
+        ip += 1;
+        ip += opcode_operand_width(op, &down.code, ip);
+    }
+    assert!(
+        named && path,
+        "down must take its fields with both RECORD_TAKE_NAMED and \
+         RECORD_TAKE_PATH (named: {named}, path: {path})",
+    );
+    let result = vm.run().expect("deep field-taking recursion should run");
+    assert_eq!(result.as_int(&vm.arena), 3 * n);
+    vm.stack_cells_walked
+        .load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[test]
+fn a_field_taken_at_every_level_of_a_deep_recursion_does_not_walk_every_frame() {
+    const CELLS_PER_LEVEL: u64 = 64;
+    let small = deep_field_take_cells_walked(400);
+    let large = deep_field_take_cells_walked(800);
+
+    assert!(
+        small <= 400 * CELLS_PER_LEVEL && large <= 800 * CELLS_PER_LEVEL,
+        "taking fields at every level exceeded its linear walk budget: n=400 \
+         walked {small} cells, n=800 walked {large}",
+    );
+    assert!(
+        2 * large <= 5 * small + CELLS_PER_LEVEL,
+        "doubling the recursion more than 2.5x'd the cells walked: n=400 \
+         walked {small}, n=800 walked {large}",
     );
 }
 

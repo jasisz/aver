@@ -1773,11 +1773,16 @@ impl VM {
                     let root_holders = read_u8!(code, ip);
                     let mut field_symbol_id = read_u32!(code, ip);
                     let mut record = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let end = self.record_path_end(
+                        record,
+                        field_symbol_id,
+                        &code[ip..ip + 6 * usize::from(depth).saturating_sub(1)],
+                    );
                     // Whether every record from the root down to `record` is
                     // held only where the compiler accounted for: the root by
                     // nothing off the stack, and exactly the cells it counted.
                     let mut unique = !self.arena.record_is_held_elsewhere(record)
-                        && self.record_stack_holders_are(record, root_holders);
+                        && self.record_stack_holders_are(record, root_holders, end);
                     for _ in 1..depth {
                         let detach = read_u8!(code, ip) != 0;
                         let holders = read_u8!(code, ip);
@@ -1793,7 +1798,7 @@ impl VM {
                         unique = unique
                             && child.is_record()
                             && self.arena.record_holder_count(child) == u32::from(!take)
-                            && self.record_stack_holders_are(child, holders);
+                            && self.record_stack_holders_are(child, holders, end);
                         record = child;
                         field_symbol_id = read_u32!(code, ip);
                     }
@@ -1822,26 +1827,19 @@ impl VM {
                             .record_field_slots
                             .get(&(type_id, field_symbol_id))
                         {
+                            let field_idx = field_idx as usize;
+                            let field = self.arena.get_record(record.arena_index()).1[field_idx];
                             // Exactly the cells the compiler accounted for,
                             // and nothing off the stack: any other holder
                             // could still read the field.
                             let can_take = known_holders.is_some_and(|holders| {
                                 !self.arena.record_is_held_elsewhere(record)
-                                    && match (holders, record.heap_index()) {
-                                        (0, _) => self.slot_is_unheld(record),
-                                        (_, Some(index)) => {
-                                            self.stack_holders_excluding(index, None)
-                                                == u32::from(holders)
-                                        }
-                                        (_, None) => false,
-                                    }
+                                    && self.record_stack_holders_are(record, holders, field)
                             });
-                            let value = if can_take {
-                                self.arena.take_record_field(record, field_idx as usize)
-                            } else {
-                                self.arena.get_record(record.arena_index()).1[field_idx as usize]
-                            };
-                            self.stack.push(value);
+                            if can_take {
+                                self.arena.take_record_field(record, field_idx);
+                            }
+                            self.stack.push(field);
                         } else {
                             let field_name = self
                                 .code
