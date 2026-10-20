@@ -760,6 +760,27 @@ impl Reader {
                     cons: Box::new(self.proof(c)?),
                 }
             }
+            ("leninduct", [Sx::Atom(v), l, r, rest @ ..]) => {
+                let (carried, [gs, names, c]) = self.carried(rest)? else {
+                    return Err(bad());
+                };
+                let [Sx::Atom(bound), Sx::Atom(bound_hyp), Sx::Atom(ih)] = self.items(names)?
+                else {
+                    return Err(bad());
+                };
+                self.var_types.borrow_mut().insert(bound.clone(), Type::Int);
+                Proof::InductLength {
+                    var: v.clone(),
+                    lhs: self.term(l)?,
+                    rhs: self.term(r)?,
+                    carried,
+                    general: self.names(gs)?,
+                    bound: bound.clone(),
+                    bound_hyp: bound_hyp.clone(),
+                    ih: ih.clone(),
+                    body: Box::new(self.proof(c)?),
+                }
+            }
             ("listcases", [Sx::Atom(v), l, r, n, ht, c]) => {
                 let (head, tail) = match self.items(ht)? {
                     [Sx::Atom(h), Sx::Atom(t)] => (h.clone(), t.clone()),

@@ -351,6 +351,7 @@ fn proofOf(tag: String, args: List<Sexp>) -> Result<Proof, String>
         "induct" -> inductProof(args)
         "listinduct" -> listInductProof(args)
         "listcases" -> listCasesProof(args)
+        "leninduct" -> lenInductProof(args)
         "ring" -> ringProof(args)
         "linear" -> linearProof(args)
         _ -> Result.Err("unknown rule {tag}")
@@ -559,6 +560,19 @@ fn listInductWith(v: String, l: Term, r: Term, rest: Tuple<List<String>, List<Se
 verify listInductWith
     listInductWith("xs", Term.TUnit, Term.TUnit, (["k"], [])) => Result.Err("malformed listinduct")
     listInductWith("xs", Term.TUnit, Term.TUnit, (["k"], [Sexp.Node([Sexp.Atom("hyp"), Sexp.Atom("k")]), Sexp.Node([Sexp.Atom("h"), Sexp.Atom("t")]), Sexp.Node([]), Sexp.Node([]), Sexp.Node([Sexp.Atom("hyp"), Sexp.Atom("k")])])) => Result.Ok(Proof.PListInduct("xs", Term.TUnit, Term.TUnit, ["k"], Proof.PHyp("k"), "h", "t", [], [], Proof.PHyp("k")))
+
+fn lenInductProof(args: List<Sexp>) -> Result<Proof, String>
+    ? "(leninduct NAME TERM TERM [(carry NAME…)] (GENERAL…) (BOUND HYP LAW) PROOF)"
+    match args
+        [Sexp.Atom(v), l, r, ..rest] -> match carried(rest)?
+            (ns, [gs, Sexp.Node([Sexp.Atom(n), Sexp.Atom(hn), Sexp.Atom(ih)]), c]) -> Result.Ok(Proof.PLenInduct(v, term(l)?, term(r)?, ns, atoms(items(gs)?)?, n, hn, ih, proof(c)?))
+            _ -> Result.Err("malformed leninduct")
+        _ -> Result.Err("malformed leninduct")
+
+verify lenInductProof
+    lenInductProof([]) => Result.Err("malformed leninduct")
+    lenInductProof([Sexp.Atom("xs"), Sexp.Node([Sexp.Atom("unit")]), Sexp.Node([Sexp.Atom("unit")]), Sexp.Node([]), Sexp.Node([Sexp.Atom("m")]), Sexp.Node([Sexp.Atom("hyp"), Sexp.Atom("k")])]) => Result.Err("malformed leninduct")
+    lenInductProof([Sexp.Atom("xs"), Sexp.Node([Sexp.Atom("unit")]), Sexp.Node([Sexp.Atom("unit")]), Sexp.Node([Sexp.Atom("carry"), Sexp.Atom("k")]), Sexp.Node([]), Sexp.Node([Sexp.Atom("m"), Sexp.Atom("hm"), Sexp.Atom("ih")]), Sexp.Node([Sexp.Atom("hyp"), Sexp.Atom("k")])]) => Result.Ok(Proof.PLenInduct("xs", Term.TUnit, Term.TUnit, ["k"], [], "m", "hm", "ih", Proof.PHyp("k")))
 
 fn listCasesProof(args: List<Sexp>) -> Result<Proof, String>
     ? "(listcases NAME TERM TERM PROOF (HEAD TAIL) PROOF)"

@@ -576,7 +576,9 @@ fn cuts_used(p: &Proof) -> bool {
 /// Calls `f` on each proof directly inside `p`.
 fn each_part<'a>(p: &'a Proof, f: &mut dyn FnMut(&'a Proof)) {
     match p {
-        Proof::Symm(q) | Proof::Congr { inner: q, .. } => f(q),
+        Proof::Symm(q) | Proof::Congr { inner: q, .. } | Proof::InductLength { body: q, .. } => {
+            f(q)
+        }
         Proof::Absurd { contradiction, .. } => f(contradiction),
         Proof::Arm { premise, .. } => f(premise),
         Proof::Unfold { premise, .. } | Proof::Law { premise, .. } => {
@@ -1246,12 +1248,19 @@ fn produce_as(
             ..ob.clone()
         };
         // A reason that recurses with a checked plan may be proved by
-        // induction along its own function, as the claim is along the law's.
+        // induction along its own function, as the claim is along the law's,
+        // and so may one whose every call shortens a list, by induction on
+        // its length.
         let induct_on = match (&t.reason_inductions.get(i), &reason.node) {
             (
                 Some(Some(_)),
                 crate::ir::hir::ResolvedExpr::Call(crate::ir::hir::ResolvedCallee::Fn(f), _),
             ) => Some((*f, None)),
+            (_, crate::ir::hir::ResolvedExpr::Call(crate::ir::hir::ResolvedCallee::Fn(f), _))
+                if Env::new(inputs).shortened(*f).is_some() =>
+            {
+                Some((*f, None))
+            }
             _ => None,
         };
         let known = known_of(&cuts);

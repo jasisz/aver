@@ -140,6 +140,19 @@ pub fn excludes(p: &ResolvedPattern, v: &Term) -> bool {
 /// The equation `p` claims, or why its data names none (a definition,
 /// field, hypothesis or law that is not there).
 pub fn claim(p: &Proof, script: &Script, hyps: &Hyps) -> Result<Eqn, String> {
+    claim_with(p, script, hyps, &[])
+}
+
+/// [`claim`] with the laws `local` in scope besides the script's own: the
+/// hypotheses of the length inductions around `p`
+/// ([`Proof::InductLength`]), innermost last.
+pub fn claim_with(
+    p: &Proof,
+    script: &Script,
+    hyps: &Hyps,
+    local: &[super::LawRef],
+) -> Result<Eqn, String> {
+    let claim = |p: &Proof, script: &Script, hyps: &Hyps| claim_with(p, script, hyps, local);
     match p {
         Proof::Refl(t) => Ok(Eqn::new(canon(t), canon(t))),
         Proof::Symm(inner) => {
@@ -250,8 +263,11 @@ pub fn claim(p: &Proof, script: &Script, hyps: &Hyps) -> Result<Eqn, String> {
             Ok(Eqn::new(canon(&concl.lhs), canon(&concl.rhs)))
         }
         Proof::Law { law, subst, .. } => {
-            let l = script
-                .law(law)
+            let l = local
+                .iter()
+                .rev()
+                .find(|l| l.key == *law)
+                .or_else(|| script.law(law))
                 .ok_or_else(|| format!("law {law} is not cited"))?;
             Ok(Eqn::new(
                 term::subst(&l.lhs, subst)?,
@@ -284,6 +300,7 @@ pub fn claim(p: &Proof, script: &Script, hyps: &Hyps) -> Result<Eqn, String> {
         | Proof::Enum { lhs, rhs, .. }
         | Proof::Induct { lhs, rhs, .. }
         | Proof::InductList { lhs, rhs, .. }
+        | Proof::InductLength { lhs, rhs, .. }
         | Proof::ListCases { lhs, rhs, .. } => Ok(Eqn::new(canon(lhs), canon(rhs))),
         Proof::Linear { goal, value, .. } => Ok(Eqn::new(canon(goal), term::boolean(*value))),
     }

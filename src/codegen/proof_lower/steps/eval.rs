@@ -1761,6 +1761,12 @@ impl Env<'_> {
                     }
                     return self.args_then_settle(cur);
                 };
+                // Inside an induction on a list's length, a call its law
+                // covers stays as it stands, for its instance to be cut in
+                // where evaluation stops (see `Env::cut_in_shorter`).
+                if self.length_ih.is_some() && self.shorter_proof(cur).is_some() {
+                    return self.settle(cur, None);
+                }
                 let outer = def.outer(args)?;
                 let ResolvedExpr::Match { subject, arms } = &def.body.node else {
                     self.mark_used(*id);
@@ -4181,6 +4187,14 @@ impl Env<'_> {
         let r = self.whnf(rhs)?;
         if term::canon_eq(l.chain.cur(), r.chain.cur()) {
             return Ok(meet(l.chain, r.chain));
+        }
+        if self.length_ih.is_some()
+            && let Some(out) = self.cut_in_shorter(l.chain.cur(), r.chain.cur(), depth)
+        {
+            let rc = r.chain.cur().clone();
+            let mut left = l.chain;
+            left.push(out?, rc);
+            return Ok(meet(left, r.chain));
         }
         let g = match l.blocked.clone().or(r.blocked.clone()) {
             Some(g) => g,

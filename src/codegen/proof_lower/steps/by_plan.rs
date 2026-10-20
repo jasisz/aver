@@ -423,6 +423,11 @@ fn needed_defs(goal: &Script, proof: &Proof) -> Vec<Def> {
                 named(nil, out);
                 named(cons, out);
             }
+            Proof::InductLength { lhs, rhs, body, .. } => {
+                terms.push(lhs);
+                terms.push(rhs);
+                named(body, out);
+            }
             Proof::Linear { goal, .. } => terms.push(goal),
             Proof::Hyp(_) | Proof::UnfoldConst { .. } => {}
         }

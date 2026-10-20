@@ -326,6 +326,25 @@ pub enum Proof {
         tail: String,
         cons: Box<Proof>,
     },
+    /// Induction on the length of a given of list type, for every value of
+    /// the givens in `general`: `body` proves the claim `lhs = rhs` as it
+    /// stands, under the hypotheses named in `carried` (each `p = true`),
+    /// those that mention neither `var` nor a given in `general`, a fresh
+    /// Int `bound`, `bound_hyp : List.len(var) <= bound`, and the law `ih`
+    /// ([`length_ih`]): the claim at every `var` shorter than `bound` and
+    /// every value of `general` where the carried hypotheses hold, cited as
+    /// any other law. The names are fresh for everything in scope.
+    InductLength {
+        var: String,
+        lhs: Term,
+        rhs: Term,
+        carried: Vec<String>,
+        general: Vec<String>,
+        bound: String,
+        bound_hyp: String,
+        ih: String,
+        body: Box<Proof>,
+    },
     /// `goal = value` for an Int comparison `goal`: its opposite and the
     /// hypotheses `hyps`, each read as `p >= 0`, then the rows `cuts`
     /// rounds from them (each over the comparisons and the cuts before
@@ -562,6 +581,57 @@ pub fn own_when<'a>(premise: &'a Option<Term>, refined: &[Term]) -> Option<&'a T
         }
     }
     Some(at)
+}
+
+/// The law a [`Proof::InductLength`] step puts in scope as `ih`: over `var`
+/// and the givens in `general`, with the types `types` gives them, the
+/// claim `lhs = rhs` where `var` is shorter than `bound` and each of
+/// `facts`, what the carried hypotheses say is true, holds.
+#[allow(clippy::too_many_arguments)]
+pub fn length_ih(
+    ih: &str,
+    var: &str,
+    general: &[String],
+    types: &[(String, crate::ast::Type)],
+    bound: &str,
+    facts: &[Term],
+    lhs: &Term,
+    rhs: &Term,
+) -> LawRef {
+    let givens: Vec<String> = std::iter::once(var.to_string())
+        .chain(general.iter().cloned())
+        .collect();
+    let list = term::var(var);
+    if let Some((_, ty)) = types.iter().find(|(g, _)| g == var) {
+        list.set_ty(ty.clone());
+    }
+    let n = term::var(bound);
+    n.set_ty(crate::ast::Type::Int);
+    let shorter = term::binop(
+        crate::ast::BinOp::Lt,
+        term::builtin("List.len", vec![list], Some(crate::ast::Type::Int)),
+        n,
+    );
+    let mut parts: Vec<Term> = std::iter::once(shorter)
+        .chain(facts.iter().cloned())
+        .collect();
+    let mut premise = parts.pop().expect("the bound");
+    while let Some(p) = parts.pop() {
+        premise = term::bool_and(p, premise);
+    }
+    LawRef {
+        key: ih.to_string(),
+        types: givens
+            .iter()
+            .filter_map(|g| types.iter().find(|(n, _)| n == g).cloned())
+            .collect(),
+        givens,
+        premise: Some(term::canon(&premise)),
+        refined: Vec::new(),
+        lhs: term::canon(lhs),
+        rhs: term::canon(rhs),
+        fact: None,
+    }
 }
 
 impl LawRef {
@@ -808,6 +878,11 @@ impl Proof {
                 nil.each_term(f);
                 cons.each_term(f);
             }
+            Proof::InductLength { lhs, rhs, body, .. } => {
+                f(lhs);
+                f(rhs);
+                body.each_term(f);
+            }
             Proof::Linear { goal, .. } => f(goal),
             Proof::Enum {
                 lhs, rhs, cases, ..
@@ -851,6 +926,7 @@ impl Proof {
             Proof::InductList { nil, cons, .. } | Proof::ListCases { nil, cons, .. } => {
                 nil.size() + cons.size()
             }
+            Proof::InductLength { body, .. } => body.size(),
         }
     }
 }

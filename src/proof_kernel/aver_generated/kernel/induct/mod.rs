@@ -185,6 +185,48 @@ impl aver_rt::AverDisplay for Varied {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Shrink {
+    pub f: AverStr,
+    pub p: AverStr,
+    pub j: aver_rt::AverInt,
+    pub n: aver_rt::AverInt,
+}
+
+impl PartialOrd for Shrink {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Shrink {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        std::cmp::Ordering::Equal
+            .then_with(|| self.f.cmp(&other.f))
+            .then_with(|| self.j.cmp(&other.j))
+            .then_with(|| self.n.cmp(&other.n))
+            .then_with(|| self.p.cmp(&other.p))
+    }
+}
+
+impl aver_rt::AverDisplay for Shrink {
+    fn aver_display(&self) -> String {
+        format!(
+            "Shrink({})",
+            vec![
+                format!("f: {}", self.f.aver_display_inner()),
+                format!("p: {}", self.p.aver_display_inner()),
+                format!("j: {}", self.j.aver_display_inner()),
+                format!("n: {}", self.n.aver_display_inner())
+            ]
+            .join(", ")
+        )
+    }
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
+}
+
 /// The calls of f in t, a call before the calls in its arguments, a match's subject before its arms, each with the names inner arms bind around it. A call of another definition of ds that calls back into f stands for the calls of f its body makes, read at the call's arguments, before the calls in its arguments; fuel bounds how many such bodies one call goes through.
 pub fn selfCalls(
     mut t @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
@@ -1199,27 +1241,306 @@ pub fn descends(
     }
 }
 
-/// Whether steps may open d: its recursion, read through the definitions of ds it calls back through, passes the gate; or every cycle through d passes one whose recursion does (rooted).
+/// Whether steps may open d: its recursion, read through the definitions of ds it calls back through, passes the gate; or every cycle through d passes one whose recursion does (rooted); or every call shortens a list (shortens).
 #[inline(always)]
 pub fn openGate(
-    mut d @ _: crate::proof_kernel::aver_generated::kernel::proof::Def,
+    d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
     ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
 ) -> Result<(), AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    match crate::proof_kernel::aver_generated::kernel::induct::recursion(&d, ds) {
+    match crate::proof_kernel::aver_generated::kernel::induct::recursion(d, ds) {
         Ok(_) => Ok(()),
         Err(why @ _) => {
-            if crate::proof_kernel::aver_generated::kernel::induct::rooted(
-                d,
+            if (crate::proof_kernel::aver_generated::kernel::induct::rooted(
+                d.clone(),
                 ds.clone(),
                 ds.clone(),
-            ) {
+            ) || crate::proof_kernel::aver_generated::kernel::induct::shortens(d, ds))
+            {
                 Ok(())
             } else {
                 Err(why)
             }
         }
     }
+}
+
+/// Whether d calls itself only directly, never back through another definition of ds, and at one place every call, its local bindings substituted, passes a list shorter than the one there (shorter). That length falls at every call, so the recursion stops.
+#[inline(always)]
+pub fn shortens(
+    d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
+    ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
+) -> bool {
+    crate::proof_kernel::cancel_checkpoint();
+    match crate::proof_kernel::aver_generated::kernel::induct::letsInlined(
+        d.lets.clone(),
+        aver_rt::AverList::empty(),
+    ) {
+        Err(_) => false,
+        Ok(ls @ _) => {
+            match crate::proof_kernel::aver_generated::kernel::subst::subst(d.body.clone(), &ls) {
+                Err(_) => false,
+                Ok(body @ _) => {
+                    ((!crate::proof_kernel::aver_generated::kernel::induct::anyBack(
+                        &crate::proof_kernel::aver_generated::kernel::induct::callees(
+                            d.clone(),
+                            ds,
+                        ),
+                        d.name.clone(),
+                        ds,
+                    )) && crate::proof_kernel::aver_generated::kernel::induct::shorterSomewhere(
+                        &body,
+                        d.name.clone(),
+                        &crate::proof_kernel::aver_generated::kernel::proof::givenNames(&d.params),
+                        aver_rt::AverInt::from_i64(0),
+                    ))
+                }
+            }
+        }
+    }
+}
+
+/// Whether one of gs reaches back to f.
+#[inline(always)]
+pub fn anyBack(
+    gs @ _: &aver_rt::AverList<AverStr>,
+    f @ _: AverStr,
+    ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
+) -> bool {
+    crate::proof_kernel::cancel_checkpoint();
+    aver_list_match!(gs.clone(), [] => false, [g, rest] => (crate::proof_kernel::aver_generated::kernel::induct::reachesBack(g, f.clone(), ds) || crate::proof_kernel::aver_generated::kernel::induct::anyBack(&rest, f, ds)))
+}
+
+/// Whether some place j of the parameters ps is one where every call of f in body is shorter.
+#[inline(always)]
+pub fn shorterSomewhere(
+    body @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    f @ _: AverStr,
+    ps @ _: &aver_rt::AverList<AverStr>,
+    j @ _: aver_rt::AverInt,
+) -> bool {
+    crate::proof_kernel::cancel_checkpoint();
+    aver_list_match!(ps.clone(), [] => false, [p, rest] => (crate::proof_kernel::aver_generated::kernel::induct::shorter(body.clone(), crate::proof_kernel::aver_generated::kernel::induct::Shrink { f: f.clone(), p: p, j: j.clone(), n: j.add(&aver_rt::AverInt::from_i64(ps.len() as i64)) }, true, aver_rt::AverList::empty()) || crate::proof_kernel::aver_generated::kernel::induct::shorterSomewhere(body, f, &rest, j.add(&aver_rt::AverInt::from_i64(1)))))
+}
+
+/// Every call of m.f in t has m.n arguments and passes at place m.j one of parts or List.drop of something shorter (smaller). A part is the tail of a cell of the list m.p names while live, or of a list shorter than it, or a name a catch-all arm binds to a shorter list: each strictly shorter than the list at m.j.
+pub fn shorter(
+    mut t @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
+    m @ _: Shrink,
+    mut live @ _: bool,
+    parts @ _: aver_rt::AverList<AverStr>,
+) -> bool {
+    let m @ _ = std::sync::Arc::new(m);
+    let parts @ _ = std::sync::Arc::new(parts);
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        match t {
+            crate::proof_kernel::aver_generated::kernel::term::Term::TCall(__g_fields) => {
+                let g = __g_fields.0.clone();
+                let xs = __g_fields.1.clone();
+                return (((g != m.f)
+                    || ((aver_rt::AverInt::from_i64(xs.len() as i64) == m.n)
+                        && crate::proof_kernel::aver_generated::kernel::induct::smaller(
+                            crate::proof_kernel::aver_generated::kernel::induct::nthTerm(
+                                xs.clone(),
+                                m.j.clone(),
+                            ),
+                            (*parts).clone(),
+                            aver_rt::AverList::empty(),
+                        )))
+                    && crate::proof_kernel::aver_generated::kernel::induct::shorterAll(
+                        &xs, &*m, live, &*parts,
+                    ));
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term::TMatch(__s_fields) => {
+                let s = __s_fields.0.clone();
+                let arms = __s_fields.1.clone();
+                return (crate::proof_kernel::aver_generated::kernel::induct::shorter(
+                    s.clone(),
+                    (*m).clone(),
+                    live,
+                    (*parts).clone(),
+                ) && crate::proof_kernel::aver_generated::kernel::induct::shorterArms(
+                    &arms, &s, &*m, live, &*parts,
+                ));
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term::TGet(__o_fields) => {
+                let o = __o_fields.0.clone();
+                let k = __o_fields.1.clone();
+                {
+                    let __tco0 = o;
+                    t = __tco0;
+                    continue;
+                }
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term::TBi(__k_fields) => {
+                let k = __k_fields.0.clone();
+                let xs = __k_fields.1.clone();
+                return crate::proof_kernel::aver_generated::kernel::induct::shorterAll(
+                    &xs, &*m, live, &*parts,
+                );
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term::TOp(__o_fields) => {
+                let o = __o_fields.0.clone();
+                let a = __o_fields.1.clone();
+                let b = __o_fields.2.clone();
+                return (crate::proof_kernel::aver_generated::kernel::induct::shorter(
+                    a,
+                    (*m).clone(),
+                    live,
+                    (*parts).clone(),
+                ) && crate::proof_kernel::aver_generated::kernel::induct::shorter(
+                    b,
+                    (*m).clone(),
+                    live,
+                    (*parts).clone(),
+                ));
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term::TNeg(__a_fields) => {
+                let a = __a_fields.0.clone();
+                {
+                    let __tco0 = a;
+                    t = __tco0;
+                    continue;
+                }
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(__c_fields) => {
+                let c = __c_fields.0.clone();
+                let xs = __c_fields.1.clone();
+                return crate::proof_kernel::aver_generated::kernel::induct::shorterAll(
+                    &xs, &*m, live, &*parts,
+                );
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term::TParts(__xs_fields) => {
+                let xs = __xs_fields.0.clone();
+                return crate::proof_kernel::aver_generated::kernel::induct::shorterAll(
+                    &xs, &*m, live, &*parts,
+                );
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term::TList(__xs_fields) => {
+                let xs = __xs_fields.0.clone();
+                return crate::proof_kernel::aver_generated::kernel::induct::shorterAll(
+                    &xs, &*m, live, &*parts,
+                );
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term::TTuple(__xs_fields) => {
+                let xs = __xs_fields.0.clone();
+                return crate::proof_kernel::aver_generated::kernel::induct::shorterAll(
+                    &xs, &*m, live, &*parts,
+                );
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term::TRec(__k_fields) => {
+                let k = __k_fields.0.clone();
+                let fs = __k_fields.1.clone();
+                return crate::proof_kernel::aver_generated::kernel::induct::shorterAll(
+                    &crate::proof_kernel::aver_generated::kernel::induct::fieldValues(&fs),
+                    &*m,
+                    live,
+                    &*parts,
+                );
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term::TUpd(__k_fields) => {
+                let k = __k_fields.0.clone();
+                let b = __k_fields.1.clone();
+                let fs = __k_fields.2.clone();
+                return crate::proof_kernel::aver_generated::kernel::induct::shorterAll(
+                    &aver_rt::AverList::prepend(
+                        b,
+                        &crate::proof_kernel::aver_generated::kernel::induct::fieldValues(&fs),
+                    ),
+                    &*m,
+                    live,
+                    &*parts,
+                );
+            }
+            _ => {
+                return true;
+            }
+        }
+    }
+}
+
+/// shorter for each term.
+#[inline(always)]
+pub fn shorterAll(
+    ts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    m @ _: &Shrink,
+    live @ _: bool,
+    parts @ _: &aver_rt::AverList<AverStr>,
+) -> bool {
+    crate::proof_kernel::cancel_checkpoint();
+    aver_list_match!(ts.clone(), [] => true, [t, rest] => (crate::proof_kernel::aver_generated::kernel::induct::shorter(t, m.clone(), live, parts.clone()) && crate::proof_kernel::aver_generated::kernel::induct::shorterAll(&rest, m, live, parts)))
+}
+
+/// shorter in each arm of a match on s: the names the arm binds are no longer parts, nor is m.p the parameter once rebound; the tail of a cell of a list at most as long as the one at m.j, or a name bound to a shorter list, is a part.
+#[inline(always)]
+pub fn shorterArms(
+    arms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
+    s @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    m @ _: &Shrink,
+    live @ _: bool,
+    parts @ _: &aver_rt::AverList<AverStr>,
+) -> bool {
+    crate::proof_kernel::cancel_checkpoint();
+    aver_list_match!(arms.clone(), [] => true, [a, rest] => (crate::proof_kernel::aver_generated::kernel::induct::shorter(a.body, m.clone(), (live && (!crate::proof_kernel::aver_generated::kernel::subst::patNames(&a.pattern).contains(&m.p))), aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::subst::without(parts.clone(), crate::proof_kernel::aver_generated::kernel::subst::patNames(&a.pattern)), &crate::proof_kernel::aver_generated::kernel::induct::armParts(&a.pattern, s.clone(), m, live, parts))) && crate::proof_kernel::aver_generated::kernel::induct::shorterArms(&rest, s, m, live, parts)))
+}
+
+/// What an arm adds to the parts: the tail of [h, ..t] over m.p while live or over something shorter, or the name of a catch-all over something shorter.
+pub fn armParts(
+    pat @ _: &crate::proof_kernel::aver_generated::kernel::term::Pat,
+    mut s @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
+    m @ _: &Shrink,
+    live @ _: bool,
+    parts @ _: &aver_rt::AverList<AverStr>,
+) -> aver_rt::AverList<AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    match pat {
+        crate::proof_kernel::aver_generated::kernel::term::Pat::PCons(h, tl) => {
+            let h = h.clone();
+            let tl = tl.clone();
+            if ((live
+                && (s
+                    == crate::proof_kernel::aver_generated::kernel::term::Term::TVar(
+                        std::sync::Arc::new(
+                            crate::proof_kernel::aver_generated::kernel::term::Term__TVar(
+                                m.p.clone(),
+                            ),
+                        ),
+                    )))
+                || crate::proof_kernel::aver_generated::kernel::induct::smaller(
+                    Some(s),
+                    parts.clone(),
+                    aver_rt::AverList::empty(),
+                ))
+            {
+                aver_rt::AverList::from_vec(vec![tl])
+            } else {
+                aver_rt::AverList::empty()
+            }
+        }
+        crate::proof_kernel::aver_generated::kernel::term::Pat::PVar(x) => {
+            let x = x.clone();
+            if crate::proof_kernel::aver_generated::kernel::induct::smaller(
+                Some(s),
+                parts.clone(),
+                aver_rt::AverList::empty(),
+            ) {
+                aver_rt::AverList::from_vec(vec![x])
+            } else {
+                aver_rt::AverList::empty()
+            }
+        }
+        _ => aver_rt::AverList::empty(),
+    }
+}
+
+/// The values of record fields.
+#[inline(always)]
+pub fn fieldValues(
+    fs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Field>,
+) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> {
+    crate::proof_kernel::cancel_checkpoint();
+    aver_list_match!(fs.clone(), [] => aver_rt::AverList::empty(), [x, rest] => aver_rt::AverList::prepend(x.value, &crate::proof_kernel::aver_generated::kernel::induct::fieldValues(&rest)))
 }
 
 /// Whether some definition r of ds reaches d and is reached from it, and r's recursion, read through the others, passes the gate. Every cycle through d then passes r, each time on a smaller value, so d stops.

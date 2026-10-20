@@ -396,6 +396,78 @@ pub fn recursion(def: &Def, ds: &[Def]) -> Result<Option<Recursion>, String> {
     Ok(Some(Recursion { at: j, guard: None }))
 }
 
+/// Whether steps may open `def` though its recursion is not one they
+/// follow: it calls itself only directly, never back through another
+/// definition of `ds`, and at one place every call, its local bindings
+/// substituted, passes a list shorter than the one there. A shorter list
+/// is the tail of a cell of the parameter (while no arm rebinds it) or of
+/// a shorter list, a name a catch-all arm binds to a shorter list, or
+/// `List.drop` of one. The kernel's `shortens` is the judge.
+pub fn shortens(def: &Def, ds: &[Def]) -> bool {
+    shortened_place(def, ds).is_some()
+}
+
+/// The place [`shortens`] finds, the first of them.
+pub fn shortened_place(def: &Def, ds: &[Def]) -> Option<usize> {
+    let f = def.fn_id;
+    if def_callees(def)
+        .iter()
+        .any(|g| *g != f && reaches(*g, f, ds))
+    {
+        return None;
+    }
+    let mut lets: Vec<(String, Term)> = Vec::new();
+    for (name, value) in &def.lets {
+        let v = term::subst(value, &lets).ok()?;
+        lets.insert(0, (name.clone(), v));
+    }
+    let body = term::subst(&def.body, &lets).ok()?;
+    (0..def.params.len()).find(|j| shorter(&body, f, def, *j, true, &[]))
+}
+
+/// Every call of `f` in `t` passes at place `j` one of `parts` or
+/// `List.drop` of one ([`shortens`]); `live` while the parameter at `j`
+/// is not rebound.
+fn shorter(t: &Term, f: FnId, def: &Def, j: usize, live: bool, parts: &[String]) -> bool {
+    use crate::ir::hir::ResolvedPattern;
+    let p = &def.params[j];
+    match &t.node {
+        ResolvedExpr::Call(ResolvedCallee::Fn(g), args)
+        | ResolvedExpr::TailCall {
+            target: g, args, ..
+        } if *g == f => {
+            args.len() == def.params.len()
+                && smaller(&args[j], parts, &[])
+                && args.iter().all(|a| shorter(a, f, def, j, live, parts))
+        }
+        ResolvedExpr::Match { subject, arms } => {
+            shorter(subject, f, def, j, live, parts)
+                && arms.iter().all(|arm| {
+                    let bound = term::pattern_binders(&arm.pattern);
+                    let mut inner: Vec<String> = parts
+                        .iter()
+                        .filter(|n| !bound.contains(n))
+                        .cloned()
+                        .collect();
+                    let at_most = (live
+                        && matches!(&subject.node, ResolvedExpr::Ident(n) if n == p))
+                        || smaller(subject, parts, &[]);
+                    match &arm.pattern {
+                        ResolvedPattern::Cons(_, tail) if at_most => inner.push(tail.clone()),
+                        ResolvedPattern::Ident(x) if smaller(subject, parts, &[]) => {
+                            inner.push(x.clone())
+                        }
+                        _ => {}
+                    }
+                    shorter(&arm.body, f, def, j, live && !bound.contains(p), &inner)
+                })
+        }
+        _ => term::children(t)
+            .into_iter()
+            .all(|c| shorter(c, f, def, j, live, parts)),
+    }
+}
+
 /// Whether `t`, a recursive call's argument at the matched place, is
 /// smaller than the value matched: a name the arm's pattern binds that no
 /// inner arm rebinds, or `List.drop` of something smaller, which is never
