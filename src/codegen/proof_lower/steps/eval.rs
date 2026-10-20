@@ -3814,8 +3814,8 @@ impl Env<'_> {
                 rhs: canon(rhs),
             }));
         }
-        // Hypotheses that contradict each other once read again: list
-        // lengths, and normal forms (see [`super::hypotheses`]).
+        // Hypotheses that contradict each other once read again by the
+        // lengths of the lists they state (see [`super::hypotheses`]).
         if let Some(proof) = self.refute_case(lhs, rhs) {
             return Ok(Ok(proof));
         }

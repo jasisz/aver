@@ -6842,8 +6842,8 @@ fn both_kernels_close_a_case_its_hypotheses_rule_out_and_refuse_a_wrong_reading(
         ),
         mutate_proof(
             &read("checked.zeroWhenOn"),
-            "(proj (get (rec Ctx (level (v level))) level)))) (hyp when)",
-            "(proj (get (rec Ctx (level (v level))) level)))) (hyp h_steps1)",
+            "(hyp h_steps7))) (hyp when))",
+            "(hyp h_steps7))) (hyp h_steps1))",
         ),
         ctor_equal,
     ];
