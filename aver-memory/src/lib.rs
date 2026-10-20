@@ -1496,6 +1496,10 @@ pub struct Arena<T: ArenaTypes> {
     /// `active_lane_source_mark == INVALID_LANE_MARK` means that the
     /// operation has no frame watermark proof and must scan conservatively.
     active_lane_source_mark: LaneMark,
+    /// Whether the rewrite in progress hands its survivors to the caller's
+    /// handoff space rather than keeping them in the frame that goes on
+    /// running. See [`Arena::rewrite_map_with`] for what it changes.
+    active_lane_hands_to_caller: bool,
     /// Total list elements the collector has written into a fresh shared body.
     /// A collector that keeps sharing intact leaves this proportional to the
     /// number of elements that actually moved, so a quadratic copy shows up

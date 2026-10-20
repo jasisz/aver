@@ -1,7 +1,8 @@
 use super::VM;
 use crate::nan_value::{Arena, ArenaEntry, ArenaList, ArenaSymbol, NanValue, NanValueConvert};
 use crate::vm::opcode::{
-    CALL_LEAF, CONCAT, LOAD_CONST, LOAD_LOCAL, RETURN, VECTOR_SET_OR_KEEP, opcode_operand_width,
+    CALL_LEAF, CONCAT, LOAD_CONST, LOAD_LOCAL, RETURN, TAIL_CALL_SELF_THIN, VECTOR_SET_OR_KEEP,
+    opcode_operand_width,
 };
 use crate::vm::types::{CallFrame, CodeStore, FnChunk};
 use crate::{lexer::Lexer, parser::Parser, vm};
@@ -228,6 +229,7 @@ fn reentrant_call_function_returns_nested_result_without_resuming_caller() {
         handoff_mark: 0,
         lane_base: 0,
         lane_mark: 0,
+        yard_budget: 0,
         globals_dirty: false,
         yard_dirty: false,
         handoff_dirty: false,
@@ -1225,6 +1227,86 @@ fn call_leaf_owned_map_set_uses_its_callers_frame_proof() {
     );
 }
 
+/// Map-entry reads for a loop whose step goes two frames down before it
+/// inserts a freshly built value into a map held in a record.
+///
+/// The parsing loop of issue #1640's follow-up has this shape. Each return
+/// hands the map to a caller whose mark is older than the frame that inserted
+/// into it, so a receipt renewed at the inner return made the outer one read
+/// the whole table on every step.
+fn nested_helper_record_map_fold_scans(n: i64) -> u64 {
+    let src = format!(
+        "record Stats\n    count: Int\n    table: Map<Int, String>\n\nfn label(i: Int) -> String\n    \"fresh-value-{{i}}\"\n\nfn addOne(st: Stats, i: Int) -> Stats\n    Stats.update(st, count = st.count + 1, table = Map.set(st.table, i, label(i)))\n\nfn step(st: Stats, i: Int) -> Stats\n    padding = String.len(\"step-padding-{{i}}\")\n    match padding > 0\n        true -> addOne(st, i)\n        false -> st\n\nfn addAll(i: Int, n: Int, st: Stats) -> Stats\n    match i >= n\n        true -> st\n        false -> addAll(i + 1, n, step(st, i))\n\nfn main() -> String\n    built = addAll(0, {n}, Stats(count = 0, table = {{}}))\n    Option.withDefault(Map.get(built.table, 1), \"missing\")\n"
+    );
+    let mut vm = compile_vm_with_ownership(&src);
+    let result = vm.run().expect("nested helper map fold should run");
+    assert_eq!(vm.arena.get_string_value(result), "fresh-value-1");
+    vm.arena.map_entries_scanned()
+}
+
+#[test]
+fn a_map_filled_two_frames_down_is_not_reread_by_every_return() {
+    // A thin loop takes its boundary every few steps, and until it does each
+    // return rewrites the pairs remembered since the last one again.
+    const SCAN_BUDGET_PER_ENTRY: u64 = 16;
+    let small = nested_helper_record_map_fold_scans(400);
+    let large = nested_helper_record_map_fold_scans(800);
+
+    assert!(
+        small <= 400 * SCAN_BUDGET_PER_ENTRY && large <= 800 * SCAN_BUDGET_PER_ENTRY,
+        "a map filled two frames down exceeded its linear scan budget: n=400 \
+         read {small}, n=800 read {large}",
+    );
+    assert!(
+        large <= 3 * small + SCAN_BUDGET_PER_ENTRY,
+        "doubling the nested fold more than tripled its reads: n=400 read \
+         {small}, n=800 read {large}",
+    );
+}
+
+/// The most arena entries a tail loop held at once while it shifted a big Int
+/// right one bit per step, and whether the loop ran as a thin self tail call.
+///
+/// `Bits.shiftRight` makes a fresh big Int on every step and the loop keeps
+/// only the latest one, so what the arena holds should not depend on `bits`.
+/// `thin` picks the loop body: as written it allocates nothing itself and is
+/// classified thin, and with a throwaway list it is an ordinary frame.
+fn shift_loop_peak_entries(bits: i64, thin: bool) -> (usize, bool) {
+    let step = if thin {
+        "acc + 1"
+    } else {
+        "acc + List.len([acc])"
+    };
+    let src = format!(
+        "fn count(n: Int, acc: Int) -> Int\n    match n <= 1\n        true -> acc\n        false -> count(Bits.shiftRight(n, 1), {step})\n\nfn start(bits: Int) -> Int\n    Result.withDefault(Bits.shiftLeft(1, bits), 0)\n\nfn main() -> Int\n    count(start({bits}), 0)\n"
+    );
+    let mut vm = compile_vm_with_ownership(&src);
+    let count = &vm.code.functions[vm.code.fn_index["count"] as usize];
+    let (mut ip, mut ran_thin) = (0, false);
+    while ip < count.code.len() {
+        let op = count.code[ip];
+        ran_thin |= op == TAIL_CALL_SELF_THIN;
+        ip += 1 + opcode_operand_width(op, &count.code, ip + 1);
+    }
+    let result = vm.run().expect("shift loop should run");
+    assert_eq!(result.as_int(&vm.arena), bits);
+    (vm.arena.peak_usage().total(), ran_thin)
+}
+
+#[test]
+fn a_tail_loop_does_not_keep_what_its_steps_drop() {
+    for thin in [true, false] {
+        let (small, small_thin) = shift_loop_peak_entries(2_000, thin);
+        let (large, large_thin) = shift_loop_peak_entries(4_000, thin);
+        assert_eq!((small_thin, large_thin), (thin, thin));
+        assert!(
+            small < 300 && large < 300,
+            "a tail loop (thin: {thin}) kept the numbers it dropped: 2000 steps \
+             held {small} entries at once, 4000 held {large}",
+        );
+    }
+}
+
 /// Entries the collector reads while a map built by `built` is held live across
 /// a stretch of allocation that does not touch it.
 ///
@@ -1285,7 +1367,26 @@ fn global_promotion_does_not_rebase_a_retained_small_young_suffix() {
     let arena_mark = vm.arena.young_len() as u32;
     let yard_mark = vm.arena.yard_len() as u32;
     let handoff_mark = vm.arena.handoff_len() as u32;
-    let mut lane_mark = vm.arena.lane_mark();
+    let lane_mark = vm.arena.lane_mark();
+    vm.frames.push(CallFrame {
+        fn_id: 0,
+        ip: 0,
+        bp: 0,
+        local_count: 0,
+        arena_mark,
+        yard_base: yard_mark,
+        yard_mark,
+        handoff_mark,
+        lane_base: lane_mark,
+        lane_mark,
+        yard_budget: 0,
+        globals_dirty: true,
+        yard_dirty: false,
+        handoff_dirty: false,
+        inplace_write_escaped: false,
+        thin: false,
+        parent_thin: false,
+    });
 
     // First TCO iteration: both entries remain in the <=4 young fast path.
     // The global is copied to stable and bumps the epoch; `retained` stays in
@@ -1294,18 +1395,11 @@ fn global_promotion_does_not_rebase_a_retained_small_young_suffix() {
     let dirty_global = NanValue::new_string(vm.arena.push_string("dirty-global-value"));
     vm.globals.push(dirty_global);
     let mut first_args = [retained];
-    let first_suffix_discharged = vm.finalize_frame_locals_for_tail_call(
-        arena_mark,
-        yard_mark,
-        handoff_mark,
-        lane_mark,
-        true,
-        false,
-        false,
-        &mut first_args,
-    );
+    let first_suffix_discharged = vm.finalize_frame_locals_for_tail_call(&mut first_args);
+    let frame = vm.frames.last_mut().unwrap();
+    frame.globals_dirty = false;
     if first_suffix_discharged {
-        lane_mark = vm.arena.lane_mark();
+        frame.lane_mark = vm.arena.lane_mark();
     }
 
     // Second iteration: a Flat body captures the retained young reference.
@@ -1315,16 +1409,7 @@ fn global_promotion_does_not_rebase_a_retained_small_young_suffix() {
     vm.arena.push_string("promotion-trigger-one");
     vm.arena.push_string("promotion-trigger-two");
     let mut second_args = [list];
-    let second_suffix_discharged = vm.finalize_frame_locals_for_tail_call(
-        arena_mark,
-        yard_mark,
-        handoff_mark,
-        lane_mark,
-        false,
-        false,
-        false,
-        &mut second_args,
-    );
+    let second_suffix_discharged = vm.finalize_frame_locals_for_tail_call(&mut second_args);
 
     assert!(second_suffix_discharged);
     assert!(!first_suffix_discharged);
@@ -1541,6 +1626,7 @@ fn a_stable_vector_written_in_place_survives_the_depth_zero_return() {
         handoff_mark: 0,
         lane_base: 0,
         lane_mark: 0,
+        yard_budget: 0,
         globals_dirty: false,
         yard_dirty: false,
         handoff_dirty: false,

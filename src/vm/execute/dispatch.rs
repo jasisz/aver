@@ -598,6 +598,7 @@ impl VM {
                         handoff_mark,
                         lane_base: lane_mark,
                         lane_mark,
+                        yard_budget: 0,
                         globals_dirty: false,
                         yard_dirty: false,
                         handoff_dirty: false,
@@ -778,6 +779,7 @@ impl VM {
                         handoff_mark: self.arena.handoff_len() as u32,
                         lane_base: lane_mark,
                         lane_mark,
+                        yard_budget: 0,
                         globals_dirty: false,
                         yard_dirty: false,
                         handoff_dirty: false,
@@ -893,18 +895,43 @@ impl VM {
                     // is therefore exactly the frame that owns the next
                     // boundary, not an accidental outer proof. No frame means
                     // no proof and the map update stamps current conservatively.
+                    //
+                    // The proof may come from a frame further down: the loop
+                    // that called the helper making this insert. Its older mark
+                    // lets that loop's own boundary skip the table, where the
+                    // helper's mark would make the loop read it whole on every
+                    // step. A frame qualifies while the table is already clean
+                    // by its mark, and the walk stops at the first that is not.
+                    let proof_of = |frame: &CallFrame| crate::types::map::OwnedMapFrameProof {
+                        arena_mark: frame.arena_mark,
+                        yard_mark: frame.yard_mark,
+                        handoff_mark: frame.handoff_mark,
+                        lane_mark: frame.lane_mark,
+                        inplace_write_escaped: frame.inplace_write_escaped,
+                    };
                     let owned_map_frame_proof = (owned_mask & 1 != 0
                         && builtin == VmBuiltin::MapSet)
                         .then(|| {
-                            self.frames
-                                .last()
-                                .map(|frame| crate::types::map::OwnedMapFrameProof {
-                                    arena_mark: frame.arena_mark,
-                                    yard_mark: frame.yard_mark,
-                                    handoff_mark: frame.handoff_mark,
-                                    lane_mark: frame.lane_mark,
-                                    inplace_write_escaped: frame.inplace_write_escaped,
-                                })
+                            let source = args[0];
+                            let mut frames = self.frames.iter().rev().take(8).map(proof_of);
+                            let top = frames.next()?;
+                            if !source.is_map() {
+                                return Some(top);
+                            }
+                            let mut escaped = top.inplace_write_escaped;
+                            let mut chosen = top;
+                            for proof in frames {
+                                escaped |= proof.inplace_write_escaped;
+                                if escaped
+                                    || proof
+                                        .receipt_for_owned_source(source, &self.arena)
+                                        .is_none()
+                                {
+                                    break;
+                                }
+                                chosen = proof;
+                            }
+                            Some(chosen)
                         })
                         .flatten();
                     let result = self.arena.with_alloc_space(alloc_space, |arena| {
@@ -921,40 +948,39 @@ impl VM {
                     self.stack.push(result);
                 }
 
-                TAIL_CALL_SELF => {
+                TAIL_CALL_SELF | TAIL_CALL_SELF_THIN => {
                     let argc = read_u8!(code, ip) as usize;
                     let _owned_mask = read_u8!(code, ip);
                     let args_start = self.stack.len() - argc;
 
                     // Self-TCO mirror of the TAIL_CALL_KNOWN no-alloc skip:
                     // if the current chunk is alloc-free, the finalizer
-                    // call is guaranteed no-op. Existing TAIL_CALL_SELF_THIN
-                    // covers self-recursive thin chunks; this branch picks
-                    // up bodies that the bytecode classifier rejected for
-                    // unrelated reasons (e.g. local_count > MAX) but
-                    // `compute_alloc_info` still proves alloc-free.
-                    let self_no_alloc = self.code.functions[fn_id as usize].no_alloc;
+                    // call is guaranteed no-op. This picks up bodies that the
+                    // bytecode classifier rejected for unrelated reasons (e.g.
+                    // local_count > MAX) but `compute_alloc_info` still proves
+                    // alloc-free.
+                    //
+                    // A thin chunk allocates nothing itself, but a builtin or
+                    // a helper it calls can, and without a boundary every
+                    // value a step drops would stay in the frame's regions
+                    // until the loop returns. It takes the boundary once its
+                    // regions grew by a few dozen entries, so a step that only
+                    // carries a helper's result on does not pay for one each.
+                    const THIN_BOUNDARY_GROWTH: usize = 32;
+                    let frame = self.frames.last().unwrap();
+                    let grown =
+                        self.arena.young_len() + self.arena.yard_len() + self.arena.handoff_len();
+                    let marks = frame.arena_mark as usize
+                        + frame.yard_mark as usize
+                        + frame.handoff_mark as usize;
+                    let needs_boundary = !self.code.functions[fn_id as usize].no_alloc
+                        && (op == TAIL_CALL_SELF
+                            || frame.globals_dirty
+                            || grown > marks + THIN_BOUNDARY_GROWTH);
                     let mut lane_rebased = false;
-                    if !self_no_alloc {
-                        let frame_mark = self.frames.last().unwrap().arena_mark;
-                        let yard_mark = self.frames.last().unwrap().yard_mark;
-                        let handoff_mark = self.frames.last().unwrap().handoff_mark;
-                        let lane_mark = self.frames.last().unwrap().lane_mark;
-                        let globals_dirty = self.frames.last().unwrap().globals_dirty;
-                        let yard_dirty = self.frames.last().unwrap().yard_dirty;
-                        let inplace_write_escaped =
-                            self.frames.last().unwrap().inplace_write_escaped;
+                    if needs_boundary {
                         let mut promoted_args = self.stack[args_start..].to_vec();
-                        lane_rebased = self.finalize_frame_locals_for_tail_call(
-                            frame_mark,
-                            yard_mark,
-                            handoff_mark,
-                            lane_mark,
-                            globals_dirty,
-                            yard_dirty,
-                            inplace_write_escaped,
-                            &mut promoted_args,
-                        );
+                        lane_rebased = self.finalize_frame_locals_for_tail_call(&mut promoted_args);
                         self.stack[bp..(argc + bp)].copy_from_slice(&promoted_args[..argc]);
                     } else {
                         self.stack.copy_within(args_start..args_start + argc, bp);
@@ -964,17 +990,19 @@ impl VM {
                         self.stack[bp + i] = NanValue::UNIT;
                     }
                     self.stack.truncate(bp + lc);
-                    let frame = self.frames.last_mut().unwrap();
-                    frame.globals_dirty = false;
-                    frame.yard_dirty = false;
-                    frame.handoff_dirty = false;
-                    frame.yard_mark = self.arena.yard_len() as u32;
-                    if lane_rebased {
-                        // The destructive boundary renewed every carried
-                        // receipt into the post-bump epoch. Small-young/no-op
-                        // paths keep the old mark because their suffix is still
-                        // owned by this frame.
-                        frame.lane_mark = self.arena.lane_mark();
+                    if needs_boundary {
+                        let frame = self.frames.last_mut().unwrap();
+                        frame.globals_dirty = false;
+                        frame.yard_dirty = false;
+                        frame.handoff_dirty = false;
+                        frame.yard_mark = self.arena.yard_len() as u32;
+                        if lane_rebased {
+                            // The destructive boundary renewed every carried
+                            // receipt into the post-bump epoch. Small-young/no-op
+                            // paths keep the old mark because their suffix is still
+                            // owned by this frame.
+                            frame.lane_mark = self.arena.lane_mark();
+                        }
                     }
                     // `inplace_write_escaped` deliberately does NOT join the
                     // three bits above: those are re-derived from the region
@@ -983,27 +1011,6 @@ impl VM {
                     // on `CallFrame`. Clearing it here loses the element a few
                     // iterations later, as an out-of-bounds arena index in
                     // `tail_call_evacuation_keeps_the_element_written_in_place`.
-                    if let Some(profile) = self.profile.as_mut() {
-                        let chunk = &self.code.functions[fn_id as usize];
-                        profile.record_function_entry(chunk, fn_id);
-                    }
-                    ip = 0;
-                }
-
-                TAIL_CALL_SELF_THIN => {
-                    let argc = read_u8!(code, ip) as usize;
-                    let _owned_mask = read_u8!(code, ip);
-                    let args_start = self.stack.len() - argc;
-                    // Thin frame: no heap alloc, no arena work.
-                    // Just copy args in-place and reset ip.
-                    for i in 0..argc {
-                        self.stack[bp + i] = self.stack[args_start + i];
-                    }
-                    let lc = self.frames.last().unwrap().local_count as usize;
-                    for i in argc..lc {
-                        self.stack[bp + i] = NanValue::UNIT;
-                    }
-                    self.stack.truncate(bp + lc);
                     if let Some(profile) = self.profile.as_mut() {
                         let chunk = &self.code.functions[fn_id as usize];
                         profile.record_function_entry(chunk, fn_id);
@@ -1028,25 +1035,8 @@ impl VM {
                         // fall through to its no-op branch. Skipping the
                         // call shaves a handful of length reads + branches
                         // per iteration in tight numeric loops.
-                        let frame_mark = self.frames.last().unwrap().arena_mark;
-                        let yard_mark = self.frames.last().unwrap().yard_mark;
-                        let handoff_mark = self.frames.last().unwrap().handoff_mark;
-                        let lane_mark = self.frames.last().unwrap().lane_mark;
-                        let globals_dirty = self.frames.last().unwrap().globals_dirty;
-                        let yard_dirty = self.frames.last().unwrap().yard_dirty;
-                        let inplace_write_escaped =
-                            self.frames.last().unwrap().inplace_write_escaped;
                         let mut promoted_args = self.stack[args_start..].to_vec();
-                        lane_rebased = self.finalize_frame_locals_for_tail_call(
-                            frame_mark,
-                            yard_mark,
-                            handoff_mark,
-                            lane_mark,
-                            globals_dirty,
-                            yard_dirty,
-                            inplace_write_escaped,
-                            &mut promoted_args,
-                        );
+                        lane_rebased = self.finalize_frame_locals_for_tail_call(&mut promoted_args);
                         self.stack[bp..(argc + bp)].copy_from_slice(&promoted_args[..argc]);
                     } else {
                         // Args already on the stack at the right position
