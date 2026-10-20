@@ -551,6 +551,39 @@ fn kernel_module_names_are_reserved_for_the_kernel() {
     );
 }
 
+/// A project file under `kernel/` takes a `Kernel.*` name, and is refused
+/// for that itself — by `check`, `verify` and `run` alike — instead of
+/// passing alone and failing first at a module that depends on it. That
+/// module hears the same reason, not one about plans modules.
+#[test]
+fn a_project_file_that_takes_a_kernel_name_is_refused_itself() {
+    let hash = "module Hash\n    intent = \"Not the kernel's.\"\n    effects []\n\nfn h(x: Int) -> Int\n    ? \"Plus one.\"\n    x + 1\n\nverify h\n    h(1) => 2\n";
+    let names = "module Names\n    intent = \"Uses it.\"\n    depends [Kernel.Hash]\n    effects []\n\nfn n(x: Int) -> Int\n    ? \"Calls it.\"\n    Kernel.Hash.h(x)\n\nverify n\n    n(1) => 2\n";
+    let dir = scratch("reserved-entry");
+    fs::create_dir_all(dir.join("kernel")).unwrap();
+    fs::write(dir.join("kernel/hash.av"), hash).unwrap();
+    fs::write(dir.join("names.av"), names).unwrap();
+    let reserved = "'Kernel.Hash' is a module name reserved for the proof kernel; the project file 'kernel/hash.av' cannot use it";
+    for command in ["check", "verify", "run"] {
+        let out = aver_in(&dir, &[command, "kernel/hash.av"], &[]);
+        let text = output_text(&out);
+        assert!(!out.status.success(), "{command}: {}", format_output(&out));
+        assert!(
+            text.contains(reserved) && text.contains("rename that directory"),
+            "{command}: {text}"
+        );
+    }
+    let out = aver_in(&dir, &["check", "names.av"], &[]);
+    let text = output_text(&out);
+    let _ = fs::remove_dir_all(&dir);
+    assert!(!out.status.success(), "{}", format_output(&out));
+    assert!(
+        text.contains("'Kernel.Hash' is a module name reserved for the proof kernel")
+            && !text.contains("only a plans module"),
+        "{text}"
+    );
+}
+
 #[test]
 fn the_helper_library_keeps_the_kernels_conventions() {
     let kernel = repo_root().join("tools/proof-kernel");

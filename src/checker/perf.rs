@@ -376,7 +376,7 @@ fn extract_eq_comparison_target(expr: &Expr) -> Option<&Expr> {
 // ---------------------------------------------------------------------------
 
 /// Collect all TailCall arg lists from the fn body.
-fn collect_tailcall_args(stmts: &[Stmt]) -> Vec<&Vec<Spanned<Expr>>> {
+fn collect_tailcall_args(stmts: &[Stmt]) -> Vec<(&str, &Vec<Spanned<Expr>>)> {
     let mut result = Vec::new();
     for stmt in stmts {
         match stmt {
@@ -387,13 +387,14 @@ fn collect_tailcall_args(stmts: &[Stmt]) -> Vec<&Vec<Spanned<Expr>>> {
     result
 }
 
-fn collect_tailcall_args_expr<'a>(expr: &'a Expr, out: &mut Vec<&'a Vec<Spanned<Expr>>>) {
+fn collect_tailcall_args_expr<'a>(
+    expr: &'a Expr,
+    out: &mut Vec<(&'a str, &'a Vec<Spanned<Expr>>)>,
+) {
     match expr {
         Expr::TailCall(boxed) => {
-            let TailCallData {
-                target: _, args, ..
-            } = boxed.as_ref();
-            out.push(args);
+            let TailCallData { target, args, .. } = boxed.as_ref();
+            out.push((target.as_str(), args));
         }
         Expr::BinOp(_, left, right) => {
             collect_tailcall_args_expr(&left.node, out);
@@ -459,6 +460,14 @@ fn check_loop_invariant(fd: &FnDef, warnings: &mut Vec<CheckFinding>) {
     if tailcall_args.is_empty() {
         return;
     }
+    // A tail call to another function of the recursive group passes its
+    // arguments to that function's parameters, not back to ours: whatever
+    // `step(e, ...)` does to `e` before calling us again is out of sight
+    // here. Mutual recursion is left unflagged rather than guessed at.
+    if tailcall_args.iter().any(|(target, _)| *target != fd.name) {
+        return;
+    }
+    let tailcall_args: Vec<_> = tailcall_args.into_iter().map(|(_, args)| args).collect();
 
     // 2-3. For each TailCall, check which params are forwarded unchanged.
     // Invariant params = intersection across ALL TailCall sites.
@@ -1049,6 +1058,23 @@ mod tests {
         assert!(
             !warnings.iter().any(|w| w.message.contains("Float.fromInt")),
             "expected no warning when width changes, got {:?}",
+            warnings
+        );
+    }
+
+    /// `e` reaches `halve` again only through `step`, which halves it: the
+    /// round trip changes it even though `halve` passes it on unchanged.
+    #[test]
+    fn b4_mutual_recursion_no_warning() {
+        let src = "fn halve(e: Int, acc: Int) -> Int\n    match e == 0\n        true -> acc\n        false -> step(e, acc, Int.mod(e, 2) == 1)\n\nfn step(e: Int, acc: Int, odd: Bool) -> Int\n    match odd\n        true -> halve(Int.div(e, 2), acc + 1)\n        false -> halve(Int.div(e, 2), acc + 1)\n";
+        let mut items = crate::source::parse_source(src).expect("parse");
+        crate::tco::transform_program(&mut items);
+        let warnings = collect_perf_warnings(&items);
+        assert!(
+            !warnings
+                .iter()
+                .any(|w| w.message.contains("doesn't change")),
+            "expected no loop-invariant warning across a mutual call, got {:?}",
             warnings
         );
     }

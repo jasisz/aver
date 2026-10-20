@@ -56,7 +56,72 @@ pub fn parse_project_source(
     module_root: &str,
     file: &str,
 ) -> Result<Vec<TopLevel>, String> {
-    parse_source_with_verify_ceiling(source, project_verify_ceiling(module_root, file))
+    let items =
+        parse_source_with_verify_ceiling(source, project_verify_ceiling(module_root, file))?;
+    if let Some(name) = reserved_kernel_name(file, module_root, &items) {
+        return Err(reserved_kernel_name_message(&name, file));
+    }
+    Ok(items)
+}
+
+/// The `Kernel.*` name a project file takes, if it takes one. A file under
+/// the `kernel` directory of the module root is the module `Kernel.<...>`
+/// to whoever depends on it, and those names belong to the proof kernel the
+/// compiler ships. The kernel's own source tree is the one exception; the
+/// embedded kernel and standard plans never come through here.
+fn reserved_kernel_name(file: &str, module_root: &str, items: &[TopLevel]) -> Option<String> {
+    let rel = path_under_root(Path::new(file), Path::new(module_root))?;
+    let mut segments: Vec<String> = rel
+        .parent()?
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect();
+    if !segments.first()?.eq_ignore_ascii_case("kernel") || is_kernel_source_tree(module_root) {
+        return None;
+    }
+    let own = visibility::module_decl(items)
+        .map(|decl| decl.name.clone())
+        .or_else(|| Some(rel.file_stem()?.to_string_lossy().into_owned()))?;
+    segments.push(own);
+    Some(
+        segments
+            .iter()
+            .map(|segment| {
+                let mut chars = segment.chars();
+                chars
+                    .next()
+                    .map(|first| first.to_uppercase().chain(chars).collect())
+                    .unwrap_or_default()
+            })
+            .collect::<Vec<String>>()
+            .join("."),
+    )
+}
+
+/// `file` relative to `root`, when it lies under it: as written first, then
+/// with both directories resolved on the filesystem.
+fn path_under_root(file: &Path, root: &Path) -> Option<PathBuf> {
+    if let Ok(rel) = file.strip_prefix(root) {
+        return Some(rel.to_path_buf());
+    }
+    let dir = match file.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        _ => Path::new("."),
+    };
+    let dir = std::fs::canonicalize(dir).ok()?;
+    let root = std::fs::canonicalize(root).ok()?;
+    let rel = dir.strip_prefix(&root).ok()?;
+    Some(rel.join(file.file_name()?))
+}
+
+/// Why a project file cannot have the kernel module name `name`.
+fn reserved_kernel_name_message(name: &str, file: &str) -> String {
+    format!(
+        "'{name}' is a module name reserved for the proof kernel; the project file '{file}' cannot use it. The names `Kernel.*` belong to the proof kernel the compiler ships, and a file under the `kernel` directory takes one: rename that directory"
+    )
 }
 
 /// The module root a command works against when the user names none: the
@@ -321,9 +386,9 @@ pub fn resolve_module_source(
     // Only the kernel's own source tree reads them from its files.
     if is_kernel_module(name) && !is_kernel_source_tree(module_root) {
         if let Some(path) = find_module_file(name, module_root) {
-            return Err(format!(
-                "'{name}' is a module name reserved for the proof kernel; the project file '{}' cannot use it",
-                path.display()
+            return Err(reserved_kernel_name_message(
+                name,
+                &path.display().to_string(),
             ));
         }
         return Ok(resolve_kernel_api_source(name));
@@ -365,6 +430,11 @@ fn kernel_dependency_refusal(
         || parent_path.starts_with("<aver-stdlib>")
         || is_kernel_source_tree(module_root)
     {
+        return None;
+    }
+    // A project file that took the kernel's name is the error, not the
+    // module depending on it: resolving it says so.
+    if find_module_file(dep, module_root).is_some() {
         return None;
     }
     let decl = visibility::module_decl(parent_items)?;
@@ -975,6 +1045,14 @@ pub fn load_program_with_cache(
     mode: LoadMode,
     cache: &mut ProgramLoadCache,
 ) -> Result<Program, LoadError> {
+    if let Some(name) =
+        reserved_kernel_name(&entry_path.to_string_lossy(), module_root, entry_items)
+    {
+        return Err(LoadError::Read(reserved_kernel_name_message(
+            &name,
+            &entry_path.display().to_string(),
+        )));
+    }
     let mut walk = Walk::new(module_root, mode, cache);
     let mut entry_items = entry_items.to_vec();
     if let Some(module) = visibility::module_decl(&entry_items) {

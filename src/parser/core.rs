@@ -421,6 +421,9 @@ impl Parser {
             TokenKind::Eof => Ok(None),
             _ => {
                 let expr = self.parse_expr()?;
+                if self.check_exact(&TokenKind::Assign) {
+                    return Err(self.binding_target_error(&expr.node));
+                }
                 self.skip_newlines();
                 Ok(Some(TopLevel::Stmt(Stmt::Expr(expr))))
             }
