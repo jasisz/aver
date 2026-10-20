@@ -1282,10 +1282,7 @@ pub fn shortens(
                 Err(_) => false,
                 Ok(body @ _) => {
                     ((!crate::proof_kernel::aver_generated::kernel::induct::anyBack(
-                        &crate::proof_kernel::aver_generated::kernel::induct::callees(
-                            d.clone(),
-                            ds,
-                        ),
+                        &crate::proof_kernel::aver_generated::kernel::induct::callees(d, ds),
                         d.name.clone(),
                         ds,
                     )) && crate::proof_kernel::aver_generated::kernel::induct::shorterSomewhere(
@@ -1873,7 +1870,7 @@ pub fn eachNotMutual(
     let ds @ _ = std::sync::Arc::new(ds);
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        aver_list_match!(todo, [] => { return Ok(()); }, [d, rest] => { if (crate::proof_kernel::aver_generated::kernel::induct::reaches(crate::proof_kernel::aver_generated::kernel::induct::callees(d.clone(), &*ds), d.name.clone(), (*ds).clone(), aver_rt::AverList::empty(), aver_rt::AverInt::from_i64(ds.len() as i64)) && (!crate::proof_kernel::aver_generated::kernel::induct::rooted(d.clone(), (*ds).clone(), (*ds).clone()))) { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(46)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name)))); __b }; __b.push_str(&AverStr::from(" is part of a mutual recursion")); __b })); } else { {
+        aver_list_match!(todo, [] => { return Ok(()); }, [d, rest] => { if (crate::proof_kernel::aver_generated::kernel::induct::reaches(crate::proof_kernel::aver_generated::kernel::induct::callees(&d, &*ds), d.name.clone(), (*ds).clone(), aver_rt::AverList::empty(), aver_rt::AverInt::from_i64(ds.len() as i64)) && (!crate::proof_kernel::aver_generated::kernel::induct::rooted(d.clone(), (*ds).clone(), (*ds).clone()))) { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(46)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name)))); __b }; __b.push_str(&AverStr::from(" is part of a mutual recursion")); __b })); } else { {
             let __tco0 = rest;
             todo = __tco0;
             continue;
@@ -1948,7 +1945,7 @@ pub fn calleesOf(
     let ds @ _ = std::sync::Arc::new(ds);
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        aver_list_match!(todo, [] => { return aver_rt::AverList::empty(); }, [d, rest] => { if (d.name == name) { return crate::proof_kernel::aver_generated::kernel::induct::callees(d, &*ds); } else { {
+        aver_list_match!(todo, [] => { return aver_rt::AverList::empty(); }, [d, rest] => { if (d.name == name) { return crate::proof_kernel::aver_generated::kernel::induct::callees(&d, &*ds); } else { {
             let __tco1 = rest;
             todo = __tco1;
             continue;
@@ -1959,17 +1956,17 @@ pub fn calleesOf(
 /// The other definitions of the script d calls.
 #[inline(always)]
 pub fn callees(
-    mut d @ _: crate::proof_kernel::aver_generated::kernel::proof::Def,
+    d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
     ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
 ) -> aver_rt::AverList<AverStr> {
     crate::proof_kernel::cancel_checkpoint();
     crate::proof_kernel::aver_generated::kernel::induct::onlyDefs(
         aver_rt::AverList::concat(
-            &crate::proof_kernel::aver_generated::kernel::induct::namesCalled(d.body),
+            &crate::proof_kernel::aver_generated::kernel::induct::namesCalled(d.body.clone()),
             &crate::proof_kernel::aver_generated::kernel::induct::letNames(&d.lets),
         ),
         ds.clone(),
-        d.name,
+        d.name.clone(),
     )
 }
 
