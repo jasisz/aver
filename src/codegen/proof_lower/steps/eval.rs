@@ -3828,13 +3828,6 @@ impl Env<'_> {
             nl.push(proof, rc);
             return Ok(Ok(meet(nl, nr)));
         }
-        // A predicate hypothesis that chooses by a Bool: open it at the
-        // arm its guard selects, splitting on the guard when it is open.
-        if depth > 0
-            && let Some(proof) = self.open_hypothesis(lhs, rhs, depth)?
-        {
-            return Ok(Ok(proof));
-        }
         // A hypothesis that calls a function evaluation can open (at a
         // list cell or a constructor): evaluated, it contradicts its stated
         // value and closes the case, or its lines are cut in.
@@ -4460,105 +4453,6 @@ impl Env<'_> {
             }));
         }
         Ok(None)
-    }
-
-    /// `lhs = rhs` once the first hypothesis `f(args) = true` not yet
-    /// opened, where `f`'s body is a `match` on a Bool with one arm for
-    /// `true` and one for `false`, is opened: its guard decided by a
-    /// hypothesis or by linear arithmetic, or split on otherwise; in each
-    /// case the lines of the selected arm (its `Bool.and` parts) are cut in
-    /// as hypotheses. `None` when no hypothesis is such a call.
-    fn open_hypothesis(
-        &mut self,
-        lhs: &Term,
-        rhs: &Term,
-        depth: usize,
-    ) -> Result<Option<Proof>, String> {
-        let found = self.hyps.iter().rev().find_map(|(name, e)| {
-            if term::bool_value(&e.rhs) != Some(true)
-                || self.opened.contains(&*term::canon_ref(&e.lhs))
-            {
-                return None;
-            }
-            let ResolvedExpr::Call(ResolvedCallee::Fn(id), args) = &e.lhs.node else {
-                return None;
-            };
-            Some((name.clone(), canon(&e.lhs), *id, args.clone()))
-        });
-        let Some((name, fact, id, args)) = found else {
-            return Ok(None);
-        };
-        let Some(def) = self.def(id) else {
-            return Ok(None);
-        };
-        let ResolvedExpr::Match { subject, arms } = &def.body.node else {
-            return Ok(None);
-        };
-        let arm_of = |v: bool| {
-            arms.iter().position(|a| {
-                matches!(&a.pattern, ResolvedPattern::Literal(crate::ast::Literal::Bool(b)) if *b == v)
-            })
-        };
-        let (Some(at_true), Some(at_false)) = (arm_of(true), arm_of(false)) else {
-            return Ok(None);
-        };
-        if arms.len() != 2 {
-            return Ok(None);
-        }
-        let args: Vec<Term> = args.iter().map(canon).collect();
-        let guard = canon(&term::subst(subject, &def.outer(&args)?)?);
-        self.mark_used(id);
-        self.opened.push(fact.clone());
-        // The arm for `value`, its lines cut in, then the claim under them.
-        let open = |env: &mut Self, value: bool, premise: Proof| -> Result<Proof, String> {
-            let k = (if value { at_true } else { at_false }) as u32 + 1;
-            let unfold = Proof::Unfold {
-                fn_id: id,
-                arm: k,
-                args: args.clone(),
-                binders: Vec::new(),
-                premise: Some(Box::new(premise)),
-            };
-            let script = env.scratch_script();
-            let body = crate::ir::proof_steps::claim::claim(&unfold, &script, &env.hyps)?.rhs;
-            let from = Proof::Trans {
-                terms: vec![body.clone(), fact.clone(), term::boolean(true)],
-                steps: vec![Proof::Symm(Box::new(unfold)), Proof::Hyp(name.clone())],
-            };
-            let mut lines = Vec::new();
-            super::split_and(&body, from, &mut lines);
-            env.prove_under_lines(lines, lhs, rhs, depth)
-        };
-        let decided = match self.hyp_for(&guard) {
-            Some((h, v)) => term::bool_value(&v).map(|b| (Proof::Hyp(h), b)),
-            None => self
-                .decide_linearly(&guard)
-                .and_then(|(p, v)| Some((p, term::bool_value(&v)?))),
-        };
-        let out = match decided {
-            Some((premise, value)) => open(self, value, premise),
-            None => {
-                let h = self.fresh_hyp();
-                let branch = |env: &mut Self, v: bool| -> Result<Proof, String> {
-                    env.hyps
-                        .push((h.clone(), Eqn::new(guard.clone(), term::boolean(v))));
-                    let out = open(env, v, Proof::Hyp(h.clone()));
-                    env.hyps.pop();
-                    out
-                };
-                match (branch(self, true), branch(self, false)) {
-                    (Ok(t), Ok(f)) => Ok(Proof::Cases {
-                        on: guard.clone(),
-                        hyp: h.clone(),
-                        if_true: Box::new(t),
-                        if_false: Box::new(f),
-                    }),
-                    (Err(e), _) | (_, Err(e)) => Err(e),
-                }
-            }
-        };
-        self.opened.pop();
-        out.map(Some)
     }
 
     /// `lhs = rhs` once the innermost hypothesis `f(args) = b` not yet

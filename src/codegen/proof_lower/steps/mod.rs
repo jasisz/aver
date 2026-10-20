@@ -990,12 +990,40 @@ fn prove_part(
         env.mark_used(id);
     }
     Ok(Part {
+        laws: laws_reached(&proof, &env.laws),
         proof,
         advice: std::mem::take(&mut env.advice),
         defs: env.used_defs(),
         consts: env.used_consts(),
-        laws: env.laws.clone(),
     })
+}
+
+/// The laws of `laws` that `proof` applies, and those the facts among them
+/// apply or carry in their own scripts: a case closed on the way and then
+/// given up may have used others, which the script would only cite.
+fn laws_reached(proof: &Proof, laws: &[LawRef]) -> Vec<LawRef> {
+    let mut keys = Vec::new();
+    laws_applied(proof, &mut keys);
+    let mut i = 0;
+    while i < keys.len() {
+        if let Some(fact) = laws
+            .iter()
+            .find(|l| l.key == keys[i])
+            .and_then(|l| l.fact.as_ref())
+        {
+            laws_applied(&fact.proof, &mut keys);
+            for l in &fact.laws {
+                if !keys.contains(&l.key) {
+                    keys.push(l.key.clone());
+                }
+            }
+        }
+        i += 1;
+    }
+    laws.iter()
+        .filter(|l| keys.contains(&l.key))
+        .cloned()
+        .collect()
 }
 
 /// One cut in scope order: a `when` line, or reason `k` (from 1) with its

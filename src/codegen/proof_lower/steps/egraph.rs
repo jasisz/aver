@@ -22,9 +22,10 @@
 //! A law instance whose `when` the table cannot show is noted: once its
 //! two sides are known to be different Bool values, its `when` is false
 //! (a case on it, the case where it holds absurd). Where all that does not
-//! close the claim, the table opens a case on a Bool side of the claim, or
-//! on a list variable a known call reads with its `match`, each case a copy
-//! or a table of its own.
+//! close the claim, the table opens a case on a Bool side of the claim, on
+//! a Bool a definition's `match` waits for to open, or on a list variable a
+//! known call reads with its `match`, each case a copy or a table of its
+//! own.
 //!
 //! Everything is bounded: terms, rounds, law instances, cases, the size of
 //! the proof handed back, and the fuel the table may spend proving
@@ -65,6 +66,8 @@ pub(crate) const MAX_TABLES: usize = 16;
 const MAX_EXPLAIN: usize = 48;
 /// Most cases on a Bool side one table opens, one inside another.
 const MAX_SPLITS: usize = 2;
+/// Most Bools a `match` waits for that one table tries a case on.
+const MAX_WAITS: usize = 2;
 /// Largest proof a table hands back.
 const MAX_PROOF: usize = 1100;
 /// Most cases on `x <= k` a read of `x != k` opens, one inside another.
@@ -242,6 +245,9 @@ pub(crate) struct Table {
     gen_now: u8,
     /// The comparisons a `match` waits for to open a definition.
     guards: Vec<Id>,
+    /// A term with a Bool value whose `match` waits for a Bool subject,
+    /// and that subject.
+    waits: Vec<(Id, Id)>,
     /// For each sum read as a polynomial, how many joins the table had then.
     arith_at: HashMap<Id, usize>,
     /// Which definitions call themselves through another.
@@ -540,6 +546,7 @@ impl Table {
             explaining: std::cell::Cell::new(0),
             gen_now: 0,
             guards: Vec::new(),
+            waits: Vec::new(),
             arith_at: HashMap::new(),
             mutual: HashMap::new(),
             decided_at: HashMap::new(),
@@ -1348,7 +1355,7 @@ impl Table {
                         continue;
                     };
                     let Some((m, k, binders, cell)) = self.pick_arm(arms, sid) else {
-                        self.note_guard(sid);
+                        self.note_guard(id, sid);
                         continue;
                     };
                     let Ok((_, body)) = crate::ir::proof_steps::claim::arm_equation(
@@ -1375,7 +1382,7 @@ impl Table {
                 ResolvedExpr::Match { subject, arms } => {
                     let sid = self.nodes[id].kids[0];
                     let Some((m, k, binders, cell)) = self.pick_arm(arms, sid) else {
-                        self.note_guard(sid);
+                        self.note_guard(id, sid);
                         continue;
                     };
                     let _ = subject;
@@ -1425,10 +1432,16 @@ impl Table {
         found
     }
 
-    /// A subject that is an Int comparison: linear arithmetic may decide it.
-    fn note_guard(&mut self, sid: Id) {
+    /// A subject `sid` term `id` waits for: linear arithmetic may decide an
+    /// Int comparison, and a case may be opened on a Bool.
+    fn note_guard(&mut self, id: Id, sid: Id) {
         if int_cmp(self.term(sid)).is_some() && !self.guards.contains(&sid) {
             self.guards.push(sid);
+        }
+        if matches!(self.term(sid).ty(), Some(crate::ast::Type::Bool))
+            && !self.waits.contains(&(id, sid))
+        {
+            self.waits.push((id, sid));
         }
     }
 
@@ -2228,6 +2241,21 @@ impl Table {
                 if boolish && !order && self.bool_of(side).is_none() {
                     cands.push(side);
                 }
+            }
+        }
+        // Then on the first Bools the `match` of a term with a known Bool
+        // value waits for, where the table knows none for the Bool: in each
+        // case the term opens at an arm.
+        let sides = cands.len();
+        for &(id, w) in &self.waits {
+            if cands.len() == sides + MAX_WAITS {
+                break;
+            }
+            if self.bool_of(id).is_some()
+                && self.bool_of(w).is_none()
+                && !cands.iter().any(|&c| self.same(c, w))
+            {
+                cands.push(w);
             }
         }
         for c in cands {

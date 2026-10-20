@@ -336,6 +336,7 @@
   "obligations": [
    "normalizedValue.carryPreservesValue.because1",
    "normalizedValue.carryPreservesValue.because2",
+   "normalizedValue.carryPreservesValue.implication",
    "transferredValue.sameRawValue.because1",
    "transferredValue.sameRawValue.because3",
    "transferredValue.sameRawValue.implication"
@@ -349,6 +350,9 @@
   ]
  },
  "projects/k5_fdiv/domain/binade.av": {
+  "obligations": [
+   "magnitudeWindow.executableMagnitude.implication"
+  ],
   "tactic": [
    "magnitudeWindow.executableMagnitude",
    "negativeWindow.executableMagnitude",
@@ -359,7 +363,8 @@
  "projects/k5_fdiv/domain/binadeorder.av": {
   "obligations": [
    "fractionWindow.integerMagnitude.because1",
-   "fractionWindow.integerMagnitude.because2"
+   "fractionWindow.integerMagnitude.because2",
+   "fractionWindow.integerMagnitude.implication"
   ],
   "tactic": [
    "fractionWindow.integerMagnitude"
@@ -468,10 +473,12 @@
    "fracExpo.executableMagnitude.because3",
    "fracExpo.executableMagnitude.because4",
    "fracExpo.executableMagnitude.because5",
+   "fracExpo.executableMagnitude.implication",
    "fracExpo.rationalMagnitude.because2",
    "fracExpo.rationalMagnitude.because3",
    "fracExpo.rationalMagnitude.because4",
    "fracExpo.rationalMagnitude.because5",
+   "fracExpo.rationalMagnitude.because6",
    "modelAway.normalizedModel.implication",
    "modelCeiling.normalizedModel.because10",
    "modelCeiling.normalizedModel.because11",
@@ -479,6 +486,7 @@
    "modelCeiling.normalizedModel.because3",
    "modelCeiling.normalizedModel.because4",
    "modelCeiling.normalizedModel.because6",
+   "modelCeiling.normalizedModel.implication",
    "modelSign.normalizedSign.because1",
    "modelSign.normalizedSign.because2",
    "modelSign.normalizedSign.because3",
@@ -486,9 +494,12 @@
    "modelSign.normalizedSign.because5",
    "modelSign.normalizedSign.because6",
    "modelSign.normalizedSign.because7",
+   "modelSticky.normalizedModel.implication",
+   "modelSticky.positivePrecision.implication",
    "modelStickyExact.normalizedModel.because2",
    "modelStickyExact.normalizedModel.because3",
    "modelStickyExact.normalizedModel.because5",
+   "modelStickyExact.normalizedModel.implication",
    "modelStickyHalf.normalizedModel.because2",
    "modelStickyHalf.normalizedModel.because3",
    "modelStickyHalf.normalizedModel.because4",
@@ -502,8 +513,10 @@
    "sameAway.normalizedModel.because3",
    "sameAway.normalizedModel.implication",
    "sameSticky.normalizedModel.because2",
+   "sameSticky.normalizedModel.implication",
    "sameTruncation.normalizedModel.because2",
    "sameTruncation.normalizedModel.because3",
+   "sameTruncation.normalizedModel.implication",
    "singleBitHalf.normalizedModel.because1",
    "singleBitHalf.normalizedModel.because10",
    "singleBitHalf.normalizedModel.because11",
@@ -515,7 +528,8 @@
    "singleBitHalf.normalizedModel.because6",
    "singleBitHalf.normalizedModel.because7",
    "singleBitHalf.normalizedModel.because8",
-   "singleBitHalf.normalizedModel.because9"
+   "singleBitHalf.normalizedModel.because9",
+   "singleBitHalf.normalizedModel.implication"
   ],
   "steps": [
    "awayFormula.knownExponent",
@@ -647,19 +661,19 @@
  },
  "projects/k5_fdiv/domain/roundscale.av": {
   "obligations": [
-   "cancelProduct.positiveFactor.because1",
    "ceilingFromWindow.euclideanWindow.implication",
    "scaledCeiling.positiveScale.because1",
    "scaledCeiling.positiveScale.because2",
-   "scaledCeiling.positiveScale.because3"
+   "scaledCeiling.positiveScale.because3",
+   "scaledExactness.positiveScale.because1"
   ],
   "steps": [
+   "cancelProduct.positiveFactor",
    "ceilingExact.exactQuotient",
    "ceilingInexact.strictRemainder",
    "remainderQuotient.smallRemainder"
   ],
   "tactic": [
-   "cancelProduct.positiveFactor",
    "ceilingFromWindow.euclideanWindow",
    "scaledCeiling.positiveScale",
    "scaledExactness.positiveScale"
@@ -723,6 +737,7 @@
  },
  "projects/k5_fdiv/domain/valuechain.av": {
   "obligations": [
+   "sameValueThrough.positiveMiddle.because2",
    "sameValueThrough.positiveMiddle.implication"
   ],
   "tactic": [
