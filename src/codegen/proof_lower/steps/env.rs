@@ -21,6 +21,14 @@ pub(crate) struct Env<'a> {
     /// Whether a definition counts an Int toward zero, and whether it
     /// divides it on the way, by [`Env::counts_down`].
     countdowns: std::cell::RefCell<HashMap<FnId, (bool, bool)>>,
+    /// Whether a recursive definition's recursion lets steps open it, and
+    /// why not, by [`Env::recursion_gate`].
+    recursion_gates: std::cell::RefCell<HashMap<FnId, Result<(), Option<String>>>>,
+    /// What the termination gate reads of each definition's recursion, by
+    /// [`Env::recursion_of`].
+    recursions: std::cell::RefCell<
+        HashMap<FnId, Result<Option<crate::ir::proof_steps::induct::Recursion>, String>>,
+    >,
     /// The division by a literal that a step takes out the multiples of
     /// the divisor from, with its proof, which reads no hypothesis, by the
     /// division (see `Env::division_step`).
@@ -416,6 +424,8 @@ impl<'a> Env<'a> {
             defs: HashMap::new(),
             raw_defs: std::cell::RefCell::new(HashMap::new()),
             countdowns: std::cell::RefCell::new(HashMap::new()),
+            recursion_gates: std::cell::RefCell::new(HashMap::new()),
+            recursions: std::cell::RefCell::new(HashMap::new()),
             wholes: std::cell::RefCell::new(HashMap::new()),
             used: Vec::new(),
             consts: HashMap::new(),
@@ -632,11 +642,31 @@ impl<'a> Env<'a> {
         }
         let ds = self.reachable_defs(def.fn_id);
         let countdown = matches!(
-            induct::recursion(def, &ds),
+            self.recursion_of(def),
             Ok(Some(induct::Recursion { guard: Some(_), .. }))
         );
         let found = (countdown, induct::divides_down(def, &ds));
         self.countdowns.borrow_mut().insert(def.fn_id, found);
+        found
+    }
+
+    /// What the termination gate reads of `def`'s recursion, through the
+    /// definitions it reaches ([`crate::ir::proof_steps::induct::recursion`]):
+    /// read once per definition. Every member of a group of definitions
+    /// calling each other reaches the same ones, so one reading serves
+    /// each member that asks about another.
+    fn recursion_of(
+        &self,
+        def: &Def,
+    ) -> Result<Option<crate::ir::proof_steps::induct::Recursion>, String> {
+        if let Some(found) = self.recursions.borrow().get(&def.fn_id) {
+            return found.clone();
+        }
+        let ds = self.reachable_defs(def.fn_id);
+        let found = crate::ir::proof_steps::induct::recursion(def, &ds);
+        self.recursions
+            .borrow_mut()
+            .insert(def.fn_id, found.clone());
         found
     }
 
@@ -682,13 +712,7 @@ impl<'a> Env<'a> {
         if self.inputs.recursive_fns.contains(&id) {
             use crate::ir::proof_steps::induct;
             let ds = self.reachable_defs(id);
-            let gate = induct::recursion(&def, &ds);
-            if !matches!(gate, Ok(Some(_)))
-                && !induct::rooted(&def, &ds)
-                && !induct::shortens(&def, &ds)
-            {
-                return Err(Shut::Recursion(gate.err()));
-            }
+            self.recursion_gate(&def, &ds).map_err(Shut::Recursion)?;
             // A group of definitions calling each other where one member
             // hands two of its own parameters of a recursive type into the
             // group (`collect(l, v, r)` calling `values(l)` and `values(r)`):
@@ -707,6 +731,31 @@ impl<'a> Env<'a> {
             }
         }
         Ok(def)
+    }
+
+    /// Whether `def`, a recursive definition, opens by its recursion: it
+    /// passes the gate, read through the helpers it calls back through
+    /// (`ds`, what it reaches); or every cycle through it passes one that
+    /// does; or it shortens a list. Why not otherwise. Read once per
+    /// definition: steps ask again at every call they cannot open.
+    fn recursion_gate(&self, def: &Def, ds: &[Def]) -> Result<(), Option<String>> {
+        use crate::ir::proof_steps::induct;
+        if let Some(found) = self.recursion_gates.borrow().get(&def.fn_id) {
+            return found.clone();
+        }
+        let gate = self.recursion_of(def);
+        let found = if matches!(gate, Ok(Some(_)))
+            || induct::rooted_by(def, ds, |r| matches!(self.recursion_of(r), Ok(Some(_))))
+            || induct::shortens(def, ds)
+        {
+            Ok(())
+        } else {
+            Err(gate.err())
+        };
+        self.recursion_gates
+            .borrow_mut()
+            .insert(def.fn_id, found.clone());
+        found
     }
 
     fn read_def(&self, id: FnId) -> Option<Def> {
