@@ -4300,44 +4300,55 @@ fn lean_checks_ring_and_linear_steps() {
 /// `==` on an Int is a decided test, so a law about it needs no
 /// `Classical.choice`. Lean 4.35's own `BEq Int` is a projection of `Int`'s
 /// order package, whose proofs use that axiom; the prelude decides `==` on
-/// an Int with an instance that uses none, also inside a list (#1558).
+/// an Int with an instance that uses none, also inside a list (#1558). The
+/// same package gives the order laws `simp` reads `a <= a` on an Int
+/// through; the prelude states those with no axiom too (#1671).
 #[test]
 fn lean_proves_int_equality_laws_without_classical_choice() {
     if !lean_required::lake_available() {
         eprintln!("skipping: `lake` is not available");
         return;
     }
-    let out = scratch("int-equality-lean");
-    let result = aver_in(
-        &repo_root().join(FIXTURES),
-        &[
-            "proof",
+    let cases: [(&str, &[&str]); 2] = [
+        (
             "int_equality.av",
-            "-o",
-            out.to_str().unwrap(),
-            "--check-json",
-            "--sorry-budget",
-            "0",
-        ],
-    );
-    assert!(result.status.success(), "{}", format_output(&result));
-    let manifest: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(out.join("proof_manifest.json")).unwrap())
-            .unwrap();
-    let laws = manifest["laws"].as_array().unwrap();
-    for law in ["same.symmetric", "sameList.reflexive", "gap.noneWhenEqual"] {
-        let record = laws
-            .iter()
-            .find(|record| record["law"] == law)
-            .unwrap_or_else(|| panic!("no record for {law}: {manifest}"));
-        assert_eq!(record["tier"], "universal", "{law}: {record}");
-        let axioms = record["axioms"].as_array().unwrap();
-        assert!(
-            !axioms.iter().any(|axiom| axiom == "Classical.choice"),
-            "{law}: {record}"
+            &["same.symmetric", "sameList.reflexive", "gap.noneWhenEqual"],
+        ),
+        ("int_order.av", &["swapTop.twiceIsTheTopPair"]),
+    ];
+    for (fixture, laws) in cases {
+        let out = scratch(&format!("int-axioms-{fixture}"));
+        let result = aver_in(
+            &repo_root().join(FIXTURES),
+            &[
+                "proof",
+                fixture,
+                "-o",
+                out.to_str().unwrap(),
+                "--check-json",
+                "--sorry-budget",
+                "0",
+            ],
         );
+        assert!(result.status.success(), "{}", format_output(&result));
+        let manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(out.join("proof_manifest.json")).unwrap())
+                .unwrap();
+        let records = manifest["laws"].as_array().unwrap();
+        for law in laws {
+            let record = records
+                .iter()
+                .find(|record| record["law"] == *law)
+                .unwrap_or_else(|| panic!("no record for {law}: {manifest}"));
+            assert_eq!(record["tier"], "universal", "{law}: {record}");
+            let axioms = record["axioms"].as_array().unwrap();
+            assert!(
+                !axioms.iter().any(|axiom| axiom == "Classical.choice"),
+                "{law}: {record}"
+            );
+        }
+        let _ = fs::remove_dir_all(out);
     }
-    let _ = fs::remove_dir_all(out);
 }
 
 const LIST_LAWS: [&str; 9] = [
