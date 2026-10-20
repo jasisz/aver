@@ -730,15 +730,29 @@ pub(super) fn compute_owned_record_params(
     };
     owned.extend(mutual_tco_value_params(ctx));
     let mut candidates: Vec<(crate::ir::FnId, Vec<usize>)> = Vec::new();
+    // A tail-call loop takes its params by value whether or not it consumes
+    // them, so for these functions `consuming` starts empty and the fixpoint
+    // below decides which record params the body really consumes.
+    let mut loops: Vec<(crate::ir::FnId, usize)> = Vec::new();
     for (id, mir_fn) in program.iter() {
         let Some(resolved) = ctx.resolved_program.fn_by_id(*id) else {
             continue;
         };
-        if ctx.mutual_tco_members.contains(id) {
-            continue;
-        }
-        if super::toplevel::resolved_fn_has_self_tailcall(resolved) {
-            owned.insert(*id, vec![true; resolved.params.len()]);
+        let mutual = ctx.mutual_tco_members.contains(id);
+        if mutual || super::toplevel::resolved_fn_has_self_tailcall(resolved) {
+            if !mutual {
+                owned.insert(*id, vec![true; resolved.params.len()]);
+            }
+            loops.push((*id, resolved.params.len()));
+            let records: Vec<usize> = (0..resolved.params.len())
+                .filter(|&i| {
+                    matches!(resolved.params[i].1, Type::Named { .. })
+                        && mir_fn.params.get(i).is_some()
+                })
+                .collect();
+            if !records.is_empty() {
+                candidates.push((*id, records));
+            }
             continue;
         }
         let by_value = owned_collection_param_names(mir_fn, &resolved.params, ctx);
@@ -774,6 +788,18 @@ pub(super) fn compute_owned_record_params(
         })
         .collect();
     let in_place = crate::ir::mir::field_moves::in_place_collection_params(program);
+    let mut consuming = owned.clone();
+    for (id, len) in &loops {
+        let returns = |i: usize| {
+            program.fn_by_id(*id).is_some_and(|mir_fn| {
+                mir_fn
+                    .params
+                    .get(i)
+                    .is_some_and(|param| result_hands_on(&mir_fn.body.node, param.local))
+            })
+        };
+        consuming.insert(*id, (0..*len).map(returns).collect());
+    }
     loop {
         let mut graduated = Vec::new();
         for (id, open) in &candidates {
@@ -781,12 +807,13 @@ pub(super) fn compute_owned_record_params(
                 continue;
             };
             for &i in open {
-                if owned[id][i] {
+                if consuming[id][i] {
                     continue;
                 }
                 let consumption = Consumption {
                     slot: mir_fn.params[i].local,
                     owned: &owned,
+                    consuming: &consuming,
                     movable: &movable[id],
                     in_place: &in_place,
                     builtins: &program.builtins,
@@ -800,7 +827,13 @@ pub(super) fn compute_owned_record_params(
             break;
         }
         for (id, i) in graduated {
-            if let Some(abi) = owned.get_mut(&id) {
+            if let Some(facts) = consuming.get_mut(&id) {
+                facts[i] = true;
+            }
+            // A mutual tail-call group keeps the wrapper ABI it was given.
+            if !ctx.mutual_tco_members.contains(&id)
+                && let Some(abi) = owned.get_mut(&id)
+            {
                 abi[i] = true;
             }
         }
@@ -867,6 +900,10 @@ pub(super) fn mutual_param_by_value(
 struct Consumption<'a> {
     slot: LocalId,
     owned: &'a HashMap<crate::ir::FnId, Vec<bool>>,
+    /// The by-value positions whose callee consumes the value: `owned`
+    /// without the positions a tail-call loop takes by value only for its
+    /// loop.
+    consuming: &'a HashMap<crate::ir::FnId, Vec<bool>>,
     movable: &'a HashSet<usize>,
     in_place: &'a HashMap<crate::ir::FnId, Vec<bool>>,
     builtins: &'a [String],
@@ -901,9 +938,10 @@ fn consumes_local(expr: &MirExpr, cx: &Consumption<'_>) -> bool {
     };
     // A field is worth moving into a record param the callee consumes, or
     // into a Map/Vector param it updates in place; a param that only reads
-    // the field gains nothing from owning it.
+    // the field gains nothing from owning it, and borrowing the record and
+    // cloning the field costs less than the caller cloning the record.
     let takes_field = |callee, index: usize, arg: &Spanned<MirExpr>| match arg.ty() {
-        Some(Type::Named { .. }) => fact(cx.owned, callee, index),
+        Some(Type::Named { .. }) => fact(cx.consuming, callee, index),
         Some(Type::Map(..) | Type::Vector(_)) => {
             fact(cx.owned, callee, index) && fact(cx.in_place, callee, index)
         }

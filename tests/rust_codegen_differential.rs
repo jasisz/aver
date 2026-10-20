@@ -3467,6 +3467,73 @@ fn main() -> Unit
     );
 }
 
+/// A record param that only hands one field on to a tail-call loop which
+/// merely reads it stays borrowed: the field is cloned inside, and the caller
+/// does not clone the whole record. A loop that stores the field still gets
+/// it moved out of an owned record.
+#[test]
+fn rust_record_param_handing_a_field_to_a_reading_loop_stays_borrowed() {
+    let src = r#"module FieldRead
+    intent = "Read and extend a trie held in a state record"
+    depends []
+    effects [Console.print]
+
+type Trie
+    Leaf
+    Node(Int, Int, Trie)
+
+record St
+    t: Trie
+    seen: Map<Int, Int>
+    next: Int
+
+fn trieGet(t: Trie, k: Int) -> Int
+    ? "The value at key k, or 0."
+    match t
+        Trie.Leaf -> 0
+        Trie.Node(key, v, rest) -> match key == k
+            true -> v
+            false -> trieGet(rest, k)
+
+fn trieGrow(t: Trie, n: Int) -> Trie
+    ? "Prepends keys n down to 1."
+    match n == 0
+        true -> t
+        false -> trieGrow(Trie.Node(n, n * 10, t), n - 1)
+
+fn stGet(st: St, k: Int) -> Int
+    ? "Reads through the state's trie only."
+    trieGet(st.t, k)
+
+fn stGrow(st: St, n: Int) -> Trie
+    ? "Extends the state's trie."
+    trieGrow(st.t, n)
+
+fn main() -> Unit
+    ! [Console.print]
+    st = St(t = Trie.Leaf, seen = {}, next = 0)
+    grown = St(t = stGrow(st, 5), seen = Map.set(st.seen, 1, 1), next = 1)
+    Console.print("{stGet(grown, 3)} {stGet(grown, 9)} {grown.next}")
+"#;
+    let expected = "30 0 1";
+    let vm = run_vm_inline("field_read", src).expect("vm run");
+    assert_eq!(vm, expected, "VM result");
+    let rust = build_run_rust_inline("field_read", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+
+    let emitted = emitted_entry_module("field_read", src);
+    assert!(
+        emitted.contains("pub fn stGet(st @ _: &St")
+            && emitted.contains("trieGet(st.t.clone()")
+            && !emitted.contains("stGet(grown.clone()"),
+        "stGet must borrow the record and clone only its field:\n{emitted}"
+    );
+    assert!(
+        emitted.contains("pub fn stGrow(mut st @ _: St") && emitted.contains("trieGrow(st.t,"),
+        "stGrow hands the field to a loop that stores it, so it moves:\n{emitted}"
+    );
+}
+
 /// A record holding a Map keyed by a tuple of more than three items: the
 /// generated record display needs the tuple key to display too.
 #[test]
