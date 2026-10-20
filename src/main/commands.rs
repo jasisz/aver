@@ -6901,6 +6901,10 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         project_config
             .as_ref()
             .and_then(|config| config.work_max_jobs),
+        project_config
+            .as_ref()
+            .map(|config| config.rust_allocator)
+            .unwrap_or_default(),
     ) {
         Ok(output) => output,
         Err(error) => {

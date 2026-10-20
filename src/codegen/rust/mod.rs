@@ -94,6 +94,7 @@ pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
         required,
         composition::ProviderComposition::default(),
         None,
+        crate::config::RustAllocator::default(),
     )
 }
 
@@ -106,11 +107,18 @@ pub fn transpile_with_provider_manifest_for_project(
     manifest: Option<&crate::config::ProviderPackageManifest>,
     known_capabilities: &BTreeSet<String>,
     work_max_jobs: Option<usize>,
+    allocator: crate::config::RustAllocator,
 ) -> Result<ProjectOutput, String> {
     let required = provider::required_operations(ctx);
     let composition =
         composition::plan_for_project(&ctx.capabilities, &required, manifest, known_capabilities)?;
-    Ok(transpile_project(ctx, required, composition, work_max_jobs))
+    Ok(transpile_project(
+        ctx,
+        required,
+        composition,
+        work_max_jobs,
+        allocator,
+    ))
 }
 
 fn transpile_project(
@@ -118,6 +126,7 @@ fn transpile_project(
     required_provider_operations: BTreeSet<String>,
     provider_composition: composition::ProviderComposition,
     work_max_jobs: Option<usize>,
+    allocator: crate::config::RustAllocator,
 ) -> ProjectOutput {
     // A program that never names `Run.Turn` carries no struct for it.
     if let Some(modules) = crate::codegen::without_unread_run_turn(
@@ -241,6 +250,7 @@ fn transpile_project(
                 has_runtime_policy,
                 ctx.emit_replay_runtime,
                 &provider_composition,
+                allocator,
             ),
         ),
         (
@@ -270,6 +280,9 @@ fn transpile_project(
             ),
         ),
     ];
+    if let Some((_, root_main)) = files.iter_mut().find(|(path, _)| path == "src/main.rs") {
+        project::declare_global_allocator(root_main, allocator);
+    }
 
     if has_provider_runtime {
         files.push((
@@ -2882,6 +2895,47 @@ fn runGuestProgram(path: String, guestArgs: List<String>) -> Result<String, Stri
         assert!(cargo_toml.contains("edition = \"2024\""));
     }
 
+    #[cfg(feature = "runtime")]
+    #[test]
+    fn rust_allocator_option_adds_mimalloc_only_when_chosen() {
+        use crate::config::RustAllocator;
+        let emit = |allocator| {
+            let mut ctx = ctx_from_source(
+                "module Demo\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(\"hi\")\n",
+                "demo",
+            );
+            super::transpile_with_provider_manifest_for_project(
+                &mut ctx,
+                None,
+                &std::collections::BTreeSet::new(),
+                None,
+                allocator,
+            )
+            .expect("transpile")
+        };
+        let system = emit(RustAllocator::System);
+        let mimalloc = emit(RustAllocator::Mimalloc);
+
+        assert!(!generated_file(&system, "Cargo.toml").contains("mimalloc"));
+        assert!(!generated_file(&system, "src/main.rs").contains("global_allocator"));
+        assert!(
+            generated_file(&mimalloc, "Cargo.toml")
+                .contains("mimalloc = { version = \"0.1.52\", default-features = false }")
+        );
+        assert_eq!(
+            generated_file(&mimalloc, "src/main.rs"),
+            format!(
+                "{}\n#[global_allocator]\nstatic GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;\n",
+                generated_file(&system, "src/main.rs")
+            )
+        );
+        for (path, content) in &system.files {
+            if path != "Cargo.toml" && path != "src/main.rs" {
+                assert_eq!(generated_file(&mimalloc, path), content, "{path}");
+            }
+        }
+    }
+
     #[test]
     fn replay_codegen_wraps_root_main_when_no_guest_entry_is_set() {
         let mut ctx = ctx_from_source(
@@ -3052,6 +3106,7 @@ fn main() -> Result<String, String>
             shape_expected: Vec::new(),
             provider_manifest: None,
             work_max_jobs: None,
+            rust_allocator: crate::config::RustAllocator::default(),
         });
 
         let out = transpile(&mut ctx);
@@ -3148,6 +3203,7 @@ fn main() -> Result<Tuple<Int, Int>, String>
             shape_expected: Vec::new(),
             provider_manifest: None,
             work_max_jobs: None,
+            rust_allocator: crate::config::RustAllocator::default(),
         });
 
         let out = transpile(&mut ctx);
