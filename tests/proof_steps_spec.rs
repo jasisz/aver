@@ -2555,6 +2555,39 @@ fn an_empty_list_a_rule_writes_keeps_its_element_type_in_lean() {
     );
 }
 
+/// The `[]` a list rule takes as an argument is written with the type of
+/// the list it stands for. Untyped, Lean unfolds the list functions
+/// around it while it unifies each step with the next, and the steps that
+/// read four bytes back through `[] ++ [d]` ran out of time in Lean.
+#[test]
+fn an_empty_list_a_step_takes_as_an_argument_is_typed_in_lean() {
+    let lean = exported_lean(
+        "rule_argument_lists.av",
+        "RuleArgumentLists",
+        "rule-argument-lists",
+    );
+    // The arguments of each list rule, up to the next step.
+    let untyped: Vec<&str> = lean
+        .split("AverSteps.list_")
+        .skip(1)
+        .map(|s| {
+            ["Eq.trans", "__aver_unfold", "AverSteps."]
+                .iter()
+                .filter_map(|end| s.find(end))
+                .min()
+                .map_or(s, |i| &s[..i])
+        })
+        .filter(|args| args.contains("([])") || args.contains("([] ++"))
+        .collect();
+    assert!(untyped.is_empty(), "{}", untyped.join("\n"));
+    let Some(summary) = lean_summary("rule_argument_lists.av", "rule-argument-lists-lean") else {
+        return;
+    };
+    assert_eq!(summary["closed_by"]["wide.fourBytes"], "steps", "{summary}");
+    assert_eq!(summary["build_errors"], 0, "{summary}");
+    assert_eq!(summary["sorries"], 0, "{summary}");
+}
+
 const HALVING_LAWS: [&str; 9] = [
     "digits.accumulatorAppends",
     "digits.exponentAbove",

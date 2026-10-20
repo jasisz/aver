@@ -175,7 +175,13 @@ pub(super) fn chain(terms: &[Term], expected: Option<&Eqn>) -> Vec<Term> {
 
 /// The term at the hole of `ctx` within `t`, a term of `ctx`'s shape.
 pub(super) fn at_hole(ctx: &Term, t: &Term) -> Option<Term> {
-    if matches!(&ctx.node, ResolvedExpr::Ident(n) if n == HOLE) {
+    at_name(ctx, HOLE, t)
+}
+
+/// The term at the variable `name` of `ctx` within `t`, a term of `ctx`'s
+/// shape.
+fn at_name(ctx: &Term, name: &str, t: &Term) -> Option<Term> {
+    if matches!(&ctx.node, ResolvedExpr::Ident(n) if n == name) {
         return Some(t.clone());
     }
     if !same_head(ctx, t) {
@@ -184,7 +190,35 @@ pub(super) fn at_hole(ctx: &Term, t: &Term) -> Option<Term> {
     term::children(ctx)
         .into_iter()
         .zip(term::children(t))
-        .find_map(|(c, u)| at_hole(c, u))
+        .find_map(|(c, u)| at_name(c, name, u))
+}
+
+/// The argument `value` a rule's lemma takes for its binder `name`, with
+/// its empty lists typed after `eq`, the step's equation, which is the
+/// rule's equation `schema` at that argument. A lemma over `List α` reads
+/// an untyped `[]` among its arguments as a list of an element type still
+/// to be found, and Lean then unfolds the list functions around it while
+/// it unifies the step with its neighbours, which in a long chain of
+/// steps runs out of time.
+pub(super) fn argument(value: &Term, name: &str, schema: &Eqn, eq: &Eqn) -> Term {
+    let around: Vec<Term> = [(&schema.lhs, &eq.lhs), (&schema.rhs, &eq.rhs)]
+        .into_iter()
+        .filter_map(|(s, t)| at_name(s, name, t))
+        .collect();
+    let around: Vec<&Term> = around.iter().collect();
+    typed(value, &around)
+}
+
+/// The argument `value` at position `i` of the call `call`, the step's
+/// side it rewrites, with its empty lists typed after that call's argument.
+pub(super) fn call_argument(value: &Term, i: usize, call: &Term) -> Term {
+    match &call.node {
+        ResolvedExpr::Call(_, args) => match args.get(i) {
+            Some(a) => typed(value, &[a]),
+            None => typed(value, &[]),
+        },
+        _ => typed(value, &[]),
+    }
 }
 
 /// The context of a congruence step with its empty lists typed after
@@ -245,6 +279,28 @@ mod tests {
         let ctx = len(term::hole());
         let inner = at_hole(&ctx, &terms[0]).unwrap();
         assert_eq!(nil_ty(&inner), Some(ints()));
+    }
+
+    #[test]
+    fn a_rule_argument_takes_the_type_of_the_equation_it_instantiates() {
+        // `list_concat_cons x ([]) rest`: the `[]` the rule takes for `a`
+        // sits at a `List Int` of the step's equation.
+        let rule = crate::ir::proof_steps::WallRule::ConcatCons;
+        let rest = with_ty(&term::var("rest"), ints());
+        let x = term::var("x");
+        x.set_ty(Type::Int);
+        let subst = vec![
+            ("x".to_string(), x),
+            ("a".to_string(), term::nil()),
+            ("b".to_string(), rest.clone()),
+        ];
+        let (_, concl) = rule.instantiate(&subst).unwrap();
+        let eq = equation(&concl, None);
+        let (_, schema) = rule.schema();
+        let a = argument(&term::nil(), "a", &schema, &eq);
+        assert_eq!(nil_ty(&a), Some(ints()));
+        let b = argument(&rest, "b", &schema, &eq);
+        assert_eq!(b.ty(), Some(&ints()));
     }
 
     #[test]
