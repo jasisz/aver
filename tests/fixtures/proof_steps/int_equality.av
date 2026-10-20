@@ -1,0 +1,44 @@
+module IntEquality
+    intent =
+        "Laws about `==` on an Int and on a list of Ints. Lean proves them with no"
+        "`Classical.choice`: the test is decided, so the proofs need no classical choice."
+    exposes [same, sameList, gap]
+    effects []
+
+fn same(a: Int, b: Int) -> Bool
+    ? "Whether two integers are equal."
+    a == b
+
+verify same
+    same(1, 1) => true
+    same(1, 2) => false
+
+verify same law symmetric
+    given a: Int = [0, 1, -2]
+    given b: Int = [0, 1, 3]
+    same(a, b) => same(b, a)
+
+fn sameList(xs: List<Int>, ys: List<Int>) -> Bool
+    ? "Whether two lists of integers are equal."
+    xs == ys
+
+verify sameList
+    sameList([1], [1]) => true
+    sameList([1], [2]) => false
+
+verify sameList law reflexive
+    given xs: List<Int> = [[], [1, 2]]
+    sameList(xs, xs) => true
+
+fn gap(a: Int, b: Int) -> Int
+    ? "The distance from b up to a."
+    a - b
+
+verify gap
+    gap(3, 1) => 2
+
+verify gap law noneWhenEqual
+    given a: Int = [0, 4]
+    given b: Int = [0, 4]
+    when a == b
+    gap(a, b) => 0

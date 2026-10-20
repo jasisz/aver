@@ -17,6 +17,26 @@ variable {α β ε : Type u}
 
 -- Prelude: helper definitions for Aver builtins"#;
 
+/// `==` on `Int` as `decide (a = b)`, the instance Lean found before 4.35,
+/// with its laws. From 4.35 core finds `BEq Int`, and its `ReflBEq` and
+/// `EquivBEq`, through `Int`'s order package, whose proofs use
+/// `Classical.choice`, so every theorem that mentions `==` on an `Int` (also
+/// through a `List`, an `Option`, a tuple or a derived record `BEq`)
+/// depended on it. Both `BEq` instances are the same test definitionally;
+/// these are built from `Int.decEq` and use no axiom. They come before the
+/// records so their derived `BEq` uses them. Proof export only: a
+/// certificate model admits no data instance at a core type.
+const LEAN_PRELUDE_INT_BEQ: &str = r#"-- `==` on `Int` by `decide`, and its laws, with no axiom: core's own
+-- instances come from `Int`'s order package, which uses `Classical.choice`.
+namespace AverInt
+instance (priority := high) beqByDecide : BEq Int := instBEqOfDecidableEq
+instance (priority := high) lawfulBEqByDecide : LawfulBEq Int where
+  eq_of_beq h := of_decide_eq_true h
+  rfl := decide_eq_true rfl
+instance (priority := high) reflBEqByDecide : ReflBEq Int := lawfulBEqByDecide.toReflBEq
+instance (priority := high) equivBEqByDecide : EquivBEq Int := instEquivBEqOfLawfulBEq
+end AverInt"#;
+
 const LEAN_PRELUDE_FLOAT_COE: &str = r#"instance : Coe Int Float := ⟨fun n => Float.ofInt n⟩
 
 def Float.fromInt (n : Int) : Float := Float.ofInt n
@@ -1471,7 +1491,10 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
     // the explicit claim block before any prelude or definitions. Skipped when
     // the body has no Oracle lifting at all — pure-math files don't depend on
     // any of the trust claims, so emitting the block would just add noise.
-    let mut parts = vec![LEAN_PRELUDE_HEADER.to_string()];
+    let mut parts = vec![
+        LEAN_PRELUDE_HEADER.to_string(),
+        LEAN_PRELUDE_INT_BEQ.to_string(),
+    ];
     if include_all_helpers || crate::codegen::builtin_records::needs_trust_header(body) {
         // This branch is only reachable from #[cfg(test)] code that
         // calls `generate_prelude` without a real ctx; pass an empty
@@ -1818,6 +1841,9 @@ pub(super) fn build_common_lean(union_body: &str, cert_model: bool) -> String {
         parts.push(format!("import {CERT_MODEL_PRELUDE_MODULE}"));
     }
     parts.push(LEAN_PRELUDE_HEADER.to_string());
+    if !cert_model {
+        parts.push(LEAN_PRELUDE_INT_BEQ.to_string());
+    }
     for record in crate::codegen::builtin_records::needed_records(union_body, false) {
         parts.push(crate::codegen::builtin_records::render_lean(record));
     }
