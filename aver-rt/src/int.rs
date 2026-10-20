@@ -389,27 +389,30 @@ impl AverInt {
 
     /// Pointwise `and` over the infinite two's-complement sequences.
     /// `bit_and(-1, x) == x` for every `x` (all-ones is the identity).
+    #[inline]
     pub fn bit_and(&self, rhs: &AverInt) -> AverInt {
         if let (AverInt::Small(a), AverInt::Small(b)) = (self, rhs) {
             return AverInt::Small(a & b);
         }
-        AverInt::from_bigint(self.to_bigint() & rhs.to_bigint())
+        bitwise_slow(self, rhs, |a, b| a & b)
     }
 
     /// Pointwise `or`. `bit_or(-1, x) == -1`, `bit_or(0, x) == x`.
+    #[inline]
     pub fn bit_or(&self, rhs: &AverInt) -> AverInt {
         if let (AverInt::Small(a), AverInt::Small(b)) = (self, rhs) {
             return AverInt::Small(a | b);
         }
-        AverInt::from_bigint(self.to_bigint() | rhs.to_bigint())
+        bitwise_slow(self, rhs, |a, b| a | b)
     }
 
     /// Pointwise `xor`. `bit_xor(-1, x) == bit_not(x)`, `bit_xor(x, x) == 0`.
+    #[inline]
     pub fn bit_xor(&self, rhs: &AverInt) -> AverInt {
         if let (AverInt::Small(a), AverInt::Small(b)) = (self, rhs) {
             return AverInt::Small(a ^ b);
         }
-        AverInt::from_bigint(self.to_bigint() ^ rhs.to_bigint())
+        bitwise_slow(self, rhs, |a, b| a ^ b)
     }
 
     /// Pointwise complement — equivalently `-self - 1` over ℤ, which is the
@@ -446,20 +449,18 @@ impl AverInt {
     /// less significant end. This is an ARITHMETIC shift: the sign tail is
     /// what gets shifted in, so `shift_right(-3, 1) == -2`, never `-1` and
     /// never a host language's logical shift.
+    #[inline]
     pub fn shift_right(&self, n: &AverInt) -> Result<AverInt, ShiftCountError> {
-        if n < &AverInt::zero() {
-            return Err(ShiftCountError::Negative);
+        // A count of 63 or more leaves only the sign tail of an `i64`, which
+        // is what the arithmetic `>> 63` gives, so a `Small` value and a
+        // non-negative `Small` count need no other check. A literal count
+        // folds the whole test away once this is inlined.
+        if let (AverInt::Small(a), AverInt::Small(count)) = (self, n)
+            && *count >= 0
+        {
+            return Ok(AverInt::Small(a >> (*count).min(63)));
         }
-        if count_reaches_sign_tail(n, self) {
-            return Ok(AverInt::Small(if self < &AverInt::zero() { -1 } else { 0 }));
-        }
-        let count = n
-            .to_usize()
-            .expect("a count below a resident integer's bit length fits usize");
-        if let AverInt::Small(a) = self {
-            return Ok(AverInt::Small(a >> count));
-        }
-        Ok(AverInt::from_bigint(self.to_bigint() >> count))
+        shift_right_slow(self, n)
     }
 
     /// `self mod 2^width` — the non-negative integer carried by the lowest
@@ -653,6 +654,27 @@ fn sub_slow(a: &AverInt, b: &AverInt) -> AverInt {
 #[inline(never)]
 fn mul_slow(a: &AverInt, b: &AverInt) -> AverInt {
     AverInt::from_bigint(a.to_bigint() * b.to_bigint())
+}
+
+#[cold]
+#[inline(never)]
+fn bitwise_slow(a: &AverInt, b: &AverInt, op: fn(BigInt, BigInt) -> BigInt) -> AverInt {
+    AverInt::from_bigint(op(a.to_bigint(), b.to_bigint()))
+}
+
+#[cold]
+#[inline(never)]
+fn shift_right_slow(a: &AverInt, n: &AverInt) -> Result<AverInt, ShiftCountError> {
+    if n < &AverInt::zero() {
+        return Err(ShiftCountError::Negative);
+    }
+    if count_reaches_sign_tail(n, a) {
+        return Ok(AverInt::Small(if a < &AverInt::zero() { -1 } else { 0 }));
+    }
+    let count = n
+        .to_usize()
+        .expect("a count below a resident integer's bit length fits usize");
+    Ok(AverInt::from_bigint(a.to_bigint() >> count))
 }
 
 #[cold]
@@ -1099,7 +1121,7 @@ mod tests {
         assert_eq!(i(-1).shift_right(&i(200)).unwrap(), i(-1));
         assert_eq!(i(1).shift_right(&i(200)).unwrap(), i(0));
 
-        for x in [-1025i64, -257, -3, -1, 0, 1, 6, 255, 1024] {
+        for x in [i64::MIN, -1025, -257, -3, -1, 0, 1, 6, 255, 1024, i64::MAX] {
             for n in [0usize, 1, 5, 62, 63, 64, 100] {
                 let modulus = two_pow(n);
                 let count = AverInt::from_i64(n as i64);
