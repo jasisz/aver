@@ -2826,14 +2826,14 @@ fn emit_mir_independent_product(
             "let {cancel_flag} = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)); "
         ));
         code.push_str(&format!("std::thread::scope(|{thread_scope}| {{ "));
-        for (i, (item, part)) in ip.items.iter().zip(parts.iter()).enumerate() {
+        for (i, part) in parts.iter().enumerate() {
             let branch_scope = generated_ident(&format!("parallel_scope{i}"));
             let branch_cancel = generated_ident(&format!("cancel_flag{i}"));
             if has_replay {
                 code.push_str(&format!("let {branch_scope} = {parallel_scope}.clone(); "));
             }
             code.push_str(&format!("let {branch_cancel} = {cancel_flag}.clone(); "));
-            let has_captures = emit_parallel_capture_bindings(&mut code, i, &item.node, emit_ctx);
+            let has_captures = emit_parallel_capture_bindings(&mut code, i, &ip.items, emit_ctx);
             if has_replay {
                 code.push_str(&format!(
                     "crate::aver_replay::with_parallel_scope_context({branch_scope}.clone(), move || "
@@ -2870,19 +2870,19 @@ fn emit_mir_independent_product(
             ));
         }
         code.push_str(&format!("std::thread::scope(|{thread_scope}| {{ "));
-        for (i, (item, part)) in ip.items.iter().zip(parts.iter()).enumerate() {
+        for (i, part) in parts.iter().enumerate() {
             if has_replay {
                 let branch_scope = generated_ident(&format!("parallel_scope{i}"));
                 code.push_str(&format!("let {branch_scope} = {parallel_scope}.clone(); "));
                 let has_captures =
-                    emit_parallel_capture_bindings(&mut code, i, &item.node, emit_ctx);
+                    emit_parallel_capture_bindings(&mut code, i, &ip.items, emit_ctx);
                 code.push_str(&format!(
                     "crate::aver_replay::with_parallel_scope_context({branch_scope}.clone(), move || {part}))"
                 ));
                 code.push_str(if has_captures { " }; " } else { "; " });
             } else {
                 let has_captures =
-                    emit_parallel_capture_bindings(&mut code, i, &item.node, emit_ctx);
+                    emit_parallel_capture_bindings(&mut code, i, &ip.items, emit_ctx);
                 code.push_str(part);
                 code.push_str(if has_captures { ") }; " } else { "); " });
             }
@@ -2913,15 +2913,23 @@ fn emit_mir_independent_product(
 /// independent value while the function's original remains available for all
 /// sibling captures.
 ///
+/// A capture moves into its branch instead of being cloned when this branch
+/// holds the local's final read and no later branch reads it: the last-use
+/// pass reads the product left to right, so a final read here means nothing
+/// after the product reads the local either. Earlier branches have already
+/// cloned their own copies by the time this spawn moves the original, and a
+/// later branch that also reads the local keeps the move for itself.
+///
 /// Returns whether a capture block was opened; the caller closes either
 /// `aver_rt::spawn_scoped(scope, …) };` or the capture-free `aver_rt::spawn_scoped(scope, …);` shape. Keeping the old
 /// shape for capture-free branches avoids churn in generated Rust.
 fn emit_parallel_capture_bindings(
     code: &mut String,
     branch: usize,
-    item: &MirExpr,
+    items: &[Spanned<MirExpr>],
     ctx: &MirEmitCtx<'_>,
 ) -> bool {
+    let item = &items[branch].node;
     let captures = mir_free_locals(item);
     let handle = generated_ident(&format!("h{branch}"));
     let thread_scope = generated_ident("s");
@@ -2932,10 +2940,20 @@ fn emit_parallel_capture_bindings(
     }
 
     code.push_str("{ ");
-    for local in captures.values() {
+    let later: Vec<BTreeMap<LocalId, MirLocal>> = items[branch + 1..]
+        .iter()
+        .map(|later| mir_free_locals(&later.node))
+        .collect();
+    for (slot, local) in &captures {
         let source_name = local.name.as_str();
         let rust_name = aver_name_to_rust(source_name);
-        let capture = materialize_scoped_thread_capture(rust_name.clone(), local, ctx);
+        let final_read = (local.last_use || mir_expr_contains_last_use_of_slot(item, *slot))
+            && !later.iter().any(|reads| reads.contains_key(slot));
+        let local = MirLocal {
+            last_use: final_read,
+            ..local.clone()
+        };
+        let capture = materialize_scoped_thread_capture(rust_name.clone(), &local, ctx);
         code.push_str(&format!("let {rust_name} = {capture}; "));
     }
     code.push_str(&format!("aver_rt::spawn_scoped({thread_scope}, move || "));
@@ -7112,42 +7130,55 @@ mod tests {
         assert!(emit.trim_end().ends_with("})? }"), "got: {emit}");
     }
 
-    #[test]
-    fn independent_product_clones_each_non_copy_capture_before_spawn() {
-        let first = span(MirExpr::Local(span(MirLocal {
-            slot: LocalId(0),
-            last_use: false,
-            name: "height".to_string(),
-        })));
-        let second = span(MirExpr::Local(span(MirLocal {
-            slot: LocalId(0),
-            last_use: true,
-            name: "height".to_string(),
-        })));
+    fn product_reading(reads: &[(&str, bool)]) -> String {
+        let items = reads
+            .iter()
+            .map(|(name, last_use)| {
+                span(MirExpr::Local(span(MirLocal {
+                    slot: LocalId(if *name == "height" { 0 } else { 1 }),
+                    last_use: *last_use,
+                    name: name.to_string(),
+                })))
+            })
+            .collect();
         let expr = span(MirExpr::IndependentProduct(span(
             crate::ir::mir::MirIndependentProduct {
-                items: vec![first, second],
+                items,
                 unwrap_results: false,
             },
         )));
+        emit_mir_expr(&expr, &empty_ctx()).expect("product should emit")
+    }
 
-        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("product should emit");
-        assert_eq!(
-            emit.matches("let height = height.clone();").count(),
-            2,
-            "every move closure needs a capture cloned outside the closure: {emit}"
-        );
+    #[test]
+    fn independent_product_moves_only_the_final_read_of_a_shared_capture() {
+        // Both branches read `height`; only the second holds its final read.
+        let emit = product_reading(&[("height", false), ("height", true)]);
         assert!(
             emit.contains(
                 "let __h0 = { let height = height.clone(); aver_rt::spawn_scoped(__s, move ||"
             ),
-            "branch 0 capture must be scoped to its spawn: {emit}"
+            "branch 0 clones before branch 1 takes the original: {emit}"
+        );
+        assert!(
+            emit.contains("let __h1 = { let height = height; aver_rt::spawn_scoped(__s, move ||"),
+            "branch 1 holds the final read and moves the original: {emit}"
+        );
+    }
+
+    #[test]
+    fn independent_product_moves_a_capture_at_its_last_use() {
+        // `(f(table), g(height))!` with `table` read for the last time.
+        let emit = product_reading(&[("table", true), ("height", false)]);
+        assert!(
+            emit.contains("let __h0 = { let table = table; aver_rt::spawn_scoped(__s, move ||"),
+            "a branch argument at its last use moves into the branch: {emit}"
         );
         assert!(
             emit.contains(
                 "let __h1 = { let height = height.clone(); aver_rt::spawn_scoped(__s, move ||"
             ),
-            "branch 1 capture must be scoped to its spawn: {emit}"
+            "a local read after the product is still cloned: {emit}"
         );
     }
 
