@@ -72,7 +72,8 @@ use super::expr::{
 };
 use super::ownership::{
     align_equality_operands, emits_direct_borrow, local_of, materialize_borrowed,
-    materialize_owned, materialize_scoped_thread_capture, owned_read_clones, projection_root_local,
+    materialize_owned, materialize_scoped_thread_capture, owned_read_clones, projection_moves,
+    projection_root_local,
 };
 use super::pattern::{emit_pattern, emit_pattern_with_guard};
 use super::syntax::{aver_name_to_rust, generated_ident};
@@ -5438,8 +5439,11 @@ fn try_emit_mir_fusion(
                 return None;
             }
             // Same-vector guard: the default arm (`args[1]`) must be the
-            // same local as the vector being set (`inner_args[0]`).
-            if !mir_same_local(&args[1].node, &inner_args[0].node) {
+            // same local, or the same field path of one local, as the
+            // vector being set (`inner_args[0]`).
+            let same_field =
+                crate::ir::mir::field_moves::same_field_path(&args[1].node, &inner_args[0].node);
+            if !same_field && !mir_same_local(&args[1].node, &inner_args[0].node) {
                 return None;
             }
             // own_param self-keep collapse (the perf flagship): when the
@@ -5458,7 +5462,11 @@ fn try_emit_mir_fusion(
             // keep shape + the VM fusion-collapse in `vm/compiler/mir.rs`.
             let set_local = local_of(&inner_args[0].node);
             let default_local = local_of(&args[1].node);
+            // A field path is read once by this fusion; `field_moves`
+            // records that read at the target and says whether it moves.
             let move_vec = match (set_local, default_local) {
+                _ if same_field => projection_root_local(&inner_args[0].node)
+                    .is_some_and(|root| projection_moves(&inner_args[0].node, root, ctx)),
                 (Some(sv), Some(dv)) => {
                     ctx.owned_params.contains(sv.name.as_str())
                         && !ctx.is_borrowed_param(&sv.name)

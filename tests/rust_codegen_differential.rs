@@ -3280,6 +3280,224 @@ fn main() -> Unit
     );
 }
 
+/// The generated entry module of the inline program `src`.
+fn emitted_entry_module(name: &str, src: &str) -> String {
+    let ws = temp_dir(&format!("{name}_emit"));
+    let f = ws.join(format!("{name}.av"));
+    fs::write(&f, src).expect("write");
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("project dir");
+    compile_rust(&f, &project, name, None, &[]).expect("compile rust");
+    let emitted = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
+        .expect("read generated entry module");
+    let _ = fs::remove_dir_all(&ws);
+    emitted
+}
+
+/// A record handed to a by-value param while a later argument of the same
+/// call still reads it. Aver evaluates `bumpNode(s, nodeAt(s, id))` left to
+/// right, so the first `s` was not the last read and Rust cloned the store;
+/// the clone kept the caller's map alive and `Map.set` in `bumpNode` copied
+/// the whole map on every call. `nodeAt` has no effect, so it now runs
+/// first into a local and `s` moves. A later argument with an effect keeps
+/// its place and the clone.
+#[test]
+fn rust_pure_later_argument_runs_before_the_moved_one() {
+    let src = r#"module ArgOrder
+    intent = "Thread a store through calls whose later argument reads it"
+    depends []
+    effects [Console.print]
+
+record Node
+    tag: Int
+    hits: Int
+
+record Store
+    nodes: Map<Int, Node>
+    next: Int
+
+record SI
+    s: Store
+    id: Int
+
+fn nodeAt(s: Store, id: Int) -> Node
+    ? "The node at id, or a blank one."
+    Option.withDefault(Map.get(s.nodes, id), Node(tag = 0, hits = 0))
+
+fn bumpNode(s: Store, n: Node) -> SI
+    ? "Store the node one hit higher under a fresh id."
+    SI(s = Store(nodes = Map.set(s.nodes, s.next, Node(tag = n.tag, hits = n.hits + 1)), next = s.next + 1), id = s.next)
+
+fn bump(s: Store, id: Int) -> SI
+    ? "Bump the node at id."
+    bumpNode(s, nodeAt(s, id))
+
+fn bumpBoth(s: Store, a: Int, b: Int) -> SI
+    ? "Bump two nodes into one."
+    bumpTwo(s, nodeAt(s, a), nodeAt(s, b))
+
+fn bumpTwo(s: Store, x: Node, y: Node) -> SI
+    ? "Store a node with both hit counts."
+    bumpNode(s, Node(tag = x.tag + y.tag, hits = x.hits + y.hits))
+
+fn noisy(s: Store, id: Int) -> Node
+    ? "nodeAt with a print."
+    ! [Console.print]
+    Console.print("read {id}")
+    nodeAt(s, id)
+
+fn bumpLoud(s: Store, id: Int) -> SI
+    ? "Bump through an effectful read."
+    ! [Console.print]
+    bumpNode(s, noisy(s, id))
+
+fn loop(s: Store, id: Int, n: Int) -> Store
+    ? "Bump n times."
+    match n == 0
+        true -> s
+        false -> loopStep(bump(s, id), n)
+
+fn loopStep(r: SI, n: Int) -> Store
+    ? "Continue from the bumped store."
+    loop(r.s, r.id, n - 1)
+
+fn seed(s: Store, n: Int) -> Store
+    ? "n blank nodes."
+    match n == 0
+        true -> s
+        false -> seed(Store(nodes = Map.set(s.nodes, s.next, Node(tag = n, hits = 0)), next = s.next + 1), n - 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    s = seed(Store(nodes = {}, next = 0), 200)
+    out = loop(s, 0, 300)
+    both = bumpBoth(out, 3, out.next - 1)
+    loud = bumpLoud(both.s, both.id)
+    Console.print("{Map.len(out.nodes)} {out.next} {nodeAt(out, out.next - 1).hits} {nodeAt(both.s, both.id).tag} {nodeAt(loud.s, loud.id).hits}")
+"#;
+    let expected = "read 500\n500 500 300 397 302";
+    let vm = run_vm_inline("arg_order", src).expect("vm run");
+    assert_eq!(vm, expected, "VM result");
+    let rust = build_run_rust_inline("arg_order", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+
+    let emitted = emitted_entry_module("arg_order", src);
+    assert!(
+        emitted.contains("pub fn bump(mut s @ _: Store")
+            && emitted.contains("= nodeAt(&s, id);")
+            && emitted.contains("bumpNode(s, &__arg"),
+        "bump must read the node first, then move its store:\n{emitted}"
+    );
+    assert!(
+        emitted.contains("pub fn bumpBoth(mut s @ _: Store") && emitted.contains("bumpTwo(s, "),
+        "bumpBoth must read both nodes first, then move its store:\n{emitted}"
+    );
+    assert!(
+        emitted.contains("bumpNode(s.clone(), &noisy("),
+        "an effectful later argument keeps its place, so the store is cloned:\n{emitted}"
+    );
+}
+
+/// The self-keep `Option.withDefault(Vector.set(s.f, i, x), s.f)` on a field
+/// of an owned record at its last use. The two reads of `s.f` hand on one
+/// value, so the field moves into the in-place set instead of being cloned
+/// for the set and again for the default. When the index reads the same
+/// field, the field cannot move before it and is cloned once.
+#[test]
+fn rust_self_keep_vector_set_on_a_record_field_moves_the_field() {
+    let src = r#"module FieldKeep
+    intent = "Append nodes to a Vector field of a store record"
+    depends []
+    effects [Console.print]
+
+record Node
+    tag: Int
+    a: Int
+
+record Store
+    nodes: Vector<Node>
+    index: Map<Int, Int>
+    next: Int
+
+record SI
+    s: Store
+    id: Int
+
+fn added(s: Store, n: Node) -> SI
+    ? "Store n at the next slot and index it."
+    SI(s = Store(nodes = Option.withDefault(Vector.set(s.nodes, s.next, n), s.nodes), index = Map.set(s.index, n.tag, s.next), next = s.next + 1), id = s.next)
+
+fn lastSet(s: Store, n: Node) -> Store
+    ? "Overwrite the last slot; the index reads the field too."
+    Store(nodes = Option.withDefault(Vector.set(s.nodes, Vector.len(s.nodes) - 1, n), s.nodes), index = s.index, next = s.next)
+
+fn fill(s: Store, k: Int) -> Store
+    ? "Add k nodes."
+    match k == 0
+        true -> s
+        false -> fill(added(s, Node(tag = k, a = k * 2)).s, k - 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    s = lastSet(fill(Store(nodes = Vector.new(300, Node(tag = 0, a = 0)), index = {}, next = 0), 310), Node(tag = 7, a = 7))
+    Console.print("{Vector.len(s.nodes)} {Map.len(s.index)} {s.next} {Option.withDefault(Vector.get(s.nodes, 5), Node(tag = 0, a = 0)).a} {Option.withDefault(Vector.get(s.nodes, 299), Node(tag = 0, a = 0)).a}")
+"#;
+    let expected = "300 310 310 610 7";
+    let vm = run_vm_inline("field_keep", src).expect("vm run");
+    assert_eq!(vm, expected, "VM result");
+    let rust = build_run_rust_inline("field_keep", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+
+    let emitted = emitted_entry_module("field_keep", src);
+    let added = emitted
+        .lines()
+        .skip_while(|line| !line.starts_with("pub fn added("))
+        .take(3)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        added.starts_with("pub fn added(mut s @ _: Store")
+            && added.contains("let __vec = s.nodes;")
+            && !added.contains("s.nodes.clone()"),
+        "added must move the field into the in-place set:\n{emitted}"
+    );
+    assert!(
+        emitted.contains("let __vec = s.nodes.clone();"),
+        "lastSet reads the field in the index, so it clones it once:\n{emitted}"
+    );
+}
+
+/// A record holding a Map keyed by a tuple of more than three items: the
+/// generated record display needs the tuple key to display too.
+#[test]
+fn rust_map_keyed_by_a_wide_tuple_in_a_record_compiles() {
+    let src = r#"module TupleKey
+    intent = "A record holding Maps keyed by four- and five-item tuples"
+    depends []
+    effects [Console.print]
+
+record Store
+    index: Map<Tuple<Int, Int, Int, Int>, Int>
+    names: Map<Tuple<Int, String, Bool, Int, Int>, String>
+    next: Int
+
+fn keyOf(a: Int, b: Int, c: Int, d: Int) -> Tuple<Int, Int, Int, Int>
+    ? "The index key of one node."
+    (a, b, c, d)
+
+fn main() -> Unit
+    ! [Console.print]
+    s = Store(index = Map.set(Map.set({}, keyOf(1, 2, 3, 4), 0), keyOf(0, 9, 9, 9), 1), names = Map.set({}, (1, "a", true, 2, 5), "x"), next = 2)
+    name = Option.withDefault(Map.get(s.names, (1, "a", true, 2, 5)), "-")
+    Console.print("{Option.withDefault(Map.get(s.index, (1, 2, 3, 4)), 9)} {Option.withDefault(Map.get(s.index, keyOf(0, 9, 9, 9)), 9)} {Map.len(s.index)} {name} {s.next}")
+"#;
+    let expected = "0 1 2 x 2";
+    let vm = run_vm_inline("tuple_key", src).expect("vm run");
+    assert_eq!(vm, expected, "VM result");
+    let rust = build_run_rust_inline("tuple_key", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+}
+
 /// Issue #1196 end to end: a Map owned by a mutual-TCO trampoline crosses a
 /// module boundary into a normal helper, returns inside `Result<Tuple<...>>`,
 /// and is destructured before the next trampoline state. The pattern-bound
