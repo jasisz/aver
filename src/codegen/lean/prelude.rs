@@ -24,10 +24,15 @@ variable {α β ε : Type u}
 /// through a `List`, an `Option`, a tuple or a derived record `BEq`)
 /// depended on it. Both `BEq` instances are the same test definitionally;
 /// these are built from `Int.decEq` and use no axiom. They come before the
-/// records so their derived `BEq` uses them. Proof export only: a
-/// certificate model admits no data instance at a core type.
-const LEAN_PRELUDE_INT_BEQ: &str = r#"-- `==` on `Int` by `decide`, and its laws, with no axiom: core's own
--- instances come from `Int`'s order package, which uses `Classical.choice`.
+/// records so their derived `BEq` uses them. The same holds for the order
+/// classes (`Std.IsPreorder` up to `Std.IsLinearOrder`): `simp` reads
+/// `a ≤ a` on an `Int` through `Std.Refl`, which core finds through the
+/// order package; these are built from the `Int.le_*` lemmas with no axiom.
+/// Proof export only: a certificate model admits no data instance at a
+/// core type.
+const LEAN_PRELUDE_INT_BEQ: &str = r#"-- `==` on `Int` by `decide`, and its laws, and the order laws of `≤` on
+-- `Int`, with no axiom: core's own instances come from `Int`'s order
+-- package, which uses `Classical.choice`.
 namespace AverInt
 instance (priority := high) beqByDecide : BEq Int := instBEqOfDecidableEq
 instance (priority := high) lawfulBEqByDecide : LawfulBEq Int where
@@ -35,6 +40,14 @@ instance (priority := high) lawfulBEqByDecide : LawfulBEq Int where
   rfl := decide_eq_true rfl
 instance (priority := high) reflBEqByDecide : ReflBEq Int := lawfulBEqByDecide.toReflBEq
 instance (priority := high) equivBEqByDecide : EquivBEq Int := instEquivBEqOfLawfulBEq
+instance (priority := high) isPreorder : Std.IsPreorder Int where
+  le_refl := Int.le_refl
+  le_trans := fun _ _ _ => Int.le_trans
+instance (priority := high) isPartialOrder : Std.IsPartialOrder Int where
+  le_antisymm := fun _ _ => Int.le_antisymm
+instance (priority := high) isLinearPreorder : Std.IsLinearPreorder Int where
+  le_total := Int.le_total
+instance (priority := high) isLinearOrder : Std.IsLinearOrder Int where
 end AverInt"#;
 
 const LEAN_PRELUDE_FLOAT_COE: &str = r#"instance : Coe Int Float := ⟨fun n => Float.ofInt n⟩

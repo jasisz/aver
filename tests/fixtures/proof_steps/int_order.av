@@ -1,0 +1,39 @@
+module IntOrder
+    intent =
+        "A law Lean proves by `simp`, which reads `a <= a` on an Int through the order"
+        "laws of Int. Lean proves it with no `Classical.choice`."
+    exposes [itemAt, swapTop]
+    effects []
+
+fn itemAt(items: List<List<Int>>, n: Int) -> List<Int>
+    ? "The nth item from the top, or an empty item."
+    match items
+        [] -> []
+        [head, ..tail] -> hereOrDeeper(head, tail, n)
+
+verify itemAt
+    itemAt([[1], [2], [3]], 0) => [1]
+    itemAt([[1], [2], [3]], 2) => [3]
+    itemAt([], 0) => []
+
+fn hereOrDeeper(head: List<Int>, tail: List<List<Int>>, n: Int) -> List<Int>
+    ? "Count down one position at a time."
+    match n <= 0
+        true -> head
+        false -> itemAt(tail, n - 1)
+
+verify hereOrDeeper
+    hereOrDeeper([1], [[2]], 0) => [1]
+    hereOrDeeper([1], [[2]], 1) => [2]
+
+fn swapTop(items: List<List<Int>>) -> List<List<Int>>
+    ? "The top two items the other way round."
+    [itemAt(items, 1), itemAt(items, 0)]
+
+verify swapTop
+    swapTop([[1], [2], [3]]) => [[2], [1]]
+
+verify swapTop law twiceIsTheTopPair
+    given items: List<List<Int>> = [[[1], [2]], [[1], [2], [3]], [[0], [7], [8], [9]]]
+    when List.len(items) >= 2
+    swapTop(swapTop(items)) => List.take(items, 2)
