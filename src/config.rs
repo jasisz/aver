@@ -306,6 +306,18 @@ pub enum IndependenceMode {
     Sequential,
 }
 
+/// `[rust] allocator`: the global allocator of the crate that
+/// `aver compile --target rust` generates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RustAllocator {
+    /// The platform's `malloc`; the generated crate names no allocator.
+    #[default]
+    System,
+    /// mimalloc, added to the generated `Cargo.toml` and declared as the
+    /// `#[global_allocator]` of the generated binary.
+    Mimalloc,
+}
+
 /// Project-level configuration loaded from `aver.toml`.
 #[derive(Debug, Clone)]
 pub struct ProjectConfig {
@@ -335,6 +347,8 @@ pub struct ProjectConfig {
     /// `[work] max-jobs`: how many jobs of this program may run at once.
     /// `None` means the host's own available parallelism.
     pub work_max_jobs: Option<usize>,
+    /// `[rust] allocator`: the generated Rust crate's global allocator.
+    pub rust_allocator: RustAllocator,
 }
 
 impl ProjectConfig {
@@ -479,6 +493,7 @@ impl ProjectConfig {
         let (shape_layers, shape_expected) = parse_shape(&table)?;
         let provider_manifest = providers::parse_provider_manifest(&table)?;
         let work_max_jobs = parse_work_max_jobs(&table)?;
+        let rust_allocator = parse_rust_allocator(&table)?;
         providers::reject_run_table(&table)?;
 
         Ok(ProjectConfig {
@@ -492,6 +507,7 @@ impl ProjectConfig {
             shape_expected,
             provider_manifest,
             work_max_jobs,
+            rust_allocator,
         })
     }
 
@@ -2724,6 +2740,19 @@ helpers = 30
     }
 
     #[test]
+    fn rust_allocator_defaults_to_system_and_names_its_values() {
+        let default = ProjectConfig::parse("").unwrap();
+        assert_eq!(default.rust_allocator, RustAllocator::System);
+        let chosen = ProjectConfig::parse("[rust]\nallocator = \"mimalloc\"\n").unwrap();
+        assert_eq!(chosen.rust_allocator, RustAllocator::Mimalloc);
+
+        let unknown = ProjectConfig::parse("[rust]\nallocator = \"jemalloc\"\n").unwrap_err();
+        assert!(unknown.contains("\"system\" or \"mimalloc\", got \"jemalloc\""));
+        let misplaced = ProjectConfig::parse("[rust]\nalloc = \"mimalloc\"\n").unwrap_err();
+        assert!(misplaced.contains("[rust] has no key 'alloc'"));
+    }
+
+    #[test]
     fn test_independence_mode_invalid() {
         let toml = r#"
 [independence]
@@ -2763,4 +2792,32 @@ fn parse_work_max_jobs(table: &toml::Table) -> Result<Option<usize>, String> {
     usize::try_from(limit)
         .map(Some)
         .map_err(|_| format!("aver.toml: [work].max-jobs {limit} is larger than this host allows"))
+}
+
+/// `[rust] allocator`: `"system"` (the default) or `"mimalloc"`.
+fn parse_rust_allocator(table: &toml::Table) -> Result<RustAllocator, String> {
+    let Some(value) = table.get("rust") else {
+        return Ok(RustAllocator::default());
+    };
+    let rust = value
+        .as_table()
+        .ok_or_else(|| "aver.toml: [rust] must be a table".to_string())?;
+    for key in rust.keys() {
+        if key != "allocator" {
+            return Err(format!("aver.toml: [rust] has no key '{key}'"));
+        }
+    }
+    match rust.get("allocator") {
+        None => Ok(RustAllocator::default()),
+        Some(toml::Value::String(name)) => match name.as_str() {
+            "system" => Ok(RustAllocator::System),
+            "mimalloc" => Ok(RustAllocator::Mimalloc),
+            other => Err(format!(
+                "aver.toml: [rust].allocator must be \"system\" or \"mimalloc\", got {other:?}"
+            )),
+        },
+        Some(_) => Err(
+            "aver.toml: [rust].allocator must be a string, \"system\" or \"mimalloc\"".to_string(),
+        ),
+    }
 }

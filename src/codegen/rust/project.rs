@@ -2,6 +2,7 @@
 use std::collections::HashSet;
 
 use super::composition::ProviderComposition;
+use crate::config::RustAllocator;
 use crate::toolchain_source::ToolchainSource;
 
 /// Exact aver-rt version embedded alongside the toolchain's Cargo source
@@ -36,6 +37,7 @@ pub fn generate_cargo_toml(
     has_runtime_policy: bool,
     has_scoped_runtime: bool,
     provider_composition: &ProviderComposition,
+    allocator: RustAllocator,
 ) -> String {
     let mut lines = Vec::new();
     lines.push("[package]".to_string());
@@ -78,6 +80,9 @@ pub fn generate_cargo_toml(
     for binding in &provider_composition.bindings {
         deps.push(binding.cargo_dependency_line());
     }
+    if allocator == RustAllocator::Mimalloc {
+        deps.push("mimalloc = { version = \"0.1.52\", default-features = false }".to_string());
+    }
 
     if !deps.is_empty() {
         lines.push("[dependencies]".to_string());
@@ -119,6 +124,17 @@ pub fn generate_cargo_toml(
     lines.push("overflow-checks = true".to_string());
 
     lines.join("\n")
+}
+
+/// Declare the allocator `[rust] allocator` chose as the binary's global
+/// allocator. The system allocator needs no declaration, so the default
+/// leaves `src/main.rs` exactly as it was.
+pub fn declare_global_allocator(root_main: &mut String, allocator: RustAllocator) {
+    if allocator == RustAllocator::Mimalloc {
+        root_main.push_str(
+            "\n#[global_allocator]\nstatic GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;\n",
+        );
+    }
 }
 
 pub fn generate_readme(name: &str) -> String {
@@ -171,6 +187,7 @@ mod tests {
 
     use super::{generate_cargo_toml, generate_readme, runtime_dependency_line, toml_string};
     use crate::codegen::rust::composition::ProviderComposition;
+    use crate::config::RustAllocator;
 
     #[test]
     fn runtime_dependency_can_use_local_override_path() {
@@ -195,6 +212,7 @@ mod tests {
             false,
             false,
             &ProviderComposition::default(),
+            RustAllocator::System,
         );
 
         assert!(manifest.contains("[profile.release]\nlto = true\ncodegen-units = 1"));
