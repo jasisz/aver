@@ -49,20 +49,132 @@ pub type Call = (Vec<Term>, Vec<String>);
 /// arguments: a recursion through a helper is checked as if the helper's
 /// body stood in its place. The kernel's `selfCalls` is the judge; this
 /// mirrors it so the producer writes what it will accept.
+///
+/// A helper that reaches itself without passing `f` is refused before
+/// any body is read, and the helper bodies read are capped
+/// ([`HELPER_READS`]): each path through a group of helpers is read on
+/// its own, so the reading grows with the number of paths, not of
+/// helpers.
 pub fn self_calls(t: &Term, f: FnId, ds: &[Def]) -> Result<Vec<Call>, String> {
+    let calls_back = calling_back(f, ds);
+    if let Some(h) = helper_cycle(t, ds, &calls_back) {
+        return Err(cycle_refusal(f, h, ds));
+    }
+    let mut read = Reading {
+        f,
+        ds,
+        calls_back,
+        left: HELPER_READS,
+    };
     let mut out = Vec::new();
-    walk(t, f, ds, ds.len(), &mut Vec::new(), &mut out)?;
+    walk(t, &mut read, ds.len(), &mut Vec::new(), &mut out)?;
     Ok(out)
+}
+
+/// The most helper bodies one [`self_calls`] reads through. A recursion
+/// whose calls through its helpers need more is refused with that reason.
+pub const HELPER_READS: usize = 1024;
+
+/// What one [`self_calls`] reads by: the definition whose calls it lists,
+/// the definitions of `ds` that call back into it, and how many more
+/// helper bodies it may read.
+struct Reading<'a> {
+    f: FnId,
+    ds: &'a [Def],
+    calls_back: Vec<FnId>,
+    left: usize,
+}
+
+/// The definitions of `ds` other than `f` from which `f` is reachable:
+/// the helpers whose calls [`self_calls`] reads through.
+fn calling_back(f: FnId, ds: &[Def]) -> Vec<FnId> {
+    if !ds.iter().any(|d| d.fn_id == f) {
+        return Vec::new();
+    }
+    let callees: Vec<(FnId, Vec<FnId>)> = ds.iter().map(|d| (d.fn_id, def_callees(d))).collect();
+    let mut found = vec![f];
+    let mut todo = vec![f];
+    while let Some(at) = todo.pop() {
+        for (g, called) in &callees {
+            if *g != at && called.contains(&at) && !found.contains(g) {
+                found.push(*g);
+                todo.push(*g);
+            }
+        }
+    }
+    found.retain(|g| *g != f);
+    found
+}
+
+/// A helper `t` reaches that lies on a cycle of helpers calling back
+/// into the definition checked without passing it: reading through it
+/// goes round that cycle until the fuel runs out, which refuses the
+/// recursion, so it is refused at once.
+fn helper_cycle(t: &Term, ds: &[Def], calls_back: &[FnId]) -> Option<FnId> {
+    let edges = |g: FnId| -> Vec<FnId> {
+        ds.iter()
+            .find(|d| d.fn_id == g)
+            .map(def_callees)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|h| calls_back.contains(h))
+            .collect()
+    };
+    let mut starts = Vec::new();
+    callees(t, &mut starts);
+    // `false` while a helper's callees are being followed, `true` once done.
+    let mut done: std::collections::HashMap<FnId, bool> = std::collections::HashMap::new();
+    for s in starts.into_iter().filter(|g| calls_back.contains(g)) {
+        if done.contains_key(&s) {
+            continue;
+        }
+        done.insert(s, false);
+        let mut stack: Vec<(FnId, Vec<FnId>)> = vec![(s, edges(s))];
+        while let Some((at, next)) = stack.last_mut() {
+            let at = *at;
+            match next.pop() {
+                Some(g) => match done.get(&g) {
+                    Some(false) => return Some(g),
+                    Some(true) => {}
+                    None => {
+                        done.insert(g, false);
+                        let e = edges(g);
+                        stack.push((g, e));
+                    }
+                },
+                None => {
+                    done.insert(at, true);
+                    stack.pop();
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Why a recursion through `h`, a helper that reaches itself without
+/// `f`, is refused.
+fn cycle_refusal(f: FnId, h: FnId, ds: &[Def]) -> String {
+    let name = |g: FnId| {
+        ds.iter()
+            .find(|d| d.fn_id == g)
+            .map_or("the function", |d| d.name.as_str())
+    };
+    let f_name = name(f);
+    format!(
+        "{f_name} recurses through {}, which reaches itself without {f_name}",
+        name(h)
+    )
 }
 
 fn walk(
     t: &Term,
-    f: FnId,
-    ds: &[Def],
+    read: &mut Reading,
     fuel: usize,
     bound: &mut Vec<String>,
     out: &mut Vec<Call>,
 ) -> Result<(), String> {
+    let f = read.f;
     let called = match &t.node {
         ResolvedExpr::Call(ResolvedCallee::Fn(g), args) => Some((*g, args)),
         ResolvedExpr::TailCall { target, args } => Some((*target, args)),
@@ -73,25 +185,25 @@ fn walk(
             if g == f {
                 out.push((args.to_vec(), bound.clone()));
             } else {
-                helper_calls(g, args, f, ds, fuel, bound, out)?;
+                helper_calls(g, args, read, fuel, bound, out)?;
             }
             for a in args {
-                walk(a, f, ds, fuel, bound, out)?;
+                walk(a, read, fuel, bound, out)?;
             }
         }
         (ResolvedExpr::Match { subject, arms }, _) => {
-            walk(subject, f, ds, fuel, bound, out)?;
+            walk(subject, read, fuel, bound, out)?;
             for arm in arms {
                 let names = term::pattern_binders(&arm.pattern);
                 let before = bound.len();
                 bound.extend(names);
-                walk(&arm.body, f, ds, fuel, bound, out)?;
+                walk(&arm.body, read, fuel, bound, out)?;
                 bound.truncate(before);
             }
         }
         _ => {
             for c in term::children(t) {
-                walk(c, f, ds, fuel, bound, out)?;
+                walk(c, read, fuel, bound, out)?;
             }
         }
     }
@@ -105,16 +217,16 @@ fn walk(
 fn helper_calls(
     g: FnId,
     args: &[Term],
-    f: FnId,
-    ds: &[Def],
+    read: &mut Reading,
     fuel: usize,
     bound: &[String],
     out: &mut Vec<Call>,
 ) -> Result<(), String> {
+    let (f, ds) = (read.f, read.ds);
     let Some(h) = ds.iter().find(|d| d.fn_id == g) else {
         return Ok(());
     };
-    if !reaches(g, f, ds) {
+    if !read.calls_back.contains(&g) {
         return Ok(());
     }
     let f_name = ds
@@ -122,11 +234,14 @@ fn helper_calls(
         .find(|d| d.fn_id == f)
         .map_or("the function", |d| d.name.as_str());
     if fuel == 0 {
+        return Err(cycle_refusal(f, g, ds));
+    }
+    if read.left == 0 {
         return Err(format!(
-            "{f_name} recurses through {}, which reaches itself without {f_name}",
-            h.name
+            "{f_name} recurses through more than {HELPER_READS} readings of helper bodies"
         ));
     }
+    read.left -= 1;
     if h.params.len() != args.len() {
         return Err(format!("{} takes {} arguments", h.name, h.params.len()));
     }
@@ -134,7 +249,7 @@ fn helper_calls(
     // with it; without one, the bindings are substituted into the body.
     let mut in_lets = Vec::new();
     for (_, v) in &h.lets {
-        walk(v, f, ds, fuel - 1, &mut Vec::new(), &mut in_lets)?;
+        walk(v, read, fuel - 1, &mut Vec::new(), &mut in_lets)?;
     }
     if !in_lets.is_empty() {
         return Err(format!(
@@ -149,7 +264,7 @@ fn helper_calls(
     }
     let body = term::subst(&h.body, &lets)?;
     let mut inside = Vec::new();
-    walk(&body, f, ds, fuel - 1, &mut Vec::new(), &mut inside)?;
+    walk(&body, read, fuel - 1, &mut Vec::new(), &mut inside)?;
     for (call, inner) in inside {
         let mut used = Vec::new();
         for a in &call {
@@ -266,11 +381,35 @@ pub fn helpers(f: FnId, ds: &[Def]) -> Vec<FnId> {
 /// recursion, read through the others, passes the gate: `def` then stops,
 /// and steps may open it though its own recursion is not one they follow.
 pub fn rooted(def: &Def, ds: &[Def]) -> bool {
+    rooted_by(def, ds, |r| matches!(recursion(r, ds), Ok(Some(_))))
+}
+
+/// [`rooted`], with whether a definition on a cycle with `def` passes the
+/// gate read by `passes` (one that remembers what it read).
+pub fn rooted_by(def: &Def, ds: &[Def], passes: impl Fn(&Def) -> bool) -> bool {
+    let back = calling_back(def.fn_id, ds);
+    let ahead = reached(def.fn_id, ds);
     ds.iter().any(|r| {
-        reachable(def.fn_id, r.fn_id, ds)
-            && reachable(r.fn_id, def.fn_id, ds)
-            && matches!(recursion(r, ds), Ok(Some(_)))
+        (r.fn_id == def.fn_id || back.contains(&r.fn_id)) && ahead.contains(&r.fn_id) && passes(r)
     })
+}
+
+/// `from` and every definition of `ds` reachable from it ([`reachable`]).
+fn reached(from: FnId, ds: &[Def]) -> Vec<FnId> {
+    let mut seen = vec![from];
+    let mut todo = vec![from];
+    while let Some(at) = todo.pop() {
+        let Some(d) = ds.iter().find(|d| d.fn_id == at) else {
+            continue;
+        };
+        for g in def_callees(d) {
+            if g != at && !seen.contains(&g) && ds.iter().any(|d| d.fn_id == g) {
+                seen.push(g);
+                todo.push(g);
+            }
+        }
+    }
+    seen
 }
 
 /// What the termination gate checked about a definition that calls

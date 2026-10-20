@@ -1,0 +1,248 @@
+module HelperGroup
+    intent =
+        "Two recursions through a large group of helpers, each helper calling the next four ways:"
+        "one also through a pair of helpers that call each other without it, one through the"
+        "chain alone. Reading every path of calls through the group would never end; steps"
+        "refuse each recursion with the reason and the laws stay open."
+    exposes [walk, total]
+    effects []
+
+fn walk(xs: List<Int>) -> Int
+    ? "The items, each counted again through the chain and the pair."
+    match xs
+        [] -> 0
+        [h, ..t] -> h + a1(t, 0) + spin(t, 1)
+
+verify walk law nonNegative
+    given a: Int = [0, 1, 5]
+    given b: Int = [2, 7]
+    walk([a, b]) >= 0 => true
+
+fn spin(xs: List<Int>, n: Int) -> Int
+    ? "Back to walk once n reaches zero, through spinBack before."
+    match n <= 0
+        true -> walk(xs)
+        false -> spinBack(xs, n - 1)
+
+fn spinBack(xs: List<Int>, n: Int) -> Int
+    ? "Calls spin again: a pair of helpers that call each other without walk."
+    spin(xs, n)
+
+fn a1(xs: List<Int>, k: Int) -> Int
+    ? "Step 1 of the chain back to walk."
+    match k
+        0 -> a2(xs, k)
+        1 -> a2(xs, k)
+        2 -> a2(xs, k)
+        _ -> a2(xs, k)
+
+fn a2(xs: List<Int>, k: Int) -> Int
+    ? "Step 2 of the chain back to walk."
+    match k
+        0 -> a3(xs, k)
+        1 -> a3(xs, k)
+        2 -> a3(xs, k)
+        _ -> a3(xs, k)
+
+fn a3(xs: List<Int>, k: Int) -> Int
+    ? "Step 3 of the chain back to walk."
+    match k
+        0 -> a4(xs, k)
+        1 -> a4(xs, k)
+        2 -> a4(xs, k)
+        _ -> a4(xs, k)
+
+fn a4(xs: List<Int>, k: Int) -> Int
+    ? "Step 4 of the chain back to walk."
+    match k
+        0 -> a5(xs, k)
+        1 -> a5(xs, k)
+        2 -> a5(xs, k)
+        _ -> a5(xs, k)
+
+fn a5(xs: List<Int>, k: Int) -> Int
+    ? "Step 5 of the chain back to walk."
+    match k
+        0 -> a6(xs, k)
+        1 -> a6(xs, k)
+        2 -> a6(xs, k)
+        _ -> a6(xs, k)
+
+fn a6(xs: List<Int>, k: Int) -> Int
+    ? "Step 6 of the chain back to walk."
+    match k
+        0 -> a7(xs, k)
+        1 -> a7(xs, k)
+        2 -> a7(xs, k)
+        _ -> a7(xs, k)
+
+fn a7(xs: List<Int>, k: Int) -> Int
+    ? "Step 7 of the chain back to walk."
+    match k
+        0 -> a8(xs, k)
+        1 -> a8(xs, k)
+        2 -> a8(xs, k)
+        _ -> a8(xs, k)
+
+fn a8(xs: List<Int>, k: Int) -> Int
+    ? "Step 8 of the chain back to walk."
+    match k
+        0 -> a9(xs, k)
+        1 -> a9(xs, k)
+        2 -> a9(xs, k)
+        _ -> a9(xs, k)
+
+fn a9(xs: List<Int>, k: Int) -> Int
+    ? "Step 9 of the chain back to walk."
+    match k
+        0 -> a10(xs, k)
+        1 -> a10(xs, k)
+        2 -> a10(xs, k)
+        _ -> a10(xs, k)
+
+fn a10(xs: List<Int>, k: Int) -> Int
+    ? "Step 10 of the chain back to walk."
+    match k
+        0 -> a11(xs, k)
+        1 -> a11(xs, k)
+        2 -> a11(xs, k)
+        _ -> a11(xs, k)
+
+fn a11(xs: List<Int>, k: Int) -> Int
+    ? "Step 11 of the chain back to walk."
+    match k
+        0 -> a12(xs, k)
+        1 -> a12(xs, k)
+        2 -> a12(xs, k)
+        _ -> a12(xs, k)
+
+fn a12(xs: List<Int>, k: Int) -> Int
+    ? "Step 12 of the chain back to walk."
+    match k
+        0 -> a13(xs, k)
+        1 -> a13(xs, k)
+        2 -> a13(xs, k)
+        _ -> a13(xs, k)
+
+fn a13(xs: List<Int>, k: Int) -> Int
+    ? "Step 13 of the chain back to walk."
+    match k
+        0 -> walk(xs)
+        1 -> walk(xs)
+        2 -> walk(xs)
+        _ -> walk(xs)
+
+fn total(xs: List<Int>) -> Int
+    ? "The items, each counted again through the chain."
+    match xs
+        [] -> 0
+        [h, ..t] -> h + b1(t, 0)
+
+verify total law nonNegative
+    given a: Int = [0, 1, 5]
+    given b: Int = [2, 7]
+    total([a, b]) >= 0 => true
+
+fn b1(xs: List<Int>, k: Int) -> Int
+    ? "Step 1 of the chain back to total."
+    match k
+        0 -> b2(xs, k)
+        1 -> b2(xs, k)
+        2 -> b2(xs, k)
+        _ -> b2(xs, k)
+
+fn b2(xs: List<Int>, k: Int) -> Int
+    ? "Step 2 of the chain back to total."
+    match k
+        0 -> b3(xs, k)
+        1 -> b3(xs, k)
+        2 -> b3(xs, k)
+        _ -> b3(xs, k)
+
+fn b3(xs: List<Int>, k: Int) -> Int
+    ? "Step 3 of the chain back to total."
+    match k
+        0 -> b4(xs, k)
+        1 -> b4(xs, k)
+        2 -> b4(xs, k)
+        _ -> b4(xs, k)
+
+fn b4(xs: List<Int>, k: Int) -> Int
+    ? "Step 4 of the chain back to total."
+    match k
+        0 -> b5(xs, k)
+        1 -> b5(xs, k)
+        2 -> b5(xs, k)
+        _ -> b5(xs, k)
+
+fn b5(xs: List<Int>, k: Int) -> Int
+    ? "Step 5 of the chain back to total."
+    match k
+        0 -> b6(xs, k)
+        1 -> b6(xs, k)
+        2 -> b6(xs, k)
+        _ -> b6(xs, k)
+
+fn b6(xs: List<Int>, k: Int) -> Int
+    ? "Step 6 of the chain back to total."
+    match k
+        0 -> b7(xs, k)
+        1 -> b7(xs, k)
+        2 -> b7(xs, k)
+        _ -> b7(xs, k)
+
+fn b7(xs: List<Int>, k: Int) -> Int
+    ? "Step 7 of the chain back to total."
+    match k
+        0 -> b8(xs, k)
+        1 -> b8(xs, k)
+        2 -> b8(xs, k)
+        _ -> b8(xs, k)
+
+fn b8(xs: List<Int>, k: Int) -> Int
+    ? "Step 8 of the chain back to total."
+    match k
+        0 -> b9(xs, k)
+        1 -> b9(xs, k)
+        2 -> b9(xs, k)
+        _ -> b9(xs, k)
+
+fn b9(xs: List<Int>, k: Int) -> Int
+    ? "Step 9 of the chain back to total."
+    match k
+        0 -> b10(xs, k)
+        1 -> b10(xs, k)
+        2 -> b10(xs, k)
+        _ -> b10(xs, k)
+
+fn b10(xs: List<Int>, k: Int) -> Int
+    ? "Step 10 of the chain back to total."
+    match k
+        0 -> b11(xs, k)
+        1 -> b11(xs, k)
+        2 -> b11(xs, k)
+        _ -> b11(xs, k)
+
+fn b11(xs: List<Int>, k: Int) -> Int
+    ? "Step 11 of the chain back to total."
+    match k
+        0 -> b12(xs, k)
+        1 -> b12(xs, k)
+        2 -> b12(xs, k)
+        _ -> b12(xs, k)
+
+fn b12(xs: List<Int>, k: Int) -> Int
+    ? "Step 12 of the chain back to total."
+    match k
+        0 -> b13(xs, k)
+        1 -> b13(xs, k)
+        2 -> b13(xs, k)
+        _ -> b13(xs, k)
+
+fn b13(xs: List<Int>, k: Int) -> Int
+    ? "Step 13 of the chain back to total."
+    match k
+        0 -> total(xs)
+        1 -> total(xs)
+        2 -> total(xs)
+        _ -> total(xs)

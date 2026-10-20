@@ -1379,6 +1379,69 @@ fn a_closed_recursive_call_says_why_it_stays_closed() {
     let _ = fs::remove_dir_all(out);
 }
 
+/// A recursion through a large group of helpers is read in bounded time:
+/// each helper of `helper_group.av` calls the next four ways, so reading
+/// every path of calls back to the function never ends. A pair of helpers
+/// that call each other without the function is refused before any body
+/// is read, and the chain alone stops at the cap on helper bodies read;
+/// both laws stay open with that reason instead of the proof never ending.
+#[test]
+fn a_recursion_through_a_large_group_of_helpers_ends_with_a_reason() {
+    use std::io::Read;
+    use std::time::{Duration, Instant};
+    let out = scratch("helper-group");
+    let mut child = Command::new(aver_bin())
+        .args([
+            "proof",
+            "helper_group.av",
+            "--backend",
+            "aver",
+            "-o",
+            out.to_str().unwrap(),
+        ])
+        .current_dir(repo_root().join(FIXTURES))
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("aver runs");
+    let mut stdout = child.stdout.take().expect("stdout is piped");
+    let reader = std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = stdout.read_to_string(&mut text);
+        text
+    });
+    let started = Instant::now();
+    loop {
+        if child.try_wait().expect("aver is waited for").is_some() {
+            break;
+        }
+        if started.elapsed() > Duration::from_secs(120) {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("aver proof of helper_group.av ran past two minutes");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let text = reader.join().expect("stdout is read");
+    let line = |law: &str| {
+        text.lines()
+            .find(|l| l.trim_start().starts_with(&format!("{law}: ")))
+            .unwrap_or_else(|| panic!("no line for {law}\n{text}"))
+            .to_string()
+    };
+    let walk = line("walk.nonNegative");
+    assert!(
+        walk.contains("walk recurses through spin, which reaches itself without walk"),
+        "{walk}"
+    );
+    let total = line("total.nonNegative");
+    assert!(
+        total.contains("total recurses through more than 1024 readings of helper bodies"),
+        "{total}"
+    );
+    let _ = fs::remove_dir_all(out);
+}
+
 #[test]
 fn induction_follows_only_the_function_the_law_is_about() {
     let out = scratch("induct-which");
