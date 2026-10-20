@@ -1242,6 +1242,57 @@ fn both_kernels_induct_along_the_laws_function_and_refuse_mutations() {
     let _ = fs::remove_dir_all(out);
 }
 
+/// A refusal at a recursive call steps leave closed says why: a recursion
+/// they do not follow names what is wrong and the shapes they do follow; a
+/// division down to zero, which they follow, is not called one they do not,
+/// in the attempt that keeps it whole.
+#[test]
+fn a_closed_recursive_call_says_why_it_stays_closed() {
+    let out = scratch("closed-recursion");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "closed_recursion.av",
+            "--backend",
+            "aver",
+            "-o",
+            out.to_str().unwrap(),
+        ],
+    );
+    let text = String::from_utf8_lossy(&result.stdout);
+    let line = |law: &str| {
+        text.lines()
+            .find(|l| l.trim_start().starts_with(&format!("{law}: ")))
+            .unwrap_or_else(|| panic!("no line for {law}\n{}", format_output(&result)))
+            .to_string()
+    };
+    let count = line("count.nonnegative");
+    assert!(
+        count.contains("steps do not open `count`: it recurses on something that is not a part of the value it matches; steps open a recursive function only when its body is one `match` on a parameter"),
+        "{count}"
+    );
+    assert!(
+        count.contains("each recursive call passes `n - 1` or `n / k`"),
+        "{count}"
+    );
+    let bytes = line("bytesOf.belowTheValue");
+    assert!(
+        bytes.contains("with the call that divides down to zero kept whole"),
+        "{bytes}"
+    );
+    assert!(!bytes.contains("steps do not open"), "{bytes}");
+    assert!(
+        bytes.contains(
+            "induction: bytesOf divides down to zero, and this attempt keeps its calls whole"
+        ),
+        "{bytes}"
+    );
+    assert!(!bytes.contains("which does not recurse"), "{bytes}");
+    assert!(!text.contains("checker limit"), "{text}");
+    let _ = fs::remove_dir_all(out);
+}
+
 #[test]
 fn induction_follows_only_the_function_the_law_is_about() {
     let out = scratch("induct-which");

@@ -99,9 +99,18 @@ impl Tactic {
         // rewrite the tree first: Instrument prefixes each `First` branch with a
         // winner-probe marker; Collapse drops each `First` to its proven winner.
         // Outside a minimize pass this is a no-op clone.
-        let tree = minimize::apply(self);
-        let strip = tree.leaf_min_indent().unwrap_or(0);
-        tree.strip_leaf_indent(strip).render_indent(1)
+        //
+        // The common indent comes off BEFORE the rewrite: the marker of a
+        // branch that starts with a keyword (`sorry`, `first`) has no indent,
+        // so measured after Instrument it would leave the authored leaves at
+        // their baked indent, deeper than the markers before them, and Lean
+        // would read the first of them as an argument of `trace` (the probe
+        // build would not parse). What a collapse leaves is a part of the
+        // tree, whose own common indent comes off after.
+        let strip = self.leaf_min_indent().unwrap_or(0);
+        let tree = minimize::apply(&self.clone().strip_leaf_indent(strip));
+        let rest = tree.leaf_min_indent().unwrap_or(0);
+        tree.strip_leaf_indent(rest).render_indent(1)
     }
 
     /// The smallest leading-space count across every non-blank line of every
@@ -156,6 +165,20 @@ impl Tactic {
                     })
                     .collect(),
             },
+        }
+    }
+
+    /// The leading-space count of the first non-blank line the tree renders
+    /// from a leaf, when that line comes from a leaf (`None` for a tree that
+    /// starts with a keyword: `sorry`, `first`, `induction`).
+    fn first_line_indent(&self) -> Option<usize> {
+        match self {
+            Tactic::Leaf(s) => s.lines().find(|l| !l.trim().is_empty()).map(leading_spaces),
+            Tactic::Seq(ts) => ts
+                .iter()
+                .find(|t| !matches!(t, Tactic::Leaf(s) if s.trim().is_empty()))
+                .and_then(Tactic::first_line_indent),
+            Tactic::Sorry | Tactic::First(_) | Tactic::Induction { .. } => None,
         }
     }
 
@@ -223,8 +246,12 @@ impl Tactic {
                             // Recurse before prepending the marker so nested
                             // `First`s take indices AFTER this node (pre-order).
                             let inner = branch.instrument_markers(next);
+                            // At the column of the branch's first line: a
+                            // line deeper than the marker before it would be
+                            // read as an argument of `trace`.
+                            let pad = " ".repeat(inner.first_line_indent().unwrap_or(0));
                             Tactic::Seq(vec![
-                                Tactic::Leaf(format!("trace \"AVERMIN:{idx}:{b}\"")),
+                                Tactic::Leaf(format!("{pad}trace \"AVERMIN:{idx}:{b}\"")),
                                 inner,
                             ])
                         })
@@ -277,7 +304,15 @@ impl Tactic {
                     }
                 }
                 match chosen {
-                    Some(t) => t,
+                    // The branch takes the place of the `first`, at its
+                    // column: what it carries deeper than its siblings (a
+                    // branch alone in its parentheses may) comes off, or
+                    // Lean would read its first line as an argument of the
+                    // line before.
+                    Some(t) => {
+                        let n = t.leaf_min_indent().unwrap_or(0);
+                        t.strip_leaf_indent(n)
+                    }
                     None => Tactic::First(kept),
                 }
             }
@@ -632,6 +667,88 @@ warning: declaration uses 'sorry'
         assert!(rendered.contains("AVERMIN:0:1"));
         assert!(rendered.contains("AVERMIN:1:0"));
         assert!(rendered.contains("AVERMIN:1:1"));
+    }
+
+    #[test]
+    fn instrument_markers_sit_at_the_column_of_a_branch_with_baked_indent() {
+        // A branch of lines that carry the legacy 2-space indent: its marker
+        // must start at the column of its first line, or Lean reads that line
+        // as an argument of `trace` and the probe build does not parse.
+        let body = || {
+            Tactic::First(vec![
+                Tactic::raw(vec!["  intro a".to_string(), "  simp".to_string()]),
+                Tactic::Sorry,
+            ])
+        };
+        minimize::begin_instrument();
+        let lines = body().render_body();
+        minimize::end();
+        let column = |text: &str| {
+            lines
+                .iter()
+                .find(|l| l.trim_start().starts_with(text))
+                .map(|l| leading_spaces(l))
+                .unwrap_or_else(|| panic!("no `{text}` in {lines:#?}"))
+        };
+        assert_eq!(
+            column("trace \"AVERMIN:0:0\""),
+            column("intro a"),
+            "{lines:#?}"
+        );
+        assert_eq!(column("intro a"), column("simp"), "{lines:#?}");
+        // Outside the pass the body renders as before.
+        assert_eq!(
+            body().render_body(),
+            vec![
+                "  first".to_string(),
+                "  | (".to_string(),
+                "    intro a".to_string(),
+                "    simp".to_string(),
+                "  )".to_string(),
+                "  | sorry".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_branch_deeper_than_its_siblings_keeps_its_marker_and_its_collapse_in_line() {
+        // A branch alone in its parentheses may sit deeper than the lines
+        // around the `first`. Its marker starts at its own column, and
+        // collapsed to it the `first` leaves it at the column of `intro`.
+        let body = || {
+            Tactic::Seq(vec![
+                leaf("intro a b"),
+                Tactic::First(vec![
+                    leaf("grind; done"),
+                    leaf("  cases a <;> cases b <;> rfl"),
+                ]),
+            ])
+        };
+        minimize::begin_instrument();
+        let lines = body().render_body();
+        minimize::end();
+        let column = |text: &str| {
+            lines
+                .iter()
+                .find(|l| l.trim_start().starts_with(text))
+                .map(|l| leading_spaces(l))
+                .unwrap_or_else(|| panic!("no `{text}` in {lines:#?}"))
+        };
+        assert_eq!(
+            column("trace \"AVERMIN:0:1\""),
+            column("cases a"),
+            "{lines:#?}"
+        );
+        minimize::begin_collapse(BTreeMap::from([(0usize, 1usize)]));
+        let collapsed = body().render_body();
+        minimize::end();
+        assert_eq!(
+            collapsed,
+            vec![
+                "  intro a b".to_string(),
+                "  cases a <;> cases b <;> rfl".to_string(),
+            ]
+        );
     }
 
     #[test]
