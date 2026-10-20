@@ -1669,8 +1669,10 @@ impl<T: ArenaTypes> Arena<T> {
     /// Move `value` into `target` if this promotion is allowed to move it, and
     /// otherwise descend into it where it stands.
     ///
-    /// The descent is deliberately unconditional here, unlike the one inside
-    /// the cons-cell walk below, and the difference is which values arrive. A
+    /// The descent is deliberately unconditional here, unlike the one for the
+    /// values a root holds ([`Arena::promote_child_to_target`]) and the one
+    /// inside the cons-cell walk below, and the difference is which values
+    /// arrive. A
     /// ROOT may be a slot this frame built outside the young region and filled
     /// with young values — an ordinary helper return builds its result directly
     /// in handoff — so a root that this promotion cannot move can still hold
@@ -1695,6 +1697,42 @@ impl<T: ArenaTypes> Arena<T> {
             return self.promote_value_to_target(value, mark, relocated, target);
         }
         self.rewrite_promoted_young_refs_in_place(space, raw_index, mark, relocated, target);
+        value
+    }
+
+    /// [`Arena::promote_region_root_to_target`] for a value found INSIDE an
+    /// entry the promotion is moving or rewriting, rather than for a root.
+    ///
+    /// The root's exception does not reach this far. A frame that promotes has
+    /// no yard entries of its own and at most one handoff entry, and that one
+    /// is the root, so a child outside the young region is older than the
+    /// frame and cannot hold anything the frame made — the same line
+    /// `take_promote_tail_value` draws for the tail of a cons cell, with the
+    /// same exception for an owned in-place write reported through
+    /// `rewrite_out_of_region_roots`. Descending anyway read the whole of every
+    /// older structure a fresh value points into, again at every return that
+    /// handed it up: a function that wraps the term it was given in a new node
+    /// and returns it read the entire term each time.
+    fn promote_child_to_target(
+        &mut self,
+        value: NanValue,
+        mark: u32,
+        relocated: &mut [u32],
+        target: AllocSpace,
+    ) -> NanValue {
+        let Some(index) = value.heap_index() else {
+            return value;
+        };
+        let (space, raw_index) = Self::decode_index(index);
+        if matches!(space, HeapSpace::Young)
+            && raw_index >= mark
+            && raw_index < self.young_entries.len() as u32
+        {
+            return self.promote_value_to_target(value, mark, relocated, target);
+        }
+        if self.rewrite_out_of_region_roots {
+            self.rewrite_promoted_young_refs_in_place(space, raw_index, mark, relocated, target);
+        }
         value
     }
 
@@ -2064,7 +2102,7 @@ impl<T: ArenaTypes> Arena<T> {
                     ArenaEntry::List(ArenaList::Concat { left, right, len })
                 }
                 ArenaEntry::List(ArenaList::Prepend { head, tail, len }) => {
-                    let head = self.promote_region_root_to_target(head, mark, relocated, target);
+                    let head = self.promote_child_to_target(head, mark, relocated, target);
                     let tail =
                         self.queue_promote_list_child(tail, mark, relocated, target, &mut pending);
                     ArenaEntry::List(ArenaList::Prepend { head, tail, len })
@@ -2093,7 +2131,7 @@ impl<T: ArenaTypes> Arena<T> {
     ) -> ArenaList {
         match list {
             ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
-                head: self.promote_region_root_to_target(head, mark, relocated, target),
+                head: self.promote_child_to_target(head, mark, relocated, target),
                 tail: self.promote_prepend_tail_iterative(tail, mark, relocated, target),
                 len,
             },
@@ -2102,7 +2140,7 @@ impl<T: ArenaTypes> Arena<T> {
             }
             other => {
                 let mut rewrite = |arena: &mut Arena<T>, value: NanValue| {
-                    arena.promote_region_root_to_target(value, mark, relocated, target)
+                    arena.promote_child_to_target(value, mark, relocated, target)
                 };
                 self.rewrite_list_with(other, &mut rewrite)
             }
@@ -2126,7 +2164,7 @@ impl<T: ArenaTypes> Arena<T> {
         while let Some(current) = pending.pop() {
             let new_entry = match current.entry {
                 ArenaEntry::List(ArenaList::Prepend { head, tail, len }) => {
-                    let head = self.promote_region_root_to_target(head, mark, relocated, target);
+                    let head = self.promote_child_to_target(head, mark, relocated, target);
                     let tail =
                         self.queue_promote_list_child(tail, mark, relocated, target, &mut pending);
                     ArenaEntry::List(ArenaList::Prepend { head, tail, len })
@@ -2220,7 +2258,7 @@ impl<T: ArenaTypes> Arena<T> {
         }
 
         let mut rewrite = |arena: &mut Arena<T>, value: NanValue| {
-            arena.promote_region_root_to_target(value, mark, relocated, target)
+            arena.promote_child_to_target(value, mark, relocated, target)
         };
         self.rewrite_entry_with(entry, &mut rewrite)
     }
@@ -2383,7 +2421,7 @@ impl<T: ArenaTypes> Arena<T> {
         }
 
         let mut rewrite = |arena: &mut Arena<T>, value: NanValue| {
-            arena.promote_region_root_to_target(value, mark, relocated, target)
+            arena.promote_child_to_target(value, mark, relocated, target)
         };
         self.rewrite_entry_with(entry, &mut rewrite)
     }

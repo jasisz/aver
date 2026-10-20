@@ -1264,6 +1264,46 @@ fn a_map_filled_two_frames_down_is_not_reread_by_every_return() {
     );
 }
 
+/// Entries the collector reads while `build` wraps the term it got back from
+/// the call below in one fresh node, `n` times, and hands the result up in a
+/// record (issue #1661).
+///
+/// `wrap` binds the new record before returning it, so the record is still in
+/// the young region at the return and the promotion moves it and the fresh
+/// node. The node's left child is the whole term built so far, which an
+/// earlier return already moved out of the region. Reading it again is the
+/// cost this measures: before the fix every return read the entire term.
+fn wrapped_term_return_reads(n: i64) -> u64 {
+    let src = format!(
+        "type T\n    Leaf\n    Node(T, Int, T)\n\nrecord R\n    t: T\n    c: Int\n\nfn wrap(r: R, k: Int) -> R\n    next = R(t = T.Node(r.t, k, T.Leaf), c = r.c + 1)\n    match next.c > 0\n        true -> next\n        false -> r\n\nfn build(n: Int) -> R\n    match n <= 0\n        true -> R(t = T.Leaf, c = 0)\n        false -> wrap(build(n - 1), n)\n\nfn main() -> Int\n    build({n}).c\n"
+    );
+    let mut vm = compile_vm_with_ownership(&src);
+    let result = vm.run().expect("term wrapping program should run");
+    assert_eq!(result.as_int(&vm.arena), n);
+    vm.arena.out_of_region_entries_read()
+        + vm.arena.map_entries_scanned()
+        + vm.arena.list_elements_scanned()
+        + vm.arena.vector_elements_scanned()
+}
+
+#[test]
+fn a_term_wrapped_in_a_fresh_node_is_not_reread_by_every_return() {
+    const READ_BUDGET_PER_STEP: u64 = 4;
+    let small = wrapped_term_return_reads(200);
+    let large = wrapped_term_return_reads(400);
+
+    assert!(
+        small <= 200 * READ_BUDGET_PER_STEP && large <= 400 * READ_BUDGET_PER_STEP,
+        "wrapping a term in a fresh node exceeded its linear read budget: \
+         n=200 read {small}, n=400 read {large}",
+    );
+    assert!(
+        2 * large <= 5 * small + READ_BUDGET_PER_STEP,
+        "doubling the wrapping steps more than 2.5x'd the reads: n=200 read \
+         {small}, n=400 read {large}",
+    );
+}
+
 /// The most arena entries a tail loop held at once while it shifted a big Int
 /// right one bit per step, and whether the loop ran as a thin self tail call.
 ///
