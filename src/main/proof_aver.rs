@@ -186,6 +186,33 @@ pub(super) fn run(
             ))
         })
         .collect();
+    // A law with `because` lines cites its own obligations: it closes only
+    // when they do, and stands on what they cite.
+    for (k, cited) in &cites {
+        if !matches!(verdicts.get(k), Some(Verdict::Steps)) {
+            continue;
+        }
+        if let Some(c) = cited.iter().find(|c| {
+            obligation_verdicts.contains_key(*c)
+                && !matches!(obligation_verdicts.get(*c), Some(Verdict::Steps))
+        }) {
+            verdicts.insert(k.clone(), Verdict::CitesOpen(c.clone()));
+        }
+    }
+    let cites: BTreeMap<String, Vec<String>> = cites
+        .into_iter()
+        .map(|(k, cited)| {
+            let through = cited
+                .into_iter()
+                .flat_map(|c| match obligation_cites.get(&c) {
+                    Some(inner) => inner.clone(),
+                    None if obligation_verdicts.contains_key(&c) => Vec::new(),
+                    None => vec![c],
+                })
+                .collect();
+            (k, through)
+        })
+        .collect();
     loop {
         let demote: Vec<(String, String)> = verdicts
             .iter()

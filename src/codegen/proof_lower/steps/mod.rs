@@ -1400,8 +1400,21 @@ fn produce_as(
     if let Some(h) = &ob.premise {
         assumes.push(("when".into(), h.clone()));
     }
-    let (_, proof) = assuming(&assumes, under_cuts(&cuts, parts[n].proof.clone(), true));
     let advice = parts[n].advice.clone();
+    // A chain whose obligations all have scripts: the law's own script
+    // cites them instead of proving each again (see [`composed`]).
+    let checked: Option<Vec<&Script>> = obligations.iter().map(|o| o.script.as_ref()).collect();
+    if n > 0
+        && let Some(scripts) = checked
+    {
+        let script = composed(&stated, &assumes, &refined, &reasons, &ob.premise, &scripts);
+        return Produced {
+            law: check(script),
+            advice,
+            obligations,
+        };
+    }
+    let (_, proof) = assuming(&assumes, under_cuts(&cuts, parts[n].proof.clone(), true));
     let mut script = Script {
         obligation: stated,
         defs: Vec::new(),
@@ -1421,6 +1434,106 @@ fn produce_as(
         advice,
         obligations,
     }
+}
+
+/// The script of a law with `because` lines whose obligations each have a
+/// checked script of their own: one cut per reason, proved by citing the
+/// obligation that proves it, then the implication cited. Each obligation
+/// is cited as a law, at the givens as they stand, with its premise (what
+/// the givens' refined types hold, the reasons before it, the `when`)
+/// proved from the hypotheses in scope. The kernel checks this composition
+/// and each obligation's script on its own, so no proof is written twice;
+/// credit composes as for any cited law, so the law closes only when its
+/// obligations do.
+fn composed(
+    stated: &Obligation,
+    assumes: &[(String, Term)],
+    refined: &[(String, Term)],
+    reasons: &[Term],
+    when: &Option<Term>,
+    scripts: &[&Script],
+) -> Script {
+    use crate::ir::proof_steps::term;
+    let identity: Vec<(String, Term)> = stated
+        .givens
+        .iter()
+        .map(|g| {
+            let v = term::var(g);
+            if let Some((_, ty)) = stated.types.iter().find(|(n, _)| n == g) {
+                v.set_ty(ty.clone());
+            }
+            (g.clone(), v)
+        })
+        .collect();
+    let cite = |k: usize| -> Proof {
+        let mut items: Vec<(Term, Proof)> = refined
+            .iter()
+            .map(|(name, line)| (line.clone(), Proof::Hyp(name.clone())))
+            .collect();
+        items.extend(
+            reasons[..k]
+                .iter()
+                .enumerate()
+                .map(|(j, r)| (r.clone(), Proof::Hyp(format!("h_reason{j}")))),
+        );
+        if let Some(h) = when {
+            items.push((h.clone(), Proof::Hyp("when".into())));
+        }
+        Proof::Law {
+            law: scripts[k].obligation.key.clone(),
+            subst: identity.clone(),
+            premise: conjunction_from(&items).map(Box::new),
+        }
+    };
+    let n = reasons.len();
+    let mut body = cite(n);
+    for k in (0..n).rev() {
+        body = Proof::Have {
+            name: format!("h_reason{k}"),
+            fact: reasons[k].clone(),
+            proof: Box::new(cite(k)),
+            body: Box::new(body),
+        };
+    }
+    let (_, proof) = assuming(assumes, body);
+    Script {
+        obligation: stated.clone(),
+        defs: Vec::new(),
+        consts: Vec::new(),
+        laws: scripts
+            .iter()
+            .map(|s| LawRef {
+                key: s.obligation.key.clone(),
+                givens: s.obligation.givens.clone(),
+                types: s.obligation.types.clone(),
+                premise: s.obligation.premise.clone(),
+                refined: s.obligation.refined.clone(),
+                lhs: s.obligation.lhs.clone(),
+                rhs: s.obligation.rhs.clone(),
+                fact: None,
+            })
+            .collect(),
+        decls: Default::default(),
+        sigs: Vec::new(),
+        plan: None,
+        proof,
+    }
+}
+
+/// `Bool.and(a, Bool.and(b, …)) = true`, joined to the right as
+/// [`conjoin`] joins the items, from a proof of `x = true` for each item
+/// `x`; `None` for no items.
+fn conjunction_from(items: &[(Term, Proof)]) -> Option<Proof> {
+    use crate::ir::proof_steps::term;
+    let ((last, last_proof), rest) = items.split_last()?;
+    let mut whole = canon(last);
+    let mut proof = last_proof.clone();
+    for (item, p) in rest.iter().rev() {
+        let next = canon(&term::bool_and(item.clone(), whole.clone()));
+        proof = rewrite::both(&next, &whole, p.clone(), proof);
+        whole = next;
+    }
+    Some(proof)
 }
 
 /// The laws before law `i`, as a `using` list may name them: hints only,
@@ -1619,10 +1732,18 @@ fn closed_by_steps(inputs: &ProofLowerInputs, laws: &[LawTheorem], key: &str) ->
         if seen.contains(&next) {
             continue;
         }
+        // A law with `because` lines cites its own obligations.
+        let obligation = || {
+            laws.iter()
+                .flat_map(|c| &c.obligation_steps)
+                .find(|o| o.key == next)
+                .and_then(|o| o.script.as_ref())
+        };
         let Some(script) = laws
             .iter()
             .find(|c| is_law_key(inputs, c, &next))
             .and_then(|c| c.steps.as_ref())
+            .or_else(obligation)
         else {
             return false;
         };

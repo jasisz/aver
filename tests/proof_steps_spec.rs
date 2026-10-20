@@ -1141,6 +1141,33 @@ fn the_aver_backend_says_where_the_steps_producer_stopped() {
     let _ = fs::remove_dir_all(out);
 }
 
+#[test]
+fn a_law_that_cites_its_obligations_closes_only_with_what_they_cite() {
+    let out = scratch("because-cites-open");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "because_cites_open.av",
+            "--backend",
+            "aver",
+            "-o",
+            out.to_str().unwrap(),
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let text = String::from_utf8_lossy(&result.stdout);
+    for expected in [
+        "  g.sameAsF: not closed by this backend (it cites f.isG, which is not)",
+        "    obligation g.sameAsF.because1: open (it cites f.isG, which is not)",
+    ] {
+        assert!(text.contains(expected), "missing `{expected}`\n{text}");
+    }
+    let script = fs::read_to_string(out.join("proof_steps").join("g.sameAsF.steps")).unwrap();
+    assert!(script.contains("g.sameAsF.because1"), "{script}");
+    let _ = fs::remove_dir_all(out);
+}
+
 /// The sub-form `index` of the first form opening with `head`.
 fn nth_form(text: &str, head: &str, index: usize) -> (usize, usize) {
     let open = text.find(head).unwrap_or_else(|| panic!("no `{head}`"));
@@ -3427,7 +3454,15 @@ fn both_kernels_accept_a_split_on_a_constructor() {
     assert_eq!(files.keys().cloned().collect::<Vec<_>>(), expected);
     let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
     for law in files.keys() {
-        assert!(read(law).contains("(split "), "{law}: no split");
+        // A law with a `because` line cites its obligations, which split.
+        if law == "double.keepsLength" {
+            assert!(
+                read(law).contains("(law double.keepsLength.because1 "),
+                "{law}: does not cite its reason"
+            );
+        } else {
+            assert!(read(law).contains("(split "), "{law}: no split");
+        }
         assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
     }
     let paths: Vec<PathBuf> = files.values().cloned().collect();
@@ -6199,7 +6234,24 @@ fn both_kernels_check_because_chains_and_refuse_mutations() {
     for law in files.keys() {
         assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
     }
-    let doubled = read("count.doubledNonNegative");
+    // The law's own script proves nothing again: it cites its obligations,
+    // each at the givens as they stand, with the reasons before it.
+    let composed = read("count.doubledNonNegative");
+    assert!(
+        composed.contains("(law count.doubledNonNegative.because1 ((n (v n))))")
+            && composed
+                .contains("(law count.doubledNonNegative.implication ((n (v n))) (hyp h_reason0))")
+            && !composed.contains("(linear "),
+        "{composed}"
+    );
+    let grows = read("twice.grows");
+    assert!(
+        grows.contains("(law twice.grows.because2 ")
+            && !grows.contains("(unfold ")
+            && !grows.contains("(linear "),
+        "{grows}"
+    );
+    let doubled = read("count.doubledNonNegative.implication");
     let positive = read("sum2.staysPositive");
     // The cited law's two-line `when`, one conjunct at a time: a linear
     // step for `x - 1 > 0`, a computation for `1 > 0`.
@@ -6247,6 +6299,26 @@ fn both_kernels_check_because_chains_and_refuse_mutations() {
         (
             "a reason read before its cut",
             mutate_proof(&doubled, "(have because1 ", "(have because2 "),
+        ),
+        (
+            "a reason cut in from the other obligation",
+            mutate_proof(
+                &composed,
+                "(law count.doubledNonNegative.because1 ",
+                "(law count.doubledNonNegative.implication ",
+            ),
+        ),
+        (
+            "the implication cited without the reason it assumes",
+            mutate_proof(&composed, " (hyp h_reason0))", ")"),
+        ),
+        (
+            "a reason cited at other givens",
+            mutate_proof(
+                &grows,
+                "(law twice.grows.because2 ((x (v x)))",
+                "(law twice.grows.because2 ((x (i 1)))",
+            ),
         ),
         (
             "the conjunction put back together by the wrong rule",
