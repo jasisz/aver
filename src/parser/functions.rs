@@ -157,12 +157,29 @@ impl Parser {
                 stmts.push(stmt);
             } else {
                 let expr = self.parse_expr()?;
+                if self.check_exact(&TokenKind::Assign) {
+                    return Err(self.binding_target_error(&expr.node));
+                }
                 stmts.push(Stmt::Expr(expr));
                 self.skip_newlines();
             }
         }
 
         Ok(stmts)
+    }
+
+    /// `target = value` where `target` is an expression rather than a name.
+    /// A binding takes exactly one name; a tuple is taken apart by `match`.
+    /// (`= expr` at the start of a body is the removed function-body form
+    /// and keeps its own message.)
+    pub(super) fn binding_target_error(&self, target: &Expr) -> ParseError {
+        if matches!(target, Expr::Tuple(_)) {
+            self.error(
+                "A binding takes a single name on the left of '='; a tuple pattern cannot be bound. Take the tuple apart with `match`.",
+            )
+        } else {
+            self.error("A binding takes a single name on the left of '='.")
+        }
     }
 
     // -------------------------------------------------------------------------

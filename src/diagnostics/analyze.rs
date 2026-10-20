@@ -804,6 +804,10 @@ fn parse_error_repair(body: &str) -> super::model::Repair {
                 "Use the named function, or a nested `match` — Aver has no short-circuit operators because effects are eager",
             )
         }
+    } else if body.contains("a tuple pattern cannot be bound") {
+        Some(
+            "Bind the tuple to a name, or match on it directly:\n    match pair(x)\n        (a, b) -> a + b",
+        )
     } else if body.contains("after '?'") {
         Some("Description needs a string literal: `? \"what this does\"`")
     } else if body.contains("after 'intent ='") {

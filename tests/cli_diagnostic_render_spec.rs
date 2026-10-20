@@ -152,3 +152,24 @@ verify ok
         json
     );
 }
+
+/// A tuple bound with `=` is told to use `match`, and the repair shows how.
+#[test]
+fn a_tuple_binding_points_to_match() {
+    strip_colors();
+    let source = "module Test\n    intent = \"t\"\n\nfn use(x: Int) -> Int\n    ? \"d\"\n    (a, b) = pair(x)\n    a + b\n";
+    let opts = AnalyzeOptions::new("test.av");
+    let report = analyze_source(source, &opts);
+    let diag = report
+        .diagnostics
+        .iter()
+        .find(|d| d.slug == "parse-error")
+        .expect("expected a parse error");
+    let rendered = render_tty(diag, false);
+    assert!(
+        rendered.contains("a tuple pattern cannot be bound")
+            && rendered.contains("(a, b) -> a + b")
+            && !rendered.contains("no longer use '= expr'"),
+        "{rendered}"
+    );
+}

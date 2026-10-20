@@ -1764,6 +1764,32 @@ fn eq_shorthand_on_fn_header_is_parse_error() {
     );
 }
 
+/// A tuple on the left of `=` is a binding that cannot be written, not the
+/// removed `fn f() = expr` body: the message says what a binding takes and
+/// sends the reader to `match`. Any other non-name target gets the binding
+/// half of it, at the top level as in a body.
+#[test]
+fn a_tuple_on_the_left_of_a_binding_is_parse_error() {
+    let src = "fn f(x: Int) -> Int\n    (a, b) = pair(x)\n    a + b\n";
+    let msg = parse_error(src);
+    assert!(
+        msg.contains("a tuple pattern cannot be bound") && msg.contains("`match`"),
+        "unexpected parse error: {msg}"
+    );
+    assert!(!msg.contains("no longer use '= expr'"), "{msg}");
+    for src in [
+        "fn f(r: R) -> Int\n    r.x = 1\n    1\n",
+        "(a, b) = pair(1)\n",
+        "r.x = 1\n",
+    ] {
+        let msg = parse_error(src);
+        assert!(
+            msg.contains("A binding takes a single name on the left of '='"),
+            "unexpected parse error for {src:?}: {msg}"
+        );
+    }
+}
+
 /// A function with no body is refused here, at the signature that is
 /// missing it — not by a backend hundreds of stages later.
 ///
