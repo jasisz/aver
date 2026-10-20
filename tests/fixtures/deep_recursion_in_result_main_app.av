@@ -1,0 +1,18 @@
+module DeepRecursionInResultMain
+    intent = "A deep non-tail recursion runs under a main that returns Result<Unit, Int> as deep as under any other main."
+
+fn depth(n: Int) -> Int
+    ? "Counts down with a call that is not in tail position."
+    match n == 0
+        true -> 0
+        false -> 1 + depth(n - 1)
+
+verify depth
+    depth(0) => 0
+    depth(3) => 3
+
+fn main() -> Result<Unit, Int>
+    ? "Prints the depth, then returns Ok."
+    ! [Console.print]
+    Console.print("main: {depth(200000)}")
+    Result.Ok(Unit)
