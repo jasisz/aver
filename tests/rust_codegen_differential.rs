@@ -280,6 +280,16 @@ fn cargo_test_in(project_dir: &Path, target: &Path) -> Result<(), String> {
 
 /// Compile + build + RUN an example, asserting stdout equals the VM.
 fn assert_plain_parity(relative: &str, module_root: Option<&str>) -> Result<(), String> {
+    assert_plain_parity_then(relative, module_root, |_, _| Ok(()))
+}
+
+/// [`assert_plain_parity`], then `then` on the built binary and the stdout
+/// both runs gave.
+fn assert_plain_parity_then(
+    relative: &str,
+    module_root: Option<&str>,
+    then: impl FnOnce(&Path, &str) -> Result<(), String>,
+) -> Result<(), String> {
     let file = repo_root().join(relative);
     if !file.exists() {
         return Err(format!("{relative}: corpus file missing"));
@@ -310,7 +320,7 @@ fn assert_plain_parity(relative: &str, module_root: Option<&str>) -> Result<(), 
                 "{relative}: stdout mismatch\n--- VM ---\n{vm_stdout}\n--- Rust ---\n{rust_stdout}"
             ));
         }
-        Ok(())
+        then(&bin, &vm_stdout)
     })();
 
     let _ = fs::remove_dir_all(&ws);
@@ -443,10 +453,39 @@ fn fused_stdlib_hex_decoding_matches_between_rust_and_vm() {
 /// through `Option`, a constructor pattern inside a tuple, equality, and one
 /// value used as both fields of a node, 18 levels deep — 262144 leaves, each
 /// level a single allocation.
+///
+/// `==` on two such values built apart, a record on the cycle and two sums
+/// on one cycle compares each shared pair once, not once per path to it: at
+/// 64 levels a walk of the tree would not end, so the compiled binary must
+/// answer as it does at 12 within a minute.
 #[test]
 fn shared_recursive_sum_matches_between_rust_and_vm() {
-    assert_plain_parity("tests/fixtures/shared_recursive_sum_app.av", None)
-        .unwrap_or_else(|e| panic!("{e}"));
+    assert_plain_parity_then(
+        "tests/fixtures/shared_recursive_sum_app.av",
+        None,
+        |bin, shallow| {
+            let mut child = Command::new(bin)
+                .arg("64")
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+            let started = std::time::Instant::now();
+            while child.try_wait().expect("binary is waitable").is_none() {
+                if started.elapsed() > std::time::Duration::from_secs(60) {
+                    let _ = child.kill();
+                    return Err("`==` at 64 levels did not end within a minute".into());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            let out = child.wait_with_output().expect("binary output");
+            let deep = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            match deep == shallow {
+                true => Ok(()),
+                false => Err(format!("at 64 levels:\n{deep}\nat 12:\n{shallow}")),
+            }
+        },
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
 }
 
 /// A constructor much larger than the others in a sum that is not recursive

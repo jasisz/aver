@@ -291,6 +291,28 @@ pub(super) fn ctor_is_shared(id: crate::ir::TypeId, variant: &str, ctx: &Codegen
     })
 }
 
+/// Whether the generated `==` of `ty` passes the `aver_rt::Walk` of the
+/// comparison it is part of down to its fields (`aver_rt::WalkEq`): a type
+/// that holds a value of itself with no collection in between, a recursive
+/// sum or a record on the cycle of one, or an `Option` of such a type. A
+/// field of any other type begins a comparison of its own.
+pub(super) fn walks(ty: &Type, ctx: &CodegenContext, scope: Option<&str>) -> bool {
+    match ty {
+        Type::Option(inner) => walks(inner, ctx, scope),
+        Type::Named { id, name } => {
+            named_type_def(*id, name, ctx, scope).is_some_and(|td| walking_def(td, ctx))
+        }
+        _ => false,
+    }
+}
+
+/// [`walks`] for a declaration.
+pub(super) fn walking_def(td: &TypeDef, ctx: &CodegenContext) -> bool {
+    let key = crate::codegen::common::backend_type_def_key(ctx, td);
+    type_def_contract(td, ctx).capabilities.partial_eq
+        && reaches_inline(td, &key, ctx, &mut HashSet::new())
+}
+
 fn reaches_inline(
     td: &TypeDef,
     target: &str,

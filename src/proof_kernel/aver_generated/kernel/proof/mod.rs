@@ -2,7 +2,7 @@
 use crate::proof_kernel::*;
 use ::aver_rt::aver_list_match;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub enum Proof {
     PRefl(std::sync::Arc<Proof__PRefl>),
     PSymm(std::sync::Arc<Proof__PSymm>),
@@ -33,8 +33,20 @@ pub enum Proof {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Proof__PRefl(pub crate::proof_kernel::aver_generated::kernel::term::Term);
 
+impl aver_rt::WalkEq for Proof__PRefl {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0.walk_eq(&other.0, walk)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Proof__PSymm(pub Proof);
+
+impl aver_rt::WalkEq for Proof__PSymm {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0.walk_eq(&other.0, walk)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Proof__PTrans(
@@ -47,6 +59,12 @@ pub struct Proof__PCongr(
     pub crate::proof_kernel::aver_generated::kernel::term::Term,
     pub Proof,
 );
+
+impl aver_rt::WalkEq for Proof__PCongr {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Proof__PUnfold(
@@ -68,11 +86,32 @@ pub struct Proof__PArm(
     pub Proof,
 );
 
+impl aver_rt::WalkEq for Proof__PArm {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0 == other.0
+            && self.1 == other.1
+            && self.2.walk_eq(&other.2, walk)
+            && self.3.walk_eq(&other.3, walk)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Proof__PProj(pub crate::proof_kernel::aver_generated::kernel::term::Term);
 
+impl aver_rt::WalkEq for Proof__PProj {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0.walk_eq(&other.0, walk)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Proof__PCell(pub crate::proof_kernel::aver_generated::kernel::term::Term);
+
+impl aver_rt::WalkEq for Proof__PCell {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0.walk_eq(&other.0, walk)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Proof__PHyp(pub AverStr);
@@ -97,6 +136,12 @@ pub struct Proof__PCompute(
     pub crate::proof_kernel::aver_generated::kernel::term::Term,
 );
 
+impl aver_rt::WalkEq for Proof__PCompute {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Proof__PCases(
     pub crate::proof_kernel::aver_generated::kernel::term::Term,
@@ -108,6 +153,15 @@ pub struct Proof__PCases(
 impl PartialEq for Proof__PCases {
     fn eq(&self, other: &Self) -> bool {
         self.1 == other.1 && self.0 == other.0 && self.2 == other.2 && self.3 == other.3
+    }
+}
+
+impl aver_rt::WalkEq for Proof__PCases {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.1 == other.1
+            && self.0.walk_eq(&other.0, walk)
+            && self.2.walk_eq(&other.2, walk)
+            && self.3.walk_eq(&other.3, walk)
     }
 }
 
@@ -125,6 +179,15 @@ impl PartialEq for Proof__PSplit {
     }
 }
 
+impl aver_rt::WalkEq for Proof__PSplit {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.1 == other.1
+            && self.0.walk_eq(&other.0, walk)
+            && self.2 == other.2
+            && self.3 == other.3
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Proof__PHave(
     pub AverStr,
@@ -132,6 +195,15 @@ pub struct Proof__PHave(
     pub Proof,
     pub Proof,
 );
+
+impl aver_rt::WalkEq for Proof__PHave {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0 == other.0
+            && self.1.walk_eq(&other.1, walk)
+            && self.2.walk_eq(&other.2, walk)
+            && self.3.walk_eq(&other.3, walk)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Proof__PEnum(
@@ -141,12 +213,29 @@ pub struct Proof__PEnum(
     pub aver_rt::AverList<Proof>,
 );
 
+impl aver_rt::WalkEq for Proof__PEnum {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0 == other.0
+            && self.1.walk_eq(&other.1, walk)
+            && self.2.walk_eq(&other.2, walk)
+            && self.3 == other.3
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Proof__PAbsurd(
     pub Proof,
     pub crate::proof_kernel::aver_generated::kernel::term::Term,
     pub crate::proof_kernel::aver_generated::kernel::term::Term,
 );
+
+impl aver_rt::WalkEq for Proof__PAbsurd {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0.walk_eq(&other.0, walk)
+            && self.1.walk_eq(&other.1, walk)
+            && self.2.walk_eq(&other.2, walk)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Proof__PInduct(
@@ -157,6 +246,17 @@ pub struct Proof__PInduct(
     pub aver_rt::AverList<AverStr>,
     pub aver_rt::AverList<Case>,
 );
+
+impl aver_rt::WalkEq for Proof__PInduct {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0 == other.0
+            && self.1 == other.1
+            && self.2.walk_eq(&other.2, walk)
+            && self.3.walk_eq(&other.3, walk)
+            && self.4 == other.4
+            && self.5 == other.5
+    }
+}
 
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Proof__PListInduct(
@@ -187,6 +287,21 @@ impl PartialEq for Proof__PListInduct {
     }
 }
 
+impl aver_rt::WalkEq for Proof__PListInduct {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0 == other.0
+            && self.5 == other.5
+            && self.6 == other.6
+            && self.1.walk_eq(&other.1, walk)
+            && self.2.walk_eq(&other.2, walk)
+            && self.3 == other.3
+            && self.4.walk_eq(&other.4, walk)
+            && self.7 == other.7
+            && self.8 == other.8
+            && self.9.walk_eq(&other.9, walk)
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Proof__PListCases(
     pub AverStr,
@@ -207,6 +322,18 @@ impl PartialEq for Proof__PListCases {
             && self.2 == other.2
             && self.3 == other.3
             && self.6 == other.6
+    }
+}
+
+impl aver_rt::WalkEq for Proof__PListCases {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0 == other.0
+            && self.4 == other.4
+            && self.5 == other.5
+            && self.1.walk_eq(&other.1, walk)
+            && self.2.walk_eq(&other.2, walk)
+            && self.3.walk_eq(&other.3, walk)
+            && self.6.walk_eq(&other.6, walk)
     }
 }
 
@@ -237,11 +364,31 @@ impl PartialEq for Proof__PLenInduct {
     }
 }
 
+impl aver_rt::WalkEq for Proof__PLenInduct {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0 == other.0
+            && self.5 == other.5
+            && self.6 == other.6
+            && self.7 == other.7
+            && self.1.walk_eq(&other.1, walk)
+            && self.2.walk_eq(&other.2, walk)
+            && self.3 == other.3
+            && self.4 == other.4
+            && self.8.walk_eq(&other.8, walk)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Proof__PRing(
     pub crate::proof_kernel::aver_generated::kernel::term::Term,
     pub crate::proof_kernel::aver_generated::kernel::term::Term,
 );
+
+impl aver_rt::WalkEq for Proof__PRing {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
+    }
+}
 
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Proof__PLinear(
@@ -259,6 +406,56 @@ impl PartialEq for Proof__PLinear {
             && self.2 == other.2
             && self.3 == other.3
             && self.4 == other.4
+    }
+}
+
+impl aver_rt::WalkEq for Proof__PLinear {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.1 == other.1
+            && self.0.walk_eq(&other.0, walk)
+            && self.2 == other.2
+            && self.3 == other.3
+            && self.4 == other.4
+    }
+}
+
+impl aver_rt::WalkEq for Proof {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+            && match (self, other) {
+                (Proof::PRefl(a0), Proof::PRefl(b0)) => walk.shared(a0, b0, true),
+                (Proof::PSymm(a0), Proof::PSymm(b0)) => walk.shared(a0, b0, true),
+                (Proof::PTrans(a0), Proof::PTrans(b0)) => a0 == b0,
+                (Proof::PCongr(a0), Proof::PCongr(b0)) => walk.shared(a0, b0, true),
+                (Proof::PUnfold(a0), Proof::PUnfold(b0)) => a0 == b0,
+                (Proof::PConst(a0), Proof::PConst(b0)) => a0 == b0,
+                (Proof::PArm(a0), Proof::PArm(b0)) => walk.shared(a0, b0, true),
+                (Proof::PProj(a0), Proof::PProj(b0)) => walk.shared(a0, b0, true),
+                (Proof::PCell(a0), Proof::PCell(b0)) => walk.shared(a0, b0, true),
+                (Proof::PHyp(a0), Proof::PHyp(b0)) => a0 == b0,
+                (Proof::PRule(a0), Proof::PRule(b0)) => a0 == b0,
+                (Proof::PLaw(a0), Proof::PLaw(b0)) => a0 == b0,
+                (Proof::PCompute(a0), Proof::PCompute(b0)) => walk.shared(a0, b0, true),
+                (Proof::PCases(a0), Proof::PCases(b0)) => walk.shared(a0, b0, true),
+                (Proof::PSplit(a0), Proof::PSplit(b0)) => walk.shared(a0, b0, true),
+                (Proof::PHave(a0), Proof::PHave(b0)) => walk.shared(a0, b0, true),
+                (Proof::PEnum(a0), Proof::PEnum(b0)) => walk.shared(a0, b0, true),
+                (Proof::PAbsurd(a0), Proof::PAbsurd(b0)) => walk.shared(a0, b0, true),
+                (Proof::PInduct(a0), Proof::PInduct(b0)) => walk.shared(a0, b0, true),
+                (Proof::PListInduct(a0), Proof::PListInduct(b0)) => walk.shared(a0, b0, true),
+                (Proof::PListCases(a0), Proof::PListCases(b0)) => walk.shared(a0, b0, true),
+                (Proof::PLenInduct(a0), Proof::PLenInduct(b0)) => walk.shared(a0, b0, true),
+                (Proof::PRing(a0), Proof::PRing(b0)) => walk.shared(a0, b0, true),
+                (Proof::PLinear(a0), Proof::PLinear(b0)) => walk.shared(a0, b0, true),
+                _ => false,
+            }
+    }
+}
+
+impl PartialEq for Proof {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        aver_rt::walk_eq(self, other)
     }
 }
 

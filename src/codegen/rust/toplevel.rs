@@ -2,7 +2,7 @@ use super::emit_ctx::{EmitCtx, should_borrow_param};
 use super::expr::{aver_name_to_rust, classify_thin_fn_def_for_rust, explicit_parameter_pattern};
 use super::representation::{
     RepresentationCapabilities, RepresentationContract, cheap_fields_first, shared_variants,
-    type_def_contract, variant_field_refs,
+    type_def_contract, variant_field_refs, walking_def, walks,
 };
 use super::types::type_annotation_to_rust_scoped;
 use crate::ast::*;
@@ -92,7 +92,7 @@ fn emit_type_def_with_visibility(td: &TypeDef, public: bool, ctx: &CodegenContex
             public,
             ctx,
             scope,
-            super::uses_packed_u8(ctx, name),
+            walking_def(td, ctx),
             representation,
         ),
     }
@@ -128,17 +128,38 @@ fn without_derived_eq(
     }
 }
 
-/// `a(i) == b(i) && ...` over the fields in `order`.
+/// `a(i) == b(i) && ...` over the fields in `order`; a field marked in
+/// `walking` compares with `a(i).walk_eq(&b(i), walk)` instead (see `walks`).
 fn fields_equal(
     order: &[usize],
+    walking: &[bool],
     a: impl Fn(usize) -> String,
     b: impl Fn(usize) -> String,
 ) -> String {
     let tests: Vec<String> = order
         .iter()
-        .map(|&i| format!("{} == {}", a(i), b(i)))
+        .map(|&i| match walking.get(i) {
+            Some(true) => format!("{}.walk_eq(&{}, walk)", a(i), b(i)),
+            _ => format!("{} == {}", a(i), b(i)),
+        })
         .collect();
     tests.join(" && ")
+}
+
+/// The `aver_rt::WalkEq` of a recursive sum, of a constructor's payload in
+/// one, or of a record holding one: `==` that carries the comparison's walk.
+fn walk_eq_impl(name: &str, test: &str) -> String {
+    format!(
+        "\nimpl aver_rt::WalkEq for {name} {{\n    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {{\n        {test}\n    }}\n}}\n"
+    )
+}
+
+/// For each of `types`, whether its `==` carries the comparison's walk.
+fn walking_fields(types: &[&str], ctx: &CodegenContext, scope: Option<&str>) -> Vec<bool> {
+    types
+        .iter()
+        .map(|ty| walks(&parse_type_str(ty), ctx, scope))
+        .collect()
 }
 
 fn partial_eq_impl(name: &str, test: &str) -> String {
@@ -174,12 +195,31 @@ fn emit_sum_type(
                 .flatten()
         })
         .collect();
-    let inline_eq = shared
+    // Every constructor is shared only in a recursive sum (see
+    // `shared_variants`). Its `==` carries an `aver_rt::Walk` through the
+    // payloads, which compares a subterm under many nodes once, not once per
+    // path to it, when the walk is long.
+    let recursive = capabilities.partial_eq && shared.iter().all(|&shared| shared);
+    let inline_eq = recursive
+        || shared
+            .iter()
+            .zip(&eq_orders)
+            .any(|(shared, order)| !shared && order.is_some());
+    // The fields of each constructor whose `==` carries the walk; one with
+    // none of them compares its `Arc` as any other sum does.
+    let walking: Vec<Vec<bool>> = variants
         .iter()
-        .zip(&eq_orders)
-        .any(|(shared, order)| !shared && order.is_some());
+        .map(|v| {
+            let types: Vec<&str> = v.fields.iter().map(String::as_str).collect();
+            match recursive {
+                true => walking_fields(&types, ctx, scope),
+                false => Vec::new(),
+            }
+        })
+        .collect();
+    let walks_on = |i: usize| walking[i].contains(&true);
     let mut body = String::new();
-    for ((v, &shared), order) in variants.iter().zip(shared).zip(&eq_orders) {
+    for (i, ((v, &shared), order)) in variants.iter().zip(shared).zip(&eq_orders).enumerate() {
         if v.fields.is_empty() {
             writeln!(body, "    {},", v.name).unwrap();
             continue;
@@ -204,9 +244,17 @@ fn emit_sum_type(
                 fields.join(", ")
             )
             .unwrap();
+            let (this, that) = (|i| format!("self.{i}"), |i| format!("other.{i}"));
             if let Some(order) = order {
-                let test = fields_equal(order, |i| format!("self.{i}"), |i| format!("other.{i}"));
+                let test = fields_equal(order, &[], this, that);
                 payloads.push_str(&partial_eq_impl(&payload, &test));
+            }
+            if walks_on(i) {
+                let order = order
+                    .clone()
+                    .unwrap_or_else(|| (0..v.fields.len()).collect());
+                let test = fields_equal(&order, &walking[i], this, that);
+                payloads.push_str(&walk_eq_impl(&payload, &test));
             }
         } else {
             writeln!(body, "    {}({}),", v.name, field_types.join(", ")).unwrap();
@@ -217,7 +265,7 @@ fn emit_sum_type(
     out.push_str(&payloads);
     if inline_eq {
         let mut arms = String::new();
-        for ((v, &shared), order) in variants.iter().zip(shared).zip(&eq_orders) {
+        for (i, ((v, &shared), order)) in variants.iter().zip(shared).zip(&eq_orders).enumerate() {
             // A shared constructor compares its one `Arc`, equal at once
             // when both sides are the same allocation.
             let order = match (shared, order) {
@@ -235,7 +283,8 @@ fn emit_sum_type(
             };
             let test = match order.len() {
                 0 => "true".to_string(),
-                _ => fields_equal(&order, |i| format!("a{i}"), |i| format!("b{i}")),
+                _ if walks_on(i) => format!("walk.shared(a0, b0, {})", capabilities.eq),
+                _ => fields_equal(&order, &[], |i| format!("a{i}"), |i| format!("b{i}")),
             };
             writeln!(
                 arms,
@@ -247,7 +296,19 @@ fn emit_sum_type(
             .unwrap();
         }
         let test = format!("match (self, other) {{\n{arms}            _ => false,\n        }}");
-        out.push_str(&partial_eq_impl(name, &test));
+        if recursive {
+            let test = format!(
+                "std::mem::discriminant(self) == std::mem::discriminant(other)\n            && {test}"
+            );
+            out.push_str(&walk_eq_impl(name, &test));
+            write!(
+                out,
+                "\nimpl PartialEq for {name} {{\n    #[inline]\n    fn eq(&self, other: &Self) -> bool {{\n        aver_rt::walk_eq(self, other)\n    }}\n}}\n"
+            )
+            .unwrap();
+        } else {
+            out.push_str(&partial_eq_impl(name, &test));
+        }
     }
 
     // A variant can key a map, and a map iterates sorted by key. The order is
@@ -385,9 +446,10 @@ fn emit_product_type(
     public: bool,
     ctx: &CodegenContext,
     scope: Option<&str>,
-    packed_u8: bool,
+    walking: bool,
     representation: RepresentationContract,
 ) -> String {
+    let packed_u8 = super::uses_packed_u8(ctx, name);
     let mut out = String::new();
     let visibility = visibility_prefix(public);
     let capabilities = representation.capabilities;
@@ -417,14 +479,26 @@ fn emit_product_type(
         .unwrap();
     }
     writeln!(out, "}}").unwrap();
-    if let Some(order) = eq_order {
+    if let Some(order) = &eq_order {
         let field = |i: usize| aver_name_to_rust(&fields[i].0);
         let test = fields_equal(
-            &order,
+            order,
+            &[],
             |i| format!("self.{}", field(i)),
             |i| format!("other.{}", field(i)),
         );
         out.push_str(&partial_eq_impl(name, &test));
+    }
+    if walking {
+        let field = |i: usize| aver_name_to_rust(&fields[i].0);
+        let order = eq_order.unwrap_or_else(|| (0..fields.len()).collect());
+        let test = fields_equal(
+            &order,
+            &walking_fields(&types, ctx, scope),
+            |i| format!("self.{}", field(i)),
+            |i| format!("other.{}", field(i)),
+        );
+        out.push_str(&walk_eq_impl(name, &test));
     }
 
     // A record can key a map, and a map iterates sorted by key, so the
@@ -1899,8 +1973,12 @@ mod tests {
         let mut ctx = empty_ctx();
         ctx.type_defs.push(td.clone());
 
+        // `==` is written out, so that it carries the comparison's walk
+        // (`aver_rt::WalkEq`); `Eq` and `Hash` are still derived.
         let emitted = emit_public_type_def(&td, &ctx);
-        assert!(emitted.contains("#[derive(Clone, Debug, PartialEq, Eq, Hash)]"));
+        assert!(emitted.contains("#[derive(Clone, Debug, Eq, Hash)]\npub enum Tree"));
+        assert!(emitted.contains("impl PartialEq for Tree"));
+        assert!(emitted.contains("aver_rt::walk_eq(self, other)"));
     }
 
     #[test]

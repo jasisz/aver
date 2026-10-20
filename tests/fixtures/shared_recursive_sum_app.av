@@ -1,8 +1,9 @@
 module SharedRecursiveSumApp
     intent =
         "Fixture: a record inside a recursive sum, recursion through Option,"
-        "and one value used as both fields of a node."
-    effects [Console.print]
+        "one value used as both fields of a node, two sums on one cycle, and"
+        "equality of such values built apart, as deep as the first argument says."
+    effects [Console.print, Args.get]
 
 record E
     node: Node
@@ -16,6 +17,13 @@ type T
     Tip(Int)
     Pair(T, T)
     Wrap(Option<T>)
+
+type Even
+    Zero
+    Succ(Odd, Odd)
+
+type Odd
+    One(Even, Even)
 
 fn size(e: E) -> Int
     ? "Counts the leaves under e."
@@ -55,11 +63,58 @@ fn tips(a: T, b: T) -> Int
 verify tips
     tips(T.Tip(1), T.Tip(2)) => 12
 
+fn twice(t: T, n: Int) -> T
+    ? "Puts t under n pairs that hold it on both sides."
+    match n <= 0
+        true -> t
+        false -> twice(T.Pair(t, t), n - 1)
+
+verify twice
+    sides(twice(T.Tip(1), 3)) => 8
+
+fn spine(n: Int, last: Int) -> T
+    ? "twice(T.Tip(1), n) with its rightmost tip last, built level by level."
+    match n <= 0
+        true -> T.Tip(last)
+        false -> T.Pair(twice(T.Tip(1), n - 1), spine(n - 1, last))
+
+verify spine
+    sides(spine(3, 1)) => 8
+
+fn even(n: Int) -> Even
+    ? "n levels of Even and Odd in turn, each holding the level below twice."
+    match n <= 0
+        true -> Even.Zero
+        false -> succ(odd(n - 1))
+
+fn succ(o: Odd) -> Even
+    ? "An Even holding o on both sides."
+    Even.Succ(o, o)
+
+fn odd(n: Int) -> Odd
+    ? "An Odd over even(n) on both sides."
+    one(even(n))
+
+fn one(e: Even) -> Odd
+    ? "An Odd holding e on both sides."
+    Odd.One(e, e)
+
+fn depth() -> Int
+    ? "The first argument as a number, 12 without one."
+    ! [Args.get]
+    match Vector.get(Vector.fromList(Args.get()), 0)
+        Option.Some(text) -> Result.withDefault(Int.fromString(text), 12)
+        Option.None -> 12
+
 fn main() -> Unit
-    ! [Console.print]
+    ! [Console.print, Args.get]
     big = nest(E(node = Node.Leaf(7), hash = 0), 18)
     Console.print("size {size(big)} hash {big.hash}")
     t = T.Pair(T.Tip(4), T.Wrap(Option.Some(T.Tip(5))))
     Console.print("sides {sides(t)} tips {tips(T.Tip(3), T.Tip(8))}")
     Console.print("equal {T.Pair(t, t) == T.Pair(t, T.Pair(T.Tip(4), T.Wrap(Option.Some(T.Tip(5)))))}")
     Console.print("differ {T.Pair(t, t) == T.Pair(t, T.Tip(4))}")
+    n = depth()
+    Console.print("dag {twice(T.Tip(1), n) == spine(n, 1)} {twice(T.Tip(1), n) == spine(n, 2)}")
+    Console.print("record {nest(E(node = Node.Leaf(7), hash = 0), n) == nest(E(node = Node.Leaf(7), hash = 0), n)}")
+    Console.print("mutual {even(n) == succ(odd(n - 1))} {even(n) == even(n + 1)}")
