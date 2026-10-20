@@ -2252,9 +2252,14 @@ fn both_kernels_check_cited_orders_and_equal_calls_and_refuse_mutations() {
     // The cited order at the goal's own atom, then linear arithmetic.
     let instance = "(law pow2.positive ((n (op - (i 0) (v k)))))";
     assert!(positive.contains(instance), "{positive}");
-    // The hypothesis about `twoPow`, read through its one unfolding.
-    let equal = "(rule int.eq.of_beq ((a (call twoPow (op - (v n) (i 1)))) (b (call pow2 (op - (v n) (i 1)))))";
-    assert!(agrees.contains(equal), "{agrees}");
+    // An equality of calls read from the hypothesis about `twoPow`.
+    let start = agrees.find("(proof ").expect("a script has a proof");
+    let at = start
+        + agrees[start..]
+            .find("(rule int.eq.of_beq ((a ")
+            .unwrap_or_else(|| panic!("{agrees}"));
+    let b = at + agrees[at..].find(" (b ").expect("the rule's right side") + 1;
+    let equal = &agrees[at..=closing(&agrees, b)];
     for (kind, text) in [
         (
             "the cited law at another argument",
@@ -2265,7 +2270,7 @@ fn both_kernels_check_cited_orders_and_equal_calls_and_refuse_mutations() {
             mutate_proof(
                 &agrees,
                 equal,
-                "(rule int.eq.of_beq ((a (call twoPow (op - (v n) (i 1)))) (b (call pow2 (v n))))",
+                &format!("{}(b (call pow2 (v n)))", &agrees[at..b]),
             ),
         ),
     ] {
