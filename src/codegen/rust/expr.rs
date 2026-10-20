@@ -225,6 +225,18 @@ fn clear_owned_param_borrows(name: &str, mask: &mut [bool], ctx: &CodegenContext
     let Some((fn_id, rfd)) = resolved_callee(name, ctx) else {
         return;
     };
+    clear_owned_param_borrows_of(fn_id, rfd, mask, ctx);
+}
+
+/// [`clear_owned_param_borrows`] for an already resolved callee. The
+/// first-class fn adapter reads the same set, so a function value and a
+/// direct call pass every param the same way.
+pub(super) fn clear_owned_param_borrows_of(
+    fn_id: crate::ir::FnId,
+    rfd: &crate::ir::hir::ResolvedFnDef,
+    mask: &mut [bool],
+    ctx: &CodegenContext,
+) {
     // A self-/mutual-TCO callee never graduates a param on the path that
     // governs its call-site ABI, so skip it (its signature ABI is fixed
     // by the TCO wrapper, not by own_param). This mirrors the `has_tco`

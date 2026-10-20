@@ -222,7 +222,7 @@ pub fn selectFastLeaf(
 
 /// Execute a two-arm [] / [h, ..t] list branch with precomputed leaf bodies.
 pub fn fastListSlotBranch(
-    calleeEnv @ _: &aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
+    mut calleeEnv @ _: aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
     slot @ _: aver_rt::AverInt,
     emptyLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
     headSlot @ _: aver_rt::AverInt,
@@ -230,7 +230,7 @@ pub fn fastListSlotBranch(
     consLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let listV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slot)?;
+    let listV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(&calleeEnv, slot)?;
     match listV {
         crate::aver_generated::domain::value::Val::ValList(__items_fields) => {
             let items = __items_fields.0.clone();
@@ -246,14 +246,14 @@ pub fn fastListSlotBranch(
 #[inline(always)]
 pub fn fastListSlotBranchItems(
     items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    calleeEnv @ _: &aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
+    mut calleeEnv @ _: aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
     emptyLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
     headSlot @ _: aver_rt::AverInt,
     tailSlot @ _: aver_rt::AverInt,
     consLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    aver_list_match!(items.clone(), [] => crate::aver_generated::domain::eval::fast::runFastLeafSlot(emptyLeaf, calleeEnv), [head, tail] => crate::aver_generated::domain::eval::fast::runFastLeafSlot(consLeaf, &crate::aver_generated::domain::eval::slots::setSlot(&crate::aver_generated::domain::eval::slots::setSlot(calleeEnv, headSlot, &head), tailSlot, &crate::aver_generated::domain::value::Val::ValList(std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValList(tail))))))
+    aver_list_match!(items.clone(), [] => crate::aver_generated::domain::eval::fast::runFastLeafSlot(emptyLeaf, &calleeEnv), [head, tail] => crate::aver_generated::domain::eval::fast::runFastLeafSlot(consLeaf, &crate::aver_generated::domain::eval::slots::setSlot(crate::aver_generated::domain::eval::slots::setSlot(calleeEnv, headSlot, &head), tailSlot, &crate::aver_generated::domain::value::Val::ValList(std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValList(tail))))))
 }
 
 /// Read a record field directly from a resolved slot.

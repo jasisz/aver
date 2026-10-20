@@ -163,7 +163,7 @@ pub fn runGuestCliProgram(
                 moduleFns.clone(),
                 || {
                     crate::cancel_checkpoint();
-                    match runGuestProgram(prog.clone(), moduleFns, guestArgs) {
+                    match runGuestProgram(prog, moduleFns, guestArgs) {
                         Ok(result @ _) => finishCliRun(localFns, result),
                         Err(e @ _) => Err((AverStr::from("Runtime error: ") + &e)),
                     }
@@ -194,7 +194,7 @@ pub fn loadModules(
             let __tco0 = rest;
             deps = __tco0;
             continue;
-        } } else { return loadOneModule(dep, &rest, moduleRoot, &*acc, &*loaded); } })
+        } } else { return loadOneModule(dep, &rest, moduleRoot, &*acc, (*loaded).clone()); } })
     }
 }
 
@@ -204,7 +204,7 @@ pub fn loadOneModule(
     rest @ _: &aver_rt::AverList<AverStr>,
     moduleRoot @ _: AverStr,
     acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
-    loaded @ _: &aver_rt::AverMap<AverStr, bool>,
+    mut loaded @ _: aver_rt::AverMap<AverStr, bool>,
 ) -> Result<
     (
         aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
@@ -1244,7 +1244,7 @@ pub fn loadOneModule__indexed(
     rest @ _: &aver_rt::AverList<AverStr>,
     moduleRoot @ _: AverStr,
     acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
-    loaded @ _: &aver_rt::AverMap<AverStr, bool>,
+    mut loaded @ _: aver_rt::AverMap<AverStr, bool>,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> Result<
     (
@@ -1285,7 +1285,7 @@ pub fn loadOneModule__indexed(
     let tokens @ _ = crate::aver_generated::domain::lexer::lex(source);
     let prog @ _ = crate::aver_generated::domain::parser::parse(&tokens)?;
     let moduleFns @ _ = resolveQualifiedModuleFns__indexed(&prog, dep.clone(), __str_index);
-    let loaded2 @ _ = loaded.clone().insert_owned(dep, true);
+    let loaded2 @ _ = loaded.insert_owned(dep, true);
     let innerResult @ _ = loadModules(prog.deps, moduleRoot.clone(), acc.clone(), loaded2)?;
     {
         let (accWithInner, loaded3) = innerResult;
