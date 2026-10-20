@@ -702,20 +702,23 @@ fn run_bundle(
         })?;
     let project_config = aver::config::ProjectConfig::parse(&manifest.runtime_policy_toml)?;
     let tcp_settings = project_config.tcp_settings.native();
-    let outcome = execute_wasm_gc_module(
-        &engine,
-        &module,
-        &program_args,
-        &EffectMode::Normal,
-        tcp_settings,
-        Some(project_config),
-        None,
-        &return_type,
-        Some(&CustomProviderConfig {
-            plan: custom_plan,
-            providers,
-        }),
-    )
+    let custom = CustomProviderConfig {
+        plan: custom_plan,
+        providers,
+    };
+    let outcome = crate::runtime::on_wasm_stack(|| {
+        execute_wasm_gc_module(
+            &engine,
+            &module,
+            &program_args,
+            &EffectMode::Normal,
+            tcp_settings,
+            Some(project_config),
+            None,
+            &return_type,
+            Some(&custom),
+        )
+    })
     .map_err(|error| format!("WASM execution error: {error}"))?;
     // `main -> Int` names the process exit status.
     if return_type == Type::Int

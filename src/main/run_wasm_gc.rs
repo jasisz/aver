@@ -347,24 +347,26 @@ pub(super) fn try_run_wasm_gc(
     // map-held vectors through extracted locals (#950).
     aver::ir::pipeline::resolve_and_reannotate(&mut items);
 
-    let outcome = rt::run_in_process(
-        &items,
-        result.analysis.as_ref(),
-        rt::RunConfig {
-            program_args,
-            entry_info: entry_info.clone(),
-            mode,
-            tcp_settings,
-            project_config,
-            type_aliases,
-            optimization,
-            packed_sequences_enabled,
-            custom_providers: Some(rt::CustomProviderConfig {
-                plan: custom_plan.clone(),
-                providers: providers.clone(),
-            }),
-        },
-    )?;
+    let config = rt::RunConfig {
+        program_args,
+        entry_info: entry_info.clone(),
+        mode,
+        tcp_settings,
+        project_config,
+        type_aliases,
+        optimization,
+        packed_sequences_enabled,
+        custom_providers: Some(rt::CustomProviderConfig {
+            plan: custom_plan.clone(),
+            providers: providers.clone(),
+        }),
+    };
+    // The guest runs on a thread with the stack its wasm stack limit needs,
+    // so running out of stack is a trap, not a host abort. The whole run
+    // stays on that one thread, with the thread-local host state it uses.
+    let outcome = aver::runtime::on_wasm_stack(|| {
+        rt::run_in_process(&items, result.analysis.as_ref(), config)
+    })?;
 
     // CLI-side recording persistence. Lib hands back
     // `recorded_effects`; we turn it into a `SessionRecording` and

@@ -114,6 +114,28 @@ fn colliding_map_keys_stay_two_keys() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 200 000 nested calls fit, and a recursion that never ends is Wasmtime's
+/// stack-overflow trap, said as an Aver error with exit status 1 rather than
+/// a host abort. `cross_backend_stress` holds the VM and wasm-gc to the same.
+#[test]
+fn deep_recursion_fits_and_runaway_recursion_is_an_aver_error() {
+    let dir = tempdir("deep");
+    let fixture = write_fixture(&dir, "deep.av", include_str!("fixtures/deep_recursion.av"));
+    let out = run_wasip2(&dir, &fixture, &["200000"]);
+    assert_ok(&out, "deep.av 200000");
+    assert_eq!(stdout(&out).trim(), "20000100000");
+
+    let out = run_wasip2(&dir, &fixture, &[]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "deep.av runaway:\n{stderr}");
+    assert!(
+        stderr.contains("stack overflow: recursion too deep")
+            && !stderr.contains("has overflowed its stack"),
+        "deep.av runaway:\n{stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A literal call to the smart constructor of an `Int` refinement gives the
 /// refined value on wasip2 as on the VM (`cross_backend_stress` holds the VM
 /// and wasm-gc to the same expected output).

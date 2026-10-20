@@ -355,6 +355,15 @@ pub(super) fn run_wasm_gc_with_host(
     )
 }
 
+/// A trap from the guest's `entry`, said in one line when it ran out of
+/// stack instead of as Wasmtime's error with its backtrace.
+fn trap_message(entry: &str, error: &wasmtime::Error) -> String {
+    match super::stack_overflow_message(error) {
+        Some(message) => format!("{entry} trap: {message}"),
+        None => format!("{entry} trap: {error:#}"),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn execute_wasm_gc_module(
     engine: &wasmtime::Engine,
@@ -537,18 +546,18 @@ fn execute_wasm_gc_module(
         let n = func.ty(&store).results().len();
         let mut out: Vec<Val> = (0..n).map(|_| Val::I32(0)).collect();
         func.call(&mut store, &arg_vals, &mut out)
-            .map_err(|e| format!("entry '{}' trap: {e:#}", fn_name))?;
+            .map_err(|e| trap_message(&format!("entry '{fn_name}'"), &e))?;
         decode::decode_main_return_typed(&mut store, &instance, &out, return_ty)?
     } else if let Some(main) = instance.get_func(&mut store, "main") {
         let n = main.ty(&store).results().len();
         let mut out: Vec<Val> = (0..n).map(|_| Val::I32(0)).collect();
         main.call(&mut store, &[], &mut out)
-            .map_err(|e| format!("main trap: {e:#}"))?;
+            .map_err(|e| trap_message("main", &e))?;
         decode::decode_main_return_typed(&mut store, &instance, &out, return_ty)?
     } else if let Some(start) = instance.get_func(&mut store, "_start") {
         start
             .call(&mut store, &[], &mut [])
-            .map_err(|e| format!("_start trap: {e:#}"))?;
+            .map_err(|e| trap_message("_start", &e))?;
         JsonValue::Null
     } else {
         return Err("module exports neither _start nor main".into());
