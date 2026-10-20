@@ -1,0 +1,28 @@
+module BecauseCitesOpen
+    intent = "A law whose reason cites a law the steps leave open: the reason's own steps close, yet neither the reason nor the law that cites it is closed."
+    exposes [f, g]
+    effects []
+
+fn f(x: String) -> String
+    ? "An exclamation after the text."
+    x + "!"
+
+fn g(x: String) -> String
+    ? "The same, written with an empty text in front."
+    ("" + x) + "!"
+
+verify f
+    f("a") => "a!"
+
+verify g
+    g("a") => "a!"
+
+verify f law isG
+    given x: String = ["", "a"]
+    f(x) => g(x)
+
+verify g law sameAsF
+    given x: String = ["", "a"]
+    because f(x) == g(x)
+    using [f.isG]
+    g(x) == f(x) holds
