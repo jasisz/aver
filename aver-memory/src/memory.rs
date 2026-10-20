@@ -72,6 +72,7 @@ impl<T: ArenaTypes> Arena<T> {
         }
         self.begin_lane_rewrite(INVALID_LANE_MARK);
         self.young_entries.truncate(mark as usize);
+        self.note_young_truncated(mark);
         self.finish_lane_rewrite();
     }
 
@@ -90,6 +91,7 @@ impl<T: ArenaTypes> Arena<T> {
         }
 
         self.young_entries.truncate(mark as usize);
+        self.note_young_truncated(mark);
         self.young_entries.extend(compacted);
         Self::recycle_u32_scratch(&mut self.scratch_young, relocated);
         self.finish_lane_rewrite();
@@ -101,6 +103,7 @@ impl<T: ArenaTypes> Arena<T> {
         }
         self.begin_lane_rewrite(INVALID_LANE_MARK);
         self.yard_entries.truncate(mark as usize);
+        self.note_yard_truncated(mark);
         self.finish_lane_rewrite();
     }
 
@@ -110,6 +113,7 @@ impl<T: ArenaTypes> Arena<T> {
         }
         self.begin_lane_rewrite(INVALID_LANE_MARK);
         self.handoff_entries.truncate(mark as usize);
+        self.note_handoff_truncated(mark);
         self.finish_lane_rewrite();
     }
 
@@ -180,6 +184,7 @@ impl<T: ArenaTypes> Arena<T> {
         }
         self.rewrite_out_of_region_roots = rewrite_out_of_region_roots;
         if rewrite_out_of_region_roots {
+            self.forget_handoff_block();
             self.begin_inplace_visit_epoch();
         }
         let mut relocated_young = Self::take_u32_scratch(
@@ -220,9 +225,12 @@ impl<T: ArenaTypes> Arena<T> {
         }
 
         self.young_entries.truncate(young_mark as usize);
+        self.note_young_truncated(young_mark);
         self.yard_entries.truncate(yard_mark as usize);
+        self.note_yard_truncated(yard_mark);
         self.yard_entries.extend(compacted_yard);
         self.handoff_entries.truncate(handoff_mark as usize);
+        self.note_handoff_truncated(handoff_mark);
         self.handoff_entries.extend(compacted_handoff);
         self.note_peak_usage();
         self.rewrite_out_of_region_roots = false;
@@ -966,6 +974,7 @@ impl<T: ArenaTypes> Arena<T> {
             compacted_handoff,
         );
         relocated_young[relocation_slot] = new_index;
+        self.boundary_entries_moved += 1;
 
         let entry = core::mem::replace(
             &mut self.young_entries[raw_index as usize],
@@ -1028,6 +1037,7 @@ impl<T: ArenaTypes> Arena<T> {
             compacted_handoff,
         );
         relocated_yard[relocation_slot] = new_index;
+        self.boundary_entries_moved += 1;
 
         let entry = core::mem::replace(
             &mut self.yard_entries[raw_index as usize],
@@ -1092,6 +1102,7 @@ impl<T: ArenaTypes> Arena<T> {
             compacted_handoff,
         );
         relocated_handoff[relocation_slot] = new_index;
+        self.boundary_entries_moved += 1;
 
         let entry = core::mem::replace(
             &mut self.handoff_entries[raw_index as usize],
@@ -1154,6 +1165,7 @@ impl<T: ArenaTypes> Arena<T> {
                     compacted_handoff,
                 );
                 relocated_young[relocation_slot] = new_index;
+                self.boundary_entries_moved += 1;
                 let entry = core::mem::replace(
                     &mut self.young_entries[raw_index as usize],
                     ArenaEntry::Int(0),
@@ -1189,6 +1201,7 @@ impl<T: ArenaTypes> Arena<T> {
                     compacted_handoff,
                 );
                 relocated_yard[relocation_slot] = new_index;
+                self.boundary_entries_moved += 1;
                 let entry = core::mem::replace(
                     &mut self.yard_entries[raw_index as usize],
                     ArenaEntry::Int(0),
@@ -1224,6 +1237,7 @@ impl<T: ArenaTypes> Arena<T> {
                     compacted_handoff,
                 );
                 relocated_handoff[relocation_slot] = new_index;
+                self.boundary_entries_moved += 1;
                 let entry = core::mem::replace(
                     &mut self.handoff_entries[raw_index as usize],
                     ArenaEntry::Int(0),
@@ -1764,6 +1778,9 @@ impl<T: ArenaTypes> Arena<T> {
         }
         self.begin_lane_rewrite(lane_mark);
         self.rewrite_out_of_region_roots = rewrite_out_of_region_roots;
+        if rewrite_out_of_region_roots {
+            self.forget_handoff_block();
+        }
 
         let mut relocated = Self::take_u32_scratch(
             &mut self.scratch_young,
@@ -1775,6 +1792,7 @@ impl<T: ArenaTypes> Arena<T> {
         }
 
         self.young_entries.truncate(mark as usize);
+        self.note_young_truncated(mark);
         self.rewrite_out_of_region_roots = false;
         Self::recycle_u32_scratch(&mut self.scratch_young, relocated);
         self.finish_lane_rewrite();
@@ -1795,6 +1813,9 @@ impl<T: ArenaTypes> Arena<T> {
         self.begin_lane_rewrite(lane_mark);
         self.active_lane_hands_to_caller = true;
         self.rewrite_out_of_region_roots = rewrite_out_of_region_roots;
+        if rewrite_out_of_region_roots {
+            self.forget_handoff_block();
+        }
 
         let mut relocated = Self::take_u32_scratch(
             &mut self.scratch_young,
@@ -1806,6 +1827,7 @@ impl<T: ArenaTypes> Arena<T> {
         }
 
         self.young_entries.truncate(mark as usize);
+        self.note_young_truncated(mark);
         self.rewrite_out_of_region_roots = false;
         Self::recycle_u32_scratch(&mut self.scratch_young, relocated);
         self.finish_lane_rewrite();
@@ -1841,6 +1863,7 @@ impl<T: ArenaTypes> Arena<T> {
         self.begin_lane_rewrite(INVALID_LANE_MARK);
         self.rewrite_out_of_region_roots = rewrite_out_of_region_roots;
         if rewrite_out_of_region_roots {
+            self.forget_handoff_block();
             self.begin_inplace_visit_epoch();
         }
         let mut relocated_young =
@@ -1880,6 +1903,7 @@ impl<T: ArenaTypes> Arena<T> {
         }
 
         self.yard_entries.truncate(mark as usize);
+        self.note_yard_truncated(mark);
         self.yard_entries.extend(compacted);
         Self::recycle_u32_scratch(&mut self.scratch_yard, relocated);
         self.finish_lane_rewrite();
@@ -1971,6 +1995,7 @@ impl<T: ArenaTypes> Arena<T> {
                 AllocSpace::Young => unreachable!("promotion target must be yard or handoff"),
             };
             relocated[relocation_slot] = new_index;
+            self.boundary_entries_moved += 1;
             self.note_peak_usage();
             let entry = core::mem::replace(
                 &mut self.young_entries[raw_index as usize],
@@ -2290,6 +2315,7 @@ impl<T: ArenaTypes> Arena<T> {
             AllocSpace::Young => unreachable!("promotion target must be yard or handoff"),
         };
         relocated[relocation_slot] = new_index;
+        self.boundary_entries_moved += 1;
         match target {
             AllocSpace::Yard => self.yard_entries.push(ArenaEntry::Int(0)),
             AllocSpace::Handoff => self.handoff_entries.push(ArenaEntry::Int(0)),

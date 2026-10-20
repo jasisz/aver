@@ -472,3 +472,138 @@ fn walking_a_list_of_integers_never_reads_its_body() {
         "a body of integers must not be read to promote the view over it"
     );
 }
+
+/// An arena whose handoff space holds one block: a record holding a
+/// vector, which holds a young string below the evacuation's young mark, and
+/// a yard string below its yard mark.
+///
+/// Returns the arena, the record and the vector as they stand in handoff.
+fn arena_with_a_handoff_block() -> (TestArena, NanValue, NanValue) {
+    let mut arena = TestArena::new();
+    let older_young = NanValue::new_string(arena.push_string("older young"));
+    let older_yard = NanValue::new_string(
+        arena.with_alloc_space(AllocSpace::Yard, |arena| arena.push_string("older yard")),
+    );
+    let (young_mark, yard_mark) = (arena.young_len() as u32, arena.yard_len() as u32);
+    let vector = NanValue::new_vector(arena.push_vector(vec![older_young]));
+    let record = NanValue::new_record(arena.push_record(1, vec![vector, older_yard]));
+    let lane = arena.lane_mark();
+    let mut roots = [record];
+    arena.evacuate_frame_to_handoff(young_mark, yard_mark, 0, lane, &mut roots, false);
+    arena.note_handoff_handed_up(0);
+    let record = roots[0];
+    let vector = arena.get_record(record.arena_index()).1[0];
+    (arena, record, vector)
+}
+
+/// The handoff region a boundary hands up becomes a block bounded by the
+/// young and yard lengths it left, a frame whose regions start at or above
+/// those bounds may keep it, and an evacuation that starts at its end extends
+/// it rather than moving it.
+#[test]
+fn a_handed_up_region_becomes_a_block_the_next_boundary_extends() {
+    let (mut arena, record, _) = arena_with_a_handoff_block();
+    let laid = HandoffBlock {
+        start: 0,
+        end: 2,
+        young_len: 1,
+        yard_len: 1,
+        live: 2,
+    };
+    assert_eq!(arena.handoff_block(), Some(laid));
+    assert_eq!(arena.handoff_block_at(0, 1, 1), Some(laid));
+    assert_eq!(
+        arena.handoff_block_at(0, 0, 1),
+        None,
+        "the block points at young index 0, which a young region from 0 moves"
+    );
+    assert_eq!(
+        arena.handoff_block_at(0, 1, 0),
+        None,
+        "the block points at yard index 0, which a yard region from 0 moves"
+    );
+    assert_eq!(
+        arena.handoff_block_at(1, 1, 1),
+        None,
+        "a handoff region that starts inside the block cannot keep it"
+    );
+
+    // The frame above wraps the record in a node of its own and returns it,
+    // leaving the block where it stands.
+    let wrapper = NanValue::new_record(arena.push_record(2, vec![record]));
+    let lane = arena.lane_mark();
+    let moved_before = arena.boundary_entries_moved();
+    let mut roots = [wrapper];
+    arena.evacuate_frame_to_handoff(1, 1, laid.end, lane, &mut roots, false);
+    arena.note_handoff_handed_up(0);
+    assert_eq!(arena.boundary_entries_moved() - moved_before, 1);
+    assert_eq!(
+        arena.get_record(roots[0].arena_index()).1[0].bits(),
+        record.bits(),
+        "the record in the block keeps its index"
+    );
+    assert_eq!(
+        arena.handoff_block(),
+        Some(HandoffBlock { end: 3, ..laid }),
+        "extending the block keeps the measure of what was live"
+    );
+}
+
+/// What a block promises only lasts until something could have broken it:
+/// a mutator that may store an index into one of its entries, or a truncate
+/// below one of its bounds. A mutator that stores no index keeps it.
+#[test]
+fn a_write_into_the_block_or_a_truncate_below_its_bounds_forgets_it() {
+    let (mut arena, _, vector) = arena_with_a_handoff_block();
+    let fresh = NanValue::new_string(arena.push_string("fresh"));
+    assert!(arena.vector_store_in_place(vector.arena_index(), 0, fresh));
+    assert_eq!(
+        arena.handoff_block(),
+        None,
+        "an in-place store into the block"
+    );
+
+    let (mut arena, _, vector) = arena_with_a_handoff_block();
+    let _ = arena.get_vector_mut(vector.arena_index());
+    assert_eq!(
+        arena.handoff_block(),
+        None,
+        "a mutable borrow of a block entry"
+    );
+
+    let (mut arena, record, _) = arena_with_a_handoff_block();
+    let _ = arena.take_record_field(record, 1);
+    assert!(
+        arena.handoff_block().is_some(),
+        "a take leaves an immediate behind and stores no index"
+    );
+
+    let (mut arena, _, _) = arena_with_a_handoff_block();
+    arena.truncate_to(1);
+    arena.truncate_yard_to(1);
+    assert!(
+        arena.handoff_block().is_some(),
+        "truncates down to the bounds"
+    );
+    arena.truncate_to(0);
+    assert_eq!(arena.handoff_block(), None, "young below the block's bound");
+
+    let (mut arena, _, _) = arena_with_a_handoff_block();
+    arena.truncate_yard_to(0);
+    assert_eq!(arena.handoff_block(), None, "yard below the block's bound");
+
+    let (mut arena, _, _) = arena_with_a_handoff_block();
+    arena.truncate_handoff_to(1);
+    assert_eq!(arena.handoff_block(), None, "handoff into the block");
+
+    let (mut arena, record, _) = arena_with_a_handoff_block();
+    let wrapper = NanValue::new_record(arena.push_record(2, vec![record]));
+    let lane = arena.lane_mark();
+    let mut roots = [wrapper];
+    arena.promote_young_roots_to_handoff(1, lane, &mut roots, true);
+    assert_eq!(
+        arena.handoff_block(),
+        None,
+        "a boundary that rewrites entries outside its regions"
+    );
+}

@@ -26,6 +26,8 @@ impl<T: ArenaTypes> Arena<T> {
             vector_elements_scanned: 0,
             out_of_region_entries_read: 0,
             rewrite_out_of_region_roots: false,
+            handoff_block: None,
+            boundary_entries_moved: 0,
             holds_any_map: false,
             holds_any_vector: false,
             holds_any_record: false,
@@ -83,6 +85,8 @@ impl<T: ArenaTypes> Arena<T> {
             vector_elements_scanned: 0,
             out_of_region_entries_read: 0,
             rewrite_out_of_region_roots: false,
+            handoff_block: None,
+            boundary_entries_moved: 0,
             // The stable entries come across whole, and a map among them is
             // still a map here.
             holds_any_map: self.holds_any_map,
@@ -325,7 +329,7 @@ impl<T: ArenaTypes> Arena<T> {
     /// enough to reach through a call.
     #[inline(never)]
     fn mark_held_elsewhere(&mut self, index: u32) {
-        match self.get_mut(index) {
+        match self.get_mut_storing_no_index(index) {
             ArenaEntry::Map { holder_count, .. }
             | ArenaEntry::Vector { holder_count, .. }
             | ArenaEntry::Record { holder_count, .. }
@@ -348,7 +352,7 @@ impl<T: ArenaTypes> Arena<T> {
 
     #[inline(never)]
     fn release_holder(&mut self, index: u32) {
-        match self.get_mut(index) {
+        match self.get_mut_storing_no_index(index) {
             ArenaEntry::Map { holder_count, .. }
             | ArenaEntry::Vector { holder_count, .. }
             | ArenaEntry::Record { holder_count, .. }
@@ -569,8 +573,28 @@ impl<T: ArenaTypes> Arena<T> {
     /// re-reading. Only this crate's own mutators may do that, because only they
     /// also maintain the promise — `get_vector_mut` gives it up, and
     /// `vector_store_in_place` narrows it to the element it writes.
+    ///
+    /// What the caller stores may be newer than the entry, so an entry of the
+    /// handoff block reached through here ends the block's promise —
+    /// see [`HandoffBlock`]. A mutator that only adjusts a holder count or
+    /// empties a slot uses [`Arena::get_mut_storing_no_index`] instead.
     #[inline]
     pub(crate) fn get_mut(&mut self, index: u32) -> &mut ArenaEntry<T> {
+        let (space, raw_index) = Self::decode_index(index);
+        if matches!(space, HeapSpace::Handoff)
+            && self
+                .handoff_block
+                .is_some_and(|block| block.start <= raw_index && raw_index < block.end)
+        {
+            self.handoff_block = None;
+        }
+        self.get_mut_storing_no_index(index)
+    }
+
+    /// [`Arena::get_mut`] for a mutator that stores no arena index into the
+    /// entry: a holder-count update, or a take that leaves an immediate behind.
+    #[inline]
+    fn get_mut_storing_no_index(&mut self, index: u32) -> &mut ArenaEntry<T> {
         let (space, raw_index) = Self::decode_index(index);
         match space {
             HeapSpace::Young => &mut self.young_entries[raw_index as usize],
@@ -779,6 +803,7 @@ impl<T: ArenaTypes> Arena<T> {
         self.map_entries_scanned += child.map_entries_scanned;
         self.vector_elements_scanned += child.vector_elements_scanned;
         self.out_of_region_entries_read += child.out_of_region_entries_read;
+        self.boundary_entries_moved += child.boundary_entries_moved;
     }
 
     /// Map entries the collector has read while deciding whether a live map
@@ -859,6 +884,117 @@ impl<T: ArenaTypes> Arena<T> {
     #[inline]
     pub fn out_of_region_entries_read(&self) -> u64 {
         self.out_of_region_entries_read
+    }
+
+    /// Total entries a frame boundary has moved out of a region it was about
+    /// to drop — see the field of the same name.
+    #[inline]
+    pub fn boundary_entries_moved(&self) -> u64 {
+        self.boundary_entries_moved
+    }
+
+    /// The handoff block the arena currently vouches for, if any — see
+    /// [`HandoffBlock`].
+    #[inline]
+    pub fn handoff_block(&self) -> Option<HandoffBlock> {
+        self.handoff_block
+    }
+
+    /// The handoff block a frame can leave where it stands, if there is one.
+    ///
+    /// `handoff_mark`, `young_mark` and `yard_mark` are where the regions the
+    /// frame is about to evacuate start. The block qualifies when it is the
+    /// start of the frame's handoff region and points at nothing in the
+    /// frame's young or yard regions — see [`HandoffBlock`] for why that is
+    /// enough. The frame can then evacuate with the block's `end` as its
+    /// handoff mark, and only what lies above the block moves.
+    #[inline]
+    pub fn handoff_block_at(
+        &self,
+        handoff_mark: u32,
+        young_mark: u32,
+        yard_mark: u32,
+    ) -> Option<HandoffBlock> {
+        let block = self.handoff_block?;
+        let fits = block.start == handoff_mark
+            && block.young_len <= young_mark
+            && block.yard_len <= yard_mark;
+        debug_assert!(!fits || block.end as usize <= self.handoff_entries.len());
+        fits.then_some(block)
+    }
+
+    /// Record that a frame boundary has just finished with the handoff region
+    /// from `handoff_mark`: a return handed it to the caller, or a tail call
+    /// left it in the frame it reuses.
+    ///
+    /// That region becomes the block, bounded by the young and yard lengths
+    /// of this moment. Nothing more is needed to make the bounds true: an
+    /// entry the program can still reach holds only indices of entries that
+    /// exist, and right after a boundary young and yard end at the marks it
+    /// truncated them to. An entry nothing reaches may hold a stale index,
+    /// but no walk reads it — keeping a block reads nothing in it, and an
+    /// evacuation reads only what it reaches from its roots.
+    ///
+    /// A block that ends at `handoff_mark` lay in the caller's region before
+    /// the call and the two become one; one that starts there is this
+    /// region's own and grows to its end. Either way the measure of what is
+    /// live stays the one already taken. Otherwise the region is measured as
+    /// it stands, which is exact after a full evacuation and an
+    /// overestimate after a return that kept its region as it was.
+    pub fn note_handoff_handed_up(&mut self, handoff_mark: u32) {
+        let end = self.handoff_entries.len() as u32;
+        if end <= handoff_mark {
+            return;
+        }
+        let (start, live) = match self.handoff_block {
+            Some(block) if block.end == handoff_mark || block.start == handoff_mark => {
+                (block.start, block.live)
+            }
+            _ => (handoff_mark, end - handoff_mark),
+        };
+        self.handoff_block = Some(HandoffBlock {
+            start,
+            end,
+            young_len: self.young_entries.len() as u32,
+            yard_len: self.yard_entries.len() as u32,
+            live,
+        });
+    }
+
+    /// Young is being truncated to `mark`.
+    #[inline]
+    pub(crate) fn note_young_truncated(&mut self, mark: u32) {
+        if self
+            .handoff_block
+            .is_some_and(|block| mark < block.young_len)
+        {
+            self.handoff_block = None;
+        }
+    }
+
+    /// Yard is being truncated to `mark`.
+    #[inline]
+    pub(crate) fn note_yard_truncated(&mut self, mark: u32) {
+        if self
+            .handoff_block
+            .is_some_and(|block| mark < block.yard_len)
+        {
+            self.handoff_block = None;
+        }
+    }
+
+    /// Handoff is being truncated to `mark`.
+    #[inline]
+    pub(crate) fn note_handoff_truncated(&mut self, mark: u32) {
+        if self.handoff_block.is_some_and(|block| mark < block.end) {
+            self.handoff_block = None;
+        }
+    }
+
+    /// A boundary is about to rewrite entries outside its own regions.
+    #[inline]
+    pub(crate) fn forget_handoff_block(&mut self) {
+        self.handoff_block = None;
     }
 
     #[inline]
@@ -1180,7 +1316,7 @@ impl<T: ArenaTypes> Arena<T> {
     /// the caller has established that no root, entry or stack cell can reach
     /// the box again.
     pub fn take_boxed_value(&mut self, wrapper: NanValue) -> NanValue {
-        let value = match self.get_mut(wrapper.arena_index()) {
+        let value = match self.get_mut_storing_no_index(wrapper.arena_index()) {
             ArenaEntry::Boxed { value, .. } => core::mem::replace(value, NanValue::UNIT),
             _ => panic!("Arena: expected Boxed at {}", wrapper.arena_index()),
         };
@@ -1193,7 +1329,7 @@ impl<T: ArenaTypes> Arena<T> {
     /// stack cell can reach the tuple again, and has already copied out the
     /// items it needs.
     pub fn release_tuple_items(&mut self, tuple: NanValue) {
-        let items = match self.get_mut(tuple.arena_index()) {
+        let items = match self.get_mut_storing_no_index(tuple.arena_index()) {
             ArenaEntry::Tuple { items, .. } => core::mem::take(items),
             _ => panic!("Arena: expected Tuple at {}", tuple.arena_index()),
         };
@@ -1227,7 +1363,7 @@ impl<T: ArenaTypes> Arena<T> {
     /// caller accounted for, and that none of those holders reads this field
     /// again.
     pub fn take_nested_record_field(&mut self, record: NanValue, field_idx: usize) -> NanValue {
-        let value = match self.get_mut(record.arena_index()) {
+        let value = match self.get_mut_storing_no_index(record.arena_index()) {
             ArenaEntry::Record { fields, .. } => {
                 core::mem::replace(&mut fields[field_idx], NanValue::UNIT)
             }
@@ -1244,7 +1380,7 @@ impl<T: ArenaTypes> Arena<T> {
     /// counterpart belongs in tests because it is `O(live heap)`.
     pub fn take_record_field(&mut self, record: NanValue, field_idx: usize) -> NanValue {
         debug_assert!(!self.record_is_held_elsewhere(record));
-        let value = match self.get_mut(record.arena_index()) {
+        let value = match self.get_mut_storing_no_index(record.arena_index()) {
             ArenaEntry::Record { fields, .. } => {
                 core::mem::replace(&mut fields[field_idx], NanValue::UNIT)
             }
@@ -1555,7 +1691,7 @@ impl<T: ArenaTypes> Arena<T> {
         } else {
             let index = map.arena_index();
             let empty_receipt = self.lane_mark();
-            match self.get_mut(index) {
+            match self.get_mut_storing_no_index(index) {
                 ArenaEntry::Map {
                     map,
                     all_immediate,
