@@ -456,7 +456,15 @@ impl Env<'_> {
                     lhs: canon(lhs),
                     rhs: canon(rhs),
                 }),
-                Ok(None) => self.prove_by_evaluation(lhs, rhs, depth - 1),
+                Ok(None) => match case
+                    .value()
+                    .is_none()
+                    .then(|| self.covered_by_literals(&st.on, &lits, lhs, rhs))
+                    .flatten()
+                {
+                    Some(absurd) => Ok(absurd),
+                    None => self.prove_by_evaluation(lhs, rhs, depth - 1),
+                },
                 Err(e) => Err(e),
             }
             .map(|body| {
@@ -517,6 +525,118 @@ impl Env<'_> {
             on: st.on,
             hyp,
             cases,
+        })
+    }
+
+    /// `lhs = rhs` in the catch-all case of a split of the Int `on` on the
+    /// literals `lits`, when the hypotheses bound `on` to those literals
+    /// alone, so the case cannot happen: for each literal `k` in turn,
+    /// from the smallest, `on <= k` is split on; where it holds, `on` is
+    /// `k` by linear arithmetic over what is in scope, which the case
+    /// states it is not, and where it does not, the next literal is
+    /// taken; past the last one the bounds contradict. `None`, with the
+    /// hypotheses as they were, when one step does not close.
+    pub(crate) fn covered_by_literals(
+        &mut self,
+        on: &Term,
+        lits: &[Term],
+        lhs: &Term,
+        rhs: &Term,
+    ) -> Option<Proof> {
+        if !matches!(on.ty(), Some(Type::Int)) {
+            return None;
+        }
+        let mut ks: Vec<num_bigint::BigInt> = lits.iter().filter_map(term::int_value).collect();
+        if ks.is_empty() || ks.len() != lits.len() {
+            return None;
+        }
+        ks.sort();
+        let named = self.next_hyp_count();
+        // The lines of each conjunction stated true that read `on`, each a
+        // hypothesis of its own, so the linear steps see the bounds.
+        let mut reads = Vec::new();
+        term::free_vars(on, &mut reads);
+        let mut lines = Vec::new();
+        for (name, e) in self.hyps.clone() {
+            if term::bool_value(&e.rhs) == Some(true)
+                && matches!(&e.lhs.node, ResolvedExpr::Call(ResolvedCallee::Builtin(b), _) if b == "Bool.and")
+            {
+                let mut found = Vec::new();
+                super::split_and(&e.lhs, Proof::Hyp(name), &mut found);
+                lines.extend(
+                    found
+                        .into_iter()
+                        .filter(|(line, _)| mentions_any(line, &reads)),
+                );
+            }
+        }
+        let mut seen = Vec::new();
+        lines.retain(|(line, _)| {
+            let new = self.hyp_for(line).is_none() && !seen.contains(line);
+            seen.push(line.clone());
+            new
+        });
+        let level = self.hyps.len();
+        let names: Vec<String> = lines.iter().map(|_| self.fresh_hyp()).collect();
+        for (name, (line, _)) in names.iter().zip(&lines) {
+            self.hyps
+                .push((name.clone(), Eqn::new(line.clone(), term::boolean(true))));
+        }
+        let out = self.cover_from(on, &ks, lhs, rhs);
+        self.hyps.truncate(level);
+        let out = out.map(|body| {
+            names
+                .into_iter()
+                .zip(lines)
+                .rev()
+                .fold(body, |body, (name, (fact, proof))| Proof::Have {
+                    name,
+                    fact,
+                    proof: Box::new(proof),
+                    body: Box::new(body),
+                })
+        });
+        if out.is_none() {
+            self.rewind_hyp_count(named);
+        }
+        out
+    }
+
+    fn cover_from(
+        &mut self,
+        on: &Term,
+        ks: &[num_bigint::BigInt],
+        lhs: &Term,
+        rhs: &Term,
+    ) -> Option<Proof> {
+        let absurd = |contradiction: Proof| Proof::Absurd {
+            contradiction: Box::new(contradiction),
+            lhs: canon(lhs),
+            rhs: canon(rhs),
+        };
+        let Some((k, rest)) = ks.split_first() else {
+            return self.refute_linearly().map(absurd);
+        };
+        let g = canon(&term::binop(
+            crate::ast::BinOp::Lte,
+            on.clone(),
+            term::int(k),
+        ));
+        let hyp = self.fresh_hyp();
+        self.hyps
+            .push((hyp.clone(), Eqn::new(g.clone(), term::boolean(true))));
+        let at_most = self.refute_linearly();
+        self.hyps.pop();
+        let at_most = at_most?;
+        self.hyps
+            .push((hyp.clone(), Eqn::new(g.clone(), term::boolean(false))));
+        let above = self.cover_from(on, rest, lhs, rhs);
+        self.hyps.pop();
+        Some(Proof::Cases {
+            on: g,
+            hyp,
+            if_true: Box::new(absurd(at_most)),
+            if_false: Box::new(above?),
         })
     }
 
@@ -658,7 +778,7 @@ impl Env<'_> {
         let v = stopped
             .iter()
             .find_map(|t| list_var_under_match(t, &self.split_binders))?;
-        self.split_list_var(&v, lhs, rhs, depth)
+        self.split_list_var(&v, lhs, rhs, depth, true)
     }
 
     /// Where a hypothesis states whether a list variable `v` is empty
@@ -695,12 +815,20 @@ impl Env<'_> {
                 _ => None,
             }
         })?;
-        self.split_list_var(&v, lhs, rhs, depth)
+        self.split_list_var(&v, lhs, rhs, depth, true)
     }
 
     /// `lhs = rhs` with the list variable `v` as `[]` and as a cell of
-    /// fresh names, in the claim and in the hypotheses.
-    fn split_list_var(&mut self, v: &Term, lhs: &Term, rhs: &Term, depth: usize) -> Option<Proof> {
+    /// fresh names, in the claim and in the hypotheses. The cell's tail is
+    /// not split again, nor its head with `head_too`.
+    pub(crate) fn split_list_var(
+        &mut self,
+        v: &Term,
+        lhs: &Term,
+        rhs: &Term,
+        depth: usize,
+        head_too: bool,
+    ) -> Option<Proof> {
         let ResolvedExpr::Ident(var) = &v.node else {
             return None;
         };
@@ -746,7 +874,10 @@ impl Env<'_> {
                 .collect();
             env.hyps = scoped?;
             let marks = env.split_binders.len();
-            env.split_binders.extend([head.clone(), tail.clone()]);
+            if head_too {
+                env.split_binders.push(head.clone());
+            }
+            env.split_binders.push(tail.clone());
             let out = (|| {
                 let l = term::subst(lhs, &at)?;
                 let r = term::subst(rhs, &at)?;

@@ -123,6 +123,7 @@ fn conclude(p: Proof, env: Env, path: String) -> Result<Eqn, String>
         Proof.PInduct(f, xs, l, r, carry, cs) -> induct(f, xs, Eqn(lhs = l, rhs = r), carry, cs, env, path)
         Proof.PListInduct(v, l, r, carry, n, h, t, general, ihs, c) -> listInduct(v, Eqn(lhs = l, rhs = r), carry, n, h, t, general, ihs, c, env, path)
         Proof.PListCases(v, l, r, n, h, t, c) -> splitList(v, Eqn(lhs = l, rhs = r), n, h, t, c, env, path)
+        Proof.PLenInduct(v, l, r, carry, general, n, hn, ih, c) -> lenInduct(v, Eqn(lhs = l, rhs = r), carry, general, [n, hn, ih], c, env, path)
         Proof.PRing(l, r) -> ring(l, r, env, path)
         Proof.PLinear(g, v, hs, ws, cs) -> linear(g, v, hs, ws, cs, env, path)
 
@@ -1558,6 +1559,68 @@ verify listInduct
     listInduct("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), ["k"], Proof.PRefl(Term.TList([])), "h", "t", [], [], Proof.PRefl(Term.TUnit), listsEnv(["xs"]), "p") => Result.Err("step p: hypothesis k is not in scope")
     listInduct("xs", Eqn(lhs = Term.TOp("==", Term.TVar("xs"), Term.TList([])), rhs = Term.TBool(false)), [], Proof.PHyp("k"), "h", "t", [], [], Proof.PHyp("k"), withHyp(listsEnv(["xs"]), "k", Term.TOp("==", Term.TVar("xs"), Term.TList([])), false), "p") => Result.Err("step p/nil: hypothesis k is not in scope")
     listInduct("xs", Eqn(lhs = Term.TOp("==", Term.TVar("xs"), Term.TList([])), rhs = Term.TBool(false)), ["k"], Proof.PHyp("k"), "h", "t", [], [], Proof.PHyp("k"), withHyp(listsEnv(["xs"]), "k", Term.TOp("==", Term.TVar("xs"), Term.TList([])), false), "p") => Result.Ok(Eqn(lhs = Term.TOp("==", Term.TVar("xs"), Term.TList([])), rhs = Term.TBool(false)))
+
+fn lenInduct(v: String, claim: Eqn, carry: List<String>, general: List<String>, names: List<String>, c: Proof, env: Env, path: String) -> Result<Eqn, String>
+    ? "Induction on the length of a given v of list type, for every value of the names in general. With names [n, hn, ih] fresh for everything in scope, c proves the claim as it stands under the carried hypotheses, each a fact, those that mention neither v nor what it generalises, an Int n, hn saying v is at most n long, and the law ih: the claim at every v shorter than n and every value of general where the carried hypotheses hold. Then the claim holds whenever v is at most n long, for every n by induction on n, so for every v."
+    carried = namedHyps(carry, env.hyps, path)?
+    match (listVar(v, env), List.contains(general, v), names)
+        (Option.None, _, _) -> refuse(path, "{v} is not a given of list type")
+        (_, true, _) -> refuse(path, "{v} is both inducted on and generalised")
+        (_, _, [n, hn, ih]) -> match freshAll(names, List.concat(takenNames(claim, env.hyps), hypLabels(env.hyps)), env, [])
+            false -> refuse(path, "the names are not fresh")
+            true -> lenCase(v, claim, carried, general, n, hn, Law(key = ih, givens = typedNames(List.prepend(v, general), env, path)?, premise = [conjoined(Term.TOp("<", Term.TBi("List.len", [Term.TVar(v)]), Term.TVar(n)), factsOf(carried, path)?)], lhs = claim.lhs, rhs = claim.rhs), c, env, path)
+        _ -> refuse(path, "a length induction names a bound, its hypothesis and its law")
+
+verify lenInduct
+    lenInduct("n", Eqn(lhs = Term.TVar("n"), rhs = Term.TVar("n")), [], [], ["m", "hm", "ih"], Proof.PRefl(Term.TVar("n")), intsEnv(["n"]), "p") => Result.Err("step p: n is not a given of list type")
+    lenInduct("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), [], ["xs"], ["m", "hm", "ih"], Proof.PRefl(Term.TVar("xs")), listsEnv(["xs"]), "p") => Result.Err("step p: xs is both inducted on and generalised")
+    lenInduct("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), [], [], ["xs", "hm", "ih"], Proof.PRefl(Term.TVar("xs")), listsEnv(["xs"]), "p") => Result.Err("step p: the names are not fresh")
+    lenInduct("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), [], [], ["m", "hm"], Proof.PRefl(Term.TVar("xs")), listsEnv(["xs"]), "p") => Result.Err("step p: a length induction names a bound, its hypothesis and its law")
+    lenInduct("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), [], [], ["m", "hm", "ih"], Proof.PRefl(Term.TVar("xs")), listsEnv(["xs"]), "p") => Result.Ok(Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")))
+    lenInduct("xs", Eqn(lhs = Term.TBi("List.len", [Term.TVar("xs")]), rhs = Term.TInt(0)), [], [], ["m", "hm", "ih"], Proof.PLaw("ih", [Kernel.Term.bind("xs", Term.TVar("xs"))], [Proof.PHyp("hm")]), listsEnv(["xs"]), "p") => Result.Err("step p/below: premise 0 does not match")
+    lenInduct("xs", Eqn(lhs = Term.TBi("List.len", [Term.TVar("xs")]), rhs = Term.TInt(0)), ["k"], [], ["m", "hm", "ih"], Proof.PHyp("k"), withHyp(listsEnv(["xs"]), "k", Term.TVar("xs"), false), "p") => Result.Err("step p: k is not a fact")
+    lenInduct("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), [], [], ["m", "hm", "ih"], Proof.PHyp("k"), withHyp(listsEnv(["xs"]), "k", Term.TOp("==", Term.TVar("xs"), Term.TList([])), true), "p") => Result.Err("step p/below: hypothesis k is not in scope")
+
+fn lenCase(v: String, claim: Eqn, carried: List<Hyp>, general: List<String>, n: String, hn: String, ih: Law, c: Proof, env: Env, path: String) -> Result<Eqn, String>
+    ? "The one case of a length induction: c proves the claim with the Int n and the hypothesis hn in scope, and the law ih cited as any other."
+    bounded = Hyp(name = hn, eqn = Eqn(lhs = Term.TOp("<=", Term.TBi("List.len", [Term.TVar(v)]), Term.TVar(n)), rhs = Term.TBool(true)))
+    hyps = List.prepend(bounded, List.concat(carried, notMentioningAny(env.hyps, List.prepend(v, general))))
+    caseProves(c, claim, Env(defs = env.defs, consts = env.consts, laws = List.prepend(ih, env.laws), hyps = hyps, vars = List.prepend(Kernel.Term.typed(n, Ty.TyInt), env.vars), sums = env.sums, recs = env.recs, sigs = env.sigs), "{path}/below")?
+    Result.Ok(claim)
+
+verify lenCase
+    lenCase("xs", Eqn(lhs = Term.TBool(true), rhs = Term.TBool(true)), [], [], "m", "hm", Law(key = "ih", givens = [], premise = [], lhs = Term.TBool(true), rhs = Term.TBool(true)), Proof.PLaw("ih", [], []), listsEnv(["xs"]), "p") => Result.Ok(Eqn(lhs = Term.TBool(true), rhs = Term.TBool(true)))
+
+fn typedNames(ns: List<String>, env: Env, path: String) -> Result<List<TypedVar>, String>
+    ? "Each name with the type it has in scope."
+    match ns
+        [] -> Result.Ok([])
+        [x, ..rest] -> Result.Ok(List.prepend(Kernel.Term.typed(x, typeOf(Term.TVar(x), env, path)?), typedNames(rest, env, path)?))
+
+verify typedNames
+    typedNames(["xs"], listsEnv(["xs"]), "p") => Result.Ok([Kernel.Term.typed("xs", Ty.TyList(Ty.TyAny))])
+    typedNames(["y"], emptyEnv(), "p") => Result.Err("step p: y is not a variable in scope")
+
+fn factsOf(hs: List<Hyp>, path: String) -> Result<List<Term>, String>
+    ? "What each hypothesis says is true; a refusal for one that is no such fact."
+    match hs
+        [] -> Result.Ok([])
+        [h, ..rest] -> match h.eqn.rhs == Term.TBool(true)
+            true -> Result.Ok(List.prepend(h.eqn.lhs, factsOf(rest, path)?))
+            false -> Result.Err("step {path}: {h.name} is not a fact")
+
+verify factsOf
+    factsOf([Hyp(name = "k", eqn = Eqn(lhs = Term.TVar("c"), rhs = Term.TBool(true)))], "p") => Result.Ok([Term.TVar("c")])
+
+fn conjoined(t: Term, rest: List<Term>) -> Term
+    ? "t and each of rest, joined by Bool.and to the right."
+    match rest
+        [] -> t
+        [x, ..more] -> Term.TBi("Bool.and", [t, conjoined(x, more)])
+
+verify conjoined
+    conjoined(Term.TVar("a"), []) => Term.TVar("a")
+    conjoined(Term.TVar("a"), [Term.TVar("b"), Term.TVar("c")]) => Term.TBi("Bool.and", [Term.TVar("a"), Term.TBi("Bool.and", [Term.TVar("b"), Term.TVar("c")])])
 
 fn withRec(env: Env) -> Env
     ? "The environment with a record R of two Int fields a and b declared."

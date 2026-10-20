@@ -70,6 +70,15 @@ const MAX_OTHER_FUNCTIONS: usize = 2;
 /// states the claim at the tail at ([`Env::claims_at_tail`]).
 const MAX_GENERAL_VALUES: usize = 3;
 
+/// How many times the fuel left an induction on the length of a list may
+/// spend, apart from the law's own fuel, which it leaves as it was. Such a
+/// function is a parser that reads one item of several shapes per call;
+/// each shape is a case of its own, with the induction's law cited in it,
+/// so its proof is several times the size of one along a `match` on a
+/// list's head and tail. The one in the btc corpus it is sized for spends
+/// twelve times the law's fuel.
+const LENGTH_FUEL_FACTOR: usize = 16;
+
 fn fresh(base: &str, taken: &[String]) -> String {
     if !taken.iter().any(|t| t == base) {
         return base.to_string();
@@ -200,9 +209,26 @@ impl Env<'_> {
             return self.induction_along(f, named, ob, depth);
         }
         let along = self.induction_along(f, None, ob, depth);
-        let Err(why) = along else {
+        let Err(mut why) = along else {
             return along;
         };
+        // A function the gate opens because every call shortens a list, but
+        // does not induct along: strong induction on that list's length.
+        // It runs on a budget of its own (see [`LENGTH_FUEL_FACTOR`]), with
+        // one level of depth more for the split of the list into `[]` and
+        // a cell, which an induction along the function gets from its own
+        // `match` for nothing.
+        if let Some(v) = self.shortened_given(f, None, ob) {
+            let (hyps, fuel) = (self.hyps.clone(), self.fuel);
+            self.fuel = fuel.saturating_mul(LENGTH_FUEL_FACTOR);
+            let out = self.prove_by_length_induction(&v, ob, depth + 1);
+            self.fuel = fuel;
+            match out {
+                Ok(proof) => return Ok(proof),
+                Err(m) => why = format!("{why}; induction on the length of {v}: {m}"),
+            }
+            self.hyps = hyps;
+        }
         let lists: Vec<String> = ob
             .lists
             .iter()
@@ -988,6 +1014,485 @@ impl Env<'_> {
         }
         self.open_premises = open_premises;
         None
+    }
+}
+
+/// An instance of the law of an induction on a list's length looked at,
+/// the hypotheses in scope then, and its proof if its premise found one.
+type Tried = (Term, Vec<(String, Eqn)>, Option<Proof>);
+
+/// What a case of an induction on the length of a list may cite
+/// ([`Proof::InductLength`]): its law and the hypothesis that the list is
+/// at most as long as the bound.
+#[derive(Debug, Clone)]
+pub(crate) struct LengthIh {
+    pub law: crate::ir::proof_steps::LawRef,
+    pub bound_hyp: String,
+    /// Each instance looked at, the hypotheses in scope then, and its
+    /// proof if its premise found one.
+    pub tried: Vec<Tried>,
+    /// While a premise is being proved: no instance is looked at inside.
+    pub busy: bool,
+}
+
+/// The instances of `law`'s left side in `t`, with their substitution of
+/// its givens, that read no name a `match` inside `t` binds around them.
+fn instances(
+    t: &Term,
+    law: &crate::ir::proof_steps::LawRef,
+    bound: &mut Vec<String>,
+    out: &mut Vec<(Term, Vec<(String, Term)>)>,
+) {
+    if let ResolvedExpr::Match { subject, arms } = &t.node {
+        instances(subject, law, bound, out);
+        for arm in arms {
+            let before = bound.len();
+            bound.extend(term::pattern_binders(&arm.pattern));
+            instances(&arm.body, law, bound, out);
+            bound.truncate(before);
+        }
+        return;
+    }
+    let mut found = Vec::new();
+    if super::rewrite::matches(&law.lhs, t, &law.givens, &mut found)
+        && let Some(subst) = super::rewrite::ordered(&law.givens, found)
+    {
+        let mut fv = Vec::new();
+        term::free_vars(t, &mut fv);
+        if !fv.iter().any(|n| bound.contains(n)) {
+            out.push((canon(t), subst));
+        }
+    }
+    for c in term::children(t) {
+        instances(c, law, bound, out);
+    }
+}
+
+impl Env<'_> {
+    /// Strong induction on the length of the list given `v`, for every
+    /// value of the other givens of the claim (see
+    /// [`Proof::InductLength`]): the claim as it stands, closed by
+    /// evaluation under the hypotheses that mention none of them, those
+    /// that do and are facts (carried), and the bound on `v`'s length,
+    /// where the law of the induction is cut in as a hypothesis at each
+    /// shorter call evaluation reaches ([`Self::cut_in_shorter`]).
+    fn prove_by_length_induction(
+        &mut self,
+        v: &str,
+        ob: &Obligation,
+        depth: usize,
+    ) -> Result<Proof, String> {
+        let mut fv = Vec::new();
+        term::free_vars(&ob.lhs, &mut fv);
+        term::free_vars(&ob.rhs, &mut fv);
+        let general: Vec<String> = ob
+            .givens
+            .iter()
+            .filter(|g| *g != v && fv.contains(g))
+            .cloned()
+            .collect();
+        let varying: Vec<&str> = std::iter::once(v)
+            .chain(general.iter().map(String::as_str))
+            .collect();
+        let mentions = |e: &Eqn| {
+            let mut fv = Vec::new();
+            term::free_vars(&e.lhs, &mut fv);
+            term::free_vars(&e.rhs, &mut fv);
+            fv.iter().any(|n| varying.contains(&n.as_str()))
+        };
+        let mut taken = ob.givens.clone();
+        taken.extend(fv.iter().cloned());
+        let mut carried: Vec<(String, Eqn)> = Vec::new();
+        for (i, (n, e)) in self.hyps.iter().enumerate() {
+            taken.push(n.clone());
+            term::free_vars(&e.lhs, &mut taken);
+            term::free_vars(&e.rhs, &mut taken);
+            let shadowed = self.hyps[i + 1..].iter().any(|(m, _)| m == n);
+            if !shadowed && mentions(e) && term::bool_value(&e.rhs) == Some(true) {
+                carried.push((n.clone(), e.clone()));
+            }
+        }
+        let bound = fresh(&format!("{v}Bound"), &taken);
+        let bound_hyp = self.fresh_hyp();
+        self.next_ih += 1;
+        let ih = format!("ih{}", self.next_ih);
+        let facts: Vec<Term> = carried.iter().map(|(_, e)| e.lhs.clone()).collect();
+        let law = crate::ir::proof_steps::length_ih(
+            &ih, v, &general, &ob.types, &bound, &facts, &ob.lhs, &ob.rhs,
+        );
+        let n = term::var(&bound);
+        n.set_ty(Type::Int);
+        let list = term::var(v);
+        if let Some((_, ty)) = ob.types.iter().find(|(g, _)| g == v) {
+            list.set_ty(ty.clone());
+        }
+        let at_most = term::binop(
+            crate::ast::BinOp::Lte,
+            term::builtin("List.len", vec![list.clone()], Some(Type::Int)),
+            n,
+        );
+        let kept: Vec<(String, Eqn)> = self
+            .hyps
+            .iter()
+            .filter(|(_, e)| !mentions(e))
+            .cloned()
+            .collect();
+        let saved = std::mem::replace(&mut self.hyps, kept);
+        self.hyps.extend(carried.iter().cloned());
+        self.hyps.push((
+            bound_hyp.clone(),
+            Eqn::new(canon(&at_most), term::boolean(true)),
+        ));
+        let outer = self.length_ih.replace(LengthIh {
+            law,
+            bound_hyp: bound_hyp.clone(),
+            tried: Vec::new(),
+            busy: false,
+        });
+        // The list as `[]` and as a cell first, where the function reads it;
+        // the claim as it stands otherwise.
+        let body = match (depth > 0)
+            .then(|| self.split_list_var(&list, &ob.lhs, &ob.rhs, depth, false))
+            .flatten()
+        {
+            Some(proof) => Ok(proof),
+            None => self.prove_by_evaluation(&ob.lhs, &ob.rhs, depth),
+        };
+        self.length_ih = outer;
+        self.hyps = saved;
+        Ok(Proof::InductLength {
+            var: v.to_string(),
+            lhs: canon(&ob.lhs),
+            rhs: canon(&ob.rhs),
+            carried: carried.into_iter().map(|(n, _)| n).collect(),
+            general,
+            bound,
+            bound_hyp,
+            ih,
+            body: Box::new(body?),
+        })
+    }
+
+    /// The list given an induction on its length follows, for a law about
+    /// `f`, whose recursion the gate does not follow but which opens because
+    /// every call shortens the list at one place
+    /// ([`induct::shortened_place`]): the given the claim passes there, the
+    /// one `named` names if any.
+    fn shortened_given(&mut self, f: FnId, named: Option<&str>, ob: &Obligation) -> Option<String> {
+        let j = self.shortened(f)?;
+        let mut calls = Vec::new();
+        calls_of(&ob.lhs, f, &mut calls);
+        calls_of(&ob.rhs, f, &mut calls);
+        calls.iter().find_map(|c| match c.get(j).map(|a| &a.node) {
+            Some(ResolvedExpr::Ident(n))
+                if ob.lists.contains(n) && named.is_none_or(|m| m == n) =>
+            {
+                Some(n.clone())
+            }
+            _ => None,
+        })
+    }
+
+    /// The place where every call of `f` shortens a list, when the gate
+    /// opens `f` for that alone ([`induct::shortened_place`]).
+    pub(crate) fn shortened(&mut self, f: FnId) -> Option<usize> {
+        let def = self.raw_def(f)?;
+        let ds = self.reachable_defs(f);
+        if induct::recursion(&def, &ds).is_ok() {
+            return None;
+        }
+        let j = induct::shortened_place(&def, &ds)?;
+        self.def(f)?;
+        Some(j)
+    }
+
+    /// Inside an induction on the length of a list whose claim is a fact
+    /// (`… holds`): each instance of its law at a shorter list `lhs` or
+    /// `rhs` holds, outside any `match` arm that binds what it reads, cut
+    /// in as a hypothesis, then `lhs = rhs` evaluated under them. `None`
+    /// when there is none.
+    pub(crate) fn cut_in_shorter(
+        &mut self,
+        lhs: &Term,
+        rhs: &Term,
+        depth: usize,
+    ) -> Option<Result<Proof, String>> {
+        let law = self.length_ih.as_ref()?.law.clone();
+        if term::bool_value(&law.rhs) != Some(true) {
+            return None;
+        }
+        let mut found = Vec::new();
+        for side in [lhs, rhs] {
+            instances(side, &law, &mut Vec::new(), &mut found);
+        }
+        let level = self.hyps.len();
+        let mut cuts: Vec<(String, Term, Proof)> = Vec::new();
+        for (call, _) in found {
+            if self.hyp_for(&call).is_some() || cuts.iter().any(|(_, c, _)| *c == call) {
+                continue;
+            }
+            if let Some(from) = self.shorter_proof(&call) {
+                let name = self.fresh_hyp();
+                let lines = self.body_lines(&call, &name);
+                cuts.push((name, call, from));
+                for (line, proof) in lines {
+                    if self.hyp_for(&line).is_none() && !cuts.iter().any(|(_, c, _)| *c == line) {
+                        let name = self.fresh_hyp();
+                        cuts.push((name, line, proof));
+                    }
+                }
+            }
+        }
+        if cuts.is_empty() {
+            return None;
+        }
+        for (name, fact, _) in &cuts {
+            self.hyps
+                .push((name.clone(), Eqn::new(fact.clone(), term::boolean(true))));
+        }
+        let out = self.prove_by_evaluation(lhs, rhs, depth);
+        self.hyps.truncate(level);
+        Some(out.map(|body| {
+            cuts.into_iter()
+                .rev()
+                .fold(body, |body, (name, fact, from)| Proof::Have {
+                    name,
+                    fact,
+                    proof: Box::new(from),
+                    body: Box::new(body),
+                })
+        }))
+    }
+
+    /// The `Bool.and` lines of the body of the call `call`, a fact by the
+    /// hypothesis `name`, each with its proof from it: the definition opened
+    /// one level, as Lean's own unfolding reads it. A line that is a `match`
+    /// is left out.
+    fn body_lines(&mut self, call: &Term, name: &str) -> Vec<(Term, Proof)> {
+        let ResolvedExpr::Call(ResolvedCallee::Fn(id), args) = &call.node else {
+            return Vec::new();
+        };
+        let Some(def) = self.def(*id) else {
+            return Vec::new();
+        };
+        let args: Vec<Term> = args.iter().map(canon).collect();
+        let Some(body) = def
+            .outer(&args)
+            .ok()
+            .and_then(|outer| term::subst(&def.body, &outer).ok())
+        else {
+            return Vec::new();
+        };
+        let body = canon(&body);
+        if matches!(body.node, ResolvedExpr::Match { .. }) {
+            return Vec::new();
+        }
+        let from = Proof::Trans {
+            terms: vec![body.clone(), call.clone(), term::boolean(true)],
+            steps: vec![
+                Proof::Symm(Box::new(Proof::Unfold {
+                    fn_id: *id,
+                    arm: 0,
+                    args,
+                    binders: Vec::new(),
+                    premise: None,
+                })),
+                Proof::Hyp(name.to_string()),
+            ],
+        };
+        let mut lines = Vec::new();
+        super::split_and(&body, from, &mut lines);
+        if lines.len() < 2 {
+            return Vec::new();
+        }
+        self.mark_used(*id);
+        lines.retain(|(line, _)| !holds_match(line));
+        lines
+    }
+
+    /// `t = true` by the law of the induction on a list's length in
+    /// progress, where `t` is an instance of its left side whose premise
+    /// is proved under the hypotheses in scope; remembered for them.
+    pub(crate) fn shorter_proof(&mut self, t: &Term) -> Option<Proof> {
+        let ih = self.length_ih.as_ref()?;
+        if ih.busy || term::bool_value(&ih.law.rhs) != Some(true) {
+            return None;
+        }
+        let law = ih.law.clone();
+        let t = canon(t);
+        if let Some((_, _, known)) = ih
+            .tried
+            .iter()
+            .find(|(c, hs, _)| *c == t && *hs == self.hyps)
+        {
+            return known.clone();
+        }
+        let mut found = Vec::new();
+        if !super::rewrite::matches(&law.lhs, &t, &law.givens, &mut found) {
+            return None;
+        }
+        let subst = super::rewrite::ordered(&law.givens, found)?;
+        let premise = canon(&term::subst(law.premise.as_ref()?, &subst).ok()?);
+        let mark = self.length_ih.as_mut().map(|ih| ih.busy = true);
+        let proof = mark.and_then(|_| self.shorter_premise(&premise));
+        let from = proof.map(|p| Proof::Law {
+            law: law.key.clone(),
+            subst,
+            premise: Some(Box::new(p)),
+        });
+        if let Some(ih) = self.length_ih.as_mut() {
+            ih.busy = false;
+            ih.tried.push((t, self.hyps.clone(), from.clone()));
+        }
+        from
+    }
+
+    /// The premise of the law of an induction on a list's length at one
+    /// instance: that the list is shorter than the bound, then the carried
+    /// facts there.
+    fn shorter_premise(&mut self, premise: &Term) -> Option<Proof> {
+        let (first, rest) = match &premise.node {
+            ResolvedExpr::Call(ResolvedCallee::Builtin(b), args)
+                if b == "Bool.and" && args.len() == 2 =>
+            {
+                (canon(&args[0]), Some(canon(&args[1])))
+            }
+            _ => (premise.clone(), None),
+        };
+        let shorter = self.below_bound(&first)?;
+        match rest {
+            None => Some(shorter),
+            Some(b) => {
+                let facts = self.carried_facts(&b)?;
+                Some(super::rewrite::both(premise, &b, shorter, facts))
+            }
+        }
+    }
+
+    /// `t = true` for the carried facts at an instance, one conjunct at a
+    /// time: as any fact, or by evaluation, where the cited laws apply.
+    fn carried_facts(&mut self, t: &Term) -> Option<Proof> {
+        if let ResolvedExpr::Call(ResolvedCallee::Builtin(b), args) = &t.node
+            && b == "Bool.and"
+            && args.len() == 2
+        {
+            let (a, rest) = (canon(&args[0]), canon(&args[1]));
+            let pa = self.carried_facts(&a)?;
+            let pb = self.carried_facts(&rest)?;
+            return Some(super::rewrite::both(t, &rest, pa, pb));
+        }
+        if let Some(p) = self.discharge(t) {
+            return Some(p);
+        }
+        let fuel = self.fuel;
+        let proved = self.prove_by_evaluation(t, &term::boolean(true), 2).ok();
+        if proved.is_none() {
+            self.fuel = fuel;
+        }
+        proved
+    }
+
+    /// `List.len(w) < n = true` for the bound `n` of the induction in
+    /// progress: linear arithmetic over the hypothesis bounding the list,
+    /// with the length of each cell it is made of one more than that of
+    /// its tail (`list.len.cons`), and each `List.drop` in `w` no longer
+    /// than the list it drops from (`List.len.ofDropAtMost`).
+    fn below_bound(&mut self, goal: &Term) -> Option<Proof> {
+        use crate::ast::BinOp;
+        use crate::ir::proof_steps::WallRule;
+        if let Some(p) = self.discharge(goal) {
+            return Some(p);
+        }
+        let ResolvedExpr::BinOp(BinOp::Lt, len_w, _) = &goal.node else {
+            return None;
+        };
+        let list_of = |t: &Term| match &t.node {
+            ResolvedExpr::Call(ResolvedCallee::Builtin(b), args)
+                if b == "List.len" && args.len() == 1 =>
+            {
+                Some(canon(&args[0]))
+            }
+            _ => None,
+        };
+        let w = list_of(len_w)?;
+        let bound_hyp = self.length_ih.as_ref()?.bound_hyp.clone();
+        let (_, bounded) = self
+            .hyps
+            .iter()
+            .rev()
+            .find(|(h, _)| *h == bound_hyp)?
+            .clone();
+        let ResolvedExpr::BinOp(BinOp::Lte, len_v, _) = &bounded.lhs.node else {
+            return None;
+        };
+        let len = |l: Term| term::builtin("List.len", vec![l], Some(Type::Int));
+        let mut facts: Vec<(Term, Proof, Option<crate::ir::proof_steps::LawRef>)> = Vec::new();
+        let mut v = list_of(len_v)?;
+        while let ResolvedExpr::Call(ResolvedCallee::Builtin(b), args) = &v.node
+            && b == "List.prepend"
+            && args.len() == 2
+        {
+            let (x, a) = (canon(&args[0]), canon(&args[1]));
+            let subst = vec![("x".to_string(), x), ("a".to_string(), a.clone())];
+            let (_, step) = WallRule::LenCons.instantiate(&subst)?;
+            let ctx = term::binop(BinOp::Lt, len(a.clone()), term::hole());
+            let fact = canon(&term::plug(&ctx, &step.lhs));
+            let one_more = canon(&term::plug(&ctx, &step.rhs));
+            let proof = Proof::Trans {
+                terms: vec![fact.clone(), one_more.clone(), term::boolean(true)],
+                steps: vec![
+                    Proof::Congr {
+                        ctx,
+                        inner: Box::new(Proof::Rule {
+                            rule: WallRule::LenCons,
+                            subst,
+                            premises: Vec::new(),
+                        }),
+                    },
+                    crate::ir::proof_steps::linear::from_hyps(&one_more, true, &[])?,
+                ],
+            };
+            facts.push((fact, proof, None));
+            v = a;
+        }
+        let at_most = crate::ir::proof_steps::facts::named("List.len.ofDropAtMost")?.law_ref();
+        let mut u = w;
+        while let ResolvedExpr::Call(ResolvedCallee::Builtin(b), args) = &u.node
+            && b == "List.drop"
+            && args.len() == 2
+        {
+            let (l, k) = (canon(&args[0]), canon(&args[1]));
+            let subst = vec![
+                (at_most.givens[0].clone(), l.clone()),
+                (at_most.givens[1].clone(), k),
+            ];
+            let fact = canon(&term::subst(&at_most.lhs, &subst).ok()?);
+            let proof = Proof::Law {
+                law: at_most.key.clone(),
+                subst,
+                premise: None,
+            };
+            facts.push((fact, proof, Some(at_most.clone())));
+            u = l;
+        }
+        let names: Vec<String> = facts.iter().map(|_| self.fresh_hyp()).collect();
+        let mut rows = vec![(bound_hyp, bounded.lhs.clone(), true)];
+        for (name, (fact, _, _)) in names.iter().zip(&facts) {
+            rows.push((name.clone(), fact.clone(), true));
+        }
+        let mut proof = crate::ir::proof_steps::linear::from_hyps(goal, true, &rows)?;
+        for (name, (fact, from, law)) in names.into_iter().zip(facts).rev() {
+            if let Some(law) = law {
+                self.use_law(law);
+            }
+            proof = Proof::Have {
+                name,
+                fact,
+                proof: Box::new(from),
+                body: Box::new(proof),
+            };
+        }
+        Some(proof)
     }
 }
 

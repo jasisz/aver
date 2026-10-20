@@ -1142,6 +1142,65 @@ fn the_aver_backend_says_where_the_steps_producer_stopped() {
 }
 
 #[test]
+fn the_catch_all_case_of_a_covered_int_split_is_absurd_and_both_kernels_check_it() {
+    let out = scratch("literal-cover");
+    let (result, summary) = aver_backend_json("literal_cover.av", &out, None);
+    assert_eq!(summary["steps_rejected"], serde_json::json!([]));
+    assert_eq!(
+        summary["closed_by"]["width.wideIsPositive"],
+        "steps",
+        "{}",
+        format_output(&result)
+    );
+    // One value past the literals: the catch-all case can happen.
+    assert_eq!(summary["closed_by"]["width.widerIsPositive"], "open");
+    let _ = fs::remove_dir_all(&out);
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("literal_cover.av", &out).into_iter().collect();
+    let text = fs::read_to_string(&files["width.wideIsPositive"]).unwrap();
+    assert_eq!(
+        aver::proof_kernel::verdict(&text),
+        Ok("width.wideIsPositive".to_string())
+    );
+    // Each literal in turn, from the smallest: at most it, the value is it.
+    assert!(
+        text.contains("(cases (op <= (v code) (i 76)) ")
+            && text.contains("(cases (op <= (v code) (i 78)) "),
+        "{text}"
+    );
+    let mut paths = Vec::new();
+    for (kind, mutant) in [
+        (
+            "the value read as the next literal",
+            mutate_proof(
+                &text,
+                "(rule int.eq.of_le_ge ((a (v code)) (b (i 77))) ",
+                "(rule int.eq.of_le_ge ((a (v code)) (b (i 78))) ",
+            ),
+        ),
+        (
+            "the case read as another literal",
+            mutate_proof(&text, "(hyp h_steps16)", "(hyp h_steps15)"),
+        ),
+    ] {
+        assert!(aver::proof_kernel::verdict(&mutant).is_err(), "{kind}");
+        let path = out.join(format!("mutant{}.steps", paths.len()));
+        fs::write(&path, &mutant).unwrap();
+        paths.push(path);
+    }
+    let result = replay(&paths);
+    let replayed = String::from_utf8_lossy(&result.stdout);
+    for path in &paths {
+        assert!(
+            replayed.contains(&format!("refused {}: ", path.display())),
+            "{}",
+            format_output(&result)
+        );
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
 fn a_law_that_cites_its_obligations_closes_only_with_what_they_cite() {
     let out = scratch("because-cites-open");
     let result = aver_in(
@@ -8323,6 +8382,177 @@ fn lean_checks_defaults_update_fields_and_wildcard_parts_by_steps() {
     );
     for law in DEFAULT_UPDATE_LAWS {
         assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+const LENGTH_LAWS: [&str; 2] = ["skips.always", "walk.staysNonnegative"];
+
+/// Lean reads an induction on a list's length as strong induction on a
+/// bound of it (`AverSteps.list_measure_induct`), the law cited in the
+/// steps a `have` over the shorter lists, and refuses the step term once
+/// the law is applied to the bound alone or at another count.
+#[test]
+fn lean_inducts_on_a_lists_length_and_refuses_mutations() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("length-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "length_induction.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "99",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in LENGTH_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let lean = fs::read_to_string(out.join("LengthInduction.lean")).unwrap();
+    for (law, theorem, from, to) in [
+        (
+            "skips.always",
+            "skips_law_always",
+            "steps_below_xs xs steps_p",
+            "steps_below_xs xs (AverSteps.and_elim_l _ _ steps_p)",
+        ),
+        (
+            "walk.staysNonnegative",
+            "walk_law_staysNonnegative",
+            "(AverSteps.and_elim_l _ _ steps_p) acc",
+            "(AverSteps.and_elim_l _ _ steps_p) (acc + 1)",
+        ),
+    ] {
+        let line = exact_line(&lean, theorem).to_string();
+        assert!(
+            line.contains("AverSteps.list_measure_induct (motive := fun xs =>")
+                && line.contains(from),
+            "{law}: {line}"
+        );
+        assert!(
+            lean_refuses(
+                &out,
+                "LengthInduction.lean",
+                &lean.replacen(&line, &line.replacen(from, to, 1), 1),
+                law
+            ),
+            "{law}: Lean must refuse the step term with {to}"
+        );
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+/// A function that binds its match on a list to a name and calls itself on
+/// what it drops from the list's tail is opened by the gate because every
+/// call shortens the list, and a law about it is proved by induction on the
+/// list's length: the law at every shorter list, cited where a call stands
+/// with a linear proof that its list is shorter. The kernel refuses the
+/// script once the induction carries less, quantifies less, renames its law
+/// or takes a name in scope, and the law cited at the list itself.
+#[test]
+fn both_kernels_induct_on_a_lists_length_and_refuse_mutations() {
+    let out = scratch("length");
+    let (result, summary) = aver_backend_json("length_induction.av", &out, None);
+    assert_eq!(summary["steps_rejected"], serde_json::json!([]));
+    for law in LENGTH_LAWS {
+        assert_eq!(
+            summary["closed_by"][law],
+            "steps",
+            "{law}: {}",
+            format_output(&result)
+        );
+    }
+    assert_eq!(
+        summary["closed_by"]["walk.staysNonnegativeBelow"], "open",
+        "{summary}"
+    );
+    let _ = fs::remove_dir_all(&out);
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("length_induction.av", &out)
+            .into_iter()
+            .collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), LENGTH_LAWS);
+    let mut mutant_paths: Vec<(String, PathBuf)> = Vec::new();
+    for (law, path) in &files {
+        let text = fs::read_to_string(path).unwrap();
+        assert_eq!(aver::proof_kernel::verdict(&text), Ok(law.clone()));
+        let open = text.find("(leninduct xs ").expect("a length induction");
+        // (leninduct xs LHS RHS [(carry …)] (GENERAL…) (BOUND HYP LAW) BODY)
+        let forms = sub_forms(&text, open);
+        let (names_from, names_to) = forms[forms.len() - 2];
+        let names: Vec<&str> = text[names_from + 1..names_to - 1].split(' ').collect();
+        let [bound, hyp, ih] = names[..] else {
+            panic!("{text}");
+        };
+        let cited = format!("(law {ih} ((xs ");
+        assert!(text.contains(&cited), "{law}: the law is cited\n{text}");
+        let renamed =
+            |names: &str| format!("{}({names}){}", &text[..names_from], &text[names_to..]);
+        // (xs TERM), the list the law is cited at.
+        let binding = text.find(&cited).unwrap() + cited.len() - "(xs ".len();
+        let at_itself = format!(
+            "{}(xs (v xs)){}",
+            &text[..binding],
+            &text[closing(&text, binding) + 1..]
+        );
+        let mut mutants = vec![
+            ("the law renamed", renamed(&format!("{bound} {hyp} {ih}x"))),
+            (
+                "the bound named as the list",
+                renamed(&format!("xs {hyp} {ih}")),
+            ),
+            ("the law cited at the list itself", at_itself),
+        ];
+        if *law == "walk.staysNonnegative" {
+            let (general_from, general_to) = forms[forms.len() - 3];
+            mutants.push((
+                "the `when` not carried",
+                text.replacen(" (carry when)", "", 1),
+            ));
+            mutants.push((
+                "the count not generalised",
+                format!("{}(){}", &text[..general_from], &text[general_to..]),
+            ));
+        }
+        for (kind, mutant) in mutants {
+            let refused = aver::proof_kernel::verdict(&mutant);
+            assert!(
+                refused
+                    .as_ref()
+                    .is_err_and(|why| why.starts_with("step proof")),
+                "{law}, {kind}: {refused:?}\n{mutant}"
+            );
+            let path = out.join(format!("mutant{}.steps", mutant_paths.len()));
+            fs::write(&path, &mutant).unwrap();
+            mutant_paths.push((format!("{law}, {kind}"), path));
+        }
+    }
+    // The replayer on the VM refuses every mutant too, all in one run.
+    let paths: Vec<PathBuf> = mutant_paths.iter().map(|(_, p)| p.clone()).collect();
+    let result = replay(&paths);
+    let text = String::from_utf8_lossy(&result.stdout);
+    assert!(!result.status.success(), "{}", format_output(&result));
+    for (kind, path) in &mutant_paths {
+        assert!(
+            text.contains(&format!("refused {}: ", path.display())),
+            "{kind}: {}",
+            format_output(&result)
+        );
     }
     let _ = fs::remove_dir_all(out);
 }

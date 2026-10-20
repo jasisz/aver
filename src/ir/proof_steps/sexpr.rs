@@ -47,6 +47,7 @@
 //!          | (induct FN (TERM…) TERM TERM [(carry NAME…)] (case (NAME…) (IH…) ((INT NAME (TERM…) (PROOF…))…) PROOF)…)
 //!          | (listinduct NAME TERM TERM [(carry NAME…)] PROOF (NAME NAME) (NAME…) ((NAME (TERM…) (PROOF…))…) PROOF)
 //!          | (listcases NAME TERM TERM PROOF (NAME NAME) PROOF)
+//!          | (leninduct NAME TERM TERM [(carry NAME…)] (NAME…) (NAME NAME NAME) PROOF)
 //!          | (ring TERM TERM) | (linear TERM BOOL (NAME…) (INT…) (cut INT (INT…))…)
 //! ```
 
@@ -645,6 +646,28 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
             general.join(" "),
             ih_ats(ihs, names)?,
             proof(cons, names)?
+        ),
+        Proof::InductLength {
+            var,
+            lhs,
+            rhs,
+            carried,
+            general,
+            bound,
+            bound_hyp,
+            ih,
+            body,
+        } => format!(
+            "(leninduct {var} {} {}{} ({}) ({bound} {bound_hyp} {ih}) {})",
+            term(lhs, names)?,
+            term(rhs, names)?,
+            if carried.is_empty() {
+                String::new()
+            } else {
+                format!(" (carry {})", carried.join(" "))
+            },
+            general.join(" "),
+            proof(body, names)?
         ),
         Proof::ListCases {
             var,

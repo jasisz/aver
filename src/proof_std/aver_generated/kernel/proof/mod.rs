@@ -25,6 +25,7 @@ pub enum Proof {
     PInduct(std::sync::Arc<Proof__PInduct>),
     PListInduct(std::sync::Arc<Proof__PListInduct>),
     PListCases(std::sync::Arc<Proof__PListCases>),
+    PLenInduct(std::sync::Arc<Proof__PLenInduct>),
     PRing(std::sync::Arc<Proof__PRing>),
     PLinear(std::sync::Arc<Proof__PLinear>),
 }
@@ -209,6 +210,33 @@ impl PartialEq for Proof__PListCases {
     }
 }
 
+#[derive(Clone, Debug, Eq, Hash)]
+pub struct Proof__PLenInduct(
+    pub AverStr,
+    pub crate::proof_std::aver_generated::kernel::term::Term,
+    pub crate::proof_std::aver_generated::kernel::term::Term,
+    pub aver_rt::AverList<AverStr>,
+    pub aver_rt::AverList<AverStr>,
+    pub AverStr,
+    pub AverStr,
+    pub AverStr,
+    pub Proof,
+);
+
+impl PartialEq for Proof__PLenInduct {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+            && self.5 == other.5
+            && self.6 == other.6
+            && self.7 == other.7
+            && self.1 == other.1
+            && self.2 == other.2
+            && self.3 == other.3
+            && self.4 == other.4
+            && self.8 == other.8
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Proof__PRing(
     pub crate::proof_std::aver_generated::kernel::term::Term,
@@ -249,17 +277,18 @@ impl Proof {
             Proof::PHyp(..) => 9,
             Proof::PInduct(..) => 10,
             Proof::PLaw(..) => 11,
-            Proof::PLinear(..) => 12,
-            Proof::PListCases(..) => 13,
-            Proof::PListInduct(..) => 14,
-            Proof::PProj(..) => 15,
-            Proof::PRefl(..) => 16,
-            Proof::PRing(..) => 17,
-            Proof::PRule(..) => 18,
-            Proof::PSplit(..) => 19,
-            Proof::PSymm(..) => 20,
-            Proof::PTrans(..) => 21,
-            Proof::PUnfold(..) => 22,
+            Proof::PLenInduct(..) => 12,
+            Proof::PLinear(..) => 13,
+            Proof::PListCases(..) => 14,
+            Proof::PListInduct(..) => 15,
+            Proof::PProj(..) => 16,
+            Proof::PRefl(..) => 17,
+            Proof::PRing(..) => 18,
+            Proof::PRule(..) => 19,
+            Proof::PSplit(..) => 20,
+            Proof::PSymm(..) => 21,
+            Proof::PTrans(..) => 22,
+            Proof::PUnfold(..) => 23,
         }
     }
 }
@@ -327,6 +356,16 @@ impl Ord for Proof {
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1)))
                 .then_with(|| (&a.2).cmp((&b.2))),
+            (Proof::PLenInduct(a), Proof::PLenInduct(b)) => std::cmp::Ordering::Equal
+                .then_with(|| (&a.0).cmp((&b.0)))
+                .then_with(|| (&a.1).cmp((&b.1)))
+                .then_with(|| (&a.2).cmp((&b.2)))
+                .then_with(|| (&a.3).cmp((&b.3)))
+                .then_with(|| (&a.4).cmp((&b.4)))
+                .then_with(|| (&a.5).cmp((&b.5)))
+                .then_with(|| (&a.6).cmp((&b.6)))
+                .then_with(|| (&a.7).cmp((&b.7)))
+                .then_with(|| (&a.8).cmp((&b.8))),
             (Proof::PLinear(a), Proof::PLinear(b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1)))
@@ -534,6 +573,21 @@ impl aver_rt::AverDisplay for Proof {
                     (&f.4).aver_display_inner(),
                     (&f.5).aver_display_inner(),
                     (&f.6).aver_display_inner()
+                ]
+                .join(", ")
+            ),
+            Proof::PLenInduct(f) => format!(
+                "PLenInduct({})",
+                vec![
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner(),
+                    (&f.3).aver_display_inner(),
+                    (&f.4).aver_display_inner(),
+                    (&f.5).aver_display_inner(),
+                    (&f.6).aver_display_inner(),
+                    (&f.7).aver_display_inner(),
+                    (&f.8).aver_display_inner()
                 ]
                 .join(", ")
             ),

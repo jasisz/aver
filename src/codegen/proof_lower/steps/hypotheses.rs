@@ -83,7 +83,10 @@ impl Env<'_> {
         self.normal_fuel = self.refute_fuel;
         let out = f(self);
         // Whatever drew on either, the refutation budget pays.
-        let spent = (self.refute_fuel - self.fuel) + (self.refute_fuel - self.normal_fuel);
+        // A refutation inside another leaves less budget than it started
+        // with.
+        let spent = self.refute_fuel.saturating_sub(self.fuel)
+            + self.refute_fuel.saturating_sub(self.normal_fuel);
         self.refute_fuel = self.refute_fuel.saturating_sub(spent);
         self.fuel = fuel;
         self.normal_fuel = normal;

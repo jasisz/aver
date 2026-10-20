@@ -204,11 +204,13 @@ fn proof(p: Proof) -> String
         Proof.PInduct(f, xs, l, r, carry, cs) -> "(induct {f} " + wrap(terms(xs)) + " {term(l)} {term(r)}" + carried(carry) + inductCases(cs) + ")"
         Proof.PListInduct(v, l, r, carry, n, h, t, general, hs, c) -> "(listinduct {v} {term(l)} {term(r)}" + carried(carry) + " {proof(n)} ({h} {t}) " + wrap(names(general)) + " " + wrap(ihAts(hs)) + " {proof(c)})"
         Proof.PListCases(v, l, r, n, h, t, c) -> "(listcases {v} {term(l)} {term(r)} {proof(n)} ({h} {t}) {proof(c)})"
+        Proof.PLenInduct(v, l, r, carry, general, n, hn, ih, c) -> "(leninduct {v} {term(l)} {term(r)}" + carried(carry) + " " + wrap(names(general)) + " ({n} {hn} {ih}) {proof(c)})"
         Proof.PRing(l, r) -> "(ring {term(l)} {term(r)})"
         Proof.PLinear(g, v, hs, ws, cs) -> "(linear {term(g)} " + boolText(v) + " " + wrap(names(hs)) + " " + wrap(ints(ws)) + cuts(cs) + ")"
 
 verify proof
     proof(Proof.PRule("bits.not", [Kernel.Term.bind("a", Term.TVar("x"))], [])) => "(rule bits.not ((a (v x))))"
+    proof(Proof.PLenInduct("xs", Term.TVar("xs"), Term.TVar("xs"), [], [], "m", "hm", "ih", Proof.PHyp("k"))) => "(leninduct xs (v xs) (v xs) () (m hm ih) (hyp k))"
     proof(Proof.PLinear(Term.TVar("g"), true, [], [1], [Cut(divisor = 2, weights = [1])])) => "(linear (v g) true () (1) (cut 2 (1)))"
 
 fn boolText(b: Bool) -> String

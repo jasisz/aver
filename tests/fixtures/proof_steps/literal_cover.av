@@ -1,0 +1,29 @@
+module LiteralCover
+    intent = "A split on an Int whose literals cover every value the hypotheses leave it: the catch-all case cannot happen."
+    exposes [width]
+    effects []
+
+fn width(code: Int) -> Int
+    ? "How many bytes hold the length of a push; zero when it is not a wide one."
+    match code
+        76 -> 1
+        77 -> 2
+        78 -> 4
+        _ -> 0
+
+verify width
+    width(76) => 1
+    width(78) => 4
+    width(5) => 0
+
+verify width law wideIsPositive
+    given code: Int = [76, 77, 78]
+    when Bool.and(code >= 76, code <= 78)
+    width(code) > 0 holds
+
+// One value past the literals: the catch-all case can happen, so it stays open.
+
+verify width law widerIsPositive
+    given code: Int = [76, 77, 78]
+    when Bool.and(code >= 76, code <= 79)
+    width(code) > 0 holds

@@ -1249,13 +1249,14 @@ fn constructor(p: &Proof) -> &'static str {
         Proof::Induct { .. } => "induct",
         Proof::InductList { .. } => "listinduct",
         Proof::ListCases { .. } => "listcases",
+        Proof::InductLength { .. } => "leninduct",
         Proof::Linear { .. } => "linear",
         Proof::Ring { .. } => "ring",
         Proof::Enum { .. } => "enum",
     }
 }
 
-const CONSTRUCTORS: [&str; 23] = [
+const CONSTRUCTORS: [&str; 24] = [
     "have",
     "refl",
     "symm",
@@ -1276,6 +1277,7 @@ const CONSTRUCTORS: [&str; 23] = [
     "induct",
     "listinduct",
     "listcases",
+    "leninduct",
     "linear",
     "ring",
     "enum",
@@ -1631,6 +1633,34 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
         s.obligation.lists = vec!["xs".into()];
         s
     };
+    // xs = xs by induction on its length; `body` proves it with the law
+    // at the shorter lists in scope. The law cited at `xs` itself has only
+    // the bound `List.len(xs) <= n` to prove that `xs` is shorter.
+    let len_induct = |body: Proof| {
+        let mut s = script(
+            var("xs"),
+            var("xs"),
+            Proof::InductLength {
+                var: "xs".into(),
+                lhs: var("xs"),
+                rhs: var("xs"),
+                carried: Vec::new(),
+                general: Vec::new(),
+                bound: "n".into(),
+                bound_hyp: "hn".into(),
+                ih: "ih".into(),
+                body: Box::new(body),
+            },
+        );
+        s.obligation.givens = vec!["xs".into()];
+        s.obligation.lists = vec!["xs".into()];
+        s
+    };
+    let at_itself = Proof::Law {
+        law: "ih".into(),
+        subst: vec![("xs".into(), var("xs"))],
+        premise: Some(Box::new(Proof::Hyp("hn".into()))),
+    };
     let concat_nil = Proof::Rule {
         rule: WallRule::ConcatNil,
         subst: vec![("b".into(), term::nil())],
@@ -1785,6 +1815,7 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
             list_cases(Proof::Refl(cell("h", "t"))),
             list_cases(Proof::Refl(var("xs"))),
         ),
+        (len_induct(Proof::Refl(var("xs"))), len_induct(at_itself)),
         (linear(1), linear(0)),
         (ring(2), ring(3)),
         (enum_split(vec![false, true]), enum_split(vec![false])),

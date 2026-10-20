@@ -195,10 +195,51 @@ impl Env<'_> {
         if let Some(proof) = self.linear_proof(&t, true) {
             return Some(proof);
         }
+        // Inside an induction on a list's length, a predicate that does not
+        // recurse and is no `match`, opened one level and its lines proved
+        // as facts: they are what the hypotheses at the shorter lists state.
+        if self.length_ih.is_some()
+            && let Some(p) = self.opened_fact(&t)
+        {
+            return Some(p);
+        }
         // Last, a comparison evaluated, within a short budget:
         // `List.len(List.prepend(x, l)) > 0` is `List.len(l) + 1 > 0`,
         // which linear arithmetic settles.
         self.discharge_by_evaluation(&t)
+    }
+
+    /// `t = true` for a call `t` of a predicate that does not recurse and
+    /// whose body is no `match`: its body at the call's arguments, proved
+    /// as a fact ([`Self::discharge`]).
+    fn opened_fact(&mut self, t: &Term) -> Option<Proof> {
+        let ResolvedExpr::Call(ResolvedCallee::Fn(id), args) = &t.node else {
+            return None;
+        };
+        if self.inputs.recursive_fns.contains(id) {
+            return None;
+        }
+        let def = self.def(*id)?;
+        if matches!(def.body.node, ResolvedExpr::Match { .. }) {
+            return None;
+        }
+        let args: Vec<Term> = args.iter().map(canon).collect();
+        let body = canon(&term::subst(&def.body, &def.outer(&args).ok()?).ok()?);
+        let lines = self.discharge(&body)?;
+        self.mark_used(*id);
+        Some(Proof::Trans {
+            terms: vec![t.clone(), body, term::boolean(true)],
+            steps: vec![
+                Proof::Unfold {
+                    fn_id: *id,
+                    arm: 0,
+                    args,
+                    binders: Vec::new(),
+                    premise: None,
+                },
+                lines,
+            ],
+        })
     }
 
     /// Prove what the cited law `law` assumes at an instance, `when`: its

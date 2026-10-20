@@ -16,7 +16,7 @@ use crate::ast::{BinOp, Spanned, VerifyKind};
 use crate::codegen::CodegenContext;
 use crate::ir::hir::{ResolvedCallee, ResolvedExpr, ResolvedPattern};
 use crate::ir::identity::FnId;
-use crate::ir::proof_steps::claim::{Hyps, arm_equation, claim};
+use crate::ir::proof_steps::claim::{Hyps, arm_equation, claim_with};
 use crate::ir::proof_steps::term::{self, HOLE, Term};
 use crate::ir::proof_steps::{Eqn, Proof, Script, WallRule};
 
@@ -126,6 +126,22 @@ theorem list_length_induct {α : Type} {motive : List α → Prop} (nil : motive
       cases x with
       | nil => exact nil
       | cons h t => exact cons h t (fun m hm => ih m (by simp at hm hx; omega))
+  exact key l.length l (Nat.le_refl _)
+theorem list_measure_induct {α : Type} {motive : List α → Prop}
+    (step : ∀ (n : Int) (v : List α), decide ((v.length : Int) ≤ n) = true →
+      (∀ w : List α, decide ((w.length : Int) < n) = true → motive w) → motive v)
+    (l : List α) : motive l := by
+  have key : ∀ (k : Nat) (x : List α), x.length ≤ k → motive x := by
+    intro k
+    induction k with
+    | zero =>
+      intro x hx
+      exact step (x.length : Int) x (decide_eq_true (Int.le_refl _))
+        (fun w hw => absurd (of_decide_eq_true hw) (by omega))
+    | succ k ih =>
+      intro x hx
+      exact step (x.length : Int) x (decide_eq_true (Int.le_refl _))
+        (fun w hw => ih w (by have := of_decide_eq_true hw; omega))
   exact key l.length l (Nat.le_refl _)
 theorem pos_of_le_false {n : Int} (h : decide (n <= 0) = false) : 0 < n := by
   have := of_decide_eq_false h
@@ -451,6 +467,9 @@ struct Renderer<'a> {
     /// The next step rendered states its equation: the whole proof, and
     /// the step inside a congruence whose hole has no type.
     state_next: bool,
+    /// The laws of the length inductions around the step being rendered
+    /// ([`Proof::InductLength`]), innermost last.
+    local_laws: Vec<crate::ir::proof_steps::LawRef>,
 }
 
 /// `t` with every empty list that has no type typed `List α`.
@@ -1191,6 +1210,150 @@ impl Renderer<'_> {
         ))
     }
 
+    /// `AverSteps.list_measure_induct`, strong induction on a bound of the
+    /// list's length, with the claim for every value of the generalised
+    /// givens and under the carried hypotheses as its motive. Its one case
+    /// takes the bound, the list, the hypothesis that the list is at most
+    /// that long and the claim at every shorter list; the law `ih` the
+    /// steps cite is that claim, stated over the list and the generalised
+    /// givens with the conjunction the steps prove as its premise.
+    #[allow(clippy::too_many_arguments)]
+    fn induct_on_length(
+        &mut self,
+        var: &str,
+        lhs: &Term,
+        rhs: &Term,
+        carried: &[String],
+        general: &[String],
+        bound: &str,
+        bound_hyp: &str,
+        ih: &str,
+        body: &Proof,
+        eq: &Eqn,
+        hyps: &Hyps,
+    ) -> Result<String, String> {
+        let lean = super::syntax::aver_name_to_lean;
+        let varying: Vec<&str> = std::iter::once(var)
+            .chain(general.iter().map(String::as_str))
+            .collect();
+        let mentions = |e: &Eqn| {
+            let mut fv = Vec::new();
+            term::free_vars(&e.lhs, &mut fv);
+            term::free_vars(&e.rhs, &mut fv);
+            fv.iter().any(|n| varying.contains(&n.as_str()))
+        };
+        let mut held: Vec<(String, Eqn)> = Vec::new();
+        for name in carried {
+            let (_, e) = hyps
+                .iter()
+                .rev()
+                .find(|(h, _)| h == name)
+                .ok_or_else(|| format!("leninduct: {name} is not in scope"))?;
+            held.push((name.clone(), e.clone()));
+        }
+        let types = &self.script.obligation.types;
+        let facts: Vec<Term> = held.iter().map(|(_, e)| e.lhs.clone()).collect();
+        let law =
+            crate::ir::proof_steps::length_ih(ih, var, general, types, bound, &facts, lhs, rhs);
+        let n = term::var(bound);
+        n.set_ty(crate::ast::Type::Int);
+        let list = term::var(var);
+        if let Some((_, ty)) = types.iter().find(|(g, _)| g == var) {
+            list.set_ty(ty.clone());
+        }
+        let at_most = term::binop(
+            BinOp::Lte,
+            term::builtin("List.len", vec![list], Some(crate::ast::Type::Int)),
+            n,
+        );
+        let mut scope: Hyps = hyps.iter().filter(|(_, e)| !mentions(e)).cloned().collect();
+        scope.extend(held.iter().cloned());
+        scope.push((
+            bound_hyp.to_string(),
+            Eqn::new(at_most, term::boolean(true)),
+        ));
+        let gs: Vec<String> = general.iter().map(|g| lean(g)).collect();
+        let hs: Vec<String> = carried.iter().map(|n| self.hyp_name(n)).collect();
+        let below = format!("steps_below_{}", lean(var));
+        let binder = |g: &str| match types.iter().find(|(n, _)| n == g) {
+            Some((_, ty)) => format!("({} : {})", lean(g), super::types::term_type_to_lean(ty)),
+            None => lean(g),
+        };
+        let premise = law.premise.clone().ok_or("leninduct: no premise")?;
+        let mut ih_type = String::from("∀");
+        for g in std::iter::once(var).chain(general.iter().map(String::as_str)) {
+            ih_type.push(' ');
+            ih_type.push_str(&binder(g));
+        }
+        ih_type.push_str(&format!(
+            ", {} → {}",
+            self.eqn(&Eqn::new(premise, term::boolean(true))),
+            self.eqn(eq)
+        ));
+        // The bound from the premise's first conjunct, then each carried
+        // fact from the rest, in order.
+        let (shorter, mut rest) = if held.is_empty() {
+            ("steps_p".to_string(), String::new())
+        } else {
+            (
+                "(AverSteps.and_elim_l _ _ steps_p)".to_string(),
+                "(AverSteps.and_elim_r _ _ steps_p)".to_string(),
+            )
+        };
+        let mut carry = Vec::new();
+        for k in 0..held.len() {
+            if k + 1 == held.len() {
+                carry.push(rest.clone());
+            } else {
+                carry.push(format!("(AverSteps.and_elim_l _ _ {rest})"));
+                rest = format!("(AverSteps.and_elim_r _ _ {rest})");
+            }
+        }
+        let mut params = vec![lean(var)];
+        params.extend(gs.iter().cloned());
+        let mut applied = vec![below.clone(), lean(var), shorter];
+        applied.extend(gs.iter().cloned());
+        applied.extend(carry);
+        let ih_value = format!("fun {} steps_p => {}", params.join(" "), applied.join(" "));
+        let outer: Vec<String> = carried
+            .iter()
+            .map(|n| self.proof(&Proof::Hyp(n.clone()), hyps))
+            .collect::<Result<_, _>>()?;
+        let saved = self.prop_hyps.clone();
+        self.prop_hyps
+            .retain(|h| !carried.contains(h) && h != bound_hyp);
+        self.local_laws.push(law);
+        self.laws.insert(ih.to_string(), lean(ih));
+        let rendered = self.proof(body, &scope);
+        self.laws.remove(ih);
+        self.local_laws.pop();
+        self.prop_hyps = saved;
+        let step = rendered?;
+        let mut motive = String::new();
+        if !gs.is_empty() {
+            motive.push_str(&format!("∀ {}, ", gs.join(" ")));
+        }
+        for (_, e) in &held {
+            motive.push_str(&format!("{} → ", self.eqn(e)));
+        }
+        motive.push_str(&self.eqn(eq));
+        let inner: Vec<String> = gs.iter().chain(&hs).cloned().collect();
+        let inner = if inner.is_empty() {
+            String::new()
+        } else {
+            format!("fun {} => ", inner.join(" "))
+        };
+        Ok(format!(
+            "(AverSteps.list_measure_induct (motive := fun {v} => {motive}) (fun {} {v} {} {below} => {inner}have {} : {ih_type} := ({ih_value}); {step}) {v}{}{})",
+            lean(bound),
+            self.hyp_name(bound_hyp),
+            lean(ih),
+            gs.iter().map(|g| format!(" {g}")).collect::<String>(),
+            outer.iter().map(|p| format!(" {p}")).collect::<String>(),
+            v = lean(var),
+        ))
+    }
+
     fn hyp_name(&self, name: &str) -> String {
         if name == "when" {
             "h_when".to_string()
@@ -1200,7 +1363,7 @@ impl Renderer<'_> {
     }
 
     fn concl(&self, p: &Proof, hyps: &Hyps) -> Result<Eqn, String> {
-        claim(p, self.script, hyps)
+        claim_with(p, self.script, hyps, &self.local_laws)
     }
 
     fn proof(&mut self, p: &Proof, hyps: &Hyps) -> Result<String, String> {
@@ -1780,6 +1943,19 @@ impl Renderer<'_> {
                     v = lean(var),
                 )
             }
+            Proof::InductLength {
+                var,
+                lhs,
+                rhs,
+                carried,
+                general,
+                bound,
+                bound_hyp,
+                ih,
+                body,
+            } => self.induct_on_length(
+                var, lhs, rhs, carried, general, bound, bound_hyp, ih, body, &eq, hyps,
+            )?,
             // Each decided comparison becomes a Prop fact and Lean's core
             // decision procedure for linear integer arithmetic closes the
             // goal from them alone; the kernel written in Aver checks the
@@ -2101,12 +2277,34 @@ impl Renderer<'_> {
             self.ctx,
         );
         let name = format!("__aver_unfold_{}", self.unfolds.len());
+        // A definition opened because every call shortens a list chooses
+        // inside its body: the two sides split apart, and a case where the
+        // two choices disagree is closed by its comparisons.
+        let shortened = crate::ir::proof_steps::induct::recursion(def, &self.script.defs).is_err()
+            && crate::ir::proof_steps::induct::shortens(def, &self.script.defs);
+        let same = if shortened {
+            SAME_MATCHES_COMPARED
+        } else {
+            SAME_MATCHES
+        };
         let statement;
         let tactic;
         if arm == 0 {
             let body = term::subst(&def.body, &outer)?;
             statement = format!("{} = {}", self.expr(&call), self.expr(&body));
-            tactic = format!("first | rfl | {SAME_MATCHES}");
+            // Such a definition matches on the list it shortens with the
+            // equation the termination proof reads (`match h : xs with`),
+            // which the statement's `match` does not name: once the list
+            // is `[]` or a cell, both reduce to the same arm. Splitting
+            // the two sides' `match`es apart instead takes a case per pair
+            // of arms, which runs out of heartbeats on a parser's body.
+            tactic = match shortened
+                .then(|| crate::ir::proof_steps::induct::shortened_place(def, &self.script.defs))
+                .flatten()
+            {
+                Some(j) => format!("first | rfl | (cases x{j} <;> rfl) | {same}"),
+                None => format!("first | rfl | {same}"),
+            };
         } else {
             let ResolvedExpr::Match { subject, arms } = &def.body.node else {
                 return Err("unfold: not a match".into());
@@ -2174,9 +2372,9 @@ impl Renderer<'_> {
                     "rw [h]; split <;> first | contradiction | simp_all".to_string()
                 }
                 "(try subst h); rfl" => {
-                    format!("(try subst h); first | rfl | {SAME_MATCHES}")
+                    format!("(try subst h); first | rfl | {same}")
                 }
-                "rw [h]; try rfl" => format!("rw [h]; all_goals first | rfl | {SAME_MATCHES}"),
+                "rw [h]; try rfl" => format!("rw [h]; all_goals first | rfl | {same}"),
                 other => other.to_string(),
             };
         }
@@ -2346,6 +2544,7 @@ pub(crate) fn render_cited_facts(body: &str, ctx: &CodegenContext) -> Result<Str
             generic: true,
             prop_hyps: Vec::new(),
             state_next: true,
+            local_laws: Vec::new(),
         };
         let ob = &script.obligation;
         let statement = r.eqn(&Eqn::new(ob.lhs.clone(), ob.rhs.clone()));
@@ -2847,6 +3046,7 @@ fn render_with(
         generic: false,
         prop_hyps: Vec::new(),
         state_next: true,
+        local_laws: Vec::new(),
     };
     let mut hyps = Hyps::new();
     if let Some(p) = &script.obligation.premise {
@@ -2927,6 +3127,10 @@ fn to_statement(ob: &crate::ir::proof_steps::Obligation, t: String) -> String {
 /// premises rule out goes to `contradiction` first, which does not reach
 /// for `Classical.choice` as `simp_all` does.
 const SAME_MATCHES: &str = "(dsimp only; (repeat' split) <;> first | contradiction | simp_all)";
+
+/// [`SAME_MATCHES`] where a case may also close by its comparisons.
+const SAME_MATCHES_COMPARED: &str =
+    "(dsimp only; (repeat' split) <;> first | contradiction | (simp_all <;> omega) | simp_all)";
 
 /// The marker a rejected step proof leaves in the build log.
 pub(crate) const STEPS_REJECTED_MARKER: &str = "AVER_STEPS_REJECTED:";

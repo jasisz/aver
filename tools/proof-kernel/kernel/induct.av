@@ -9,7 +9,9 @@ module Induct
         "n > 0. A call of another definition that calls back into the one checked counts as the"
         "recursive calls its body makes, its local bindings substituted, read at the call's"
         "arguments, so a recursion through a helper is checked as if the helper's body stood in"
-        "its place. See src/ir/proof_steps/induct.rs."
+        "its place. A definition may also be opened, though not inducted along, when it calls"
+        "itself only directly and every call passes, at one place, a list shorter than the one"
+        "there, wherever in its body the call stands. See src/ir/proof_steps/induct.rs."
     exposes [Call, Place, Varied, ArmCalls, Recursion, selfCalls, recursion, openGate, refuseMutualRecursion, varied, nthTerm]
     depends [Kernel.Term, Kernel.Subst, Kernel.Proof]
     effects []
@@ -338,12 +340,119 @@ verify descends
     descends(Option.None, "n") => false
 
 fn openGate(d: Def, ds: List<Def>) -> Result<Unit, String>
-    ? "Whether steps may open d: its recursion, read through the definitions of ds it calls back through, passes the gate; or every cycle through d passes one whose recursion does (rooted)."
+    ? "Whether steps may open d: its recursion, read through the definitions of ds it calls back through, passes the gate; or every cycle through d passes one whose recursion does (rooted); or every call shortens a list (shortens)."
     match recursion(d, ds)
         Result.Ok(_) -> Result.Ok(Unit)
-        Result.Err(why) -> match rooted(d, ds, ds)
+        Result.Err(why) -> match Bool.or(rooted(d, ds, ds), shortens(d, ds))
             true -> Result.Ok(Unit)
             false -> Result.Err(why)
+
+record Shrink
+    f: String
+    p: String
+    j: Int
+    n: Int
+
+fn shortens(d: Def, ds: List<Def>) -> Bool
+    ? "Whether d calls itself only directly, never back through another definition of ds, and at one place every call, its local bindings substituted, passes a list shorter than the one there (shorter). That length falls at every call, so the recursion stops."
+    match letsInlined(d.lets, [])
+        Result.Err(_) -> false
+        Result.Ok(ls) -> match Kernel.Subst.subst(d.body, ls)
+            Result.Err(_) -> false
+            Result.Ok(body) -> Bool.and(Bool.not(anyBack(callees(d, ds), d.name, ds)), shorterSomewhere(body, d.name, Kernel.Proof.givenNames(d.params), 0))
+
+verify shortens
+    shortens(Def(name = "f", params = [Kernel.Term.typed("xs", Ty.TyAny)], ret = Ty.TyAny, lets = [Kernel.Term.bind("y", Term.TMatch(Term.TVar("xs"), [Arm(pattern = Pat.PNil, body = Term.TInt(0)), Arm(pattern = Pat.PCons("h", "t"), body = Term.TMatch(Term.TBi("List.drop", [Term.TVar("t"), Term.TVar("h")]), [Arm(pattern = Pat.PVar("r"), body = Term.TCall("f", [Term.TBi("List.drop", [Term.TVar("r"), Term.TInt(1)])]))]))]))], body = Term.TOp("+", Term.TVar("y"), Term.TInt(1))), []) => true
+    shortens(Def(name = "f", params = [Kernel.Term.typed("xs", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TOp("+", Term.TCall("f", [Term.TBi("List.drop", [Term.TVar("xs"), Term.TInt(1)])]), Term.TInt(1))), []) => false
+    shortens(Def(name = "f", params = [Kernel.Term.typed("xs", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TMatch(Term.TVar("xs"), [Arm(pattern = Pat.PCons("h", "t"), body = Term.TMatch(Term.TVar("t"), [Arm(pattern = Pat.PCons("xs", "u"), body = Term.TMatch(Term.TVar("xs"), [Arm(pattern = Pat.PCons("a", "b"), body = Term.TCall("f", [Term.TVar("xs")]))]))]))])), []) => false
+    shortens(walks(), [walks(), skipping([], Term.TCall("walk", [Term.TVar("rest")]))]) => false
+
+fn anyBack(gs: List<String>, f: String, ds: List<Def>) -> Bool
+    ? "Whether one of gs reaches back to f."
+    match gs
+        [] -> false
+        [g, ..rest] -> Bool.or(reachesBack(g, f, ds), anyBack(rest, f, ds))
+
+verify anyBack
+    anyBack(["orOn"], "any", [listAny(), orOn(Term.TCall("any", [Term.TVar("rest")]))]) => true
+
+fn shorterSomewhere(body: Term, f: String, ps: List<String>, j: Int) -> Bool
+    ? "Whether some place j of the parameters ps is one where every call of f in body is shorter."
+    match ps
+        [] -> false
+        [p, ..rest] -> Bool.or(shorter(body, Shrink(f = f, p = p, j = j, n = j + List.len(ps)), true, []), shorterSomewhere(body, f, rest, j + 1))
+
+verify shorterSomewhere
+    shorterSomewhere(Term.TUnit, "f", [], 0) => false
+
+fn shorter(t: Term, m: Shrink, live: Bool, parts: List<String>) -> Bool
+    ? "Every call of m.f in t has m.n arguments and passes at place m.j one of parts or List.drop of something shorter (smaller). A part is the tail of a cell of the list m.p names while live, or of a list shorter than it, or a name a catch-all arm binds to a shorter list: each strictly shorter than the list at m.j."
+    match t
+        Term.TCall(g, xs) -> Bool.and(Bool.or(g != m.f, Bool.and(List.len(xs) == m.n, smaller(nthTerm(xs, m.j), parts, []))), shorterAll(xs, m, live, parts))
+        Term.TMatch(s, arms) -> Bool.and(shorter(s, m, live, parts), shorterArms(arms, s, m, live, parts))
+        Term.TGet(o, k) -> shorter(o, m, live, parts)
+        Term.TBi(k, xs) -> shorterAll(xs, m, live, parts)
+        Term.TOp(o, a, b) -> Bool.and(shorter(a, m, live, parts), shorter(b, m, live, parts))
+        Term.TNeg(a) -> shorter(a, m, live, parts)
+        Term.TCtor(c, xs) -> shorterAll(xs, m, live, parts)
+        Term.TParts(xs) -> shorterAll(xs, m, live, parts)
+        Term.TList(xs) -> shorterAll(xs, m, live, parts)
+        Term.TTuple(xs) -> shorterAll(xs, m, live, parts)
+        Term.TRec(k, fs) -> shorterAll(fieldValues(fs), m, live, parts)
+        Term.TUpd(k, b, fs) -> shorterAll(List.prepend(b, fieldValues(fs)), m, live, parts)
+        _ -> true
+
+verify shorter
+    shorter(Term.TCall("f", [Term.TVar("t")]), Shrink(f = "f", p = "xs", j = 0, n = 1), true, ["t"]) => true
+    shorter(Term.TCall("f", [Term.TVar("t"), Term.TInt(1)]), Shrink(f = "f", p = "xs", j = 0, n = 1), true, ["t"]) => false
+    shorter(Term.TMatch(Term.TVar("xs"), [Arm(pattern = Pat.PCons("h", "t"), body = Term.TCall("f", [Term.TVar("h")]))]), Shrink(f = "f", p = "xs", j = 0, n = 1), true, []) => false
+    shorter(Term.TMatch(Term.TVar("xs"), [Arm(pattern = Pat.PCons("h", "t"), body = Term.TCall("f", [Term.TVar("t")]))]), Shrink(f = "f", p = "xs", j = 0, n = 1), false, []) => false
+    shorter(Term.TMatch(Term.TVar("t"), [Arm(pattern = Pat.PVar("t"), body = Term.TCall("f", [Term.TVar("t")]))]), Shrink(f = "f", p = "xs", j = 0, n = 1), true, ["t"]) => true
+    shorter(Term.TMatch(Term.TVar("xs"), [Arm(pattern = Pat.PVar("r"), body = Term.TCall("f", [Term.TVar("r")]))]), Shrink(f = "f", p = "xs", j = 0, n = 1), true, []) => false
+    shorter(Term.TMatch(Term.TVar("u"), [Arm(pattern = Pat.PCons("t", "w"), body = Term.TCall("f", [Term.TVar("t")]))]), Shrink(f = "f", p = "xs", j = 0, n = 1), true, ["t"]) => false
+
+fn shorterAll(ts: List<Term>, m: Shrink, live: Bool, parts: List<String>) -> Bool
+    ? "shorter for each term."
+    match ts
+        [] -> true
+        [t, ..rest] -> Bool.and(shorter(t, m, live, parts), shorterAll(rest, m, live, parts))
+
+verify shorterAll
+    shorterAll([], Shrink(f = "f", p = "xs", j = 0, n = 1), true, []) => true
+
+fn shorterArms(arms: List<Arm>, s: Term, m: Shrink, live: Bool, parts: List<String>) -> Bool
+    ? "shorter in each arm of a match on s: the names the arm binds are no longer parts, nor is m.p the parameter once rebound; the tail of a cell of a list at most as long as the one at m.j, or a name bound to a shorter list, is a part."
+    match arms
+        [] -> true
+        [a, ..rest] -> Bool.and(shorter(a.body, m, Bool.and(live, Bool.not(List.contains(Kernel.Subst.patNames(a.pattern), m.p))), List.concat(Kernel.Subst.without(parts, Kernel.Subst.patNames(a.pattern)), armParts(a.pattern, s, m, live, parts))), shorterArms(rest, s, m, live, parts))
+
+verify shorterArms
+    shorterArms([], Term.TUnit, Shrink(f = "f", p = "xs", j = 0, n = 1), true, []) => true
+
+fn armParts(pat: Pat, s: Term, m: Shrink, live: Bool, parts: List<String>) -> List<String>
+    ? "What an arm adds to the parts: the tail of [h, ..t] over m.p while live or over something shorter, or the name of a catch-all over something shorter."
+    match pat
+        Pat.PCons(h, tl) -> match Bool.or(Bool.and(live, s == Term.TVar(m.p)), smaller(Option.Some(s), parts, []))
+            true -> [tl]
+            false -> []
+        Pat.PVar(x) -> match smaller(Option.Some(s), parts, [])
+            true -> [x]
+            false -> []
+        _ -> []
+
+verify armParts
+    armParts(Pat.PCons("h", "t"), Term.TVar("xs"), Shrink(f = "f", p = "xs", j = 0, n = 1), true, []) => ["t"]
+    armParts(Pat.PVar("r"), Term.TBi("List.drop", [Term.TVar("t"), Term.TInt(2)]), Shrink(f = "f", p = "xs", j = 0, n = 1), true, ["t"]) => ["r"]
+    armParts(Pat.PWild, Term.TVar("t"), Shrink(f = "f", p = "xs", j = 0, n = 1), true, ["t"]) => []
+
+fn fieldValues(fs: List<Field>) -> List<Term>
+    ? "The values of record fields."
+    match fs
+        [] -> []
+        [x, ..rest] -> List.prepend(x.value, fieldValues(rest))
+
+verify fieldValues
+    fieldValues([]) => []
 
 verify openGate
     openGate(Def(name = "f", params = [Kernel.Term.typed("n", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TMatch(Term.TOp(">", Term.TVar("n"), Term.TInt(0)), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TCall("f", [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(256)])])), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(0))])), []) => Result.Ok(Unit)

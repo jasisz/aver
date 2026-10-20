@@ -34,6 +34,7 @@ type Proof
     PInduct(String, List<Term>, Term, Term, List<String>, List<Case>)
     PListInduct(String, Term, Term, List<String>, Proof, String, String, List<String>, List<IhAt>, Proof)
     PListCases(String, Term, Term, Proof, String, String, Proof)
+    PLenInduct(String, Term, Term, List<String>, List<String>, String, String, String, Proof)
     PRing(Term, Term)
     PLinear(Term, Bool, List<String>, List<Int>, List<Cut>)
 

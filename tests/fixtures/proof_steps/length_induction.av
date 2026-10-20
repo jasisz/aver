@@ -1,0 +1,47 @@
+module LengthInduction
+    intent = "Induction on the length of a list: a function that binds its match on the list to a name and drops a run from it calls itself on a shorter list, and the law about it holds at every shorter list."
+    exposes [walk, skips]
+    effects []
+
+fn walk(xs: List<Int>, acc: Int) -> Bool
+    ? "Skip a run of the length each positive head names; the count stays nonnegative."
+    rest = match xs
+        [] -> true
+        [h, ..t] -> match h > 0
+            true -> match List.drop(t, h)
+                after -> walk(List.drop(after, 1), acc + 1)
+            false -> walk(t, acc)
+    Bool.and(rest, acc >= 0)
+
+verify walk
+    walk([], 0) => true
+    walk([2, 5, 5, 1], 0) => true
+    walk([1], 0 - 1) => false
+
+fn skips(xs: List<Int>) -> Bool
+    ? "Skip the run each head names; a length is never negative."
+    step = match xs
+        [] -> true
+        [h, ..t] -> skips(List.drop(t, h))
+    Bool.and(step, List.len(xs) >= 0)
+
+verify skips
+    skips([1, 7, 0]) => true
+
+verify walk law staysNonnegative
+    given xs: List<Int> = [[], [1, 2], [0, 3, 1]]
+    given acc: Int = [0, 1, 5]
+    when acc >= 0
+    walk(xs, acc) holds
+
+verify skips law always
+    given xs: List<Int> = [[], [1, 7, 0], [0, 0]]
+    skips(xs) holds
+
+// The same shape, false: it stays open.
+
+verify walk law staysNonnegativeBelow
+    given xs: List<Int> = [[]]
+    given acc: Int = [0]
+    when acc >= 0
+    walk(xs, acc - 1) holds

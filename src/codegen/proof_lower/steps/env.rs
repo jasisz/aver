@@ -87,6 +87,9 @@ pub(crate) struct Env<'a> {
     pub advice: Vec<String>,
     /// The functions an induction in progress follows, innermost last.
     pub inducting: Vec<crate::ir::identity::FnId>,
+    /// Inside an induction on the length of a list, its hypothesis
+    /// (see `Env::prove_by_length_induction`).
+    pub length_ih: Option<super::induction::LengthIh>,
     /// Where a cited law matched but a conjunct of its `when` found no
     /// proof, for the refusal.
     pub open_premises: Vec<String>,
@@ -427,6 +430,7 @@ impl<'a> Env<'a> {
             stops: Vec::new(),
             advice: Vec::new(),
             inducting: Vec::new(),
+            length_ih: None,
             open_premises: Vec::new(),
             opened: Vec::new(),
             barren: Vec::new(),
@@ -666,7 +670,10 @@ impl<'a> Env<'a> {
             use crate::ir::proof_steps::induct;
             let ds = self.reachable_defs(id);
             let gate = induct::recursion(&def, &ds);
-            if !matches!(gate, Ok(Some(_))) && !induct::rooted(&def, &ds) {
+            if !matches!(gate, Ok(Some(_)))
+                && !induct::rooted(&def, &ds)
+                && !induct::shortens(&def, &ds)
+            {
                 return Err(Shut::Recursion(gate.err()));
             }
             // A group of definitions calling each other where one member
