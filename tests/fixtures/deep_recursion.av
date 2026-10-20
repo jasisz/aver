@@ -1,0 +1,49 @@
+module DeepRecursion
+    intent =
+        "Non-tail recursion as deep as the first argument says: builds a chain that deep and sums it."
+        "Without an argument it recurses until the backend runs out of stack."
+    effects [Args.get, Console.print]
+
+type Chain
+    End
+    Link(Int, Chain)
+
+fn build(n: Int) -> Chain
+    ? "A right-nested chain of depth n, built by non-tail recursion."
+    match n <= 0
+        true -> Chain.End
+        false -> Chain.Link(n, build(n - 1))
+
+verify build
+    build(0) => Chain.End
+    build(1) => Chain.Link(1, Chain.End)
+
+fn total(chain: Chain) -> Int
+    ? "Sums the chain by non-tail recursion."
+    match chain
+        Chain.End -> 0
+        Chain.Link(v, rest) -> v + total(rest)
+
+verify total
+    total(build(3)) => 6
+
+fn forever(go: Bool) -> Int
+    ? "Waits on a call to itself while go holds, so with true it never returns. It allocates nothing on the way down."
+    match go
+        true -> forever(go) + 1
+        false -> 0
+
+verify forever
+    forever(false) => 0
+
+fn depthOf(arg: String) -> Int
+    ? "The depth the argument names, 0 when it is not a number."
+    match Int.fromString(arg)
+        Result.Ok(n) -> n
+        Result.Err(_) -> 0
+
+fn main() -> Unit
+    ! [Args.get, Console.print]
+    match Args.get()
+        [] -> Console.print(String.fromInt(forever(true)))
+        [arg, ..rest] -> Console.print(String.fromInt(total(build(depthOf(arg)))))

@@ -507,6 +507,14 @@ Self and mutual tail recursion are optimized automatically. A transform pass aft
 
 This deliberately covers less than all recursion. Non-tail recursion can still be expensive on large inputs, so `aver check` warns when a recursive function still has non-tail recursive callsites after TCO. When scale matters, write long linear traversals in accumulator style.
 
+How deep non-tail recursion may go depends on the backend:
+
+- **VM** (`aver run`): call frames live on the heap, so the only limit is memory. A runaway recursion grows until the process runs out of it.
+- **Compiled Rust** (`aver compile --target rust`): `main`, every branch of an independent product and every `Work` job run on a thread with 256 MiB of stack (`aver_rt::THREAD_STACK_BYTES`). Going past it ends the process with Rust's `thread '<name>' has overflowed its stack` and an abort, not an Aver error.
+- **wasm-gc and wasip2 under Wasmtime** (`aver run --wasm-gc`, `aver run --wasip2`, Wasmtime packs): the guest may use 224 MiB of stack, on a host thread of 256 MiB. Going past it is a Wasmtime trap, reported as `stack overflow: recursion too deep` with exit status 1. Other hosts (browsers, Workers, other WASI runtimes) set their own limit.
+
+The depth those sizes allow depends on how much each frame holds, so it is not the same number on every backend; a chain of a million nested calls fits in all of them. On wasm-gc every garbage collection walks the whole guest stack, so a recursion that allocates on each level gets slower the deeper it is.
+
 ## Processes
 
 A function is a process when it requests something its program answers. The program answers a capability when one of its modules says so in its header with `answers [<Capability>]`; see [Capabilities the program answers](services.md#capabilities-the-program-answers--answers-runwake-and-the-generated-loop). Every operation of such a capability is a request. Precisely, a function is a process when its effect list names an operation of a capability that a module of its own module's dependencies answers (the module itself and every module it `depends` on, transitively), or names `Run.turn`, or when it calls a process of its own module or one a dependency exposes. Nothing marks a process: the set is derived from the program as written, and `aver check` lists it, one line per process with the reason (`process loop: requests Pool.claim, answered by Pooled`, `process walk: calls process fetch`, `process ticking: requests Run.turn`).

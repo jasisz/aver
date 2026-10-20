@@ -32,10 +32,47 @@ pub fn wasmtime_gc_engine_config() -> wasmtime::Config {
     config.cranelift_opt_level(wasmtime::OptLevel::Speed);
     config.collector(wasmtime::Collector::Copying);
     config.gc_heap_initial_size(16 * 1024 * 1024);
-    config.max_wasm_stack(8 * 1024 * 1024);
+    config.max_wasm_stack(WASM_STACK_BYTES);
     // `component-model-async` requires max_wasm_stack <= async_stack_size.
-    config.async_stack_size(12 * 1024 * 1024);
+    config.async_stack_size(aver_rt::THREAD_STACK_BYTES);
     config
+}
+
+/// How much stack a wasm guest may use before Wasmtime stops it with a
+/// stack-overflow trap. The guest runs on the thread that calls it, so that
+/// thread needs this much and room for the host on top: [`on_wasm_stack`]
+/// gives it [`aver_rt::THREAD_STACK_BYTES`], the stack compiled Rust gives
+/// `main`, and keeps 32 MiB of it for the host. A thread with less stack than
+/// this overflows before the guest does, and the process aborts.
+#[cfg(any(feature = "wasm", feature = "wasip2"))]
+pub const WASM_STACK_BYTES: usize = aver_rt::THREAD_STACK_BYTES - 32 * 1024 * 1024;
+
+/// Run `body`, which calls into a wasm guest, on a thread with
+/// [`aver_rt::THREAD_STACK_BYTES`] of stack, so deep recursion in the guest
+/// ends in Wasmtime's stack-overflow trap rather than in the host's guard
+/// page.
+#[cfg(any(feature = "wasm", feature = "wasip2"))]
+pub fn on_wasm_stack<T: Send>(body: impl FnOnce() -> T + Send) -> T {
+    std::thread::scope(|scope| match aver_rt::spawn_scoped(scope, body).join() {
+        Ok(value) => value,
+        Err(panic) => std::panic::resume_unwind(panic),
+    })
+}
+
+/// The message for a guest that ran out of stack, or `None` for any other
+/// error.
+#[cfg(any(feature = "wasm", feature = "wasip2"))]
+pub fn stack_overflow_message(error: &wasmtime::Error) -> Option<String> {
+    matches!(
+        error.downcast_ref::<wasmtime::Trap>(),
+        Some(wasmtime::Trap::StackOverflow)
+    )
+    .then(|| {
+        format!(
+            "stack overflow: recursion too deep (the wasm stack limit is {} MiB)",
+            WASM_STACK_BYTES / (1024 * 1024)
+        )
+    })
 }
 
 /// Work workers need interruption points even inside a pure recursive body.

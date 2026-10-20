@@ -1364,3 +1364,69 @@ fn colliding_map_keys_stay_two_keys_self_host() {
         COLLIDING_KEYS_OUT.trim(),
     );
 }
+
+// ─── How deep non-tail recursion may go ────────────────────────────────
+
+/// Non-tail recursion as deep as its first argument says; without one it
+/// recurses until the backend runs out of stack. `tests/wasip2_stress.rs`
+/// runs the same file on wasip2.
+const DEEP_RECURSION_SRC: &str = include_str!("fixtures/deep_recursion.av");
+/// sum 1..200 000 = 200 000 * 200 001 / 2.
+const DEEP_RECURSION_200K_OUT: &str = "20000100000";
+
+/// Runs `source` with `aver run <mode> -- <args>`, whatever the exit status.
+fn run_with_args(prefix: &str, source: &str, mode: &[&str], args: &[&str]) -> std::process::Output {
+    let path = temp_module(prefix, source);
+    let mut command = Command::new(env!("CARGO_BIN_EXE_aver"));
+    command
+        .current_dir(PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+        .arg("run")
+        .arg(&path)
+        .args(mode);
+    if !args.is_empty() {
+        command.arg("--").args(args);
+    }
+    let out = command.output().expect("expected `aver run` to execute");
+    cleanup(&path);
+    out
+}
+
+/// 200 000 nested calls used to overflow the 8 MiB host thread `aver run
+/// --wasm-gc` ran the guest on, and the process aborted. The VM keeps its
+/// frames on the heap. Both must give the same answer.
+#[test]
+fn cross_deep_non_tail_recursion_200k_vm_and_wasm_gc() {
+    for (label, mode) in [("VM", &[][..]), ("wasm-gc", &["--wasm-gc"][..])] {
+        let out = run_with_args("aver-cross-deep", DEEP_RECURSION_SRC, mode, &["200000"]);
+        assert!(
+            out.status.success(),
+            "{label} run failed:\n{}",
+            format_output(&out)
+        );
+        assert_eq_with_label(
+            label,
+            String::from_utf8_lossy(&out.stdout).trim(),
+            DEEP_RECURSION_200K_OUT,
+        );
+    }
+}
+
+/// A recursion that never ends is Wasmtime's stack-overflow trap, said as an
+/// Aver error with exit status 1, not a host abort by signal.
+#[test]
+fn runaway_recursion_is_an_aver_error_on_wasm_gc() {
+    let out = run_with_args(
+        "aver-cross-runaway",
+        DEEP_RECURSION_SRC,
+        &["--wasm-gc"],
+        &[],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{}", format_output(&out));
+    assert!(
+        stderr.contains("stack overflow: recursion too deep")
+            && !stderr.contains("has overflowed its stack"),
+        "{}",
+        format_output(&out)
+    );
+}

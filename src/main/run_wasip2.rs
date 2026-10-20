@@ -67,17 +67,23 @@ pub(super) fn cmd_run_wasip2(
                 process::exit(1);
             }
         };
-        match run_component(
-            &component.bytes,
-            &program_args,
-            &component.capability_wit_plan,
-            &component.providers,
-        ) {
+        // The guest runs on a thread with the stack its wasm stack limit
+        // needs, so running out of stack is a trap, not a host abort.
+        match aver::runtime::on_wasm_stack(|| {
+            run_component(
+                &component.bytes,
+                &program_args,
+                &component.capability_wit_plan,
+                &component.providers,
+            )
+        }) {
             Ok(()) => {}
             Err(e) => {
+                let reason =
+                    aver::runtime::stack_overflow_message(&e).unwrap_or_else(|| e.to_string());
                 eprintln!(
                     "{}",
-                    format!("--wasip2: component execution failed — {e}").red()
+                    format!("--wasip2: component execution failed — {reason}").red()
                 );
                 process::exit(1);
             }
