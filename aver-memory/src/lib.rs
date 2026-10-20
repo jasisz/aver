@@ -1469,6 +1469,73 @@ impl Clone for SharedCount {
     }
 }
 
+/// A run of handoff entries a frame boundary handed up, and the bounds of what
+/// those entries can point at.
+///
+/// While the arena holds a block, every arena index stored in an entry of
+/// `handoff[start..end)` that the program can still reach is a stable index, a
+/// handoff index below `end`, a young index below `young_len`, or a yard index
+/// below `yard_len`.
+///
+/// Recording a block makes that true by construction: it is recorded right
+/// after a boundary, as the handoff suffix from the frame's handoff mark, with
+/// the young and yard lengths of that moment — and a reachable entry only ever
+/// holds indices of entries that exist (see
+/// [`Arena::note_handoff_handed_up`]). Two kinds of event could make it false
+/// later, and the arena forgets the block at both:
+///
+/// - a write into an existing entry that may store an index: everything that
+///   does goes through `Arena::get_mut`, which forgets the block when the
+///   entry lies in it. The mutators that only adjust a holder count or take a
+///   value out, leaving an immediate behind, store no index and use
+///   `get_mut_storing_no_index`. A boundary that runs for an owned in-place
+///   write (`rewrite_out_of_region_roots`) rewrites entries outside its own
+///   regions, so it forgets the block too.
+/// - a truncate of young below `young_len`, of yard below `yard_len`, or of
+///   handoff below `end`. Below those bounds an index no longer names the
+///   entry it named when the block was recorded, and a boundary's rewrite of
+///   an entry it does not move only ever happens on the way to such a
+///   truncate.
+///
+/// So a frame whose handoff region starts at `start`, whose young region
+/// starts at or above `young_len` and whose yard region starts at or above
+/// `yard_len` can leave the block where it stands and evacuate only what lies
+/// above `end`: nothing in the block points into what that evacuation moves.
+/// See [`Arena::handoff_block_at`].
+///
+/// A region handed up from the block's `end`, or from its `start`, extends the
+/// block rather than starting a new one, so a value handed up through many
+/// returns, or carried by a tail-call loop, stays one block in the frame that
+/// owns it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HandoffBlock {
+    pub start: u32,
+    pub end: u32,
+    pub young_len: u32,
+    pub yard_len: u32,
+    /// How many entries were live when the block was first recorded from
+    /// `start` — exact after a full evacuation, an overestimate otherwise.
+    /// Extending the block leaves it as it is, so the block's length against
+    /// it bounds how much may have died since.
+    pub live: u32,
+}
+
+impl HandoffBlock {
+    /// Whether keeping the block still keeps little that is dead.
+    ///
+    /// Entries in the block that died since it was recorded stay with it, so a
+    /// frame keeps the block only while it is at most about twice what was
+    /// live when it was first recorded from `start`. Past that the frame
+    /// evacuates in full, which costs what is live and records the block
+    /// afresh, so each entry added pays for a bounded share of that work —
+    /// the bound a tail-call loop keeps on its yard.
+    #[inline]
+    pub fn holds_little_dead(&self) -> bool {
+        const DEAD_ENTRY_SLACK: u64 = 64;
+        u64::from(self.end - self.start) <= 2 * u64::from(self.live) + DEAD_ENTRY_SLACK
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Arena<T: ArenaTypes> {
     young_entries: Vec<ArenaEntry<T>>,
@@ -1593,6 +1660,16 @@ pub struct Arena<T: ArenaTypes> {
     /// [`Arena::promote_roots_to_stable`]. Set only for the span of one such
     /// call and cleared when it returns.
     rewrite_out_of_region_roots: bool,
+    /// The handoff range the last frame boundaries handed up, and the bounds
+    /// of what its entries can point at — see [`HandoffBlock`]. `None` once
+    /// anything could have broken those bounds.
+    handoff_block: Option<HandoffBlock>,
+    /// Total entries a frame boundary has moved out of a region it was about
+    /// to drop, by evacuation and by promotion alike. A return that moves only
+    /// what its frame made keeps this proportional to allocation; one that
+    /// moves everything its result reaches, at every level of a recursion that
+    /// builds the result, makes it quadratic.
+    boundary_entries_moved: u64,
     /// Whether this arena has ever stored a map.
     ///
     /// The escape in front of the per-push pass that marks the maps an entry

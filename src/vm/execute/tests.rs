@@ -1304,6 +1304,123 @@ fn a_term_wrapped_in_a_fresh_node_is_not_reread_by_every_return() {
     );
 }
 
+/// Entries the collector moves or reads while `step` calls the level below,
+/// wraps the term it got back in a node it binds itself, and returns that
+/// node, `n` times.
+///
+/// At each return the fresh node is in the frame's young region and the term
+/// under it in its handoff region, where the return below left it. Evacuating
+/// the frame copied the node and then the whole term again, so every level
+/// moved everything built beneath it.
+fn term_wrapped_after_the_call_moves(n: i64) -> u64 {
+    let src = format!(
+        "type T\n    Leaf\n    Node(T, Int, T)\n\nfn size(t: T) -> Int\n    match t\n        T.Leaf -> 0\n        T.Node(l, _, r) -> size(l) + 1 + size(r)\n\nfn build(n: Int) -> T\n    match n <= 0\n        true -> T.Leaf\n        false -> step(n)\n\nfn step(n: Int) -> T\n    inner = build(n - 1)\n    next = T.Node(inner, n, T.Leaf)\n    match n > 0\n        true -> next\n        false -> inner\n\nfn main() -> Int\n    size(build({n}))\n"
+    );
+    let mut vm = compile_vm_with_ownership(&src);
+    let result = vm.run().expect("term wrapping program should run");
+    assert_eq!(result.as_int(&vm.arena), n);
+    vm.arena.boundary_entries_moved()
+        + vm.arena.out_of_region_entries_read()
+        + vm.arena.map_entries_scanned()
+        + vm.arena.list_elements_scanned()
+        + vm.arena.vector_elements_scanned()
+}
+
+#[test]
+fn a_term_wrapped_after_the_call_is_not_moved_by_every_return() {
+    const MOVE_BUDGET_PER_STEP: u64 = 8;
+    let small = term_wrapped_after_the_call_moves(200);
+    let large = term_wrapped_after_the_call_moves(400);
+
+    assert!(
+        small <= 200 * MOVE_BUDGET_PER_STEP && large <= 400 * MOVE_BUDGET_PER_STEP,
+        "wrapping the returned term after the call exceeded its linear budget: \
+         n=200 moved {small}, n=400 moved {large}",
+    );
+    assert!(
+        2 * large <= 5 * small + MOVE_BUDGET_PER_STEP,
+        "doubling the wrapping steps more than 2.5x'd the moves: n=200 moved \
+         {small}, n=400 moved {large}",
+    );
+}
+
+/// The state-threading shape: every level passes the state it was given to
+/// the level below, and the state that comes back up is extended by a node
+/// at each level on the way. Each level's return finds the state from below
+/// laid out at the start of its handoff region by the return below it, and
+/// the new node in young.
+const STATE_DECLS: &str = "type T\n    Leaf\n    Node(T, Int, T)\n\nrecord St\n    t: T\n    n: Int\n\nrecord RB\n    b: Bool\n    st: St\n\nfn size(t: T) -> Int\n    match t\n        T.Leaf -> 0\n        T.Node(l, _, r) -> size(l) + 1 + size(r)\n\n";
+
+/// Entries the collector moves or reads while `n` levels hand an extended
+/// state back up through plain returns.
+fn state_handed_up_moves(n: i64) -> u64 {
+    let src = format!(
+        "{STATE_DECLS}fn level(st: St, k: Int) -> RB\n    r = descend(st, k)\n    next = RB(b = r.b, st = St(t = T.Node(r.st.t, k, T.Leaf), n = r.st.n + 1))\n    match next.b\n        true -> next\n        false -> r\n\nfn descend(st: St, k: Int) -> RB\n    match k <= 0\n        true -> RB(b = true, st = st)\n        false -> level(st, k - 1)\n\nfn main() -> Int\n    r = level(St(t = T.Leaf, n = 0), {n})\n    size(r.st.t)\n"
+    );
+    let mut vm = compile_vm_with_ownership(&src);
+    let result = vm.run().expect("state threading program should run");
+    assert_eq!(result.as_int(&vm.arena), n + 1);
+    vm.arena.boundary_entries_moved()
+        + vm.arena.out_of_region_entries_read()
+        + vm.arena.map_entries_scanned()
+        + vm.arena.list_elements_scanned()
+        + vm.arena.vector_elements_scanned()
+}
+
+#[test]
+fn a_state_handed_up_through_returns_is_not_moved_by_every_return() {
+    const MOVE_BUDGET_PER_LEVEL: u64 = 12;
+    let small = state_handed_up_moves(200);
+    let large = state_handed_up_moves(400);
+
+    assert!(
+        small <= 200 * MOVE_BUDGET_PER_LEVEL && large <= 400 * MOVE_BUDGET_PER_LEVEL,
+        "handing a state up through returns exceeded its linear budget: \
+         n=200 moved {small}, n=400 moved {large}",
+    );
+    assert!(
+        2 * large <= 5 * small + MOVE_BUDGET_PER_LEVEL,
+        "doubling the levels more than 2.5x'd the moves: n=200 moved {small}, \
+         n=400 moved {large}",
+    );
+}
+
+/// Entries the collector moves or reads while `n` levels hand an extended
+/// state back up, each through a tail-call loop: the level's frame becomes
+/// `loopAll`, which calls the level below and carries its result to the next
+/// step through `loopNext`.
+fn state_carried_by_tail_loops_moves(n: i64) -> u64 {
+    let src = format!(
+        "{STATE_DECLS}fn level(st: St, k: Int) -> RB\n    match k <= 0\n        true -> RB(b = true, st = st)\n        false -> loopAll(st, k, 1)\n\nfn loopAll(st: St, k: Int, i: Int) -> RB\n    match i <= 0\n        true -> RB(b = true, st = St(t = T.Node(st.t, k, T.Leaf), n = st.n + 1))\n        false -> loopNext(level(st, k - 1), k, i - 1)\n\nfn loopNext(r: RB, k: Int, i: Int) -> RB\n    match r.b\n        true -> loopAll(r.st, k, i)\n        false -> r\n\nfn main() -> Int\n    r = level(St(t = T.Leaf, n = 0), {n})\n    size(r.st.t)\n"
+    );
+    let mut vm = compile_vm_with_ownership(&src);
+    let result = vm.run().expect("tail loop state program should run");
+    assert_eq!(result.as_int(&vm.arena), n);
+    vm.arena.boundary_entries_moved()
+        + vm.arena.out_of_region_entries_read()
+        + vm.arena.map_entries_scanned()
+        + vm.arena.list_elements_scanned()
+        + vm.arena.vector_elements_scanned()
+}
+
+#[test]
+fn a_state_carried_by_tail_loops_is_not_moved_by_every_step() {
+    const MOVE_BUDGET_PER_LEVEL: u64 = 12;
+    let small = state_carried_by_tail_loops_moves(200);
+    let large = state_carried_by_tail_loops_moves(400);
+
+    assert!(
+        small <= 200 * MOVE_BUDGET_PER_LEVEL && large <= 400 * MOVE_BUDGET_PER_LEVEL,
+        "carrying a state through tail loops exceeded its linear budget: \
+         n=200 moved {small}, n=400 moved {large}",
+    );
+    assert!(
+        2 * large <= 5 * small + MOVE_BUDGET_PER_LEVEL,
+        "doubling the levels more than 2.5x'd the moves: n=200 moved {small}, \
+         n=400 moved {large}",
+    );
+}
+
 /// Operand-stack cells the holder walks visit while `down` recurses `n`
 /// levels and, at every level, takes the fields of its record argument into
 /// the record it passes on: `s.a` and `s.b` one level down, `s.w.x` and

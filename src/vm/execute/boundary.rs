@@ -178,6 +178,42 @@ impl VM {
             return true;
         }
 
+        // A call in this step handed its result up as a block at the start of
+        // the frame's handoff region — see the same case in
+        // `finalize_frame_return_to_caller`. Moving it into the yard would copy
+        // the carried state at every step, and again from the yard at the
+        // final return, so it stays in handoff: what the step added above it
+        // is evacuated there too and extends it, and the yard does not grow.
+        // Once the block holds too much that may be dead, the whole region is
+        // evacuated afresh, still into handoff.
+        //
+        // The frame keeps its lane mark. A rebase claims that everything this
+        // frame owned before it now lies below the marks, and the block is
+        // still in the frame's handoff region.
+        if !inplace_write_escaped
+            && let Some(block) = self
+                .arena
+                .handoff_block_at(handoff_mark, arena_mark, yard_mark)
+        {
+            let from = if block.holds_little_dead() {
+                block.end
+            } else {
+                handoff_mark
+            };
+            if has_local_young || has_local_yard || self.arena.handoff_len() > from as usize {
+                self.arena.evacuate_frame_to_handoff(
+                    arena_mark,
+                    yard_mark,
+                    from,
+                    lane_mark,
+                    frame_roots,
+                    false,
+                );
+                self.arena.note_handoff_handed_up(handoff_mark);
+            }
+            return false;
+        }
+
         if has_local_yard || has_local_handoff {
             self.arena.evacuate_frame_to_yard(
                 arena_mark,
@@ -209,8 +245,35 @@ impl VM {
         false
     }
 
+    /// Finish the frame's regions on a return to the frame below it, and
+    /// record what the return leaves in handoff as the block the caller may
+    /// keep — see `HandoffBlock`.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn finalize_frame_return_to_caller(
+        &mut self,
+        arena_mark: u32,
+        yard_base: u32,
+        handoff_mark: u32,
+        lane_mark: LaneMark,
+        globals_dirty: bool,
+        inplace_write_escaped: bool,
+        frame_roots: &mut [NanValue],
+    ) -> (bool, bool) {
+        let dirty = self.finalize_frame_regions_for_return(
+            arena_mark,
+            yard_base,
+            handoff_mark,
+            lane_mark,
+            globals_dirty,
+            inplace_write_escaped,
+            frame_roots,
+        );
+        self.arena.note_handoff_handed_up(handoff_mark);
+        dirty
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn finalize_frame_regions_for_return(
         &mut self,
         arena_mark: u32,
         yard_base: u32,
@@ -269,6 +332,31 @@ impl VM {
             );
             self.arena.truncate_yard_to(yard_base);
             return (false, self.arena.handoff_len() > handoff_mark as usize);
+        }
+
+        // The value a call below handed up, recorded as a block at the start
+        // of this frame's handoff region by that call's own boundary and
+        // pointing at nothing this frame's young or yard regions hold: the
+        // usual shape
+        // of a state threaded through every call and returned again. A full
+        // evacuation would copy all of it again, at every level it passes
+        // through. Only what lies above the block moves; the block stays
+        // where it is and becomes the start of the block the caller sees.
+        if !inplace_write_escaped
+            && let Some(block) = self
+                .arena
+                .handoff_block_at(handoff_mark, arena_mark, yard_base)
+            && block.holds_little_dead()
+        {
+            let (yard_dirty, _) = self.arena.evacuate_frame_to_handoff(
+                arena_mark,
+                yard_base,
+                block.end,
+                lane_mark,
+                frame_roots,
+                false,
+            );
+            return (yard_dirty, true);
         }
 
         if has_local_young || has_local_yard || has_local_handoff {

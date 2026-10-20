@@ -218,6 +218,55 @@ fn main() -> Unit
     );
 }
 
+/// A tail call leaves the block a call below handed up into the frame's
+/// handoff region where it stands, evacuates what lies above it into handoff
+/// too, and the block grows over it (`HandoffBlock` in
+/// `aver-memory/src/lib.rs`). Here the first step gets a string back from
+/// `seed`, which makes that block, and the vector it builds for the next step
+/// joins the block at the tail call. The next step then stores a string it
+/// allocated into the vector in place. The vector is in the frame's own
+/// region, so the write is not an escaping one and nothing on the frame
+/// reports it: what keeps the string is the arena forgetting the block at the
+/// write. Kept, the block would still point at the string's young slot after
+/// the next tail call moved the string and truncated young, and the program
+/// printed `JUNK-FILLER-ONE` — the string `main` allocated there next.
+#[test]
+fn a_handoff_block_written_in_place_is_evacuated_with_the_value() {
+    let src = r#"module FrameBoundaryBlock
+    intent = "an in-place write into a handoff block must survive the next boundary"
+    depends []
+    effects [Console]
+
+fn seed(n: Int, k: Int) -> String
+    ? "a heap string handed up through handoff; recursive so it is not inlined"
+    match k > 0
+        true -> seed(n, k - 1)
+        false -> "seed-marker-{n}-endmarker"
+
+fn fill(s: String, i: Int, v: Vector<String>) -> Vector<String>
+    ? "from -1 build the vector after a string seed hands up, then store into it in place"
+    match i < 0
+        true -> fill(seed(7, 1), 0, Vector.new(3, "placeholder-string"))
+        false -> match i >= 1
+            true -> Option.withDefault(Vector.set(v, 1, s), v)
+            false -> fill(s, i + 1, Option.withDefault(Vector.set(v, i, String.toUpper("written-marker-7-endmarker")), v))
+
+fn main() -> Unit
+    ! [Console.print]
+    w = fill("unused", 0 - 1, Vector.new(1, "unused"))
+    j1 = String.toUpper("junk-filler-one")
+    j2 = String.toUpper("junk-filler-two")
+    j3 = String.toUpper("junk-filler-three")
+    Console.print("{Option.withDefault(Vector.get(w, 0), "MISSING")} {Option.withDefault(Vector.get(w, 1), "MISSING")}")
+    Console.print("{String.len(j1)} {String.len(j2)} {String.len(j3)}")
+"#;
+    assert_eq!(
+        run_vm("handoff_block_write", src),
+        "WRITTEN-MARKER-7-ENDMARKER seed-marker-7-endmarker\n15 15 17",
+        "a boundary kept a handoff block that had been written in place"
+    );
+}
+
 /// Control: the same program shape over a `Map` is correct on pristine `main`
 /// and stays correct here, because a map never takes the in-place route.
 ///
