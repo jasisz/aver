@@ -209,6 +209,83 @@ fn builds_refined(t: &Term, inputs: &ProofLowerInputs) -> bool {
         .any(|c| builds_refined(c, inputs))
 }
 
+/// Why steps leave a definition closed ([`Env::gate_def`]).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Shut {
+    /// Not a pure definition of local bindings then one expression.
+    Unreadable,
+    /// It builds a refined record its module exposes opaque.
+    BuildsRefined,
+    /// Its recursion is not one steps follow; the gate's reason when it
+    /// gave one.
+    Recursion(Option<String>),
+    /// It is in a group of definitions the Lean export runs on fuel.
+    FuelledGroup,
+    /// It divides an Int down to zero, and this attempt keeps such a call
+    /// whole.
+    Halving,
+}
+
+/// The recursion shapes steps follow, in the words a refusal uses.
+const OPENED_SHAPES: &str = "steps open a recursive function only when its body is one `match` on a parameter and each recursive call passes a part of the matched value (a list's tail, a field of a variant, or `List.drop` of one), or when it is a `match` on `n <= 0` or `n > 0` for an Int parameter `n` and each recursive call passes `n - 1` or `n / k` for a literal `k` of at least 2";
+
+impl Shut {
+    /// What a refusal says about a call of the recursive `name` that steps
+    /// left closed for this reason. Nothing for [`Shut::Halving`]: the
+    /// refusal of that attempt says it keeps such calls whole.
+    pub(crate) fn note(&self, name: &str) -> Option<String> {
+        let note = match self {
+            Shut::Unreadable => format!(
+                "steps do not open `{name}`: it is not a pure function whose body is local bindings then one expression; cite a law about it instead"
+            ),
+            Shut::BuildsRefined => format!(
+                "steps do not open `{name}`: it builds a value of a refined type that its module exposes opaque, which this law cannot look inside; cite a law about it from its own module instead"
+            ),
+            Shut::Recursion(why) => {
+                // The gate names the definition first (`f recurses from a
+                // local binding`): said of `it` here.
+                let why = match why.as_deref() {
+                    Some(why) => match why.strip_prefix(&format!("{name} ")) {
+                        Some(rest) => format!("it {rest}"),
+                        None => format!("its recursion is not a shape they follow ({why})"),
+                    },
+                    None => "its recursion is not a shape they follow".to_string(),
+                };
+                format!(
+                    "steps do not open `{name}`: {why}; {OPENED_SHAPES}; rewrite it in one of these shapes, or cite a law about it instead"
+                )
+            }
+            Shut::FuelledGroup => format!(
+                "steps do not open `{name}`: it belongs to a group of functions that call each other and hand two values of a list or variant type back into the group at once (as `collect(l, v, r)` calling `values(l)` and `values(r)`), which the Lean export runs on fuel; cite a law about it instead"
+            ),
+            Shut::Halving => return None,
+        };
+        Some(note)
+    }
+
+    /// Why an induction along the recursive `name` does not start, for a
+    /// definition the recursion gate itself passes.
+    pub(crate) fn no_induction(&self, name: &str) -> String {
+        match self {
+            Shut::Unreadable => format!(
+                "induction: {name} is not a pure function whose body is local bindings then one expression"
+            ),
+            Shut::BuildsRefined => format!(
+                "induction: {name} builds a value of a refined type that its module exposes opaque"
+            ),
+            Shut::Recursion(_) => {
+                format!("induction: {name} recurses in a shape steps do not follow")
+            }
+            Shut::FuelledGroup => format!(
+                "induction: {name} belongs to a group of functions that the Lean export runs on fuel"
+            ),
+            Shut::Halving => format!(
+                "induction: {name} divides down to zero, and this attempt keeps its calls whole"
+            ),
+        }
+    }
+}
+
 /// Whether `id` sits in a group of definitions that call each other (a
 /// cycle through another definition) in which some member passes two or
 /// more of its own parameters of a list or named type, as they stand, to
@@ -557,7 +634,12 @@ impl<'a> Env<'a> {
     }
 
     fn build_def(&self, id: FnId) -> Option<Def> {
-        let def = self.raw_def(id)?;
+        self.gate_def(id).ok()
+    }
+
+    /// [`Self::build_def`], with why steps leave the definition closed.
+    pub(crate) fn gate_def(&self, id: FnId) -> Result<Def, Shut> {
+        let def = self.raw_def(id).ok_or(Shut::Unreadable)?;
         // A definition of another module that builds a record of a refined
         // type, which that module exposes opaque: the law's module cannot see
         // inside such a record, and Lean states it as a `Subtype` that step
@@ -574,7 +656,7 @@ impl<'a> Env<'a> {
                         .any(|t| builds_refined(t, self.inputs))
             })
         {
-            return None;
+            return Err(Shut::BuildsRefined);
         }
         // A recursive function opens only when its own recursion passes the
         // gate, a descent into a part or a division of an Int down to zero,
@@ -583,8 +665,9 @@ impl<'a> Env<'a> {
         if self.inputs.recursive_fns.contains(&id) {
             use crate::ir::proof_steps::induct;
             let ds = self.reachable_defs(id);
-            if !matches!(induct::recursion(&def, &ds), Ok(Some(_))) && !induct::rooted(&def, &ds) {
-                return None;
+            let gate = induct::recursion(&def, &ds);
+            if !matches!(gate, Ok(Some(_))) && !induct::rooted(&def, &ds) {
+                return Err(Shut::Recursion(gate.err()));
             }
             // A group of definitions calling each other where one member
             // hands two of its own parameters of a recursive type into the
@@ -594,16 +677,16 @@ impl<'a> Env<'a> {
             // no definitional step. Steps leave it closed, so the kernel
             // never accepts what Lean cannot check.
             if fuelled_group(id, &ds) {
-                return None;
+                return Err(Shut::FuelledGroup);
             }
             if induct::divides_down(&def, &ds) {
                 if !self.open_halving {
-                    return None;
+                    return Err(Shut::Halving);
                 }
                 self.met_halving.set(true);
             }
         }
-        Some(def)
+        Ok(def)
     }
 
     fn read_def(&self, id: FnId) -> Option<Def> {
@@ -728,13 +811,16 @@ impl<'a> Env<'a> {
         }
     }
 
-    /// Record that evaluation met a call of `f` it may not open.
+    /// Record that evaluation met a call of the recursive `f` it may not
+    /// open, with why, in words that say what the author can change.
     pub(crate) fn note_closed_recursion(&mut self, f: FnId) {
+        let Err(shut) = self.gate_def(f) else {
+            return;
+        };
         let name = crate::ir::proof_steps::sexpr::Names::fn_name(self.inputs.symbol_table, f);
-        let note = format!(
-            "checker limit: steps do not open `{name}`, whose recursion is not a descent they follow"
-        );
-        self.note(note);
+        if let Some(note) = shut.note(&name) {
+            self.note(note);
+        }
     }
 
     /// Keep `note` for the refusal, once.

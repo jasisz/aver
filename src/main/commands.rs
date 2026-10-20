@@ -12031,8 +12031,22 @@ fn run_lean_minimize(
     minimize::begin_instrument();
     cmd_proof_lean(file, output_dir, ctx, verify_mode);
     minimize::end();
-    let (_probe_ok, probe_out) = build(output_dir);
+    let (probe_ok, probe_out) = build(output_dir);
+    // A probe that does not build gives winners only for what elaborated.
+    if !probe_ok && let Some(line) = probe_out.lines().find(|l| l.starts_with("error:")) {
+        eprintln!("--minimize: the probe build failed, first at {line}");
+    }
     let winners = minimize::parse_winners(&probe_out);
+    // The theorems that already error behind the isolation guard before the
+    // collapse (an attempt Lean refuses is declined, not a failure): the
+    // markers change no proof, so these are the normal proof's. A collapse
+    // may keep them; it must add none. Without a built probe there is no
+    // such list, and the collapse must elaborate without any.
+    let errored_before: Vec<String> = if probe_ok && !winners.is_empty() {
+        lean_isolated_errors(output_dir).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
 
     if winners.is_empty() {
         // No portfolio was exercised (or none collapsible) — restore the normal
@@ -12048,10 +12062,36 @@ fn run_lean_minimize(
     minimize::end();
 
     // 3) FAIL-SAFE verify.
-    let (collapsed_ok, _) = build(output_dir);
-    // A collapsed proof that errors behind the isolation guard still builds;
-    // it must restore the normal proof exactly like a failed build.
-    let collapsed_ok = collapsed_ok && lean_isolated_errors(output_dir).is_ok_and(|e| e.is_empty());
+    let (built, build_out) = build(output_dir);
+    // A collapsed proof that errors behind the isolation guard where the
+    // normal proof did not still builds; it must restore the normal proof
+    // exactly like a failed build.
+    let why: Vec<String> = if built {
+        match lean_isolated_errors(output_dir) {
+            Ok(errored) => errored
+                .into_iter()
+                .filter(|name| !errored_before.contains(name))
+                .map(|name| format!("`{name}` errors"))
+                .collect(),
+            Err(e) => vec![e],
+        }
+    } else {
+        build_out
+            .lines()
+            .filter(|l| l.starts_with("error:"))
+            .map(str::to_string)
+            .collect()
+    };
+    let collapsed_ok = built && why.is_empty();
+    if !collapsed_ok {
+        // Say what broke, so a portfolio the collapse got wrong can be found.
+        for line in why.iter().take(5) {
+            eprintln!("--minimize: {line}");
+        }
+        if why.len() > 5 {
+            eprintln!("--minimize: … and {} more", why.len() - 5);
+        }
+    }
     if collapsed_ok {
         println!(
             "{}",

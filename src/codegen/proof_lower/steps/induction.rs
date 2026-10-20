@@ -653,6 +653,14 @@ impl Env<'_> {
         {
             return Err(format!("induction: {why}"));
         }
+        // One the gate passes but steps keep closed all the same, for
+        // another reason.
+        if def.is_none()
+            && self.inputs.recursive_fns.contains(&f)
+            && let Err(shut) = self.gate_def(f)
+        {
+            return Err(shut.no_induction(&f_name));
+        }
         let rec = match def.as_ref().map(|d| induct::recursion(d, &ds)) {
             Some(Ok(Some(rec))) => rec,
             Some(Err(why)) => return Err(format!("induction: {why}")),
