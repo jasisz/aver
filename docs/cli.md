@@ -438,9 +438,6 @@ reason     = "Bitcoin Core corpus includes consensus-max 10,000-byte scripts"
 
 [work]
 max-jobs = 4                     # jobs running at once (default: host parallelism)
-
-[rust]
-allocator = "mimalloc"           # generated Rust crate's global allocator (default: "system")
 ```
 
 Effect-host / path / key allowlists narrow which hosts, files and env keys the runtime will admit. Tcp's positive-integer settings configure connection establishment, one-shot request idle timeouts, and one shared limit for established/accepted connections plus in-flight dials. They never impose a deadline on persistent session I/O. Unknown or misplaced keys inside an effect section are errors. `[[check.suppress]]` lets a project waive specific lint slugs in specific paths, optionally for one exact function, with a reason.
