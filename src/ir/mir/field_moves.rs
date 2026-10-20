@@ -48,7 +48,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::expr::{
-    MirCallee, MirCtor, MirExpr, MirMatch, MirPattern, MirRecordUpdate, walk_children,
+    MirCall, MirCallee, MirCtor, MirExpr, MirMatch, MirPattern, MirRecordUpdate, walk_children,
 };
 use super::program::LocalId;
 use crate::ast::Spanned;
@@ -77,6 +77,69 @@ pub struct VectorSetMatch<'a> {
     pub updated: Option<(LocalId, &'a str)>,
     /// Address of the subject call.
     pub call: usize,
+}
+
+/// `Option.withDefault(Vector.set(s.f, index, value), s.f)`: a set that
+/// keeps the Vector unchanged when the index is out of range, on a field
+/// path of a local (`s.f`, `s.a.f`) named the same in both places.
+///
+/// The two reads of `s.f` hand on one value: the set's result when the index
+/// is in range, the field itself otherwise. A backend that evaluates the
+/// index and the value first and then reads the field once, updating it in
+/// place or returning it, needs it only once, after the index and the value.
+/// The analysis records that single read at the target's address, so the
+/// field moves when nothing else needs it.
+pub struct SelfKeepVectorSet<'a> {
+    pub target: &'a Spanned<MirExpr>,
+    pub index: &'a Spanned<MirExpr>,
+    pub value: &'a Spanned<MirExpr>,
+    pub default: &'a Spanned<MirExpr>,
+    /// Address of the inner `Vector.set` call.
+    pub call: usize,
+}
+
+/// See [`SelfKeepVectorSet`]. `builtins` names the program's builtin ids.
+pub fn self_keep_vector_set<'a>(
+    call: &'a MirCall,
+    builtins: &[String],
+) -> Option<SelfKeepVectorSet<'a>> {
+    let name = |callee: &MirCallee| match callee {
+        MirCallee::Builtin(id) => builtins.get(id.0 as usize).map(String::as_str),
+        _ => None,
+    };
+    let [update, default] = call.args.as_slice() else {
+        return None;
+    };
+    let MirExpr::Call(inner) = &update.node else {
+        return None;
+    };
+    if name(&call.callee) != Some("Option.withDefault")
+        || name(&inner.node.callee) != Some("Vector.set")
+    {
+        return None;
+    }
+    let [target, index, value] = inner.node.args.as_slice() else {
+        return None;
+    };
+    if !same_field_path(&target.node, &default.node) {
+        return None;
+    }
+    Some(SelfKeepVectorSet {
+        target,
+        index,
+        value,
+        default,
+        call: &inner.node as *const MirCall as usize,
+    })
+}
+
+/// Whether `a` and `b` read the same field path (`s.f`, `s.a.f`) of one
+/// local. A bare local is not a field path.
+pub fn same_field_path(a: &MirExpr, b: &MirExpr) -> bool {
+    match (projection_root(a), projection_root(b)) {
+        (Some((sa, _, pa)), Some((sb, _, pb))) => sa == sb && !pa.is_empty() && pa == pb,
+        _ => false,
+    }
 }
 
 /// See [`VectorSetMatch`]. `builtins` names the program's builtin ids.
@@ -403,6 +466,35 @@ fn collect(
                     collect(&arm.body.node, trail, in_product, builtins, reads);
                     trail.pop();
                 }
+                return;
+            }
+        }
+        MirExpr::Call(call) => {
+            if let Some(keep) = self_keep_vector_set(&call.node, builtins)
+                && let Some((slot, target_last_use, path)) = projection_root(&keep.target.node)
+                && let Some((_, default_last_use, _)) = projection_root(&keep.default.node)
+            {
+                // The index and the value run first; the field is read once,
+                // where the default stands (see `self_keep_vector_set`).
+                trail.push((addr, 0, Branching::Call));
+                for (index, arg) in [(1, keep.index), (2, keep.value)] {
+                    trail.push((keep.call, index, Branching::Call));
+                    collect(&arg.node, trail, in_product, builtins, reads);
+                    trail.pop();
+                }
+                trail.pop();
+                let last_use = target_last_use || default_last_use;
+                trail.push((addr, 1, Branching::Call));
+                reads.entry(slot).or_default().push(Read {
+                    part: Part::Path(path),
+                    update: None,
+                    addr: &keep.target.node as *const MirExpr as usize,
+                    last_use,
+                    root_last_use: last_use,
+                    in_product,
+                    trail: trail.clone(),
+                });
+                trail.pop();
                 return;
             }
         }

@@ -185,31 +185,32 @@ impl<T: AverDisplay + Clone> AverDisplay for crate::AverVector<T> {
     }
 }
 
-impl<A: AverDisplay, B: AverDisplay> AverDisplay for (A, B) {
-    fn aver_display(&self) -> String {
-        format!(
-            "({}, {})",
-            self.0.aver_display_inner(),
-            self.1.aver_display_inner()
-        )
-    }
+/// Tuples display as `(a, b, ...)`, every item in its inner form, as the VM
+/// prints them. Rust implements `Eq`, `Ord` and `Hash` for tuples of up to
+/// twelve items, so that is also the largest tuple a `Map` key can be.
+macro_rules! tuple_display {
+    ($($name:ident : $idx:tt),+) => {
+        impl<$($name: AverDisplay),+> AverDisplay for ($($name,)+) {
+            fn aver_display(&self) -> String {
+                let parts = [$(self.$idx.aver_display_inner()),+];
+                format!("({})", parts.join(", "))
+            }
 
-    fn aver_display_inner(&self) -> String {
-        self.aver_display()
-    }
+            fn aver_display_inner(&self) -> String {
+                self.aver_display()
+            }
+        }
+    };
 }
 
-impl<A: AverDisplay, B: AverDisplay, C: AverDisplay> AverDisplay for (A, B, C) {
-    fn aver_display(&self) -> String {
-        format!(
-            "({}, {}, {})",
-            self.0.aver_display_inner(),
-            self.1.aver_display_inner(),
-            self.2.aver_display_inner()
-        )
-    }
-
-    fn aver_display_inner(&self) -> String {
-        self.aver_display()
-    }
-}
+tuple_display!(A: 0, B: 1);
+tuple_display!(A: 0, B: 1, C: 2);
+tuple_display!(A: 0, B: 1, C: 2, D: 3);
+tuple_display!(A: 0, B: 1, C: 2, D: 3, E: 4);
+tuple_display!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5);
+tuple_display!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6);
+tuple_display!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7);
+tuple_display!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8);
+tuple_display!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9);
+tuple_display!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10);
+tuple_display!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10, L: 11);

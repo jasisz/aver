@@ -1,6 +1,7 @@
 /// Rust backend for the Aver transpiler.
 ///
 /// Transforms Aver AST -> valid Rust source code.
+mod arg_order;
 mod builtins;
 pub(crate) mod composition;
 pub mod emit_ctx;
@@ -178,6 +179,15 @@ fn transpile_project(
             crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_rust(prog, &boxed, &carrier),
         );
         ctx.rust_owned_record_params = from_mir::compute_owned_record_params(ctx);
+        // Bind pure later arguments first where that turns an earlier
+        // argument into a move; a moved param can make its own function
+        // take it by value, which can enable the same rewrite in callers.
+        for _ in 0..8 {
+            if !arg_order::hoist_reads_before_moves(ctx) {
+                break;
+            }
+            ctx.rust_owned_record_params = from_mir::compute_owned_record_params(ctx);
+        }
     }
     let has_embedded_policy = ctx.policy.is_some();
     let has_runtime_policy = ctx.runtime_policy_from_env;

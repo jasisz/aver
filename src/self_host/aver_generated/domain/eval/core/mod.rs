@@ -4319,7 +4319,7 @@ pub fn evalTopLevelStmts(
     let fns @ _ = std::sync::Arc::new(fns);
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(stmts, [] => { return Ok((last, env)); }, [s, rest] => { match crate::aver_generated::domain::eval::core::evalStmt(&s, env.clone(), &crate::aver_generated::domain::eval::store::withGlobals(&*fns, env)) { Err(e @ _) => { return Err(e); }, Ok(pair @ _) => { { let (v, newEnv) = pair; {
+        aver_list_match!(stmts, [] => { return Ok((last, env)); }, [s, rest] => { match { let __arg10 @ _ = crate::aver_generated::domain::eval::store::withGlobals(&*fns, env.clone()); crate::aver_generated::domain::eval::core::evalStmt(&s, env, &__arg10) } { Err(e @ _) => { return Err(e); }, Ok(pair @ _) => { { let (v, newEnv) = pair; {
             let __tco0 = rest;
             let __tco1 = newEnv;
             let __tco2 = v;

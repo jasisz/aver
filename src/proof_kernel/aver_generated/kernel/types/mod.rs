@@ -692,10 +692,10 @@ pub fn hasEq(t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ty, e @ 
 
 /// A type as the proof of its own statement sees it: each type variable is one unknown type, which fits only itself and has an equality only when the variable asks for one.
 pub fn rigid(
-    t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ty,
+    mut t @ _: crate::proof_kernel::aver_generated::kernel::term::Ty,
 ) -> crate::proof_kernel::aver_generated::kernel::term::Ty {
     crate::proof_kernel::cancel_checkpoint();
-    match t {
+    match &t {
         crate::proof_kernel::aver_generated::kernel::term::Ty::TyVar(__n_fields) => {
             let n = __n_fields.0.clone();
             let eq = __n_fields.1.clone();
@@ -703,12 +703,12 @@ pub fn rigid(
                 crate::proof_kernel::aver_generated::kernel::term::Ty__TyRigid(n, eq),
             ))
         }
-        _ => crate::proof_kernel::aver_generated::kernel::types::rebuild(
-            t.clone(),
-            &crate::proof_kernel::aver_generated::kernel::types::rigidAll(
-                &crate::proof_kernel::aver_generated::kernel::types::partsOf(t),
-            ),
-        ),
+        _ => {
+            let __arg3 @ _ = crate::proof_kernel::aver_generated::kernel::types::rigidAll(
+                &crate::proof_kernel::aver_generated::kernel::types::partsOf(&t),
+            );
+            crate::proof_kernel::aver_generated::kernel::types::rebuild(t, &__arg3)
+        }
     }
 }
 
@@ -718,7 +718,7 @@ pub fn rigidAll(
     ts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Ty>,
 ) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Ty> {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(ts.clone(), [] => aver_rt::AverList::empty(), [t, rest] => aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::types::rigid(&t), &crate::proof_kernel::aver_generated::kernel::types::rigidAll(&rest)))
+    aver_list_match!(ts.clone(), [] => aver_rt::AverList::empty(), [t, rest] => aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::types::rigid(t), &crate::proof_kernel::aver_generated::kernel::types::rigidAll(&rest)))
 }
 
 /// The givens of a statement as its own proof sees them.
@@ -727,7 +727,7 @@ pub fn rigidVars(
     vs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar>,
 ) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar> {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(vs.clone(), [] => aver_rt::AverList::empty(), [v, rest] => aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::term::typed(v.name, crate::proof_kernel::aver_generated::kernel::types::rigid(&v.ty)), &crate::proof_kernel::aver_generated::kernel::types::rigidVars(&rest)))
+    aver_list_match!(vs.clone(), [] => aver_rt::AverList::empty(), [v, rest] => aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::term::typed(v.name, crate::proof_kernel::aver_generated::kernel::types::rigid(v.ty)), &crate::proof_kernel::aver_generated::kernel::types::rigidVars(&rest)))
 }
 
 /// What a declared type's declaration says of its ==; a name the script does not declare has none.

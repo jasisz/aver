@@ -1421,7 +1421,7 @@ pub fn resolveArms(
     let slots @ _ = std::sync::Arc::new(slots);
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(arms, [] => { return (acc.reverse(), (*slots).clone()); }, [arm, rest] => { { let (__stp0, _) = crate::aver_generated::domain::resolver::core::resolveArm(&arm, &*slots); {
+        aver_list_match!(arms, [] => { return (acc.reverse(), (*slots).clone()); }, [arm, rest] => { { let (__stp0, _) = crate::aver_generated::domain::resolver::core::resolveArm(arm, &*slots); {
             let __tco0 = rest;
             let __tco2 = aver_rt::AverList::prepend(__stp0, &acc);
             arms = __tco0;
@@ -1433,7 +1433,7 @@ pub fn resolveArms(
 
 /// Resolve one match arm; continue with the ORIGINAL slots, since an arm's pattern binders are scoped to its own body. Threading the arm-extended map onward leaked binder slots into later arms and past the match, where a wrapping binding aliased them and shadowed names resolved wrong.
 pub fn resolveOneArm(
-    arm @ _: &crate::aver_generated::domain::ast::MatchArm,
+    mut arm @ _: crate::aver_generated::domain::ast::MatchArm,
     rest @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
     mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
@@ -1455,7 +1455,7 @@ pub fn resolveOneArm(
 
 /// Resolve a match arm: extend slots with pattern bindings, then resolve body.
 pub fn resolveArm(
-    arm @ _: &crate::aver_generated::domain::ast::MatchArm,
+    mut arm @ _: crate::aver_generated::domain::ast::MatchArm,
     slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> (
     crate::aver_generated::domain::ast::MatchArm,
@@ -1466,11 +1466,13 @@ pub fn resolveArm(
         crate::aver_generated::domain::resolver::core::addPatternSlots(&arm.pattern, slots.clone());
     {
         let (newSlots, _) = armSlotResult;
-        crate::aver_generated::domain::resolver::core::resolveArmBody(
-            arm.clone(),
-            newSlots,
-            crate::aver_generated::domain::resolver::core::patternBindingSlots(&arm.pattern, slots),
-        )
+        {
+            let __arg4 @ _ = crate::aver_generated::domain::resolver::core::patternBindingSlots(
+                &arm.pattern,
+                slots,
+            );
+            crate::aver_generated::domain::resolver::core::resolveArmBody(arm, newSlots, __arg4)
+        }
     }
 }
 
@@ -1906,7 +1908,7 @@ pub fn resolveArms__collected(
     let slots @ _ = std::sync::Arc::new(slots);
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(arms, [] => { return (aver_rt::list_builder_finalize(acc), (*slots).clone()); }, [arm, rest] => { { let (__stp0, _) = crate::aver_generated::domain::resolver::core::resolveArm(&arm, &*slots); {
+        aver_list_match!(arms, [] => { return (aver_rt::list_builder_finalize(acc), (*slots).clone()); }, [arm, rest] => { { let (__stp0, _) = crate::aver_generated::domain::resolver::core::resolveArm(arm, &*slots); {
             let __tco0 = rest;
             let __tco2 = aver_rt::list_builder_push(acc, __stp0);
             arms = __tco0;

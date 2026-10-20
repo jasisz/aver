@@ -915,7 +915,10 @@ pub fn runCliFile(
     let prepared @ _ = loadProgramFromFile(path, moduleRoot)?;
     {
         let (prog, moduleFns) = prepared;
-        runGuestCliProgram(prog.clone(), &moduleFns, &prog.fns, guestArgs)
+        {
+            let __arg6 @ _ = prog.fns.clone();
+            runGuestCliProgram(prog, &moduleFns, &__arg6, guestArgs)
+        }
     }
 }
 

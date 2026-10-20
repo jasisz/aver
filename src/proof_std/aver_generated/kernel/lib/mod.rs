@@ -600,9 +600,8 @@ pub fn evalNode(
             {
                 let __list_subject = __pat0;
                 if let Some((x, rest)) = aver_rt::list_uncons_cloned(&__list_subject) {
-                    Ok(crate::proof_std::aver_generated::kernel::lib::chain(
-                        t.clone(),
-                        &crate::proof_std::aver_generated::kernel::lib::Rw {
+                    Ok({
+                        let __arg18 @ _ = crate::proof_std::aver_generated::kernel::lib::Rw {
                             to: crate::proof_std::aver_generated::kernel::lib::cons(
                                 x.clone(),
                                 crate::proof_std::aver_generated::kernel::term::Term::TList(
@@ -616,26 +615,13 @@ pub fn evalNode(
                             proof: crate::proof_std::aver_generated::kernel::proof::Proof::PCell(
                                 std::sync::Arc::new(
                                     crate::proof_std::aver_generated::kernel::proof::Proof__PCell(
-                                        t,
+                                        t.clone(),
                                     ),
                                 ),
                             ),
-                        },
-                        crate::proof_std::aver_generated::kernel::lib::evalWithin(
-                            s,
-                            crate::proof_std::aver_generated::kernel::lib::cons(
-                                x,
-                                crate::proof_std::aver_generated::kernel::term::Term::TList(
-                                    std::sync::Arc::new(
-                                        crate::proof_std::aver_generated::kernel::term::Term__TList(
-                                            rest,
-                                        ),
-                                    ),
-                                ),
-                            ),
-                            depth,
-                        )?,
-                    ))
+                        };
+                        crate::proof_std::aver_generated::kernel::lib::chain(t, &__arg18, crate::proof_std::aver_generated::kernel::lib::evalWithin(s, crate::proof_std::aver_generated::kernel::lib::cons(x, crate::proof_std::aver_generated::kernel::term::Term::TList(std::sync::Arc::new(crate::proof_std::aver_generated::kernel::term::Term__TList(rest)))), depth)?)
+                    })
                 } else {
                     Ok(crate::proof_std::aver_generated::kernel::lib::refl(t))
                 }
@@ -1109,11 +1095,15 @@ pub fn evalOp(
             ),
         }
     };
-    Ok(crate::proof_std::aver_generated::kernel::lib::chain(
-        t.clone(),
-        &crate::proof_std::aver_generated::kernel::lib::chain(t, &first, second),
-        crate::proof_std::aver_generated::kernel::lib::compute(end),
-    ))
+    Ok({
+        let __arg12 @ _ =
+            crate::proof_std::aver_generated::kernel::lib::chain(t.clone(), &first, second);
+        crate::proof_std::aver_generated::kernel::lib::chain(
+            t,
+            &__arg12,
+            crate::proof_std::aver_generated::kernel::lib::compute(end),
+        )
+    })
 }
 
 /// An Int operator between two Int literals, by computation; any other term is left as it is, since the kernel computes only closed literals.

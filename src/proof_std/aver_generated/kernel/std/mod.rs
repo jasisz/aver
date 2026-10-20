@@ -1102,13 +1102,10 @@ pub fn holeBelow(
             let o = __o_fields.0.clone();
             let a = __o_fields.1.clone();
             let b = __o_fields.2.clone();
-            crate::proof_std::aver_generated::kernel::std::opWith(
-                o,
-                a.clone(),
-                b,
-                &crate::proof_std::aver_generated::kernel::std::holeAt(&a, target),
-                target,
-            )
+            {
+                let __arg16 @ _ = crate::proof_std::aver_generated::kernel::std::holeAt(&a, target);
+                crate::proof_std::aver_generated::kernel::std::opWith(o, a, b, &__arg16, target)
+            }
         }
         crate::proof_std::aver_generated::kernel::term::Term::TNeg(__a_fields) => {
             let a = __a_fields.0.clone();
