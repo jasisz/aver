@@ -195,6 +195,71 @@ fn walking_fields(types: &[&str], ctx: &CodegenContext, scope: Option<&str>) -> 
         .collect()
 }
 
+/// The two bodies of an `aver_rt::WalkHash` (see `aver_rt::shared_hash`)
+/// for one constructor or record: its fields fed to the hasher `state` as a
+/// derived `Hash` would, against the budget `left`, and its fields written
+/// to the hasher `h` of a hash made from parts. A field marked in `walking`
+/// (see `walks`) goes through its own `WalkHash`; the others are hashed as
+/// they are.
+///
+/// Only a constructor or record with two or more such fields takes one from
+/// the budget: a walk meets a node once per path to it only where paths
+/// branch, and a walk down a single field of each node is as long as the
+/// value. Small keys of a type like a list or a name pay nothing for it.
+struct HashParts {
+    stream: String,
+    from_parts: String,
+}
+
+fn hash_parts(walking: &[bool], field: impl Fn(usize) -> String) -> HashParts {
+    let branches = walking.iter().filter(|&&walks| walks).count() > 1;
+    let mut parts = HashParts {
+        stream: match branches {
+            true => " if left == 0 { return 0; } let left = left - 1;".to_string(),
+            false => String::new(),
+        },
+        from_parts: String::new(),
+    };
+    for (i, &walks) in walking.iter().enumerate() {
+        let field = field(i);
+        match walks {
+            true => {
+                write!(
+                    parts.stream,
+                    " let left = aver_rt::WalkHash::stream(&{field}, state, left);"
+                )
+                .unwrap();
+                write!(
+                    parts.from_parts,
+                    " std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&{field}, walk));"
+                )
+                .unwrap();
+            }
+            false => {
+                write!(parts.stream, " std::hash::Hash::hash(&{field}, state);").unwrap();
+                write!(parts.from_parts, " std::hash::Hash::hash(&{field}, h);").unwrap();
+            }
+        }
+    }
+    parts
+}
+
+/// `name`, or `_` when the body does not read it.
+fn used<'a>(name: &'a str, body: &str) -> &'a str {
+    match body.contains(&format!("{name})")) || body.contains(&format!("{name}.")) {
+        true => name,
+        false => "_",
+    }
+}
+
+/// The `aver_rt::WalkHash` of a recursive sum or of a record on its cycle.
+fn walk_hash_impl(name: &str, stream: &str, from_parts: &str) -> String {
+    format!(
+        "\nimpl aver_rt::WalkHash for {name} {{\n    fn stream<H: std::hash::Hasher>(&self, state: &mut H, left: u32) -> u32 {{\n        {stream}\n    }}\n\n    fn walk_hash(&self, {}: aver_rt::HashWalk<'_>) -> u64 {{\n        {from_parts}\n    }}\n}}\n",
+        used("walk", from_parts),
+    )
+}
+
 fn partial_eq_impl(name: &str, test: &str) -> String {
     format!(
         "\nimpl PartialEq for {name} {{\n    fn eq(&self, other: &Self) -> bool {{\n        {test}\n    }}\n}}\n"
@@ -332,16 +397,12 @@ fn emit_sum_type(
         }
     }
     if thin {
-        // The macro gives the type its `Clone`; `Debug` and `Hash` read the
-        // view, which is declared in constructor order and so hashes and
-        // prints as the enum would.
-        let view_derives = match capabilities.hash {
-            true => "Debug, Hash",
-            false => "Debug",
-        };
+        // The macro gives the type its `Clone`; `Debug` reads the view,
+        // which is declared in constructor order and so prints as the enum
+        // would.
         writeln!(
             out,
-            "::aver_rt::thin_sum! {{\n    #[derive({view_derives})]\n    {visibility}{name} / {view} / {pair} {{\n{body}    }}\n}}"
+            "::aver_rt::thin_sum! {{\n    #[derive(Debug)]\n    {visibility}{name} / {view} / {pair} {{\n{body}    }}\n}}"
         )
         .unwrap();
         write!(
@@ -349,12 +410,46 @@ fn emit_sum_type(
             "\nimpl std::fmt::Debug for {name} {{\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{\n        std::fmt::Debug::fmt(&self.view(), f)\n    }}\n}}\n"
         )
         .unwrap();
+        // A large value is hashed from the hashes of the nodes it holds (see
+        // `aver_rt::shared_hash`), so a node held in many places is hashed
+        // once, not once per path to it.
         if capabilities.hash {
             write!(
                 out,
-                "\nimpl std::hash::Hash for {name} {{\n    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {{\n        self.view().hash(state)\n    }}\n}}\n"
+                "\nimpl std::hash::Hash for {name} {{\n    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {{\n        aver_rt::shared_hash::hash(self, state)\n    }}\n}}\n"
             )
             .unwrap();
+            let (mut stream, mut from_parts) = (String::new(), String::new());
+            for (i, v) in variants.iter().enumerate() {
+                let ctor = format!("            {view}::{}", v.name);
+                let tag = format!("std::hash::Hash::hash(&{i}u32, ");
+                if v.fields.is_empty() {
+                    writeln!(stream, "{ctor} => {{ {tag}state); left }}").unwrap();
+                    writeln!(from_parts, "{ctor} => aver_rt::shared_hash::tag_hash({i}),").unwrap();
+                    continue;
+                }
+                let types: Vec<&str> = v.fields.iter().map(String::as_str).collect();
+                let parts = hash_parts(&walking_fields(&types, ctx, scope), |j| format!("f.{j}"));
+                writeln!(
+                    stream,
+                    "{ctor}(f) => {{ {tag}state);{} left }}",
+                    parts.stream
+                )
+                .unwrap();
+                writeln!(
+                    from_parts,
+                    "{ctor}(f) => walk.node(self, |{}, h| {{ {tag}h);{} }}),",
+                    used("walk", &parts.from_parts),
+                    parts.from_parts
+                )
+                .unwrap();
+            }
+            let matched = |arms: &str| format!("match self.view() {{\n{arms}        }}");
+            out.push_str(&walk_hash_impl(
+                name,
+                &matched(&stream),
+                &matched(&from_parts),
+            ));
         }
         if capabilities.eq {
             write!(out, "\nimpl Eq for {name} {{}}\n").unwrap();
@@ -633,6 +728,16 @@ fn emit_product_type(
             |i| format!("other.{}", field(i)),
         );
         out.push_str(&walk_eq_impl(name, &test));
+    }
+    if cyclic && capabilities.hash {
+        let field = |i: usize| format!("self.{}", aver_name_to_rust(&fields[i].0));
+        let parts = hash_parts(&walking_fields(&types, ctx, scope), field);
+        let from_parts = format!(
+            "let h = &mut aver_rt::shared_hash::node_hasher();{}\n        std::hash::Hasher::finish(h)",
+            parts.from_parts
+        );
+        let stream = format!("{}\n        left", parts.stream.trim());
+        out.push_str(&walk_hash_impl(name, &stream, &from_parts));
     }
     if cyclic {
         let field = |i: usize| aver_name_to_rust(&fields[i].0);
@@ -2111,14 +2216,30 @@ mod tests {
         let mut ctx = empty_ctx();
         ctx.type_defs.push(td.clone());
 
-        // `==` is written out, so that it carries the comparison's walk
-        // (`aver_rt::WalkEq`); `Eq` and `Hash` are still derived.
+        // `==` and the hash are written out, so that they carry the walk
+        // (`aver_rt::WalkEq`, `aver_rt::WalkHash`); `Eq` is still derived.
         let emitted = emit_public_type_def(&td, &ctx);
-        assert!(
-            emitted.contains("#[derive(Debug, Hash)]\n    pub Tree / Tree__view / Tree__pair {")
-        );
+        assert!(emitted.contains("#[derive(Debug)]\n    pub Tree / Tree__view / Tree__pair {"));
         assert!(emitted.contains("impl Eq for Tree {}"));
         assert!(emitted.contains("impl std::hash::Hash for Tree {"));
+        assert!(emitted.contains("aver_rt::shared_hash::hash(self, state)"));
+        assert!(
+            emitted.contains("Tree__view::Empty => { std::hash::Hash::hash(&0u32, state); left }")
+        );
+        assert!(emitted.contains(
+            "Tree__view::Node(f) => { std::hash::Hash::hash(&1u32, state); \
+             if left == 0 { return 0; } let left = left - 1; \
+             let left = aver_rt::WalkHash::stream(&f.0, state, left); \
+             std::hash::Hash::hash(&f.1, state); \
+             let left = aver_rt::WalkHash::stream(&f.2, state, left); left }"
+        ));
+        assert!(emitted.contains("Tree__view::Empty => aver_rt::shared_hash::tag_hash(0),"));
+        assert!(emitted.contains(
+            "Tree__view::Node(f) => walk.node(self, |walk, h| { std::hash::Hash::hash(&1u32, h); \
+             std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk)); \
+             std::hash::Hash::hash(&f.1, h); \
+             std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.2, walk)); }),"
+        ));
         assert!(emitted.contains("impl PartialEq for Tree"));
         assert!(emitted.contains("aver_rt::walk_eq(self, other)"));
     }

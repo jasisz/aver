@@ -1225,6 +1225,13 @@ pub(super) fn emit_module_with(
     eq_helpers_registry.find_walks(&registry);
     eq_helpers_registry.assign_slots(&mut next_builtin_fn_idx, &mut next_type_idx);
     eq_helpers_registry.emit_helper_types(&mut types);
+    let map_keys: Vec<String> = registry
+        .map_order
+        .iter()
+        .filter_map(|canonical| super::types::parse_map_kv(canonical))
+        .map(|(key, _)| key.trim().to_string())
+        .collect();
+    hash_helpers_registry.find_walks(&registry, &map_keys);
     hash_helpers_registry.assign_slots(&mut next_builtin_fn_idx, &mut next_type_idx);
     hash_helpers_registry.emit_helper_types(&mut types);
 
@@ -2489,11 +2496,9 @@ pub(super) fn emit_module_with(
     for t_idx in eq_helpers_registry.function_types() {
         funcs.function(t_idx);
     }
-    // Hash helpers — same shape (one entry per registered slot).
-    for (name, _kind) in hash_helpers_registry.iter() {
-        let t_idx = hash_helpers_registry
-            .lookup_type_idx(name)
-            .expect("registered hash helper has type idx after assign_slots");
+    // Hash helpers — same shape (one entry per registered slot), then the
+    // walks of recursive map keys and their remembered hashes.
+    for t_idx in hash_helpers_registry.function_types() {
         funcs.function(t_idx);
     }
     if let Some(hw) = &handler_wrapper {
@@ -2988,6 +2993,9 @@ pub(super) fn emit_module_with(
     // The state of a comparison of recursive values, after every other
     // global and only for a program that compares one.
     let eq_walk_globals = eq_helpers_registry.emit_walk_globals(&mut globals, &mut next_global_idx);
+    // The same for a hash of a recursive map key.
+    let hash_walk_globals =
+        hash_helpers_registry.emit_walk_globals(&mut globals, &mut next_global_idx);
     if next_global_idx > 0 {
         module.section(&globals);
     }
@@ -4031,11 +4039,22 @@ pub(super) fn emit_module_with(
             carrier_eq_hash_lookup.insert(name.to_string(), (eq_fn, hash_fn));
         }
     }
+    // A map key that reaches itself hashes and compares in steps.
+    let walked_key_lookup: HashMap<String, (u32, u32)> = hash_helpers_registry
+        .walked()
+        .filter(|name| eq_helpers_registry.walks(name))
+        .filter_map(|name| {
+            let eq_fn = eq_helpers_registry.lookup_fn_idx(name)?;
+            let hash_fn = hash_helpers_registry.lookup_fn_idx(name)?;
+            Some((name.to_string(), (eq_fn, hash_fn)))
+        })
+        .collect();
     map_helpers.emit_helper_bodies(
         &mut codes,
         &registry,
         &compound_eq_hash_lookup,
         &carrier_eq_hash_lookup,
+        &walked_key_lookup,
     )?;
 
     // List / Vector.fromList / String.split-join helper bodies.
@@ -4100,8 +4119,8 @@ pub(super) fn emit_module_with(
     hash_helpers_registry.emit_helper_bodies(
         &mut codes,
         &registry,
-        string_eq_fn_idx,
         &compound_hash_lookup,
+        hash_walk_globals.as_ref(),
     )?;
 
     if let Some(hw) = &handler_wrapper {

@@ -3,7 +3,7 @@ use crate::proof_kernel::*;
 use ::aver_rt::aver_list_match;
 
 ::aver_rt::thin_sum! {
-    #[derive(Debug, Hash)]
+    #[derive(Debug)]
     pub Proof / Proof__view / Proof__pair {
         0 PRefl(Proof__PRefl),
         1 PSymm(Proof__PSymm),
@@ -40,7 +40,405 @@ impl std::fmt::Debug for Proof {
 
 impl std::hash::Hash for Proof {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.view().hash(state)
+        aver_rt::shared_hash::hash(self, state)
+    }
+}
+
+impl aver_rt::WalkHash for Proof {
+    fn stream<H: std::hash::Hasher>(&self, state: &mut H, left: u32) -> u32 {
+        match self.view() {
+            Proof__view::PRefl(f) => {
+                std::hash::Hash::hash(&0u32, state);
+                let left = aver_rt::WalkHash::stream(&f.0, state, left);
+                left
+            }
+            Proof__view::PSymm(f) => {
+                std::hash::Hash::hash(&1u32, state);
+                let left = aver_rt::WalkHash::stream(&f.0, state, left);
+                left
+            }
+            Proof__view::PTrans(f) => {
+                std::hash::Hash::hash(&2u32, state);
+                std::hash::Hash::hash(&f.0, state);
+                std::hash::Hash::hash(&f.1, state);
+                left
+            }
+            Proof__view::PCongr(f) => {
+                std::hash::Hash::hash(&3u32, state);
+                if left == 0 {
+                    return 0;
+                }
+                let left = left - 1;
+                let left = aver_rt::WalkHash::stream(&f.0, state, left);
+                let left = aver_rt::WalkHash::stream(&f.1, state, left);
+                left
+            }
+            Proof__view::PUnfold(f) => {
+                std::hash::Hash::hash(&4u32, state);
+                std::hash::Hash::hash(&f.0, state);
+                std::hash::Hash::hash(&f.1, state);
+                std::hash::Hash::hash(&f.2, state);
+                std::hash::Hash::hash(&f.3, state);
+                std::hash::Hash::hash(&f.4, state);
+                left
+            }
+            Proof__view::PConst(f) => {
+                std::hash::Hash::hash(&5u32, state);
+                std::hash::Hash::hash(&f.0, state);
+                left
+            }
+            Proof__view::PArm(f) => {
+                std::hash::Hash::hash(&6u32, state);
+                if left == 0 {
+                    return 0;
+                }
+                let left = left - 1;
+                std::hash::Hash::hash(&f.0, state);
+                std::hash::Hash::hash(&f.1, state);
+                let left = aver_rt::WalkHash::stream(&f.2, state, left);
+                let left = aver_rt::WalkHash::stream(&f.3, state, left);
+                left
+            }
+            Proof__view::PProj(f) => {
+                std::hash::Hash::hash(&7u32, state);
+                let left = aver_rt::WalkHash::stream(&f.0, state, left);
+                left
+            }
+            Proof__view::PCell(f) => {
+                std::hash::Hash::hash(&8u32, state);
+                let left = aver_rt::WalkHash::stream(&f.0, state, left);
+                left
+            }
+            Proof__view::PHyp(f) => {
+                std::hash::Hash::hash(&9u32, state);
+                std::hash::Hash::hash(&f.0, state);
+                left
+            }
+            Proof__view::PRule(f) => {
+                std::hash::Hash::hash(&10u32, state);
+                std::hash::Hash::hash(&f.0, state);
+                std::hash::Hash::hash(&f.1, state);
+                std::hash::Hash::hash(&f.2, state);
+                left
+            }
+            Proof__view::PLaw(f) => {
+                std::hash::Hash::hash(&11u32, state);
+                std::hash::Hash::hash(&f.0, state);
+                std::hash::Hash::hash(&f.1, state);
+                std::hash::Hash::hash(&f.2, state);
+                left
+            }
+            Proof__view::PCompute(f) => {
+                std::hash::Hash::hash(&12u32, state);
+                if left == 0 {
+                    return 0;
+                }
+                let left = left - 1;
+                let left = aver_rt::WalkHash::stream(&f.0, state, left);
+                let left = aver_rt::WalkHash::stream(&f.1, state, left);
+                left
+            }
+            Proof__view::PCases(f) => {
+                std::hash::Hash::hash(&13u32, state);
+                if left == 0 {
+                    return 0;
+                }
+                let left = left - 1;
+                let left = aver_rt::WalkHash::stream(&f.0, state, left);
+                std::hash::Hash::hash(&f.1, state);
+                let left = aver_rt::WalkHash::stream(&f.2, state, left);
+                let left = aver_rt::WalkHash::stream(&f.3, state, left);
+                left
+            }
+            Proof__view::PSplit(f) => {
+                std::hash::Hash::hash(&14u32, state);
+                let left = aver_rt::WalkHash::stream(&f.0, state, left);
+                std::hash::Hash::hash(&f.1, state);
+                std::hash::Hash::hash(&f.2, state);
+                std::hash::Hash::hash(&f.3, state);
+                left
+            }
+            Proof__view::PHave(f) => {
+                std::hash::Hash::hash(&15u32, state);
+                if left == 0 {
+                    return 0;
+                }
+                let left = left - 1;
+                std::hash::Hash::hash(&f.0, state);
+                let left = aver_rt::WalkHash::stream(&f.1, state, left);
+                let left = aver_rt::WalkHash::stream(&f.2, state, left);
+                let left = aver_rt::WalkHash::stream(&f.3, state, left);
+                left
+            }
+            Proof__view::PEnum(f) => {
+                std::hash::Hash::hash(&16u32, state);
+                if left == 0 {
+                    return 0;
+                }
+                let left = left - 1;
+                std::hash::Hash::hash(&f.0, state);
+                let left = aver_rt::WalkHash::stream(&f.1, state, left);
+                let left = aver_rt::WalkHash::stream(&f.2, state, left);
+                std::hash::Hash::hash(&f.3, state);
+                left
+            }
+            Proof__view::PAbsurd(f) => {
+                std::hash::Hash::hash(&17u32, state);
+                if left == 0 {
+                    return 0;
+                }
+                let left = left - 1;
+                let left = aver_rt::WalkHash::stream(&f.0, state, left);
+                let left = aver_rt::WalkHash::stream(&f.1, state, left);
+                let left = aver_rt::WalkHash::stream(&f.2, state, left);
+                left
+            }
+            Proof__view::PInduct(f) => {
+                std::hash::Hash::hash(&18u32, state);
+                if left == 0 {
+                    return 0;
+                }
+                let left = left - 1;
+                std::hash::Hash::hash(&f.0, state);
+                std::hash::Hash::hash(&f.1, state);
+                let left = aver_rt::WalkHash::stream(&f.2, state, left);
+                let left = aver_rt::WalkHash::stream(&f.3, state, left);
+                std::hash::Hash::hash(&f.4, state);
+                std::hash::Hash::hash(&f.5, state);
+                left
+            }
+            Proof__view::PListInduct(f) => {
+                std::hash::Hash::hash(&19u32, state);
+                if left == 0 {
+                    return 0;
+                }
+                let left = left - 1;
+                std::hash::Hash::hash(&f.0, state);
+                let left = aver_rt::WalkHash::stream(&f.1, state, left);
+                let left = aver_rt::WalkHash::stream(&f.2, state, left);
+                std::hash::Hash::hash(&f.3, state);
+                let left = aver_rt::WalkHash::stream(&f.4, state, left);
+                std::hash::Hash::hash(&f.5, state);
+                std::hash::Hash::hash(&f.6, state);
+                std::hash::Hash::hash(&f.7, state);
+                std::hash::Hash::hash(&f.8, state);
+                let left = aver_rt::WalkHash::stream(&f.9, state, left);
+                left
+            }
+            Proof__view::PListCases(f) => {
+                std::hash::Hash::hash(&20u32, state);
+                if left == 0 {
+                    return 0;
+                }
+                let left = left - 1;
+                std::hash::Hash::hash(&f.0, state);
+                let left = aver_rt::WalkHash::stream(&f.1, state, left);
+                let left = aver_rt::WalkHash::stream(&f.2, state, left);
+                let left = aver_rt::WalkHash::stream(&f.3, state, left);
+                std::hash::Hash::hash(&f.4, state);
+                std::hash::Hash::hash(&f.5, state);
+                let left = aver_rt::WalkHash::stream(&f.6, state, left);
+                left
+            }
+            Proof__view::PLenInduct(f) => {
+                std::hash::Hash::hash(&21u32, state);
+                if left == 0 {
+                    return 0;
+                }
+                let left = left - 1;
+                std::hash::Hash::hash(&f.0, state);
+                let left = aver_rt::WalkHash::stream(&f.1, state, left);
+                let left = aver_rt::WalkHash::stream(&f.2, state, left);
+                std::hash::Hash::hash(&f.3, state);
+                std::hash::Hash::hash(&f.4, state);
+                std::hash::Hash::hash(&f.5, state);
+                std::hash::Hash::hash(&f.6, state);
+                std::hash::Hash::hash(&f.7, state);
+                let left = aver_rt::WalkHash::stream(&f.8, state, left);
+                left
+            }
+            Proof__view::PRing(f) => {
+                std::hash::Hash::hash(&22u32, state);
+                if left == 0 {
+                    return 0;
+                }
+                let left = left - 1;
+                let left = aver_rt::WalkHash::stream(&f.0, state, left);
+                let left = aver_rt::WalkHash::stream(&f.1, state, left);
+                left
+            }
+            Proof__view::PLinear(f) => {
+                std::hash::Hash::hash(&23u32, state);
+                let left = aver_rt::WalkHash::stream(&f.0, state, left);
+                std::hash::Hash::hash(&f.1, state);
+                std::hash::Hash::hash(&f.2, state);
+                std::hash::Hash::hash(&f.3, state);
+                std::hash::Hash::hash(&f.4, state);
+                left
+            }
+        }
+    }
+
+    fn walk_hash(&self, walk: aver_rt::HashWalk<'_>) -> u64 {
+        match self.view() {
+            Proof__view::PRefl(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&0u32, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
+            }),
+            Proof__view::PSymm(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&1u32, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
+            }),
+            Proof__view::PTrans(f) => walk.node(self, |_, h| {
+                std::hash::Hash::hash(&2u32, h);
+                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hash::hash(&f.1, h);
+            }),
+            Proof__view::PCongr(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&3u32, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.1, walk));
+            }),
+            Proof__view::PUnfold(f) => walk.node(self, |_, h| {
+                std::hash::Hash::hash(&4u32, h);
+                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hash::hash(&f.1, h);
+                std::hash::Hash::hash(&f.2, h);
+                std::hash::Hash::hash(&f.3, h);
+                std::hash::Hash::hash(&f.4, h);
+            }),
+            Proof__view::PConst(f) => walk.node(self, |_, h| {
+                std::hash::Hash::hash(&5u32, h);
+                std::hash::Hash::hash(&f.0, h);
+            }),
+            Proof__view::PArm(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&6u32, h);
+                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hash::hash(&f.1, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.2, walk));
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.3, walk));
+            }),
+            Proof__view::PProj(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&7u32, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
+            }),
+            Proof__view::PCell(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&8u32, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
+            }),
+            Proof__view::PHyp(f) => walk.node(self, |_, h| {
+                std::hash::Hash::hash(&9u32, h);
+                std::hash::Hash::hash(&f.0, h);
+            }),
+            Proof__view::PRule(f) => walk.node(self, |_, h| {
+                std::hash::Hash::hash(&10u32, h);
+                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hash::hash(&f.1, h);
+                std::hash::Hash::hash(&f.2, h);
+            }),
+            Proof__view::PLaw(f) => walk.node(self, |_, h| {
+                std::hash::Hash::hash(&11u32, h);
+                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hash::hash(&f.1, h);
+                std::hash::Hash::hash(&f.2, h);
+            }),
+            Proof__view::PCompute(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&12u32, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.1, walk));
+            }),
+            Proof__view::PCases(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&13u32, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
+                std::hash::Hash::hash(&f.1, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.2, walk));
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.3, walk));
+            }),
+            Proof__view::PSplit(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&14u32, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
+                std::hash::Hash::hash(&f.1, h);
+                std::hash::Hash::hash(&f.2, h);
+                std::hash::Hash::hash(&f.3, h);
+            }),
+            Proof__view::PHave(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&15u32, h);
+                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.1, walk));
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.2, walk));
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.3, walk));
+            }),
+            Proof__view::PEnum(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&16u32, h);
+                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.1, walk));
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.2, walk));
+                std::hash::Hash::hash(&f.3, h);
+            }),
+            Proof__view::PAbsurd(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&17u32, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.1, walk));
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.2, walk));
+            }),
+            Proof__view::PInduct(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&18u32, h);
+                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hash::hash(&f.1, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.2, walk));
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.3, walk));
+                std::hash::Hash::hash(&f.4, h);
+                std::hash::Hash::hash(&f.5, h);
+            }),
+            Proof__view::PListInduct(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&19u32, h);
+                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.1, walk));
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.2, walk));
+                std::hash::Hash::hash(&f.3, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.4, walk));
+                std::hash::Hash::hash(&f.5, h);
+                std::hash::Hash::hash(&f.6, h);
+                std::hash::Hash::hash(&f.7, h);
+                std::hash::Hash::hash(&f.8, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.9, walk));
+            }),
+            Proof__view::PListCases(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&20u32, h);
+                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.1, walk));
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.2, walk));
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.3, walk));
+                std::hash::Hash::hash(&f.4, h);
+                std::hash::Hash::hash(&f.5, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.6, walk));
+            }),
+            Proof__view::PLenInduct(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&21u32, h);
+                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.1, walk));
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.2, walk));
+                std::hash::Hash::hash(&f.3, h);
+                std::hash::Hash::hash(&f.4, h);
+                std::hash::Hash::hash(&f.5, h);
+                std::hash::Hash::hash(&f.6, h);
+                std::hash::Hash::hash(&f.7, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.8, walk));
+            }),
+            Proof__view::PRing(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&22u32, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.1, walk));
+            }),
+            Proof__view::PLinear(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&23u32, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
+                std::hash::Hash::hash(&f.1, h);
+                std::hash::Hash::hash(&f.2, h);
+                std::hash::Hash::hash(&f.3, h);
+                std::hash::Hash::hash(&f.4, h);
+            }),
+        }
     }
 }
 

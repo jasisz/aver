@@ -2008,14 +2008,18 @@ fn aver_run_within_a_minute(file: &Path, args: &[&str]) -> String {
 /// levels a walk of the unfolded tree would not end, so the VM must answer
 /// as it does at 12 within a minute. The fixture also differs at the last
 /// leaf of the graph, compares records on the cycle and two sums on one
-/// cycle.
+/// cycle, and keys maps by such values: a key's hash is made from the hashes
+/// of its parts, each shared one hashed once, and `Map.keys` converts a
+/// shared part once to sort the keys.
 #[test]
 fn vm_equality_of_shared_values_costs_the_graph() {
     let file =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/shared_recursive_sum_app.av");
     let shallow = aver_run_within_a_minute(&file, &["12"]);
     assert!(
-        shallow.contains("dag true false") && shallow.contains("mutual true false"),
+        shallow.contains("map 2 3 false\nkeys 2 true\nkey record true false mutual true false")
+            && shallow.contains("dag true false")
+            && shallow.contains("mutual true false"),
         "{shallow}"
     );
     assert_eq!(aver_run_within_a_minute(&file, &["64"]), shallow);

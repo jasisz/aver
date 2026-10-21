@@ -1,5 +1,5 @@
 use super::*;
-use alloc::collections::BTreeSet;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::ToString;
 
 /// How many pairs of arena values one `==` compares before it starts again
@@ -92,6 +92,15 @@ impl EqWork<'_> {
             EqWork::Remember(_) => true,
         }
     }
+}
+
+/// How a hash goes on: fed to one hasher within its budget, or made from
+/// parts with memory. The memory maps the bits of a value with parts to its
+/// hash; the arena is not changed while a hash runs, so the bits name one
+/// value for the whole hash.
+struct HashWalk<'a> {
+    left: u32,
+    known: Option<&'a mut BTreeMap<u64, u64>>,
 }
 
 impl NanValue {
@@ -382,7 +391,74 @@ impl NanValue {
             _ => same(false),
         }
     }
-    pub fn hash_in<T: ArenaTypes, H: core::hash::Hasher>(self, state: &mut H, arena: &Arena<T>) {
+
+    /// Structural hash that respects `key_eq_in` for every value shape: two
+    /// equal values always produce the same u64 regardless of arena layout.
+    /// Used by Map when the key type is anything beyond inline scalars.
+    ///
+    /// The value is fed to one hasher part by part, as it always was,
+    /// through at most [`EQ_BUDGET`] values with parts (a variant with
+    /// fields, a record, a tuple, a list, a vector). A value with more stops
+    /// there and adds its hash made from its parts' hashes, so the hash of a
+    /// part held in many fields of the arena is made once and remembered
+    /// rather than once per path to it (see [`HashWalk`]). Whether a value
+    /// has parts is decided by its kind, not by how the arena holds it, so
+    /// equal values unfold alike and stop at the same place.
+    #[inline(never)]
+    pub fn map_key_hash_deep<T: ArenaTypes>(self, arena: &Arena<T>) -> u64 {
+        use core::hash::Hasher;
+        let mut state = DefaultHasher::new();
+        let mut walk = HashWalk {
+            left: EQ_BUDGET,
+            known: None,
+        };
+        self.hash_field(&mut state, arena, &mut walk);
+        if walk.left == 0 {
+            state.write_u64(self.hash_from_parts(arena));
+        }
+        state.finish()
+    }
+
+    /// The hash of a value made from its parts' hashes, each remembered.
+    #[cold]
+    #[inline(never)]
+    fn hash_from_parts<T: ArenaTypes>(self, arena: &Arena<T>) -> u64 {
+        use core::hash::Hasher;
+        let mut known = BTreeMap::new();
+        let mut walk = HashWalk {
+            left: 0,
+            known: Some(&mut known),
+        };
+        let mut state = DefaultHasher::new();
+        match self.hash_in(&mut state, arena, &mut walk) {
+            Some(parts) => parts,
+            None => state.finish(),
+        }
+    }
+
+    /// Feeds a field to the hasher of the value holding it: a value with
+    /// parts as its hash.
+    fn hash_field<T: ArenaTypes>(
+        self,
+        state: &mut DefaultHasher,
+        arena: &Arena<T>,
+        walk: &mut HashWalk<'_>,
+    ) {
+        use core::hash::Hasher;
+        if let Some(parts) = self.hash_in(state, arena, walk) {
+            state.write_u64(parts);
+        }
+    }
+
+    /// The hash of a value with parts, which it returns; any other value is
+    /// fed to `state`. Whether a value has parts is decided by its kind, not
+    /// by how the arena holds it, so equal values agree on it.
+    fn hash_in<T: ArenaTypes>(
+        self,
+        state: &mut DefaultHasher,
+        arena: &Arena<T>,
+        walk: &mut HashWalk<'_>,
+    ) -> Option<u64> {
         use core::hash::Hash;
         if self.is_float() {
             1u8.hash(state);
@@ -393,7 +469,7 @@ impl NanValue {
                 f.to_bits()
             };
             bits.hash(state);
-            return;
+            return None;
         }
         if let Some((kind, inner)) = self.wrapper_parts(arena) {
             match kind {
@@ -402,63 +478,86 @@ impl NanValue {
                 WRAP_ERR => (TAG_ERR as u8).hash(state),
                 _ => (0xFFu8).hash(state),
             }
-            inner.hash_in(state, arena);
-            return;
+            inner.hash_field(state, arena, walk);
+            return None;
         }
         if let Some((tid, vid, inner)) = self.inline_variant_info(arena) {
-            (TAG_VARIANT as u8).hash(state);
-            tid.hash(state);
-            vid.hash(state);
-            inner.hash_in(state, arena);
-            return;
+            return self.hash_parts(state, walk, |state, walk| {
+                (TAG_VARIANT as u8).hash(state);
+                tid.hash(state);
+                vid.hash(state);
+                inner.hash_field(state, arena, walk);
+            });
         }
         if let Some((tid, vid, fields)) = self.variant_parts(arena) {
-            (TAG_VARIANT as u8).hash(state);
-            tid.hash(state);
-            vid.hash(state);
-            for field in fields {
-                field.hash_in(state, arena);
+            let header = |state: &mut DefaultHasher| {
+                (TAG_VARIANT as u8).hash(state);
+                tid.hash(state);
+                vid.hash(state);
+            };
+            if fields.is_empty() {
+                header(state);
+                return None;
             }
-            return;
+            return self.hash_parts(state, walk, |state, walk| {
+                header(state);
+                for field in fields {
+                    field.hash_field(state, arena, walk);
+                }
+            });
         }
         if self.is_string() {
             (TAG_STRING as u8).hash(state);
             arena.get_string_value(self).hash(state);
-            return;
+            return None;
         }
         let tag = self.tag();
-        (tag as u8).hash(state);
+        if !matches!(tag, TAG_LIST | TAG_TUPLE | TAG_VECTOR | TAG_RECORD) {
+            (tag as u8).hash(state);
+        }
         match tag {
             TAG_INT => int_ref_hash(self.int_ref(arena), state),
             TAG_IMMEDIATE => self.payload().hash(state),
             TAG_NONE => 0u8.hash(state),
             TAG_STRING => arena.get_string_value(self).hash(state),
             TAG_LIST => {
-                arena.list_len_value(self).hash(state);
-                for item in arena.list_to_vec_value(self) {
-                    item.hash_in(state, arena);
-                }
+                return self.hash_parts(state, walk, |state, walk| {
+                    (tag as u8).hash(state);
+                    arena.list_len_value(self).hash(state);
+                    for item in arena.list_to_vec_value(self) {
+                        item.hash_field(state, arena, walk);
+                    }
+                });
             }
             TAG_TUPLE => {
-                let items = arena.get_tuple(self.arena_index());
-                items.len().hash(state);
-                for item in items {
-                    item.hash_in(state, arena);
-                }
+                return self.hash_parts(state, walk, |state, walk| {
+                    (tag as u8).hash(state);
+                    let items = arena.get_tuple(self.arena_index());
+                    items.len().hash(state);
+                    for item in items {
+                        item.hash_field(state, arena, walk);
+                    }
+                });
             }
             TAG_VECTOR => {
-                let items = arena.vector_ref_value(self);
-                items.len().hash(state);
-                for item in items {
-                    item.hash_in(state, arena);
-                }
+                return self.hash_parts(state, walk, |state, walk| {
+                    (tag as u8).hash(state);
+                    let items = arena.vector_ref_value(self);
+                    items.len().hash(state);
+                    for item in items {
+                        item.hash_field(state, arena, walk);
+                    }
+                });
             }
             TAG_RECORD => {
-                let (tid, fields) = arena.get_record(self.arena_index());
-                tid.hash(state);
-                for f in fields {
-                    f.hash_in(state, arena);
-                }
+                return self.hash_parts(state, walk, |state, walk| {
+                    (tag as u8).hash(state);
+                    let (tid, fields) = arena.get_record(self.arena_index());
+                    tid.hash(state);
+                    for f in fields {
+                        f.hash_field(state, arena, walk);
+                    }
+                });
             }
             TAG_VARIANT | TAG_INLINE_VARIANT => {
                 unreachable!("variant hashing handled above")
@@ -466,6 +565,43 @@ impl NanValue {
             TAG_SYMBOL => self.bits().hash(state),
             _ => self.0.hash(state),
         }
+        None
+    }
+
+    /// A value with parts, `parts` feeding them to a hasher: fed to `state`
+    /// while the budget lasts, nothing once it is spent; with memory, its
+    /// hash made by a hasher of its own, looked up and remembered.
+    #[inline(always)]
+    fn hash_parts(
+        self,
+        state: &mut DefaultHasher,
+        walk: &mut HashWalk<'_>,
+        parts: impl FnOnce(&mut DefaultHasher, &mut HashWalk<'_>),
+    ) -> Option<u64> {
+        use core::hash::Hasher;
+        if walk.known.is_none() {
+            if walk.left > 0 {
+                walk.left -= 1;
+                parts(state, walk);
+            }
+            return None;
+        }
+        let made = |walk: &mut HashWalk<'_>| {
+            let mut state = DefaultHasher::new();
+            parts(&mut state, walk);
+            state.finish()
+        };
+        if !self.may_hold_heap_index() {
+            return Some(made(walk));
+        }
+        if let Some(&hash) = walk.known.as_ref().and_then(|known| known.get(&self.0)) {
+            return Some(hash);
+        }
+        let hash = made(walk);
+        if let Some(known) = walk.known.as_deref_mut() {
+            known.insert(self.0, hash);
+        }
+        Some(hash)
     }
 
     pub fn repr<T: ArenaTypes>(self, arena: &Arena<T>) -> String {

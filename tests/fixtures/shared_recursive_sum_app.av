@@ -2,7 +2,8 @@ module SharedRecursiveSumApp
     intent =
         "Fixture: a record inside a recursive sum, recursion through Option,"
         "one value used as both fields of a node, two sums on one cycle, and"
-        "equality of such values built apart, as deep as the first argument says."
+        "equality of such values built apart and maps keyed by them, as deep as"
+        "the first argument says."
     effects [Console.print, Args.get]
 
 record E
@@ -115,6 +116,13 @@ fn main() -> Unit
     Console.print("equal {T.Pair(t, t) == T.Pair(t, T.Pair(T.Tip(4), T.Wrap(Option.Some(T.Tip(5)))))}")
     Console.print("differ {T.Pair(t, t) == T.Pair(t, T.Tip(4))}")
     n = depth()
+    keys = Map.fromList([(twice(T.Tip(1), n), 1), (spine(n, 2), 2), (spine(n, 1), 3)])
+    Console.print("map {Map.len(keys)} {Option.withDefault(Map.get(keys, twice(T.Tip(1), n)), 0)} {Map.has(keys, spine(n, 3))}")
+    leaves = Map.fromList([(twice(T.Tip(2), n), 2), (twice(T.Tip(1), n), 1)])
+    Console.print("keys {List.len(Map.keys(leaves))} {Map.values(leaves) == [1, 2]}")
+    records = Map.fromList([(nest(E(node = Node.Leaf(7), hash = 0), n), 1)])
+    evens = Map.fromList([(even(n), 1)])
+    Console.print("key record {Map.has(records, nest(E(node = Node.Leaf(7), hash = 0), n))} {Map.has(records, nest(E(node = Node.Leaf(8), hash = 0), n))} mutual {Map.has(evens, succ(odd(n - 1)))} {Map.has(evens, even(n + 1))}")
     Console.print("dag {twice(T.Tip(1), n) == spine(n, 1)} {twice(T.Tip(1), n) == spine(n, 2)}")
     Console.print("record {nest(E(node = Node.Leaf(7), hash = 0), n) == nest(E(node = Node.Leaf(7), hash = 0), n)}")
     Console.print("mutual {even(n) == succ(odd(n - 1))} {even(n) == even(n + 1)}")

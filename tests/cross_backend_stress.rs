@@ -1542,18 +1542,21 @@ fn run_within(source: &str, mode: &[&str], args: &[&str], limit: std::time::Dura
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
+/// What the fixture of shared recursive values prints last: maps keyed by
+/// them, then `==` on them.
+const SHARED_TAIL: &str = "map 2 3 false\nkeys 2 true\nkey record true false mutual true false\n\
+                           dag true false\nrecord true\nmutual true false";
+
 /// `==` on two values of a recursive type built apart, each holding one
 /// subterm under both fields of a node, compares each shared pair once on
-/// wasm-gc: at 64 levels a walk of the unfolded tree would not end, so it
-/// must answer as at 12 within a minute, a difference at the last leaf too.
+/// wasm-gc, and a map keyed by such values hashes each shared node once: at
+/// 64 levels a walk of the unfolded tree would not end, so it must answer as
+/// at 12 within a minute, a difference at the last leaf too.
 #[test]
 fn shared_recursive_sum_equality_ends_on_wasm_gc() {
     let source = include_str!("fixtures/shared_recursive_sum_app.av");
     let minute = std::time::Duration::from_secs(60);
     let shallow = run_within(source, &["--wasm-gc"], &["12"], minute);
-    assert!(
-        shallow.ends_with("dag true false\nrecord true\nmutual true false"),
-        "{shallow}"
-    );
+    assert!(shallow.ends_with(SHARED_TAIL), "{shallow}");
     assert_eq!(run_within(source, &["--wasm-gc"], &["64"], minute), shallow);
 }

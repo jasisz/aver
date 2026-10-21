@@ -465,9 +465,10 @@ fn fused_stdlib_hex_decoding_matches_between_rust_and_vm() {
 /// level a single allocation.
 ///
 /// `==` on two such values built apart, a record on the cycle and two sums
-/// on one cycle compares each shared pair once, not once per path to it: at
-/// 64 levels a walk of the tree would not end, so the compiled binary must
-/// answer as it does at 12 within a minute.
+/// on one cycle compares each shared pair once, not once per path to it, and
+/// a map keyed by such values hashes each shared node once: at 64 levels a
+/// walk of the tree would not end, so the compiled binary must answer as it
+/// does at 12 within a minute.
 #[test]
 fn shared_recursive_sum_matches_between_rust_and_vm() {
     assert_plain_parity_then(

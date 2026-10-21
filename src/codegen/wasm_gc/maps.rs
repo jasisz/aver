@@ -897,6 +897,7 @@ impl MapHelperRegistry {
         registry: &TypeRegistry,
         list_eq_hash: &HashMap<String, (u32, u32)>,
         carrier_eq_hash: &HashMap<String, (u32, u32)>,
+        walked: &HashMap<String, (u32, u32)>,
     ) -> Result<(), WasmGcError> {
         let string_key_helpers = self.key.get("String").copied();
         // Snapshot every K's helpers — record hash/eq dispatch
@@ -910,7 +911,11 @@ impl MapHelperRegistry {
         // Calls into those.
         let mut all_key_helpers: HashMap<String, KeyHelpers> =
             self.key.iter().map(|(k, h)| (k.clone(), *h)).collect();
-        for (carrier, &(eq_fn, hash_fn)) in carrier_eq_hash {
+        // A key type that reaches itself is compared and hashed in steps by
+        // its `__eq_<X>` / `__hash_<X>` (eq_helpers / hash_helpers), which
+        // meet a subterm held under several nodes once rather than once per
+        // path to it; its map-key body is a thin proxy too.
+        for (carrier, &(eq_fn, hash_fn)) in carrier_eq_hash.iter().chain(walked) {
             all_key_helpers.insert(
                 carrier.clone(),
                 KeyHelpers {
@@ -943,6 +948,18 @@ impl MapHelperRegistry {
             );
         }
         for k_aver in &self.key_order {
+            if let Some(&(eq_fn, hash_fn)) = walked.get(k_aver) {
+                for (helper, params) in [(hash_fn, 1), (eq_fn, 2)] {
+                    let mut f = Function::new([]);
+                    for param in 0..params {
+                        f.instruction(&Instruction::LocalGet(param));
+                    }
+                    f.instruction(&Instruction::Call(helper));
+                    f.instruction(&Instruction::End);
+                    codes.function(&f);
+                }
+                continue;
+            }
             codes.function(&emit_hash_for(
                 k_aver,
                 registry,
@@ -1391,7 +1408,7 @@ fn string_idx(registry: &TypeRegistry) -> Result<u32, WasmGcError> {
 /// DJB2 hash over the byte content of a `(ref null $string)`.
 /// `h = 5381; for b in s: h = h * 33 + b`. A standard non-cryptographic
 /// string hash.
-fn emit_hash_string(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+pub(super) fn emit_hash_string(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let s_idx = string_idx(registry)?;
     let padding = wat_helper::padding_types(s_idx);
     let wat = format!(
