@@ -5,10 +5,10 @@
 //! audit proves that the smart constructor cannot be bypassed. It is not an
 //! alternative representation for an arbitrary Aver list.
 
+use crate::shared::Shared as Rc;
 use crate::{AverDisplay, AverInt, AverList};
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::sync::Arc as Rc;
 
 /// An immutable, cheaply cloned byte sequence with slice views.
 #[derive(Clone)]

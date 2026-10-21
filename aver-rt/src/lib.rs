@@ -106,9 +106,17 @@ impl Buffer {
     }
 }
 
-/// Aver string type: newtype over Rc<str> for O(1) clone and native `+` operator.
-#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+/// Aver string type: newtype over `Shared<str>` for O(1) clone and native `+` operator.
+#[derive(Clone, Eq, Ord, PartialOrd, Hash)]
 pub struct AverStr(Rc<str>);
+
+/// One string is equal to itself without reading it, as `Arc<str>`'s `==`.
+impl PartialEq for AverStr {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0) || *self.0 == *other.0
+    }
+}
 
 impl AverStr {
     pub fn len(&self) -> usize {
@@ -162,6 +170,13 @@ impl From<Rc<str>> for AverStr {
     }
 }
 
+/// From hand-written code that holds an `Arc<str>`: the text is copied.
+impl From<std::sync::Arc<str>> for AverStr {
+    fn from(s: std::sync::Arc<str>) -> Self {
+        Self(Rc::from(&*s))
+    }
+}
+
 impl fmt::Display for AverStr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
@@ -192,7 +207,8 @@ pub fn aver_str_concat(a: &AverStr, b: &AverStr) -> AverStr {
     s.push_str(b);
     AverStr::from(s)
 }
-use std::sync::Arc as Rc;
+/// Every node the runtime's values share (lists, vectors, maps, strings).
+use crate::shared::Shared as Rc;
 
 // ── par_execute: parallel execution for independent products (?!) ─────────────────
 

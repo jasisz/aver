@@ -24,7 +24,7 @@
 //! copies otherwise, which costs the walk it was avoiding but answers
 //! the same.
 
-use std::sync::Arc as Rc;
+use crate::shared::Shared as Rc;
 
 use crate::{AverInt, AverIntList, AverPackedU8, AverStr};
 

@@ -1,9 +1,11 @@
-//! The reference-counted box that holds a value of a user type.
+//! The reference-counted box that holds a value of a user type, and the
+//! nodes of the runtime's lists, vectors, maps and strings.
 //!
 //! [`Shared<T>`] is `std::sync::Arc<T>` without weak references: the node is
 //! one atomic count followed by the value, so it costs 8 bytes of header, not
 //! the 16 of an `Arc` (a strong and a weak count). Values never take a weak
-//! reference; only the runtime's work engine does, and it keeps `Arc`.
+//! reference; only the runtime's work engine does, and it keeps `Arc`. A
+//! `Shared<str>` is one node holding the count and the bytes, as `Arc<str>`.
 //!
 //! The count is atomic because a value crosses threads in `(a, b)!`. Every
 //! atomic operation and its ordering is the one `std::sync::Arc` uses for
@@ -17,6 +19,7 @@
 //! alone and a later layout can put a tag after it or keep a node in a
 //! static.
 
+use std::alloc::{self, Layout};
 use std::borrow::Borrow;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -31,13 +34,13 @@ use std::sync::atomic::{self, AtomicUsize, Ordering};
 const MAX_REFCOUNT: usize = isize::MAX as usize;
 
 #[repr(C)]
-struct Node<T> {
+struct Node<T: ?Sized> {
     count: AtomicUsize,
     value: T,
 }
 
 /// A thread-safe reference-counted pointer to a `T` (see the module docs).
-pub struct Shared<T> {
+pub struct Shared<T: ?Sized> {
     ptr: NonNull<Node<T>>,
     /// Owns a `Node<T>` for the drop check, as `Arc` does.
     phantom: PhantomData<Node<T>>,
@@ -45,8 +48,8 @@ pub struct Shared<T> {
 
 // As `Arc`: sending a `Shared` shares the `T` with the threads that keep a
 // clone, and the last owner drops it on whichever thread it is.
-unsafe impl<T: Sync + Send> Send for Shared<T> {}
-unsafe impl<T: Sync + Send> Sync for Shared<T> {}
+unsafe impl<T: ?Sized + Sync + Send> Send for Shared<T> {}
+unsafe impl<T: ?Sized + Sync + Send> Sync for Shared<T> {}
 
 impl<T> Shared<T> {
     /// A new node holding `value`, with a count of one.
@@ -58,7 +61,9 @@ impl<T> Shared<T> {
         });
         Self::from_node(NonNull::from(Box::leak(node)))
     }
+}
 
+impl<T: ?Sized> Shared<T> {
     #[inline]
     fn from_node(ptr: NonNull<Node<T>>) -> Self {
         Self {
@@ -83,7 +88,7 @@ impl<T> Shared<T> {
     /// Whether both point to the same node, as `Arc::ptr_eq`.
     #[inline]
     pub fn ptr_eq(this: &Self, other: &Self) -> bool {
-        this.ptr == other.ptr
+        std::ptr::addr_eq(this.ptr.as_ptr(), other.ptr.as_ptr())
     }
 
     /// How many `Shared` point to this node, as `Arc::strong_count` (a
@@ -114,7 +119,9 @@ impl<T> Shared<T> {
             None
         }
     }
+}
 
+impl<T> Shared<T> {
     /// The value, mutably, copied first into a node of its own when another
     /// owner shares it, as `Arc::make_mut`. `Arc` swaps the count to 0 here
     /// to keep a weak reference from upgrading meanwhile; with none, the
@@ -162,7 +169,7 @@ impl<T> Shared<T> {
     }
 }
 
-impl<T> Clone for Shared<T> {
+impl<T: ?Sized> Clone for Shared<T> {
     /// As `Arc::clone`: a `Relaxed` increment, since a new owner is made
     /// only from an existing one, which keeps the node alive meanwhile.
     #[inline]
@@ -175,7 +182,7 @@ impl<T> Clone for Shared<T> {
     }
 }
 
-impl<T> Drop for Shared<T> {
+impl<T: ?Sized> Drop for Shared<T> {
     /// As `Arc::drop`: a `Release` decrement, so this owner's use of the
     /// value happens before the drop; the last owner's `Acquire` fence makes
     /// every other owner's use happen before it frees the node.
@@ -189,7 +196,7 @@ impl<T> Drop for Shared<T> {
     }
 }
 
-impl<T> Deref for Shared<T> {
+impl<T: ?Sized> Deref for Shared<T> {
     type Target = T;
 
     #[inline]
@@ -198,13 +205,13 @@ impl<T> Deref for Shared<T> {
     }
 }
 
-impl<T> AsRef<T> for Shared<T> {
+impl<T: ?Sized> AsRef<T> for Shared<T> {
     fn as_ref(&self) -> &T {
         self
     }
 }
 
-impl<T> Borrow<T> for Shared<T> {
+impl<T: ?Sized> Borrow<T> for Shared<T> {
     fn borrow(&self) -> &T {
         self
     }
@@ -232,46 +239,70 @@ impl<T: Clone> From<Shared<T>> for Arc<T> {
     }
 }
 
+impl From<&str> for Shared<str> {
+    /// As `Arc::from(&str)`: one node holding the count and a copy of the
+    /// bytes, laid out as `Node<str>`, so dropping it through a `Box` frees
+    /// it with the layout it was allocated with.
+    fn from(text: &str) -> Self {
+        let layout = Layout::new::<AtomicUsize>()
+            .extend(Layout::array::<u8>(text.len()).expect("a str fits in isize"))
+            .expect("a str fits in isize")
+            .0
+            .pad_to_align();
+        unsafe {
+            let memory = alloc::alloc(layout);
+            if memory.is_null() {
+                alloc::handle_alloc_error(layout);
+            }
+            let node = std::ptr::slice_from_raw_parts_mut(memory, text.len()) as *mut Node<str>;
+            (&raw mut (*node).count).write(AtomicUsize::new(1));
+            let bytes = (&raw mut (*node).value).cast::<u8>();
+            std::ptr::copy_nonoverlapping(text.as_ptr(), bytes, text.len());
+            Self::from_node(NonNull::new_unchecked(node))
+        }
+    }
+}
+
 impl<T: Default> Default for Shared<T> {
     fn default() -> Self {
         Self::new(T::default())
     }
 }
 
-impl<T: fmt::Debug> fmt::Debug for Shared<T> {
+impl<T: ?Sized + fmt::Debug> fmt::Debug for Shared<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&**self, f)
     }
 }
 
-impl<T: fmt::Display> fmt::Display for Shared<T> {
+impl<T: ?Sized + fmt::Display> fmt::Display for Shared<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(&**self, f)
     }
 }
 
-impl<T: PartialEq> PartialEq for Shared<T> {
+impl<T: ?Sized + PartialEq> PartialEq for Shared<T> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         **self == **other
     }
 }
 
-impl<T: Eq> Eq for Shared<T> {}
+impl<T: ?Sized + Eq> Eq for Shared<T> {}
 
-impl<T: PartialOrd> PartialOrd for Shared<T> {
+impl<T: ?Sized + PartialOrd> PartialOrd for Shared<T> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         (**self).partial_cmp(&**other)
     }
 }
 
-impl<T: Ord> Ord for Shared<T> {
+impl<T: ?Sized + Ord> Ord for Shared<T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         (**self).cmp(&**other)
     }
 }
 
-impl<T: Hash> Hash for Shared<T> {
+impl<T: ?Sized + Hash> Hash for Shared<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         (**self).hash(state)
     }
@@ -423,6 +454,27 @@ mod tests {
         let back: Shared<String> = arc.clone().into();
         assert_eq!(*back, "x");
         assert_eq!(Arc::strong_count(&arc), 1);
+    }
+
+    #[test]
+    fn a_str_is_one_node() {
+        assert_eq!(size_of::<Shared<str>>(), 2 * size_of::<usize>());
+        for text in ["", "a", "seven b", "a longer text than one word"] {
+            let a: Shared<str> = Shared::from(text);
+            let b = a.clone();
+            assert_eq!(&*a, text);
+            assert!(Shared::ptr_eq(&a, &b));
+            assert_eq!(Shared::strong_count(&a), 2);
+            assert_eq!(a, Shared::from(text));
+        }
+        let texts: Vec<Shared<str>> = (0..64).map(|i| Shared::from(&*"x".repeat(i))).collect();
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                let mine = texts.clone();
+                scope.spawn(move || assert_eq!(mine[63].len(), 63));
+            }
+        });
+        assert!(texts.iter().all(|t| Shared::strong_count(t) == 1));
     }
 
     #[test]
