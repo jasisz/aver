@@ -1,0 +1,25 @@
+fallback 1 ran
+pick 10
+fallback 1 ran
+pick 1
+fallback 2 ran
+pickOk 20
+fallback 2 ran
+pickOk 2
+fallback 3 ran
+found ok 30
+fallback 3 ran
+found err 3
+fallback 4 ran
+lookup 40
+fallback 4 ran
+lookup 4
+value ran
+fallback 5 ran
+ordered 50
+fallback 6 ran
+fallback 7 ran
+nested 60
+fallback 6 ran
+fallback 6 ran
+nested 6

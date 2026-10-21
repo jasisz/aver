@@ -115,6 +115,13 @@ impl MirProgram {
         self.fallback_is_quiet(fallback, &mut calls) && calls
     }
 
+    /// Whether the fallback has an effect or leaves the function, by the
+    /// same reading: such a fallback runs before the value is looked at on
+    /// every backend, because Aver evaluates arguments before the call.
+    pub fn fallback_has_effect(&self, fallback: &MirExpr) -> bool {
+        !self.fallback_is_quiet(fallback, &mut false)
+    }
+
     fn fallback_is_quiet(&self, expr: &MirExpr, calls: &mut bool) -> bool {
         use super::expr::MirCallee;
         let quiet = match expr {
