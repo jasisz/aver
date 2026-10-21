@@ -32,10 +32,12 @@ use crate::value::{RuntimeError, Value, aver_repr};
 /// NaN-boxed path and `[2, 10]` on the tree-walk path, and a string key
 /// containing an escape sorted by its escape sequence rather than by its
 /// characters. Converting the key back to a `Value` keeps one comparator for
-/// both paths rather than a second copy that can drift.
+/// both paths rather than a second copy that can drift. The conversion
+/// shares a part held in many places, so a key that shares its parts costs
+/// what it holds, not its unfolded tree.
 fn sort_keys_nv(keys: &mut [NanValue], arena: &Arena) {
-    use crate::nan_value::NanValueConvert;
-    let mut keyed: Vec<(Value, NanValue)> = keys.iter().map(|k| (k.to_value(arena), *k)).collect();
+    let values = crate::nan_value::to_values_sharing(keys.iter().copied(), arena);
+    let mut keyed: Vec<(Value, NanValue)> = values.into_iter().zip(keys.iter().copied()).collect();
     keyed.sort_by(|(a, _), (b, _)| compare_keys(a, b));
     for (slot, (_, key)) in keys.iter_mut().zip(keyed) {
         *slot = key;
@@ -44,11 +46,9 @@ fn sort_keys_nv(keys: &mut [NanValue], arena: &Arena) {
 
 /// [`sort_keys_nv`] for `(key, value)` pairs — ordered by key alone.
 fn sort_entries_nv(entries: &mut [(NanValue, NanValue)], arena: &Arena) {
-    use crate::nan_value::NanValueConvert;
-    let mut keyed: Vec<(Value, (NanValue, NanValue))> = entries
-        .iter()
-        .map(|pair| (pair.0.to_value(arena), *pair))
-        .collect();
+    let values = crate::nan_value::to_values_sharing(entries.iter().map(|pair| pair.0), arena);
+    let mut keyed: Vec<(Value, (NanValue, NanValue))> =
+        values.into_iter().zip(entries.iter().copied()).collect();
     keyed.sort_by(|(a, _), (b, _)| compare_keys(a, b));
     for (slot, (_, pair)) in entries.iter_mut().zip(keyed) {
         *slot = pair;
@@ -104,6 +104,10 @@ pub(crate) fn compare_keys(a: &Value, b: &Value) -> Ordering {
             seq(&xs, &ys)
         }
         (Value::Record { fields: xs, .. }, Value::Record { fields: ys, .. }) => {
+            // One part shared by both keys (see `sort_keys_nv`) is equal to itself.
+            if std::ptr::eq(&**xs, &**ys) {
+                return Ordering::Equal;
+            }
             compare_fields_by_name(xs, ys)
         }
         (
@@ -117,7 +121,10 @@ pub(crate) fn compare_keys(a: &Value, b: &Value) -> Ordering {
                 fields: ys,
                 ..
             },
-        ) => vx.cmp(vy).then_with(|| seq(xs, ys)),
+        ) => vx.cmp(vy).then_with(|| match std::ptr::eq(&**xs, &**ys) {
+            true => Ordering::Equal,
+            false => seq(xs, ys),
+        }),
         _ => compare_scalar_keys(a, b),
     }
 }

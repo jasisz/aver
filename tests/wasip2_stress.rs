@@ -215,8 +215,9 @@ fn bits_pop_count_matches_expected() {
 }
 
 /// `==` on recursive values sharing subterms, built apart, compares each
-/// shared pair once: at 64 levels it answers as at 12, within a minute.
-/// `cross_backend_stress` runs the same file on wasm-gc.
+/// shared pair once, and a map keyed by them hashes each shared node once:
+/// at 64 levels it answers as at 12, within a minute. `cross_backend_stress`
+/// runs the same file on wasm-gc.
 #[test]
 fn shared_recursive_sum_equality_ends() {
     let dir = tempdir("shared-sum");
@@ -247,10 +248,9 @@ fn shared_recursive_sum_equality_ends() {
         stdout(&out).trim().to_string()
     };
     let shallow = run("12");
-    assert!(
-        shallow.ends_with("dag true false\nrecord true\nmutual true false"),
-        "{shallow}"
-    );
+    let tail = "map 2 3 false\nkeys 2 true\nkey record true false mutual true false\n\
+                dag true false\nrecord true\nmutual true false";
+    assert!(shallow.ends_with(tail), "{shallow}");
     assert_eq!(run("64"), shallow);
     let _ = std::fs::remove_dir_all(&dir);
 }

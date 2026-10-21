@@ -3,7 +3,7 @@ use crate::proof_std::*;
 use ::aver_rt::aver_list_match;
 
 ::aver_rt::thin_sum! {
-    #[derive(Debug, Hash)]
+    #[derive(Debug)]
     pub Ty / Ty__view / Ty__pair {
         0 TyInt,
         1 TyBool,
@@ -31,7 +31,146 @@ impl std::fmt::Debug for Ty {
 
 impl std::hash::Hash for Ty {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.view().hash(state)
+        aver_rt::shared_hash::hash(self, state)
+    }
+}
+
+impl aver_rt::WalkHash for Ty {
+    fn stream<H: std::hash::Hasher>(&self, state: &mut H, left: u32) -> u32 {
+        match self.view() {
+            Ty__view::TyInt => {
+                std::hash::Hash::hash(&0u32, state);
+                left
+            }
+            Ty__view::TyBool => {
+                std::hash::Hash::hash(&1u32, state);
+                left
+            }
+            Ty__view::TyStr => {
+                std::hash::Hash::hash(&2u32, state);
+                left
+            }
+            Ty__view::TyFloat => {
+                std::hash::Hash::hash(&3u32, state);
+                left
+            }
+            Ty__view::TyUnit => {
+                std::hash::Hash::hash(&4u32, state);
+                left
+            }
+            Ty__view::TyList(f) => {
+                std::hash::Hash::hash(&5u32, state);
+                let left = aver_rt::WalkHash::stream(&f.0, state, left);
+                left
+            }
+            Ty__view::TyOption(f) => {
+                std::hash::Hash::hash(&6u32, state);
+                let left = aver_rt::WalkHash::stream(&f.0, state, left);
+                left
+            }
+            Ty__view::TyResult(f) => {
+                std::hash::Hash::hash(&7u32, state);
+                if left == 0 {
+                    return 0;
+                }
+                let left = left - 1;
+                let left = aver_rt::WalkHash::stream(&f.0, state, left);
+                let left = aver_rt::WalkHash::stream(&f.1, state, left);
+                left
+            }
+            Ty__view::TyMap(f) => {
+                std::hash::Hash::hash(&8u32, state);
+                if left == 0 {
+                    return 0;
+                }
+                let left = left - 1;
+                let left = aver_rt::WalkHash::stream(&f.0, state, left);
+                let left = aver_rt::WalkHash::stream(&f.1, state, left);
+                left
+            }
+            Ty__view::TyVector(f) => {
+                std::hash::Hash::hash(&9u32, state);
+                let left = aver_rt::WalkHash::stream(&f.0, state, left);
+                left
+            }
+            Ty__view::TyTuple(f) => {
+                std::hash::Hash::hash(&10u32, state);
+                std::hash::Hash::hash(&f.0, state);
+                left
+            }
+            Ty__view::TyNamed(f) => {
+                std::hash::Hash::hash(&11u32, state);
+                std::hash::Hash::hash(&f.0, state);
+                left
+            }
+            Ty__view::TyAny => {
+                std::hash::Hash::hash(&12u32, state);
+                left
+            }
+            Ty__view::TyVar(f) => {
+                std::hash::Hash::hash(&13u32, state);
+                std::hash::Hash::hash(&f.0, state);
+                std::hash::Hash::hash(&f.1, state);
+                left
+            }
+            Ty__view::TyRigid(f) => {
+                std::hash::Hash::hash(&14u32, state);
+                std::hash::Hash::hash(&f.0, state);
+                std::hash::Hash::hash(&f.1, state);
+                left
+            }
+        }
+    }
+
+    fn walk_hash(&self, walk: aver_rt::HashWalk<'_>) -> u64 {
+        match self.view() {
+            Ty__view::TyInt => aver_rt::shared_hash::tag_hash(0),
+            Ty__view::TyBool => aver_rt::shared_hash::tag_hash(1),
+            Ty__view::TyStr => aver_rt::shared_hash::tag_hash(2),
+            Ty__view::TyFloat => aver_rt::shared_hash::tag_hash(3),
+            Ty__view::TyUnit => aver_rt::shared_hash::tag_hash(4),
+            Ty__view::TyList(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&5u32, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
+            }),
+            Ty__view::TyOption(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&6u32, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
+            }),
+            Ty__view::TyResult(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&7u32, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.1, walk));
+            }),
+            Ty__view::TyMap(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&8u32, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.1, walk));
+            }),
+            Ty__view::TyVector(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&9u32, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
+            }),
+            Ty__view::TyTuple(f) => walk.node(self, |_, h| {
+                std::hash::Hash::hash(&10u32, h);
+                std::hash::Hash::hash(&f.0, h);
+            }),
+            Ty__view::TyNamed(f) => walk.node(self, |_, h| {
+                std::hash::Hash::hash(&11u32, h);
+                std::hash::Hash::hash(&f.0, h);
+            }),
+            Ty__view::TyAny => aver_rt::shared_hash::tag_hash(12),
+            Ty__view::TyVar(f) => walk.node(self, |_, h| {
+                std::hash::Hash::hash(&13u32, h);
+                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hash::hash(&f.1, h);
+            }),
+            Ty__view::TyRigid(f) => walk.node(self, |_, h| {
+                std::hash::Hash::hash(&14u32, h);
+                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hash::hash(&f.1, h);
+            }),
+        }
     }
 }
 
@@ -369,7 +508,7 @@ impl aver_rt::AverDisplay for TypedVar {
 }
 
 ::aver_rt::thin_sum! {
-    #[derive(Debug, Hash)]
+    #[derive(Debug)]
     pub Term / Term__view / Term__pair {
         0 TInt(Term__TInt),
         1 TBool(Term__TBool),
@@ -400,7 +539,197 @@ impl std::fmt::Debug for Term {
 
 impl std::hash::Hash for Term {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.view().hash(state)
+        aver_rt::shared_hash::hash(self, state)
+    }
+}
+
+impl aver_rt::WalkHash for Term {
+    fn stream<H: std::hash::Hasher>(&self, state: &mut H, left: u32) -> u32 {
+        match self.view() {
+            Term__view::TInt(f) => {
+                std::hash::Hash::hash(&0u32, state);
+                std::hash::Hash::hash(&f.0, state);
+                left
+            }
+            Term__view::TBool(f) => {
+                std::hash::Hash::hash(&1u32, state);
+                std::hash::Hash::hash(&f.0, state);
+                left
+            }
+            Term__view::TStr(f) => {
+                std::hash::Hash::hash(&2u32, state);
+                std::hash::Hash::hash(&f.0, state);
+                left
+            }
+            Term__view::TUnit => {
+                std::hash::Hash::hash(&3u32, state);
+                left
+            }
+            Term__view::TVar(f) => {
+                std::hash::Hash::hash(&4u32, state);
+                std::hash::Hash::hash(&f.0, state);
+                left
+            }
+            Term__view::THole => {
+                std::hash::Hash::hash(&5u32, state);
+                left
+            }
+            Term__view::TGet(f) => {
+                std::hash::Hash::hash(&6u32, state);
+                let left = aver_rt::WalkHash::stream(&f.0, state, left);
+                std::hash::Hash::hash(&f.1, state);
+                left
+            }
+            Term__view::TCall(f) => {
+                std::hash::Hash::hash(&7u32, state);
+                std::hash::Hash::hash(&f.0, state);
+                std::hash::Hash::hash(&f.1, state);
+                left
+            }
+            Term__view::TBi(f) => {
+                std::hash::Hash::hash(&8u32, state);
+                std::hash::Hash::hash(&f.0, state);
+                std::hash::Hash::hash(&f.1, state);
+                left
+            }
+            Term__view::TOp(f) => {
+                std::hash::Hash::hash(&9u32, state);
+                if left == 0 {
+                    return 0;
+                }
+                let left = left - 1;
+                std::hash::Hash::hash(&f.0, state);
+                let left = aver_rt::WalkHash::stream(&f.1, state, left);
+                let left = aver_rt::WalkHash::stream(&f.2, state, left);
+                left
+            }
+            Term__view::TNeg(f) => {
+                std::hash::Hash::hash(&10u32, state);
+                let left = aver_rt::WalkHash::stream(&f.0, state, left);
+                left
+            }
+            Term__view::TCtor(f) => {
+                std::hash::Hash::hash(&11u32, state);
+                std::hash::Hash::hash(&f.0, state);
+                std::hash::Hash::hash(&f.1, state);
+                left
+            }
+            Term__view::TMatch(f) => {
+                std::hash::Hash::hash(&12u32, state);
+                let left = aver_rt::WalkHash::stream(&f.0, state, left);
+                std::hash::Hash::hash(&f.1, state);
+                left
+            }
+            Term__view::TParts(f) => {
+                std::hash::Hash::hash(&13u32, state);
+                std::hash::Hash::hash(&f.0, state);
+                left
+            }
+            Term__view::TList(f) => {
+                std::hash::Hash::hash(&14u32, state);
+                std::hash::Hash::hash(&f.0, state);
+                left
+            }
+            Term__view::TTuple(f) => {
+                std::hash::Hash::hash(&15u32, state);
+                std::hash::Hash::hash(&f.0, state);
+                left
+            }
+            Term__view::TRec(f) => {
+                std::hash::Hash::hash(&16u32, state);
+                std::hash::Hash::hash(&f.0, state);
+                std::hash::Hash::hash(&f.1, state);
+                left
+            }
+            Term__view::TUpd(f) => {
+                std::hash::Hash::hash(&17u32, state);
+                std::hash::Hash::hash(&f.0, state);
+                let left = aver_rt::WalkHash::stream(&f.1, state, left);
+                std::hash::Hash::hash(&f.2, state);
+                left
+            }
+        }
+    }
+
+    fn walk_hash(&self, walk: aver_rt::HashWalk<'_>) -> u64 {
+        match self.view() {
+            Term__view::TInt(f) => walk.node(self, |_, h| {
+                std::hash::Hash::hash(&0u32, h);
+                std::hash::Hash::hash(&f.0, h);
+            }),
+            Term__view::TBool(f) => walk.node(self, |_, h| {
+                std::hash::Hash::hash(&1u32, h);
+                std::hash::Hash::hash(&f.0, h);
+            }),
+            Term__view::TStr(f) => walk.node(self, |_, h| {
+                std::hash::Hash::hash(&2u32, h);
+                std::hash::Hash::hash(&f.0, h);
+            }),
+            Term__view::TUnit => aver_rt::shared_hash::tag_hash(3),
+            Term__view::TVar(f) => walk.node(self, |_, h| {
+                std::hash::Hash::hash(&4u32, h);
+                std::hash::Hash::hash(&f.0, h);
+            }),
+            Term__view::THole => aver_rt::shared_hash::tag_hash(5),
+            Term__view::TGet(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&6u32, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
+                std::hash::Hash::hash(&f.1, h);
+            }),
+            Term__view::TCall(f) => walk.node(self, |_, h| {
+                std::hash::Hash::hash(&7u32, h);
+                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hash::hash(&f.1, h);
+            }),
+            Term__view::TBi(f) => walk.node(self, |_, h| {
+                std::hash::Hash::hash(&8u32, h);
+                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hash::hash(&f.1, h);
+            }),
+            Term__view::TOp(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&9u32, h);
+                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.1, walk));
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.2, walk));
+            }),
+            Term__view::TNeg(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&10u32, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
+            }),
+            Term__view::TCtor(f) => walk.node(self, |_, h| {
+                std::hash::Hash::hash(&11u32, h);
+                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hash::hash(&f.1, h);
+            }),
+            Term__view::TMatch(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&12u32, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
+                std::hash::Hash::hash(&f.1, h);
+            }),
+            Term__view::TParts(f) => walk.node(self, |_, h| {
+                std::hash::Hash::hash(&13u32, h);
+                std::hash::Hash::hash(&f.0, h);
+            }),
+            Term__view::TList(f) => walk.node(self, |_, h| {
+                std::hash::Hash::hash(&14u32, h);
+                std::hash::Hash::hash(&f.0, h);
+            }),
+            Term__view::TTuple(f) => walk.node(self, |_, h| {
+                std::hash::Hash::hash(&15u32, h);
+                std::hash::Hash::hash(&f.0, h);
+            }),
+            Term__view::TRec(f) => walk.node(self, |_, h| {
+                std::hash::Hash::hash(&16u32, h);
+                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hash::hash(&f.1, h);
+            }),
+            Term__view::TUpd(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&17u32, h);
+                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.1, walk));
+                std::hash::Hash::hash(&f.2, h);
+            }),
+        }
     }
 }
 

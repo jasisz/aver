@@ -19,6 +19,7 @@ mod runtime;
 mod service_types;
 mod shared;
 mod shared_eq;
+pub mod shared_hash;
 pub mod strcursor;
 mod string_index;
 pub mod tcp;
@@ -54,6 +55,7 @@ pub use service_types::{
 };
 pub use shared::Shared;
 pub use shared_eq::{NodeId, Walk, WalkEq, walk_eq};
+pub use shared_hash::{HashWalk, WalkHash};
 pub use strcursor::{
     str_code1, str_code1_lower, str_code1_upper, str_cursor_code, str_cursor_end, str_cursor_head,
     str_cursor_next, str_fold_lower, str_fold_upper,

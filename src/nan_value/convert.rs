@@ -31,6 +31,13 @@ pub(crate) fn register_capability_resource_type(arena: &mut Arena) -> u32 {
 pub trait NanValueConvert {
     fn from_value(val: &Value, arena: &mut Arena) -> NanValue;
     fn to_value(self, arena: &Arena) -> Value;
+    /// [`NanValueConvert::to_value`] that, given a memory, converts a variant
+    /// or record held in many places of the arena once and shares it, so a
+    /// value that shares its parts converts at the cost of what it holds,
+    /// not of its unfolded tree.
+    fn to_value_in(self, arena: &Arena, memo: &mut Option<HashMap<u64, Value>>) -> Value;
+    /// [`NanValueConvert::to_value_in`] of the value itself, unremembered.
+    fn to_value_parts(self, arena: &Arena, memo: &mut Option<HashMap<u64, Value>>) -> Value;
 }
 
 impl NanValueConvert for NanValue {
@@ -179,13 +186,34 @@ impl NanValueConvert for NanValue {
         }
     }
 
-    /// Convert NanValue back to old Value (for interop during migration).
     fn to_value(self, arena: &Arena) -> Value {
+        self.to_value_in(arena, &mut None)
+    }
+
+    fn to_value_in(self, arena: &Arena, memo: &mut Option<HashMap<u64, Value>>) -> Value {
+        // `Value` keeps the fields of a variant or a record behind an `Rc`,
+        // so one converted once is shared by every place that holds it.
+        let shared = memo.is_some()
+            && self.may_hold_heap_index()
+            && matches!(self.tag(), TAG_VARIANT | TAG_RECORD);
+        if shared && let Some(known) = memo.as_ref().and_then(|m| m.get(&self.bits())) {
+            return known.clone();
+        }
+        let converted = self.to_value_parts(arena, memo);
+        if shared && let Some(m) = memo.as_mut() {
+            m.insert(self.bits(), converted.clone());
+        }
+        converted
+    }
+
+    /// Convert NanValue back to old Value, its parts through the memory of
+    /// [`NanValueConvert::to_value_in`].
+    fn to_value_parts(self, arena: &Arena, memo: &mut Option<HashMap<u64, Value>>) -> Value {
         if self.is_float() {
             return Value::Float(self.as_float());
         }
         if let Some((kind, inner)) = self.wrapper_parts(arena) {
-            let inner = inner.to_value(arena);
+            let inner = inner.to_value_in(arena, memo);
             return match kind {
                 WRAP_SOME => Value::Some(Box::new(inner)),
                 WRAP_OK => Value::Ok(Box::new(inner)),
@@ -199,13 +227,13 @@ impl NanValueConvert for NanValue {
             return Value::Variant {
                 type_name,
                 variant,
-                fields: vec![inner.to_value(arena)].into(),
+                fields: vec![inner.to_value_in(arena, memo)].into(),
             };
         }
         if let Some((type_id, variant_id, fields)) = self.variant_parts(arena) {
             let type_name = arena.get_type_name(type_id).to_string();
             let variant = arena.get_variant_name(type_id, variant_id).to_string();
-            let vals: Vec<Value> = fields.iter().map(|v| v.to_value(arena)).collect();
+            let vals: Vec<Value> = fields.iter().map(|v| v.to_value_in(arena, memo)).collect();
             return Value::Variant {
                 type_name,
                 variant,
@@ -229,24 +257,24 @@ impl NanValueConvert for NanValue {
                 let vals: Vec<Value> = arena
                     .list_to_vec_value(self)
                     .into_iter()
-                    .map(|v| v.to_value(arena))
+                    .map(|v| v.to_value_in(arena, memo))
                     .collect();
                 Value::List(aver_rt::AverList::from_vec(vals))
             }
             TAG_VECTOR => {
                 let items = arena.vector_ref_value(self);
-                let vals: Vec<Value> = items.iter().map(|v| v.to_value(arena)).collect();
+                let vals: Vec<Value> = items.iter().map(|v| v.to_value_in(arena, memo)).collect();
                 Value::Vector(aver_rt::AverVector::from_vec(vals))
             }
             TAG_TUPLE => {
                 let items = arena.get_tuple(self.arena_index());
-                Value::Tuple(items.iter().map(|v| v.to_value(arena)).collect())
+                Value::Tuple(items.iter().map(|v| v.to_value_in(arena, memo)).collect())
             }
             TAG_MAP => {
                 let map = arena.map_ref_value(self);
                 let mut hm = HashMap::new();
                 for (k, v) in map.values() {
-                    hm.insert(k.to_value(arena), v.to_value(arena));
+                    hm.insert(k.to_value_in(arena, memo), v.to_value_in(arena, memo));
                 }
                 Value::Map(hm)
             }
@@ -256,7 +284,7 @@ impl NanValueConvert for NanValue {
                 if type_name == CAPABILITY_RESOURCE_TYPE {
                     let values: Vec<String> = fields
                         .iter()
-                        .map(|value| match value.to_value(arena) {
+                        .map(|value| match value.to_value_in(arena, memo) {
                             Value::Str(value) => value,
                             _ => String::new(),
                         })
@@ -283,7 +311,7 @@ impl NanValueConvert for NanValue {
                 let pairs: Vec<(String, Value)> = field_names
                     .iter()
                     .zip(fields)
-                    .map(|(n, v)| (n.clone(), v.to_value(arena)))
+                    .map(|(n, v)| (n.clone(), v.to_value_in(arena, memo)))
                     .collect();
                 Value::Record {
                     type_name,
@@ -302,7 +330,7 @@ impl NanValueConvert for NanValue {
                     let (name, members) = arena.get_namespace(self.symbol_index());
                     let mut hm = HashMap::new();
                     for (k, v) in members {
-                        hm.insert(k.to_string(), v.to_value(arena));
+                        hm.insert(k.to_string(), v.to_value_in(arena, memo));
                     }
                     Value::Namespace {
                         name: name.to_string(),
@@ -317,4 +345,18 @@ impl NanValueConvert for NanValue {
             _ => Value::Unit,
         }
     }
+}
+
+/// The `Value`s of `values`, which share every variant or record held in
+/// more than one place under them (see [`NanValueConvert::to_value_in`]).
+/// The values themselves are not remembered: they are the keys of one map,
+/// each held there once.
+pub(crate) fn to_values_sharing(
+    values: impl Iterator<Item = NanValue>,
+    arena: &Arena,
+) -> Vec<Value> {
+    let mut memo = Some(HashMap::new());
+    values
+        .map(|value| value.to_value_parts(arena, &mut memo))
+        .collect()
 }

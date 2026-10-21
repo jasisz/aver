@@ -251,6 +251,73 @@ fn walk_edge<'a>(
         .map(|(k, _)| k.as_str())
 }
 
+/// The helpers of `order` whose type reaches itself through records, sums
+/// and `Option`s held directly, in the order of `order`. The hash helpers
+/// pick theirs by the same rule (`hash_helpers`).
+pub(crate) fn self_reaching(
+    order: &[String],
+    kinds: &HashMap<String, EqKind>,
+    registry: &TypeRegistry,
+) -> Vec<String> {
+    let edges: HashMap<&str, Vec<&str>> = order
+        .iter()
+        .map(|name| {
+            let kind = kinds[name];
+            let fields = match kind {
+                EqKind::Record | EqKind::Sum | EqKind::OptionEq => {
+                    helper_field_types(name, kind, registry)
+                }
+                _ => Vec::new(),
+            };
+            let to = fields
+                .iter()
+                .filter_map(|t| walk_edge(t, kinds, registry))
+                .collect();
+            (name.as_str(), to)
+        })
+        .collect();
+    let reaches_itself = |name: &str| {
+        let mut seen = HashSet::new();
+        let mut todo = edges[name].clone();
+        while let Some(next) = todo.pop() {
+            if next == name {
+                return true;
+            }
+            if seen.insert(next) {
+                todo.extend(edges[next].iter().copied());
+            }
+        }
+        false
+    };
+    order
+        .iter()
+        .filter(|name| reaches_itself(name))
+        .cloned()
+        .collect()
+}
+
+/// The helpers a value of one of the types `roots` reaches through its
+/// fields, in collections too.
+pub(crate) fn reached_from(
+    roots: &[String],
+    kinds: &HashMap<String, EqKind>,
+    registry: &TypeRegistry,
+) -> HashSet<String> {
+    let mut seen = HashSet::new();
+    let mut todo: Vec<&str> = roots
+        .iter()
+        .flat_map(|root| field_helpers(root, kinds))
+        .collect();
+    while let Some(next) = todo.pop() {
+        if seen.insert(next.to_string()) {
+            for field in helper_field_types(next, kinds[next], registry) {
+                todo.extend(field_helpers(&field, kinds));
+            }
+        }
+    }
+    seen
+}
+
 /// The declared types of the fields of helper `name`.
 fn helper_field_types(name: &str, kind: EqKind, registry: &TypeRegistry) -> Vec<String> {
     match kind {
@@ -541,44 +608,13 @@ impl EqHelperRegistry {
     /// every helper is registered.
     pub(crate) fn find_walks(&mut self, registry: &TypeRegistry) {
         self.order.sort_unstable();
-        let edges: HashMap<&str, Vec<&str>> = self
-            .order
-            .iter()
-            .map(|name| {
-                let kind = self.kinds[name];
-                let fields = match kind {
-                    EqKind::Record | EqKind::Sum | EqKind::OptionEq => {
-                        helper_field_types(name, kind, registry)
-                    }
-                    _ => Vec::new(),
-                };
-                let to = fields
-                    .iter()
-                    .filter_map(|t| walk_edge(t, &self.kinds, registry))
-                    .collect();
-                (name.as_str(), to)
-            })
-            .collect();
-        let reaches_itself = |name: &str| {
-            let mut seen = HashSet::new();
-            let mut todo = edges[name].clone();
-            while let Some(next) = todo.pop() {
-                if next == name {
-                    return true;
-                }
-                if seen.insert(next) {
-                    todo.extend(edges[next].iter().copied());
-                }
-            }
-            false
-        };
-        let walks: Vec<String> = self
-            .order
-            .iter()
-            .filter(|name| reaches_itself(name))
-            .cloned()
-            .collect();
+        let walks = self_reaching(&self.order, &self.kinds, registry);
         self.walks = walks.into_iter().map(|name| (name, (0, 0))).collect();
+    }
+
+    /// Whether the helper of `name` compares in steps.
+    pub(crate) fn walks(&self, name: &str) -> bool {
+        self.walks.iter().any(|(walked, _)| walked == name)
     }
 
     /// Whether `==` on `name` is reflexive: no `Float` is named in any

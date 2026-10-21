@@ -3,7 +3,7 @@ use crate::proof_std::*;
 use ::aver_rt::aver_list_match;
 
 ::aver_rt::thin_sum! {
-    #[derive(Debug, Hash)]
+    #[derive(Debug)]
     pub Tactic / Tactic__view / Tactic__pair {
         0 Auto,
         1 Cases(Tactic__Cases),
@@ -23,7 +23,110 @@ impl std::fmt::Debug for Tactic {
 
 impl std::hash::Hash for Tactic {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.view().hash(state)
+        aver_rt::shared_hash::hash(self, state)
+    }
+}
+
+impl aver_rt::WalkHash for Tactic {
+    fn stream<H: std::hash::Hasher>(&self, state: &mut H, left: u32) -> u32 {
+        match self.view() {
+            Tactic__view::Auto => {
+                std::hash::Hash::hash(&0u32, state);
+                left
+            }
+            Tactic__view::Cases(f) => {
+                std::hash::Hash::hash(&1u32, state);
+                let left = aver_rt::WalkHash::stream(&f.0, state, left);
+                left
+            }
+            Tactic__view::Induction(f) => {
+                std::hash::Hash::hash(&2u32, state);
+                if left == 0 {
+                    return 0;
+                }
+                let left = left - 1;
+                std::hash::Hash::hash(&f.0, state);
+                std::hash::Hash::hash(&f.1, state);
+                std::hash::Hash::hash(&f.2, state);
+                let left = aver_rt::WalkHash::stream(&f.3, state, left);
+                let left = aver_rt::WalkHash::stream(&f.4, state, left);
+                left
+            }
+            Tactic__view::Split(f) => {
+                std::hash::Hash::hash(&3u32, state);
+                if left == 0 {
+                    return 0;
+                }
+                let left = left - 1;
+                std::hash::Hash::hash(&f.0, state);
+                std::hash::Hash::hash(&f.1, state);
+                std::hash::Hash::hash(&f.2, state);
+                let left = aver_rt::WalkHash::stream(&f.3, state, left);
+                let left = aver_rt::WalkHash::stream(&f.4, state, left);
+                left
+            }
+            Tactic__view::SplitBool(f) => {
+                std::hash::Hash::hash(&4u32, state);
+                if left == 0 {
+                    return 0;
+                }
+                let left = left - 1;
+                let left = aver_rt::WalkHash::stream(&f.0, state, left);
+                let left = aver_rt::WalkHash::stream(&f.1, state, left);
+                let left = aver_rt::WalkHash::stream(&f.2, state, left);
+                left
+            }
+            Tactic__view::First(f) => {
+                std::hash::Hash::hash(&5u32, state);
+                std::hash::Hash::hash(&f.0, state);
+                left
+            }
+            Tactic__view::Plan(f) => {
+                std::hash::Hash::hash(&6u32, state);
+                std::hash::Hash::hash(&f.0, state);
+                left
+            }
+        }
+    }
+
+    fn walk_hash(&self, walk: aver_rt::HashWalk<'_>) -> u64 {
+        match self.view() {
+            Tactic__view::Auto => aver_rt::shared_hash::tag_hash(0),
+            Tactic__view::Cases(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&1u32, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
+            }),
+            Tactic__view::Induction(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&2u32, h);
+                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hash::hash(&f.1, h);
+                std::hash::Hash::hash(&f.2, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.3, walk));
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.4, walk));
+            }),
+            Tactic__view::Split(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&3u32, h);
+                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hash::hash(&f.1, h);
+                std::hash::Hash::hash(&f.2, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.3, walk));
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.4, walk));
+            }),
+            Tactic__view::SplitBool(f) => walk.node(self, |walk, h| {
+                std::hash::Hash::hash(&4u32, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.1, walk));
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.2, walk));
+            }),
+            Tactic__view::First(f) => walk.node(self, |_, h| {
+                std::hash::Hash::hash(&5u32, h);
+                std::hash::Hash::hash(&f.0, h);
+            }),
+            Tactic__view::Plan(f) => walk.node(self, |_, h| {
+                std::hash::Hash::hash(&6u32, h);
+                std::hash::Hash::hash(&f.0, h);
+            }),
+        }
     }
 }
 
