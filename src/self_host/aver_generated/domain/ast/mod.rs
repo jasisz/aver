@@ -3807,9 +3807,8 @@ pub fn userCtorTagOffsetLoop__indexed(
     mut name @ _: AverStr,
     mut pos @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverInt,
-    __str_index @ _: aver_rt::StringIndex,
+    mut __str_index @ _: aver_rt::StringIndex,
 ) -> aver_rt::AverInt {
-    let __str_index @ _ = aver_rt::Shared::new(__str_index);
     loop {
         crate::cancel_checkpoint();
         let accPlusOne @ _ = acc.add(&aver_rt::AverInt::from_i64(1));
@@ -3928,9 +3927,8 @@ pub fn canonicalCtorNameAtBothDots__indexed(
 pub fn lastDotAtOrBefore__indexed(
     mut name @ _: AverStr,
     mut pos @ _: aver_rt::AverInt,
-    __str_index @ _: aver_rt::StringIndex,
+    mut __str_index @ _: aver_rt::StringIndex,
 ) -> aver_rt::AverInt {
-    let __str_index @ _ = aver_rt::Shared::new(__str_index);
     loop {
         crate::cancel_checkpoint();
         if (pos < aver_rt::AverInt::from_i64(0)) {

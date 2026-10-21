@@ -1,0 +1,44 @@
+module LoopHandsOnItsParam
+    intent =
+        "Fixture: a tail-recursive walk passes a record holding a Vector on unchanged and, where it stops, hands the record to a function that sets the Vector; as many appends as the first argument says."
+    effects [Console.print, Args.get]
+
+record Cols
+    keys: Vector<Int>
+    n: Int
+
+fn appended(c: Cols, key: Int) -> Cols
+    ? "key written at the next free slot."
+    Cols(keys = Option.withDefault(Vector.set(c.keys, c.n, key), c.keys), n = c.n + 1)
+
+fn find(c: Cols, key: Int, slot: Int) -> Cols
+    ? "Walks the used slots from slot on; appends key when it is not there."
+    match slot >= c.n
+        true -> appended(c, key)
+        false -> match Option.withDefault(Vector.get(c.keys, slot), -1) == key
+            true -> c
+            false -> find(c, key, slot + 1)
+
+fn findNear(c: Cols, key: Int) -> Cols
+    ? "Looks key up from two slots back."
+    start = Int.max(c.n - 2, 0)
+    find(c, key, start)
+
+fn fill(c: Cols, i: Int, n: Int) -> Cols
+    ? "Appends 0 .. n - 1."
+    match i >= n
+        true -> c
+        false -> fill(findNear(c, i), i + 1, n)
+
+fn sizeArg() -> Int
+    ? "The first argument as a number, 1000 without one."
+    ! [Args.get]
+    match Vector.get(Vector.fromList(Args.get()), 0)
+        Option.Some(text) -> Result.withDefault(Int.fromString(text), 1000)
+        Option.None -> 1000
+
+fn main()
+    ! [Console.print, Args.get]
+    n = sizeArg()
+    c = fill(Cols(keys = Result.withDefault(Vector.new(n, 0), Vector.fromList([])), n = 0), 0, n)
+    Console.print("n {c.n} last {Option.withDefault(Vector.get(c.keys, n - 1), -1)} again {find(c, 0, 0).n}")

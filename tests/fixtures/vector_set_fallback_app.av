@@ -1,0 +1,37 @@
+module VectorSelfKeep
+    intent =
+        "Fixture: a vector held in a local is set with the local named again as the fallback of its own set, through Option.withDefault and in the None arm of a match on the set; as many writes as the first argument says."
+    effects [Console.print, Args.get]
+
+fn putTwo(v: Vector<Int>, i: Int) -> Vector<Int>
+    ? "Writes i and i + 1; the second write goes through a local named again as its own fallback."
+    w = Option.withDefault(Vector.set(v, i, i), v)
+    Option.withDefault(Vector.set(w, i + 1, i + 1), w)
+
+fn putTwoMatch(v: Vector<Int>, i: Int) -> Vector<Int>
+    ? "The same, the second write through a match whose None arm keeps the local."
+    w = Option.withDefault(Vector.set(v, i, i), v)
+    match Vector.set(w, i + 1, i + 1)
+        Option.Some(u) -> u
+        Option.None -> w
+
+fn fill(v: Vector<Int>, i: Int, n: Int) -> Vector<Int>
+    ? "Writes every slot below n, two at a time, alternating the two forms."
+    match i + 1 >= n
+        true -> v
+        false -> match Int.mod(i, 4) == 0
+            true -> fill(putTwo(v, i), i + 2, n)
+            false -> fill(putTwoMatch(v, i), i + 2, n)
+
+fn sizeArg() -> Int
+    ? "The first argument as a number, 1000 without one."
+    ! [Args.get]
+    match Vector.get(Vector.fromList(Args.get()), 0)
+        Option.Some(text) -> Result.withDefault(Int.fromString(text), 1000)
+        Option.None -> 1000
+
+fn main()
+    ! [Console.print, Args.get]
+    n = sizeArg()
+    v = fill(Result.withDefault(Vector.new(n, 0), Vector.fromList([])), 0, n)
+    Console.print("n {Vector.len(v)} last {Option.withDefault(Vector.get(v, n - 1), -1)} out {Vector.len(putTwo(v, n))}")

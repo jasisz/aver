@@ -5763,9 +5763,8 @@ pub fn hypsAt(
 #[inline(always)]
 pub fn withoutNames(
     bs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
-    names @ _: aver_rt::AverList<AverStr>,
+    mut names @ _: aver_rt::AverList<AverStr>,
 ) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding> {
-    let names @ _ = aver_rt::Shared::new(names);
     let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>;
     let mut bs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding> =
         bs;
@@ -5788,8 +5787,7 @@ pub fn withoutNames(
                         return aver_rt::AverList::prepend(
                             b,
                             &crate::proof_kernel::aver_generated::kernel::check::withoutNames(
-                                &rest,
-                                (*names).clone(),
+                                &rest, names,
                             ),
                         );
                     }

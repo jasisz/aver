@@ -144,6 +144,20 @@ pub fn same_field_path(a: &MirExpr, b: &MirExpr) -> bool {
 
 /// See [`VectorSetMatch`]. `builtins` names the program's builtin ids.
 pub fn vector_set_match<'a>(m: &'a MirMatch, builtins: &[String]) -> Option<VectorSetMatch<'a>> {
+    set_match(m, builtins, false)
+}
+
+/// The same shape as [`vector_set_match`] with a local itself as the target
+/// (`match Vector.set(v, i, x)`). Generated Rust moves such a local into the
+/// set when the `Some` arm does not read it again.
+pub fn local_vector_set_match<'a>(
+    m: &'a MirMatch,
+    builtins: &[String],
+) -> Option<VectorSetMatch<'a>> {
+    set_match(m, builtins, true)
+}
+
+fn set_match<'a>(m: &'a MirMatch, builtins: &[String], local: bool) -> Option<VectorSetMatch<'a>> {
     let MirExpr::Call(call) = &m.subject.node else {
         return None;
     };
@@ -156,7 +170,7 @@ pub fn vector_set_match<'a>(m: &'a MirMatch, builtins: &[String]) -> Option<Vect
         return None;
     }
     let target = &call.node.args[0];
-    if !projection_root(&target.node).is_some_and(|(_, _, path)| !path.is_empty()) {
+    if !projection_root(&target.node).is_some_and(|(_, _, path)| path.is_empty() == local) {
         return None;
     }
     if m.arms.len() != 2 {

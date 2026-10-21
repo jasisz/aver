@@ -177,8 +177,8 @@ pub fn runGuestCliProgram(
 pub fn loadModules(
     deps @ _: &aver_rt::AverList<AverStr>,
     mut moduleRoot @ _: AverStr,
-    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
-    loaded @ _: aver_rt::AverMap<AverStr, bool>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    mut loaded @ _: aver_rt::AverMap<AverStr, bool>,
 ) -> Result<
     (
         aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
@@ -186,8 +186,6 @@ pub fn loadModules(
     ),
     AverStr,
 > {
-    let acc @ _ = aver_rt::Shared::new(acc);
-    let loaded @ _ = aver_rt::Shared::new(loaded);
     let mut __hold0: aver_rt::AverList<AverStr>;
     let mut deps @ _: &aver_rt::AverList<AverStr> = deps;
     loop {
@@ -195,7 +193,7 @@ pub fn loadModules(
         {
             let __list_subject = deps;
             if __list_subject.is_empty() {
-                return Ok(((*acc).clone(), (*loaded).clone()));
+                return Ok((acc, loaded));
             } else {
                 if let Some((dep, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
                     if loaded.contains_key(&dep) {
@@ -206,7 +204,7 @@ pub fn loadModules(
                             continue;
                         }
                     } else {
-                        return loadOneModule(dep, &rest, moduleRoot, &*acc, (*loaded).clone());
+                        return loadOneModule(dep, &rest, moduleRoot, &acc, loaded);
                     }
                 } else {
                     panic!("Aver Rust codegen: non-exhaustive list match")
@@ -1544,9 +1542,8 @@ pub fn dotToSlash__indexed(
     mut pos @ _: aver_rt::AverInt,
     mut total @ _: aver_rt::AverInt,
     mut acc @ _: AverStr,
-    __str_index @ _: aver_rt::StringIndex,
+    mut __str_index @ _: aver_rt::StringIndex,
 ) -> AverStr {
-    let __str_index @ _ = aver_rt::Shared::new(__str_index);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));

@@ -2158,11 +2158,9 @@ pub fn callsShrink(
 /// A name the arm's pattern binds, not rebound inside; or List.drop of something smaller, which is never longer than the list it drops from, whatever the count.
 pub fn smaller(
     mut t @ _: Option<crate::proof_kernel::aver_generated::kernel::term::Term>,
-    parts @ _: aver_rt::AverList<AverStr>,
-    inner @ _: aver_rt::AverList<AverStr>,
+    mut parts @ _: aver_rt::AverList<AverStr>,
+    mut inner @ _: aver_rt::AverList<AverStr>,
 ) -> bool {
-    let parts @ _ = aver_rt::Shared::new(parts);
-    let inner @ _ = aver_rt::Shared::new(inner);
     loop {
         crate::proof_kernel::cancel_checkpoint();
         match t {
@@ -2803,11 +2801,9 @@ pub fn generalised(
     mut k @ _: aver_rt::AverInt,
     mut j @ _: aver_rt::AverInt,
     mut v @ _: AverStr,
-    givens @ _: aver_rt::AverList<AverStr>,
-    seen @ _: aver_rt::AverList<AverStr>,
+    mut givens @ _: aver_rt::AverList<AverStr>,
+    mut seen @ _: aver_rt::AverList<AverStr>,
 ) -> aver_rt::AverList<Place> {
-    let givens @ _ = aver_rt::Shared::new(givens);
-    let seen @ _ = aver_rt::Shared::new(seen);
     let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>;
     let mut xs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> =
         xs;
@@ -2829,7 +2825,7 @@ pub fn generalised(
                                 if (((k != j) && (n != v))
                                     && (givens.contains(&n) && (!seen.contains(&n))))
                                 {
-                                    return aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::induct::Place { at: k.clone(), name: n.clone() }, &crate::proof_kernel::aver_generated::kernel::induct::generalised(&rest, k.add(&aver_rt::AverInt::from_i64(1)), j, v, (*givens).clone(), aver_rt::AverList::prepend(n, &(*seen).clone())));
+                                    return aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::induct::Place { at: k.clone(), name: n.clone() }, &crate::proof_kernel::aver_generated::kernel::induct::generalised(&rest, k.add(&aver_rt::AverInt::from_i64(1)), j, v, givens, aver_rt::AverList::prepend(n, &seen)));
                                 } else {
                                     {
                                         let __tco0 = rest;

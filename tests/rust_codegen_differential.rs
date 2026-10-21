@@ -3804,6 +3804,58 @@ fn a_param_moved_and_read_in_one_call_is_read_first_and_moved() {
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A local Vector named again only as the fallback of its own `Vector.set`
+/// (`Option.withDefault(Vector.set(w, i, x), w)`, or `w` in the `None` arm
+/// of a match on the set) moves into the set: the set fails only out of
+/// range, where nothing changed, and then hands the Vector back. Cloned
+/// first, the Vector had two owners and every write copied all of it. The
+/// compiled binary must make 10^6 writes within a minute.
+#[test]
+fn a_local_named_again_as_its_own_set_fallback_moves_into_the_set() {
+    let relative = "tests/fixtures/vector_set_fallback_app.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("vector_set_fallback", &src);
+    assert!(
+        !emitted.contains("w.clone()"),
+        "the local must move into its set:\n{emitted}"
+    );
+    assert_plain_parity_then(relative, None, |bin, _| {
+        let got = run_within(bin, "1000000", 60)?;
+        match got == "n 1000000 last 999999 out 1000000" {
+            true => Ok(()),
+            false => Err(format!("at 10^6 writes: {got}")),
+        }
+    })
+    .unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// A tail-recursive walk that passes a record on unchanged and hands it, where
+/// it stops, to a function that sets a Vector in it, keeps the record as an
+/// owned local of the loop and moves it out on that exit. It used to wrap the
+/// record in a `Shared` and return `(*c).clone()`, so the Vector had two
+/// owners and every append copied it. The compiled binary must make 2^20
+/// appends to a Vector of 2^20 slots within a minute.
+#[test]
+fn a_loop_moves_a_param_it_passes_on_out_on_exit() {
+    let relative = "tests/fixtures/loop_hands_on_its_param_app.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("loop_hands_on_its_param", &src);
+    assert!(
+        emitted.contains("return appended(c, key);")
+            && !emitted.contains("(*c).clone()")
+            && !emitted.contains("Shared::new(c)"),
+        "the walk must move its record out on exit:\n{emitted}"
+    );
+    assert_plain_parity_then(relative, None, |bin, _| {
+        let got = run_within(bin, "1048576", 60)?;
+        match got == "n 1048576 last 1048575 again 1048576" {
+            true => Ok(()),
+            false => Err(format!("at 2^20 appends: {got}")),
+        }
+    })
+    .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A tail-recursive loop borrows the params it only reads: a tree it
 /// descends, a bucket or list it walks, a key it passes on. Its callers then
 /// lend their values too, so `known(st, ..)`, which only hands a field of
