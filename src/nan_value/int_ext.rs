@@ -39,9 +39,9 @@ impl NanIntExt for NanValue {
 
     #[inline]
     fn from_aver_int(value: AverInt, arena: &mut Arena) -> NanValue {
-        match value {
-            AverInt::Small(n) => NanValue::new_int(n, arena),
-            AverInt::Big(b) => NanValue::new_big_int(*b, arena),
+        match value.to_i64() {
+            Some(n) => NanValue::new_int(n, arena),
+            None => NanValue::new_big_int(value.into_bigint(), arena),
         }
     }
 }

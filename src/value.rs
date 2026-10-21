@@ -119,8 +119,8 @@ pub struct FunctionValue {
 
 #[derive(Debug, Clone)]
 pub enum Value {
-    /// Mathematical ℤ (arbitrary precision). Small-int optimized: most values
-    /// are `AverInt::Small(i64)` with no allocation. Use `Value::int(n)` to
+    /// Mathematical ℤ (arbitrary precision). Small-int optimized: a value
+    /// below 2^62 in magnitude takes no allocation. Use `Value::int(n)` to
     /// build one from an `i64`.
     Int(AverInt),
     Float(f64),

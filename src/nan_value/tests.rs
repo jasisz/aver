@@ -19,7 +19,7 @@ fn converting_a_map_value_does_not_rebuild_its_table_per_entry() {
             .map(|i| {
                 (
                     crate::value::Value::Str(format!("k{i}")),
-                    crate::value::Value::Int(aver_rt::AverInt::Small(i)),
+                    crate::value::Value::Int(aver_rt::AverInt::from_i64(i)),
                 )
             })
             .collect();
@@ -102,16 +102,14 @@ fn new_big_int_demotes_in_range_payload() {
     assert_eq!(arena.len(), 0, "in-range value should not allocate");
     assert_eq!(from_big.as_aver_int(&arena), AverInt::from_i64(5));
     assert_eq!(from_big.as_aver_int(&arena), inline.as_aver_int(&arena));
-    assert!(matches!(from_big.as_aver_int(&arena), AverInt::Small(5)));
 
     // i64 boundary values still demote (no BigInt slot).
     let max = NanValue::new_big_int(BigInt::from(i64::MAX), &mut arena);
     assert_eq!(max.as_aver_int(&arena), AverInt::from_i64(i64::MAX));
-    assert!(matches!(max.as_aver_int(&arena), AverInt::Small(_)));
 
     // A genuinely out-of-range payload stays Big.
     let past = NanValue::new_big_int(BigInt::from(i64::MAX) + 1, &mut arena);
-    assert!(matches!(past.as_aver_int(&arena), AverInt::Big(_)));
+    assert_eq!(past.as_aver_int(&arena).to_i64(), None);
 }
 
 #[test]
