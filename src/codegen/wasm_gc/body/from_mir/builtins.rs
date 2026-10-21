@@ -1938,21 +1938,34 @@ pub(crate) fn emit_mir_result_from_option(
     )));
 
     // Some: evaluate the eager error argument, discard its value, then Ok.
+    // An error that can write the subject scratch itself would leave its
+    // own value there, so the payload is read before it runs; any other
+    // error runs first, as it always has.
+    let emit_payload = |func: &mut Function| {
+        func.instruction(&Instruction::LocalGet(scratch));
+        func.instruction(&Instruction::RefCastNonNull(
+            wasm_encoder::HeapType::Concrete(option_idx),
+        ));
+        func.instruction(&Instruction::StructGet {
+            struct_type_index: option_idx,
+            field_index: 1,
+        });
+    };
+    let payload_first = may_write_subject_scratch(&error.node, ctx);
+    if payload_first {
+        func.instruction(&Instruction::I32Const(RESULT_OK_TAG));
+        emit_payload(func);
+    }
     let error_produces = emit_mir_expr(func, error, slots, ctx)?.ok_or(WasmGcError::Validation(
         "Result.fromOption: error argument could not be emitted".into(),
     ))?;
     if error_produces {
         func.instruction(&Instruction::Drop);
     }
-    func.instruction(&Instruction::I32Const(RESULT_OK_TAG));
-    func.instruction(&Instruction::LocalGet(scratch));
-    func.instruction(&Instruction::RefCastNonNull(
-        wasm_encoder::HeapType::Concrete(option_idx),
-    ));
-    func.instruction(&Instruction::StructGet {
-        struct_type_index: option_idx,
-        field_index: 1,
-    });
+    if !payload_first {
+        func.instruction(&Instruction::I32Const(RESULT_OK_TAG));
+        emit_payload(func);
+    }
     emit_default_value(func, &error_aver, ctx.registry)?;
     func.instruction(&Instruction::StructNew(result_idx));
 
@@ -1968,6 +1981,39 @@ pub(crate) fn emit_mir_result_from_option(
     func.instruction(&Instruction::StructNew(result_idx));
     func.instruction(&Instruction::End);
     Ok(MirBuiltinEmit::Produced(true))
+}
+
+/// Whether emitting `expr` can write the subject scratch: some node in it
+/// keeps a value there while it looks at it. Those are a `match`, `?`, an
+/// independent product, and the inlined unwraps `Option.withDefault`,
+/// `Result.withDefault`, `Result.fromOption` and `__result_proven`; nothing
+/// else reads `SlotTable::subject_scratch`. A call to a user function runs
+/// in its own frame with its own locals, so only its arguments count. A
+/// builtin whose name is not known counts as one that can.
+fn may_write_subject_scratch(expr: &MirExpr, ctx: &EmitCtx<'_>) -> bool {
+    use crate::ir::hir::BuiltinIntrinsic;
+    let own = match expr {
+        MirExpr::Match(_) | MirExpr::Try(_) | MirExpr::IndependentProduct(_) => true,
+        MirExpr::Call(call) => match call.node.callee {
+            MirCallee::Builtin(id) => ctx
+                .mir_builtins
+                .and_then(|names| names.get(id.0 as usize))
+                .is_none_or(|name| {
+                    matches!(
+                        name.as_str(),
+                        "Option.withDefault" | "Result.withDefault" | "Result.fromOption"
+                    )
+                }),
+            MirCallee::Intrinsic(BuiltinIntrinsic::ResultProven) => true,
+            _ => false,
+        },
+        _ => false,
+    };
+    let mut nested = false;
+    crate::ir::mir::expr::walk_children(expr, &mut |child| {
+        nested = nested || may_write_subject_scratch(child, ctx);
+    });
+    own || nested
 }
 
 /// With a `Map` argument of `arg`'s type on the stack, make it the current

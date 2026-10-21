@@ -548,6 +548,21 @@ fn effectful_fallback_runs_first_on_rust() {
     .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// The error of `Result.fromOption` may unwrap another value itself: Rust
+/// prints the written output `cross_backend_stress` and `wasip2_stress`
+/// hold the VM, wasm-gc and wasip2 to.
+#[test]
+fn nested_unwrap_in_error_keeps_value_on_rust() {
+    let relative = "tests/fixtures/nested_unwrap_error_app.av";
+    let expected = include_str!("fixtures/nested_unwrap_error_app.expected").trim();
+    assert_plain_parity_then(relative, None, |_, stdout| {
+        (stdout == expected)
+            .then_some(())
+            .ok_or_else(|| format!("unexpected output:\n{stdout}"))
+    })
+    .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A two-arm bool `match` whose default arm NAMES the matched value
 /// (`other -> …`) instead of spelling `false` or `_`.
 ///
