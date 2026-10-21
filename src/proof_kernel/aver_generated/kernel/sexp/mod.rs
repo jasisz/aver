@@ -265,17 +265,19 @@ pub fn within(
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(a) => {
             let a = a.clone();
             if a.starts_with("#") {
-                table.get(&a).cloned().ok_or(aver_rt::AverStr::from({
-                    let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(
-                            (aver_rt::AverInt::from_i64(46)).to_usize().unwrap_or(0),
-                        );
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(a))));
+                table.get(&a).cloned().ok_or_else(|| {
+                    aver_rt::AverStr::from({
+                        let mut __b = {
+                            let mut __b = aver_rt::Buffer::with_capacity(
+                                (aver_rt::AverInt::from_i64(46)).to_usize().unwrap_or(0),
+                            );
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(a))));
+                            __b
+                        };
+                        __b.push_str(&AverStr::from(" is not defined before its use"));
                         __b
-                    };
-                    __b.push_str(&AverStr::from(" is not defined before its use"));
-                    __b
-                }))
+                    })
+                })
             } else {
                 Ok((s, aver_rt::AverInt::from_i64(1)))
             }

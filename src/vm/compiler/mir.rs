@@ -227,6 +227,9 @@ pub(super) fn compile_mir_expr(
                     {
                         return Ok(());
                     }
+                    if try_emit_lazy_fallback(fc, builtin, args)? {
+                        return Ok(());
+                    }
                     for arg in args {
                         compile_mir_expr(fc, arg)?;
                     }
@@ -1975,6 +1978,54 @@ fn try_emit_vector_compound(
         }
         _ => Ok(false),
     }
+}
+
+/// `Option.withDefault(o, d)`, `Result.withDefault(r, d)` and
+/// `Result.fromOption(o, d)` whose fallback `d` may run only when the value
+/// is missing (`MirProgram::fallback_runs_only_when_missing`): unwrap the
+/// value, or drop it and only then run the fallback. Returns `Ok(false)`
+/// for any other call, which evaluates every argument first.
+fn try_emit_lazy_fallback(
+    fc: &mut FnCompiler<'_>,
+    builtin: VmBuiltin,
+    args: &[Spanned<MirExpr>],
+) -> Result<bool, MirVmUnsupported> {
+    // The kind `MATCH_UNWRAP` takes for the present value, and the `WRAP`
+    // kinds of `Result.fromOption`'s two outcomes.
+    let (present, wraps) = match builtin {
+        VmBuiltin::OptionWithDefault => (2, None),
+        VmBuiltin::ResultWithDefault => (0, None),
+        VmBuiltin::ResultFromOption => (2, Some((0, 1))),
+        _ => return Ok(false),
+    };
+    let [value, fallback] = args else {
+        return Ok(false);
+    };
+    if !fc
+        .mir_program
+        .is_some_and(|program| program.fallback_runs_only_when_missing(&fallback.node))
+    {
+        return Ok(false);
+    }
+    compile_mir_expr(fc, value)?;
+    fc.emit_op(MATCH_UNWRAP);
+    fc.emit_u8(present);
+    let missing = fc.offset();
+    fc.emit_i32(0);
+    if let Some((ok, _)) = wraps {
+        fc.emit_op(WRAP);
+        fc.emit_u8(ok);
+    }
+    let done = fc.emit_jump(JUMP);
+    fc.patch_jump(missing);
+    fc.emit_op(POP);
+    compile_mir_expr(fc, fallback)?;
+    if let Some((_, err)) = wraps {
+        fc.emit_op(WRAP);
+        fc.emit_u8(err);
+    }
+    fc.patch_jump(done);
+    Ok(true)
 }
 
 /// Tail-call owned mask: bit `i` is set when arg `i` carries a last-use
