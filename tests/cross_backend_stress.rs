@@ -1391,6 +1391,33 @@ fn effectful_fallback_runs_first_wasm_gc() {
     );
 }
 
+/// The error of `Result.fromOption` may unwrap another value itself (a
+/// `withDefault`, another `fromOption`, a `?`). wasm-gc read the present
+/// payload back after the error ran, from the local that inner unwrap had
+/// just reused, and answered with the inner value or trapped.
+/// `tests/wasip2_stress.rs` and `tests/rust_codegen_differential.rs` hold
+/// wasip2 and Rust to the same output.
+const NESTED_UNWRAP_ERROR_SRC: &str = include_str!("fixtures/nested_unwrap_error_app.av");
+const NESTED_UNWRAP_ERROR_OUT: &str = include_str!("fixtures/nested_unwrap_error_app.expected");
+
+#[test]
+fn nested_unwrap_in_error_keeps_value_vm() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-nested-unwrap-vm", NESTED_UNWRAP_ERROR_SRC),
+        NESTED_UNWRAP_ERROR_OUT.trim(),
+    );
+}
+
+#[test]
+fn nested_unwrap_in_error_keeps_value_wasm_gc() {
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-nested-unwrap-wasmgc", NESTED_UNWRAP_ERROR_SRC),
+        NESTED_UNWRAP_ERROR_OUT.trim(),
+    );
+}
+
 // ─── How deep non-tail recursion may go ────────────────────────────────
 
 /// Non-tail recursion as deep as its first argument says; without one it

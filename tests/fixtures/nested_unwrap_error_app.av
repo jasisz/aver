@@ -1,0 +1,51 @@
+module NestedUnwrapErrorApp
+    intent =
+        "The error of Result.fromOption may unwrap another value itself; the present value still comes out, on every backend."
+
+fn label(n: Int) -> String
+    ? "n as text."
+    String.fromInt(n)
+
+fn viaCall(o: Option<Int>, p: Option<Int>) -> Result<Int, String>
+    ? "o, or the text of p (8 when missing) as the error, through a call."
+    Result.fromOption(o, label(Option.withDefault(p, 8)))
+
+fn viaBuiltin(o: Option<Int>, p: Option<Int>) -> Result<Int, String>
+    ? "The same through a builtin."
+    Result.fromOption(o, String.fromInt(Option.withDefault(p, 8)))
+
+fn viaText(o: Option<Int>, r: Result<Int, String>) -> Result<Int, String>
+    ? "o, or the text of r (9 when an error) as the error, in an interpolation."
+    Result.fromOption(o, "got {Result.withDefault(r, 9)}")
+
+fn viaInner(o: Option<Int>, q: Option<String>) -> Result<Int, String>
+    ? "o, or q (inner when missing) as the error, through another fromOption."
+    Result.fromOption(o, Result.withDefault(Result.fromOption(q, "inner"), "none"))
+
+fn viaTry(o: Option<Int>, r: Result<Int, String>) -> Result<Int, String>
+    ? "o, or the text of r as the error; an error in r leaves first."
+    Result.fromOption(o, label(r?))
+
+fn show(r: Result<Int, String>) -> String
+    ? "Ok or Err with its payload."
+    match r
+        Result.Ok(n) -> "ok {n}"
+        Result.Err(message) -> "err {message}"
+
+fn main() -> Unit
+    ? "Prints each case present and missing."
+    ! [Console.print]
+    Console.print(show(viaCall(Option.Some(1), Option.Some(2))))
+    Console.print(show(viaCall(Option.None, Option.Some(2))))
+    Console.print(show(viaCall(Option.None, Option.None)))
+    Console.print(show(viaBuiltin(Option.Some(3), Option.Some(4))))
+    Console.print(show(viaBuiltin(Option.None, Option.Some(4))))
+    Console.print(show(viaText(Option.Some(5), Result.Ok(6))))
+    Console.print(show(viaText(Option.None, Result.Ok(6))))
+    Console.print(show(viaText(Option.None, Result.Err("no"))))
+    Console.print(show(viaInner(Option.Some(7), Option.Some("q"))))
+    Console.print(show(viaInner(Option.None, Option.Some("q"))))
+    Console.print(show(viaInner(Option.None, Option.None)))
+    Console.print(show(viaTry(Option.Some(10), Result.Ok(11))))
+    Console.print(show(viaTry(Option.None, Result.Ok(11))))
+    Console.print(show(viaTry(Option.Some(10), Result.Err("left"))))

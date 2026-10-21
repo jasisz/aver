@@ -133,6 +133,26 @@ fn effectful_fallback_runs_first() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The error of `Result.fromOption` may unwrap another value itself; the
+/// present value still comes out. `cross_backend_stress` holds the VM and
+/// wasm-gc to the same output.
+#[test]
+fn nested_unwrap_in_error_keeps_value() {
+    let dir = tempdir("nested-unwrap");
+    let fixture = write_fixture(
+        &dir,
+        "nested.av",
+        include_str!("fixtures/nested_unwrap_error_app.av"),
+    );
+    let out = run_wasip2(&dir, &fixture, &[]);
+    assert_ok(&out, "nested.av");
+    assert_eq!(
+        stdout(&out).trim(),
+        include_str!("fixtures/nested_unwrap_error_app.expected").trim()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 200 000 nested calls fit, and a recursion that never ends is Wasmtime's
 /// stack-overflow trap, said as an Aver error with exit status 1 rather than
 /// a host abort. `cross_backend_stress` holds the VM and wasm-gc to the same.
