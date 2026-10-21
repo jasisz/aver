@@ -205,6 +205,17 @@ jobs:
       - name: Test aver-rt
         run: cargo test -p aver-rt
 
+      # The nodes of user values and of the runtime's collections are
+      # reference counted by hand-written unsafe code; Miri checks it for
+      # undefined behaviour and data races. Only those modules: the rest of
+      # the crate's tests take most of an hour under Miri.
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+
+      - name: Miri on the reference-counted nodes
+        run: cargo +nightly miri test -p aver-rt --lib -- shared::tests shared_eq::tests thin::tests
+
   wasm_lanes:
     name: WASM (${{ matrix.lane }})
     runs-on: ubuntu-latest
