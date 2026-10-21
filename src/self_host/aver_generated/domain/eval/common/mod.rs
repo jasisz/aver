@@ -23,15 +23,15 @@ pub fn evalVarFallbackNamed(
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::eval::store::lookupFnOption(fns, name.clone()) {
         Some(fd @ _) => Ok(crate::aver_generated::domain::value::Val::ValFnRef(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValFnRef(fd.name)),
+            crate::aver_generated::domain::value::Val__ValFnRef(fd.name),
         )),
         None => match crate::aver_generated::domain::builtins::splitDotted(name.clone()) {
             Some(_) => Ok(crate::aver_generated::domain::value::Val::ValVariant(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValVariant(
+                crate::aver_generated::domain::value::Val__ValVariant(
                     crate::aver_generated::domain::ast::ctorNameToTag(name.clone()),
                     name,
                     aver_rt::AverList::empty(),
-                )),
+                ),
             )),
             None => Err(aver_rt::AverStr::from({
                 let mut __b = {
@@ -92,11 +92,11 @@ pub fn normalizeFnReturn(
         Err(err @ _) => {
             match crate::aver_generated::domain::eval::common::unwrapPropagatedError(err.clone()) {
                 Some(msg @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-                    aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                        crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+                    crate::aver_generated::domain::value::Val__ValErr(
+                        crate::aver_generated::domain::value::Val::ValStr(
                             crate::aver_generated::domain::value::Val__ValStr(msg),
-                        )),
-                    )),
+                        ),
+                    ),
                 )),
                 None => Err(err),
             }

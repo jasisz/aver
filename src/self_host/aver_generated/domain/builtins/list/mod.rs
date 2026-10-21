@@ -93,8 +93,9 @@ pub fn builtinListPrependInner(
     crate::cancel_checkpoint();
     let items @ _ = crate::aver_generated::domain::builtins::helpers::expectList(lstV)?;
     Ok(crate::aver_generated::domain::value::Val::ValList(
-        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValList(
-            aver_rt::AverList::prepend(v.clone(), &items),
+        crate::aver_generated::domain::value::Val__ValList(aver_rt::AverList::prepend(
+            v.clone(),
+            &items,
         )),
     ))
 }
@@ -107,8 +108,8 @@ pub fn builtinListLen(
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let items @ _ = crate::aver_generated::domain::builtins::helpers::expectList(&v)?;
     Ok(crate::aver_generated::domain::value::Val::ValInt(
-        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt(
-            aver_rt::AverInt::from_i64(items.len() as i64),
+        crate::aver_generated::domain::value::Val__ValInt(aver_rt::AverInt::from_i64(
+            items.len() as i64
         )),
     ))
 }
@@ -134,9 +135,9 @@ pub fn builtinListTakeInner(
     let items @ _ = crate::aver_generated::domain::builtins::helpers::expectList(lstV)?;
     let count @ _ = crate::aver_generated::domain::builtins::helpers::expectInt(nV)?;
     Ok(crate::aver_generated::domain::value::Val::ValList(
-        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValList(
+        crate::aver_generated::domain::value::Val__ValList(
             crate::aver_generated::domain::builtins::list::listTake(&items, count),
-        )),
+        ),
     ))
 }
 
@@ -175,9 +176,9 @@ pub fn builtinListDropInner(
     let items @ _ = crate::aver_generated::domain::builtins::helpers::expectList(lstV)?;
     let count @ _ = crate::aver_generated::domain::builtins::helpers::expectInt(nV)?;
     Ok(crate::aver_generated::domain::value::Val::ValList(
-        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValList(
+        crate::aver_generated::domain::value::Val__ValList(
             crate::aver_generated::domain::builtins::list::listDrop(items, count),
-        )),
+        ),
     ))
 }
 
@@ -211,9 +212,7 @@ pub fn builtinListReverse(
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let items @ _ = crate::aver_generated::domain::builtins::helpers::expectList(&v)?;
     Ok(crate::aver_generated::domain::value::Val::ValList(
-        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValList(
-            items.reverse(),
-        )),
+        crate::aver_generated::domain::value::Val__ValList(items.reverse()),
     ))
 }
 
@@ -238,8 +237,8 @@ pub fn builtinListConcatInner(
     let aItems @ _ = crate::aver_generated::domain::builtins::helpers::expectList(aV)?;
     let bItems @ _ = crate::aver_generated::domain::builtins::helpers::expectList(bV)?;
     Ok(crate::aver_generated::domain::value::Val::ValList(
-        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValList(
-            aver_rt::AverList::concat(&aItems, &bItems),
+        crate::aver_generated::domain::value::Val__ValList(aver_rt::AverList::concat(
+            &aItems, &bItems,
         )),
     ))
 }
@@ -264,9 +263,9 @@ pub fn builtinListContainsInner(
     crate::cancel_checkpoint();
     let items @ _ = crate::aver_generated::domain::builtins::helpers::expectList(lstV)?;
     Ok(crate::aver_generated::domain::value::Val::ValBool(
-        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValBool(
+        crate::aver_generated::domain::value::Val__ValBool(
             crate::aver_generated::domain::builtins::list::listContainsVal(items, needle),
-        )),
+        ),
     ))
 }
 
@@ -274,12 +273,11 @@ pub fn builtinListContainsInner(
 #[inline(always)]
 pub fn listContainsVal(
     mut items @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    needle @ _: crate::aver_generated::domain::value::Val,
+    mut needle @ _: crate::aver_generated::domain::value::Val,
 ) -> bool {
-    let needle @ _ = aver_rt::Shared::new(needle);
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(items, [] => { return false; }, [v, rest] => { if (crate::aver_generated::domain::value::valRepr(&v) == crate::aver_generated::domain::value::valRepr(&*needle)) { return true; } else { {
+        aver_list_match!(items, [] => { return false; }, [v, rest] => { if (crate::aver_generated::domain::value::valRepr(&v) == crate::aver_generated::domain::value::valRepr(&needle)) { return true; } else { {
             let __tco0 = rest;
             items = __tco0;
             continue;
@@ -308,9 +306,9 @@ pub fn builtinListZipInner(
     let aItems @ _ = crate::aver_generated::domain::builtins::helpers::expectList(aV)?;
     let bItems @ _ = crate::aver_generated::domain::builtins::helpers::expectList(bV)?;
     Ok(crate::aver_generated::domain::value::Val::ValList(
-        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValList(
+        crate::aver_generated::domain::value::Val__ValList(
             crate::aver_generated::domain::builtins::list::zipLists(&aItems, &bItems),
-        )),
+        ),
     ))
 }
 
@@ -341,7 +339,7 @@ pub fn zipListsAcc(
         aver_list_match!(a, [] => { return reversed; }, [x, xs] => { aver_list_match!(b, [] => { return reversed; }, [y, ys] => { {
             let __tco0 = xs;
             let __tco1 = ys;
-            let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::value::Val::ValTuple(aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValTuple(aver_rt::AverList::from_vec(vec![x, y])))), &acc);
+            let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::value::Val::ValTuple(crate::aver_generated::domain::value::Val__ValTuple(aver_rt::AverList::from_vec(vec![x, y]))), &acc);
             a = __tco0;
             b = __tco1;
             acc = __tco2;
@@ -357,7 +355,7 @@ pub fn builtinListHead(
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let items @ _ = crate::aver_generated::domain::builtins::helpers::expectList(&v)?;
-    aver_list_match!(items, [] => Ok(crate::aver_generated::domain::value::Val::ValNone), [h, rest] => Ok(crate::aver_generated::domain::value::Val::ValSome(aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValSome(h)))))
+    aver_list_match!(items, [] => Ok(crate::aver_generated::domain::value::Val::ValNone), [h, rest] => Ok(crate::aver_generated::domain::value::Val::ValSome(crate::aver_generated::domain::value::Val__ValSome(h))))
 }
 
 /// List.tail(list) -> Option of rest.
@@ -367,5 +365,5 @@ pub fn builtinListTail(
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let items @ _ = crate::aver_generated::domain::builtins::helpers::expectList(&v)?;
-    aver_list_match!(items, [] => Ok(crate::aver_generated::domain::value::Val::ValNone), [h, rest] => Ok(crate::aver_generated::domain::value::Val::ValSome(aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValSome(crate::aver_generated::domain::value::Val::ValList(aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValList(rest))))))))
+    aver_list_match!(items, [] => Ok(crate::aver_generated::domain::value::Val::ValNone), [h, rest] => Ok(crate::aver_generated::domain::value::Val::ValSome(crate::aver_generated::domain::value::Val__ValSome(crate::aver_generated::domain::value::Val::ValList(crate::aver_generated::domain::value::Val__ValList(rest))))))
 }

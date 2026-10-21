@@ -1,0 +1,14 @@
+module Trees
+    kind = capability
+    semantics = effectful
+    exposes [Tree, echo]
+
+type Tree
+    Leaf(Int)
+    Empty
+    Both(Tree, Tree)
+
+operation echo(value: Tree) -> Result<Tree, String>
+    ? "Round-trip a value of a recursive sum through the provider boundary."
+    oracle = generative
+    replay = recorded

@@ -55,7 +55,7 @@ pub fn builtinResultOk(
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     Ok(crate::aver_generated::domain::value::Val::ValOk(
-        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(v)),
+        crate::aver_generated::domain::value::Val__ValOk(v),
     ))
 }
 
@@ -66,7 +66,7 @@ pub fn builtinResultErr(
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     Ok(crate::aver_generated::domain::value::Val::ValErr(
-        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(v)),
+        crate::aver_generated::domain::value::Val__ValErr(v),
     ))
 }
 
@@ -78,13 +78,16 @@ pub fn builtinResultWithDefault(
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
         let (resV, defV) = pair;
-        match resV {
-            crate::aver_generated::domain::value::Val::ValOk(__inner_fields) => {
-                let inner = __inner_fields.0.clone();
-                Ok(inner)
+        {
+            let __t = resV;
+            match __t.view() {
+                crate::aver_generated::domain::value::Val__view::ValOk(__inner_fields) => {
+                    let inner = __inner_fields.0.clone();
+                    Ok(inner)
+                }
+                crate::aver_generated::domain::value::Val__view::ValErr(_) => Ok(defV),
+                _ => Err(AverStr::from("Result.withDefault requires Result value")),
             }
-            crate::aver_generated::domain::value::Val::ValErr(_) => Ok(defV),
-            _ => Err(AverStr::from("Result.withDefault requires Result value")),
         }
     }
 }
@@ -96,7 +99,7 @@ pub fn builtinOptionSome(
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     Ok(crate::aver_generated::domain::value::Val::ValSome(
-        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValSome(v)),
+        crate::aver_generated::domain::value::Val__ValSome(v),
     ))
 }
 
@@ -108,13 +111,16 @@ pub fn builtinOptionWithDefault(
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
         let (optV, defV) = pair;
-        match optV {
-            crate::aver_generated::domain::value::Val::ValSome(__inner_fields) => {
-                let inner = __inner_fields.0.clone();
-                Ok(inner)
+        {
+            let __t = optV;
+            match __t.view() {
+                crate::aver_generated::domain::value::Val__view::ValSome(__inner_fields) => {
+                    let inner = __inner_fields.0.clone();
+                    Ok(inner)
+                }
+                crate::aver_generated::domain::value::Val__view::ValNone => Ok(defV),
+                _ => Err(AverStr::from("Option.withDefault requires Option value")),
             }
-            crate::aver_generated::domain::value::Val::ValNone => Ok(defV),
-            _ => Err(AverStr::from("Option.withDefault requires Option value")),
         }
     }
 }
@@ -127,19 +133,22 @@ pub fn callResultFromOption(
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
         let (optV, errV) = pair;
-        match optV {
-            crate::aver_generated::domain::value::Val::ValSome(__inner_fields) => {
-                let inner = __inner_fields.0.clone();
-                Ok(crate::aver_generated::domain::value::Val::ValOk(
-                    aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(inner)),
-                ))
+        {
+            let __t = optV;
+            match __t.view() {
+                crate::aver_generated::domain::value::Val__view::ValSome(__inner_fields) => {
+                    let inner = __inner_fields.0.clone();
+                    Ok(crate::aver_generated::domain::value::Val::ValOk(
+                        crate::aver_generated::domain::value::Val__ValOk(inner),
+                    ))
+                }
+                crate::aver_generated::domain::value::Val__view::ValNone => {
+                    Ok(crate::aver_generated::domain::value::Val::ValErr(
+                        crate::aver_generated::domain::value::Val__ValErr(errV),
+                    ))
+                }
+                _ => Err(AverStr::from("Result.fromOption requires Option value")),
             }
-            crate::aver_generated::domain::value::Val::ValNone => {
-                Ok(crate::aver_generated::domain::value::Val::ValErr(
-                    aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(errV)),
-                ))
-            }
-            _ => Err(AverStr::from("Result.fromOption requires Option value")),
         }
     }
 }

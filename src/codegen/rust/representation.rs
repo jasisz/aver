@@ -96,28 +96,39 @@ pub(super) fn type_def_contract(td: &TypeDef, ctx: &CodegenContext) -> Represent
 /// slower and the memory broke even at a quarter of them.
 const LARGE_VARIANT_BYTES: usize = 64;
 
-/// Which constructors of a sum keep their fields in one `aver_rt::Shared`
-/// (`T::Pair(Shared<T__Pair>)`), one entry per variant in declaration order.
+/// Whether a sum is laid out as an `aver_rt::thin_sum!`: one pointer per
+/// value, to a node holding the constructor's tag and its fields only.
 ///
-/// Every constructor does in a sum a value of which can hold a value of the
-/// same type with no collection in between: directly, or through records,
-/// other sums, `Option`, `Result` or tuples. Such a type has a fixed size
-/// only through a pointer somewhere on the cycle, and with the pointer on the
-/// constructor a value used in many places is one allocation: copying it, or
-/// putting it into another constructor, copies the pointer. Recursion through
-/// `List`, `Vector` or `Map` already goes through the heap.
-///
-/// In any other sum only a constructor at least [`LARGE_VARIANT_BYTES`]
-/// larger than every other one does, since a value of a sum takes the room
-/// of its largest constructor: without the pointer a value of a small one
-/// would carry that room unused.
+/// A sum is when a value of it can hold a value of the same type with no
+/// collection in between: directly, or through records, other sums,
+/// `Option`, `Result` or tuples. Such a type has a fixed size only through a
+/// pointer somewhere on the cycle, and with the pointer on the value, a value
+/// used in many places is one allocation: copying it, or putting it into
+/// another constructor, copies the pointer. Recursion through `List`,
+/// `Vector` or `Map` already goes through the heap.
+pub(super) fn is_thin_sum(td: &TypeDef, ctx: &CodegenContext) -> bool {
+    let key = crate::codegen::common::backend_type_def_key(ctx, td);
+    matches!(td, TypeDef::Sum { .. }) && reaches_inline(td, &key, ctx, &mut HashSet::new())
+}
+
+/// [`is_thin_sum`] for the type `id`.
+pub(super) fn type_is_thin(id: crate::ir::TypeId, ctx: &CodegenContext) -> bool {
+    named_type_def(Some(id), "", ctx, None).is_some_and(|td| is_thin_sum(td, ctx))
+}
+
+/// Which constructors of a sum that is not thin (see [`is_thin_sum`]) keep
+/// their fields in one `aver_rt::Shared` (`T::Pair(Shared<T__Pair>)`), one
+/// entry per variant in declaration order: only a constructor at least
+/// [`LARGE_VARIANT_BYTES`] larger than every other one, since a value of a
+/// sum takes the room of its largest constructor: without the pointer a
+/// value of a small one would carry that room unused.
 pub(super) fn shared_variants(td: &TypeDef, ctx: &CodegenContext) -> Vec<bool> {
     let TypeDef::Sum { variants, .. } = td else {
         return Vec::new();
     };
     let key = crate::codegen::common::backend_type_def_key(ctx, td);
-    if reaches_inline(td, &key, ctx, &mut HashSet::new()) {
-        return vec![true; variants.len()];
+    if is_thin_sum(td, ctx) {
+        return vec![false; variants.len()];
     }
     let scope = crate::codegen::common::type_key_for_decl(ctx, td);
     let sizes: Vec<usize> = variants
@@ -187,6 +198,7 @@ fn inline_size(
                 |field: &String| inline_size(&parse_type_str(field), ctx, decl.scope_str(), seen);
             let size = match td {
                 TypeDef::Product { fields, .. } => fields.iter().map(|(_, f)| field_size(f)).sum(),
+                TypeDef::Sum { .. } if is_thin_sum(td, ctx) => WORD,
                 TypeDef::Sum { variants, .. } => {
                     let shared = shared_variants(td, ctx);
                     variants

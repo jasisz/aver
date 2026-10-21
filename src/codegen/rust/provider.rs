@@ -542,6 +542,7 @@ pub(super) fn emit_represented_type_codec(
             name,
             variants,
             &super::representation::shared_variants(type_def, ctx),
+            super::representation::is_thin_sum(type_def, ctx),
             &canonical,
             &field_type,
         ),
@@ -620,6 +621,7 @@ fn emit_sum_codec(
     name: &str,
     variants: &[TypeVariant],
     shared: &[bool],
+    thin: bool,
     canonical: &str,
     field_type: &dyn Fn(&str) -> String,
 ) -> String {
@@ -627,11 +629,17 @@ fn emit_sum_codec(
         .iter()
         .zip(shared)
         .map(|(variant, &shared)| {
+            // A thin sum is matched through its view, its fields borrowed.
+            let shared = shared || thin;
+            let case = match thin {
+                true => format!("{name}__view"),
+                false => "Self".to_string(),
+            };
             let (bindings, fields) = variant_field_refs(shared, "field", variant.fields.len());
             let pattern = if fields.is_empty() {
-                format!("Self::{}", variant.name)
+                format!("{case}::{}", variant.name)
             } else {
-                format!("Self::{}({bindings})", variant.name)
+                format!("{case}::{}({bindings})", variant.name)
             };
             // A shared constructor's fields sit behind the constructor's `Shared`.
             let fields = match shared {
@@ -668,6 +676,9 @@ fn emit_sum_codec(
                 .collect::<Vec<_>>();
             let constructor = if decoded.is_empty() {
                 format!("Self::{}", variant.name)
+            } else if thin {
+                let payload = format!("{name}__{}", variant.name);
+                format!("Self::{}({payload}({}))", variant.name, decoded.join(", "))
             } else if shared {
                 let payload = format!("{name}__{}", variant.name);
                 format!(
@@ -689,11 +700,15 @@ fn emit_sum_codec(
         })
         .collect::<Vec<_>>()
         .join("\n");
+    let matched = match thin {
+        true => "self.view()",
+        false => "self",
+    };
     format!(
         r#"impl aver_rt::provider::ProviderCodec for {name} {{
     fn into_provider_value(self, registry: &aver_rt::provider::NativeProviderRegistry, capability: &str) -> Result<aver_rt::provider::ProviderValue, String> {{
         use aver_rt::provider::ProviderCodec as _;
-        Ok(match self {{
+        Ok(match {matched} {{
 {encode_arms}
         }})
     }}

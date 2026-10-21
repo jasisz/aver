@@ -192,7 +192,8 @@ pub fn emit_replay_value_impl(
             emit_record_impl(name, fields, packed_u8, ctx, scope)
         }
         TypeDef::Sum { name, variants, .. } => {
-            emit_variant_impl(name, variants, &shared_variants(td, ctx), ctx, scope)
+            let thin = super::representation::is_thin_sum(td, ctx);
+            emit_variant_impl(name, variants, &shared_variants(td, ctx), thin, ctx, scope)
         }
     }
 }
@@ -290,6 +291,7 @@ fn emit_variant_impl(
     name: &str,
     variants: &[TypeVariant],
     shared: &[bool],
+    thin: bool,
     ctx: &CodegenContext,
     scope: Option<&str>,
 ) -> String {
@@ -302,23 +304,27 @@ fn emit_variant_impl(
     let to_arms = variants
         .iter()
         .zip(shared)
-        .map(|(variant, &shared)| emit_variant_to_arm(name, variant, shared))
+        .map(|(variant, &shared)| emit_variant_to_arm(name, variant, shared, thin))
         .collect::<Vec<_>>()
         .join("\n");
 
     let from_arms = variants
         .iter()
         .zip(shared)
-        .map(|(variant, &shared)| emit_variant_from_arm(name, variant, shared, ctx, scope))
+        .map(|(variant, &shared)| emit_variant_from_arm(name, variant, shared, thin, ctx, scope))
         .collect::<Vec<_>>()
         .join("\n");
 
+    let matched = match thin {
+        true => "self.view()",
+        false => "self",
+    };
     format!(
         r#"impl aver_replay::ReplayValue for {name} {{
     fn to_replay_json(&self) -> serde_json::Value {{
         let mut payload = serde_json::Map::new();
         payload.insert("type".to_string(), serde_json::Value::String({canonical:?}.to_string()));
-        match self {{
+        match {matched} {{
 {to_arms}
         }}
     }}
@@ -350,10 +356,16 @@ fn emit_variant_impl(
     )
 }
 
-fn emit_variant_to_arm(type_name: &str, variant: &TypeVariant, shared: bool) -> String {
+fn emit_variant_to_arm(type_name: &str, variant: &TypeVariant, shared: bool, thin: bool) -> String {
+    // A thin sum is matched through its view, its fields borrowed.
+    let shared = shared || thin;
+    let case = match thin {
+        true => format!("{type_name}__view"),
+        false => type_name.to_string(),
+    };
     if variant.fields.is_empty() {
         return format!(
-            "            {type_name}::{variant_name} => {{\n                payload.insert(\"name\".to_string(), serde_json::Value::String({variant_name:?}.to_string()));\n                payload.insert(\"fields\".to_string(), serde_json::Value::Array(vec![]));\n                aver_replay::wrap_marker(\"$variant\", serde_json::Value::Object(payload))\n            }}",
+            "            {case}::{variant_name} => {{\n                payload.insert(\"name\".to_string(), serde_json::Value::String({variant_name:?}.to_string()));\n                payload.insert(\"fields\".to_string(), serde_json::Value::Array(vec![]));\n                aver_replay::wrap_marker(\"$variant\", serde_json::Value::Object(payload))\n            }}",
             variant_name = variant.name
         );
     }
@@ -366,7 +378,7 @@ fn emit_variant_to_arm(type_name: &str, variant: &TypeVariant, shared: bool) -> 
         .join(", ");
 
     format!(
-        "            {type_name}::{variant_name}({bindings}) => {{\n                payload.insert(\"name\".to_string(), serde_json::Value::String({variant_name:?}.to_string()));\n                payload.insert(\"fields\".to_string(), serde_json::Value::Array(vec![{field_json}]));\n                aver_replay::wrap_marker(\"$variant\", serde_json::Value::Object(payload))\n            }}",
+        "            {case}::{variant_name}({bindings}) => {{\n                payload.insert(\"name\".to_string(), serde_json::Value::String({variant_name:?}.to_string()));\n                payload.insert(\"fields\".to_string(), serde_json::Value::Array(vec![{field_json}]));\n                aver_replay::wrap_marker(\"$variant\", serde_json::Value::Object(payload))\n            }}",
         variant_name = variant.name,
     )
 }
@@ -375,6 +387,7 @@ fn emit_variant_from_arm(
     type_name: &str,
     variant: &TypeVariant,
     shared: bool,
+    thin: bool,
     ctx: &CodegenContext,
     scope: Option<&str>,
 ) -> String {
@@ -400,7 +413,9 @@ fn emit_variant_from_arm(
         })
         .collect::<Vec<_>>()
         .join(", ");
-    let field_loads = if shared {
+    let field_loads = if thin {
+        format!("{type_name}__{}({field_loads})", variant.name)
+    } else if shared {
         format!(
             "aver_rt::Shared::new({type_name}__{}({field_loads}))",
             variant.name

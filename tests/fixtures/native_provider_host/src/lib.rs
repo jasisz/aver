@@ -13,6 +13,8 @@ pub const ECHO_CONTRACT_HASH: &str =
     "sha256:36832abf9ae258a8d018106da7ea75b15618c40d9f45a1959ab5d59e59358586";
 pub const SHAPES_CONTRACT_HASH: &str =
     "sha256:32a895c71442e3cf3bf5fbad50ec7aaaa1b3a2c4de3c8ee5d8745abf3840242c";
+pub const TREES_CONTRACT_HASH: &str =
+    "sha256:17432587006dd8cc8c798996beb1f7cd92f6d7d8fbfb8b6dfb456f63e7ce6373";
 pub const VAULT_CONTRACT_HASH: &str =
     "sha256:9d47d09bba1f2905acf09cbb1f5d164feccf1e88d9fa36ac4c704ffe7038e138";
 pub const MODES_CONTRACT_HASH: &str =
@@ -135,6 +137,43 @@ impl CapabilityProvider for ShapesProvider {
             return Err(ProviderFault::new("bad_args", "expected one Bundle"));
         };
         if context.operation != "Shapes.echo" {
+            return Err(ProviderFault::new("bad_call", &context.operation));
+        }
+        Ok(ProviderValue::ResultOk(Box::new(value.clone())))
+    }
+}
+
+/// `Trees.echo` of `tests/fixtures/native_provider_recursive`: the same echo,
+/// for a value of a recursive sum.
+pub fn trees_binding() -> ProviderBinding {
+    ProviderBinding::new(
+        "Trees",
+        TREES_CONTRACT_HASH,
+        ["Trees.echo"],
+        Arc::new(TreesProvider),
+    )
+}
+
+struct TreesProvider;
+
+impl CapabilityProvider for TreesProvider {
+    fn identity(&self) -> &str {
+        "example.trees-echo@1"
+    }
+
+    fn fingerprint(&self) -> &str {
+        "trees-v1"
+    }
+
+    fn invoke(
+        &self,
+        context: &ProviderContext,
+        args: &[ProviderValue],
+    ) -> Result<ProviderValue, ProviderFault> {
+        let [value] = args else {
+            return Err(ProviderFault::new("bad_args", "expected one Tree"));
+        };
+        if context.operation != "Trees.echo" {
             return Err(ProviderFault::new("bad_call", &context.operation));
         }
         Ok(ProviderValue::ResultOk(Box::new(value.clone())))

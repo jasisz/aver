@@ -62,19 +62,28 @@ pub fn builtinVectorNew(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
-    match pair {
-        (crate::aver_generated::domain::value::Val::ValInt(__size_fields), defaultVal) => {
-            let size = __size_fields.0.clone();
-            Ok(crate::aver_generated::domain::value::Val::ValVector(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValVector(
-                    match aver_rt::checked_vector_size(&(size)) {
-                        Some(__n) => Ok(aver_rt::AverVector::new(__n, defaultVal)),
-                        None => Err(aver_rt::AverStr::from(aver_rt::vector_size_error_message())),
-                    }?,
-                )),
-            ))
+    {
+        let __t = pair;
+        match (__t.0.view(), &__t.1) {
+            (
+                crate::aver_generated::domain::value::Val__view::ValInt(__size_fields),
+                defaultVal,
+            ) => {
+                let size = __size_fields.0.clone();
+                let defaultVal = defaultVal.clone();
+                Ok(crate::aver_generated::domain::value::Val::ValVector(
+                    crate::aver_generated::domain::value::Val__ValVector(
+                        match aver_rt::checked_vector_size(&(size)) {
+                            Some(__n) => Ok(aver_rt::AverVector::new(__n, defaultVal)),
+                            None => {
+                                Err(aver_rt::AverStr::from(aver_rt::vector_size_error_message()))
+                            }
+                        }?,
+                    ),
+                ))
+            }
+            _ => Err(AverStr::from("Vector.new: first arg must be Int")),
         }
-        _ => Err(AverStr::from("Vector.new: first arg must be Int")),
     }
 }
 
@@ -84,21 +93,24 @@ pub fn builtinVectorGet(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
-    match pair {
-        (
-            crate::aver_generated::domain::value::Val::ValVector(__vec_fields),
-            crate::aver_generated::domain::value::Val::ValInt(__idx_fields),
-        ) => {
-            let vec = __vec_fields.0.clone();
-            let idx = __idx_fields.0.clone();
-            match (idx).to_usize().and_then(|__i| vec.get(__i).cloned()) {
-                Some(v @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
-                    aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValSome(v)),
-                )),
-                None => Ok(crate::aver_generated::domain::value::Val::ValNone),
+    {
+        let __t = pair;
+        match (__t.0.view(), __t.1.view()) {
+            (
+                crate::aver_generated::domain::value::Val__view::ValVector(__vec_fields),
+                crate::aver_generated::domain::value::Val__view::ValInt(__idx_fields),
+            ) => {
+                let vec = __vec_fields.0.clone();
+                let idx = __idx_fields.0.clone();
+                match (idx).to_usize().and_then(|__i| vec.get(__i).cloned()) {
+                    Some(v @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
+                        crate::aver_generated::domain::value::Val__ValSome(v),
+                    )),
+                    None => Ok(crate::aver_generated::domain::value::Val::ValNone),
+                }
             }
+            _ => Err(AverStr::from("Vector.get: expected (Vector, Int)")),
         }
-        _ => Err(AverStr::from("Vector.get: expected (Vector, Int)")),
     }
 }
 
@@ -141,26 +153,32 @@ pub fn builtinVectorSetInner(
     valV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match vecV {
-        crate::aver_generated::domain::value::Val::ValVector(__vec_fields) => {
-            let vec = __vec_fields.0.clone();
-            match idxV {
-                crate::aver_generated::domain::value::Val::ValInt(__idx_fields) => {
-                    let idx = __idx_fields.0.clone();
-                    if (idx < aver_rt::AverInt::from_i64(0)) {
-                        Ok(crate::aver_generated::domain::value::Val::ValNone)
-                    } else {
-                        if (idx < aver_rt::AverInt::from_i64(vec.len() as i64)) {
-                            crate::aver_generated::domain::builtins::vector::builtinVectorSetInBounds(vec, idx, valV)
-                        } else {
-                            Ok(crate::aver_generated::domain::value::Val::ValNone)
+    {
+        let __t = vecV;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValVector(__vec_fields) => {
+                let vec = __vec_fields.0.clone();
+                {
+                    let __t = idxV;
+                    match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValInt(__idx_fields) => {
+                            let idx = __idx_fields.0.clone();
+                            if (idx < aver_rt::AverInt::from_i64(0)) {
+                                Ok(crate::aver_generated::domain::value::Val::ValNone)
+                            } else {
+                                if (idx < aver_rt::AverInt::from_i64(vec.len() as i64)) {
+                                    crate::aver_generated::domain::builtins::vector::builtinVectorSetInBounds(vec, idx, valV)
+                                } else {
+                                    Ok(crate::aver_generated::domain::value::Val::ValNone)
+                                }
+                            }
                         }
+                        _ => Err(AverStr::from("Vector.set: second arg must be Int")),
                     }
                 }
-                _ => Err(AverStr::from("Vector.set: second arg must be Int")),
             }
+            _ => Err(AverStr::from("Vector.set: first arg must be Vector")),
         }
-        _ => Err(AverStr::from("Vector.set: first arg must be Vector")),
     }
 }
 
@@ -177,11 +195,11 @@ pub fn builtinVectorSetInBounds(
         .and_then(|__i| vec.set_owned(__i, valV.clone()))
     {
         Some(newVec @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValSome(
-                crate::aver_generated::domain::value::Val::ValVector(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValSome(
+                crate::aver_generated::domain::value::Val::ValVector(
                     crate::aver_generated::domain::value::Val__ValVector(newVec),
-                )),
-            )),
+                ),
+            ),
         )),
         None => Err(AverStr::from("Vector.set: index out of bounds")),
     }
@@ -193,16 +211,19 @@ pub fn builtinVectorLen(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
-    match v {
-        crate::aver_generated::domain::value::Val::ValVector(__vec_fields) => {
-            let vec = __vec_fields.0.clone();
-            Ok(crate::aver_generated::domain::value::Val::ValInt(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt(
-                    aver_rt::AverInt::from_i64(vec.len() as i64),
-                )),
-            ))
+    {
+        let __t = v;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValVector(__vec_fields) => {
+                let vec = __vec_fields.0.clone();
+                Ok(crate::aver_generated::domain::value::Val::ValInt(
+                    crate::aver_generated::domain::value::Val__ValInt(aver_rt::AverInt::from_i64(
+                        vec.len() as i64,
+                    )),
+                ))
+            }
+            _ => Err(AverStr::from("Vector.len: expected Vector")),
         }
-        _ => Err(AverStr::from("Vector.len: expected Vector")),
     }
 }
 
@@ -212,16 +233,19 @@ pub fn builtinVectorFromList(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
-    match v {
-        crate::aver_generated::domain::value::Val::ValList(__items_fields) => {
-            let items = __items_fields.0.clone();
-            Ok(crate::aver_generated::domain::value::Val::ValVector(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValVector(
-                    aver_rt::AverVector::from_vec(items.to_vec()),
-                )),
-            ))
+    {
+        let __t = v;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValList(__items_fields) => {
+                let items = __items_fields.0.clone();
+                Ok(crate::aver_generated::domain::value::Val::ValVector(
+                    crate::aver_generated::domain::value::Val__ValVector(
+                        aver_rt::AverVector::from_vec(items.to_vec()),
+                    ),
+                ))
+            }
+            _ => Err(AverStr::from("Vector.fromList: expected List")),
         }
-        _ => Err(AverStr::from("Vector.fromList: expected List")),
     }
 }
 
@@ -231,15 +255,16 @@ pub fn builtinVectorToList(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
-    match v {
-        crate::aver_generated::domain::value::Val::ValVector(__vec_fields) => {
-            let vec = __vec_fields.0.clone();
-            Ok(crate::aver_generated::domain::value::Val::ValList(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValList(
-                    vec.to_list(),
-                )),
-            ))
+    {
+        let __t = v;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValVector(__vec_fields) => {
+                let vec = __vec_fields.0.clone();
+                Ok(crate::aver_generated::domain::value::Val::ValList(
+                    crate::aver_generated::domain::value::Val__ValList(vec.to_list()),
+                ))
+            }
+            _ => Err(AverStr::from("List.fromVector: expected Vector")),
         }
-        _ => Err(AverStr::from("List.fromVector: expected Vector")),
     }
 }

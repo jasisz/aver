@@ -1,8 +1,8 @@
 use super::emit_ctx::{EmitCtx, should_borrow_param};
 use super::expr::{aver_name_to_rust, classify_thin_fn_def_for_rust, explicit_parameter_pattern};
 use super::representation::{
-    RepresentationCapabilities, RepresentationContract, cheap_fields_first, shared_variants,
-    type_def_contract, variant_field_refs, walking_def, walks,
+    RepresentationCapabilities, RepresentationContract, cheap_fields_first, is_thin_sum,
+    shared_variants, type_def_contract, variant_field_refs, walking_def, walks,
 };
 use super::types::type_annotation_to_rust_scoped;
 use crate::ast::*;
@@ -85,6 +85,7 @@ fn emit_type_def_with_visibility(td: &TypeDef, public: bool, ctx: &CodegenContex
             scope,
             representation,
             &shared_variants(td, ctx),
+            is_thin_sum(td, ctx),
         ),
         TypeDef::Product { name, fields, .. } => emit_product_type(
             name,
@@ -168,6 +169,7 @@ fn partial_eq_impl(name: &str, test: &str) -> String {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_sum_type(
     name: &str,
     variants: &[TypeVariant],
@@ -176,12 +178,22 @@ fn emit_sum_type(
     scope: Option<&str>,
     representation: RepresentationContract,
     shared: &[bool],
+    thin: bool,
 ) -> String {
     let mut out = String::new();
     let visibility = visibility_prefix(public);
     let capabilities = representation.capabilities;
     // A shared constructor keeps its fields in one `{name}__{variant}`
-    // struct behind an `aver_rt::Shared` (see `shared_variants`).
+    // struct behind an `aver_rt::Shared` (see `shared_variants`); every
+    // constructor with fields of a thin sum keeps them in one such struct in
+    // its node (see `is_thin_sum`), matched through `{name}__view` and
+    // compared through `{name}__pair`.
+    let shared: Vec<bool> = match thin {
+        true => vec![true; variants.len()],
+        false => shared.to_vec(),
+    };
+    let view = format!("{name}__view");
+    let pair = format!("{name}__pair");
     let mut payloads = String::new();
     // The order `==` compares each constructor's fields in, where it is not
     // the declared one (see `cheap_fields_first`).
@@ -195,11 +207,10 @@ fn emit_sum_type(
                 .flatten()
         })
         .collect();
-    // Every constructor is shared only in a recursive sum (see
-    // `shared_variants`). Its `==` carries an `aver_rt::Walk` through the
+    // The `==` of a thin sum carries an `aver_rt::Walk` through the
     // payloads, which compares a subterm under many nodes once, not once per
     // path to it, when the walk is long.
-    let recursive = capabilities.partial_eq && shared.iter().all(|&shared| shared);
+    let recursive = capabilities.partial_eq && thin;
     let inline_eq = recursive
         || shared
             .iter()
@@ -219,9 +230,12 @@ fn emit_sum_type(
         .collect();
     let walks_on = |i: usize| walking[i].contains(&true);
     let mut body = String::new();
-    for (i, ((v, &shared), order)) in variants.iter().zip(shared).zip(&eq_orders).enumerate() {
+    for (i, ((v, &shared), order)) in variants.iter().zip(&shared).zip(&eq_orders).enumerate() {
         if v.fields.is_empty() {
-            writeln!(body, "    {},", v.name).unwrap();
+            match thin {
+                true => writeln!(body, "        {i} {},", v.name).unwrap(),
+                false => writeln!(body, "    {},", v.name).unwrap(),
+            }
             continue;
         }
         let field_types: Vec<String> = v
@@ -231,7 +245,10 @@ fn emit_sum_type(
             .collect();
         if shared {
             let payload = format!("{name}__{}", v.name);
-            writeln!(body, "    {}(aver_rt::Shared<{payload}>),", v.name).unwrap();
+            match thin {
+                true => writeln!(body, "        {i} {}({payload}),", v.name).unwrap(),
+                false => writeln!(body, "    {}(aver_rt::Shared<{payload}>),", v.name).unwrap(),
+            }
             let fields: Vec<String> = field_types
                 .iter()
                 .map(|ty| format!("{visibility}{ty}"))
@@ -272,12 +289,42 @@ fn emit_sum_type(
             writeln!(body, "    {}({}),", v.name, field_types.join(", ")).unwrap();
         }
     }
-    let derived = derive_line(without_derived_eq(capabilities, inline_eq));
-    writeln!(out, "{derived}\n{visibility}enum {name} {{\n{body}}}").unwrap();
+    if thin {
+        // The macro gives the type its `Clone`; `Debug` and `Hash` read the
+        // view, which is declared in constructor order and so hashes and
+        // prints as the enum would.
+        let view_derives = match capabilities.hash {
+            true => "Debug, Hash",
+            false => "Debug",
+        };
+        writeln!(
+            out,
+            "::aver_rt::thin_sum! {{\n    #[derive({view_derives})]\n    {visibility}{name} / {view} / {pair} {{\n{body}    }}\n}}"
+        )
+        .unwrap();
+        write!(
+            out,
+            "\nimpl std::fmt::Debug for {name} {{\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{\n        std::fmt::Debug::fmt(&self.view(), f)\n    }}\n}}\n"
+        )
+        .unwrap();
+        if capabilities.hash {
+            write!(
+                out,
+                "\nimpl std::hash::Hash for {name} {{\n    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {{\n        self.view().hash(state)\n    }}\n}}\n"
+            )
+            .unwrap();
+        }
+        if capabilities.eq {
+            write!(out, "\nimpl Eq for {name} {{}}\n").unwrap();
+        }
+    } else {
+        let derived = derive_line(without_derived_eq(capabilities, inline_eq));
+        writeln!(out, "{derived}\n{visibility}enum {name} {{\n{body}}}").unwrap();
+    }
     out.push_str(&payloads);
     if inline_eq {
         let mut arms = String::new();
-        for (i, ((v, &shared), order)) in variants.iter().zip(shared).zip(&eq_orders).enumerate() {
+        for (i, ((v, &shared), order)) in variants.iter().zip(&shared).zip(&eq_orders).enumerate() {
             // A shared constructor compares its one `Shared`, equal at once
             // when both sides are the same allocation and `==` is reflexive.
             let order = match (shared, order) {
@@ -295,22 +342,36 @@ fn emit_sum_type(
             };
             let test = match order.len() {
                 0 => "true".to_string(),
-                _ if walks_on(i) => format!("walk.shared(a0, b0, {})", capabilities.eq),
+                // Both nodes of one constructor: equal at once when they are
+                // one node and `==` is reflexive.
+                _ if walks_on(i) => format!(
+                    "walk.node(self, other, {}, |walk| a0.walk_eq(b0, walk))",
+                    capabilities.eq
+                ),
                 _ => fields_equal(&order, &[], |i| format!("a{i}"), |i| format!("b{i}")),
             };
-            writeln!(
-                arms,
-                "            ({name}::{0}{1}, {name}::{0}{2}) => {test},",
-                v.name,
-                binds("a"),
-                binds("b")
-            )
+            match thin {
+                true if order.is_empty() => {
+                    writeln!(arms, "            Some({pair}::{}) => {test},", v.name)
+                }
+                true => writeln!(
+                    arms,
+                    "            Some({pair}::{}(a0, b0)) => {test},",
+                    v.name
+                ),
+                false => writeln!(
+                    arms,
+                    "            ({name}::{0}{1}, {name}::{0}{2}) => {test},",
+                    v.name,
+                    binds("a"),
+                    binds("b")
+                ),
+            }
             .unwrap();
         }
-        let test = format!("match (self, other) {{\n{arms}            _ => false,\n        }}");
         if recursive {
             let test = format!(
-                "std::mem::discriminant(self) == std::mem::discriminant(other)\n            && {test}"
+                "match {name}::view_pair(self, other) {{\n{arms}            None => false,\n        }}"
             );
             out.push_str(&walk_eq_impl(name, &test));
             write!(
@@ -319,6 +380,7 @@ fn emit_sum_type(
             )
             .unwrap();
         } else {
+            let test = format!("match (self, other) {{\n{arms}            _ => false,\n        }}");
             out.push_str(&partial_eq_impl(name, &test));
         }
     }
@@ -329,6 +391,11 @@ fn emit_sum_type(
     // field name: declaration order is not observable anywhere else, so
     // ordering by it would make reordering two constructors change how every
     // map on this key iterates.
+    // A thin sum is matched through its view (see `is_thin_sum`).
+    let (case, matched) = match thin {
+        true => (view.as_str(), "self.view()"),
+        false => (name, "self"),
+    };
     if capabilities.eq && capabilities.hash && representation.orderable {
         let mut by_name: Vec<(&TypeVariant, bool)> =
             variants.iter().zip(shared.iter().copied()).collect();
@@ -336,12 +403,12 @@ fn emit_sum_type(
         writeln!(out).unwrap();
         writeln!(out, "impl {} {{", name).unwrap();
         writeln!(out, "    fn aver_key_rank(&self) -> usize {{").unwrap();
-        writeln!(out, "        match self {{").unwrap();
+        writeln!(out, "        match {matched} {{").unwrap();
         for (rank, (v, _)) in by_name.iter().enumerate() {
             if v.fields.is_empty() {
-                writeln!(out, "            {}::{} => {},", name, v.name, rank).unwrap();
+                writeln!(out, "            {}::{} => {},", case, v.name, rank).unwrap();
             } else {
-                writeln!(out, "            {}::{}(..) => {},", name, v.name, rank).unwrap();
+                writeln!(out, "            {}::{}(..) => {},", case, v.name, rank).unwrap();
             }
         }
         writeln!(out, "        }}").unwrap();
@@ -372,18 +439,29 @@ fn emit_sum_type(
         writeln!(out, "        if rank != std::cmp::Ordering::Equal {{").unwrap();
         writeln!(out, "            return rank;").unwrap();
         writeln!(out, "        }}").unwrap();
-        writeln!(out, "        match (self, other) {{").unwrap();
+        match thin {
+            true => writeln!(out, "        match {name}::view_pair(self, other) {{"),
+            false => writeln!(out, "        match (self, other) {{"),
+        }
+        .unwrap();
         for &(v, shared) in &by_name {
             if v.fields.is_empty() {
                 continue;
             }
             let (binds_a, refs_a) = variant_field_refs(shared, "a", v.fields.len());
             let (binds_b, refs_b) = variant_field_refs(shared, "b", v.fields.len());
-            writeln!(
-                out,
-                "            ({0}::{1}({2}), {0}::{1}({3})) => std::cmp::Ordering::Equal",
-                name, v.name, binds_a, binds_b
-            )
+            match thin {
+                true => writeln!(
+                    out,
+                    "            Some({pair}::{}({binds_a}, {binds_b})) => std::cmp::Ordering::Equal",
+                    v.name
+                ),
+                false => writeln!(
+                    out,
+                    "            ({0}::{1}({2}), {0}::{1}({3})) => std::cmp::Ordering::Equal",
+                    name, v.name, binds_a, binds_b
+                ),
+            }
             .unwrap();
             let chain: Vec<String> = refs_a
                 .iter()
@@ -402,13 +480,13 @@ fn emit_sum_type(
         writeln!(out).unwrap();
         writeln!(out, "impl aver_rt::AverDisplay for {} {{", name).unwrap();
         writeln!(out, "    fn aver_display(&self) -> String {{").unwrap();
-        writeln!(out, "        match self {{").unwrap();
-        for (v, &shared) in variants.iter().zip(shared) {
+        writeln!(out, "        match {matched} {{").unwrap();
+        for (v, &shared) in variants.iter().zip(&shared) {
             if v.fields.is_empty() {
                 writeln!(
                     out,
                     "            {}::{} => \"{}\".to_string(),",
-                    name, v.name, v.name
+                    case, v.name, v.name
                 )
                 .unwrap();
             } else {
@@ -422,14 +500,14 @@ fn emit_sum_type(
                     writeln!(
                         out,
                         "            {}::{}({}) => format!(\"{}({{}})\", {}),",
-                        name, v.name, bindings, v.name, display_parts[0]
+                        case, v.name, bindings, v.name, display_parts[0]
                     )
                     .unwrap();
                 } else {
                     writeln!(
                         out,
                         "            {}::{}({}) => format!(\"{}({{}})\", vec![{}].join(\", \")),",
-                        name,
+                        case,
                         v.name,
                         bindings,
                         v.name,
@@ -1988,7 +2066,11 @@ mod tests {
         // `==` is written out, so that it carries the comparison's walk
         // (`aver_rt::WalkEq`); `Eq` and `Hash` are still derived.
         let emitted = emit_public_type_def(&td, &ctx);
-        assert!(emitted.contains("#[derive(Clone, Debug, Eq, Hash)]\npub enum Tree"));
+        assert!(
+            emitted.contains("#[derive(Debug, Hash)]\n    pub Tree / Tree__view / Tree__pair {")
+        );
+        assert!(emitted.contains("impl Eq for Tree {}"));
+        assert!(emitted.contains("impl std::hash::Hash for Tree {"));
         assert!(emitted.contains("impl PartialEq for Tree"));
         assert!(emitted.contains("aver_rt::walk_eq(self, other)"));
     }

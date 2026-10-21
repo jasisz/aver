@@ -380,6 +380,16 @@ fn deep_recursion_under_a_result_int_main_matches_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A value of a recursive sum is one pointer to a node holding its
+/// constructor's tag and fields, matched through a view: alone, in a tuple,
+/// with a name bound to the whole value, in a self tail call, compared with
+/// `==` on shared nodes, and ordered as a `Map` key by constructor name.
+#[test]
+fn recursive_sum_as_one_pointer_matches_vm() {
+    assert_plain_parity("tests/fixtures/recursive_sum_app.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// Constant folding can turn `0.0 / 0.0` or `1.0 / 0.0` into NaN or an
 /// infinity, which have no Rust literal; they emit as the `f64` constants.
 #[test]

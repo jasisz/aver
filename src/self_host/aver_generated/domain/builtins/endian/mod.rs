@@ -50,7 +50,7 @@ pub fn byteVals(
         crate::cancel_checkpoint();
         aver_list_match!(octets, [] => { return acc.reverse(); }, [octet, rest] => { {
             let __tco0 = rest;
-            let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::value::Val::ValInt(aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt(octet))), &acc);
+            let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::value::Val::ValInt(crate::aver_generated::domain::value::Val__ValInt(octet)), &acc);
             octets = __tco0;
             acc = __tco1;
             continue;
@@ -63,12 +63,12 @@ pub fn bytesVal(
     bytes @ _: &crate::aver_generated::bytes::Bytes,
 ) -> crate::aver_generated::domain::value::Val {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::value::Val::ValRecord(aver_rt::Shared::new(
+    crate::aver_generated::domain::value::Val::ValRecord(
         crate::aver_generated::domain::value::Val__ValRecord(
             AverStr::from("Bytes"),
             aver_rt::AverList::from_vec(vec![(
                 AverStr::from("values"),
-                crate::aver_generated::domain::value::Val::ValList(aver_rt::Shared::new(
+                crate::aver_generated::domain::value::Val::ValList(
                     crate::aver_generated::domain::value::Val__ValList(
                         crate::aver_generated::domain::builtins::endian::byteVals__collected(
                             crate::aver_generated::bytes::octets(bytes),
@@ -77,10 +77,10 @@ pub fn bytesVal(
                             ),
                         ),
                     ),
-                )),
+                ),
             )]),
         ),
-    ))
+    )
 }
 
 /// Int.toBigEndian(value, width) -> semantic Result value.
@@ -110,16 +110,16 @@ pub fn encodeBigInner(
         .map_err(aver_rt::AverStr::from)
     {
         Ok(bytes @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+            crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::builtins::endian::bytesVal(&bytes),
-            )),
+            ),
         )),
         Err(error @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(error),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -151,16 +151,16 @@ pub fn encodeLittleInner(
         .map_err(aver_rt::AverStr::from)
     {
         Ok(bytes @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+            crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::builtins::endian::bytesVal(&bytes),
-            )),
+            ),
         )),
         Err(error @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(error),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -174,8 +174,8 @@ pub fn decodeBig(
     let octets @ _ = crate::aver_generated::domain::builtins::helpers::expectBytes(&value)?;
     let bytes @ _ = crate::aver_generated::bytes::fromList(&octets)?;
     Ok(crate::aver_generated::domain::value::Val::ValInt(
-        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt(
-            aver_rt::int_from_big_endian((bytes).values.as_slice()),
+        crate::aver_generated::domain::value::Val__ValInt(aver_rt::int_from_big_endian(
+            (bytes).values.as_slice(),
         )),
     ))
 }
@@ -189,8 +189,8 @@ pub fn decodeLittle(
     let octets @ _ = crate::aver_generated::domain::builtins::helpers::expectBytes(&value)?;
     let bytes @ _ = crate::aver_generated::bytes::fromList(&octets)?;
     Ok(crate::aver_generated::domain::value::Val::ValInt(
-        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt(
-            aver_rt::int_from_little_endian((bytes).values.as_slice()),
+        crate::aver_generated::domain::value::Val__ValInt(aver_rt::int_from_little_endian(
+            (bytes).values.as_slice(),
         )),
     ))
 }
@@ -205,7 +205,7 @@ pub fn byteVals__collected(
         crate::cancel_checkpoint();
         aver_list_match!(octets, [] => { return aver_rt::list_builder_finalize(acc); }, [octet, rest] => { {
             let __tco0 = rest;
-            let __tco1 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::value::Val::ValInt(aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt(octet))));
+            let __tco1 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::value::Val::ValInt(crate::aver_generated::domain::value::Val__ValInt(octet)));
             octets = __tco0;
             acc = __tco1;
             continue;

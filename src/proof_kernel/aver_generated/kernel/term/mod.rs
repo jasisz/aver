@@ -2,24 +2,40 @@
 use crate::proof_kernel::*;
 use ::aver_rt::aver_list_match;
 
-#[derive(Clone, Debug, Eq, Hash)]
-pub enum Ty {
-    TyInt,
-    TyBool,
-    TyStr,
-    TyFloat,
-    TyUnit,
-    TyList(aver_rt::Shared<Ty__TyList>),
-    TyOption(aver_rt::Shared<Ty__TyOption>),
-    TyResult(aver_rt::Shared<Ty__TyResult>),
-    TyMap(aver_rt::Shared<Ty__TyMap>),
-    TyVector(aver_rt::Shared<Ty__TyVector>),
-    TyTuple(aver_rt::Shared<Ty__TyTuple>),
-    TyNamed(aver_rt::Shared<Ty__TyNamed>),
-    TyAny,
-    TyVar(aver_rt::Shared<Ty__TyVar>),
-    TyRigid(aver_rt::Shared<Ty__TyRigid>),
+::aver_rt::thin_sum! {
+    #[derive(Debug, Hash)]
+    pub Ty / Ty__view / Ty__pair {
+        0 TyInt,
+        1 TyBool,
+        2 TyStr,
+        3 TyFloat,
+        4 TyUnit,
+        5 TyList(Ty__TyList),
+        6 TyOption(Ty__TyOption),
+        7 TyResult(Ty__TyResult),
+        8 TyMap(Ty__TyMap),
+        9 TyVector(Ty__TyVector),
+        10 TyTuple(Ty__TyTuple),
+        11 TyNamed(Ty__TyNamed),
+        12 TyAny,
+        13 TyVar(Ty__TyVar),
+        14 TyRigid(Ty__TyRigid),
+    }
 }
+
+impl std::fmt::Debug for Ty {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.view(), f)
+    }
+}
+
+impl std::hash::Hash for Ty {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.view().hash(state)
+    }
+}
+
+impl Eq for Ty {}
 
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Ty__TyList(pub Ty);
@@ -134,25 +150,34 @@ impl PartialEq for Ty__TyRigid {
 
 impl aver_rt::WalkEq for Ty {
     fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-            && match (self, other) {
-                (Ty::TyInt, Ty::TyInt) => true,
-                (Ty::TyBool, Ty::TyBool) => true,
-                (Ty::TyStr, Ty::TyStr) => true,
-                (Ty::TyFloat, Ty::TyFloat) => true,
-                (Ty::TyUnit, Ty::TyUnit) => true,
-                (Ty::TyList(a0), Ty::TyList(b0)) => walk.shared(a0, b0, true),
-                (Ty::TyOption(a0), Ty::TyOption(b0)) => walk.shared(a0, b0, true),
-                (Ty::TyResult(a0), Ty::TyResult(b0)) => walk.shared(a0, b0, true),
-                (Ty::TyMap(a0), Ty::TyMap(b0)) => walk.shared(a0, b0, true),
-                (Ty::TyVector(a0), Ty::TyVector(b0)) => walk.shared(a0, b0, true),
-                (Ty::TyTuple(a0), Ty::TyTuple(b0)) => a0 == b0,
-                (Ty::TyNamed(a0), Ty::TyNamed(b0)) => a0 == b0,
-                (Ty::TyAny, Ty::TyAny) => true,
-                (Ty::TyVar(a0), Ty::TyVar(b0)) => a0 == b0,
-                (Ty::TyRigid(a0), Ty::TyRigid(b0)) => a0 == b0,
-                _ => false,
+        match Ty::view_pair(self, other) {
+            Some(Ty__pair::TyInt) => true,
+            Some(Ty__pair::TyBool) => true,
+            Some(Ty__pair::TyStr) => true,
+            Some(Ty__pair::TyFloat) => true,
+            Some(Ty__pair::TyUnit) => true,
+            Some(Ty__pair::TyList(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
             }
+            Some(Ty__pair::TyOption(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Ty__pair::TyResult(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Ty__pair::TyMap(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Ty__pair::TyVector(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Ty__pair::TyTuple(a0, b0)) => a0 == b0,
+            Some(Ty__pair::TyNamed(a0, b0)) => a0 == b0,
+            Some(Ty__pair::TyAny) => true,
+            Some(Ty__pair::TyVar(a0, b0)) => a0 == b0,
+            Some(Ty__pair::TyRigid(a0, b0)) => a0 == b0,
+            None => false,
+        }
     }
 }
 
@@ -165,22 +190,22 @@ impl PartialEq for Ty {
 
 impl Ty {
     fn aver_key_rank(&self) -> usize {
-        match self {
-            Ty::TyAny => 0,
-            Ty::TyBool => 1,
-            Ty::TyFloat => 2,
-            Ty::TyInt => 3,
-            Ty::TyList(..) => 4,
-            Ty::TyMap(..) => 5,
-            Ty::TyNamed(..) => 6,
-            Ty::TyOption(..) => 7,
-            Ty::TyResult(..) => 8,
-            Ty::TyRigid(..) => 9,
-            Ty::TyStr => 10,
-            Ty::TyTuple(..) => 11,
-            Ty::TyUnit => 12,
-            Ty::TyVar(..) => 13,
-            Ty::TyVector(..) => 14,
+        match self.view() {
+            Ty__view::TyAny => 0,
+            Ty__view::TyBool => 1,
+            Ty__view::TyFloat => 2,
+            Ty__view::TyInt => 3,
+            Ty__view::TyList(..) => 4,
+            Ty__view::TyMap(..) => 5,
+            Ty__view::TyNamed(..) => 6,
+            Ty__view::TyOption(..) => 7,
+            Ty__view::TyResult(..) => 8,
+            Ty__view::TyRigid(..) => 9,
+            Ty__view::TyStr => 10,
+            Ty__view::TyTuple(..) => 11,
+            Ty__view::TyUnit => 12,
+            Ty__view::TyVar(..) => 13,
+            Ty__view::TyVector(..) => 14,
         }
     }
 }
@@ -197,32 +222,32 @@ impl Ord for Ty {
         if rank != std::cmp::Ordering::Equal {
             return rank;
         }
-        match (self, other) {
-            (Ty::TyList(a), Ty::TyList(b)) => {
+        match Ty::view_pair(self, other) {
+            Some(Ty__pair::TyList(a, b)) => {
                 std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Ty::TyMap(a), Ty::TyMap(b)) => std::cmp::Ordering::Equal
+            Some(Ty__pair::TyMap(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1))),
-            (Ty::TyNamed(a), Ty::TyNamed(b)) => {
+            Some(Ty__pair::TyNamed(a, b)) => {
                 std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Ty::TyOption(a), Ty::TyOption(b)) => {
+            Some(Ty__pair::TyOption(a, b)) => {
                 std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Ty::TyResult(a), Ty::TyResult(b)) => std::cmp::Ordering::Equal
+            Some(Ty__pair::TyResult(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1))),
-            (Ty::TyRigid(a), Ty::TyRigid(b)) => std::cmp::Ordering::Equal
+            Some(Ty__pair::TyRigid(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1))),
-            (Ty::TyTuple(a), Ty::TyTuple(b)) => {
+            Some(Ty__pair::TyTuple(a, b)) => {
                 std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Ty::TyVar(a), Ty::TyVar(b)) => std::cmp::Ordering::Equal
+            Some(Ty__pair::TyVar(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1))),
-            (Ty::TyVector(a), Ty::TyVector(b)) => {
+            Some(Ty__pair::TyVector(a, b)) => {
                 std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
             _ => std::cmp::Ordering::Equal,
@@ -232,31 +257,31 @@ impl Ord for Ty {
 
 impl aver_rt::AverDisplay for Ty {
     fn aver_display(&self) -> String {
-        match self {
-            Ty::TyInt => "TyInt".to_string(),
-            Ty::TyBool => "TyBool".to_string(),
-            Ty::TyStr => "TyStr".to_string(),
-            Ty::TyFloat => "TyFloat".to_string(),
-            Ty::TyUnit => "TyUnit".to_string(),
-            Ty::TyList(f) => format!("TyList({})", (&f.0).aver_display_inner()),
-            Ty::TyOption(f) => format!("TyOption({})", (&f.0).aver_display_inner()),
-            Ty::TyResult(f) => format!(
+        match self.view() {
+            Ty__view::TyInt => "TyInt".to_string(),
+            Ty__view::TyBool => "TyBool".to_string(),
+            Ty__view::TyStr => "TyStr".to_string(),
+            Ty__view::TyFloat => "TyFloat".to_string(),
+            Ty__view::TyUnit => "TyUnit".to_string(),
+            Ty__view::TyList(f) => format!("TyList({})", (&f.0).aver_display_inner()),
+            Ty__view::TyOption(f) => format!("TyOption({})", (&f.0).aver_display_inner()),
+            Ty__view::TyResult(f) => format!(
                 "TyResult({})",
                 vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Ty::TyMap(f) => format!(
+            Ty__view::TyMap(f) => format!(
                 "TyMap({})",
                 vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Ty::TyVector(f) => format!("TyVector({})", (&f.0).aver_display_inner()),
-            Ty::TyTuple(f) => format!("TyTuple({})", (&f.0).aver_display_inner()),
-            Ty::TyNamed(f) => format!("TyNamed({})", (&f.0).aver_display_inner()),
-            Ty::TyAny => "TyAny".to_string(),
-            Ty::TyVar(f) => format!(
+            Ty__view::TyVector(f) => format!("TyVector({})", (&f.0).aver_display_inner()),
+            Ty__view::TyTuple(f) => format!("TyTuple({})", (&f.0).aver_display_inner()),
+            Ty__view::TyNamed(f) => format!("TyNamed({})", (&f.0).aver_display_inner()),
+            Ty__view::TyAny => "TyAny".to_string(),
+            Ty__view::TyVar(f) => format!(
                 "TyVar({})",
                 vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Ty::TyRigid(f) => format!(
+            Ty__view::TyRigid(f) => format!(
                 "TyRigid({})",
                 vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
@@ -303,27 +328,43 @@ impl aver_rt::AverDisplay for TypedVar {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash)]
-pub enum Term {
-    TInt(aver_rt::Shared<Term__TInt>),
-    TBool(aver_rt::Shared<Term__TBool>),
-    TStr(aver_rt::Shared<Term__TStr>),
-    TUnit,
-    TVar(aver_rt::Shared<Term__TVar>),
-    THole,
-    TGet(aver_rt::Shared<Term__TGet>),
-    TCall(aver_rt::Shared<Term__TCall>),
-    TBi(aver_rt::Shared<Term__TBi>),
-    TOp(aver_rt::Shared<Term__TOp>),
-    TNeg(aver_rt::Shared<Term__TNeg>),
-    TCtor(aver_rt::Shared<Term__TCtor>),
-    TMatch(aver_rt::Shared<Term__TMatch>),
-    TParts(aver_rt::Shared<Term__TParts>),
-    TList(aver_rt::Shared<Term__TList>),
-    TTuple(aver_rt::Shared<Term__TTuple>),
-    TRec(aver_rt::Shared<Term__TRec>),
-    TUpd(aver_rt::Shared<Term__TUpd>),
+::aver_rt::thin_sum! {
+    #[derive(Debug, Hash)]
+    pub Term / Term__view / Term__pair {
+        0 TInt(Term__TInt),
+        1 TBool(Term__TBool),
+        2 TStr(Term__TStr),
+        3 TUnit,
+        4 TVar(Term__TVar),
+        5 THole,
+        6 TGet(Term__TGet),
+        7 TCall(Term__TCall),
+        8 TBi(Term__TBi),
+        9 TOp(Term__TOp),
+        10 TNeg(Term__TNeg),
+        11 TCtor(Term__TCtor),
+        12 TMatch(Term__TMatch),
+        13 TParts(Term__TParts),
+        14 TList(Term__TList),
+        15 TTuple(Term__TTuple),
+        16 TRec(Term__TRec),
+        17 TUpd(Term__TUpd),
+    }
 }
+
+impl std::fmt::Debug for Term {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.view(), f)
+    }
+}
+
+impl std::hash::Hash for Term {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.view().hash(state)
+    }
+}
+
+impl Eq for Term {}
 
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Term__TInt(pub aver_rt::AverInt);
@@ -501,28 +542,37 @@ impl aver_rt::WalkEq for Term__TUpd {
 
 impl aver_rt::WalkEq for Term {
     fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-            && match (self, other) {
-                (Term::TInt(a0), Term::TInt(b0)) => a0 == b0,
-                (Term::TBool(a0), Term::TBool(b0)) => a0 == b0,
-                (Term::TStr(a0), Term::TStr(b0)) => a0 == b0,
-                (Term::TUnit, Term::TUnit) => true,
-                (Term::TVar(a0), Term::TVar(b0)) => a0 == b0,
-                (Term::THole, Term::THole) => true,
-                (Term::TGet(a0), Term::TGet(b0)) => walk.shared(a0, b0, true),
-                (Term::TCall(a0), Term::TCall(b0)) => a0 == b0,
-                (Term::TBi(a0), Term::TBi(b0)) => a0 == b0,
-                (Term::TOp(a0), Term::TOp(b0)) => walk.shared(a0, b0, true),
-                (Term::TNeg(a0), Term::TNeg(b0)) => walk.shared(a0, b0, true),
-                (Term::TCtor(a0), Term::TCtor(b0)) => a0 == b0,
-                (Term::TMatch(a0), Term::TMatch(b0)) => walk.shared(a0, b0, true),
-                (Term::TParts(a0), Term::TParts(b0)) => a0 == b0,
-                (Term::TList(a0), Term::TList(b0)) => a0 == b0,
-                (Term::TTuple(a0), Term::TTuple(b0)) => a0 == b0,
-                (Term::TRec(a0), Term::TRec(b0)) => a0 == b0,
-                (Term::TUpd(a0), Term::TUpd(b0)) => walk.shared(a0, b0, true),
-                _ => false,
+        match Term::view_pair(self, other) {
+            Some(Term__pair::TInt(a0, b0)) => a0 == b0,
+            Some(Term__pair::TBool(a0, b0)) => a0 == b0,
+            Some(Term__pair::TStr(a0, b0)) => a0 == b0,
+            Some(Term__pair::TUnit) => true,
+            Some(Term__pair::TVar(a0, b0)) => a0 == b0,
+            Some(Term__pair::THole) => true,
+            Some(Term__pair::TGet(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
             }
+            Some(Term__pair::TCall(a0, b0)) => a0 == b0,
+            Some(Term__pair::TBi(a0, b0)) => a0 == b0,
+            Some(Term__pair::TOp(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Term__pair::TNeg(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Term__pair::TCtor(a0, b0)) => a0 == b0,
+            Some(Term__pair::TMatch(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Term__pair::TParts(a0, b0)) => a0 == b0,
+            Some(Term__pair::TList(a0, b0)) => a0 == b0,
+            Some(Term__pair::TTuple(a0, b0)) => a0 == b0,
+            Some(Term__pair::TRec(a0, b0)) => a0 == b0,
+            Some(Term__pair::TUpd(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+            }
+            None => false,
+        }
     }
 }
 
@@ -535,25 +585,25 @@ impl PartialEq for Term {
 
 impl Term {
     fn aver_key_rank(&self) -> usize {
-        match self {
-            Term::TBi(..) => 0,
-            Term::TBool(..) => 1,
-            Term::TCall(..) => 2,
-            Term::TCtor(..) => 3,
-            Term::TGet(..) => 4,
-            Term::THole => 5,
-            Term::TInt(..) => 6,
-            Term::TList(..) => 7,
-            Term::TMatch(..) => 8,
-            Term::TNeg(..) => 9,
-            Term::TOp(..) => 10,
-            Term::TParts(..) => 11,
-            Term::TRec(..) => 12,
-            Term::TStr(..) => 13,
-            Term::TTuple(..) => 14,
-            Term::TUnit => 15,
-            Term::TUpd(..) => 16,
-            Term::TVar(..) => 17,
+        match self.view() {
+            Term__view::TBi(..) => 0,
+            Term__view::TBool(..) => 1,
+            Term__view::TCall(..) => 2,
+            Term__view::TCtor(..) => 3,
+            Term__view::TGet(..) => 4,
+            Term__view::THole => 5,
+            Term__view::TInt(..) => 6,
+            Term__view::TList(..) => 7,
+            Term__view::TMatch(..) => 8,
+            Term__view::TNeg(..) => 9,
+            Term__view::TOp(..) => 10,
+            Term__view::TParts(..) => 11,
+            Term__view::TRec(..) => 12,
+            Term__view::TStr(..) => 13,
+            Term__view::TTuple(..) => 14,
+            Term__view::TUnit => 15,
+            Term__view::TUpd(..) => 16,
+            Term__view::TVar(..) => 17,
         }
     }
 }
@@ -570,55 +620,55 @@ impl Ord for Term {
         if rank != std::cmp::Ordering::Equal {
             return rank;
         }
-        match (self, other) {
-            (Term::TBi(a), Term::TBi(b)) => std::cmp::Ordering::Equal
+        match Term::view_pair(self, other) {
+            Some(Term__pair::TBi(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1))),
-            (Term::TBool(a), Term::TBool(b)) => {
+            Some(Term__pair::TBool(a, b)) => {
                 std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Term::TCall(a), Term::TCall(b)) => std::cmp::Ordering::Equal
+            Some(Term__pair::TCall(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1))),
-            (Term::TCtor(a), Term::TCtor(b)) => std::cmp::Ordering::Equal
+            Some(Term__pair::TCtor(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1))),
-            (Term::TGet(a), Term::TGet(b)) => std::cmp::Ordering::Equal
+            Some(Term__pair::TGet(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1))),
-            (Term::TInt(a), Term::TInt(b)) => {
+            Some(Term__pair::TInt(a, b)) => {
                 std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Term::TList(a), Term::TList(b)) => {
+            Some(Term__pair::TList(a, b)) => {
                 std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Term::TMatch(a), Term::TMatch(b)) => std::cmp::Ordering::Equal
+            Some(Term__pair::TMatch(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1))),
-            (Term::TNeg(a), Term::TNeg(b)) => {
+            Some(Term__pair::TNeg(a, b)) => {
                 std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Term::TOp(a), Term::TOp(b)) => std::cmp::Ordering::Equal
+            Some(Term__pair::TOp(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1)))
                 .then_with(|| (&a.2).cmp((&b.2))),
-            (Term::TParts(a), Term::TParts(b)) => {
+            Some(Term__pair::TParts(a, b)) => {
                 std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Term::TRec(a), Term::TRec(b)) => std::cmp::Ordering::Equal
+            Some(Term__pair::TRec(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1))),
-            (Term::TStr(a), Term::TStr(b)) => {
+            Some(Term__pair::TStr(a, b)) => {
                 std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Term::TTuple(a), Term::TTuple(b)) => {
+            Some(Term__pair::TTuple(a, b)) => {
                 std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Term::TUpd(a), Term::TUpd(b)) => std::cmp::Ordering::Equal
+            Some(Term__pair::TUpd(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1)))
                 .then_with(|| (&a.2).cmp((&b.2))),
-            (Term::TVar(a), Term::TVar(b)) => {
+            Some(Term__pair::TVar(a, b)) => {
                 std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
             _ => std::cmp::Ordering::Equal,
@@ -628,26 +678,26 @@ impl Ord for Term {
 
 impl aver_rt::AverDisplay for Term {
     fn aver_display(&self) -> String {
-        match self {
-            Term::TInt(f) => format!("TInt({})", (&f.0).aver_display_inner()),
-            Term::TBool(f) => format!("TBool({})", (&f.0).aver_display_inner()),
-            Term::TStr(f) => format!("TStr({})", (&f.0).aver_display_inner()),
-            Term::TUnit => "TUnit".to_string(),
-            Term::TVar(f) => format!("TVar({})", (&f.0).aver_display_inner()),
-            Term::THole => "THole".to_string(),
-            Term::TGet(f) => format!(
+        match self.view() {
+            Term__view::TInt(f) => format!("TInt({})", (&f.0).aver_display_inner()),
+            Term__view::TBool(f) => format!("TBool({})", (&f.0).aver_display_inner()),
+            Term__view::TStr(f) => format!("TStr({})", (&f.0).aver_display_inner()),
+            Term__view::TUnit => "TUnit".to_string(),
+            Term__view::TVar(f) => format!("TVar({})", (&f.0).aver_display_inner()),
+            Term__view::THole => "THole".to_string(),
+            Term__view::TGet(f) => format!(
                 "TGet({})",
                 vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Term::TCall(f) => format!(
+            Term__view::TCall(f) => format!(
                 "TCall({})",
                 vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Term::TBi(f) => format!(
+            Term__view::TBi(f) => format!(
                 "TBi({})",
                 vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Term::TOp(f) => format!(
+            Term__view::TOp(f) => format!(
                 "TOp({})",
                 vec![
                     (&f.0).aver_display_inner(),
@@ -656,23 +706,23 @@ impl aver_rt::AverDisplay for Term {
                 ]
                 .join(", ")
             ),
-            Term::TNeg(f) => format!("TNeg({})", (&f.0).aver_display_inner()),
-            Term::TCtor(f) => format!(
+            Term__view::TNeg(f) => format!("TNeg({})", (&f.0).aver_display_inner()),
+            Term__view::TCtor(f) => format!(
                 "TCtor({})",
                 vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Term::TMatch(f) => format!(
+            Term__view::TMatch(f) => format!(
                 "TMatch({})",
                 vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Term::TParts(f) => format!("TParts({})", (&f.0).aver_display_inner()),
-            Term::TList(f) => format!("TList({})", (&f.0).aver_display_inner()),
-            Term::TTuple(f) => format!("TTuple({})", (&f.0).aver_display_inner()),
-            Term::TRec(f) => format!(
+            Term__view::TParts(f) => format!("TParts({})", (&f.0).aver_display_inner()),
+            Term__view::TList(f) => format!("TList({})", (&f.0).aver_display_inner()),
+            Term__view::TTuple(f) => format!("TTuple({})", (&f.0).aver_display_inner()),
+            Term__view::TRec(f) => format!(
                 "TRec({})",
                 vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Term::TUpd(f) => format!(
+            Term__view::TUpd(f) => format!(
                 "TUpd({})",
                 vec![
                     (&f.0).aver_display_inner(),
@@ -1009,9 +1059,12 @@ impl aver_rt::AverDisplay for FinField {
 /// Whether a term is the hole.
 pub fn isHole(t @ _: &Term) -> bool {
     crate::proof_kernel::cancel_checkpoint();
-    match t {
-        crate::proof_kernel::aver_generated::kernel::term::Term::THole => true,
-        _ => false,
+    {
+        let __t = t;
+        match __t.view() {
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::THole => true,
+            _ => false,
+        }
     }
 }
 

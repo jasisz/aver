@@ -1,0 +1,12 @@
+module NativeProviderRecursive
+    intent = "Send a value of a recursive sum to a native provider and take it back."
+    depends [Trees]
+    exposes [sample, main]
+    effects [Trees.echo]
+
+fn sample() -> Result<Trees.Tree, String>
+    ! [Trees.echo]
+    Trees.echo(Trees.Tree.Both(Trees.Tree.Leaf(9), Trees.Tree.Both(Trees.Tree.Empty, Trees.Tree.Leaf(2))))
+
+fn main() -> Unit
+    Unit

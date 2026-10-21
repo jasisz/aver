@@ -11,17 +11,17 @@ pub fn applyBinop(
     match op {
         crate::aver_generated::domain::ast::BinOp::OpAdd => {
             Ok(crate::aver_generated::domain::value::Val::ValInt(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt(x.add(&y))),
+                crate::aver_generated::domain::value::Val__ValInt(x.add(&y)),
             ))
         }
         crate::aver_generated::domain::ast::BinOp::OpSub => {
             Ok(crate::aver_generated::domain::value::Val::ValInt(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt(x.sub(&y))),
+                crate::aver_generated::domain::value::Val__ValInt(x.sub(&y)),
             ))
         }
         crate::aver_generated::domain::ast::BinOp::OpMul => {
             Ok(crate::aver_generated::domain::value::Val::ValInt(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt(x.mul(&y))),
+                crate::aver_generated::domain::value::Val__ValInt(x.mul(&y)),
             ))
         }
         crate::aver_generated::domain::ast::BinOp::OpDiv => {
@@ -29,10 +29,10 @@ pub fn applyBinop(
                 Err(AverStr::from("division by zero"))
             } else {
                 Ok(crate::aver_generated::domain::value::Val::ValInt(
-                    aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt(
+                    crate::aver_generated::domain::value::Val__ValInt(
                         (x).div_euclid(&(y))
                             .unwrap_or(aver_rt::AverInt::from_i64(0)),
-                    )),
+                    ),
                 ))
             }
         }
@@ -49,17 +49,17 @@ pub fn applyBinopFloat(
     match op {
         crate::aver_generated::domain::ast::BinOp::OpAdd => {
             Ok(crate::aver_generated::domain::value::Val::ValFloat(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValFloat((x + y))),
+                crate::aver_generated::domain::value::Val__ValFloat((x + y)),
             ))
         }
         crate::aver_generated::domain::ast::BinOp::OpSub => {
             Ok(crate::aver_generated::domain::value::Val::ValFloat(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValFloat((x - y))),
+                crate::aver_generated::domain::value::Val__ValFloat((x - y)),
             ))
         }
         crate::aver_generated::domain::ast::BinOp::OpMul => {
             Ok(crate::aver_generated::domain::value::Val::ValFloat(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValFloat((x * y))),
+                crate::aver_generated::domain::value::Val__ValFloat((x * y)),
             ))
         }
         crate::aver_generated::domain::ast::BinOp::OpDiv => {
@@ -67,9 +67,7 @@ pub fn applyBinopFloat(
                 Err(AverStr::from("float division by zero"))
             } else {
                 Ok(crate::aver_generated::domain::value::Val::ValFloat(
-                    aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValFloat(
-                        (x / y),
-                    )),
+                    crate::aver_generated::domain::value::Val__ValFloat((x / y)),
                 ))
             }
         }
@@ -85,34 +83,34 @@ pub fn applyCmp(
     crate::cancel_checkpoint();
     match op {
         crate::aver_generated::domain::ast::CmpOp::CmpEq => {
-            crate::aver_generated::domain::value::Val::ValBool(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val::ValBool(
                 crate::aver_generated::domain::value::Val__ValBool((x == y)),
-            ))
+            )
         }
         crate::aver_generated::domain::ast::CmpOp::CmpNeq => {
-            crate::aver_generated::domain::value::Val::ValBool(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val::ValBool(
                 crate::aver_generated::domain::value::Val__ValBool((x != y)),
-            ))
+            )
         }
         crate::aver_generated::domain::ast::CmpOp::CmpLt => {
-            crate::aver_generated::domain::value::Val::ValBool(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val::ValBool(
                 crate::aver_generated::domain::value::Val__ValBool((x < y)),
-            ))
+            )
         }
         crate::aver_generated::domain::ast::CmpOp::CmpGt => {
-            crate::aver_generated::domain::value::Val::ValBool(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val::ValBool(
                 crate::aver_generated::domain::value::Val__ValBool((x > y)),
-            ))
+            )
         }
         crate::aver_generated::domain::ast::CmpOp::CmpLte => {
-            crate::aver_generated::domain::value::Val::ValBool(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val::ValBool(
                 crate::aver_generated::domain::value::Val__ValBool((x <= y)),
-            ))
+            )
         }
         crate::aver_generated::domain::ast::CmpOp::CmpGte => {
-            crate::aver_generated::domain::value::Val::ValBool(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val::ValBool(
                 crate::aver_generated::domain::value::Val__ValBool((x >= y)),
-            ))
+            )
         }
     }
 }
@@ -126,34 +124,34 @@ pub fn applyCmpFloat(
     crate::cancel_checkpoint();
     match op {
         crate::aver_generated::domain::ast::CmpOp::CmpEq => {
-            crate::aver_generated::domain::value::Val::ValBool(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val::ValBool(
                 crate::aver_generated::domain::value::Val__ValBool((x == y)),
-            ))
+            )
         }
         crate::aver_generated::domain::ast::CmpOp::CmpNeq => {
-            crate::aver_generated::domain::value::Val::ValBool(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val::ValBool(
                 crate::aver_generated::domain::value::Val__ValBool((x != y)),
-            ))
+            )
         }
         crate::aver_generated::domain::ast::CmpOp::CmpLt => {
-            crate::aver_generated::domain::value::Val::ValBool(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val::ValBool(
                 crate::aver_generated::domain::value::Val__ValBool((x < y)),
-            ))
+            )
         }
         crate::aver_generated::domain::ast::CmpOp::CmpGt => {
-            crate::aver_generated::domain::value::Val::ValBool(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val::ValBool(
                 crate::aver_generated::domain::value::Val__ValBool((x > y)),
-            ))
+            )
         }
         crate::aver_generated::domain::ast::CmpOp::CmpLte => {
-            crate::aver_generated::domain::value::Val::ValBool(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val::ValBool(
                 crate::aver_generated::domain::value::Val__ValBool((x <= y)),
-            ))
+            )
         }
         crate::aver_generated::domain::ast::CmpOp::CmpGte => {
-            crate::aver_generated::domain::value::Val::ValBool(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val::ValBool(
                 crate::aver_generated::domain::value::Val__ValBool((x >= y)),
-            ))
+            )
         }
     }
 }
@@ -165,55 +163,58 @@ pub fn evalBinopVals(
     op @ _: &crate::aver_generated::domain::ast::BinOp,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match (va, vb) {
-        (
-            crate::aver_generated::domain::value::Val::ValInt(__x_fields),
-            crate::aver_generated::domain::value::Val::ValInt(__y_fields),
-        ) => {
-            let x = __x_fields.0.clone();
-            let y = __y_fields.0.clone();
-            crate::aver_generated::domain::eval::ops::applyBinop(x, y, op)
-        }
-        (
-            crate::aver_generated::domain::value::Val::ValFloat(__x_fields),
-            crate::aver_generated::domain::value::Val::ValFloat(__y_fields),
-        ) => {
-            let x = __x_fields.0.clone();
-            let y = __y_fields.0.clone();
-            crate::aver_generated::domain::eval::ops::applyBinopFloat(x, y, op)
-        }
-        (
-            crate::aver_generated::domain::value::Val::ValInt(__x_fields),
-            crate::aver_generated::domain::value::Val::ValFloat(__y_fields),
-        ) => {
-            let x = __x_fields.0.clone();
-            let y = __y_fields.0.clone();
-            crate::aver_generated::domain::eval::ops::applyBinopFloat(x.to_f64(), y, op)
-        }
-        (
-            crate::aver_generated::domain::value::Val::ValFloat(__x_fields),
-            crate::aver_generated::domain::value::Val::ValInt(__y_fields),
-        ) => {
-            let x = __x_fields.0.clone();
-            let y = __y_fields.0.clone();
-            crate::aver_generated::domain::eval::ops::applyBinopFloat(x, y.to_f64(), op)
-        }
-        (
-            crate::aver_generated::domain::value::Val::ValStr(__x_fields),
-            crate::aver_generated::domain::value::Val::ValStr(__y_fields),
-        ) => {
-            let x = __x_fields.0.clone();
-            let y = __y_fields.0.clone();
-            match op {
-                crate::aver_generated::domain::ast::BinOp::OpAdd => Ok(
-                    crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
-                        crate::aver_generated::domain::value::Val__ValStr((x + &y)),
-                    )),
-                ),
-                _ => Err(AverStr::from("strings only support +")),
+    {
+        let __t = (va, vb);
+        match (__t.0.view(), __t.1.view()) {
+            (
+                crate::aver_generated::domain::value::Val__view::ValInt(__x_fields),
+                crate::aver_generated::domain::value::Val__view::ValInt(__y_fields),
+            ) => {
+                let x = __x_fields.0.clone();
+                let y = __y_fields.0.clone();
+                crate::aver_generated::domain::eval::ops::applyBinop(x, y, op)
             }
+            (
+                crate::aver_generated::domain::value::Val__view::ValFloat(__x_fields),
+                crate::aver_generated::domain::value::Val__view::ValFloat(__y_fields),
+            ) => {
+                let x = __x_fields.0.clone();
+                let y = __y_fields.0.clone();
+                crate::aver_generated::domain::eval::ops::applyBinopFloat(x, y, op)
+            }
+            (
+                crate::aver_generated::domain::value::Val__view::ValInt(__x_fields),
+                crate::aver_generated::domain::value::Val__view::ValFloat(__y_fields),
+            ) => {
+                let x = __x_fields.0.clone();
+                let y = __y_fields.0.clone();
+                crate::aver_generated::domain::eval::ops::applyBinopFloat(x.to_f64(), y, op)
+            }
+            (
+                crate::aver_generated::domain::value::Val__view::ValFloat(__x_fields),
+                crate::aver_generated::domain::value::Val__view::ValInt(__y_fields),
+            ) => {
+                let x = __x_fields.0.clone();
+                let y = __y_fields.0.clone();
+                crate::aver_generated::domain::eval::ops::applyBinopFloat(x, y.to_f64(), op)
+            }
+            (
+                crate::aver_generated::domain::value::Val__view::ValStr(__x_fields),
+                crate::aver_generated::domain::value::Val__view::ValStr(__y_fields),
+            ) => {
+                let x = __x_fields.0.clone();
+                let y = __y_fields.0.clone();
+                match op {
+                    crate::aver_generated::domain::ast::BinOp::OpAdd => {
+                        Ok(crate::aver_generated::domain::value::Val::ValStr(
+                            crate::aver_generated::domain::value::Val__ValStr((x + &y)),
+                        ))
+                    }
+                    _ => Err(AverStr::from("strings only support +")),
+                }
+            }
+            _ => Err(AverStr::from("binop type mismatch")),
         }
-        _ => Err(AverStr::from("binop type mismatch")),
     }
 }
 
@@ -222,24 +223,25 @@ pub fn evalNegVals(
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match v {
-        crate::aver_generated::domain::value::Val::ValInt(__n_fields) => {
-            let n = __n_fields.0.clone();
-            Ok(crate::aver_generated::domain::value::Val::ValInt(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt(
-                    aver_rt::AverInt::from_i64(0).sub(&n),
-                )),
-            ))
+    {
+        let __t = v;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValInt(__n_fields) => {
+                let n = __n_fields.0.clone();
+                Ok(crate::aver_generated::domain::value::Val::ValInt(
+                    crate::aver_generated::domain::value::Val__ValInt(
+                        aver_rt::AverInt::from_i64(0).sub(&n),
+                    ),
+                ))
+            }
+            crate::aver_generated::domain::value::Val__view::ValFloat(__f_fields) => {
+                let f = __f_fields.0.clone();
+                Ok(crate::aver_generated::domain::value::Val::ValFloat(
+                    crate::aver_generated::domain::value::Val__ValFloat((0.0f64 - f)),
+                ))
+            }
+            _ => Err(AverStr::from("unary '-' requires Int or Float")),
         }
-        crate::aver_generated::domain::value::Val::ValFloat(__f_fields) => {
-            let f = __f_fields.0.clone();
-            Ok(crate::aver_generated::domain::value::Val::ValFloat(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValFloat(
-                    (0.0f64 - f),
-                )),
-            ))
-        }
-        _ => Err(AverStr::from("unary '-' requires Int or Float")),
     }
 }
 
@@ -250,68 +252,75 @@ pub fn evalCmpVals(
     op @ _: &crate::aver_generated::domain::ast::CmpOp,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match (va, vb) {
-        (
-            crate::aver_generated::domain::value::Val::ValInt(__x_fields),
-            crate::aver_generated::domain::value::Val::ValInt(__y_fields),
-        ) => {
-            let x = __x_fields.0.clone();
-            let y = __y_fields.0.clone();
-            Ok(crate::aver_generated::domain::eval::ops::applyCmp(x, y, op))
+    {
+        let __t = (va, vb);
+        match (__t.0.view(), __t.1.view()) {
+            (
+                crate::aver_generated::domain::value::Val__view::ValInt(__x_fields),
+                crate::aver_generated::domain::value::Val__view::ValInt(__y_fields),
+            ) => {
+                let x = __x_fields.0.clone();
+                let y = __y_fields.0.clone();
+                Ok(crate::aver_generated::domain::eval::ops::applyCmp(x, y, op))
+            }
+            (
+                crate::aver_generated::domain::value::Val__view::ValFloat(__x_fields),
+                crate::aver_generated::domain::value::Val__view::ValFloat(__y_fields),
+            ) => {
+                let x = __x_fields.0.clone();
+                let y = __y_fields.0.clone();
+                Ok(crate::aver_generated::domain::eval::ops::applyCmpFloat(
+                    x, y, op,
+                ))
+            }
+            (
+                crate::aver_generated::domain::value::Val__view::ValInt(__x_fields),
+                crate::aver_generated::domain::value::Val__view::ValFloat(__y_fields),
+            ) => {
+                let x = __x_fields.0.clone();
+                let y = __y_fields.0.clone();
+                Ok(crate::aver_generated::domain::eval::ops::applyCmpFloat(
+                    x.to_f64(),
+                    y,
+                    op,
+                ))
+            }
+            (
+                crate::aver_generated::domain::value::Val__view::ValFloat(__x_fields),
+                crate::aver_generated::domain::value::Val__view::ValInt(__y_fields),
+            ) => {
+                let x = __x_fields.0.clone();
+                let y = __y_fields.0.clone();
+                Ok(crate::aver_generated::domain::eval::ops::applyCmpFloat(
+                    x,
+                    y.to_f64(),
+                    op,
+                ))
+            }
+            (
+                crate::aver_generated::domain::value::Val__view::ValStr(__x_fields),
+                crate::aver_generated::domain::value::Val__view::ValStr(__y_fields),
+            ) => {
+                let x = __x_fields.0.clone();
+                let y = __y_fields.0.clone();
+                Ok(crate::aver_generated::domain::eval::ops::applyStrCmp(
+                    x, y, op,
+                ))
+            }
+            (
+                crate::aver_generated::domain::value::Val__view::ValBool(__x_fields),
+                crate::aver_generated::domain::value::Val__view::ValBool(__y_fields),
+            ) => {
+                let x = __x_fields.0.clone();
+                let y = __y_fields.0.clone();
+                crate::aver_generated::domain::eval::ops::applyBoolCmp(x, y, op)
+            }
+            (_, _) => {
+                let a = __t.0.clone();
+                let b = __t.1.clone();
+                crate::aver_generated::domain::eval::ops::evalCmpRepr(&a, &b, op)
+            }
         }
-        (
-            crate::aver_generated::domain::value::Val::ValFloat(__x_fields),
-            crate::aver_generated::domain::value::Val::ValFloat(__y_fields),
-        ) => {
-            let x = __x_fields.0.clone();
-            let y = __y_fields.0.clone();
-            Ok(crate::aver_generated::domain::eval::ops::applyCmpFloat(
-                x, y, op,
-            ))
-        }
-        (
-            crate::aver_generated::domain::value::Val::ValInt(__x_fields),
-            crate::aver_generated::domain::value::Val::ValFloat(__y_fields),
-        ) => {
-            let x = __x_fields.0.clone();
-            let y = __y_fields.0.clone();
-            Ok(crate::aver_generated::domain::eval::ops::applyCmpFloat(
-                x.to_f64(),
-                y,
-                op,
-            ))
-        }
-        (
-            crate::aver_generated::domain::value::Val::ValFloat(__x_fields),
-            crate::aver_generated::domain::value::Val::ValInt(__y_fields),
-        ) => {
-            let x = __x_fields.0.clone();
-            let y = __y_fields.0.clone();
-            Ok(crate::aver_generated::domain::eval::ops::applyCmpFloat(
-                x,
-                y.to_f64(),
-                op,
-            ))
-        }
-        (
-            crate::aver_generated::domain::value::Val::ValStr(__x_fields),
-            crate::aver_generated::domain::value::Val::ValStr(__y_fields),
-        ) => {
-            let x = __x_fields.0.clone();
-            let y = __y_fields.0.clone();
-            Ok(crate::aver_generated::domain::eval::ops::applyStrCmp(
-                x, y, op,
-            ))
-        }
-        (
-            crate::aver_generated::domain::value::Val::ValBool(__x_fields),
-            crate::aver_generated::domain::value::Val::ValBool(__y_fields),
-        ) => {
-            let x = __x_fields.0.clone();
-            let y = __y_fields.0.clone();
-            crate::aver_generated::domain::eval::ops::applyBoolCmp(x, y, op)
-        }
-        (a, b) => crate::aver_generated::domain::eval::ops::evalCmpRepr(&a, &b, op),
     }
 }
 
@@ -324,34 +333,34 @@ pub fn applyStrCmp(
     crate::cancel_checkpoint();
     match op {
         crate::aver_generated::domain::ast::CmpOp::CmpEq => {
-            crate::aver_generated::domain::value::Val::ValBool(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val::ValBool(
                 crate::aver_generated::domain::value::Val__ValBool((x == y)),
-            ))
+            )
         }
         crate::aver_generated::domain::ast::CmpOp::CmpNeq => {
-            crate::aver_generated::domain::value::Val::ValBool(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val::ValBool(
                 crate::aver_generated::domain::value::Val__ValBool((x != y)),
-            ))
+            )
         }
         crate::aver_generated::domain::ast::CmpOp::CmpLt => {
-            crate::aver_generated::domain::value::Val::ValBool(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val::ValBool(
                 crate::aver_generated::domain::value::Val__ValBool((x < y)),
-            ))
+            )
         }
         crate::aver_generated::domain::ast::CmpOp::CmpGt => {
-            crate::aver_generated::domain::value::Val::ValBool(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val::ValBool(
                 crate::aver_generated::domain::value::Val__ValBool((x > y)),
-            ))
+            )
         }
         crate::aver_generated::domain::ast::CmpOp::CmpLte => {
-            crate::aver_generated::domain::value::Val::ValBool(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val::ValBool(
                 crate::aver_generated::domain::value::Val__ValBool((x <= y)),
-            ))
+            )
         }
         crate::aver_generated::domain::ast::CmpOp::CmpGte => {
-            crate::aver_generated::domain::value::Val::ValBool(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val::ValBool(
                 crate::aver_generated::domain::value::Val__ValBool((x >= y)),
-            ))
+            )
         }
     }
 }
@@ -366,12 +375,12 @@ pub fn applyBoolCmp(
     match op {
         crate::aver_generated::domain::ast::CmpOp::CmpEq => {
             Ok(crate::aver_generated::domain::value::Val::ValBool(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValBool((x == y))),
+                crate::aver_generated::domain::value::Val__ValBool((x == y)),
             ))
         }
         crate::aver_generated::domain::ast::CmpOp::CmpNeq => {
             Ok(crate::aver_generated::domain::value::Val::ValBool(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValBool((x != y))),
+                crate::aver_generated::domain::value::Val__ValBool((x != y)),
             ))
         }
         _ => Err(AverStr::from("bools only support == and !=")),
@@ -388,18 +397,18 @@ pub fn evalCmpRepr(
     match op {
         crate::aver_generated::domain::ast::CmpOp::CmpEq => {
             Ok(crate::aver_generated::domain::value::Val::ValBool(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValBool(
+                crate::aver_generated::domain::value::Val__ValBool(
                     (crate::aver_generated::domain::value::valRepr(va)
                         == crate::aver_generated::domain::value::valRepr(vb)),
-                )),
+                ),
             ))
         }
         crate::aver_generated::domain::ast::CmpOp::CmpNeq => {
             Ok(crate::aver_generated::domain::value::Val::ValBool(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValBool(
+                crate::aver_generated::domain::value::Val__ValBool(
                     (crate::aver_generated::domain::value::valRepr(va)
                         != crate::aver_generated::domain::value::valRepr(vb)),
-                )),
+                ),
             ))
         }
         _ => Err(aver_rt::AverStr::from({
@@ -463,9 +472,7 @@ pub fn evalVectorGetOrIntVals(
         Ok(maybeV @ _) => match maybeV {
             Some(v @ _) => Ok(v),
             None => Ok(crate::aver_generated::domain::value::Val::ValInt(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt(
-                    defaultValue,
-                )),
+                crate::aver_generated::domain::value::Val__ValInt(defaultValue),
             )),
         },
         Err(err @ _) => Err(err),
@@ -479,37 +486,39 @@ pub fn evalIntModOrIntVals(
     defaultValue @ _: aver_rt::AverInt,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match aV {
-        crate::aver_generated::domain::value::Val::ValInt(__a_fields) => {
-            let a = __a_fields.0.clone();
-            match bV {
-                crate::aver_generated::domain::value::Val::ValInt(__b_fields) => {
-                    let b = __b_fields.0.clone();
-                    if (b == aver_rt::AverInt::from_i64(0)) {
-                        Ok(crate::aver_generated::domain::value::Val::ValInt(
-                            aver_rt::Shared::new(
-                                crate::aver_generated::domain::value::Val__ValInt(defaultValue),
-                            ),
-                        ))
-                    } else {
-                        Ok(crate::aver_generated::domain::value::Val::ValInt(
-                            aver_rt::Shared::new(
-                                crate::aver_generated::domain::value::Val__ValInt(
-                                    (match (a).rem_euclid(&(b)) {
-                                        Some(__r) => Ok(__r),
-                                        None => Err("division by zero".to_string()),
-                                    })
-                                    .into_aver()
-                                    .unwrap_or(defaultValue),
-                                ),
-                            ),
-                        ))
+    {
+        let __t = aV;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValInt(__a_fields) => {
+                let a = __a_fields.0.clone();
+                {
+                    let __t = bV;
+                    match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValInt(__b_fields) => {
+                            let b = __b_fields.0.clone();
+                            if (b == aver_rt::AverInt::from_i64(0)) {
+                                Ok(crate::aver_generated::domain::value::Val::ValInt(
+                                    crate::aver_generated::domain::value::Val__ValInt(defaultValue),
+                                ))
+                            } else {
+                                Ok(crate::aver_generated::domain::value::Val::ValInt(
+                                    crate::aver_generated::domain::value::Val__ValInt(
+                                        (match (a).rem_euclid(&(b)) {
+                                            Some(__r) => Ok(__r),
+                                            None => Err("division by zero".to_string()),
+                                        })
+                                        .into_aver()
+                                        .unwrap_or(defaultValue),
+                                    ),
+                                ))
+                            }
+                        }
+                        _ => Err(AverStr::from("expected int argument")),
                     }
                 }
-                _ => Err(AverStr::from("expected int argument")),
             }
+            _ => Err(AverStr::from("expected int argument")),
         }
-        _ => Err(AverStr::from("expected int argument")),
     }
 }
 
@@ -520,38 +529,42 @@ pub fn evalVectorSetMaybeDefault(
     valueV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<Option<crate::aver_generated::domain::value::Val>, AverStr> {
     crate::cancel_checkpoint();
-    match vecV {
-        crate::aver_generated::domain::value::Val::ValVector(__vec_fields) => {
-            let vec = __vec_fields.0.clone();
-            match idxV {
-                crate::aver_generated::domain::value::Val::ValInt(__idx_fields) => {
-                    let idx = __idx_fields.0.clone();
-                    if (idx < aver_rt::AverInt::from_i64(0)) {
-                        Ok(None)
-                    } else {
-                        if (idx < aver_rt::AverInt::from_i64(vec.len() as i64)) {
-                            Ok(Some(crate::aver_generated::domain::value::Val::ValVector(
-                                aver_rt::Shared::new(
-                                    crate::aver_generated::domain::value::Val__ValVector({
-                                        let __vec = vec.clone();
-                                        match (idx).to_usize() {
-                                            Some(__idx) if __idx < __vec.len() => {
-                                                __vec.set_unchecked(__idx, valueV.clone())
+    {
+        let __t = vecV;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValVector(__vec_fields) => {
+                let vec = __vec_fields.0.clone();
+                {
+                    let __t = idxV;
+                    match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValInt(__idx_fields) => {
+                            let idx = __idx_fields.0.clone();
+                            if (idx < aver_rt::AverInt::from_i64(0)) {
+                                Ok(None)
+                            } else {
+                                if (idx < aver_rt::AverInt::from_i64(vec.len() as i64)) {
+                                    Ok(Some(crate::aver_generated::domain::value::Val::ValVector(
+                                        crate::aver_generated::domain::value::Val__ValVector({
+                                            let __vec = vec.clone();
+                                            match (idx).to_usize() {
+                                                Some(__idx) if __idx < __vec.len() => {
+                                                    __vec.set_unchecked(__idx, valueV.clone())
+                                                }
+                                                _ => __vec,
                                             }
-                                            _ => __vec,
-                                        }
-                                    }),
-                                ),
-                            )))
-                        } else {
-                            Ok(None)
+                                        }),
+                                    )))
+                                } else {
+                                    Ok(None)
+                                }
+                            }
                         }
+                        _ => Err(AverStr::from("Vector.set: second arg must be Int")),
                     }
                 }
-                _ => Err(AverStr::from("Vector.set: second arg must be Int")),
             }
+            _ => Err(AverStr::from("Vector.set: first arg must be Vector")),
         }
-        _ => Err(AverStr::from("Vector.set: first arg must be Vector")),
     }
 }
 
@@ -561,20 +574,26 @@ pub fn evalVectorGetMaybeDefault(
     idxV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<Option<crate::aver_generated::domain::value::Val>, AverStr> {
     crate::cancel_checkpoint();
-    match vecV {
-        crate::aver_generated::domain::value::Val::ValVector(__vec_fields) => {
-            let vec = __vec_fields.0.clone();
-            match idxV {
-                crate::aver_generated::domain::value::Val::ValInt(__idx_fields) => {
-                    let idx = __idx_fields.0.clone();
-                    match (idx).to_usize().and_then(|__i| vec.get(__i).cloned()) {
-                        Some(v @ _) => Ok(Some(v)),
-                        None => Ok(None),
+    {
+        let __t = vecV;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValVector(__vec_fields) => {
+                let vec = __vec_fields.0.clone();
+                {
+                    let __t = idxV;
+                    match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValInt(__idx_fields) => {
+                            let idx = __idx_fields.0.clone();
+                            match (idx).to_usize().and_then(|__i| vec.get(__i).cloned()) {
+                                Some(v @ _) => Ok(Some(v)),
+                                None => Ok(None),
+                            }
+                        }
+                        _ => Err(AverStr::from("Vector.get: expected (Vector, Int)")),
                     }
                 }
-                _ => Err(AverStr::from("Vector.get: expected (Vector, Int)")),
             }
+            _ => Err(AverStr::from("Vector.get: expected (Vector, Int)")),
         }
-        _ => Err(AverStr::from("Vector.get: expected (Vector, Int)")),
     }
 }

@@ -208,6 +208,68 @@ fn main() {{
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "7:2:2:9");
 }
 
+/// A value of a recursive sum is one pointer to a node in generated Rust;
+/// the provider codec and the replay codec read it through its view and
+/// build it back node by node. Recorded with the provider, replayed without.
+#[test]
+fn generated_rust_round_trips_a_recursive_sum_through_provider_and_replay() {
+    let project = generate_project("native_provider_recursive", true);
+    let generated_crate = &project.crate_name;
+    fs::write(
+        project.root.join("src/bin/trees_host.rs"),
+        format!(
+            r#"use {generated_crate} as generated;
+use aver_rt::AverDisplay;
+
+fn main() {{
+    if std::env::var_os("NO_PROVIDER").is_none() {{
+        generated::install_provider_bindings(vec![native_provider_fixture::trees_binding()])
+            .expect("install native Trees provider");
+        generated::preflight_required_providers().expect("provider preflight");
+    }}
+    let tree = generated::aver_replay::with_guest_scope(
+        "treesReplay",
+        serde_json::Value::Null,
+        generated::aver_generated::entry::sample,
+    )
+    .expect("Trees.echo Result.Ok");
+    println!("{{}}", tree.aver_display());
+}}
+"#
+        ),
+    )
+    .expect("write recursive-sum host");
+
+    let shown = "Both(Leaf(9), Both(Empty, Leaf(2)))";
+    let recording = project.root.join("trees-replay.json");
+    let record = Command::new("cargo")
+        .current_dir(&project.root)
+        .args(["run", "--quiet", "--bin", "trees_host"])
+        .env("CARGO_INCREMENTAL", "0")
+        .env("AVER_REPLAY_RECORD", &recording)
+        .env("AVER_REPLAY_REQUEST_ID", "native-provider-trees")
+        .env("AVER_REPLAY_TIMESTAMP", "2026-08-18T00:00:00Z")
+        .output()
+        .expect("record generated native provider run");
+    assert!(record.status.success(), "{}", command_report(&record));
+    assert_eq!(String::from_utf8_lossy(&record.stdout).trim(), shown);
+    let json = fs::read_to_string(&recording).expect("read generated replay recording");
+    assert!(json.contains("$variant") && json.contains("Both"), "{json}");
+
+    let replay = Command::new("cargo")
+        .current_dir(&project.root)
+        .args(["run", "--quiet", "--bin", "trees_host"])
+        .env("CARGO_INCREMENTAL", "0")
+        .env("AVER_REPLAY_REPLAY", &recording)
+        .env("AVER_REPLAY_CHECK_ARGS", "1")
+        .env("NO_PROVIDER", "1")
+        .output()
+        .expect("replay generated native provider run");
+    assert!(replay.status.success(), "{}", command_report(&replay));
+    let stdout = String::from_utf8_lossy(&replay.stdout);
+    assert_eq!(stdout.trim().lines().last(), Some(shown), "{stdout}");
+}
+
 #[test]
 fn generated_rust_reports_wrong_shape_fault_and_panic_at_the_provider_boundary() {
     let project = generate_project("native_provider_shapes", false);

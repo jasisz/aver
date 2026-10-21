@@ -1649,9 +1649,11 @@ fn helper(n: Int) -> Int
     }
 
     /// A value of a recursive sum used as both fields of a new node is one
-    /// allocation: the constructor's fields share one `aver_rt::Shared`, and copying the
+    /// allocation: the value is one pointer to a node holding the
+    /// constructor's tag and fields (`aver_rt::thin_sum!`), and copying the
     /// value copies the pointer, so the node holds two pointers to the one
-    /// `x` instead of two fresh copies of it. A record on the cycle (`E`
+    /// `x` instead of two fresh copies of it. A match reads the value's view.
+    /// A record on the cycle (`E`
     /// holds `Node`, `Node` holds `E`) gets its fixed size from the same
     /// pointer, and a sum that recurses only through a list keeps its fields
     /// inline.
@@ -1691,21 +1693,21 @@ fn left(t: T) -> T
         let entry = generated_rust_entry_file(&out);
 
         for expected in [
-            "Pair(aver_rt::Shared<T__Pair>),",
+            "    pub T / T__view / T__pair {\n        0 Leaf(T__Leaf),\n        1 Pair(T__Pair),\n    }",
             "pub struct T__Pair(pub T, pub T);",
-            "T::Pair(aver_rt::Shared::new(T__Pair(x.clone(), x)))",
-            "T::Pair(__a_fields) => {",
+            "T::Pair(T__Pair(x.clone(), x))",
+            "T__view::Pair(__a_fields) => {",
             "let a = __a_fields.0.clone();",
             "pub node: Node,",
-            "App(aver_rt::Shared<Node__App>),",
+            "1 App(Node__App),",
             "pub struct Node__App(pub E, pub E);",
             "Rose(aver_rt::AverInt, aver_rt::AverList<Rose>),",
         ] {
             assert!(entry.contains(expected), "missing `{expected}`:\n{entry}");
         }
         assert!(
-            !entry.contains("Shared::new(x.clone())"),
-            "a field copies its value into a fresh Shared:\n{entry}"
+            !entry.contains("Shared::new(x.clone())") && !entry.contains("aver_rt::Shared<T__"),
+            "a recursive sum keeps its fields in a node of its own, not a Shared:\n{entry}"
         );
     }
 
@@ -1772,8 +1774,8 @@ fn width(s: Shape) -> Int
             "    One(aver_rt::AverInt),\n    Two(aver_rt::AverInt, aver_rt::AverInt),",
             "#[derive(Clone, Debug, Eq, Hash)]\npub struct Tree__Node(pub Tree, pub Tree, pub aver_rt::AverInt);",
             "impl PartialEq for Tree__Node {\n    fn eq(&self, other: &Self) -> bool {\n        std::ptr::eq(self, other) || self.2 == other.2 && self.0 == other.0 && self.1 == other.1\n    }\n}",
-            "(Tree::Node(a0), Tree::Node(b0)) => walk.shared(a0, b0, true),",
-            "(Tree::Leaf(a0), Tree::Leaf(b0)) => a0 == b0,",
+            "Some(Tree__pair::Node(a0, b0)) => walk.node(self, other, true, |walk| a0.walk_eq(b0, walk)),",
+            "Some(Tree__pair::Leaf(a0, b0)) => a0 == b0,",
             "impl aver_rt::WalkEq for Tree__Node {\n    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {\n        self.2 == other.2 && self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)\n    }\n}",
             "(Cell::Cell(a0, a1, a2), Cell::Cell(b0, b1, b2)) => a1 == b1 && a2 == b2 && a0 == b0,",
             "(Cell::Empty, Cell::Empty) => true,",
