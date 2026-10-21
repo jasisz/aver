@@ -72,7 +72,12 @@ pub(super) struct TypeRegistry {
     /// ProviderSummary` in payment_ops); without the parent in the
     /// key, one would silently shadow the other and emit would pick
     /// the wrong concrete struct type.
-    pub(super) variants: HashMap<String, Vec<VariantInfo>>,
+    ///
+    /// Ordered by name: walks that filter one sum's constructors out of
+    /// this table (comparator and eq/hash helper discovery) assign fn and
+    /// type indices in walk order, so a hash order here made the same
+    /// program compile to different bytes from run to run.
+    pub(super) variants: BTreeMap<String, Vec<VariantInfo>>,
     /// `record_name → field list` so `Attr` can resolve a field name
     /// to its struct field index + type.
     pub(super) record_fields: HashMap<String, Vec<(String, String)>>,
@@ -414,7 +419,7 @@ impl TypeRegistry {
         let handler_active = _handler_active;
         let mut records = HashMap::new();
         let mut sum_roots = HashMap::new();
-        let mut variants: HashMap<String, Vec<VariantInfo>> = HashMap::new();
+        let mut variants: BTreeMap<String, Vec<VariantInfo>> = BTreeMap::new();
         let mut record_fields = HashMap::new();
         let mut next_idx: u32 = 0;
         for item in items {
@@ -2414,7 +2419,7 @@ fn expr_uses_string(expr: &crate::ir::hir::ResolvedExpr) -> bool {
 fn program_uses_vector(
     resolved_fn_defs: &[crate::ir::hir::ResolvedFnDef],
     record_fields: &HashMap<String, Vec<(String, String)>>,
-    variants: &HashMap<String, Vec<VariantInfo>>,
+    variants: &BTreeMap<String, Vec<VariantInfo>>,
     capability_boundary_types: &[String],
 ) -> bool {
     use crate::ir::hir::{BuiltinIntrinsic, ResolvedCallee, ResolvedFnBody, ResolvedStmt};

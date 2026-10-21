@@ -320,6 +320,64 @@ fn compile_wasip2_certify_emits_component_bound_package() {
     let _ = fs::remove_dir_all(&workspace);
 }
 
+/// A certificate binds the exact artifact bytes, so one source must compile
+/// to one artifact every time. Hash-ordered walks inside codegen showed up
+/// here first: `Map<Shape, Int>` keyed by a sum whose constructors hold an
+/// `Int` and a `String` got its two comparators in a different order on
+/// different runs. Each run is a fresh process, so each gets its own hash
+/// seeds; enough runs make a two-way coin flip all but certain to show.
+#[cfg(feature = "wasm-compile")]
+fn compiled_artifact_hashes(source: &str, target: &str, artifact: &str) -> Vec<String> {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = temp_output_dir(&format!("aver-compile-determinism-{target}"));
+    let hashes = (0..16)
+        .map(|run| {
+            let output_dir = workspace.join(run.to_string());
+            let output = Command::new(env!("CARGO_BIN_EXE_aver"))
+                .current_dir(&repo_root)
+                .arg("compile")
+                .arg(source)
+                .arg("--target")
+                .arg(target)
+                .arg("-o")
+                .arg(&output_dir)
+                .output()
+                .expect("run aver compile");
+            assert!(
+                output.status.success(),
+                "compile failed:\n{}",
+                format_output(&output)
+            );
+            let bytes = fs::read(output_dir.join(artifact)).expect("artifact exists");
+            aver::codegen::cert::sha256_hex(&bytes)
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    let _ = fs::remove_dir_all(&workspace);
+    hashes.into_iter().collect()
+}
+
+#[cfg(feature = "wasm-compile")]
+#[test]
+fn wasm_gc_compile_is_byte_deterministic() {
+    let hashes = compiled_artifact_hashes(
+        "tests/fixtures/sum_layout_and_equality_app.av",
+        "wasm-gc",
+        "sum_layout_and_equality_app.wasm",
+    );
+    assert_eq!(hashes.len(), 1, "one source, several artifacts: {hashes:?}");
+}
+
+#[cfg(feature = "wasip2")]
+#[test]
+fn wasip2_compile_is_byte_deterministic() {
+    let hashes = compiled_artifact_hashes(
+        "tests/fixtures/sum_layout_and_equality_app.av",
+        "wasip2",
+        "sum_layout_and_equality_app.component.wasm",
+    );
+    assert_eq!(hashes.len(), 1, "one source, several artifacts: {hashes:?}");
+}
+
 #[test]
 fn repeated_compile_preserves_byte_identical_generated_file_mtimes() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
