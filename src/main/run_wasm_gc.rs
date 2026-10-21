@@ -149,7 +149,7 @@ pub(super) fn cmd_run_wasm_gc_with_mode(
                 && let aver::replay::JsonValue::Number(code) = &outcome.output
                 && let Some(code) = code.as_i64()
             {
-                process::exit(aver_rt::main_exit_status(&aver_rt::AverInt::Small(code)));
+                process::exit(aver_rt::main_exit_status(&aver_rt::AverInt::from_i64(code)));
             }
             if let Some(message) = returned_error(&outcome.output) {
                 eprintln!(

@@ -565,10 +565,7 @@ fn int_div_min_by_neg_one_is_exact_over_z() {
 /// given decimal string. Guards the exact C0 law: the VM stopped wrapping.
 fn assert_positive_big(src: &str, decimal: &str) {
     let expected = aver_rt::AverInt::from_str(decimal).unwrap();
-    assert!(
-        matches!(&expected, aver_rt::AverInt::Big(_)),
-        "test value should be a Big"
-    );
+    assert_eq!(expected.to_i64(), None, "test value should be past i64");
     assert!(expected > aver_rt::AverInt::zero());
     assert_eq!(eval(src), Value::Int(expected));
 }

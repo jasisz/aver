@@ -724,7 +724,7 @@ fn run_bundle(
     if return_type == Type::Int
         && let Some(code) = outcome.output.as_i64()
     {
-        std::process::exit(aver_rt::main_exit_status(&aver_rt::AverInt::Small(code)));
+        std::process::exit(aver_rt::main_exit_status(&aver_rt::AverInt::from_i64(code)));
     }
     Ok(())
 }

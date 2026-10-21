@@ -97,6 +97,10 @@ The Rust backend derives representation traits from an explicit capability contr
 
 A constructor of a recursive sum, and a constructor of any other sum much larger than its siblings, keeps its fields in one struct `T__Variant` behind an `aver_rt::Shared<T__Variant>`, so copying the value copies a pointer. `Shared` is `std::sync::Arc` without weak references: its node is one atomic count followed by the fields, 8 bytes of header instead of the 16 of an `Arc`, and the atomic operations are those of `Arc`'s strong count, because values cross threads in `(a, b)!`. It has the `Arc` methods generated code uses (`new`, `clone`, `ptr_eq`, `as_ptr`, `strong_count`, `get_mut`, `make_mut`, `try_unwrap`, `unwrap_or_clone`) and `Deref`, `AsRef<T>`, `Borrow<T>`, `Clone`, `Debug`, `Display`, `PartialEq`, `Eq`, `PartialOrd`, `Ord`, `Hash` and `Default`, all reading the value. Its `==` never compares addresses; a payload whose `==` is reflexive (no `Float` inside) starts its own `==` with `std::ptr::eq`, which is what `Arc` does for such a type. Hand-written Rust that holds an `Arc<T>` converts with `Shared::from(arc)` and `Arc::from(shared)`: the value moves when the source is its only owner and is cloned otherwise. The runtime's lists, vectors, maps and strings keep their nodes in `Shared` too (`AverStr` holds a `Shared<str>`, one node with the count and the bytes; `AverStr::from` also takes an `Arc<str>`, copying the text). Provider objects are still registered as `std::sync::Arc<dyn CapabilityProvider>`, and the work engine, the TCP reactor and the string index keep `Arc`.
 
+### Int
+
+An `Int` is one machine word, `aver_rt::AverInt` (8 bytes, `Option<Int>` too): a value in `[-2^62, 2^62)` is stored in the word and arithmetic on it stays in registers, while a larger magnitude goes to the heap as a `BigInt`, so a program that packs a full 63 bits into one `Int` (a 64-bit hash, several fields in one word) pays an allocation for every value past `2^62`.
+
 ## Runtime dependency
 
 `Cargo.toml` is generated around the shared `aver-rt` runtime crate. Service-specific runtime features are turned on only when needed:

@@ -2,8 +2,9 @@
 //!
 //! Aver's `Int` is mathematical ℤ: total, never wrapping, faithful to the
 //! Lean proof model. `AverInt` is the runtime carrier for that model.
-//! It is small-int optimized: any value that fits an `i64` is stored inline
-//! as `Small`, and only genuinely large magnitudes spill to a heap `BigInt`.
+//! It takes one machine word: a value in `[-2^62, 2^62)` is stored in the word
+//! itself, and only a larger magnitude spills to a heap `BigInt` (see
+//! [`repr`]).
 //!
 //! Native machine-integer speed is a separate, opt-in concern (a bounded
 //! refinement type whose carrier the compiler lowers to raw `i64`); it is not
@@ -12,12 +13,12 @@
 //!
 //! ## Canonical form
 //!
-//! The single invariant every constructor and operation upholds: a value that
-//! fits `i64` is **always** `Small`. A `Big` payload never holds a value in
-//! `[i64::MIN, i64::MAX]`. This makes the representation canonical, so derived
-//! `Eq`, `Ord`, and `Hash` are unique — two numerically-equal values always
-//! compare and hash identically regardless of how they were built. Map/Set
-//! keying depends on this.
+//! The single invariant every constructor and operation upholds: a value in
+//! the inline range is **always** stored inline. A heap `BigInt` never holds a
+//! value in `[-2^62, 2^62)`. This makes the representation canonical, so `Eq`,
+//! `Ord`, and `Hash` can read the word first — two numerically-equal values
+//! always compare and hash identically regardless of how they were built.
+//! Map/Set keying depends on this.
 
 use core::cmp::Ordering;
 use core::fmt;
@@ -25,7 +26,7 @@ use core::str::FromStr;
 
 use num_bigint::{BigInt, Sign};
 use num_integer::Integer;
-use num_traits::{FromPrimitive, ToPrimitive, Zero};
+use num_traits::{FromPrimitive, ToPrimitive};
 
 /// Why a shift count or bit width was refused by [`AverInt::shift_left`],
 /// [`AverInt::shift_right`] or [`AverInt::low_bits`].
@@ -156,92 +157,251 @@ fn materializing_count(n: &AverInt) -> Result<usize, ShiftCountError> {
 }
 
 /// Whether a non-negative count reaches or passes the magnitude of `value`.
-/// A `Big` count is necessarily beyond every magnitude that can already be
-/// resident in this process, so it reaches the sign tail without conversion
-/// to a host-sized integer.
+/// A count past the inline range (2^62 bits) is necessarily beyond every
+/// magnitude that can already be resident in this process, so it reaches the
+/// sign tail without conversion to a host-sized integer.
 fn count_reaches_sign_tail(n: &AverInt, value: &AverInt) -> bool {
-    let value_bits = match value {
-        AverInt::Small(value) => 64 - value.unsigned_abs().leading_zeros() as u64,
-        AverInt::Big(value) => value.bits(),
+    let value_bits = match value.view() {
+        View::Small(value) => 64 - value.unsigned_abs().leading_zeros() as u64,
+        View::Big(value) => value.bits(),
     };
-    match n {
-        AverInt::Small(count) => (*count as u64) >= value_bits,
-        AverInt::Big(_) => true,
+    match n.view() {
+        View::Small(count) => (count as u64) >= value_bits,
+        View::Big(_) => true,
     }
 }
 
-/// Arbitrary-precision integer (mathematical ℤ) with a small-int fast path.
+/// The one-word carrier behind [`AverInt`], and the only `unsafe` code of the
+/// type.
 ///
-/// Invariant: `Big` never holds a value representable as `i64` (see module
-/// docs). Always construct/renormalize through this type's API.
+/// The word is odd for an inline integer `n`, stored as `2n + 1`, which covers
+/// `[-2^62, 2^62)`. It is even for any other value: then it is the address of
+/// a heap `BigInt` that this value owns, allocated by a `Box` (so aligned to at
+/// least 8, its lowest bit is 0). Neither form is zero, so `Option<AverInt>`
+/// takes the zero word for `None` and is one word too.
+///
+/// Odd for inline values keeps every fast path a word operation: both
+/// operands are inline when `a & b & 1` is set, `2x+1 + 2y` is `2(x+y)+1`,
+/// and an `i64` overflow of the word is exactly a result past the inline
+/// range. Comparison, `and`, `or` and arithmetic shift work on the words
+/// unchanged.
+mod repr {
+    use core::marker::PhantomData;
+    use core::mem::ManuallyDrop;
+    use core::num::NonZeroU64;
+
+    use num_bigint::BigInt;
+
+    /// The smallest value stored inline.
+    pub(super) const INLINE_MIN: i64 = -(1 << 62);
+    /// The largest value stored inline.
+    pub(super) const INLINE_MAX: i64 = (1 << 62) - 1;
+
+    pub(super) struct Repr {
+        word: NonZeroU64,
+        // An even word owns a `Box<BigInt>`: `Send`, `Sync` and drop check
+        // follow from it.
+        _owns: PhantomData<Box<BigInt>>,
+    }
+
+    impl Repr {
+        /// The word as a signed integer.
+        #[inline(always)]
+        pub(super) const fn word(&self) -> i64 {
+            self.word.get() as i64
+        }
+
+        #[inline(always)]
+        pub(super) const fn is_inline(&self) -> bool {
+            self.word.get() & 1 == 1
+        }
+
+        /// An inline value from its word. The lowest bit is set here, so no
+        /// word can be taken for an address; the callers pass words that are
+        /// already odd, where this folds away.
+        #[inline(always)]
+        pub(super) const fn from_word(word: i64) -> Self {
+            match NonZeroU64::new(word as u64 | 1) {
+                Some(word) => Repr {
+                    word,
+                    _owns: PhantomData,
+                },
+                None => unreachable!(),
+            }
+        }
+
+        /// Box `b`. Canonical form wants `b` outside the inline range; that is
+        /// the caller's rule, not a condition of memory safety.
+        pub(super) fn from_big(b: BigInt) -> Self {
+            let address = Box::into_raw(Box::new(b)).expose_provenance() as u64;
+            debug_assert!(address & 1 == 0, "a BigInt box is aligned");
+            Repr {
+                word: NonZeroU64::new(address).expect("a Box address is not null"),
+                _owns: PhantomData,
+            }
+        }
+
+        #[inline(always)]
+        fn pointer(&self) -> *mut BigInt {
+            core::ptr::with_exposed_provenance_mut(self.word.get() as usize)
+        }
+
+        /// The heap integer, when the word is an address.
+        #[inline]
+        pub(super) fn big(&self) -> Option<&BigInt> {
+            if self.is_inline() {
+                return None;
+            }
+            // SAFETY: only `from_big` makes an even word, from a box whose
+            // provenance it exposed, and the box lives until this value is
+            // dropped or taken apart by `into_big`.
+            Some(unsafe { &*self.pointer() })
+        }
+
+        /// The heap integer by value, or the inline value's word.
+        pub(super) fn into_big(self) -> Result<BigInt, i64> {
+            let this = ManuallyDrop::new(self);
+            if this.is_inline() {
+                return Err(this.word());
+            }
+            // SAFETY: as in `big`; `this` is never dropped, so the box is
+            // freed once, by the returned value.
+            Ok(*unsafe { Box::from_raw(this.pointer()) })
+        }
+    }
+
+    impl Drop for Repr {
+        #[inline]
+        fn drop(&mut self) {
+            if !self.is_inline() {
+                // SAFETY: as in `big`; drop runs once.
+                drop(unsafe { Box::from_raw(self.pointer()) });
+            }
+        }
+    }
+
+    impl Clone for Repr {
+        #[inline]
+        fn clone(&self) -> Self {
+            match self.big() {
+                None => Repr {
+                    word: self.word,
+                    _owns: PhantomData,
+                },
+                Some(b) => Repr::from_big(b.clone()),
+            }
+        }
+    }
+}
+
+use repr::{INLINE_MAX, INLINE_MIN, Repr};
+
+const _: () = assert!(core::mem::size_of::<AverInt>() == 8);
+const _: () = assert!(core::mem::size_of::<Option<AverInt>>() == 8);
+
+/// Arbitrary-precision integer (mathematical ℤ) in one machine word.
+///
+/// Invariant: a value in `[-2^62, 2^62)` is always inline, never boxed (see
+/// module docs). Always construct/renormalize through this type's API.
 #[derive(Clone)]
-pub enum AverInt {
-    /// A value that fits `i64` — the common, allocation-free case.
+pub struct AverInt(Repr);
+
+/// One value read either way: inline, or the heap integer.
+enum View<'a> {
     Small(i64),
-    /// A value outside the `i64` range. Boxed to keep the enum small (a
-    /// bare `BigInt` is three machine words; boxing keeps `AverInt` at two).
-    Big(Box<BigInt>),
+    Big(&'a BigInt),
 }
 
 impl AverInt {
-    /// The mathematical integer `n`, stored inline.
+    /// An inline value. `n` must be in the inline range.
+    #[inline(always)]
+    const fn inline(n: i64) -> Self {
+        debug_assert!(INLINE_MIN <= n && n <= INLINE_MAX);
+        AverInt(Repr::from_word((n << 1) | 1))
+    }
+
+    #[inline(always)]
+    fn view(&self) -> View<'_> {
+        match self.0.big() {
+            None => View::Small(self.0.word() >> 1),
+            Some(b) => View::Big(b),
+        }
+    }
+
+    /// The words of two inline operands, if both are.
+    #[inline(always)]
+    fn words(a: &AverInt, b: &AverInt) -> Option<(i64, i64)> {
+        let (a, b) = (a.0.word(), b.0.word());
+        (a & b & 1 != 0).then_some((a, b))
+    }
+
+    /// The mathematical integer `n`; inline when it is in `[-2^62, 2^62)`.
     #[inline]
-    pub const fn from_i64(n: i64) -> Self {
-        AverInt::Small(n)
+    pub fn from_i64(n: i64) -> Self {
+        if (INLINE_MIN..=INLINE_MAX).contains(&n) {
+            AverInt::inline(n)
+        } else {
+            from_i64_slow(n)
+        }
     }
 
     /// Zero.
     #[inline]
     pub const fn zero() -> Self {
-        AverInt::Small(0)
+        AverInt::inline(0)
     }
 
-    /// Renormalize a `BigInt` to canonical form: demote to `Small` when it
-    /// fits `i64`, otherwise box it as `Big`. Every path that produces or
+    /// Renormalize a `BigInt` to canonical form: inline when it fits the
+    /// inline range, otherwise boxed. Every path that produces or
     /// reconstructs a `BigInt` must funnel through here so the canonical
-    /// invariant (a value fitting `i64` is *always* `Small`) holds — this is
-    /// the sole sanctioned way to build a `Big`, which is why `Big`'s payload
-    /// is private.
+    /// invariant holds — this is the sole sanctioned way to box a value.
     #[inline]
     pub fn from_bigint(b: BigInt) -> Self {
         match b.to_i64() {
-            Some(n) => AverInt::Small(n),
-            None => AverInt::Big(Box::new(b)),
+            Some(n) if (INLINE_MIN..=INLINE_MAX).contains(&n) => AverInt::inline(n),
+            _ => AverInt(Repr::from_big(b)),
+        }
+    }
+
+    /// The value as a `BigInt`, moving the heap integer out when there is one.
+    pub fn into_bigint(self) -> BigInt {
+        match self.0.into_big() {
+            Ok(b) => b,
+            Err(word) => BigInt::from(word >> 1),
         }
     }
 
     /// Borrow as a `BigInt` for an operation that cannot stay in `i64`.
     #[inline]
     fn to_bigint(&self) -> BigInt {
-        match self {
-            AverInt::Small(n) => BigInt::from(*n),
-            AverInt::Big(b) => (**b).clone(),
+        match self.view() {
+            View::Small(n) => BigInt::from(n),
+            View::Big(b) => b.clone(),
         }
     }
 
     /// `true` for the additive identity.
     #[inline]
     pub fn is_zero(&self) -> bool {
-        match self {
-            AverInt::Small(n) => *n == 0,
-            AverInt::Big(b) => b.is_zero(),
-        }
+        // Zero is inline, and no other value has its word.
+        self.0.word() == 1
     }
 
     // -- Arithmetic (non-wrapping) ----------------------------------------
     //
-    // Each operation takes the i64 fast path via `checked_*`; only on an
-    // i64-overflow does it promote to `BigInt`. The result is always
-    // renormalized, so e.g. `Big - Big` that cancels back into range returns
-    // `Small`.
+    // Each operation takes the inline fast path on the words via `checked_*`;
+    // only when the word overflows does it promote to `BigInt`. The result is
+    // always renormalized, so e.g. `Big - Big` that cancels back into range
+    // returns an inline value.
 
     /// `self + rhs` over ℤ (never wraps).
     #[inline]
     pub fn add(&self, rhs: &AverInt) -> AverInt {
-        if let (AverInt::Small(a), AverInt::Small(b)) = (self, rhs) {
-            if let Some(s) = a.checked_add(*b) {
-                return AverInt::Small(s);
-            }
+        // `2a+1 + 2b` is `2(a+b)+1`.
+        if let Some((a, b)) = AverInt::words(self, rhs)
+            && let Some(s) = a.checked_add(b ^ 1)
+        {
+            return AverInt(Repr::from_word(s));
         }
         add_slow(self, rhs)
     }
@@ -249,10 +409,11 @@ impl AverInt {
     /// `self - rhs` over ℤ (never wraps).
     #[inline]
     pub fn sub(&self, rhs: &AverInt) -> AverInt {
-        if let (AverInt::Small(a), AverInt::Small(b)) = (self, rhs) {
-            if let Some(s) = a.checked_sub(*b) {
-                return AverInt::Small(s);
-            }
+        // `2a+1 - 2b` is `2(a-b)+1`.
+        if let Some((a, b)) = AverInt::words(self, rhs)
+            && let Some(s) = a.checked_sub(b ^ 1)
+        {
+            return AverInt(Repr::from_word(s));
         }
         sub_slow(self, rhs)
     }
@@ -260,41 +421,36 @@ impl AverInt {
     /// `self * rhs` over ℤ (never wraps).
     #[inline]
     pub fn mul(&self, rhs: &AverInt) -> AverInt {
-        if let (AverInt::Small(a), AverInt::Small(b)) = (self, rhs) {
-            if let Some(s) = a.checked_mul(*b) {
-                return AverInt::Small(s);
-            }
+        // `a * 2b` is `2ab`, and the set lowest bit makes it `2ab+1`.
+        if let Some((a, b)) = AverInt::words(self, rhs)
+            && let Some(p) = (a >> 1).checked_mul(b ^ 1)
+        {
+            return AverInt(Repr::from_word(p | 1));
         }
         mul_slow(self, rhs)
     }
 
-    /// `-self` over ℤ (never wraps; `-i64::MIN` promotes to `Big`).
+    /// `-self` over ℤ (never wraps; `-(-2^62)` leaves the inline range).
     pub fn neg(&self) -> AverInt {
-        match self {
-            AverInt::Small(n) => match n.checked_neg() {
-                Some(v) => AverInt::Small(v),
-                None => AverInt::from_bigint(-BigInt::from(*n)),
-            },
-            AverInt::Big(b) => AverInt::from_bigint(-(**b).clone()),
+        match self.view() {
+            View::Small(n) => AverInt::from_i64(-n),
+            View::Big(b) => AverInt::from_bigint(-b.clone()),
         }
     }
 
     /// Euclidean quotient, matching `i64::div_euclid` and the Lean
     /// `Int.ediv` model the proofs cite: the unique `q` with a remainder in
     /// `[0, |rhs|)`. Returns `None` when `rhs == 0`. Over ℤ there is no
-    /// `i64::MIN / -1` overflow edge — it is just `i64::MAX + 1`, returned as
-    /// a `Big`.
+    /// `MIN / -1` overflow edge — the quotient is just one past the inline
+    /// maximum, returned boxed.
     #[inline]
     pub fn div_euclid(&self, rhs: &AverInt) -> Option<AverInt> {
         if rhs.is_zero() {
             return None;
         }
-        if let (AverInt::Small(a), AverInt::Small(b)) = (self, rhs) {
-            // `div_euclid` on i64 is total except for `MIN / -1`, which
-            // overflows; fall through to BigInt for that single edge.
-            if let Some(q) = a.checked_div_euclid(*b) {
-                return Some(AverInt::Small(q));
-            }
+        if let (View::Small(a), View::Small(b)) = (self.view(), rhs.view()) {
+            // An inline dividend is above `i64::MIN`, so this never overflows.
+            return Some(AverInt::from_i64(a.div_euclid(b)));
         }
         Some(div_euclid_slow(self, rhs))
     }
@@ -308,10 +464,9 @@ impl AverInt {
         if rhs.is_zero() {
             return None;
         }
-        if let (AverInt::Small(a), AverInt::Small(b)) = (self, rhs) {
-            if let Some(r) = a.checked_rem_euclid(*b) {
-                return Some(AverInt::Small(r));
-            }
+        if let (View::Small(a), View::Small(b)) = (self.view(), rhs.view()) {
+            // Below `|b|`, so inline.
+            return Some(AverInt::inline(a.rem_euclid(b)));
         }
         Some(rem_euclid_slow(self, rhs))
     }
@@ -324,10 +479,8 @@ impl AverInt {
         if rhs.is_zero() {
             return None;
         }
-        if let (AverInt::Small(a), AverInt::Small(b)) = (self, rhs) {
-            if let Some(q) = a.checked_div(*b) {
-                return Some(AverInt::Small(q));
-            }
+        if let (View::Small(a), View::Small(b)) = (self.view(), rhs.view()) {
+            return Some(AverInt::from_i64(a / b));
         }
         Some(AverInt::from_bigint(self.to_bigint() / rhs.to_bigint()))
     }
@@ -338,22 +491,17 @@ impl AverInt {
         if rhs.is_zero() {
             return None;
         }
-        if let (AverInt::Small(a), AverInt::Small(b)) = (self, rhs) {
-            if let Some(r) = a.checked_rem(*b) {
-                return Some(AverInt::Small(r));
-            }
+        if let (View::Small(a), View::Small(b)) = (self.view(), rhs.view()) {
+            return Some(AverInt::inline(a % b));
         }
         Some(AverInt::from_bigint(self.to_bigint() % rhs.to_bigint()))
     }
 
-    /// `|self|` over ℤ (never wraps; `|i64::MIN|` promotes to `Big`).
+    /// `|self|` over ℤ (never wraps; `|-2^62|` leaves the inline range).
     pub fn abs(&self) -> AverInt {
-        match self {
-            AverInt::Small(n) => match n.checked_abs() {
-                Some(v) => AverInt::Small(v),
-                None => AverInt::from_bigint(BigInt::from(*n).magnitude().clone().into()),
-            },
-            AverInt::Big(b) => AverInt::from_bigint(BigInt::from(b.magnitude().clone())),
+        match self.view() {
+            View::Small(n) => AverInt::from_i64(n.abs()),
+            View::Big(b) => AverInt::from_bigint(BigInt::from(b.magnitude().clone())),
         }
     }
 
@@ -381,18 +529,19 @@ impl AverInt {
     // The `Bits` namespace reads an `Int` as its infinite two's-complement
     // bit sequence: a non-negative value has infinitely many leading zeroes,
     // a negative one infinitely many leading ones. That is exactly the
-    // sequence `i64` already carries (sign extension IS the infinite tail),
-    // so the `Small`/`Small` fast path is the native machine operator with
-    // no correction — and `num_bigint`'s `BitAnd`/`BitOr`/`BitXor` implement
-    // the same convention for the promoted case. There is no width anywhere:
-    // width is requested explicitly through `low_bits`.
+    // sequence the word already carries above its lowest bit (sign extension
+    // IS the infinite tail), so the inline fast path is the native machine
+    // operator on the words, with the lowest bit kept set — and
+    // `num_bigint`'s `BitAnd`/`BitOr`/`BitXor` implement the same convention
+    // for the promoted case. There is no width anywhere: width is requested
+    // explicitly through `low_bits`.
 
     /// Pointwise `and` over the infinite two's-complement sequences.
     /// `bit_and(-1, x) == x` for every `x` (all-ones is the identity).
     #[inline]
     pub fn bit_and(&self, rhs: &AverInt) -> AverInt {
-        if let (AverInt::Small(a), AverInt::Small(b)) = (self, rhs) {
-            return AverInt::Small(a & b);
+        if let Some((a, b)) = AverInt::words(self, rhs) {
+            return AverInt(Repr::from_word(a & b));
         }
         bitwise_slow(self, rhs, |a, b| a & b)
     }
@@ -400,8 +549,8 @@ impl AverInt {
     /// Pointwise `or`. `bit_or(-1, x) == -1`, `bit_or(0, x) == x`.
     #[inline]
     pub fn bit_or(&self, rhs: &AverInt) -> AverInt {
-        if let (AverInt::Small(a), AverInt::Small(b)) = (self, rhs) {
-            return AverInt::Small(a | b);
+        if let Some((a, b)) = AverInt::words(self, rhs) {
+            return AverInt(Repr::from_word(a | b));
         }
         bitwise_slow(self, rhs, |a, b| a | b)
     }
@@ -409,8 +558,9 @@ impl AverInt {
     /// Pointwise `xor`. `bit_xor(-1, x) == bit_not(x)`, `bit_xor(x, x) == 0`.
     #[inline]
     pub fn bit_xor(&self, rhs: &AverInt) -> AverInt {
-        if let (AverInt::Small(a), AverInt::Small(b)) = (self, rhs) {
-            return AverInt::Small(a ^ b);
+        if let Some((a, b)) = AverInt::words(self, rhs) {
+            // The lowest bits cancel; `from_word` sets it again.
+            return AverInt(Repr::from_word(a ^ b));
         }
         bitwise_slow(self, rhs, |a, b| a ^ b)
     }
@@ -418,12 +568,12 @@ impl AverInt {
     /// Pointwise complement — equivalently `-self - 1` over ℤ, which is the
     /// only total reading of "flip every bit" without a width to complement
     /// against. Computed as the subtraction so the identity is the
-    /// definition rather than a coincidence of the carrier: the `Small` arm
-    /// cannot overflow (`!n` is in range for every `i64`).
+    /// definition rather than a coincidence of the carrier: the inline arm
+    /// cannot leave the range (`!n` is inline for every inline `n`).
     pub fn bit_not(&self) -> AverInt {
-        match self {
-            AverInt::Small(n) => AverInt::Small(!n),
-            AverInt::Big(b) => AverInt::from_bigint(-(&**b) - 1),
+        match self.view() {
+            View::Small(n) => AverInt::inline(!n),
+            View::Big(b) => AverInt::from_bigint(-b - 1),
         }
     }
 
@@ -431,15 +581,15 @@ impl AverInt {
     /// significant end. Over ℤ this never truncates.
     pub fn shift_left(&self, n: &AverInt) -> Result<AverInt, ShiftCountError> {
         let count = materializing_count(n)?;
-        if let AverInt::Small(a) = self
+        if let View::Small(a) = self.view()
             && count < 63
         {
             let shifted = a << count;
             // Round-trip oracle: no bit left the i64 iff shifting back
             // restores the input (`>>` on a signed value is arithmetic, so
             // this holds for both signs).
-            if (shifted >> count) == *a {
-                return Ok(AverInt::Small(shifted));
+            if (shifted >> count) == a {
+                return Ok(AverInt::from_i64(shifted));
             }
         }
         Ok(AverInt::from_bigint(self.to_bigint() << count))
@@ -451,14 +601,16 @@ impl AverInt {
     /// never a host language's logical shift.
     #[inline]
     pub fn shift_right(&self, n: &AverInt) -> Result<AverInt, ShiftCountError> {
-        // A count of 63 or more leaves only the sign tail of an `i64`, which
-        // is what the arithmetic `>> 63` gives, so a `Small` value and a
-        // non-negative `Small` count need no other check. A literal count
-        // folds the whole test away once this is inlined.
-        if let (AverInt::Small(a), AverInt::Small(count)) = (self, n)
-            && *count >= 0
+        // On the word `2a+1`, `>> c` drops the tag bit and `c - 1` bits of
+        // `a`, and setting the lowest bit again gives `2(a >> c)+1`. A count
+        // of 63 or more leaves only the sign tail, which is what the
+        // arithmetic `>> 63` gives, so an inline value and a non-negative
+        // inline count (a positive word) need no other check. A literal
+        // count folds the whole test away once this is inlined.
+        if let Some((a, count)) = AverInt::words(self, n)
+            && count > 0
         {
-            return Ok(AverInt::Small(a >> (*count).min(63)));
+            return Ok(AverInt(Repr::from_word(a >> (count >> 1).min(63))));
         }
         shift_right_slow(self, n)
     }
@@ -486,25 +638,20 @@ impl AverInt {
             // width is the size of a genuinely new non-negative magnitude.
             materializing_count(width)?
         };
-        if let AverInt::Small(a) = self {
-            if count >= 64 {
-                // A non-negative i64 is entirely below bit 64, so every bit
-                // survives and the value is unchanged. A negative one has an
-                // all-ones tail above bit 63 that the window still captures,
-                // so it falls through to the exact bigint path.
-                if *a >= 0 {
-                    return Ok(AverInt::Small(*a));
-                }
+        // Only a negative value gets here with an inline `self` (a
+        // non-negative one returned above), so the window always captures
+        // part of its one tail.
+        if let View::Small(a) = self.view()
+            && count < 64
+        {
+            // `count == 63` gives the mask `i64::MAX`. Every result here is
+            // non-negative and below `2^63`, so it fits `i64`.
+            let mask = if count == 63 {
+                i64::MAX
             } else {
-                // `count == 63` gives the mask `i64::MAX`. Every result here
-                // is non-negative and below `2^63`, so it always fits.
-                let mask = if count == 63 {
-                    i64::MAX
-                } else {
-                    (1i64 << count) - 1
-                };
-                return Ok(AverInt::Small(a & mask));
-            }
+                (1i64 << count) - 1
+            };
+            return Ok(AverInt::from_i64(a & mask));
         }
         let modulus = BigInt::from(1u8) << count;
         let (_, r) = euclid_div_rem(&self.to_bigint(), &modulus);
@@ -519,9 +666,15 @@ impl AverInt {
     /// size.
     #[inline]
     pub fn pop_count(&self, width: &AverInt) -> Result<AverInt, ShiftCountError> {
-        if let (Some(x), Some(w @ 0..=64)) = (self.to_i64(), width.to_i64()) {
+        // An inline value read as an `i64` carries its sign tail, so up to 64
+        // low bits are the machine's. The count is at most 64, so inline.
+        if let Some((a, w)) = AverInt::words(self, width)
+            && let w @ 0..=64 = w >> 1
+        {
             let mask = u64::MAX.checked_shr(64 - w as u32).unwrap_or(0);
-            return Ok(AverInt::from_i64(((x as u64) & mask).count_ones() as i64));
+            return Ok(AverInt::inline(
+                (((a >> 1) as u64) & mask).count_ones() as i64
+            ));
         }
         pop_count_slow(self, width)
     }
@@ -536,36 +689,36 @@ impl AverInt {
     /// `self` as `i64` if it fits, else `None`.
     #[inline]
     pub fn to_i64(&self) -> Option<i64> {
-        match self {
-            AverInt::Small(n) => Some(*n),
-            AverInt::Big(b) => b.to_i64(),
+        match self.view() {
+            View::Small(n) => Some(n),
+            View::Big(b) => b.to_i64(),
         }
     }
 
     /// `self` as `usize` if it fits (non-negative and in range), else `None`.
     #[inline]
     pub fn to_usize(&self) -> Option<usize> {
-        match self {
-            AverInt::Small(n) => usize::try_from(*n).ok(),
-            AverInt::Big(b) => b.to_usize(),
+        match self.view() {
+            View::Small(n) => usize::try_from(n).ok(),
+            View::Big(b) => b.to_usize(),
         }
     }
 
     /// `self` as `u16` if it fits, else `None`.
     #[inline]
     pub fn to_u16(&self) -> Option<u16> {
-        match self {
-            AverInt::Small(n) => u16::try_from(*n).ok(),
-            AverInt::Big(b) => b.to_u16(),
+        match self.view() {
+            View::Small(n) => u16::try_from(n).ok(),
+            View::Big(b) => b.to_u16(),
         }
     }
 
     /// `self` as `u32` if it fits, else `None`.
     #[inline]
     pub fn to_u32(&self) -> Option<u32> {
-        match self {
-            AverInt::Small(n) => u32::try_from(*n).ok(),
-            AverInt::Big(b) => b.to_u32(),
+        match self.view() {
+            View::Small(n) => u32::try_from(n).ok(),
+            View::Big(b) => b.to_u32(),
         }
     }
 
@@ -574,19 +727,19 @@ impl AverInt {
     /// is the only intentionally-lossy conversion.
     #[inline]
     pub fn to_f64(&self) -> f64 {
-        match self {
-            AverInt::Small(n) => *n as f64,
+        match self.view() {
+            View::Small(n) => n as f64,
             // `BigInt::to_f64` returns `Some(±inf)` for out-of-range
             // magnitudes and is never `None`, so the unwrap is total.
-            AverInt::Big(b) => b.to_f64().unwrap_or(f64::INFINITY),
+            View::Big(b) => b.to_f64().unwrap_or(f64::INFINITY),
         }
     }
 
     /// Truncate a finite `f64` toward zero into ℤ. The exact mirror of the
     /// VM's `float_to_aver_int` (`src/types/int.rs`): non-finite (`NaN`/`±∞`)
-    /// maps to `0`; an in-`i64`-range truncated value stays `Small`; an
-    /// out-of-range *finite* magnitude is represented EXACTLY as a `Big` via
-    /// `BigInt::from_f64`.
+    /// maps to `0`; an in-`i64`-range truncated value goes through
+    /// `from_i64`; an out-of-range *finite* magnitude is represented EXACTLY
+    /// via `BigInt::from_f64`.
     ///
     /// This is the constructor `Int.fromFloat` and `Float.floor/ceil/round`
     /// must funnel through — a bare `f as i64` cast SATURATES huge finite
@@ -597,7 +750,7 @@ impl AverInt {
         }
         let truncated = f.trunc();
         match truncated.to_i64() {
-            Some(n) => AverInt::Small(n),
+            Some(n) => AverInt::from_i64(n),
             // Out of i64 range but finite: represent exactly via BigInt.
             None => match BigInt::from_f64(truncated) {
                 Some(b) => AverInt::from_bigint(b),
@@ -605,6 +758,12 @@ impl AverInt {
             },
         }
     }
+}
+
+#[cold]
+#[inline(never)]
+fn from_i64_slow(n: i64) -> AverInt {
+    AverInt(Repr::from_big(BigInt::from(n)))
 }
 
 /// Euclidean `(quotient, remainder)` for `BigInt` operands, value-identical to
@@ -634,24 +793,25 @@ fn euclid_div_rem(a: &BigInt, b: &BigInt) -> (BigInt, BigInt) {
 // -- Equality / ordering / hashing -----------------------------------------
 //
 // The canonical-form invariant makes these total over representations: equal
-// numbers are always the same variant carrying the same payload.
+// numbers are either the same inline word or two boxes of equal integers.
 
 impl PartialEq for AverInt {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (AverInt::Small(a), AverInt::Small(b)) => a == b,
-            (AverInt::Big(a), AverInt::Big(b)) => a == b,
-            // Canonical form guarantees a Small and a Big are never equal.
-            _ => false,
+        let (a, b) = (self.0.word(), other.0.word());
+        // Canonical form: an inline value never equals a boxed one, and the
+        // words of an inline and a boxed value differ in the lowest bit.
+        if (a | b) & 1 != 0 {
+            return a == b;
         }
+        self.0.big() == other.0.big()
     }
 }
 
 impl Eq for AverInt {}
 
 // The `BigInt` paths of the arithmetic above, kept out of line so the
-// inlined `Small` fast path stays a few instructions at every call site.
+// inlined inline-value fast path stays a few instructions at every call site.
 
 #[cold]
 #[inline(never)]
@@ -684,7 +844,7 @@ fn shift_right_slow(a: &AverInt, n: &AverInt) -> Result<AverInt, ShiftCountError
         return Err(ShiftCountError::Negative);
     }
     if count_reaches_sign_tail(n, a) {
-        return Ok(AverInt::Small(if a < &AverInt::zero() { -1 } else { 0 }));
+        return Ok(AverInt::from_i64(if a < &AverInt::zero() { -1 } else { 0 }));
     }
     let count = n
         .to_usize()
@@ -745,29 +905,39 @@ fn rem_euclid_slow(a: &AverInt, b: &AverInt) -> AverInt {
     AverInt::from_bigint(r)
 }
 
+#[cold]
+#[inline(never)]
+fn cmp_slow(a: &AverInt, b: &AverInt) -> Ordering {
+    match (a.view(), b.view()) {
+        (View::Big(a), View::Big(b)) => a.cmp(b),
+        // A boxed value is out of the inline range, so its sign decides the
+        // comparison against any inline one.
+        (View::Small(_), View::Big(b)) => {
+            if b.sign() == num_bigint::Sign::Minus {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            }
+        }
+        (View::Big(a), View::Small(_)) => {
+            if a.sign() == num_bigint::Sign::Minus {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            }
+        }
+        (View::Small(a), View::Small(b)) => a.cmp(&b),
+    }
+}
+
 impl Ord for AverInt {
     #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
-        match (self, other) {
-            (AverInt::Small(a), AverInt::Small(b)) => a.cmp(b),
-            (AverInt::Big(a), AverInt::Big(b)) => a.cmp(b),
-            // A Big is out of i64 range, so its sign decides the comparison
-            // against any Small.
-            (AverInt::Small(_), AverInt::Big(b)) => {
-                if b.sign() == num_bigint::Sign::Minus {
-                    Ordering::Greater
-                } else {
-                    Ordering::Less
-                }
-            }
-            (AverInt::Big(a), AverInt::Small(_)) => {
-                if a.sign() == num_bigint::Sign::Minus {
-                    Ordering::Less
-                } else {
-                    Ordering::Greater
-                }
-            }
+        // `2n+1` is monotone, so inline words compare as their values.
+        if let Some((a, b)) = AverInt::words(self, other) {
+            return a.cmp(&b);
         }
+        cmp_slow(self, other)
     }
 }
 
@@ -781,21 +951,23 @@ impl PartialOrd for AverInt {
 impl core::hash::Hash for AverInt {
     #[inline]
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        // Hash on the canonical numeric form: a Small and a numerically-equal
-        // Big can never coexist (canonical invariant), so hashing the variant
-        // payload is sufficient and consistent with `Eq`.
-        match self {
-            AverInt::Small(n) => n.hash(state),
-            AverInt::Big(b) => b.hash(state),
+        // Hash the number, consistently with `Eq`: every value that fits
+        // `i64` hashes as that `i64`, whichever way it is stored.
+        match self.view() {
+            View::Small(n) => n.hash(state),
+            View::Big(b) => match b.to_i64() {
+                Some(n) => n.hash(state),
+                None => b.hash(state),
+            },
         }
     }
 }
 
 impl fmt::Display for AverInt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            AverInt::Small(n) => write!(f, "{}", n),
-            AverInt::Big(b) => write!(f, "{}", b),
+        match self.view() {
+            View::Small(n) => write!(f, "{}", n),
+            View::Big(b) => write!(f, "{}", b),
         }
     }
 }
@@ -804,10 +976,7 @@ impl fmt::Debug for AverInt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Print the bare number so `Value::Int(..)`'s derived `Debug` reads
         // `Int(42)` (not `Int(AverInt(42))`), keeping golden strings stable.
-        match self {
-            AverInt::Small(n) => write!(f, "{}", n),
-            AverInt::Big(b) => write!(f, "{}", b),
-        }
+        write!(f, "{self}")
     }
 }
 
@@ -819,7 +988,7 @@ impl FromStr for AverInt {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // Fast path: most parsed ints fit i64.
         if let Ok(n) = s.parse::<i64>() {
-            return Ok(AverInt::Small(n));
+            return Ok(AverInt::from_i64(n));
         }
         match BigInt::from_str(s) {
             Ok(b) => Ok(AverInt::from_bigint(b)),
@@ -831,13 +1000,14 @@ impl FromStr for AverInt {
 impl From<i64> for AverInt {
     #[inline]
     fn from(n: i64) -> Self {
-        AverInt::Small(n)
+        AverInt::from_i64(n)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use num_traits::Zero;
 
     fn big(s: &str) -> AverInt {
         AverInt::from_str(s).unwrap()
@@ -891,13 +1061,18 @@ mod tests {
 
     #[test]
     fn canonical_form_demotes_to_small() {
-        // i64::MAX * 2 / 2 returns to range and must be Small again.
-        let a = AverInt::from_i64(i64::MAX);
+        // The inline maximum doubled and halved returns to range and must be
+        // inline again. i64::MAX doubled and halved is past it, so boxed.
+        let a = AverInt::from_i64(INLINE_MAX);
         let doubled = a.add(&a);
-        assert!(matches!(doubled, AverInt::Big(_)));
+        assert!(!doubled.0.is_inline());
         let halved = doubled.div_euclid(&AverInt::from_i64(2)).unwrap();
-        assert_eq!(halved, AverInt::from_i64(i64::MAX));
-        assert!(matches!(halved, AverInt::Small(_)));
+        assert_eq!(halved, AverInt::from_i64(INLINE_MAX));
+        assert!(halved.0.is_inline());
+        let a = AverInt::from_i64(i64::MAX);
+        let halved = a.add(&a).div_euclid(&AverInt::from_i64(2)).unwrap();
+        assert_eq!(halved.to_i64(), Some(i64::MAX));
+        assert!(!halved.0.is_inline());
     }
 
     #[test]
@@ -905,7 +1080,7 @@ mod tests {
         // The exact runtime-vs-proof law: a*a >= 0 even where i64 would wrap.
         let a = AverInt::from_i64(i64::MAX);
         let sq = a.mul(&a);
-        assert!(matches!(sq, AverInt::Big(_)));
+        assert!(!sq.0.is_inline());
         assert!(sq >= AverInt::zero());
     }
 
@@ -933,7 +1108,7 @@ mod tests {
         // to build a Big, and it upholds this.
         let from_big = AverInt::from_bigint(BigInt::from(5));
         let small = AverInt::from_i64(5);
-        assert!(matches!(from_big, AverInt::Small(5)));
+        assert_eq!((from_big.0.is_inline(), from_big.to_i64()), (true, Some(5)));
         assert_eq!(from_big, small);
         let mut hb = DefaultHasher::new();
         let mut hs = DefaultHasher::new();
@@ -941,18 +1116,20 @@ mod tests {
         small.hash(&mut hs);
         assert_eq!(hb.finish(), hs.finish());
 
-        // Boundary values that exactly fit i64 also demote.
-        assert!(matches!(
-            AverInt::from_bigint(BigInt::from(i64::MAX)),
-            AverInt::Small(i64::MAX)
-        ));
-        assert!(matches!(
-            AverInt::from_bigint(BigInt::from(i64::MIN)),
-            AverInt::Small(i64::MIN)
-        ));
-        // One past the boundary stays Big.
+        // The ends of the inline range demote; one past either end, and
+        // the ends of i64, stay boxed.
+        for n in [INLINE_MAX, INLINE_MIN] {
+            let v = AverInt::from_bigint(BigInt::from(n));
+            assert!(v.0.is_inline());
+            assert_eq!(v.to_i64(), Some(n));
+        }
+        for n in [INLINE_MAX + 1, INLINE_MIN - 1, i64::MAX, i64::MIN] {
+            let v = AverInt::from_bigint(BigInt::from(n));
+            assert!(!v.0.is_inline());
+            assert_eq!(v, AverInt::from_i64(n));
+        }
         let past = AverInt::from_bigint(BigInt::from(i64::MAX) + 1);
-        assert!(matches!(past, AverInt::Big(_)));
+        assert!(!past.0.is_inline());
     }
 
     #[test]
@@ -979,7 +1156,7 @@ mod tests {
         // i64 dividend reaches it). The exact case the i64 fast path can never
         // exercise, so it pins the BigInt code directly.
         let two_63 = AverInt::from_i64(i64::MAX).add(&AverInt::from_i64(1));
-        assert!(matches!(two_63, AverInt::Big(_)));
+        assert!(!two_63.0.is_inline());
 
         let neg3 = AverInt::from_i64(-3);
         let q = two_63.div_euclid(&neg3).unwrap();
@@ -1001,8 +1178,8 @@ mod tests {
 
         for a in [&pos, &neg] {
             for b in [&dpos, &dneg] {
-                assert!(matches!(*a, AverInt::Big(_)));
-                assert!(matches!(*b, AverInt::Big(_)));
+                assert!(!a.0.is_inline());
+                assert!(!b.0.is_inline());
                 let q = a.div_euclid(b).unwrap();
                 let r = a.rem_euclid(b).unwrap();
                 // 0 <= r
@@ -1025,7 +1202,7 @@ mod tests {
     fn min_div_neg_one_promotes_not_panics() {
         let min = AverInt::from_i64(i64::MIN);
         let q = min.div_euclid(&AverInt::from_i64(-1)).unwrap();
-        assert!(matches!(q, AverInt::Big(_)));
+        assert!(!q.0.is_inline());
         assert_eq!(q, big("9223372036854775808"));
     }
 
@@ -1066,7 +1243,7 @@ mod tests {
     fn parse_roundtrip_past_i64() {
         let s = "170141183460469231731687303715884105727"; // 2^127 - 1
         let v = big(s);
-        assert!(matches!(v, AverInt::Big(_)));
+        assert!(!v.0.is_inline());
         assert_eq!(v.to_string(), s);
     }
 
@@ -1083,7 +1260,7 @@ mod tests {
         // i64::MAX (`as i64`), but produce the EXACT BigInt — mirroring the
         // VM's `float_to_aver_int`.
         let v = AverInt::from_f64_trunc(1e20);
-        assert!(matches!(v, AverInt::Big(_)));
+        assert!(!v.0.is_inline());
         assert_eq!(v.to_string(), "100000000000000000000");
         // Negative huge magnitude is exact too.
         let n = AverInt::from_f64_trunc(-1e20);
@@ -1312,5 +1489,151 @@ mod tests {
             bit_width_too_large_message(),
             format!("bit width exceeds the {MAX_MATERIALIZED_BITS} bit limit")
         );
+    }
+
+    // -- The inline boundary -----------------------------------------------
+    //
+    // Every operation against `BigInt` arithmetic on values around the ends
+    // of the inline range (±2^62), of i64 (±2^63) and of u64 (2^64), and
+    // every result checked to be in canonical form.
+
+    fn boundary_values() -> Vec<BigInt> {
+        let mut out = Vec::new();
+        for base in [0u32, 1, 31, 62, 63, 64, 100] {
+            let magnitude = if base == 0 {
+                BigInt::zero()
+            } else {
+                BigInt::from(1u8) << base
+            };
+            for sign in [1, -1] {
+                for delta in -2..=2 {
+                    let v = &magnitude * sign + delta;
+                    if !out.contains(&v) {
+                        out.push(v);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The value, checked to be in canonical form.
+    fn canonical(v: AverInt, expected: &BigInt, what: &str) -> AverInt {
+        let inline = expected >= &BigInt::from(INLINE_MIN) && expected <= &BigInt::from(INLINE_MAX);
+        assert_eq!(v.0.is_inline(), inline, "{what}: form of {expected}");
+        assert_eq!(v.to_bigint(), *expected, "{what}");
+        v
+    }
+
+    fn hash_of(v: &AverInt) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        v.hash(&mut h);
+        h.finish()
+    }
+
+    #[test]
+    fn size_is_one_word_and_option_takes_the_niche() {
+        assert_eq!(core::mem::size_of::<AverInt>(), 8);
+        assert_eq!(core::mem::size_of::<Option<AverInt>>(), 8);
+    }
+
+    #[test]
+    fn construction_and_conversion_at_the_inline_boundary() {
+        for x in boundary_values() {
+            let what = format!("{x}");
+            let built = canonical(AverInt::from_bigint(x.clone()), &x, &what);
+            let parsed = canonical(AverInt::from_str(&what).unwrap(), &x, &what);
+            assert_eq!(built.to_string(), what);
+            assert_eq!(format!("{built:?}"), what);
+            assert_eq!(built, parsed);
+            assert_eq!(hash_of(&built), hash_of(&parsed));
+            assert_eq!(built.to_i64(), x.to_i64(), "{what}");
+            assert_eq!(built.to_usize(), x.to_usize(), "{what}");
+            assert_eq!(built.to_f64(), x.to_f64().unwrap(), "{what}");
+            if let Some(n) = x.to_i64() {
+                canonical(AverInt::from_i64(n), &x, &what);
+                canonical(AverInt::from(n), &x, &what);
+                // Every value that fits i64 hashes as that i64, as it did
+                // before the inline range was narrowed.
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                std::hash::Hash::hash(&n, &mut h);
+                assert_eq!(hash_of(&built), std::hash::Hasher::finish(&h), "{what}");
+                if n.unsigned_abs() < 1 << 53 {
+                    canonical(AverInt::from_f64_trunc(n as f64), &x, &what);
+                }
+            }
+            let cloned = built.clone();
+            assert_eq!(cloned, built);
+            assert_eq!(cloned.into_bigint(), x);
+            assert_eq!(built.is_zero(), x.is_zero());
+            canonical(built.neg(), &-&x, &what);
+            canonical(built.abs(), &BigInt::from(x.magnitude().clone()), &what);
+            canonical(built.bit_not(), &(-&x - 1), &what);
+            let some = Some(built.clone());
+            assert_eq!(some.as_ref(), Some(&built));
+        }
+    }
+
+    #[test]
+    fn binary_operations_at_the_inline_boundary() {
+        let values = boundary_values();
+        for x in &values {
+            for y in &values {
+                let (a, b) = (
+                    AverInt::from_bigint(x.clone()),
+                    AverInt::from_bigint(y.clone()),
+                );
+                let what = |op: &str| format!("{x} {op} {y}");
+                canonical(a.add(&b), &(x + y), &what("+"));
+                canonical(a.sub(&b), &(x - y), &what("-"));
+                canonical(a.mul(&b), &(x * y), &what("*"));
+                canonical(a.bit_and(&b), &(x & y), &what("&"));
+                canonical(a.bit_or(&b), &(x | y), &what("|"));
+                canonical(a.bit_xor(&b), &(x ^ y), &what("^"));
+                assert_eq!(a.cmp(&b), x.cmp(y), "{}", what("cmp"));
+                assert_eq!(a == b, x == y, "{}", what("=="));
+                canonical(a.min_ref(&b), x.min(y), &what("min"));
+                canonical(a.max_ref(&b), x.max(y), &what("max"));
+                if y.is_zero() {
+                    assert!(a.div_euclid(&b).is_none() && a.rem_euclid(&b).is_none());
+                    assert!(a.div_trunc(&b).is_none() && a.rem_trunc(&b).is_none());
+                } else {
+                    let (q, r) = euclid_div_rem(x, y);
+                    canonical(a.div_euclid(&b).unwrap(), &q, &what("div"));
+                    canonical(a.rem_euclid(&b).unwrap(), &r, &what("mod"));
+                    canonical(a.div_trunc(&b).unwrap(), &(x / y), &what("/"));
+                    canonical(a.rem_trunc(&b).unwrap(), &(x % y), &what("%"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shifts_and_low_bits_at_the_inline_boundary() {
+        for x in boundary_values() {
+            let a = AverInt::from_bigint(x.clone());
+            for n in [0usize, 1, 2, 30, 61, 62, 63, 64, 65, 100, 130] {
+                let count = AverInt::from_i64(n as i64);
+                let modulus = BigInt::from(1u8) << n;
+                let what = |op: &str| format!("{x} {op} {n}");
+                canonical(a.shift_left(&count).unwrap(), &(&x * &modulus), &what("<<"));
+                let (q, r) = euclid_div_rem(&x, &modulus);
+                canonical(a.shift_right(&count).unwrap(), &q, &what(">>"));
+                canonical(a.low_bits(&count).unwrap(), &r, &what("low"));
+                // The ones among the lowest `n` bits are those of `x mod 2^n`.
+                let ones = BigInt::from(r.magnitude().count_ones());
+                canonical(a.pop_count(&count).unwrap(), &ones, &what("popCount"));
+            }
+            // A count past the inline range reaches the sign tail.
+            let huge = AverInt::from_i64(INLINE_MAX + 1);
+            let tail = if x.sign() == Sign::Minus { -1 } else { 0 };
+            canonical(
+                a.shift_right(&huge).unwrap(),
+                &BigInt::from(tail),
+                "huge >>",
+            );
+            assert_eq!(a.shift_left(&huge), Err(ShiftCountError::TooLarge));
+        }
     }
 }
