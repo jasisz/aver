@@ -1,6 +1,6 @@
 //! `==` on values of a recursive sum at the cost of the graph they share.
 //!
-//! A recursive sum keeps each constructor's fields behind one [`Shared`], so a
+//! A recursive sum keeps each constructor's fields in one node, so a
 //! subterm can sit under many nodes. Two equal values built apart are
 //! different objects all the way down, and a comparison node by node meets a
 //! shared subterm once for every path to it: the work is the size of the
@@ -87,17 +87,50 @@ fn with_memory<T: WalkEq>(a: &T, b: &T) -> bool {
     )
 }
 
+/// A node of a recursive sum, as a comparison sees it: its address, which
+/// identifies it while it lives, and how many owners it has.
+pub trait NodeId {
+    fn addr(&self) -> usize;
+    fn count(&self) -> usize;
+}
+
+impl<T> NodeId for Shared<T> {
+    #[inline]
+    fn addr(&self) -> usize {
+        Shared::as_ptr(self) as usize
+    }
+
+    #[inline]
+    fn count(&self) -> usize {
+        Shared::strong_count(self)
+    }
+}
+
 impl Walk<'_> {
     /// The payloads of one constructor of a recursive sum. `reflexive` says
     /// their `==` is (they hold no `Float`), so one object is equal to itself
     /// without being read.
     #[inline]
     pub fn shared<T: WalkEq>(self, a: &Shared<T>, b: &Shared<T>, reflexive: bool) -> bool {
-        if reflexive && Shared::ptr_eq(a, b) {
+        self.node(a, b, reflexive, |walk| (**a).walk_eq(&**b, walk))
+    }
+
+    /// Two nodes of one constructor of a recursive sum, `fields_eq` comparing
+    /// their fields. `reflexive` says their `==` is (they hold no `Float`),
+    /// so one node is equal to itself without being read.
+    #[inline]
+    pub fn node<N: NodeId>(
+        self,
+        a: &N,
+        b: &N,
+        reflexive: bool,
+        fields_eq: impl FnOnce(Self) -> bool,
+    ) -> bool {
+        if reflexive && a.addr() == b.addr() {
             return true;
         }
         if let Some(memory) = self.memory {
-            return self.remembering(memory, a, b);
+            return self.remembering(memory, a, b, fields_eq);
         }
         // Out of budget: the answer is thrown away and found again.
         let left = self.left.get();
@@ -105,26 +138,32 @@ impl Walk<'_> {
             return false;
         }
         self.left.set(left - 1);
-        a.walk_eq(b, self)
+        fields_eq(self)
     }
 
-    /// [`Walk::shared`] with memory: a pair of nodes both held in several
+    /// [`Walk::node`] with memory: a pair of nodes both held in several
     /// places is looked up, and remembered once found equal. A node held in
     /// one place is reached by one path only.
     #[cold]
     #[inline(never)]
-    fn remembering<T: WalkEq>(self, memory: &Memory, a: &Shared<T>, b: &Shared<T>) -> bool {
-        if Shared::strong_count(a) == 1 || Shared::strong_count(b) == 1 {
-            return a.walk_eq(b, self);
+    fn remembering<N: NodeId>(
+        self,
+        memory: &Memory,
+        a: &N,
+        b: &N,
+        fields_eq: impl FnOnce(Self) -> bool,
+    ) -> bool {
+        if a.count() == 1 || b.count() == 1 {
+            return fields_eq(self);
         }
-        let pair = (Shared::as_ptr(a) as usize, Shared::as_ptr(b) as usize);
+        let pair = (a.addr(), b.addr());
         let seen = memory.equal.take();
         let known = seen.as_ref().is_some_and(|seen| seen.contains(&pair));
         memory.equal.set(seen);
         if known {
             return true;
         }
-        let same = a.walk_eq(b, self);
+        let same = fields_eq(self);
         if same {
             let mut seen = memory.equal.take().unwrap_or_default();
             seen.insert(pair);

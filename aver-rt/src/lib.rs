@@ -22,6 +22,7 @@ mod string_index;
 pub mod tcp;
 #[cfg(feature = "terminal")]
 pub mod terminal;
+pub mod thin;
 pub mod work;
 
 pub use bytebuilder::{ByteBuilder, byte_builder_finalize, byte_builder_new, byte_builder_push};
@@ -48,7 +49,7 @@ pub use service_types::{
     TerminalSize,
 };
 pub use shared::Shared;
-pub use shared_eq::{Walk, WalkEq, walk_eq};
+pub use shared_eq::{NodeId, Walk, WalkEq, walk_eq};
 pub use strcursor::{
     str_code1, str_code1_lower, str_code1_upper, str_cursor_code, str_cursor_end, str_cursor_head,
     str_cursor_next, str_fold_lower, str_fold_upper,
