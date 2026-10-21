@@ -640,13 +640,13 @@ pub fn join(
     ) {
         (true, _, _) => Ok(b),
         (_, true, _) => Ok(a),
-        (_, _, true) => Ok(crate::proof_std::aver_generated::kernel::types::rebuild(
-            a.clone(),
-            &crate::proof_std::aver_generated::kernel::types::joinEach(
+        (_, _, true) => Ok({
+            let __arg2 @ _ = crate::proof_std::aver_generated::kernel::types::joinEach(
                 &crate::proof_std::aver_generated::kernel::types::partsOf(&a),
                 &crate::proof_std::aver_generated::kernel::types::partsOf(&b),
-            )?,
-        )),
+            )?;
+            crate::proof_std::aver_generated::kernel::types::rebuild(a, &__arg2)
+        }),
         _ => Err(aver_rt::AverStr::from({
             let mut __b = {
                 let mut __b = {

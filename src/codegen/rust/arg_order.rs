@@ -178,10 +178,15 @@ fn plan(callee: FnId, args: &[Spanned<MirExpr>], facts: &Facts<'_>) -> Option<Pl
         if hoisted.contains(&j) {
             // A hoisted value is bound to a boxed local: an `Int` argument
             // may be a raw `i64` the callee takes bare.
-            if !matches!(arg.ty(), Some(ty) if *ty != Type::Int) || !effect_free(&arg.node, facts) {
+            // A hoisted argument may leave early with `?`: everything it
+            // overtakes is effect-free and leaves nowhere, so whether it
+            // ran first cannot be observed.
+            if !matches!(arg.ty(), Some(ty) if *ty != Type::Int)
+                || !effect_free(&arg.node, facts, true)
+            {
                 return None;
             }
-        } else if j < last_hoisted && !effect_free(&arg.node, facts) {
+        } else if j < last_hoisted && !effect_free(&arg.node, facts, false) {
             return None;
         }
     }
@@ -287,8 +292,9 @@ fn apply(expr: &mut Spanned<MirExpr>, mir_fn: &mut MirFn, plan: &Plan) {
 /// Whether `expr` has no effect, so running it earlier or later among other
 /// effect-free expressions cannot be observed. A call is effect-free when it
 /// calls a function that declares no effects or a builtin that is not a host
-/// operation; an early exit (`?`, `return`) and a tail call are not moved.
-fn effect_free(expr: &MirExpr, facts: &Facts<'_>) -> bool {
+/// operation. A tail call and `return` are not moved, nor is `?` unless
+/// `exits` allows it.
+fn effect_free(expr: &MirExpr, facts: &Facts<'_>, exits: bool) -> bool {
     match expr {
         MirExpr::Call(call) => {
             let callee = match &call.node.callee {
@@ -301,8 +307,9 @@ fn effect_free(expr: &MirExpr, facts: &Facts<'_>) -> bool {
                     .node
                     .args
                     .iter()
-                    .all(|arg| effect_free(&arg.node, facts))
+                    .all(|arg| effect_free(&arg.node, facts, exits))
         }
+        MirExpr::Try(inner) if exits => effect_free(&inner.node, facts, exits),
         MirExpr::TailCall(_)
         | MirExpr::Try(_)
         | MirExpr::Return(_)
@@ -310,7 +317,7 @@ fn effect_free(expr: &MirExpr, facts: &Facts<'_>) -> bool {
         _ => {
             let mut free = true;
             crate::ir::mir::expr::walk_children(expr, &mut |child| {
-                free = free && effect_free(child, facts);
+                free = free && effect_free(child, facts, exits);
             });
             free
         }

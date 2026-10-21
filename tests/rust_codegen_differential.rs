@@ -3739,6 +3739,71 @@ fn a_map_threaded_through_record_results_is_moved_not_cloned() {
     .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// Runs `bin arg` and returns its stdout, or an error when it does not end
+/// within `secs` seconds.
+fn run_within(bin: &Path, arg: &str, secs: u64) -> Result<String, String> {
+    let mut child = Command::new(bin)
+        .arg(arg)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+    let started = std::time::Instant::now();
+    while child.try_wait().expect("binary is waitable").is_none() {
+        if started.elapsed() > std::time::Duration::from_secs(secs) {
+            let _ = child.kill();
+            return Err(format!("`{arg}` did not end within {secs} s"));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let out = child.wait_with_output().expect("binary output");
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// A record handed by value to a function that sets a Vector in it, while a
+/// later argument of the same call still reads it behind `?`
+/// (`addExpr(t, i, exprOf(t, ..)?)`): the reading argument runs first, so `t`
+/// moves into `addExpr` and the function takes it by value. Cloned at the
+/// call, the record kept a second owner of the Vector for the whole call and
+/// every set copied it. The compiled binary must write 2^17 lines into 2^17
+/// slots within a minute.
+#[test]
+fn a_param_moved_and_read_in_one_call_is_read_first_and_moved() {
+    let relative = "tests/fixtures/moved_and_read_in_one_call_app.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("moved_and_read_in_one_call", &src);
+    assert!(
+        emitted.contains("pub fn exprLine(mut t @ _: Tables,")
+            && emitted.contains("addExpr(t, i, __arg")
+            && !emitted.contains("addExpr(t.clone()"),
+        "exprLine must read `t` first and move it into addExpr:\n{emitted}"
+    );
+    let file = repo_root().join(relative);
+    let ws = temp_dir("moved_and_read_in_one_call");
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| {
+        compile_rust(&file, &project, "moved_and_read_in_one_call", None, &[])?;
+        let bin = cargo_build(&project, "moved_and_read_in_one_call")?;
+        let small = run_within(&bin, "1000", 60)?;
+        let vm = Command::new(aver_bin())
+            .current_dir(repo_root())
+            .args(["run", relative, "--", "1000"])
+            .output()
+            .map_err(|e| format!("vm run: {e}"))?;
+        let vm = String::from_utf8_lossy(&vm.stdout).trim().to_string();
+        if small != vm {
+            return Err(format!("--- VM ---\n{vm}\n--- Rust ---\n{small}"));
+        }
+        let got = run_within(&bin, "131072", 60)?;
+        match got.starts_with("n 131072 last ") && got.ends_with("n 131073 last -") {
+            true => Ok(()),
+            false => Err(format!("at 2^17 lines: {got}")),
+        }
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A tail-recursive loop borrows the params it only reads: a tree it
 /// descends, a bucket or list it walks, a key it passes on. Its callers then
 /// lend their values too, so `known(st, ..)`, which only hands a field of
