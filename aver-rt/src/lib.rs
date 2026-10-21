@@ -107,7 +107,7 @@ impl Buffer {
 }
 
 /// Aver string type: newtype over `Shared<str>` for O(1) clone and native `+` operator.
-#[derive(Clone, Eq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Eq, Ord, PartialOrd)]
 pub struct AverStr(Rc<str>);
 
 /// One string is equal to itself without reading it, as `Arc<str>`'s `==`.
@@ -115,6 +115,12 @@ impl PartialEq for AverStr {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.0, &other.0) || *self.0 == *other.0
+    }
+}
+
+impl Hash for AverStr {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        (*self.0).hash(state)
     }
 }
 
