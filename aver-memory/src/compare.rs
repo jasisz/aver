@@ -150,14 +150,31 @@ impl NanValue {
     /// [`EqWork::Remember`] goes under the parts of a pair, so the pair is
     /// remembered when all of them have been found equal and not before, as it
     /// would be on the way back up a recursion.
+    #[inline(always)]
     fn eq_as<T: ArenaTypes, const KEY: bool>(
         self,
         other: Self,
         arena: &Arena<T>,
         walk: &mut EqWalk<'_>,
     ) -> bool {
+        match self.eq_open::<T, KEY>(other, arena, walk) {
+            EqOpen::Same(same) => same,
+            EqOpen::Parts(parts, remember) => Self::eq_walk::<T, KEY>(parts, remember, arena, walk),
+        }
+    }
+
+    /// [`NanValue::eq_as`] of a pair that has opened to `parts`.
+    fn eq_walk<T: ArenaTypes, const KEY: bool>(
+        parts: EqWork<'_>,
+        remember: Option<(u64, u64)>,
+        arena: &Arena<T>,
+        walk: &mut EqWalk<'_>,
+    ) -> bool {
         let mut stack = Vec::new();
-        let mut next = Some(EqWork::Pair(self, other));
+        if let Some(pair) = remember {
+            stack.push(EqWork::Remember(pair));
+        }
+        let mut next = Some(parts);
         loop {
             let mut work = match next.take().or_else(|| stack.pop()) {
                 Some(EqWork::Remember(pair)) => {
@@ -193,6 +210,7 @@ impl NanValue {
 
     /// One step of [`NanValue::eq_as`]: the answer for a pair, or the parts
     /// that decide it, and with memory the pair to remember once they have.
+    #[inline(always)]
     fn eq_open<'a, T: ArenaTypes, const KEY: bool>(
         self,
         other: Self,

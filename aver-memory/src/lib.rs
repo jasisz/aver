@@ -1546,6 +1546,10 @@ pub struct Arena<T: ArenaTypes> {
     scratch_yard: Vec<u32>,
     scratch_handoff: Vec<u32>,
     scratch_stable: Vec<u32>,
+    /// The work lists of the frame-boundary walks, kept from one boundary to
+    /// the next so that a boundary does not allocate one.
+    scratch_local_pending: Vec<memory::Taken<T, memory::LocalRewriteSlot>>,
+    scratch_promote_pending: Vec<memory::Taken<T, memory::PromoteRewriteSlot>>,
     peak_usage: ArenaUsage,
     alloc_space: AllocSpace,
     /// Monotone logical serial for the allocation lane. It advances after each

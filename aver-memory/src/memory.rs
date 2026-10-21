@@ -8,8 +8,8 @@ use super::*;
 /// leave a below-mark slot holding an above-mark index (see
 /// [`Arena::take_local_value`]). It mirrors `PromoteRewriteSlot`, which the
 /// promotion walk has always had.
-#[derive(Clone, Copy)]
-enum LocalRewriteSlot {
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum LocalRewriteSlot {
     InPlace {
         space: HeapSpace,
         raw_index: usize,
@@ -20,8 +20,8 @@ enum LocalRewriteSlot {
     },
 }
 
-#[derive(Clone, Copy)]
-enum PromoteRewriteSlot {
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum PromoteRewriteSlot {
     InPlace {
         space: HeapSpace,
         raw_index: usize,
@@ -35,7 +35,8 @@ enum PromoteRewriteSlot {
 /// An entry a boundary walk has taken out of its slot and queued: the handle
 /// that names it now, the entry, still to be rewritten, and where `slot` says
 /// to put it back.
-struct Taken<T: ArenaTypes, S> {
+#[derive(Clone, Debug)]
+pub(crate) struct Taken<T: ArenaTypes, S> {
     value: NanValue,
     entry: ArenaEntry<T>,
     slot: S,
@@ -192,8 +193,8 @@ impl<T: ArenaTypes> Arena<T> {
                 .saturating_sub(handoff_mark as usize),
         );
 
-        let mut pending = Vec::new();
-        for root in roots {
+        let mut pending = core::mem::take(&mut self.scratch_local_pending);
+        for root in roots.iter_mut().filter(|root| root.heap_index().is_some()) {
             *root = self.evacuate_local_root(
                 *root,
                 young_mark,
@@ -208,6 +209,7 @@ impl<T: ArenaTypes> Arena<T> {
                 &mut pending,
             );
         }
+        self.scratch_local_pending = pending;
 
         self.young_entries.truncate(young_mark as usize);
         self.note_young_truncated(young_mark);
@@ -1234,8 +1236,8 @@ impl<T: ArenaTypes> Arena<T> {
             self.young_entries.len() - mark as usize,
         );
 
-        let mut pending = Vec::new();
-        for root in roots {
+        let mut pending = core::mem::take(&mut self.scratch_promote_pending);
+        for root in roots.iter_mut().filter(|root| root.heap_index().is_some()) {
             *root = self.promote_region_root_to_target(
                 *root,
                 mark,
@@ -1244,6 +1246,7 @@ impl<T: ArenaTypes> Arena<T> {
                 &mut pending,
             );
         }
+        self.scratch_promote_pending = pending;
 
         self.young_entries.truncate(mark as usize);
         self.note_young_truncated(mark);
@@ -1277,8 +1280,8 @@ impl<T: ArenaTypes> Arena<T> {
             self.young_entries.len() - mark as usize,
         );
 
-        let mut pending = Vec::new();
-        for root in roots {
+        let mut pending = core::mem::take(&mut self.scratch_promote_pending);
+        for root in roots.iter_mut().filter(|root| root.heap_index().is_some()) {
             *root = self.promote_region_root_to_target(
                 *root,
                 mark,
@@ -1287,6 +1290,7 @@ impl<T: ArenaTypes> Arena<T> {
                 &mut pending,
             );
         }
+        self.scratch_promote_pending = pending;
 
         self.young_entries.truncate(mark as usize);
         self.note_young_truncated(mark);

@@ -33,6 +33,8 @@ impl<T: ArenaTypes> Arena<T> {
             scratch_yard: Vec::new(),
             scratch_handoff: Vec::new(),
             scratch_stable: Vec::new(),
+            scratch_local_pending: Vec::new(),
+            scratch_promote_pending: Vec::new(),
             peak_usage: ArenaUsage::default(),
             alloc_space: AllocSpace::Young,
             lane_serial: 1,
@@ -89,6 +91,8 @@ impl<T: ArenaTypes> Arena<T> {
             scratch_yard: Vec::new(),
             scratch_handoff: Vec::new(),
             scratch_stable: Vec::new(),
+            scratch_local_pending: Vec::new(),
+            scratch_promote_pending: Vec::new(),
             peak_usage: ArenaUsage::default(),
             alloc_space: AllocSpace::Young,
             // Stable entries and their receipts are cloned by value, so the
