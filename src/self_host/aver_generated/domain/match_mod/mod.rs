@@ -102,15 +102,13 @@ pub fn matchPattern(
         }
         crate::aver_generated::domain::ast::Pattern::PatConstructor(ctorName, bindings) => {
             let ctorName = ctorName.clone();
-            let bindings = bindings.clone();
-            crate::aver_generated::domain::match_mod::matchPatConstructor(ctorName, &bindings, &v)
+            crate::aver_generated::domain::match_mod::matchPatConstructor(ctorName, bindings, &v)
         }
         crate::aver_generated::domain::ast::Pattern::PatConstructorId(tag, ctorName, bindings) => {
             let tag = tag.clone();
             let ctorName = ctorName.clone();
-            let bindings = bindings.clone();
             crate::aver_generated::domain::match_mod::matchPatConstructorById(
-                tag, ctorName, &bindings, &v,
+                tag, ctorName, bindings, &v,
             )
         }
         crate::aver_generated::domain::ast::Pattern::PatTuple(pats) => {
@@ -221,7 +219,7 @@ pub fn matchPatEmpty(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValList(__items_fields) => {
-                let items = __items_fields.0.clone();
+                let items = &__items_fields.0;
                 {
                     let __list_subject = items;
                     if __list_subject.is_empty() {
@@ -247,8 +245,27 @@ pub fn matchPatCons(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValList(__items_fields) => {
-                let items = __items_fields.0.clone();
-                aver_list_match!(items, [] => Err(AverStr::from("no match")), [head, tail] => Ok(aver_rt::AverList::from_vec(vec![(h, head), (t, crate::aver_generated::domain::value::Val::ValList(crate::aver_generated::domain::value::Val__ValList(tail)))])))
+                let items = &__items_fields.0;
+                {
+                    let __list_subject = items;
+                    if __list_subject.is_empty() {
+                        Err(AverStr::from("no match"))
+                    } else {
+                        if let Some((head, tail)) = aver_rt::list_uncons_cloned(__list_subject) {
+                            Ok(aver_rt::AverList::from_vec(vec![
+                                (h, head),
+                                (
+                                    t,
+                                    crate::aver_generated::domain::value::Val::ValList(
+                                        crate::aver_generated::domain::value::Val__ValList(tail),
+                                    ),
+                                ),
+                            ]))
+                        } else {
+                            panic!("Aver Rust codegen: non-exhaustive list match")
+                        }
+                    }
+                }
             }
             _ => Err(AverStr::from("no match")),
         }
@@ -342,9 +359,9 @@ pub fn matchGenericConstructor(
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValVariant(__fullName_fields) => {
                 let fullName = __fullName_fields.1.clone();
-                let fields = __fullName_fields.2.clone();
+                let fields = &__fullName_fields.2;
                 crate::aver_generated::domain::match_mod::matchGenericCtorCheck(
-                    ctorName, fullName, bindings, &fields,
+                    ctorName, fullName, bindings, fields,
                 )
             }
             _ => Err(AverStr::from("no match")),
@@ -493,11 +510,11 @@ pub fn matchGenericCtorById(
             crate::aver_generated::domain::value::Val__view::ValVariant(__vTag_fields) => {
                 let vTag = __vTag_fields.0.clone();
                 let fullName = __vTag_fields.1.clone();
-                let fields = __vTag_fields.2.clone();
+                let fields = &__vTag_fields.2;
                 if (vTag == tag) {
                     if (fullName == ctorName) {
                         Ok(crate::aver_generated::domain::match_mod::zipBindings(
-                            bindings, &fields,
+                            bindings, fields,
                         ))
                     } else {
                         Err(AverStr::from("no match"))
@@ -599,8 +616,8 @@ pub fn zipBindings(
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::match_mod::zipBindingsAcc(
-        names.clone(),
-        vals.clone(),
+        names,
+        vals,
         aver_rt::AverList::empty(),
     )
 }
@@ -608,21 +625,49 @@ pub fn zipBindings(
 /// Accumulate binding pairs in reverse, then reverse at end.
 #[inline(always)]
 pub fn zipBindingsAcc(
-    mut names @ _: aver_rt::AverList<AverStr>,
-    mut vals @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    names @ _: &aver_rt::AverList<AverStr>,
+    vals @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
+    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut names @ _: &aver_rt::AverList<AverStr> = names;
+    let mut __hold1: aver_rt::AverList<crate::aver_generated::domain::value::Val>;
+    let mut vals @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val> = vals;
     loop {
         crate::cancel_checkpoint();
         let reversed @ _ = acc.reverse();
-        aver_list_match!(names, [] => { return reversed; }, [n, ns] => { aver_list_match!(vals, [] => { return reversed; }, [v, vs] => { {
-            let __tco0 = ns;
-            let __tco1 = vs;
-            let __tco2 = aver_rt::AverList::prepend((n, v), &acc);
-            names = __tco0;
-            vals = __tco1;
-            acc = __tco2;
-            continue;
-        } }) })
+        {
+            let __list_subject = names;
+            if __list_subject.is_empty() {
+                return reversed;
+            } else {
+                if let Some((n, ns)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    {
+                        let __list_subject = vals;
+                        if __list_subject.is_empty() {
+                            return reversed;
+                        } else {
+                            if let Some((v, vs)) = aver_rt::list_uncons_cloned(__list_subject) {
+                                {
+                                    let __tco0 = ns;
+                                    let __tco1 = vs;
+                                    let __tco2 = aver_rt::AverList::prepend((n, v), &acc);
+                                    __hold0 = __tco0;
+                                    names = &__hold0;
+                                    __hold1 = __tco1;
+                                    vals = &__hold1;
+                                    acc = __tco2;
+                                    continue;
+                                }
+                            } else {
+                                panic!("Aver Rust codegen: non-exhaustive list match")
+                            }
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }

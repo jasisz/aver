@@ -578,7 +578,7 @@ pub fn evalVectorGetMaybeDefault(
         let __t = vecV;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValVector(__vec_fields) => {
-                let vec = __vec_fields.0.clone();
+                let vec = &__vec_fields.0;
                 {
                     let __t = idxV;
                     match __t.view() {

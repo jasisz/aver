@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use super::emit_ctx::{EmitCtx, should_borrow_param};
 use super::pattern::emit_pattern;
 /// Aver expressions → Rust expression strings.
@@ -181,56 +183,52 @@ pub(super) fn callee_borrow_mask(name: &str, arg_count: usize, ctx: &CodegenCont
     let Some((fn_id, resolved)) = resolved_callee(name, ctx) else {
         return vec![false; arg_count];
     };
-    // Mutual-TCO members expose borrow-by-default wrappers. A lone self-TCO
-    // function exposes its owned mutable loop signature.
-    let is_mutual_tco = ctx.mutual_tco_members.contains(&fn_id);
-    let mut mask = if !is_mutual_tco && super::toplevel::resolved_fn_has_self_tailcall(resolved) {
-        vec![false; arg_count]
-    } else {
-        resolved
-            .params
-            .iter()
-            .take(arg_count)
-            .enumerate()
-            .map(|(i, (_, ty))| {
-                should_borrow_param(ty) && !super::from_mir::mutual_param_by_value(ctx, fn_id, i)
-            })
-            .collect()
-    };
+    let mut mask = param_borrow_mask(fn_id, resolved, ctx);
+    mask.resize(arg_count, false);
+    mask
+}
 
+/// Which params of `fn_id` its Rust signature borrows (`&T`).
+pub(super) fn param_borrow_mask(
+    fn_id: crate::ir::FnId,
+    resolved: &crate::ir::hir::ResolvedFnDef,
+    ctx: &CodegenContext,
+) -> Vec<bool> {
+    // Mutual-TCO members expose borrow-by-default wrappers. A lone self-TCO
+    // function borrows only the params its loop lends.
+    let is_mutual_tco = ctx.mutual_tco_members.contains(&fn_id);
+    if !is_mutual_tco && super::toplevel::resolved_fn_has_self_tailcall(resolved) {
+        return (0..resolved.params.len())
+            .map(|i| super::from_mir::self_loop_lends(ctx, fn_id, i))
+            .collect();
+    }
+    let mut mask: Vec<bool> = resolved
+        .params
+        .iter()
+        .enumerate()
+        .map(|(i, (_, ty))| {
+            should_borrow_param(ty) && !super::from_mir::mutual_param_by_value(ctx, fn_id, i)
+        })
+        .collect();
     // own_param graduation: a NON-TCO collection param the `own_param`
     // pass proved can use the owned Rust ABI is emitted by value (`mut p: T`,
     // see `MirFnEmitPolicy::apply_own_param` / `emit_fn_params_with_owned`),
     // so the CALLER must pass it BY VALUE, not `&T`. Clear the borrow bit
     // at every graduated param position so the call site matches the
-    // graduated signature. (Self-/mutual-TCO callees already return an
-    // all-`false` / borrow-by-default mask above; the graduation only
-    // applies on the non-TCO emit, so overriding here is the single place
-    // that keeps call sites and signatures in lockstep.) A missing MIR fn
-    // / aliased_slots leaves the mask unchanged (conservative borrow).
-    clear_owned_param_borrows(name, &mut mask, ctx);
+    // graduated signature. A missing MIR fn / aliased_slots leaves the mask
+    // unchanged (conservative borrow).
+    clear_owned_param_borrows_of(fn_id, resolved, &mut mask, ctx);
     mask
 }
 
 /// Clear the borrow bit for every own_param-graduated collection param of
-/// callee `name`, so the call site passes those args by value (matching
-/// the graduated `mut p: T` signature). Resolves the callee's `MirFn` +
-/// `ResolvedFnDef` by the SAME identity-keyed lookup the signature emit
-/// uses, then applies `from_mir::owned_collection_param_names` (the single
-/// source of the owned-param set). Graduation only happens on non-TCO
-/// emits; a self-/mutual-TCO callee carries no graduated params here
-/// because `apply_own_param` on those paths never populates the non-TCO
-/// signature's owned set, so this is a no-op for them.
-fn clear_owned_param_borrows(name: &str, mask: &mut [bool], ctx: &CodegenContext) {
-    let Some((fn_id, rfd)) = resolved_callee(name, ctx) else {
-        return;
-    };
-    clear_owned_param_borrows_of(fn_id, rfd, mask, ctx);
-}
-
-/// [`clear_owned_param_borrows`] for an already resolved callee. The
-/// first-class fn adapter reads the same set, so a function value and a
-/// direct call pass every param the same way.
+/// the callee, so the call site passes those args by value (matching the
+/// graduated `mut p: T` signature). Applies
+/// `from_mir::owned_collection_param_names` (the single source of the
+/// owned-param set). Graduation only happens on non-TCO emits, so this is a
+/// no-op for a self-/mutual-TCO callee. The first-class fn adapter reads the
+/// same set, so a function value and a direct call pass every param the same
+/// way.
 pub(super) fn clear_owned_param_borrows_of(
     fn_id: crate::ir::FnId,
     rfd: &crate::ir::hir::ResolvedFnDef,
@@ -510,11 +508,15 @@ fn emit_default_dispatch_arm(
     }
 }
 
+/// `lent`: `subject` is a `&AverList`, matched through the borrow (the macro
+/// takes its list by value). `heads`: the heads an arm borrows from the list
+/// instead of cloning them out.
 pub(super) fn emit_list_match<F>(
     subject: String,
+    lent: bool,
+    heads: &HashSet<String>,
     arms: &[ResolvedMatchArm],
     list_shape: Option<ListMatchShape>,
-    allow_fast_macro: bool,
     ctx: &CodegenContext,
     body_for_arm: F,
 ) -> String
@@ -522,14 +524,20 @@ where
     F: Fn(&ResolvedMatchArm) -> String,
 {
     // Fast path: exactly [] and [h, ..t] → use aver_list_match! macro
-    if allow_fast_macro
+    if !lent
+        && heads.is_empty()
         && let Some(code) =
             try_emit_list_match_macro(&subject, arms, list_shape, ctx, &body_for_arm)
     {
         return code;
     }
     let subject_name = generated_ident("list_subject");
-    let arms_code = emit_list_match_arms(&subject_name, arms, ctx, &body_for_arm);
+    let subject_ref = match lent {
+        true => subject_name.clone(),
+        false => format!("&{subject_name}"),
+    };
+    let arms_code =
+        emit_list_match_arms(&subject_name, &subject_ref, heads, arms, ctx, &body_for_arm);
     format!("{{ let {} = {}; {} }}", subject_name, subject, arms_code)
 }
 
@@ -582,6 +590,8 @@ where
 
 fn emit_list_match_arms<F>(
     subject_name: &str,
+    subject_ref: &str,
+    heads: &HashSet<String>,
     arms: &[ResolvedMatchArm],
     ctx: &CodegenContext,
     body_for_arm: &F,
@@ -597,7 +607,7 @@ where
     let fallback = if rest.is_empty() {
         "panic!(\"Aver Rust codegen: non-exhaustive list match\")".to_string()
     } else {
-        emit_list_match_arms(subject_name, rest, ctx, body_for_arm)
+        emit_list_match_arms(subject_name, subject_ref, heads, rest, ctx, body_for_arm)
     };
 
     match &first.pattern {
@@ -625,9 +635,21 @@ where
             } else {
                 aver_name_to_rust(tail)
             };
+            if heads.contains(head) {
+                // The head is borrowed from the list; only the rest is a
+                // new list value.
+                return match tail == "_" {
+                    true => format!(
+                        "if let Some({head_pat}) = {subject_name}.first() {{ {body} }} else {{ {fallback} }}"
+                    ),
+                    false => format!(
+                        "if let (Some({head_pat}), Some({tail_pat})) = ({subject_name}.first(), {subject_name}.tail()) {{ {body} }} else {{ {fallback} }}"
+                    ),
+                };
+            }
             format!(
-                "if let Some(({}, {})) = aver_rt::list_uncons_cloned(&{}) {{ {} }} else {{ {} }}",
-                head_pat, tail_pat, subject_name, body, fallback
+                "if let Some(({}, {})) = aver_rt::list_uncons_cloned({}) {{ {} }} else {{ {} }}",
+                head_pat, tail_pat, subject_ref, body, fallback
             )
         }
         ResolvedPattern::Wildcard => body,
@@ -638,15 +660,15 @@ where
         other => {
             let pat = emit_pattern(other, false, ctx);
             format!(
-                "match &{} {{ {} => {{ {} }}, _ => {{ {} }} }}",
-                subject_name, pat, body, fallback
+                "match {} {{ {} => {{ {} }}, _ => {{ {} }} }}",
+                subject_ref, pat, body, fallback
             )
         }
     }
 }
 
 fn emit_list_arm_body(arm: &ResolvedMatchArm, ctx: &CodegenContext, body: String) -> String {
-    let rebindings = emit_pattern_rebindings(&arm.pattern, ctx, false);
+    let rebindings = emit_pattern_rebindings(&arm.pattern, ctx, false, &HashSet::new());
     if rebindings.is_empty() {
         body
     } else {
@@ -664,9 +686,10 @@ pub(super) fn emit_pattern_rebindings(
     pattern: &ResolvedPattern,
     ctx: &CodegenContext,
     by_ref: bool,
+    lent: &HashSet<String>,
 ) -> String {
     let mut lines = Vec::new();
-    collect_pattern_rebindings(pattern, ctx, by_ref, &mut lines);
+    collect_pattern_rebindings(pattern, ctx, by_ref, lent, &mut lines);
     if lines.is_empty() {
         String::new()
     } else {
@@ -682,21 +705,24 @@ fn collect_pattern_rebindings(
     pattern: &ResolvedPattern,
     ctx: &CodegenContext,
     by_ref: bool,
+    lent: &HashSet<String>,
     lines: &mut Vec<String>,
 ) {
     match pattern {
         ResolvedPattern::Tuple(items) => {
             for item in items {
-                collect_pattern_rebindings(item, ctx, by_ref, lines);
+                collect_pattern_rebindings(item, ctx, by_ref, lent, lines);
             }
         }
         ResolvedPattern::Ctor(ctor, bindings) => {
             let fields = super::pattern::shared_fields_binder(ctor, bindings, ctx);
             for (idx, b) in bindings.iter().enumerate().filter(|(_, b)| *b != "_") {
+                let borrowed = lent.contains(b);
                 let b = aver_name_to_rust(b);
                 match &fields {
+                    Some(fields) if borrowed => lines.push(format!("let {b} = &{fields}.{idx};")),
                     Some(fields) => lines.push(format!("let {b} = {fields}.{idx}.clone();")),
-                    None if by_ref => lines.push(format!("let {b} = {b}.clone();")),
+                    None if by_ref && !borrowed => lines.push(format!("let {b} = {b}.clone();")),
                     None => {}
                 }
             }

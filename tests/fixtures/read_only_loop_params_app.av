@@ -1,0 +1,117 @@
+module ReadOnlyLoopParams
+    intent =
+        "Fixture: tail-recursive loops that only read their params (a tree descent, a bucket search, a walk over a list) called through helpers that pass a record field on, one loop that keeps its accumulator, and parts of a tree or a list only read."
+    effects [Console.print]
+
+type Tree
+    Empty
+    Leaf(Int, List<Tuple<Int, String>>)
+    Branch(Tree, Tree)
+
+record St
+    cache: Tree
+    names: List<String>
+    depth: Int
+
+fn childOf(t: Tree, bits: Int) -> Tree
+    ? "The branch the lowest of the bits picks."
+    match t
+        Tree.Branch(l, r) -> match Int.mod(bits, 2) == 0
+            true -> l
+            false -> r
+        _ -> Tree.Empty
+
+fn getAt(t: Tree, key: Int, bits: Int) -> List<Tuple<Int, String>>
+    ? "Descends by the key's bits, lowest first, to its bucket."
+    match t
+        Tree.Empty -> []
+        Tree.Leaf(k, bucket) -> match k == key
+            true -> bucket
+            false -> []
+        Tree.Branch(_, _) -> getAt(childOf(t, bits), key, Int.div(bits, 2))
+
+fn findIn(bucket: List<Tuple<Int, String>>, key: Int) -> Option<String>
+    ? "Linear search of a bucket."
+    match bucket
+        [] -> Option.None
+        [(k, v), ..rest] -> match k == key
+            true -> Option.Some(v)
+            false -> findIn(rest, key)
+
+fn lookup(cache: Tree, key: Int) -> Option<String>
+    ? "The value under key."
+    findIn(getAt(cache, key, key), key)
+
+fn known(st: St, key: Int) -> Bool
+    ? "Whether the state's cache holds key."
+    match lookup(st.cache, key)
+        Option.Some(_) -> true
+        Option.None -> false
+
+fn sameAs(names: List<String>, name: String) -> Bool
+    ? "Whether every name is the given one."
+    match names
+        [] -> true
+        [n, ..rest] -> match n == name
+            true -> sameAs(rest, name)
+            false -> false
+
+fn lengths(names: List<String>, acc: Int) -> Int
+    ? "The total length of the names."
+    match names
+        [] -> acc
+        [n, ..rest] -> lengths(rest, acc + String.len(n))
+
+fn anyLong(names: List<String>) -> Bool
+    ? "Whether some name is longer than four characters."
+    match names
+        [] -> false
+        [n, ..rest] -> Bool.or(String.len(n) > 4, anyLong(rest))
+
+fn keep(names: List<String>, acc: List<String>) -> List<String>
+    ? "The names longer than three characters, last first."
+    match names
+        [] -> acc
+        [n, ..rest] -> match String.len(n) > 3
+            true -> keep(rest, List.prepend(n, acc))
+            false -> keep(rest, acc)
+
+fn leaves(t: Tree) -> Int
+    ? "The number of leaves."
+    match t
+        Tree.Empty -> 0
+        Tree.Leaf(_, _) -> 1
+        Tree.Branch(l, r) -> leaves(l) + leaves(r)
+
+fn allLeaves(ts: List<Tree>, acc: Int) -> Int
+    ? "The number of leaves of every tree."
+    match ts
+        [] -> acc
+        [t, ..rest] -> allLeaves(rest, acc + leaves(t))
+
+fn show(o: Option<String>) -> String
+    ? "The value, or a dash."
+    match o
+        Option.Some(v) -> v
+        Option.None -> "-"
+
+fn joined(names: List<String>, acc: String) -> String
+    ? "The names after acc, each after a space."
+    match names
+        [] -> acc
+        [n, ..rest] -> joined(rest, "{acc} {n}")
+
+fn build(depth: Int, at: Int, step: Int) -> Tree
+    ? "A tree of the given depth whose leaf at a path holds one entry for its key."
+    match depth == 0
+        true -> Tree.Leaf(at, [(at, "v{at}"), (at + 1000, "w")])
+        false -> Tree.Branch(build(depth - 1, at, step * 2), build(depth - 1, at + step, step * 2))
+
+fn main()
+    ! [Console.print]
+    st = St(cache = build(4, 0, 1), names = ["alpha", "beta", "gamma", "pi"], depth = 4)
+    Console.print("known 5 {known(st, 5)} known 21 {known(st, 21)}")
+    Console.print("lookup 9 {show(lookup(st.cache, 9))} lookup 1009 {show(lookup(st.cache, 1009))}")
+    Console.print("same {sameAs(st.names, "alpha")} lengths {lengths(st.names, 0)} long {anyLong(st.names)}")
+    Console.print("leaves {leaves(st.cache)} all {allLeaves([st.cache, Tree.Empty, st.cache], 0)}")
+    Console.print("kept{joined(keep(st.names, []), "")} names{joined(st.names, "")} depth {st.depth}")

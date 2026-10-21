@@ -7,8 +7,8 @@ pub fn oneArg(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
-        let __list_subject = args.clone();
-        if let Some((a, rest)) = aver_rt::list_uncons_cloned(&__list_subject) {
+        let __list_subject = args;
+        if let Some((a, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
             {
                 let __list_subject = rest;
                 if __list_subject.is_empty() {
@@ -35,8 +35,8 @@ pub fn twoArgs(
 > {
     crate::cancel_checkpoint();
     {
-        let __list_subject = args.clone();
-        if let Some((a, rest)) = aver_rt::list_uncons_cloned(&__list_subject) {
+        let __list_subject = args;
+        if let Some((a, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
             {
                 let __list_subject = rest;
                 if let Some((b, rest2)) = aver_rt::list_uncons_cloned(&__list_subject) {
@@ -117,7 +117,7 @@ pub fn expectBytes(
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValRecord(__name_fields) => {
                 let name = __name_fields.0.clone();
-                let fields = __name_fields.1.clone();
+                let fields = &__name_fields.1;
                 if (&*name == "Bytes") {
                     crate::aver_generated::domain::builtins::helpers::expectBytesFields(fields)
                 } else {
@@ -132,74 +132,139 @@ pub fn expectBytes(
 /// Find the opaque Bytes values field in its interpreter representation.
 #[inline(always)]
 pub fn expectBytesFields(
-    mut fields @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> Result<aver_rt::AverIntList, AverStr> {
+    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>;
+    let mut fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> =
+        fields;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(fields, [] => { return Err(AverStr::from("expected Bytes argument")); }, [field, rest] => { { let (name, value) = field; if (&*name == "values") { { let __t = value; match __t.view() {
-        crate::aver_generated::domain::value::Val__view::ValList(__items_fields) => {
-            let items = __items_fields.0.clone();
-            return crate::aver_generated::domain::builtins::helpers::expectByteItems__collected(items, aver_rt::int_list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)));
-        },
-        _ => {
-            return Err(AverStr::from("expected Bytes argument"));
+        {
+            let __list_subject = fields;
+            if __list_subject.is_empty() {
+                return Err(AverStr::from("expected Bytes argument"));
+            } else {
+                if let (Some(field), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    {
+                        let (name, value) = field.clone();
+                        if (&*name == "values") {
+                            {
+                                let __t = value;
+                                match __t.view() {
+                                    crate::aver_generated::domain::value::Val__view::ValList(
+                                        __items_fields,
+                                    ) => {
+                                        let items = &__items_fields.0;
+                                        return crate::aver_generated::domain::builtins::helpers::expectByteItems__collected(items, aver_rt::int_list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)));
+                                    }
+                                    _ => {
+                                        return Err(AverStr::from("expected Bytes argument"));
+                                    }
+                                }
+                            }
+                        } else {
+                            {
+                                let __tco0 = rest;
+                                __hold0 = __tco0;
+                                fields = &__hold0;
+                                continue;
+                            }
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
         }
-    } } } else { {
-            let __tco0 = rest;
-            fields = __tco0;
-            continue;
-        } } } })
     }
 }
 
 /// Project byte values while preserving their source order.
 #[inline(always)]
 pub fn expectByteItems(
-    mut items @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     mut acc @ _: aver_rt::AverIntList,
 ) -> Result<aver_rt::AverIntList, AverStr> {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val>;
+    let mut items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val> = items;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(items, [] => { return Ok(acc.reverse()); }, [item, rest] => { { let __t = item; match __t.view() {
-        crate::aver_generated::domain::value::Val__view::ValInt(__value_fields) => {
-            let value = __value_fields.0.clone();
-            {
-            let __tco0 = rest;
-            let __tco1 = aver_rt::AverIntList::prepend(value, &acc);
-            items = __tco0;
-            acc = __tco1;
-            continue;
+        {
+            let __list_subject = items;
+            if __list_subject.is_empty() {
+                return Ok(acc.reverse());
+            } else {
+                if let (Some(item), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    {
+                        let __t = item;
+                        match __t.view() {
+                            crate::aver_generated::domain::value::Val__view::ValInt(
+                                __value_fields,
+                            ) => {
+                                let value = __value_fields.0.clone();
+                                {
+                                    let __tco0 = rest;
+                                    let __tco1 = aver_rt::AverIntList::prepend(value, &acc);
+                                    __hold0 = __tco0;
+                                    items = &__hold0;
+                                    acc = __tco1;
+                                    continue;
+                                }
+                            }
+                            _ => {
+                                return Err(AverStr::from("expected Bytes argument"));
+                            }
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
         }
-        },
-        _ => {
-            return Err(AverStr::from("expected Bytes argument"));
-        }
-    } } })
     }
 }
 
 /// Synthesized collecting variant of `expectByteItems`. Appends to a builder where `expectByteItems` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn expectByteItems__collected(
-    mut items @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     mut acc @ _: aver_rt::AverIntList,
 ) -> Result<aver_rt::AverIntList, AverStr> {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val>;
+    let mut items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val> = items;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(items, [] => { return Ok(aver_rt::int_list_builder_finalize(acc)); }, [item, rest] => { { let __t = item; match __t.view() {
-        crate::aver_generated::domain::value::Val__view::ValInt(__value_fields) => {
-            let value = __value_fields.0.clone();
-            {
-            let __tco0 = rest;
-            let __tco1 = aver_rt::int_list_builder_push(acc, value);
-            items = __tco0;
-            acc = __tco1;
-            continue;
+        {
+            let __list_subject = items;
+            if __list_subject.is_empty() {
+                return Ok(aver_rt::int_list_builder_finalize(acc));
+            } else {
+                if let (Some(item), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    {
+                        let __t = item;
+                        match __t.view() {
+                            crate::aver_generated::domain::value::Val__view::ValInt(
+                                __value_fields,
+                            ) => {
+                                let value = __value_fields.0.clone();
+                                {
+                                    let __tco0 = rest;
+                                    let __tco1 = aver_rt::int_list_builder_push(acc, value);
+                                    __hold0 = __tco0;
+                                    items = &__hold0;
+                                    acc = __tco1;
+                                    continue;
+                                }
+                            }
+                            _ => {
+                                return Err(AverStr::from("expected Bytes argument"));
+                            }
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
         }
-        },
-        _ => {
-            return Err(AverStr::from("expected Bytes argument"));
-        }
-    } } })
     }
 }

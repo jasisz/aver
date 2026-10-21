@@ -71,48 +71,48 @@ pub fn evalClosed(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) 
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TOp(__o_fields) => {
                 let o = __o_fields.0.clone();
-                let a = __o_fields.1.clone();
-                let b = __o_fields.2.clone();
+                let a = &__o_fields.1;
+                let b = &__o_fields.2;
                 {
-                    let __t = &a;
+                    let __t = a;
                     match __t.view() {
                         crate::proof_std::aver_generated::kernel::term::Term__view::TCtor(
                             __c_fields,
                         ) => {
                             let c = __c_fields.0.clone();
-                            let xs = __c_fields.1.clone();
+                            let xs = &__c_fields.1;
                             {
-                                let __t = &b;
+                                let __t = b;
                                 match __t.view() {
         crate::proof_std::aver_generated::kernel::term::Term__view::TCtor(__d_fields) => {
             let d = __d_fields.0.clone();
-            let ys = __d_fields.1.clone();
+            let ys = &__d_fields.1;
             crate::proof_std::aver_generated::kernel::eval::ctorOp(o, &crate::proof_std::aver_generated::kernel::eval::sameCtor(c, d, aver_rt::AverInt::from_i64(xs.len() as i64).add(&aver_rt::AverInt::from_i64(ys.len() as i64))))
         },
         _ => {
-            crate::proof_std::aver_generated::kernel::eval::evalOp(o, &crate::proof_std::aver_generated::kernel::eval::evalClosed(&a), &crate::proof_std::aver_generated::kernel::eval::evalClosed(&b))
+            crate::proof_std::aver_generated::kernel::eval::evalOp(o, &crate::proof_std::aver_generated::kernel::eval::evalClosed(a), &crate::proof_std::aver_generated::kernel::eval::evalClosed(b))
         }
     }
                             }
                         }
                         _ => crate::proof_std::aver_generated::kernel::eval::evalOp(
                             o,
-                            &crate::proof_std::aver_generated::kernel::eval::evalClosed(&a),
-                            &crate::proof_std::aver_generated::kernel::eval::evalClosed(&b),
+                            &crate::proof_std::aver_generated::kernel::eval::evalClosed(a),
+                            &crate::proof_std::aver_generated::kernel::eval::evalClosed(b),
                         ),
                     }
                 }
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TNeg(__a_fields) => {
-                let a = __a_fields.0.clone();
+                let a = &__a_fields.0;
                 crate::proof_std::aver_generated::kernel::eval::negated(
-                    &crate::proof_std::aver_generated::kernel::eval::evalClosed(&a),
+                    &crate::proof_std::aver_generated::kernel::eval::evalClosed(a),
                 )
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TList(__xs_fields) => {
-                let xs = __xs_fields.0.clone();
+                let xs = &__xs_fields.0;
                 crate::proof_std::aver_generated::kernel::eval::listOf(
-                    &crate::proof_std::aver_generated::kernel::eval::evalAll(&xs),
+                    &crate::proof_std::aver_generated::kernel::eval::evalAll(xs),
                 )
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TBi(__name_fields) => {
@@ -179,21 +179,50 @@ pub fn evalAll(
     xs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
 ) -> aver_rt::AverList<Option<Val>> {
     crate::proof_std::cancel_checkpoint();
-    aver_list_match!(xs.clone(), [] => aver_rt::AverList::empty(), [x, rest] => aver_rt::AverList::prepend(crate::proof_std::aver_generated::kernel::eval::evalClosed(&x), &crate::proof_std::aver_generated::kernel::eval::evalAll(&rest)))
+    {
+        let __list_subject = xs;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                aver_rt::AverList::prepend(
+                    crate::proof_std::aver_generated::kernel::eval::evalClosed(x),
+                    &crate::proof_std::aver_generated::kernel::eval::evalAll(&rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// A list value when every element is closed.
 #[inline(always)]
 pub fn listOf(vs @ _: &aver_rt::AverList<Option<Val>>) -> Option<Val> {
     crate::proof_std::cancel_checkpoint();
-    aver_list_match!(vs.clone(), [] => Some(crate::proof_std::aver_generated::kernel::eval::Val::VList(aver_rt::AverList::empty())), [__pat0, rest] => match __pat0 {
-        Some(v) => {
-            crate::proof_std::aver_generated::kernel::eval::consOnto(&v, &crate::proof_std::aver_generated::kernel::eval::listOf(&rest))
-        },
-        _ => {
-            None
+    {
+        let __list_subject = vs;
+        if __list_subject.is_empty() {
+            Some(crate::proof_std::aver_generated::kernel::eval::Val::VList(
+                aver_rt::AverList::empty(),
+            ))
+        } else {
+            if let (Some(__pat0), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                match __pat0 {
+                    Some(v) => {
+                        let v = v.clone();
+                        crate::proof_std::aver_generated::kernel::eval::consOnto(
+                            &v,
+                            &crate::proof_std::aver_generated::kernel::eval::listOf(&rest),
+                        )
+                    }
+                    _ => None,
+                }
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
         }
-    })
+    }
 }
 
 /// v in front of a list value.
@@ -397,15 +426,17 @@ pub fn evalBuiltin(
             if &*__dispatch_subject == "Bool.and" {
                 {
                     let __list_subject = __pat1;
-                    if let Some((a, __pat2)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                    if let (Some(a), Some(__pat2)) = (__list_subject.first(), __list_subject.tail())
+                    {
                         {
                             let __list_subject = __pat2;
-                            if let Some((b, __pat3)) = aver_rt::list_uncons_cloned(&__list_subject)
+                            if let (Some(b), Some(__pat3)) =
+                                (__list_subject.first(), __list_subject.tail())
                             {
                                 {
                                     let __list_subject = __pat3;
                                     if __list_subject.is_empty() {
-                                        crate::proof_std::aver_generated::kernel::eval::both(&crate::proof_std::aver_generated::kernel::eval::evalClosed(&a), &crate::proof_std::aver_generated::kernel::eval::evalClosed(&b), true)
+                                        crate::proof_std::aver_generated::kernel::eval::both(&crate::proof_std::aver_generated::kernel::eval::evalClosed(a), &crate::proof_std::aver_generated::kernel::eval::evalClosed(b), true)
                                     } else {
                                         crate::proof_std::aver_generated::kernel::eval::listBuiltin(
                                             name, args,
@@ -426,16 +457,18 @@ pub fn evalBuiltin(
                 if &*__dispatch_subject == "Bool.or" {
                     {
                         let __list_subject = __pat1;
-                        if let Some((a, __pat4)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                        if let (Some(a), Some(__pat4)) =
+                            (__list_subject.first(), __list_subject.tail())
+                        {
                             {
                                 let __list_subject = __pat4;
-                                if let Some((b, __pat5)) =
-                                    aver_rt::list_uncons_cloned(&__list_subject)
+                                if let (Some(b), Some(__pat5)) =
+                                    (__list_subject.first(), __list_subject.tail())
                                 {
                                     {
                                         let __list_subject = __pat5;
                                         if __list_subject.is_empty() {
-                                            crate::proof_std::aver_generated::kernel::eval::both(&crate::proof_std::aver_generated::kernel::eval::evalClosed(&a), &crate::proof_std::aver_generated::kernel::eval::evalClosed(&b), false)
+                                            crate::proof_std::aver_generated::kernel::eval::both(&crate::proof_std::aver_generated::kernel::eval::evalClosed(a), &crate::proof_std::aver_generated::kernel::eval::evalClosed(b), false)
                                         } else {
                                             crate::proof_std::aver_generated::kernel::eval::listBuiltin(name, args)
                                         }
@@ -454,12 +487,13 @@ pub fn evalBuiltin(
                     if &*__dispatch_subject == "Bool.not" {
                         {
                             let __list_subject = __pat1;
-                            if let Some((a, __pat6)) = aver_rt::list_uncons_cloned(&__list_subject)
+                            if let (Some(a), Some(__pat6)) =
+                                (__list_subject.first(), __list_subject.tail())
                             {
                                 {
                                     let __list_subject = __pat6;
                                     if __list_subject.is_empty() {
-                                        crate::proof_std::aver_generated::kernel::eval::negate(&crate::proof_std::aver_generated::kernel::eval::evalClosed(&a))
+                                        crate::proof_std::aver_generated::kernel::eval::negate(&crate::proof_std::aver_generated::kernel::eval::evalClosed(a))
                                     } else {
                                         crate::proof_std::aver_generated::kernel::eval::listBuiltin(
                                             name, args,
@@ -476,18 +510,18 @@ pub fn evalBuiltin(
                         if &*__dispatch_subject == "__int_div_euclid" {
                             {
                                 let __list_subject = __pat1;
-                                if let Some((a, __pat7)) =
-                                    aver_rt::list_uncons_cloned(&__list_subject)
+                                if let (Some(a), Some(__pat7)) =
+                                    (__list_subject.first(), __list_subject.tail())
                                 {
                                     {
                                         let __list_subject = __pat7;
-                                        if let Some((k, __pat8)) =
-                                            aver_rt::list_uncons_cloned(&__list_subject)
+                                        if let (Some(k), Some(__pat8)) =
+                                            (__list_subject.first(), __list_subject.tail())
                                         {
                                             {
                                                 let __list_subject = __pat8;
                                                 if __list_subject.is_empty() {
-                                                    crate::proof_std::aver_generated::kernel::eval::division(&crate::proof_std::aver_generated::kernel::eval::evalClosed(&a), &crate::proof_std::aver_generated::kernel::eval::evalClosed(&k), true)
+                                                    crate::proof_std::aver_generated::kernel::eval::division(&crate::proof_std::aver_generated::kernel::eval::evalClosed(a), &crate::proof_std::aver_generated::kernel::eval::evalClosed(k), true)
                                                 } else {
                                                     crate::proof_std::aver_generated::kernel::eval::listBuiltin(name, args)
                                                 }
@@ -506,18 +540,18 @@ pub fn evalBuiltin(
                             if &*__dispatch_subject == "__int_mod_euclid" {
                                 {
                                     let __list_subject = __pat1;
-                                    if let Some((a, __pat9)) =
-                                        aver_rt::list_uncons_cloned(&__list_subject)
+                                    if let (Some(a), Some(__pat9)) =
+                                        (__list_subject.first(), __list_subject.tail())
                                     {
                                         {
                                             let __list_subject = __pat9;
-                                            if let Some((k, __pat10)) =
-                                                aver_rt::list_uncons_cloned(&__list_subject)
+                                            if let (Some(k), Some(__pat10)) =
+                                                (__list_subject.first(), __list_subject.tail())
                                             {
                                                 {
                                                     let __list_subject = __pat10;
                                                     if __list_subject.is_empty() {
-                                                        crate::proof_std::aver_generated::kernel::eval::division(&crate::proof_std::aver_generated::kernel::eval::evalClosed(&a), &crate::proof_std::aver_generated::kernel::eval::evalClosed(&k), false)
+                                                        crate::proof_std::aver_generated::kernel::eval::division(&crate::proof_std::aver_generated::kernel::eval::evalClosed(a), &crate::proof_std::aver_generated::kernel::eval::evalClosed(k), false)
                                                     } else {
                                                         crate::proof_std::aver_generated::kernel::eval::listBuiltin(name, args)
                                                     }
@@ -536,18 +570,18 @@ pub fn evalBuiltin(
                                 if &*__dispatch_subject == "__bits_shl" {
                                     {
                                         let __list_subject = __pat1;
-                                        if let Some((a, __pat11)) =
-                                            aver_rt::list_uncons_cloned(&__list_subject)
+                                        if let (Some(a), Some(__pat11)) =
+                                            (__list_subject.first(), __list_subject.tail())
                                         {
                                             {
                                                 let __list_subject = __pat11;
-                                                if let Some((n, __pat12)) =
-                                                    aver_rt::list_uncons_cloned(&__list_subject)
+                                                if let (Some(n), Some(__pat12)) =
+                                                    (__list_subject.first(), __list_subject.tail())
                                                 {
                                                     {
                                                         let __list_subject = __pat12;
                                                         if __list_subject.is_empty() {
-                                                            crate::proof_std::aver_generated::kernel::eval::shifted(&crate::proof_std::aver_generated::kernel::eval::evalClosed(&a), &crate::proof_std::aver_generated::kernel::eval::evalClosed(&n))
+                                                            crate::proof_std::aver_generated::kernel::eval::shifted(&crate::proof_std::aver_generated::kernel::eval::evalClosed(a), &crate::proof_std::aver_generated::kernel::eval::evalClosed(n))
                                                         } else {
                                                             crate::proof_std::aver_generated::kernel::eval::listBuiltin(name, args)
                                                         }
@@ -720,15 +754,17 @@ pub fn listBuiltin(
             if &*__dispatch_subject == "List.prepend" {
                 {
                     let __list_subject = __pat1;
-                    if let Some((a, __pat2)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                    if let (Some(a), Some(__pat2)) = (__list_subject.first(), __list_subject.tail())
+                    {
                         {
                             let __list_subject = __pat2;
-                            if let Some((l, __pat3)) = aver_rt::list_uncons_cloned(&__list_subject)
+                            if let (Some(l), Some(__pat3)) =
+                                (__list_subject.first(), __list_subject.tail())
                             {
                                 {
                                     let __list_subject = __pat3;
                                     if __list_subject.is_empty() {
-                                        crate::proof_std::aver_generated::kernel::eval::prepended(&crate::proof_std::aver_generated::kernel::eval::evalClosed(&a), &crate::proof_std::aver_generated::kernel::eval::evalClosed(&l))
+                                        crate::proof_std::aver_generated::kernel::eval::prepended(&crate::proof_std::aver_generated::kernel::eval::evalClosed(a), &crate::proof_std::aver_generated::kernel::eval::evalClosed(l))
                                     } else {
                                         None
                                     }
@@ -745,16 +781,18 @@ pub fn listBuiltin(
                 if &*__dispatch_subject == "List.concat" {
                     {
                         let __list_subject = __pat1;
-                        if let Some((a, __pat4)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                        if let (Some(a), Some(__pat4)) =
+                            (__list_subject.first(), __list_subject.tail())
+                        {
                             {
                                 let __list_subject = __pat4;
-                                if let Some((b, __pat5)) =
-                                    aver_rt::list_uncons_cloned(&__list_subject)
+                                if let (Some(b), Some(__pat5)) =
+                                    (__list_subject.first(), __list_subject.tail())
                                 {
                                     {
                                         let __list_subject = __pat5;
                                         if __list_subject.is_empty() {
-                                            crate::proof_std::aver_generated::kernel::eval::concatenated(&crate::proof_std::aver_generated::kernel::eval::evalClosed(&a), &crate::proof_std::aver_generated::kernel::eval::evalClosed(&b))
+                                            crate::proof_std::aver_generated::kernel::eval::concatenated(&crate::proof_std::aver_generated::kernel::eval::evalClosed(a), &crate::proof_std::aver_generated::kernel::eval::evalClosed(b))
                                         } else {
                                             None
                                         }
@@ -771,12 +809,13 @@ pub fn listBuiltin(
                     if &*__dispatch_subject == "List.len" {
                         {
                             let __list_subject = __pat1;
-                            if let Some((l, __pat6)) = aver_rt::list_uncons_cloned(&__list_subject)
+                            if let (Some(l), Some(__pat6)) =
+                                (__list_subject.first(), __list_subject.tail())
                             {
                                 {
                                     let __list_subject = __pat6;
                                     if __list_subject.is_empty() {
-                                        crate::proof_std::aver_generated::kernel::eval::lengthOf(&crate::proof_std::aver_generated::kernel::eval::evalClosed(&l))
+                                        crate::proof_std::aver_generated::kernel::eval::lengthOf(&crate::proof_std::aver_generated::kernel::eval::evalClosed(l))
                                     } else {
                                         None
                                     }
@@ -789,13 +828,13 @@ pub fn listBuiltin(
                         if &*__dispatch_subject == "List.reverse" {
                             {
                                 let __list_subject = __pat1;
-                                if let Some((l, __pat7)) =
-                                    aver_rt::list_uncons_cloned(&__list_subject)
+                                if let (Some(l), Some(__pat7)) =
+                                    (__list_subject.first(), __list_subject.tail())
                                 {
                                     {
                                         let __list_subject = __pat7;
                                         if __list_subject.is_empty() {
-                                            crate::proof_std::aver_generated::kernel::eval::reversed(&crate::proof_std::aver_generated::kernel::eval::evalClosed(&l))
+                                            crate::proof_std::aver_generated::kernel::eval::reversed(&crate::proof_std::aver_generated::kernel::eval::evalClosed(l))
                                         } else {
                                             None
                                         }
@@ -808,18 +847,18 @@ pub fn listBuiltin(
                             if &*__dispatch_subject == "List.take" {
                                 {
                                     let __list_subject = __pat1;
-                                    if let Some((l, __pat8)) =
-                                        aver_rt::list_uncons_cloned(&__list_subject)
+                                    if let (Some(l), Some(__pat8)) =
+                                        (__list_subject.first(), __list_subject.tail())
                                     {
                                         {
                                             let __list_subject = __pat8;
-                                            if let Some((n, __pat9)) =
-                                                aver_rt::list_uncons_cloned(&__list_subject)
+                                            if let (Some(n), Some(__pat9)) =
+                                                (__list_subject.first(), __list_subject.tail())
                                             {
                                                 {
                                                     let __list_subject = __pat9;
                                                     if __list_subject.is_empty() {
-                                                        crate::proof_std::aver_generated::kernel::eval::sliced(&crate::proof_std::aver_generated::kernel::eval::evalClosed(&l), &crate::proof_std::aver_generated::kernel::eval::evalClosed(&n), true)
+                                                        crate::proof_std::aver_generated::kernel::eval::sliced(&crate::proof_std::aver_generated::kernel::eval::evalClosed(l), &crate::proof_std::aver_generated::kernel::eval::evalClosed(n), true)
                                                     } else {
                                                         None
                                                     }
@@ -836,18 +875,18 @@ pub fn listBuiltin(
                                 if &*__dispatch_subject == "List.drop" {
                                     {
                                         let __list_subject = __pat1;
-                                        if let Some((l, __pat10)) =
-                                            aver_rt::list_uncons_cloned(&__list_subject)
+                                        if let (Some(l), Some(__pat10)) =
+                                            (__list_subject.first(), __list_subject.tail())
                                         {
                                             {
                                                 let __list_subject = __pat10;
-                                                if let Some((n, __pat11)) =
-                                                    aver_rt::list_uncons_cloned(&__list_subject)
+                                                if let (Some(n), Some(__pat11)) =
+                                                    (__list_subject.first(), __list_subject.tail())
                                                 {
                                                     {
                                                         let __list_subject = __pat11;
                                                         if __list_subject.is_empty() {
-                                                            crate::proof_std::aver_generated::kernel::eval::sliced(&crate::proof_std::aver_generated::kernel::eval::evalClosed(&l), &crate::proof_std::aver_generated::kernel::eval::evalClosed(&n), false)
+                                                            crate::proof_std::aver_generated::kernel::eval::sliced(&crate::proof_std::aver_generated::kernel::eval::evalClosed(l), &crate::proof_std::aver_generated::kernel::eval::evalClosed(n), false)
                                                         } else {
                                                             None
                                                         }

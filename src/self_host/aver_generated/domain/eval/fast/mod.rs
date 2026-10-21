@@ -91,16 +91,14 @@ pub fn runFastLeafSlot(
             )
         }
         crate::aver_generated::domain::ast::FastLeaf::LeafBinopSlots(op, slotA, slotB) => {
-            let op = op.clone();
             let slotA = slotA.clone();
             let slotB = slotB.clone();
-            crate::aver_generated::domain::eval::fast::fastBinopSlots(calleeEnv, &op, slotA, slotB)
+            crate::aver_generated::domain::eval::fast::fastBinopSlots(calleeEnv, op, slotA, slotB)
         }
         crate::aver_generated::domain::ast::FastLeaf::LeafCmpSlots(op, slotA, slotB) => {
-            let op = op.clone();
             let slotA = slotA.clone();
             let slotB = slotB.clone();
-            crate::aver_generated::domain::eval::fast::fastCmpSlots(calleeEnv, &op, slotA, slotB)
+            crate::aver_generated::domain::eval::fast::fastCmpSlots(calleeEnv, op, slotA, slotB)
         }
     }
 }
@@ -250,9 +248,9 @@ pub fn fastListSlotBranch(
         let __t = listV;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValList(__items_fields) => {
-                let items = __items_fields.0.clone();
+                let items = &__items_fields.0;
                 crate::aver_generated::domain::eval::fast::fastListSlotBranchItems(
-                    &items, calleeEnv, emptyLeaf, headSlot, tailSlot, consLeaf,
+                    items, calleeEnv, emptyLeaf, headSlot, tailSlot, consLeaf,
                 )
             }
             _ => Err(AverStr::from("no matching arm")),
@@ -271,7 +269,29 @@ pub fn fastListSlotBranchItems(
     consLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    aver_list_match!(items.clone(), [] => crate::aver_generated::domain::eval::fast::runFastLeafSlot(emptyLeaf, &calleeEnv), [head, tail] => crate::aver_generated::domain::eval::fast::runFastLeafSlot(consLeaf, &crate::aver_generated::domain::eval::slots::setSlot(crate::aver_generated::domain::eval::slots::setSlot(calleeEnv, headSlot, &head), tailSlot, &crate::aver_generated::domain::value::Val::ValList(crate::aver_generated::domain::value::Val__ValList(tail)))))
+    {
+        let __list_subject = items;
+        if __list_subject.is_empty() {
+            crate::aver_generated::domain::eval::fast::runFastLeafSlot(emptyLeaf, &calleeEnv)
+        } else {
+            if let (Some(head), Some(tail)) = (__list_subject.first(), __list_subject.tail()) {
+                crate::aver_generated::domain::eval::fast::runFastLeafSlot(
+                    consLeaf,
+                    &crate::aver_generated::domain::eval::slots::setSlot(
+                        crate::aver_generated::domain::eval::slots::setSlot(
+                            calleeEnv, headSlot, head,
+                        ),
+                        tailSlot,
+                        &crate::aver_generated::domain::value::Val::ValList(
+                            crate::aver_generated::domain::value::Val__ValList(tail),
+                        ),
+                    ),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// Read a record field directly from a resolved slot.
@@ -286,7 +306,7 @@ pub fn fastFieldAccessSlot(
         let __t = recordV;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValRecord(__fields_fields) => {
-                let fields = __fields_fields.1.clone();
+                let fields = &__fields_fields.1;
                 crate::aver_generated::domain::eval::common::lookupField(fields, field)
             }
             _ => Err(AverStr::from("field access on non-record")),
@@ -316,7 +336,7 @@ pub fn fastMapGetSlotInner(
         let __t = mapV;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
-                let m = __m_fields.0.clone();
+                let m = &__m_fields.0;
                 match m
                     .get(&crate::aver_generated::domain::value::mapKeyRepr(keyV))
                     .cloned()
@@ -441,7 +461,7 @@ pub fn fastVectorGetOrIntSlotInner(
         let __t = vecV;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValVector(__vec_fields) => {
-                let vec = __vec_fields.0.clone();
+                let vec = &__vec_fields.0;
                 {
                     let __t = idxV;
                     match __t.view() {
@@ -476,7 +496,7 @@ pub fn fastMapHasSlot(
         let __t = mapV;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
-                let m = __m_fields.0.clone();
+                let m = &__m_fields.0;
                 Ok(crate::aver_generated::domain::value::Val::ValBool(
                     crate::aver_generated::domain::value::Val__ValBool(
                         m.contains_key(&crate::aver_generated::domain::value::mapKeyRepr(&keyV)),
@@ -524,7 +544,7 @@ pub fn fastVectorLenSlot(
         let __t = vecV;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValVector(__vec_fields) => {
-                let vec = __vec_fields.0.clone();
+                let vec = &__vec_fields.0;
                 Ok(crate::aver_generated::domain::value::Val::ValInt(
                     crate::aver_generated::domain::value::Val__ValInt(aver_rt::AverInt::from_i64(
                         vec.len() as i64,

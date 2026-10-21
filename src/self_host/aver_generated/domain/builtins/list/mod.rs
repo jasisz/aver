@@ -149,7 +149,24 @@ pub fn listTake(
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     crate::cancel_checkpoint();
     if (count > aver_rt::AverInt::from_i64(0)) {
-        aver_list_match!(items.clone(), [] => aver_rt::AverList::empty(), [item, rest] => aver_rt::AverList::prepend(item, &crate::aver_generated::domain::builtins::list::listTake(&rest, count.sub(&aver_rt::AverInt::from_i64(1)))))
+        {
+            let __list_subject = items;
+            if __list_subject.is_empty() {
+                aver_rt::AverList::empty()
+            } else {
+                if let Some((item, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    aver_rt::AverList::prepend(
+                        item,
+                        &crate::aver_generated::domain::builtins::list::listTake(
+                            &rest,
+                            count.sub(&aver_rt::AverInt::from_i64(1)),
+                        ),
+                    )
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     } else {
         aver_rt::AverList::empty()
     }
@@ -251,20 +268,20 @@ pub fn builtinListContains(
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
         let (lstV, needle) = pair;
-        crate::aver_generated::domain::builtins::list::builtinListContainsInner(&lstV, needle)
+        crate::aver_generated::domain::builtins::list::builtinListContainsInner(&lstV, &needle)
     }
 }
 
 /// Inner impl of List.contains.
 pub fn builtinListContainsInner(
     lstV @ _: &crate::aver_generated::domain::value::Val,
-    mut needle @ _: crate::aver_generated::domain::value::Val,
+    needle @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let items @ _ = crate::aver_generated::domain::builtins::helpers::expectList(lstV)?;
     Ok(crate::aver_generated::domain::value::Val::ValBool(
         crate::aver_generated::domain::value::Val__ValBool(
-            crate::aver_generated::domain::builtins::list::listContainsVal(items, needle),
+            crate::aver_generated::domain::builtins::list::listContainsVal(&items, needle),
         ),
     ))
 }
@@ -272,16 +289,36 @@ pub fn builtinListContainsInner(
 /// Check if a value is in a list by repr comparison.
 #[inline(always)]
 pub fn listContainsVal(
-    mut items @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    mut needle @ _: crate::aver_generated::domain::value::Val,
+    items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    needle @ _: &crate::aver_generated::domain::value::Val,
 ) -> bool {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val>;
+    let mut items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val> = items;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(items, [] => { return false; }, [v, rest] => { if (crate::aver_generated::domain::value::valRepr(&v) == crate::aver_generated::domain::value::valRepr(&needle)) { return true; } else { {
-            let __tco0 = rest;
-            items = __tco0;
-            continue;
-        } } })
+        {
+            let __list_subject = items;
+            if __list_subject.is_empty() {
+                return false;
+            } else {
+                if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    if (crate::aver_generated::domain::value::valRepr(v)
+                        == crate::aver_generated::domain::value::valRepr(needle))
+                    {
+                        return true;
+                    } else {
+                        {
+                            let __tco0 = rest;
+                            __hold0 = __tco0;
+                            items = &__hold0;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
@@ -319,32 +356,63 @@ pub fn zipLists(
     b @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::builtins::list::zipListsAcc(
-        a.clone(),
-        b.clone(),
-        aver_rt::AverList::empty(),
-    )
+    crate::aver_generated::domain::builtins::list::zipListsAcc(a, b, aver_rt::AverList::empty())
 }
 
 /// Accumulate zipped pairs in reverse, then reverse at end.
 #[inline(always)]
 pub fn zipListsAcc(
-    mut a @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    mut b @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    a @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    b @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val>;
+    let mut a @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val> = a;
+    let mut __hold1: aver_rt::AverList<crate::aver_generated::domain::value::Val>;
+    let mut b @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val> = b;
     loop {
         crate::cancel_checkpoint();
         let reversed @ _ = acc.reverse();
-        aver_list_match!(a, [] => { return reversed; }, [x, xs] => { aver_list_match!(b, [] => { return reversed; }, [y, ys] => { {
-            let __tco0 = xs;
-            let __tco1 = ys;
-            let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::value::Val::ValTuple(crate::aver_generated::domain::value::Val__ValTuple(aver_rt::AverList::from_vec(vec![x, y]))), &acc);
-            a = __tco0;
-            b = __tco1;
-            acc = __tco2;
-            continue;
-        } }) })
+        {
+            let __list_subject = a;
+            if __list_subject.is_empty() {
+                return reversed;
+            } else {
+                if let Some((x, xs)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    {
+                        let __list_subject = b;
+                        if __list_subject.is_empty() {
+                            return reversed;
+                        } else {
+                            if let Some((y, ys)) = aver_rt::list_uncons_cloned(__list_subject) {
+                                {
+                                    let __tco0 = xs;
+                                    let __tco1 = ys;
+                                    let __tco2 = aver_rt::AverList::prepend(
+                                        crate::aver_generated::domain::value::Val::ValTuple(
+                                            crate::aver_generated::domain::value::Val__ValTuple(
+                                                aver_rt::AverList::from_vec(vec![x, y]),
+                                            ),
+                                        ),
+                                        &acc,
+                                    );
+                                    __hold0 = __tco0;
+                                    a = &__hold0;
+                                    __hold1 = __tco1;
+                                    b = &__hold1;
+                                    acc = __tco2;
+                                    continue;
+                                }
+                            } else {
+                                panic!("Aver Rust codegen: non-exhaustive list match")
+                            }
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 

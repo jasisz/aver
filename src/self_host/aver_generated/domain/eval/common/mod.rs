@@ -107,15 +107,37 @@ pub fn normalizeFnReturn(
 /// Look up a record field by name.
 #[inline(always)]
 pub fn lookupField(
-    mut fields @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
     mut name @ _: AverStr,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
+    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>;
+    let mut fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> =
+        fields;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(fields, [] => { return Err((AverStr::from("unknown field: ") + &name)); }, [pair, rest] => { { let (k, v) = pair; if (k == name) { return Ok(v); } else { {
-            let __tco0 = rest;
-            fields = __tco0;
-            continue;
-        } } } })
+        {
+            let __list_subject = fields;
+            if __list_subject.is_empty() {
+                return Err((AverStr::from("unknown field: ") + &name));
+            } else {
+                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    {
+                        let (k, v) = pair.clone();
+                        if (k == name) {
+                            return Ok(v);
+                        } else {
+                            {
+                                let __tco0 = rest;
+                                __hold0 = __tco0;
+                                fields = &__hold0;
+                                continue;
+                            }
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }

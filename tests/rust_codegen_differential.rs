@@ -3690,7 +3690,7 @@ fn main() -> Unit
     let emitted = emitted_entry_module("field_read", src);
     assert!(
         emitted.contains("pub fn stGet(st @ _: &St")
-            && emitted.contains("trieGet(st.t.clone()")
+            && emitted.contains("trieGet(&st.t,")
             && !emitted.contains("stGet(grown.clone()"),
         "stGet must borrow the record and clone only its field:\n{emitted}"
     );
@@ -3737,6 +3737,47 @@ fn a_map_threaded_through_record_results_is_moved_not_cloned() {
         }
     })
     .unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// A tail-recursive loop borrows the params it only reads: a tree it
+/// descends, a bucket or list it walks, a key it passes on. Its callers then
+/// lend their values too, so `known(st, ..)`, which only hands a field of
+/// `st` to such a loop, borrows `st` instead of every caller cloning the
+/// whole record. A borrowed list is matched through its borrow, and a part
+/// of a constructor or the head of a list that is only read is borrowed from
+/// it. A loop that returns its accumulator keeps taking it by value.
+#[test]
+fn a_loop_borrows_the_params_it_only_reads() {
+    let relative = "tests/fixtures/read_only_loop_params_app.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("read_only_loop_params", &src);
+    for signature in [
+        "fn getAt(t @ _: &Tree,",
+        "fn findIn(bucket @ _: &aver_rt::AverList<",
+        "fn known(st @ _: &St,",
+        "fn sameAs(names @ _: &aver_rt::AverList<AverStr>, mut name @ _: AverStr)",
+        "fn keep(names @ _: &aver_rt::AverList<AverStr>, mut acc @ _: aver_rt::AverList<AverStr>)",
+    ] {
+        assert!(
+            emitted.contains(signature),
+            "missing `{signature}`:\n{emitted}"
+        );
+    }
+    assert!(
+        !emitted.contains("st.clone()") && !emitted.contains("names.clone()"),
+        "a record or list only read must not be cloned:\n{emitted}"
+    );
+    // The parts of a tree or a list a function only reads are borrowed from
+    // it, not cloned out.
+    assert!(
+        emitted.contains("let l = &") && emitted.contains("let r = &"),
+        "the branches `leaves` only reads must be borrowed:\n{emitted}"
+    );
+    assert!(
+        emitted.contains("(Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail())"),
+        "the head `allLeaves` only reads must be borrowed:\n{emitted}"
+    );
+    assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
 }
 
 /// A record holding a Map keyed by a tuple of more than three items: the
@@ -5776,12 +5817,13 @@ fn main() -> Unit
     let result = (|| -> Result<(), String> {
         compile_rust(&source, &project, "borrowed_call_arg_later_move", None, &[])?;
         let emitted = generated_entry(&project)?;
-        if !emitted.contains("slopeOf(&newest.clone(), &lastOf(older, newest))") {
+        if !emitted.contains("slopeOf(&newest.clone(), &lastOf(&older, newest))") {
             return Err(format!(
                 "the earlier borrow was not detached before the later move:\n{emitted}"
             ));
         }
-        if !emitted.contains("slopeOf(&newest, &newest)") {
+        // `newest` is only read here, so the arm borrows it from the list.
+        if !emitted.contains("slopeOf(newest, newest)") {
             return Err(format!(
                 "two borrowed arguments cloned despite having no later move:\n{emitted}"
             ));
