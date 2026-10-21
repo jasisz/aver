@@ -2,7 +2,7 @@
 use crate::proof_std::*;
 use ::aver_rt::aver_list_match;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub enum Ty {
     TyInt,
     TyBool,
@@ -24,17 +24,47 @@ pub enum Ty {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Ty__TyList(pub Ty);
 
+impl aver_rt::WalkEq for Ty__TyList {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0.walk_eq(&other.0, walk)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Ty__TyOption(pub Ty);
+
+impl aver_rt::WalkEq for Ty__TyOption {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0.walk_eq(&other.0, walk)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Ty__TyResult(pub Ty, pub Ty);
 
+impl aver_rt::WalkEq for Ty__TyResult {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Ty__TyMap(pub Ty, pub Ty);
 
+impl aver_rt::WalkEq for Ty__TyMap {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Ty__TyVector(pub Ty);
+
+impl aver_rt::WalkEq for Ty__TyVector {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0.walk_eq(&other.0, walk)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Ty__TyTuple(pub aver_rt::AverList<Ty>);
@@ -47,6 +77,37 @@ pub struct Ty__TyVar(pub AverStr, pub bool);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Ty__TyRigid(pub AverStr, pub bool);
+
+impl aver_rt::WalkEq for Ty {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+            && match (self, other) {
+                (Ty::TyInt, Ty::TyInt) => true,
+                (Ty::TyBool, Ty::TyBool) => true,
+                (Ty::TyStr, Ty::TyStr) => true,
+                (Ty::TyFloat, Ty::TyFloat) => true,
+                (Ty::TyUnit, Ty::TyUnit) => true,
+                (Ty::TyList(a0), Ty::TyList(b0)) => walk.shared(a0, b0, true),
+                (Ty::TyOption(a0), Ty::TyOption(b0)) => walk.shared(a0, b0, true),
+                (Ty::TyResult(a0), Ty::TyResult(b0)) => walk.shared(a0, b0, true),
+                (Ty::TyMap(a0), Ty::TyMap(b0)) => walk.shared(a0, b0, true),
+                (Ty::TyVector(a0), Ty::TyVector(b0)) => walk.shared(a0, b0, true),
+                (Ty::TyTuple(a0), Ty::TyTuple(b0)) => a0 == b0,
+                (Ty::TyNamed(a0), Ty::TyNamed(b0)) => a0 == b0,
+                (Ty::TyAny, Ty::TyAny) => true,
+                (Ty::TyVar(a0), Ty::TyVar(b0)) => a0 == b0,
+                (Ty::TyRigid(a0), Ty::TyRigid(b0)) => a0 == b0,
+                _ => false,
+            }
+    }
+}
+
+impl PartialEq for Ty {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        aver_rt::walk_eq(self, other)
+    }
+}
 
 impl Ty {
     fn aver_key_rank(&self) -> usize {
@@ -188,7 +249,7 @@ impl aver_rt::AverDisplay for TypedVar {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub enum Term {
     TInt(std::sync::Arc<Term__TInt>),
     TBool(std::sync::Arc<Term__TBool>),
@@ -231,6 +292,12 @@ impl PartialEq for Term__TGet {
     }
 }
 
+impl aver_rt::WalkEq for Term__TGet {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.1 == other.1 && self.0.walk_eq(&other.0, walk)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Term__TCall(pub AverStr, pub aver_rt::AverList<Term>);
 
@@ -240,14 +307,32 @@ pub struct Term__TBi(pub AverStr, pub aver_rt::AverList<Term>);
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Term__TOp(pub AverStr, pub Term, pub Term);
 
+impl aver_rt::WalkEq for Term__TOp {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0 == other.0 && self.1.walk_eq(&other.1, walk) && self.2.walk_eq(&other.2, walk)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Term__TNeg(pub Term);
+
+impl aver_rt::WalkEq for Term__TNeg {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0.walk_eq(&other.0, walk)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Term__TCtor(pub AverStr, pub aver_rt::AverList<Term>);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Term__TMatch(pub Term, pub aver_rt::AverList<Arm>);
+
+impl aver_rt::WalkEq for Term__TMatch {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0.walk_eq(&other.0, walk) && self.1 == other.1
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Term__TParts(pub aver_rt::AverList<Term>);
@@ -263,6 +348,46 @@ pub struct Term__TRec(pub AverStr, pub aver_rt::AverList<Field>);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Term__TUpd(pub AverStr, pub Term, pub aver_rt::AverList<Field>);
+
+impl aver_rt::WalkEq for Term__TUpd {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0 == other.0 && self.1.walk_eq(&other.1, walk) && self.2 == other.2
+    }
+}
+
+impl aver_rt::WalkEq for Term {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+            && match (self, other) {
+                (Term::TInt(a0), Term::TInt(b0)) => a0 == b0,
+                (Term::TBool(a0), Term::TBool(b0)) => a0 == b0,
+                (Term::TStr(a0), Term::TStr(b0)) => a0 == b0,
+                (Term::TUnit, Term::TUnit) => true,
+                (Term::TVar(a0), Term::TVar(b0)) => a0 == b0,
+                (Term::THole, Term::THole) => true,
+                (Term::TGet(a0), Term::TGet(b0)) => walk.shared(a0, b0, true),
+                (Term::TCall(a0), Term::TCall(b0)) => a0 == b0,
+                (Term::TBi(a0), Term::TBi(b0)) => a0 == b0,
+                (Term::TOp(a0), Term::TOp(b0)) => walk.shared(a0, b0, true),
+                (Term::TNeg(a0), Term::TNeg(b0)) => walk.shared(a0, b0, true),
+                (Term::TCtor(a0), Term::TCtor(b0)) => a0 == b0,
+                (Term::TMatch(a0), Term::TMatch(b0)) => walk.shared(a0, b0, true),
+                (Term::TParts(a0), Term::TParts(b0)) => a0 == b0,
+                (Term::TList(a0), Term::TList(b0)) => a0 == b0,
+                (Term::TTuple(a0), Term::TTuple(b0)) => a0 == b0,
+                (Term::TRec(a0), Term::TRec(b0)) => a0 == b0,
+                (Term::TUpd(a0), Term::TUpd(b0)) => walk.shared(a0, b0, true),
+                _ => false,
+            }
+    }
+}
+
+impl PartialEq for Term {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        aver_rt::walk_eq(self, other)
+    }
+}
 
 impl Term {
     fn aver_key_rank(&self) -> usize {

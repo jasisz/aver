@@ -1,7 +1,7 @@
 #[allow(unused_imports)]
 use crate::*;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum Val {
     ValInt(std::sync::Arc<Val__ValInt>),
     ValFloat(std::sync::Arc<Val__ValFloat>),
@@ -48,11 +48,29 @@ pub struct Val__ValVector(pub aver_rt::AverVector<Val>);
 #[derive(Clone, Debug, PartialEq)]
 pub struct Val__ValOk(pub Val);
 
+impl aver_rt::WalkEq for Val__ValOk {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0.walk_eq(&other.0, walk)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Val__ValErr(pub Val);
 
+impl aver_rt::WalkEq for Val__ValErr {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0.walk_eq(&other.0, walk)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Val__ValSome(pub Val);
+
+impl aver_rt::WalkEq for Val__ValSome {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0.walk_eq(&other.0, walk)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Val__ValTuple(pub aver_rt::AverList<Val>);
@@ -78,6 +96,41 @@ pub struct Val__ValVariant(
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Val__ValMap(pub aver_rt::AverMap<AverStr, Val>);
+
+impl aver_rt::WalkEq for Val {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+            && match (self, other) {
+                (Val::ValInt(a0), Val::ValInt(b0)) => a0 == b0,
+                (Val::ValFloat(a0), Val::ValFloat(b0)) => a0 == b0,
+                (Val::ValStr(a0), Val::ValStr(b0)) => a0 == b0,
+                (Val::ValBool(a0), Val::ValBool(b0)) => a0 == b0,
+                (Val::ValFnRef(a0), Val::ValFnRef(b0)) => a0 == b0,
+                (Val::ValList(a0), Val::ValList(b0)) => a0 == b0,
+                (Val::ValVector(a0), Val::ValVector(b0)) => a0 == b0,
+                (Val::ValOk(a0), Val::ValOk(b0)) => walk.shared(a0, b0, false),
+                (Val::ValErr(a0), Val::ValErr(b0)) => walk.shared(a0, b0, false),
+                (Val::ValSome(a0), Val::ValSome(b0)) => walk.shared(a0, b0, false),
+                (Val::ValNone, Val::ValNone) => true,
+                (Val::ValTuple(a0), Val::ValTuple(b0)) => a0 == b0,
+                (Val::ValRecord(a0), Val::ValRecord(b0)) => a0 == b0,
+                (Val::ValTcpConnection(a0), Val::ValTcpConnection(b0)) => a0 == b0,
+                (Val::ValTcpDial(a0), Val::ValTcpDial(b0)) => a0 == b0,
+                (Val::ValTcpListener(a0), Val::ValTcpListener(b0)) => a0 == b0,
+                (Val::ValVariant(a0), Val::ValVariant(b0)) => a0 == b0,
+                (Val::ValMap(a0), Val::ValMap(b0)) => a0 == b0,
+                (Val::ValUnit, Val::ValUnit) => true,
+                _ => false,
+            }
+    }
+}
+
+impl PartialEq for Val {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        aver_rt::walk_eq(self, other)
+    }
+}
 
 impl aver_rt::AverDisplay for Val {
     fn aver_display(&self) -> String {

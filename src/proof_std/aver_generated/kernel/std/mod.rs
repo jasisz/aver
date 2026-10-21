@@ -2,7 +2,7 @@
 use crate::proof_std::*;
 use ::aver_rt::aver_list_match;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub enum Tactic {
     Auto,
     Cases(std::sync::Arc<Tactic__Cases>),
@@ -16,6 +16,12 @@ pub enum Tactic {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Tactic__Cases(pub Tactic);
 
+impl aver_rt::WalkEq for Tactic__Cases {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0.walk_eq(&other.0, walk)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Tactic__Induction(
     pub AverStr,
@@ -24,6 +30,16 @@ pub struct Tactic__Induction(
     pub Tactic,
     pub Tactic,
 );
+
+impl aver_rt::WalkEq for Tactic__Induction {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0 == other.0
+            && self.1 == other.1
+            && self.2 == other.2
+            && self.3.walk_eq(&other.3, walk)
+            && self.4.walk_eq(&other.4, walk)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Tactic__Split(
@@ -34,6 +50,16 @@ pub struct Tactic__Split(
     pub Tactic,
 );
 
+impl aver_rt::WalkEq for Tactic__Split {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0 == other.0
+            && self.1 == other.1
+            && self.2 == other.2
+            && self.3.walk_eq(&other.3, walk)
+            && self.4.walk_eq(&other.4, walk)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Tactic__SplitBool(
     pub crate::proof_std::aver_generated::kernel::term::Term,
@@ -41,11 +67,42 @@ pub struct Tactic__SplitBool(
     pub Tactic,
 );
 
+impl aver_rt::WalkEq for Tactic__SplitBool {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        self.0.walk_eq(&other.0, walk)
+            && self.1.walk_eq(&other.1, walk)
+            && self.2.walk_eq(&other.2, walk)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Tactic__First(pub aver_rt::AverList<Tactic>);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Tactic__Plan(pub AverStr);
+
+impl aver_rt::WalkEq for Tactic {
+    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+            && match (self, other) {
+                (Tactic::Auto, Tactic::Auto) => true,
+                (Tactic::Cases(a0), Tactic::Cases(b0)) => walk.shared(a0, b0, true),
+                (Tactic::Induction(a0), Tactic::Induction(b0)) => walk.shared(a0, b0, true),
+                (Tactic::Split(a0), Tactic::Split(b0)) => walk.shared(a0, b0, true),
+                (Tactic::SplitBool(a0), Tactic::SplitBool(b0)) => walk.shared(a0, b0, true),
+                (Tactic::First(a0), Tactic::First(b0)) => a0 == b0,
+                (Tactic::Plan(a0), Tactic::Plan(b0)) => a0 == b0,
+                _ => false,
+            }
+    }
+}
+
+impl PartialEq for Tactic {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        aver_rt::walk_eq(self, other)
+    }
+}
 
 impl Tactic {
     fn aver_key_rank(&self) -> usize {
