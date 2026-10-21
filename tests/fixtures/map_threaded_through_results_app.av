@@ -1,0 +1,88 @@
+module MapThreadedThroughResults
+    intent =
+        "Fixture: a memo Map threaded through mutually recursive functions that return it inside a record, one insert per node of a tree as deep as the first argument says."
+    effects [Console.print, Args.get]
+
+type T
+    Leaf(Int)
+    Node(Int, T, T)
+    Bind(Int, T, T)
+
+record R
+    t: T
+    memo: Map<Int, Tuple<T, T>>
+
+fn keyOf(t: T) -> Int
+    ? "The node's key."
+    match t
+        T.Leaf(n) -> n
+        T.Node(k, _, _) -> k
+        T.Bind(k, _, _) -> k
+
+fn go(t: T, memo: Map<Int, Tuple<T, T>>) -> R
+    ? "Rebuilds t, remembering every inner node."
+    match t
+        T.Leaf(_) -> R(t = t, memo = memo)
+        _ -> memoed(t, memo, keyOf(t))
+
+fn hit(entry: Option<Tuple<T, T>>, t: T) -> Option<T>
+    ? "The remembered result for t, if the entry is for t."
+    match entry
+        Option.Some(pair) -> hitPair(pair, t)
+        Option.None -> Option.None
+
+fn hitPair(pair: Tuple<T, T>, t: T) -> Option<T>
+    ? "The pair's result when its key node is t."
+    match pair
+        (key, result) -> match key == t
+            true -> Option.Some(result)
+            false -> Option.None
+
+fn memoed(t: T, memo: Map<Int, Tuple<T, T>>, key: Int) -> R
+    ? "Looks t up, or builds and remembers it."
+    match hit(Map.get(memo, key), t)
+        Option.Some(r) -> R(t = r, memo = memo)
+        Option.None -> remember(build(t, memo), t, key)
+
+fn remember(r: R, t: T, key: Int) -> R
+    ? "Records the result in the memo."
+    R(t = r.t, memo = Map.set(r.memo, key, (t, r.t)))
+
+fn build(t: T, memo: Map<Int, Tuple<T, T>>) -> R
+    ? "Rebuilds an inner node."
+    match t
+        T.Node(k, a, b) -> buildNode(k, a, b, memo)
+        T.Bind(k, a, b) -> buildBind(k, a, b, memo)
+        _ -> R(t = t, memo = memo)
+
+fn buildNode(k: Int, a: T, b: T, memo: Map<Int, Tuple<T, T>>) -> R
+    ? "Rebuilds both children of a Node."
+    ra = go(a, memo)
+    rb = go(b, ra.memo)
+    R(t = T.Node(k, ra.t, rb.t), memo = rb.memo)
+
+fn buildBind(k: Int, a: T, b: T, memo: Map<Int, Tuple<T, T>>) -> R
+    ? "Rebuilds both children of a Bind."
+    ra = go(a, memo)
+    rb = go(b, ra.memo)
+    R(t = T.Bind(k, ra.t, rb.t), memo = rb.memo)
+
+fn tree(levels: Int, id: Int) -> T
+    ? "A full tree of the given depth; inner nodes get keys id, 2id, 2id+1, ..."
+    match levels == 0
+        true -> T.Leaf(0 - id)
+        false -> match Int.mod(levels, 2) == 0
+            true -> T.Node(id, tree(levels - 1, 2 * id), tree(levels - 1, 2 * id + 1))
+            false -> T.Bind(id, tree(levels - 1, 2 * id), tree(levels - 1, 2 * id + 1))
+
+fn levelsArg() -> Int
+    ? "The first argument as a number, 8 without one."
+    ! [Args.get]
+    match Vector.get(Vector.fromList(Args.get()), 0)
+        Option.Some(text) -> Result.withDefault(Int.fromString(text), 8)
+        Option.None -> 8
+
+fn main()
+    ! [Console.print, Args.get]
+    r = go(tree(levelsArg(), 1), {})
+    Console.print("remembered {Map.len(r.memo)} root {keyOf(r.t)}")
