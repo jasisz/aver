@@ -518,9 +518,15 @@ fn collect(
 
 /// Which Map and Vector params of every function are updated in place:
 /// the param is the target of `Map.set`, `Map.remove` or `Vector.set`, or
-/// is handed to a callee param that is. Moving a field into a param that
+/// is handed to a callee param that is, or reaches the function's result
+/// (returned, or stored in the record or constructor it returns) while a
+/// caller updates that result in place. The last case is a Map threaded
+/// through record results: `remember(build(t, memo), ..)` with
+/// `Map.set(r.memo, ..)` inside `remember` updates `build`'s result, so
+/// `build`'s `memo` is updated in place. Moving a field into a param that
 /// only reads it saves nothing, so only these params make a field move
-/// worth taking a record by value for.
+/// worth taking a record by value for. A record param is marked too when a
+/// field of it is updated or handed on this way.
 pub fn in_place_collection_params(
     program: &crate::ir::mir::program::MirProgram,
 ) -> HashMap<crate::ir::FnId, Vec<bool>> {
@@ -528,21 +534,46 @@ pub fn in_place_collection_params(
         .iter()
         .map(|(id, f)| (*id, vec![false; f.params.len()]))
         .collect();
+    // Functions whose result some caller updates in place.
+    let mut results: HashSet<crate::ir::FnId> = HashSet::new();
+    let calls: HashMap<crate::ir::FnId, HashMap<LocalId, crate::ir::FnId>> = program
+        .iter()
+        .map(|(id, f)| {
+            let mut lets = HashMap::new();
+            call_lets(&f.body.node, &mut lets);
+            (*id, lets)
+        })
+        .collect();
     loop {
-        let mut changed = Vec::new();
+        let mut marked = Vec::new();
+        let mut reached = HashSet::new();
         for (id, f) in program.iter() {
+            let mut slots = HashSet::new();
+            in_place_args(
+                &f.body.node,
+                &updated,
+                &calls[id],
+                &program.builtins,
+                &mut slots,
+                &mut reached,
+            );
+            if results.contains(id) {
+                result_parts(&f.body.node, &calls[id], &mut slots, &mut reached);
+            }
             for (index, param) in f.params.iter().enumerate() {
-                if !updated[id][index]
-                    && updates_in_place(&f.body.node, param.local, &updated, &program.builtins)
-                {
-                    changed.push((*id, index));
+                if !updated[id][index] && slots.contains(&param.local) {
+                    marked.push((*id, index));
                 }
             }
         }
-        if changed.is_empty() {
+        let mut grown = false;
+        for id in reached {
+            grown |= results.insert(id);
+        }
+        if marked.is_empty() && !grown {
             return updated;
         }
-        for (id, index) in changed {
+        for (id, index) in marked {
             if let Some(params) = updated.get_mut(&id) {
                 params[index] = true;
             }
@@ -550,45 +581,119 @@ pub fn in_place_collection_params(
     }
 }
 
-fn updates_in_place(
+/// The let-bound locals holding a named function's result.
+fn call_lets(expr: &MirExpr, out: &mut HashMap<LocalId, crate::ir::FnId>) {
+    if let MirExpr::Let(let_expr) = expr
+        && let MirExpr::Call(call) = &let_expr.node.value.node
+        && let MirCallee::Fn(callee) = call.node.callee
+    {
+        out.insert(let_expr.node.binding, callee);
+    }
+    walk_children(expr, &mut |child| call_lets(child, out));
+}
+
+/// Note what an argument in an in-place or result position updates: the
+/// local at the root of its field path, and the function whose result that
+/// is, directly or through a `let`.
+fn note(
+    arg: &MirExpr,
+    calls: &HashMap<LocalId, crate::ir::FnId>,
+    slots: &mut HashSet<LocalId>,
+    results: &mut HashSet<crate::ir::FnId>,
+) {
+    let mut root = arg;
+    while let MirExpr::Project(project) = root {
+        root = &project.node.base.node;
+    }
+    match root {
+        MirExpr::Local(local) => {
+            slots.insert(local.node.slot);
+            results.extend(calls.get(&local.node.slot));
+        }
+        MirExpr::Call(call) => {
+            if let MirCallee::Fn(callee) = call.node.callee {
+                results.insert(callee);
+            }
+        }
+        MirExpr::TailCall(call) => {
+            results.insert(call.node.target);
+        }
+        _ => {}
+    }
+}
+
+/// Note every argument `expr` gives to the target of `Map.set`,
+/// `Map.remove` or `Vector.set`, or to a callee param already updated in
+/// place.
+fn in_place_args(
     expr: &MirExpr,
-    slot: LocalId,
     updated: &HashMap<crate::ir::FnId, Vec<bool>>,
+    calls: &HashMap<LocalId, crate::ir::FnId>,
     builtins: &[String],
-) -> bool {
-    let is_slot = |arg: &MirExpr| matches!(arg, MirExpr::Local(local) if local.node.slot == slot);
-    let hands_on = |callee: crate::ir::FnId, args: &[crate::ast::Spanned<MirExpr>]| {
-        args.iter().enumerate().any(|(index, arg)| {
-            is_slot(&arg.node)
-                && updated
-                    .get(&callee)
-                    .and_then(|params| params.get(index))
-                    .copied()
-                    .unwrap_or(false)
-        })
+    slots: &mut HashSet<LocalId>,
+    results: &mut HashSet<crate::ir::FnId>,
+) {
+    let mut hand_on = |callee, args: &[Spanned<MirExpr>]| {
+        let params = updated.get(&callee);
+        for (index, arg) in args.iter().enumerate() {
+            if params.and_then(|p| p.get(index)).copied().unwrap_or(false) {
+                note(&arg.node, calls, slots, results);
+            }
+        }
     };
-    let found = match expr {
+    match expr {
         MirExpr::Call(call) => match call.node.callee {
-            super::expr::MirCallee::Builtin(id) => {
-                matches!(
+            MirCallee::Builtin(id)
+                if matches!(
                     builtins.get(id.0 as usize).map(String::as_str),
                     Some("Map.set" | "Map.remove" | "Vector.set")
-                ) && call.node.args.first().is_some_and(|arg| is_slot(&arg.node))
+                ) =>
+            {
+                if let Some(target) = call.node.args.first() {
+                    note(&target.node, calls, slots, results);
+                }
             }
-            super::expr::MirCallee::Fn(callee) => hands_on(callee, &call.node.args),
-            _ => false,
+            MirCallee::Fn(callee) => hand_on(callee, &call.node.args),
+            _ => {}
         },
-        MirExpr::TailCall(call) => hands_on(call.node.target, &call.node.args),
-        _ => false,
-    };
-    if found {
-        return true;
+        MirExpr::TailCall(call) => hand_on(call.node.target, &call.node.args),
+        _ => {}
     }
-    let mut below = false;
     walk_children(expr, &mut |child| {
-        below = below || updates_in_place(child, slot, updated, builtins);
+        in_place_args(child, updated, calls, builtins, slots, results)
     });
-    below
+}
+
+/// Note every value that reaches the result of `expr`: through `let`
+/// bodies, `match` arms and branches, into the fields of the record,
+/// constructor or tuple it builds.
+fn result_parts(
+    expr: &MirExpr,
+    calls: &HashMap<LocalId, crate::ir::FnId>,
+    slots: &mut HashSet<LocalId>,
+    results: &mut HashSet<crate::ir::FnId>,
+) {
+    match expr {
+        MirExpr::Let(let_expr) => result_parts(&let_expr.node.body.node, calls, slots, results),
+        MirExpr::Match(match_expr) => {
+            for arm in &match_expr.node.arms {
+                result_parts(&arm.body.node, calls, slots, results);
+            }
+        }
+        MirExpr::IfThenElse(branches) => {
+            result_parts(&branches.node.then_branch.node, calls, slots, results);
+            result_parts(&branches.node.else_branch.node, calls, slots, results);
+        }
+        MirExpr::RecordCreate(_)
+        | MirExpr::RecordUpdate(_)
+        | MirExpr::Construct(_)
+        | MirExpr::Tuple(_)
+        | MirExpr::Return(_)
+        | MirExpr::Try(_) => walk_children(expr, &mut |child| {
+            result_parts(child, calls, slots, results)
+        }),
+        _ => note(expr, calls, slots, results),
+    }
 }
 
 /// Whether this update reads its base local for the last time: the base

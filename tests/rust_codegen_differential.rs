@@ -3700,6 +3700,45 @@ fn main() -> Unit
     );
 }
 
+/// A memo Map threaded through mutually recursive functions that return it
+/// inside a record, and updated in place only on a field of such a result
+/// (`remember(build(t, memo), ..)` with `Map.set(r.memo, ..)`), is moved
+/// along the whole cycle: no function borrows it and clones it for the next
+/// call, which made every insert copy the whole map. The compiled binary
+/// must remember 2^17 nodes within a minute.
+#[test]
+fn a_map_threaded_through_record_results_is_moved_not_cloned() {
+    let relative = "tests/fixtures/map_threaded_through_results_app.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("map_through_results", &src);
+    assert!(
+        !emitted.contains("&aver_rt::AverMap") && !emitted.contains("memo.clone()"),
+        "the memo must be taken by value and moved along the cycle:\n{emitted}"
+    );
+    assert_plain_parity_then(relative, None, |bin, _| {
+        let mut child = Command::new(bin)
+            .arg("17")
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+        let started = std::time::Instant::now();
+        while child.try_wait().expect("binary is waitable").is_none() {
+            if started.elapsed() > std::time::Duration::from_secs(60) {
+                let _ = child.kill();
+                return Err("2^17 inserts did not end within a minute".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let out = child.wait_with_output().expect("binary output");
+        let got = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        match got == "remembered 131071 root 1" {
+            true => Ok(()),
+            false => Err(format!("at 17 levels:\n{}", format_output(&out))),
+        }
+    })
+    .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A record holding a Map keyed by a tuple of more than three items: the
 /// generated record display needs the tuple key to display too.
 #[test]
