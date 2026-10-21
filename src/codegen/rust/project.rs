@@ -57,6 +57,9 @@ pub fn generate_cargo_toml(
     if services.contains("Terminal") {
         rt_features.push("terminal");
     }
+    if allocator == RustAllocator::Mimalloc {
+        rt_features.push("mimalloc");
+    }
     rt_features.sort();
 
     let mut deps = Vec::new();
@@ -79,9 +82,6 @@ pub fn generate_cargo_toml(
     }
     for binding in &provider_composition.bindings {
         deps.push(binding.cargo_dependency_line());
-    }
-    if allocator == RustAllocator::Mimalloc {
-        deps.push("mimalloc = { version = \"0.1.52\", default-features = false }".to_string());
     }
 
     if !deps.is_empty() {
@@ -132,7 +132,7 @@ pub fn generate_cargo_toml(
 pub fn declare_global_allocator(root_main: &mut String, allocator: RustAllocator) {
     if allocator == RustAllocator::Mimalloc {
         root_main.push_str(
-            "\n#[global_allocator]\nstatic GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;\n",
+            "\n#[global_allocator]\nstatic GLOBAL: aver_rt::MiMalloc = aver_rt::MiMalloc;\n",
         );
     }
 }

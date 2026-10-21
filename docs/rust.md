@@ -112,7 +112,7 @@ An `Int` is one machine word, `aver_rt::AverInt` (8 bytes, `Option<Int>` too): a
 
 `ureq` comes in transitively through `aver-rt/http`. Generated projects do not declare it themselves.
 
-The generated binary uses the platform's allocator. A project can ask for mimalloc instead with `[rust]` `allocator = "mimalloc"` in its `aver.toml` (the default is `"system"`; any other value is an error): `Cargo.toml` then depends on `mimalloc` and `src/main.rs` declares it as the `#[global_allocator]`. It helps programs that allocate heavily, most of all on macOS, and needs a C compiler to build.
+The generated binary uses the platform's allocator. A project can ask for mimalloc instead with `[rust]` `allocator = "mimalloc"` in its `aver.toml` (the default is `"system"`; any other value is an error): `Cargo.toml` then turns on the `mimalloc` feature of `aver-rt` and `src/main.rs` declares `aver_rt::MiMalloc` as the `#[global_allocator]`. It sends requests aligned to 16 bytes or less to plain `mi_malloc`, so a 48-byte value takes a 48-byte block rather than the 64-byte one that `mi_malloc_aligned` falls back to when the 48-byte page is full. It helps programs that allocate heavily, most of all on macOS, and needs a C compiler to build.
 
 When developing the runtime inside the Aver repository, set `AVER_RUNTIME_PATH` before running `aver compile`. The generated project then uses a path dependency instead of the crates.io release:
 

@@ -83,6 +83,7 @@ the Rust call stack while its `Arc` chain is released.
 
 - default: no optional dependencies
 - `http`: enables the HTTP client runtime via `ureq`
+- `mimalloc`: `MiMalloc`, a global allocator on mimalloc, for `[rust] allocator = "mimalloc"`
 
 ## Stability
 
