@@ -391,6 +391,11 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
                     "Bits.low" if crate::ast::is_literal_nonneg_int_count(&args[1]) => {
                         Some(BuiltinIntrinsic::BitsLow)
                     }
+                    "Bits.popCount"
+                        if crate::ast::is_literal_nonneg_shift_right_count(&args[1]) =>
+                    {
+                        Some(BuiltinIntrinsic::BitsPopCount)
+                    }
                     "Vector.new" if crate::ast::is_literal_vector_size(&args[0]) => {
                         Some(BuiltinIntrinsic::VectorNew)
                     }

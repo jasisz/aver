@@ -804,6 +804,9 @@ fn emit_fn_call(
                 BuiltinIntrinsic::BitsLow if arg_strs.len() == 2 => {
                     format!("(AverBits.low {} {})", arg_strs[0], arg_strs[1])
                 }
+                BuiltinIntrinsic::BitsPopCount if arg_strs.len() == 2 => {
+                    format!("(AverBitCount.popCount {} {})", arg_strs[0], arg_strs[1])
+                }
                 BuiltinIntrinsic::VectorNew if arg_strs.len() == 2 => format!(
                     "(Array.replicate (Int.toNat {}) {})",
                     arg_strs[0], arg_strs[1]

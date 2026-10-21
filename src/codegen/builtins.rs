@@ -78,6 +78,7 @@ codegen_builtins! {
     BitsShiftLeft => "Bits.shiftLeft",
     BitsShiftRight => "Bits.shiftRight",
     BitsLow => "Bits.low",
+    BitsPopCount => "Bits.popCount",
 
     // --- Float ---
     FloatAbs => "Float.abs",

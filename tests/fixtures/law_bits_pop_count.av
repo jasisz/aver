@@ -1,0 +1,24 @@
+module LawBitsPopCount
+    intent =
+        "Bits.popCount in the proof model: a zero-bit window has no one bits"
+        "for every Int, and sampled counts of both signs reduce in the kernel."
+    effects []
+
+fn none(x: Int) -> Int
+    ? "The one bits of a zero-bit window."
+    Bits.popCount(x, 0)
+
+verify none law empty
+    given x: Int = [0, 1, -1, 255, -256]
+    none(x) => 0
+
+fn ones(x: Int) -> Int
+    ? "The one bits among the lowest sixteen bits of x."
+    Bits.popCount(x, 16)
+
+verify ones
+    ones(0) => 0
+    ones(65535) => 16
+    ones(65536) => 0
+    ones(-1) => 16
+    ones(-65536) => 0

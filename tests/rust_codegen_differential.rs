@@ -1930,6 +1930,20 @@ fn main() -> Unit
     );
 }
 
+/// `Bits.popCount` on the Rust backend: the program `cross_backend_stress`
+/// runs on the VM and wasm-gc.
+#[test]
+fn rust_bits_pop_count_matches_vm() {
+    let src = include_str!("fixtures/bits_pop_count.av");
+    let expected = include_str!("fixtures/bits_pop_count.expected").trim();
+
+    let vm = run_vm_inline("bits_pop_count", src).expect("vm run");
+    let rust =
+        build_run_rust_inline("bits_pop_count", src).expect("rust compile + cargo build + run");
+    assert_eq!(vm.trim(), expected, "VM popCount contract changed");
+    assert_eq!(rust.trim(), expected, "Rust popCount diverged from the VM");
+}
+
 /// The same rule over an `Int` carrier, on the Rust backend: the program
 /// `cross_backend_stress` runs on the VM and wasm-gc.
 #[test]

@@ -482,6 +482,10 @@ pub const BITS_SHIFT_RIGHT: u8 = 0x97;
 /// guarantees `w >= 0`.
 pub const BITS_LOW: u8 = 0x98;
 
+/// Pop w, pop x, push the count of one bits among the lowest `w` bits of
+/// `x` (Int). Caller guarantees `w >= 0`.
+pub const BITS_POP_COUNT: u8 = 0xB4;
+
 // --- Codepoint cursor (chars fusion) -----------------------------------
 //
 // Emitted by the chars-fusion pass in place of a `String.chars(s)` list
@@ -729,6 +733,7 @@ pub fn opcode_name(op: u8) -> &'static str {
         BITS_SHIFT_LEFT => "BITS_SHIFT_LEFT",
         BITS_SHIFT_RIGHT => "BITS_SHIFT_RIGHT",
         BITS_LOW => "BITS_LOW",
+        BITS_POP_COUNT => "BITS_POP_COUNT",
         STR_CURSOR_END => "STR_CURSOR_END",
         STR_CURSOR_HEAD => "STR_CURSOR_HEAD",
         STR_CURSOR_NEXT => "STR_CURSOR_NEXT",
@@ -812,6 +817,7 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | BITS_SHIFT_LEFT
         | BITS_SHIFT_RIGHT
         | BITS_LOW
+        | BITS_POP_COUNT
         | STR_CURSOR_END
         | STR_CURSOR_HEAD
         | STR_CURSOR_NEXT

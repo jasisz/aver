@@ -151,16 +151,18 @@ Fixed-width behaviour is always **requested explicitly**, through `Bits.low`. Ar
 | `Bits.shiftLeft` | `(Int, Int) -> Result<Int, String>` |
 | `Bits.shiftRight` | `(Int, Int) -> Result<Int, String>` |
 | `Bits.low` | `(Int, Int) -> Result<Int, String>` |
+| `Bits.popCount` | `(Int, Int) -> Result<Int, String>` |
 
 For a non-negative `n` and `width`:
 
 - `Bits.shiftLeft(x, n)` is `x * 2^n`
 - `Bits.shiftRight(x, n)` is `floor(x / 2^n)`, an **arithmetic** right shift, so `Bits.shiftRight(-3, 1) == -2`
 - `Bits.low(x, width)` is `x mod 2^width`, the non-negative value of the lowest `width` bits, so `Bits.low(257, 8) == 1`, `Bits.low(-1, 8) == 255`, and `Bits.low(x, 0) == 0`
+- `Bits.popCount(x, width)` is the number of one bits among the lowest `width` bits, the bits `Bits.low(x, width)` keeps, so `Bits.popCount(11, 3) == 2`, `Bits.popCount(-1, 8) == 8`, and `Bits.popCount(x, 0) == 0`
 
-A negative shift count or width is `Result.Err`. It never panics, never silently flips direction and never clamps. The **16,777,216-bit materialization bound applies only where a result can grow**: always to `shiftLeft`, and to `low` when `x` is negative (extracting a finite low-bit value from infinite leading ones). Positive `low` returns `x` directly once `width` reaches its existing bit length. `shiftRight` never grows or materializes a count-sized value. An arbitrarily large non-negative count reaches `0` for non-negative `x`, or `-1` for negative `x`, in constant space.
+A negative shift count or width is `Result.Err`. It never panics, never silently flips direction and never clamps. The **16,777,216-bit materialization bound applies only where a result can grow**: always to `shiftLeft`, and to `low` when `x` is negative (extracting a finite low-bit value from infinite leading ones). Positive `low` returns `x` directly once `width` reaches its existing bit length. `shiftRight` never grows or materializes a count-sized value. An arbitrarily large non-negative count reaches `0` for non-negative `x`, or `-1` for negative `x`, in constant space. `popCount` never exceeds its `width`, so it has no bound either: a negative `x` counts its leading ones up to any width.
 
-As with `Int.div` / `Int.mod`, syntax can discharge the error. A bounded non-negative literal discharges `shiftLeft` and `low`, and **any** non-negative literal discharges `shiftRight`. So `Bits.low(x, 32)` and `Bits.shiftRight(x, 100000000000000000000)` type as plain `Int`. Dynamic counts keep `Result<Int, String>` because they may still be negative.
+As with `Int.div` / `Int.mod`, syntax can discharge the error. A bounded non-negative literal discharges `shiftLeft` and `low`, and **any** non-negative literal discharges `shiftRight` and `popCount`. So `Bits.low(x, 32)` and `Bits.shiftRight(x, 100000000000000000000)` type as plain `Int`. Dynamic counts keep `Result<Int, String>` because they may still be negative.
 
 Prefer `Bits.low` over a magic mask. It states the protocol invariant instead of implying it:
 

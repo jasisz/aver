@@ -195,6 +195,25 @@ fn literal_int_refinement_discharge_matches_expected() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `Bits.popCount` gives the VM's answers on wasip2 (`cross_backend_stress`
+/// holds the VM and wasm-gc to the same expected output).
+#[test]
+fn bits_pop_count_matches_expected() {
+    let dir = tempdir("popcount");
+    let fixture = write_fixture(
+        &dir,
+        "popcount.av",
+        include_str!("fixtures/bits_pop_count.av"),
+    );
+    let out = run_wasip2(&dir, &fixture, &[]);
+    assert_ok(&out, "popcount.av");
+    assert_eq!(
+        stdout(&out).trim(),
+        include_str!("fixtures/bits_pop_count.expected").trim()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn roundtrip_100x() {
     let dir = tempdir("rt100");

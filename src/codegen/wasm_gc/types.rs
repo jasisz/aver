@@ -1391,6 +1391,12 @@ impl TypeRegistry {
         }
         if resolved_fn_defs
             .iter()
+            .any(|fd| fn_body_calls_builtin(fd, "Bits.popCount"))
+        {
+            intern_synthetic(b"negative bit width".to_vec());
+        }
+        if resolved_fn_defs
+            .iter()
             .any(|fd| fn_body_calls_builtin(fd, "Vector.new"))
         {
             intern_synthetic(aver_rt::vector_size_error_message().into_bytes());
@@ -2331,11 +2337,12 @@ fn expr_uses_string(expr: &crate::ir::hir::ResolvedExpr) -> bool {
                             | "Int.div"
                             | "Int.fromString"
                             | "Float.fromString"
-                            // Same reason: the three count-taking `Bits`
+                            // Same reason: the four count-taking `Bits`
                             // operations return `Result<Int, String>`.
                             | "Bits.shiftLeft"
                             | "Bits.shiftRight"
                             | "Bits.low"
+                            | "Bits.popCount"
                             // Effects that produce or consume String at
                             // their boundary. The string slot has to be
                             // allocated whenever any of these is called
@@ -2533,6 +2540,17 @@ pub(super) fn fn_uses_bits(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
     })
 }
 
+/// Whether `Bits.popCount` is reachable in either callee form, the gate of
+/// its `__aint_popcount` helper (see [`fn_uses_bits`]).
+pub(super) fn fn_uses_pop_count(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
+    use crate::ir::hir::{BuiltinIntrinsic, ResolvedCallee};
+    fn_body_reaches(fd, &|callee| match callee {
+        ResolvedCallee::Builtin(name) => name == "Bits.popCount",
+        ResolvedCallee::Intrinsic(intr) => *intr == BuiltinIntrinsic::BitsPopCount,
+        _ => false,
+    })
+}
+
 fn fn_body_calls_int_mod(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
     fn_body_calls_builtin(fd, "Int.mod")
 }
@@ -2583,6 +2601,7 @@ fn builtin_touches_int(name: &str) -> bool {
             | "Bits.shiftLeft"
             | "Bits.shiftRight"
             | "Bits.low"
+            | "Bits.popCount"
             // Float/Int bridges.
             | "Float.fromInt"
             | "Float.floor"

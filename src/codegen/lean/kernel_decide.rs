@@ -549,6 +549,7 @@ impl Walk<'_> {
                     | BuiltinIntrinsic::BitsShiftLeft
                     | BuiltinIntrinsic::BitsShiftRight
                     | BuiltinIntrinsic::BitsLow
+                    | BuiltinIntrinsic::BitsPopCount
             ),
             // Higher-order fn value / resolver give-up.
             ResolvedCallee::LocalSlot { .. } | ResolvedCallee::Unresolved { .. } => false,
@@ -751,7 +752,7 @@ fn builtin_panic_capability(builtin: Builtin) -> PanicCapability {
         // and `AverBits.and`/`or`/`xor`/`not` are closed-form over `Nat`
         // bitwise ops with no partial step anywhere.
         //
-        // The three count-taking ones are the interesting case. Their Lean
+        // The four count-taking ones are the interesting case. Their Lean
         // definitions use `Int.toNat` on the count, which sends every
         // negative count to `0` — on its own that would narrow past the VM,
         // which returns `Result.Err` there. It does not, because the
@@ -759,7 +760,8 @@ fn builtin_panic_capability(builtin: Builtin) -> PanicCapability {
         // see `lean::builtins`), so the model never evaluates the
         // definition at a count the VM rejected. The guard is load-bearing:
         // remove it and this line becomes a lie.
-        BitsAnd | BitsOr | BitsXor | BitsNot | BitsShiftLeft | BitsShiftRight | BitsLow => Total,
+        BitsAnd | BitsOr | BitsXor | BitsNot | BitsShiftLeft | BitsShiftRight | BitsLow
+        | BitsPopCount => Total,
 
         // `Int.toNat` again, but here the VM narrows IDENTICALLY —
         // `list::clamp_count` sends every count `<= 0` to `0` — so no input
@@ -894,7 +896,8 @@ fn builtin_reduces_in_kernel(builtin: Builtin) -> bool {
         // arithmetic all have kernel GMP acceleration, so a concrete `Bits`
         // goal reduces to `isTrue`/`isFalse` without `native_decide`.
         // Probed on Lean 4.32 against every case in the specification.
-        BitsAnd | BitsOr | BitsXor | BitsNot | BitsShiftLeft | BitsShiftRight | BitsLow => true,
+        BitsAnd | BitsOr | BitsXor | BitsNot | BitsShiftLeft | BitsShiftRight | BitsLow
+        | BitsPopCount => true,
 
         StringFirstCodePoint | StringFromCodePoint => true,
 

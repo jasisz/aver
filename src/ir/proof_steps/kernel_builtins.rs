@@ -42,6 +42,11 @@ pub fn aver_source() -> String {
     }
     rows.push(("__bits_low".into(), vec![Type::Int, Type::Int], Type::Int));
     rows.push((
+        "__bits_popcount".into(),
+        vec![Type::Int, Type::Int],
+        Type::Int,
+    ));
+    rows.push((
         "__vector_new".into(),
         vec![Type::Int, t()],
         Type::Vector(Box::new(t())),

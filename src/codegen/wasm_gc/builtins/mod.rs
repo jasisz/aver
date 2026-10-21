@@ -237,6 +237,10 @@ pub(super) enum BuiltinName {
     /// family's only new primitive: `Bits.shiftLeft` multiplies by it,
     /// `Bits.shiftRight` / `Bits.low` Euclid-divide by it.
     AintPow2,
+    /// `__aint_popcount(x, w) -> i64` — the one bits among the lowest `w`
+    /// (saturated, non-negative) bits of `x`, or of `-x - 1` when `x < 0`.
+    /// `Bits.popCount` subtracts the second from `w`.
+    AintPopCount,
     /// `__aint_cmp(a, b) -> i32` (-1/0/1) — total order over ℤ.
     AintCmp,
     /// `__aint_eq(a, b) -> i32` (1/0) — equality leaning on canonical form.
@@ -402,6 +406,7 @@ impl BuiltinName {
             Self::AintDivmod => "__aint_divmod",
             Self::AintBitwise => "__aint_bitwise",
             Self::AintPow2 => "__aint_pow2",
+            Self::AintPopCount => "__aint_popcount",
             Self::AintCmp => "__aint_cmp",
             Self::AintEq => "__aint_eq",
             Self::AintHash => "__aint_hash",
@@ -517,6 +522,7 @@ impl BuiltinName {
                 aint_ref_ty(registry)?,
                 ValType::I32,
             ]),
+            Self::AintPopCount => Ok(vec![aint_ref_ty(registry)?, ValType::I64]),
             // `want_mod` selects modulo (≠0) vs division (0).
             Self::AintDivmod => Ok(vec![
                 aint_ref_ty(registry)?,
@@ -609,7 +615,9 @@ impl BuiltinName {
                 Ok(vec![ValType::I32])
             }
             Self::AintToF64 => Ok(vec![ValType::F64]),
-            Self::AintToI64Sat | Self::AintToI64Checked => Ok(vec![ValType::I64]),
+            Self::AintToI64Sat | Self::AintToI64Checked | Self::AintPopCount => {
+                Ok(vec![ValType::I64])
+            }
             // Shared bignum sub-routines.
             Self::AintDecompose => Ok(vec![mag_ref_ty(registry)?, ValType::I32]),
             Self::AintNormalize => Ok(vec![aint_ref_ty(registry)?]),
@@ -695,6 +703,7 @@ impl BuiltinName {
             Self::AintDivmod => bignum::emit_aint_divmod(registry),
             Self::AintBitwise => bignum::emit_aint_bitwise(registry),
             Self::AintPow2 => bignum::emit_aint_pow2(registry),
+            Self::AintPopCount => bignum::emit_aint_popcount(registry),
             Self::AintCmp => bignum::emit_aint_cmp(registry),
             Self::AintEq => bignum::emit_aint_eq(registry),
             Self::AintHash => bignum::emit_aint_hash(registry),

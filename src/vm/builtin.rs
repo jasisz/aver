@@ -50,6 +50,7 @@ vm_builtins! {
     BitsShiftLeft => "Bits.shiftLeft",
     BitsShiftRight => "Bits.shiftRight",
     BitsLow => "Bits.low",
+    BitsPopCount => "Bits.popCount",
 
     FloatFromString => "Float.fromString",
     FloatFromInt => "Float.fromInt",
@@ -277,7 +278,8 @@ impl VmBuiltin {
             | Self::BitsNot
             | Self::BitsShiftLeft
             | Self::BitsShiftRight
-            | Self::BitsLow => bits::call_nv(self.name(), args, arena),
+            | Self::BitsLow
+            | Self::BitsPopCount => bits::call_nv(self.name(), args, arena),
             Self::BranchPathChild | Self::BranchPathParse => {
                 branch_path::call_nv(self.name(), args, arena)
             }

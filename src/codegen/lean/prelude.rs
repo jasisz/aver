@@ -552,6 +552,36 @@ theorem nat_land_split (x m P j hi lo : Nat) (hP : P = 2 ^ j) (hm : m = P * hi +
 
 end AverBits"#;
 
+/// `Bits.popCount`'s proof model: the one bits `AverBits.low x w` keeps,
+/// counted by `w` halvings of its value. Core Lean has a population count
+/// only for `BitVec`, so this is a plain structural recursion, which the
+/// kernel reduces for a literal width. It lives outside `AverBits` so that
+/// namespace stays exactly the certificate wall's `ModelPrelude`.
+///
+/// The zero-width equation is a `simp` lemma in a standalone export, so a law
+/// about an empty window closes in the tactic portfolio. A certificate model
+/// is untrusted data whose verifier rejects attributes, so it gets the
+/// definitions alone (see [`generate_except_namespace_prelude`]).
+fn aver_bit_count_prelude(cert_model: bool) -> String {
+    let zero_width = if cert_model {
+        ""
+    } else {
+        "\n\n@[simp] theorem popCount_zero (x : Int) : popCount x 0 = 0 := rfl"
+    };
+    format!("{LEAN_PRELUDE_AVER_BIT_COUNT}{zero_width}\n\nend AverBitCount")
+}
+
+const LEAN_PRELUDE_AVER_BIT_COUNT: &str = r#"namespace AverBitCount
+
+/-- The one bits among the lowest `w` bits of `n`. -/
+def natCount : Nat → Nat → Nat
+  | 0, _ => 0
+  | w + 1, n => n % 2 + natCount w (n / 2)
+
+/-- The one bits among the lowest `w` bits of `x` under infinite two's
+    complement: those of `x % 2 ^ w`, the value `AverBits.low x w` has. -/
+def popCount (x w : Int) : Int := ((natCount w.toNat (x % 2 ^ w.toNat).toNat : Nat) : Int)"#;
+
 const LEAN_PRELUDE_AVER_MEASURE: &str = r#"namespace AverMeasure
 def list (elemMeasure : α → Nat) : List α → Nat
   | [] => 1
@@ -1543,6 +1573,7 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
             "NumericParse" => parts.push(generate_numeric_parse_prelude(body, include_all_helpers)),
             "StringCodePoint" => parts.push(LEAN_PRELUDE_STRING_CODE_POINT.to_string()),
             "AverBits" => parts.push(LEAN_PRELUDE_AVER_BITS.to_string()),
+            "AverBitCount" => parts.push(aver_bit_count_prelude(false)),
             "AverMeasure" => parts.push(LEAN_PRELUDE_AVER_MEASURE.to_string()),
             "AverMap" => parts.push(generate_map_prelude(body, include_all_helpers)),
             "ProofFuel" => parts.push(LEAN_PRELUDE_PROOF_FUEL.to_string()),
@@ -1871,6 +1902,7 @@ pub(super) fn build_common_lean(union_body: &str, cert_model: bool) -> String {
             "StringCodePoint" => parts.push(LEAN_PRELUDE_STRING_CODE_POINT.to_string()),
             "AverBits" if cert_model => {}
             "AverBits" => parts.push(LEAN_PRELUDE_AVER_BITS.to_string()),
+            "AverBitCount" => parts.push(aver_bit_count_prelude(cert_model)),
             "AverMeasure" => parts.push(LEAN_PRELUDE_AVER_MEASURE.to_string()),
             "AverMap" => parts.push(generate_map_prelude(union_body, false)),
             "ProofFuel" => parts.push(LEAN_PRELUDE_PROOF_FUEL.to_string()),

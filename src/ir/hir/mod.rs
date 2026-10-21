@@ -548,6 +548,9 @@ pub enum BuiltinIntrinsic {
     /// bounded non-negative `w`; the non-negative value of the lowest `w`
     /// bits.
     BitsLow,
+    /// `__bits_popcount(<x>, <w>)` — unchecked count of the one bits among
+    /// the lowest `w` bits for any non-negative literal `w`; never above `w`.
+    BitsPopCount,
     /// `__vector_new(<size>, <fill>)` — unchecked vector construction for a
     /// syntactic non-negative size literal inside the portable element
     /// materialization budget. Produced only by the resolver's `Vector.new`
@@ -675,6 +678,7 @@ impl BuiltinIntrinsic {
             Self::BitsShiftLeft => "__bits_shl",
             Self::BitsShiftRight => "__bits_shr",
             Self::BitsLow => "__bits_low",
+            Self::BitsPopCount => "__bits_popcount",
             Self::VectorNew => "__vector_new",
             Self::BranchPathChild => "__branch_path_child",
             Self::BranchPathParse => "__branch_path_parse",

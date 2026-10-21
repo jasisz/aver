@@ -1328,6 +1328,7 @@ pub(crate) fn emit_mir_expr(
                         BuiltinIntrinsic::BitsShiftLeft => Some(BitsOp::ShiftLeft),
                         BuiltinIntrinsic::BitsShiftRight => Some(BitsOp::ShiftRight),
                         BuiltinIntrinsic::BitsLow => Some(BitsOp::Low),
+                        BuiltinIntrinsic::BitsPopCount => Some(BitsOp::PopCount),
                         _ => None,
                     } && call.args.len() == 2
                     {
