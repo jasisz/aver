@@ -107,8 +107,29 @@ const LARGE_VARIANT_BYTES: usize = 64;
 /// another constructor, copies the pointer. Recursion through `List`,
 /// `Vector` or `Map` already goes through the heap.
 pub(super) fn is_thin_sum(td: &TypeDef, ctx: &CodegenContext) -> bool {
+    matches!(td, TypeDef::Sum { .. }) && on_cycle(td, ctx)
+}
+
+/// Whether a value of `td` can hold a value of `td` with no collection in
+/// between: a recursive sum (see [`is_thin_sum`]) or a record on the cycle
+/// of one.
+pub(super) fn on_cycle(td: &TypeDef, ctx: &CodegenContext) -> bool {
     let key = crate::codegen::common::backend_type_def_key(ctx, td);
-    matches!(td, TypeDef::Sum { .. }) && reaches_inline(td, &key, ctx, &mut HashSet::new())
+    reaches_inline(td, &key, ctx, &mut HashSet::new())
+}
+
+/// Whether a field of `ty` hands the nodes it holds over when the node or
+/// record holding it is freed (`aver_rt::thin::HandOver`): a type
+/// [`on_cycle`], or an `Option` of one. A field of any other type is dropped
+/// as it is.
+pub(super) fn hands_over(ty: &Type, ctx: &CodegenContext, scope: Option<&str>) -> bool {
+    match ty {
+        Type::Option(inner) => hands_over(inner, ctx, scope),
+        Type::Named { id, name } => {
+            named_type_def(*id, name, ctx, scope).is_some_and(|td| on_cycle(td, ctx))
+        }
+        _ => false,
+    }
 }
 
 /// [`is_thin_sum`] for the type `id`.
@@ -320,9 +341,7 @@ pub(super) fn walks(ty: &Type, ctx: &CodegenContext, scope: Option<&str>) -> boo
 
 /// [`walks`] for a declaration.
 pub(super) fn walking_def(td: &TypeDef, ctx: &CodegenContext) -> bool {
-    let key = crate::codegen::common::backend_type_def_key(ctx, td);
-    type_def_contract(td, ctx).capabilities.partial_eq
-        && reaches_inline(td, &key, ctx, &mut HashSet::new())
+    type_def_contract(td, ctx).capabilities.partial_eq && on_cycle(td, ctx)
 }
 
 fn reaches_inline(
