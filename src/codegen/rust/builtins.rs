@@ -32,6 +32,7 @@ pub(super) fn builtin_needs_str_conversion(name: &str) -> bool {
             | "Bits.shiftLeft"
             | "Bits.shiftRight"
             | "Bits.low"
+            | "Bits.popCount"
     )
 }
 

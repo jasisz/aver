@@ -989,8 +989,10 @@ pub(crate) fn emit_mir_int_div_mod_boxed(
 ///   shift the specification asks for.
 /// - `low(x, w)` → `__aint_divmod(x, __aint_pow2(w), 1)` — the Euclidean
 ///   remainder is already in `[0, 2^w)`.
+/// - `popCount(x, w)` → `__aint_popcount(x, w)`, or `w` minus it for a
+///   negative `x`, whose low bits are the complement of those of `-x - 1`.
 ///
-/// The three count-taking operations build the concrete `Result<Int,String>`
+/// The four count-taking operations build the concrete `Result<Int,String>`
 /// struct, guarding the operation-specific partiality into `Result.Err` with
 /// the VM's exact message bytes. The range tests use `__aint_to_i64_sat`,
 /// which saturates a Big to `i64::MIN`/`MAX` — so its sign is the value's
@@ -1052,7 +1054,7 @@ pub(crate) fn emit_mir_bits(
             func.instruction(&Instruction::Call(sub));
             return Ok(MirBuiltinEmit::Produced(true));
         }
-        BitsOp::ShiftLeft | BitsOp::ShiftRight | BitsOp::Low => {}
+        BitsOp::ShiftLeft | BitsOp::ShiftRight | BitsOp::Low | BitsOp::PopCount => {}
     }
 
     let res_idx =
@@ -1100,7 +1102,7 @@ pub(crate) fn emit_mir_bits(
     emit_string_literal_bytes(func, op.negative_message(), ctx)?;
     func.instruction(&Instruction::StructNew(res_idx));
     func.instruction(&Instruction::Else);
-    if !matches!(op, BitsOp::ShiftRight) {
+    if op.has_upper_bound() {
         // shiftLeft is bounded whenever count exceeds the limit. `low` is
         // bounded only for a negative input: a non-negative result contains
         // no more information than the already-resident input.
@@ -1130,7 +1132,7 @@ pub(crate) fn emit_mir_bits(
     emit_bits_counted_from_slots(func, op, value_slot, count_slot, ctx, &helper)?;
     emit_default_value(func, "String", ctx.registry)?;
     func.instruction(&Instruction::StructNew(res_idx));
-    if !matches!(op, BitsOp::ShiftRight) {
+    if op.has_upper_bound() {
         func.instruction(&Instruction::End);
     }
     func.instruction(&Instruction::End);
@@ -1179,6 +1181,31 @@ fn emit_bits_counted_from_slots(
         func.instruction(&Instruction::LocalGet(value_slot));
         func.instruction(&Instruction::LocalGet(count_slot));
         emit_bits_counted_tail(func, op, helper)?;
+        func.instruction(&Instruction::End);
+        return Ok(());
+    }
+
+    if matches!(op, BitsOp::PopCount) {
+        // `__aint_popcount` counts the bits that differ from the sign tail:
+        // the answer itself for `x >= 0`, its complement within `w` below.
+        let count_ones = |func: &mut Function| -> Result<(), WasmGcError> {
+            func.instruction(&Instruction::LocalGet(value_slot));
+            func.instruction(&Instruction::LocalGet(count_slot));
+            func.instruction(&Instruction::Call(helper("__aint_to_i64_sat")?));
+            func.instruction(&Instruction::Call(helper("__aint_popcount")?));
+            func.instruction(&Instruction::Call(helper("__aint_from_i64")?));
+            Ok(())
+        };
+        func.instruction(&Instruction::LocalGet(value_slot));
+        func.instruction(&Instruction::Call(helper("__aint_to_i64_sat")?));
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64LtS);
+        func.instruction(&Instruction::If(aint_ref));
+        func.instruction(&Instruction::LocalGet(count_slot));
+        count_ones(func)?;
+        func.instruction(&Instruction::Call(helper("__aint_sub")?));
+        func.instruction(&Instruction::Else);
+        count_ones(func)?;
         func.instruction(&Instruction::End);
         return Ok(());
     }
@@ -1370,6 +1397,7 @@ pub(crate) enum BitsOp {
     ShiftLeft,
     ShiftRight,
     Low,
+    PopCount,
 }
 
 impl BitsOp {
@@ -1382,6 +1410,7 @@ impl BitsOp {
             "Bits.shiftLeft" => Self::ShiftLeft,
             "Bits.shiftRight" => Self::ShiftRight,
             "Bits.low" => Self::Low,
+            "Bits.popCount" => Self::PopCount,
             _ => return None,
         })
     }
@@ -1403,10 +1432,17 @@ impl BitsOp {
         }
     }
 
+    /// Whether a count past the materialization bound can be refused.
+    /// `shiftRight` only shrinks its value and `popCount` answers at most
+    /// its width, so neither has one.
+    fn has_upper_bound(self) -> bool {
+        !matches!(self, Self::ShiftRight | Self::PopCount)
+    }
+
     /// Byte-identical to the VM's `Result.Err` payload (`types/bits.rs`).
     fn negative_message(self) -> &'static [u8] {
         match self {
-            Self::Low => b"negative bit width",
+            Self::Low | Self::PopCount => b"negative bit width",
             _ => b"negative shift count",
         }
     }

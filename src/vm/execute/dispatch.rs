@@ -2224,13 +2224,14 @@ impl VM {
                 // only emits these for a syntactic non-negative literal
                 // within the fixed materialization bound, so both refusal
                 // arms are unreachable.
-                BITS_SHIFT_LEFT | BITS_SHIFT_RIGHT | BITS_LOW => {
+                BITS_SHIFT_LEFT | BITS_SHIFT_RIGHT | BITS_LOW | BITS_POP_COUNT => {
                     let n = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let x = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let (x, n) = (x.as_aver_int(&self.arena), n.as_aver_int(&self.arena));
                     let computed = match op {
                         BITS_SHIFT_LEFT => x.shift_left(&n),
                         BITS_SHIFT_RIGHT => x.shift_right(&n),
+                        BITS_POP_COUNT => x.pop_count(&n),
                         _ => x.low_bits(&n),
                     };
                     let r = computed.map_err(|_| {

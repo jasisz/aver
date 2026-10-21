@@ -1418,6 +1418,32 @@ fn nested_unwrap_in_error_keeps_value_wasm_gc() {
     );
 }
 
+// ─── Bits.popCount ─────────────────────────────────────────────────────
+
+/// `Bits.popCount` on both signs, across the 64-bit seam and at the width
+/// edges, dynamic and discharged. `tests/wasip2_stress.rs` and
+/// `tests/rust_codegen_differential.rs` hold wasip2 and Rust to the same output.
+const POP_COUNT_SRC: &str = include_str!("fixtures/bits_pop_count.av");
+const POP_COUNT_OUT: &str = include_str!("fixtures/bits_pop_count.expected");
+
+#[test]
+fn bits_pop_count_vm() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-popcount-vm", POP_COUNT_SRC),
+        POP_COUNT_OUT.trim(),
+    );
+}
+
+#[test]
+fn bits_pop_count_wasm_gc() {
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-popcount-wasmgc", POP_COUNT_SRC),
+        POP_COUNT_OUT.trim(),
+    );
+}
+
 // ─── How deep non-tail recursion may go ────────────────────────────────
 
 /// Non-tail recursion as deep as its first argument says; without one it

@@ -96,7 +96,8 @@ use super::builtins::{BuiltinName, BuiltinRegistry};
 use super::effects::{EffectName, EffectRegistry};
 use super::maps::MapHelperRegistry;
 use super::types::{
-    TypeRegistry, fn_uses_bits, param_types_with_repr, record_struct_type, return_results_with_repr,
+    TypeRegistry, fn_uses_bits, fn_uses_pop_count, param_types_with_repr, record_struct_type,
+    return_results_with_repr,
 };
 use super::wasip2_disk_bytes::{
     DiskReadBytesIndices, DiskSizeIndices, DiskWriteBytesIndices, emit_disk_read_bytes,
@@ -715,6 +716,11 @@ pub(super) fn emit_module_with(
     if registry.bignum && resolved_fn_defs.iter().any(fn_uses_bits) {
         builtin_registry.register(BuiltinName::AintBitwise);
         builtin_registry.register(BuiltinName::AintPow2);
+    }
+    // The same rule for `Bits.popCount`'s limb walk, on its own gate so a
+    // program that only shifts and masks keeps the indices it had.
+    if registry.bignum && resolved_fn_defs.iter().any(fn_uses_pop_count) {
+        builtin_registry.register(BuiltinName::AintPopCount);
     }
     if registry.bignum
         && effect_registry
@@ -7678,6 +7684,7 @@ fn refuse_fabricated_intrinsics(
             | BuiltinIntrinsic::BitsShiftLeft
             | BuiltinIntrinsic::BitsShiftRight
             | BuiltinIntrinsic::BitsLow
+            | BuiltinIntrinsic::BitsPopCount
             | BuiltinIntrinsic::VectorNew
             | BuiltinIntrinsic::ResultProven
             | BuiltinIntrinsic::StrIndexBuild

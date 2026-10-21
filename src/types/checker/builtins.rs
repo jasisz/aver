@@ -148,11 +148,11 @@ impl TypeChecker {
         // (infinite two's complement).
         //
         // `and` / `or` / `xor` / `not` are total: that reading is defined
-        // for every integer, so there is nothing to fail on. The three
+        // for every integer, so there is nothing to fail on. The four
         // count-taking operations register the DYNAMIC type. Literal
         // discharge is operation-specific: shiftLeft/low retain the fixed
-        // materialization bound, while shiftRight accepts every non-negative
-        // literal because its result cannot grow.
+        // materialization bound, while shiftRight and popCount accept every
+        // non-negative literal because their result cannot grow.
         let bits_sigs: &[(&str, &[Type], Type, &[&str])] = &[
             ("Bits.and", &[Type::Int, Type::Int], Type::Int, &[]),
             ("Bits.or", &[Type::Int, Type::Int], Type::Int, &[]),
@@ -166,6 +166,7 @@ impl TypeChecker {
                 &[],
             ),
             ("Bits.low", &[Type::Int, Type::Int], int_result(), &[]),
+            ("Bits.popCount", &[Type::Int, Type::Int], int_result(), &[]),
         ];
         for (name, params, ret, effects) in bits_sigs {
             self.insert_sig(name, params, ret.clone(), effects);

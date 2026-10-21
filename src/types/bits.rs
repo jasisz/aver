@@ -8,6 +8,7 @@
 ///   Bits.shiftLeft(x, n)   → Result<Int, String>  — `x * 2^n`
 ///   Bits.shiftRight(x, n)  → Result<Int, String>  — `floor(x / 2^n)`
 ///   Bits.low(x, width)     → Result<Int, String>  — `x mod 2^width`
+///   Bits.popCount(x, width) → Result<Int, String> — one bits of `low(x, width)`
 ///
 /// Everything here takes ordinary mathematical `Int` values and returns
 /// ordinary mathematical `Int` values. There is no bit-vector, no machine
@@ -31,6 +32,7 @@
 /// whose infinite one tail would otherwise manufacture a new magnitude of
 /// the requested width. `shiftRight` never grows a value, so it has no upper
 /// bound and returns `0` or `-1` in O(1) once the count reaches the sign tail.
+/// `popCount` answers at most its width and has no upper bound either.
 /// Literal discharge follows those same operation-specific rules.
 ///
 /// No effects required.
@@ -78,6 +80,13 @@ pub fn call_nv(
             args,
             arena,
             AverInt::low_bits,
+            NEGATIVE_WIDTH,
+        )),
+        "Bits.popCount" => Some(counted_nv(
+            name,
+            args,
+            arena,
+            AverInt::pop_count,
             NEGATIVE_WIDTH,
         )),
         _ => None,

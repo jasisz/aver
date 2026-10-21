@@ -591,7 +591,7 @@ impl SlotTable {
 
 /// True if the body reaches a builtin whose lowering GUARDS one operand and
 /// then needs the operands again in both arms: boxed `Int.div` / `Int.mod`
-/// (guarded on a zero divisor) and the three count-taking `Bits` operations
+/// (guarded on a zero divisor) and the four count-taking `Bits` operations
 /// (guarded on the shared valid-count range).
 ///
 /// `Bits.and` / `.or` / `.xor` / `.not` are absent: they have no guard, so
@@ -608,6 +608,7 @@ fn fn_needs_aint_operands(fd: &ResolvedFnDef) -> bool {
                         | "Bits.shiftLeft"
                         | "Bits.shiftRight"
                         | "Bits.low"
+                        | "Bits.popCount"
                 )
         ) || matches!(
             callee,
@@ -615,6 +616,7 @@ fn fn_needs_aint_operands(fd: &ResolvedFnDef) -> bool {
                 BuiltinIntrinsic::BitsShiftLeft
                     | BuiltinIntrinsic::BitsShiftRight
                     | BuiltinIntrinsic::BitsLow
+                    | BuiltinIntrinsic::BitsPopCount
             )
         )
     }

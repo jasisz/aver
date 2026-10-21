@@ -142,7 +142,7 @@ pub(super) fn collect_results_from_builtin_uses(
                             "Int.fromString" | "Int.mod" | "Int.div" => {
                                 intern_result("Result<Int,String>", out, order, next_idx)
                             }
-                            "Bits.shiftLeft" | "Bits.shiftRight" | "Bits.low" => {
+                            "Bits.shiftLeft" | "Bits.shiftRight" | "Bits.low" | "Bits.popCount" => {
                                 intern_result("Result<Int,String>", out, order, next_idx)
                             }
                             "String.fromUtf8" => {

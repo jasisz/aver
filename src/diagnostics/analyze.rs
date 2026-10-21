@@ -793,7 +793,7 @@ fn parse_error_repair(body: &str) -> super::model::Repair {
     let hint = if body.contains("operator does not exist in Aver") {
         if body.contains("Bits.") {
             Some(
-                "Bit-level operations live in the `Bits` namespace: Bits.and / Bits.or / Bits.xor / Bits.not are Int -> Int, and Bits.shiftLeft / Bits.shiftRight / Bits.low return Result<Int, String> (plain Int when the count is a non-negative literal). `Bits` is a namespace, not a type — its arguments and results are ordinary mathematical Int values",
+                "Bit-level operations live in the `Bits` namespace: Bits.and / Bits.or / Bits.xor / Bits.not are Int -> Int, and Bits.shiftLeft / Bits.shiftRight / Bits.low / Bits.popCount return Result<Int, String> (plain Int when the count is a non-negative literal). `Bits` is a namespace, not a type — its arguments and results are ordinary mathematical Int values",
             )
         } else if body.contains("Int.mod") {
             Some(

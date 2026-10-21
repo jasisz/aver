@@ -9,7 +9,7 @@ use crate::ir::hir::BuiltinIntrinsic;
 use crate::ir::identity::{FnId, FnKey};
 use crate::nan_value::{NanIntExt, NanValue};
 use crate::vm::opcode::{
-    BITS_LOW, BITS_SHIFT_LEFT, BITS_SHIFT_RIGHT, BRANCH_PATH_CHILD_LITERAL,
+    BITS_LOW, BITS_POP_COUNT, BITS_SHIFT_LEFT, BITS_SHIFT_RIGHT, BRANCH_PATH_CHILD_LITERAL,
     BRANCH_PATH_PARSE_LITERAL, BUFFER_APPEND_SEP_UNLESS_FIRST, BUFFER_APPEND_STR, BUFFER_FINALIZE,
     BUFFER_NEW, BYTE_BUILDER_FINALIZE, BYTE_BUILDER_NEW, BYTE_BUILDER_PUSH, INT_DIV_EUCLID,
     INT_MOD_EUCLID, LIST_BUILDER_FINALIZE, LIST_BUILDER_NEW, LIST_BUILDER_PUSH, RESULT_PROVEN,
@@ -41,6 +41,7 @@ pub(super) fn buffer_intrinsic_opcode(intrinsic: BuiltinIntrinsic) -> Option<(u8
         BuiltinIntrinsic::BitsShiftLeft => Some((BITS_SHIFT_LEFT, 2)),
         BuiltinIntrinsic::BitsShiftRight => Some((BITS_SHIFT_RIGHT, 2)),
         BuiltinIntrinsic::BitsLow => Some((BITS_LOW, 2)),
+        BuiltinIntrinsic::BitsPopCount => Some((BITS_POP_COUNT, 2)),
         BuiltinIntrinsic::VectorNew => Some((VECTOR_NEW_LITERAL, 2)),
         BuiltinIntrinsic::BranchPathChild => Some((BRANCH_PATH_CHILD_LITERAL, 2)),
         BuiltinIntrinsic::BranchPathParse => Some((BRANCH_PATH_PARSE_LITERAL, 1)),

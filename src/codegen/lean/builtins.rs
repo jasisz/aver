@@ -38,6 +38,14 @@ fn bits_low(a: &[String]) -> String {
     )
 }
 
+fn bits_pop_count(a: &[String]) -> String {
+    format!(
+        "(if {n} < 0 then Except.error \"negative bit width\" else Except.ok (AverBitCount.popCount {x} {n}) : Except String Int)",
+        x = p(&a[0]),
+        n = p(&a[1])
+    )
+}
+
 fn vector_new(a: &[String]) -> String {
     let limit = aver_rt::MAX_MATERIALIZED_VECTOR_ELEMENTS;
     let error = aver_rt::vector_size_error_message();
@@ -145,7 +153,7 @@ pub fn emit_builtin_call(
         BitsOr => format!("AverBits.or {} {}", p(&a[0]), p(&a[1])),
         BitsXor => format!("AverBits.xor {} {}", p(&a[0]), p(&a[1])),
         BitsNot => format!("AverBits.not {}", p(&a[0])),
-        // The three count-taking operations are partial below zero. GUARD
+        // The four count-taking operations are partial below zero. GUARD
         // the count so the `.error` arm is reachable — the same shape
         // `Int.div` / `Int.mod` use for a zero divisor, and for the same
         // reason: an unconditional `Except.ok` makes a `match` on the error
@@ -159,6 +167,7 @@ pub fn emit_builtin_call(
         ),
         BitsShiftRight => bits_shift_right(&a),
         BitsLow => bits_low(&a),
+        BitsPopCount => bits_pop_count(&a),
 
         // ---- Bool ----
         BoolOr => format!("({} || {})", operand(&a[0]), operand(&a[1])),

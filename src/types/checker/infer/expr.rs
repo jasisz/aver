@@ -1062,10 +1062,11 @@ impl TypeChecker {
                             }
                             return Type::Int;
                         }
-                        // Right shift only shrinks its input, so every
-                        // syntactic non-negative literal is total. Huge
-                        // literals lower to the O(1) infinite sign tail.
-                        "Bits.shiftRight"
+                        // Right shift only shrinks its input, and a count of
+                        // ones never exceeds its width, so every syntactic
+                        // non-negative literal is total. Huge literals lower
+                        // to the O(1) infinite sign tail.
+                        "Bits.shiftRight" | "Bits.popCount"
                             if args.len() == 2
                                 && crate::ast::is_literal_nonneg_shift_right_count(&args[1]) =>
                         {

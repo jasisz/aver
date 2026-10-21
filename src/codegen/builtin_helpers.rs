@@ -100,6 +100,12 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
               namespace — never opaque, never a bit-vector.",
     },
     BuiltinHelper {
+        key: "AverBitCount",
+        body_tokens: &["AverBitCount."],
+        depends_on: &[],
+        doc: "The one bits among the low bits of an `Int`, backing `Bits.popCount`.",
+    },
+    BuiltinHelper {
         key: "AverMeasure",
         body_tokens: &["AverMeasure."],
         depends_on: &[],
@@ -261,6 +267,7 @@ mod tests {
                 "StringCase",
                 "StringCodePoint",
                 "AverBits",
+                "AverBitCount",
                 "AverMeasure",
                 "AverMap",
                 "ProofFuel",

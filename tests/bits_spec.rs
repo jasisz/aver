@@ -205,6 +205,10 @@ fn lowOfZeroWidthIsZero(x: Int) -> Bool
     ? "A zero-bit window carries no value at all."
     Bits.low(x, 0) == 0
 
+fn popCountReadsTheLowBits(x: Int) -> Bool
+    ? "popCount counts exactly the bits low keeps, never more than the width."
+    Bool.and(Bits.popCount(x, 8) == Bits.popCount(Bits.low(x, 8), 8), Bits.popCount(x, 8) <= 8)
+
 verify complementIsNegateMinusOne
     complementIsNegateMinusOne(0) => true
     complementIsNegateMinusOne(1) => true
@@ -262,6 +266,12 @@ verify lowOfZeroWidthIsZero
     lowOfZeroWidthIsZero(0) => true
     lowOfZeroWidthIsZero(123) => true
     lowOfZeroWidthIsZero(-123) => true
+
+verify popCountReadsTheLowBits
+    popCountReadsTheLowBits(0) => true
+    popCountReadsTheLowBits(257) => true
+    popCountReadsTheLowBits(-1) => true
+    popCountReadsTheLowBits(-257) => true
 "#;
     let dir = tempfile::tempdir().expect("tempdir");
     let entry = dir.path().join("laws.av");
@@ -410,14 +420,21 @@ fn hugeRightShiftDischarges(x: Int) -> Int
     ? "Right shift has no materialization ceiling; even a BigInt literal is total."
     Bits.shiftRight(x, 9223372036854775808)
 
+fn hugePopCountDischarges(x: Int) -> Int
+    ? "A count of ones never exceeds its width, so any literal width is total."
+    Bits.popCount(x, 9223372036854775808)
+
 fn main() -> Unit
     ! [Console.print]
-    Console.print("{packed(1, 0)} {zeroWidthDischarges(7)} {hugeRightShiftDischarges(-7)}")
+    Console.print("{packed(1, 0)} {zeroWidthDischarges(7)} {hugeRightShiftDischarges(-7)} {hugePopCountDischarges(-2)}")
 "#
     .replace("__LIMIT__", &aver_rt::MAX_MATERIALIZED_BITS.to_string());
     let (ok, out) = typecheck_source(&src);
     assert!(ok, "literal counts should discharge:\n{out}");
-    assert_eq!(run_source("discharged", &src), "32 0 -1");
+    assert_eq!(
+        run_source("discharged", &src),
+        "32 0 -1 9223372036854775807"
+    );
 }
 
 #[test]
@@ -521,7 +538,7 @@ fn a_user_module_named_bits_still_shadows_the_namespace() {
 /// A module named after a builtin namespace cannot RE-DEFINE one of that
 /// namespace's own method names. This is not new and not specific to `Bits`:
 /// `module Bool` has never been able to define `fn and`. It is pinned here
-/// because adding `Bits` extends that rule to seven more names, which is the
+/// because adding `Bits` extends that rule to eight more names, which is the
 /// one way this change can break existing source — and the diagnostic a user
 /// hits should be the same familiar one, not something `Bits`-specific.
 #[test]

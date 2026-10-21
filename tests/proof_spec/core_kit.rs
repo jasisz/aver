@@ -52,6 +52,18 @@ fn proof_literal_bit_masks_close_in_core() {
     );
 }
 
+/// `Bits.popCount` with a literal width: the zero-width law closes for every
+/// `Int` on the `AverBitCount` definition, and the sampled counts reduce.
+#[test]
+fn proof_bits_pop_count_closes_in_core() {
+    assert_all_universal(
+        "tests/fixtures/law_bits_pop_count.av",
+        "aver-proof-bits-pop-count",
+        "LawBitsPopCount",
+        1,
+    );
+}
+
 /// A function that matches an `Int` on literals, stated against the same set
 /// as two ranges. The sign-split arm used to commit on it without closing it
 /// (`unsolved goals`, which failed the build); the literal split closes it.

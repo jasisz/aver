@@ -6158,6 +6158,15 @@ fn emit_mir_builtin_call(
             "negative bit width",
             "bit_width_too_large_message",
         ),
+        // `pop_count` never answers `TooLarge`; the arm is only there for
+        // the shared shape.
+        "Bits.popCount" => emit_bits_counted(
+            "pop_count",
+            arg!(0),
+            arg!(1),
+            "negative bit width",
+            "bit_width_too_large_message",
+        ),
 
         // ---- Bool ----
         "Bool.or" => format!("({} || {})", arg!(0), arg!(1)),
@@ -6318,10 +6327,12 @@ fn emit_mir_intrinsic_call(
         // neither `ShiftCountError` arm is reachable and `.unwrap()` is total.
         BuiltinIntrinsic::BitsShiftLeft
         | BuiltinIntrinsic::BitsShiftRight
-        | BuiltinIntrinsic::BitsLow => {
+        | BuiltinIntrinsic::BitsLow
+        | BuiltinIntrinsic::BitsPopCount => {
             let method = match intrinsic {
                 BuiltinIntrinsic::BitsShiftLeft => "shift_left",
                 BuiltinIntrinsic::BitsShiftRight => "shift_right",
+                BuiltinIntrinsic::BitsPopCount => "pop_count",
                 _ => "low_bits",
             };
             let x = emit_mir_expr(&args[0], ctx)?;

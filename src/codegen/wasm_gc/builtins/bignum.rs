@@ -704,6 +704,15 @@ pub(super) fn emit_aint_pow2(registry: &TypeRegistry) -> Result<Function, WasmGc
     wat_helper::compile_wat_helper(&wat)
 }
 
+/// `__aint_popcount(x, w) -> i64` — `Bits.popCount`'s limb walk. One
+/// self-contained function: a Small reads its word with `i64.popcnt`, a Big
+/// walks its 32-bit limbs, taking `-x - 1` of a negative magnitude on the fly.
+pub(super) fn emit_aint_popcount(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let decls = aint_type_decls(registry)?;
+    let wat = format!(include_str!("wat/popcount.wat"), decls = decls);
+    wat_helper::compile_wat_helper(&wat)
+}
+
 /// `__aint_cmp(a, b) -> i32` (-1/0/1). Sign first, then unsigned
 /// magnitude (flipped for two negatives). Mirrors `AverInt::cmp`.
 pub(super) fn emit_aint_cmp(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
@@ -1171,6 +1180,10 @@ mod validation_guard {
             // Small/Big branches both return `(ref null $aint)`.
             ("__aint_bitwise", render_bitwise(&registry)),
             ("__aint_pow2", render_pow2(&registry)),
+            (
+                "__aint_popcount",
+                render_simple(&registry, include_str!("wat/popcount.wat")),
+            ),
             (
                 "__aint_abs",
                 render_simple(&registry, include_str!("wat/abs.wat")),

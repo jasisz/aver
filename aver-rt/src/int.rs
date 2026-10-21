@@ -511,6 +511,21 @@ impl AverInt {
         Ok(AverInt::from_bigint(r))
     }
 
+    /// The number of one bits among the lowest `width` bits — exactly the
+    /// bits `low_bits(self, width)` keeps, so a negative value counts its
+    /// infinite one tail up to the window: `pop_count(-1, 8) == 8`. Refuses
+    /// only a negative width. The count never exceeds `width`, so there is
+    /// no materialization bound and a Big width needs no allocation of its
+    /// size.
+    #[inline]
+    pub fn pop_count(&self, width: &AverInt) -> Result<AverInt, ShiftCountError> {
+        if let (Some(x), Some(w @ 0..=64)) = (self.to_i64(), width.to_i64()) {
+            let mask = u64::MAX.checked_shr(64 - w as u32).unwrap_or(0);
+            return Ok(AverInt::from_i64(((x as u64) & mask).count_ones() as i64));
+        }
+        pop_count_slow(self, width)
+    }
+
     // -- Checked conversions to machine integers --------------------------
     //
     // Every conversion to a fixed-width machine integer is checked: it
@@ -675,6 +690,45 @@ fn shift_right_slow(a: &AverInt, n: &AverInt) -> Result<AverInt, ShiftCountError
         .to_usize()
         .expect("a count below a resident integer's bit length fits usize");
     Ok(AverInt::from_bigint(a.to_bigint() >> count))
+}
+
+#[cold]
+#[inline(never)]
+fn pop_count_slow(x: &AverInt, width: &AverInt) -> Result<AverInt, ShiftCountError> {
+    if width < &AverInt::zero() {
+        return Err(ShiftCountError::Negative);
+    }
+    let value = x.to_bigint();
+    if value.sign() == Sign::Minus {
+        // The low bits of a negative `x` are the complement of the low bits
+        // of `-x - 1`, which is non-negative.
+        let zeros = low_ones(&(-value - 1u8), width);
+        return Ok(width.sub(&AverInt::from_i64(zeros as i64)));
+    }
+    Ok(AverInt::from_i64(low_ones(&value, width) as i64))
+}
+
+/// The one bits of a non-negative `value` among its lowest `width` bits.
+fn low_ones(value: &BigInt, width: &AverInt) -> u64 {
+    let magnitude = value.magnitude();
+    let Some(width) = width
+        .to_usize()
+        .filter(|width| (*width as u64) < magnitude.bits())
+    else {
+        // The window covers every set bit.
+        return magnitude.count_ones();
+    };
+    let mut digits = magnitude.iter_u64_digits();
+    let whole: u64 = digits
+        .by_ref()
+        .take(width / 64)
+        .map(|digit| u64::from(digit.count_ones()))
+        .sum();
+    let rest = width % 64;
+    let partial = digits
+        .next()
+        .map_or(0, |digit| (digit & ((1u64 << rest) - 1)).count_ones());
+    whole + u64::from(partial)
 }
 
 #[cold]
@@ -1170,9 +1224,52 @@ mod tests {
     }
 
     #[test]
+    fn pop_count_counts_the_bits_low_bits_keeps() {
+        let i = AverInt::from_i64;
+        assert_eq!(i(-1).pop_count(&i(8)).unwrap(), i(8));
+        assert_eq!(i(0b1011).pop_count(&i(3)).unwrap(), i(2));
+        assert_eq!(i(123).pop_count(&i(0)).unwrap(), i(0));
+        // A negative value's one tail is counted up to any width, Big too.
+        let huge = two_pow(200);
+        assert_eq!(i(-1).pop_count(&huge).unwrap(), huge);
+        assert_eq!(i(5).pop_count(&huge).unwrap(), i(2));
+
+        let big = two_pow(100).add(&i(5));
+        for x in [
+            -1025i64,
+            -257,
+            -3,
+            -1,
+            0,
+            1,
+            6,
+            255,
+            i64::MIN,
+            i64::MAX,
+            1 << 62,
+        ]
+        .map(AverInt::from_i64)
+        .into_iter()
+        .chain([big.clone(), big.neg(), two_pow(63), two_pow(64).neg()])
+        {
+            for w in [0usize, 1, 8, 16, 32, 63, 64, 65, 100, 101, 128, 200] {
+                let width = AverInt::from_i64(w as i64);
+                let low = x.low_bits(&width).unwrap().to_bigint();
+                let expected = AverInt::from_i64(low.magnitude().count_ones() as i64);
+                assert_eq!(x.pop_count(&width).unwrap(), expected, "popCount {x} {w}");
+            }
+        }
+    }
+
+    #[test]
     fn negative_counts_are_refused_by_every_counted_bits_operation() {
         let i = AverInt::from_i64;
-        for op in [AverInt::shift_left, AverInt::shift_right, AverInt::low_bits] {
+        for op in [
+            AverInt::shift_left,
+            AverInt::shift_right,
+            AverInt::low_bits,
+            AverInt::pop_count,
+        ] {
             assert_eq!(op(&i(42), &i(-1)), Err(ShiftCountError::Negative));
             // A huge NEGATIVE count is still `Negative`, not swallowed by
             // the representability check.

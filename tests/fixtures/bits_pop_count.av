@@ -1,0 +1,47 @@
+module PopCount
+    intent =
+        "Bits.popCount across both signs, the 64-bit seam and the width edges,"
+        "dynamic and discharged, so every backend can be held to one output."
+    effects [Console.print]
+
+fn count(x: Int, w: Int) -> String
+    ? "An undischarged width, so the Result survives to runtime."
+    match Bits.popCount(x, w)
+        Result.Ok(v) -> "{v}"
+        Result.Err(e) -> e
+
+fn dynamic(x: Int) -> String
+    ? "Every width of interest for one value."
+    "{count(x, 0)} {count(x, 1)} {count(x, 16)} {count(x, 32)} {count(x, 63)} {count(x, 64)} {count(x, 65)} {count(x, 200)}"
+
+fn literal(x: Int) -> String
+    ? "Discharged literal widths, one far past the materialization bound."
+    "{Bits.popCount(x, 0)} {Bits.popCount(x, 16)} {Bits.popCount(x, 64)} {Bits.popCount(x, 200)} {Bits.popCount(x, 100000000000000000000)}"
+
+fn main() -> Unit
+    ? "One line per value and form, then the refused and Big widths."
+    ! [Console.print]
+    big = Bits.shiftLeft(1, 100) + 5
+    Console.print(dynamic(0))
+    Console.print(literal(0))
+    Console.print(dynamic(1))
+    Console.print(literal(1))
+    Console.print(dynamic(0 - 1))
+    Console.print(literal(0 - 1))
+    Console.print(dynamic(0 - Bits.shiftLeft(1, 63)))
+    Console.print(literal(0 - Bits.shiftLeft(1, 63)))
+    Console.print(dynamic(Bits.shiftLeft(1, 63) - 1))
+    Console.print(literal(Bits.shiftLeft(1, 63) - 1))
+    Console.print(dynamic(Bits.shiftLeft(1, 62) - 1))
+    Console.print(literal(Bits.shiftLeft(1, 62) - 1))
+    Console.print(dynamic(Bits.shiftLeft(1, 62) + 1))
+    Console.print(literal(Bits.shiftLeft(1, 62) + 1))
+    Console.print(dynamic(Bits.shiftLeft(1, 63)))
+    Console.print(literal(Bits.shiftLeft(1, 63)))
+    Console.print(dynamic(big))
+    Console.print(literal(big))
+    Console.print(dynamic(0 - big))
+    Console.print(literal(0 - big))
+    Console.print(dynamic(0 - Bits.shiftLeft(1, 64)))
+    Console.print(literal(0 - Bits.shiftLeft(1, 64)))
+    Console.print("{count(5, 0 - 1)} {count(0 - 5, 0 - big)} {count(0 - 1, Bits.shiftLeft(1, 70))} {count(big, Bits.shiftLeft(1, 70))} {count(0 - big, Bits.shiftLeft(1, 70))}")
