@@ -82,192 +82,207 @@ pub fn empty() -> TyEnv {
 /// A type as Aver spells it; a hole is _.
 pub fn show(t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ty) -> AverStr {
     crate::proof_kernel::cancel_checkpoint();
-    match t {
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyInt => AverStr::from("Int"),
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyBool => AverStr::from("Bool"),
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyStr => AverStr::from("String"),
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyFloat => AverStr::from("Float"),
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyUnit => AverStr::from("Unit"),
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyList(__a_fields) => {
-            let a = __a_fields.0.clone();
-            aver_rt::AverStr::from({
-                let mut __b = {
+    {
+        let __t = t;
+        match __t.view() {
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyInt => {
+                AverStr::from("Int")
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyBool => {
+                AverStr::from("Bool")
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyStr => {
+                AverStr::from("String")
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyFloat => {
+                AverStr::from("Float")
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyUnit => {
+                AverStr::from("Unit")
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyList(__a_fields) => {
+                let a = __a_fields.0.clone();
+                aver_rt::AverStr::from({
                     let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(
-                            (aver_rt::AverInt::from_i64(22)).to_usize().unwrap_or(0),
-                        );
-                        __b.push_str(&AverStr::from("List<"));
+                        let mut __b = {
+                            let mut __b = aver_rt::Buffer::with_capacity(
+                                (aver_rt::AverInt::from_i64(22)).to_usize().unwrap_or(0),
+                            );
+                            __b.push_str(&AverStr::from("List<"));
+                            __b
+                        };
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                            &(crate::proof_kernel::aver_generated::kernel::types::show(&a)),
+                        )));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                        &(crate::proof_kernel::aver_generated::kernel::types::show(&a)),
-                    )));
+                    __b.push_str(&AverStr::from(">"));
                     __b
-                };
-                __b.push_str(&AverStr::from(">"));
-                __b
-            })
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyOption(__a_fields) => {
-            let a = __a_fields.0.clone();
-            aver_rt::AverStr::from({
-                let mut __b = {
+                })
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyOption(__a_fields) => {
+                let a = __a_fields.0.clone();
+                aver_rt::AverStr::from({
                     let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(
-                            (aver_rt::AverInt::from_i64(24)).to_usize().unwrap_or(0),
-                        );
-                        __b.push_str(&AverStr::from("Option<"));
+                        let mut __b = {
+                            let mut __b = aver_rt::Buffer::with_capacity(
+                                (aver_rt::AverInt::from_i64(24)).to_usize().unwrap_or(0),
+                            );
+                            __b.push_str(&AverStr::from("Option<"));
+                            __b
+                        };
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                            &(crate::proof_kernel::aver_generated::kernel::types::show(&a)),
+                        )));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                        &(crate::proof_kernel::aver_generated::kernel::types::show(&a)),
-                    )));
+                    __b.push_str(&AverStr::from(">"));
                     __b
-                };
-                __b.push_str(&AverStr::from(">"));
-                __b
-            })
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyResult(__a_fields) => {
-            let a = __a_fields.0.clone();
-            let b = __a_fields.1.clone();
-            aver_rt::AverStr::from({
-                let mut __b = {
+                })
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyResult(__a_fields) => {
+                let a = __a_fields.0.clone();
+                let b = __a_fields.1.clone();
+                aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
                             let mut __b = {
-                                let mut __b = aver_rt::Buffer::with_capacity(
-                                    (aver_rt::AverInt::from_i64(42)).to_usize().unwrap_or(0),
-                                );
-                                __b.push_str(&AverStr::from("Result<"));
+                                let mut __b = {
+                                    let mut __b = aver_rt::Buffer::with_capacity(
+                                        (aver_rt::AverInt::from_i64(42)).to_usize().unwrap_or(0),
+                                    );
+                                    __b.push_str(&AverStr::from("Result<"));
+                                    __b
+                                };
+                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                    &(crate::proof_kernel::aver_generated::kernel::types::show(&a)),
+                                )));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                &(crate::proof_kernel::aver_generated::kernel::types::show(&a)),
-                            )));
+                            __b.push_str(&AverStr::from(", "));
                             __b
                         };
-                        __b.push_str(&AverStr::from(", "));
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                            &(crate::proof_kernel::aver_generated::kernel::types::show(&b)),
+                        )));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                        &(crate::proof_kernel::aver_generated::kernel::types::show(&b)),
-                    )));
+                    __b.push_str(&AverStr::from(">"));
                     __b
-                };
-                __b.push_str(&AverStr::from(">"));
-                __b
-            })
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyMap(__k_fields) => {
-            let k = __k_fields.0.clone();
-            let v = __k_fields.1.clone();
-            aver_rt::AverStr::from({
-                let mut __b = {
+                })
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyMap(__k_fields) => {
+                let k = __k_fields.0.clone();
+                let v = __k_fields.1.clone();
+                aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
                             let mut __b = {
-                                let mut __b = aver_rt::Buffer::with_capacity(
-                                    (aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0),
-                                );
-                                __b.push_str(&AverStr::from("Map<"));
+                                let mut __b = {
+                                    let mut __b = aver_rt::Buffer::with_capacity(
+                                        (aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0),
+                                    );
+                                    __b.push_str(&AverStr::from("Map<"));
+                                    __b
+                                };
+                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                    &(crate::proof_kernel::aver_generated::kernel::types::show(&k)),
+                                )));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                &(crate::proof_kernel::aver_generated::kernel::types::show(&k)),
-                            )));
+                            __b.push_str(&AverStr::from(", "));
                             __b
                         };
-                        __b.push_str(&AverStr::from(", "));
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                            &(crate::proof_kernel::aver_generated::kernel::types::show(&v)),
+                        )));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                        &(crate::proof_kernel::aver_generated::kernel::types::show(&v)),
-                    )));
+                    __b.push_str(&AverStr::from(">"));
                     __b
-                };
-                __b.push_str(&AverStr::from(">"));
-                __b
-            })
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyVector(__a_fields) => {
-            let a = __a_fields.0.clone();
-            aver_rt::AverStr::from({
-                let mut __b = {
+                })
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyVector(__a_fields) => {
+                let a = __a_fields.0.clone();
+                aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = {
+                            let mut __b = aver_rt::Buffer::with_capacity(
+                                (aver_rt::AverInt::from_i64(24)).to_usize().unwrap_or(0),
+                            );
+                            __b.push_str(&AverStr::from("Vector<"));
+                            __b
+                        };
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                            &(crate::proof_kernel::aver_generated::kernel::types::show(&a)),
+                        )));
+                        __b
+                    };
+                    __b.push_str(&AverStr::from(">"));
+                    __b
+                })
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyTuple(__xs_fields) => {
+                let xs = __xs_fields.0.clone();
+                aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = {
+                            let mut __b = aver_rt::Buffer::with_capacity(
+                                (aver_rt::AverInt::from_i64(18)).to_usize().unwrap_or(0),
+                            );
+                            __b.push_str(&AverStr::from("("));
+                            __b
+                        };
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                            &((aver_rt::string_join(
+                                &crate::proof_kernel::aver_generated::kernel::types::showAll(&xs),
+                                &AverStr::from(", "),
+                            ))
+                            .into_aver()),
+                        )));
+                        __b
+                    };
+                    __b.push_str(&AverStr::from(")"));
+                    __b
+                })
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyNamed(__n_fields) => {
+                let n = __n_fields.0.clone();
+                n
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyAny => {
+                AverStr::from("_")
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyVar(__n_fields) => {
+                let n = __n_fields.0.clone();
+                let eq = __n_fields.1.clone();
+                aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = aver_rt::Buffer::with_capacity(
-                            (aver_rt::AverInt::from_i64(24)).to_usize().unwrap_or(0),
+                            (aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&AverStr::from("Vector<"));
+                        __b.push_str(&AverStr::from("?"));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                        &(crate::proof_kernel::aver_generated::kernel::types::show(&a)),
-                    )));
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
                     __b
-                };
-                __b.push_str(&AverStr::from(">"));
-                __b
-            })
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyTuple(__xs_fields) => {
-            let xs = __xs_fields.0.clone();
-            aver_rt::AverStr::from({
-                let mut __b = {
+                })
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyRigid(__n_fields) => {
+                let n = __n_fields.0.clone();
+                let eq = __n_fields.1.clone();
+                aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = aver_rt::Buffer::with_capacity(
-                            (aver_rt::AverInt::from_i64(18)).to_usize().unwrap_or(0),
+                            (aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&AverStr::from("("));
+                        __b.push_str(&AverStr::from("?"));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                        &((aver_rt::string_join(
-                            &crate::proof_kernel::aver_generated::kernel::types::showAll(&xs),
-                            &AverStr::from(", "),
-                        ))
-                        .into_aver()),
-                    )));
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
                     __b
-                };
-                __b.push_str(&AverStr::from(")"));
-                __b
-            })
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(__n_fields) => {
-            let n = __n_fields.0.clone();
-            n
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny => AverStr::from("_"),
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyVar(__n_fields) => {
-            let n = __n_fields.0.clone();
-            let eq = __n_fields.1.clone();
-            aver_rt::AverStr::from({
-                let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity(
-                        (aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0),
-                    );
-                    __b.push_str(&AverStr::from("?"));
-                    __b
-                };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
-                __b
-            })
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyRigid(__n_fields) => {
-            let n = __n_fields.0.clone();
-            let eq = __n_fields.1.clone();
-            aver_rt::AverStr::from({
-                let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity(
-                        (aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0),
-                    );
-                    __b.push_str(&AverStr::from("?"));
-                    __b
-                };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
-                __b
-            })
+                })
+            }
         }
     }
 }
@@ -316,86 +331,89 @@ pub fn constType(
 /// What a type is made of: its outermost shape, or the whole type when it has no parts. A declared name, a type variable and an unknown type each have a head no other kind of type has, whatever their name: _ is the head of a hole alone.
 pub fn headOf(t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ty) -> AverStr {
     crate::proof_kernel::cancel_checkpoint();
-    match t {
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyList(__a_fields) => {
-            let a = __a_fields.0.clone();
-            AverStr::from("List")
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyOption(__a_fields) => {
-            let a = __a_fields.0.clone();
-            AverStr::from("Option")
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyVector(__a_fields) => {
-            let a = __a_fields.0.clone();
-            AverStr::from("Vector")
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyResult(__a_fields) => {
-            let a = __a_fields.0.clone();
-            let b = __a_fields.1.clone();
-            AverStr::from("Result")
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyMap(__a_fields) => {
-            let a = __a_fields.0.clone();
-            let b = __a_fields.1.clone();
-            AverStr::from("Map")
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyTuple(__xs_fields) => {
-            let xs = __xs_fields.0.clone();
-            AverStr::from("tuple")
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(__n_fields) => {
-            let n = __n_fields.0.clone();
-            aver_rt::AverStr::from({
-                let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity(
-                        (aver_rt::AverInt::from_i64(22)).to_usize().unwrap_or(0),
-                    );
-                    __b.push_str(&AverStr::from("named "));
-                    __b
-                };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
-                __b
-            })
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyVar(__n_fields) => {
-            let n = __n_fields.0.clone();
-            let eq = __n_fields.1.clone();
-            aver_rt::AverStr::from({
-                let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity(
-                        (aver_rt::AverInt::from_i64(20)).to_usize().unwrap_or(0),
-                    );
-                    __b.push_str(&AverStr::from("var "));
-                    __b
-                };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
-                __b
-            })
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyRigid(__n_fields) => {
-            let n = __n_fields.0.clone();
-            let eq = __n_fields.1.clone();
-            aver_rt::AverStr::from({
-                let mut __b = {
+    {
+        let __t = t;
+        match __t.view() {
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyList(__a_fields) => {
+                let a = __a_fields.0.clone();
+                AverStr::from("List")
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyOption(__a_fields) => {
+                let a = __a_fields.0.clone();
+                AverStr::from("Option")
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyVector(__a_fields) => {
+                let a = __a_fields.0.clone();
+                AverStr::from("Vector")
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyResult(__a_fields) => {
+                let a = __a_fields.0.clone();
+                let b = __a_fields.1.clone();
+                AverStr::from("Result")
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyMap(__a_fields) => {
+                let a = __a_fields.0.clone();
+                let b = __a_fields.1.clone();
+                AverStr::from("Map")
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyTuple(__xs_fields) => {
+                let xs = __xs_fields.0.clone();
+                AverStr::from("tuple")
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyNamed(__n_fields) => {
+                let n = __n_fields.0.clone();
+                aver_rt::AverStr::from({
                     let mut __b = {
-                        let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(41)).to_usize().unwrap_or(0),
-                            );
-                            __b.push_str(&AverStr::from("unknown "));
-                            __b
-                        };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(eq))));
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(22)).to_usize().unwrap_or(0),
+                        );
+                        __b.push_str(&AverStr::from("named "));
                         __b
                     };
-                    __b.push_str(&AverStr::from(" "));
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
                     __b
-                };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
-                __b
-            })
+                })
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyVar(__n_fields) => {
+                let n = __n_fields.0.clone();
+                let eq = __n_fields.1.clone();
+                aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(20)).to_usize().unwrap_or(0),
+                        );
+                        __b.push_str(&AverStr::from("var "));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                    __b
+                })
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyRigid(__n_fields) => {
+                let n = __n_fields.0.clone();
+                let eq = __n_fields.1.clone();
+                aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = {
+                            let mut __b = {
+                                let mut __b = aver_rt::Buffer::with_capacity(
+                                    (aver_rt::AverInt::from_i64(41)).to_usize().unwrap_or(0),
+                                );
+                                __b.push_str(&AverStr::from("unknown "));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(eq))));
+                            __b
+                        };
+                        __b.push_str(&AverStr::from(" "));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                    __b
+                })
+            }
+            _ => crate::proof_kernel::aver_generated::kernel::types::show(t),
         }
-        _ => crate::proof_kernel::aver_generated::kernel::types::show(t),
     }
 }
 
@@ -404,34 +422,37 @@ pub fn partsOf(
     t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ty,
 ) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Ty> {
     crate::proof_kernel::cancel_checkpoint();
-    match t {
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyList(__a_fields) => {
-            let a = __a_fields.0.clone();
-            aver_rt::AverList::from_vec(vec![a])
+    {
+        let __t = t;
+        match __t.view() {
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyList(__a_fields) => {
+                let a = __a_fields.0.clone();
+                aver_rt::AverList::from_vec(vec![a])
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyOption(__a_fields) => {
+                let a = __a_fields.0.clone();
+                aver_rt::AverList::from_vec(vec![a])
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyVector(__a_fields) => {
+                let a = __a_fields.0.clone();
+                aver_rt::AverList::from_vec(vec![a])
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyResult(__a_fields) => {
+                let a = __a_fields.0.clone();
+                let b = __a_fields.1.clone();
+                aver_rt::AverList::from_vec(vec![a, b])
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyMap(__a_fields) => {
+                let a = __a_fields.0.clone();
+                let b = __a_fields.1.clone();
+                aver_rt::AverList::from_vec(vec![a, b])
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyTuple(__xs_fields) => {
+                let xs = __xs_fields.0.clone();
+                xs
+            }
+            _ => aver_rt::AverList::empty(),
         }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyOption(__a_fields) => {
-            let a = __a_fields.0.clone();
-            aver_rt::AverList::from_vec(vec![a])
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyVector(__a_fields) => {
-            let a = __a_fields.0.clone();
-            aver_rt::AverList::from_vec(vec![a])
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyResult(__a_fields) => {
-            let a = __a_fields.0.clone();
-            let b = __a_fields.1.clone();
-            aver_rt::AverList::from_vec(vec![a, b])
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyMap(__a_fields) => {
-            let a = __a_fields.0.clone();
-            let b = __a_fields.1.clone();
-            aver_rt::AverList::from_vec(vec![a, b])
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyTuple(__xs_fields) => {
-            let xs = __xs_fields.0.clone();
-            xs
-        }
-        _ => aver_rt::AverList::empty(),
     }
 }
 
@@ -441,79 +462,82 @@ pub fn rebuild(
     parts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Ty>,
 ) -> crate::proof_kernel::aver_generated::kernel::term::Ty {
     crate::proof_kernel::cancel_checkpoint();
-    match &t {
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyList(__a_fields) => {
-            let a = __a_fields.0.clone();
-            crate::proof_kernel::aver_generated::kernel::term::Ty::TyList(aver_rt::Shared::new(
-                crate::proof_kernel::aver_generated::kernel::term::Ty__TyList(
-                    crate::proof_kernel::aver_generated::kernel::types::nth(
-                        parts.clone(),
-                        aver_rt::AverInt::from_i64(0),
+    {
+        let __t = &t;
+        match __t.view() {
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyList(__a_fields) => {
+                let a = __a_fields.0.clone();
+                crate::proof_kernel::aver_generated::kernel::term::Ty::TyList(
+                    crate::proof_kernel::aver_generated::kernel::term::Ty__TyList(
+                        crate::proof_kernel::aver_generated::kernel::types::nth(
+                            parts.clone(),
+                            aver_rt::AverInt::from_i64(0),
+                        ),
                     ),
-                ),
-            ))
+                )
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyOption(__a_fields) => {
+                let a = __a_fields.0.clone();
+                crate::proof_kernel::aver_generated::kernel::term::Ty::TyOption(
+                    crate::proof_kernel::aver_generated::kernel::term::Ty__TyOption(
+                        crate::proof_kernel::aver_generated::kernel::types::nth(
+                            parts.clone(),
+                            aver_rt::AverInt::from_i64(0),
+                        ),
+                    ),
+                )
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyVector(__a_fields) => {
+                let a = __a_fields.0.clone();
+                crate::proof_kernel::aver_generated::kernel::term::Ty::TyVector(
+                    crate::proof_kernel::aver_generated::kernel::term::Ty__TyVector(
+                        crate::proof_kernel::aver_generated::kernel::types::nth(
+                            parts.clone(),
+                            aver_rt::AverInt::from_i64(0),
+                        ),
+                    ),
+                )
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyResult(__a_fields) => {
+                let a = __a_fields.0.clone();
+                let b = __a_fields.1.clone();
+                crate::proof_kernel::aver_generated::kernel::term::Ty::TyResult(
+                    crate::proof_kernel::aver_generated::kernel::term::Ty__TyResult(
+                        crate::proof_kernel::aver_generated::kernel::types::nth(
+                            parts.clone(),
+                            aver_rt::AverInt::from_i64(0),
+                        ),
+                        crate::proof_kernel::aver_generated::kernel::types::nth(
+                            parts.clone(),
+                            aver_rt::AverInt::from_i64(1),
+                        ),
+                    ),
+                )
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyMap(__a_fields) => {
+                let a = __a_fields.0.clone();
+                let b = __a_fields.1.clone();
+                crate::proof_kernel::aver_generated::kernel::term::Ty::TyMap(
+                    crate::proof_kernel::aver_generated::kernel::term::Ty__TyMap(
+                        crate::proof_kernel::aver_generated::kernel::types::nth(
+                            parts.clone(),
+                            aver_rt::AverInt::from_i64(0),
+                        ),
+                        crate::proof_kernel::aver_generated::kernel::types::nth(
+                            parts.clone(),
+                            aver_rt::AverInt::from_i64(1),
+                        ),
+                    ),
+                )
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyTuple(__xs_fields) => {
+                let xs = __xs_fields.0.clone();
+                crate::proof_kernel::aver_generated::kernel::term::Ty::TyTuple(
+                    crate::proof_kernel::aver_generated::kernel::term::Ty__TyTuple(parts.clone()),
+                )
+            }
+            _ => t,
         }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyOption(__a_fields) => {
-            let a = __a_fields.0.clone();
-            crate::proof_kernel::aver_generated::kernel::term::Ty::TyOption(aver_rt::Shared::new(
-                crate::proof_kernel::aver_generated::kernel::term::Ty__TyOption(
-                    crate::proof_kernel::aver_generated::kernel::types::nth(
-                        parts.clone(),
-                        aver_rt::AverInt::from_i64(0),
-                    ),
-                ),
-            ))
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyVector(__a_fields) => {
-            let a = __a_fields.0.clone();
-            crate::proof_kernel::aver_generated::kernel::term::Ty::TyVector(aver_rt::Shared::new(
-                crate::proof_kernel::aver_generated::kernel::term::Ty__TyVector(
-                    crate::proof_kernel::aver_generated::kernel::types::nth(
-                        parts.clone(),
-                        aver_rt::AverInt::from_i64(0),
-                    ),
-                ),
-            ))
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyResult(__a_fields) => {
-            let a = __a_fields.0.clone();
-            let b = __a_fields.1.clone();
-            crate::proof_kernel::aver_generated::kernel::term::Ty::TyResult(aver_rt::Shared::new(
-                crate::proof_kernel::aver_generated::kernel::term::Ty__TyResult(
-                    crate::proof_kernel::aver_generated::kernel::types::nth(
-                        parts.clone(),
-                        aver_rt::AverInt::from_i64(0),
-                    ),
-                    crate::proof_kernel::aver_generated::kernel::types::nth(
-                        parts.clone(),
-                        aver_rt::AverInt::from_i64(1),
-                    ),
-                ),
-            ))
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyMap(__a_fields) => {
-            let a = __a_fields.0.clone();
-            let b = __a_fields.1.clone();
-            crate::proof_kernel::aver_generated::kernel::term::Ty::TyMap(aver_rt::Shared::new(
-                crate::proof_kernel::aver_generated::kernel::term::Ty__TyMap(
-                    crate::proof_kernel::aver_generated::kernel::types::nth(
-                        parts.clone(),
-                        aver_rt::AverInt::from_i64(0),
-                    ),
-                    crate::proof_kernel::aver_generated::kernel::types::nth(
-                        parts.clone(),
-                        aver_rt::AverInt::from_i64(1),
-                    ),
-                ),
-            ))
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyTuple(__xs_fields) => {
-            let xs = __xs_fields.0.clone();
-            crate::proof_kernel::aver_generated::kernel::term::Ty::TyTuple(aver_rt::Shared::new(
-                crate::proof_kernel::aver_generated::kernel::term::Ty__TyTuple(parts.clone()),
-            ))
-        }
-        _ => t,
     }
 }
 
@@ -658,34 +682,40 @@ pub fn fits(
 /// Whether == between two values of the type is equality. Data, not a rule of the kernel: a declared type has one when its declaration in the script says so, any other type by its shape in Kernel.Builtins and then part by part; a type variable when it asks for one.
 pub fn hasEq(t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ty, e @ _: &TyEnv) -> bool {
     crate::proof_kernel::cancel_checkpoint();
-    match t {
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(__n_fields) => {
-            let n = __n_fields.0.clone();
-            crate::proof_kernel::aver_generated::kernel::types::declaredEq(
-                &crate::proof_kernel::aver_generated::kernel::types::sumNamed(
-                    n.clone(),
-                    e.sums.clone(),
-                ),
-                &crate::proof_kernel::aver_generated::kernel::types::recNamed(n, e.recs.clone()),
-            )
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyVar(__n_fields) => {
-            let n = __n_fields.0.clone();
-            let eq = __n_fields.1.clone();
-            eq
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyRigid(__n_fields) => {
-            let n = __n_fields.0.clone();
-            let eq = __n_fields.1.clone();
-            eq
-        }
-        _ => {
-            (crate::proof_kernel::aver_generated::kernel::builtins::equality(
-                crate::proof_kernel::aver_generated::kernel::types::headOf(t),
-            ) && crate::proof_kernel::aver_generated::kernel::types::allEq(
-                &crate::proof_kernel::aver_generated::kernel::types::partsOf(t),
-                e,
-            ))
+    {
+        let __t = t;
+        match __t.view() {
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyNamed(__n_fields) => {
+                let n = __n_fields.0.clone();
+                crate::proof_kernel::aver_generated::kernel::types::declaredEq(
+                    &crate::proof_kernel::aver_generated::kernel::types::sumNamed(
+                        n.clone(),
+                        e.sums.clone(),
+                    ),
+                    &crate::proof_kernel::aver_generated::kernel::types::recNamed(
+                        n,
+                        e.recs.clone(),
+                    ),
+                )
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyVar(__n_fields) => {
+                let n = __n_fields.0.clone();
+                let eq = __n_fields.1.clone();
+                eq
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyRigid(__n_fields) => {
+                let n = __n_fields.0.clone();
+                let eq = __n_fields.1.clone();
+                eq
+            }
+            _ => {
+                (crate::proof_kernel::aver_generated::kernel::builtins::equality(
+                    crate::proof_kernel::aver_generated::kernel::types::headOf(t),
+                ) && crate::proof_kernel::aver_generated::kernel::types::allEq(
+                    &crate::proof_kernel::aver_generated::kernel::types::partsOf(t),
+                    e,
+                ))
+            }
         }
     }
 }
@@ -695,19 +725,22 @@ pub fn rigid(
     mut t @ _: crate::proof_kernel::aver_generated::kernel::term::Ty,
 ) -> crate::proof_kernel::aver_generated::kernel::term::Ty {
     crate::proof_kernel::cancel_checkpoint();
-    match &t {
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyVar(__n_fields) => {
-            let n = __n_fields.0.clone();
-            let eq = __n_fields.1.clone();
-            crate::proof_kernel::aver_generated::kernel::term::Ty::TyRigid(aver_rt::Shared::new(
-                crate::proof_kernel::aver_generated::kernel::term::Ty__TyRigid(n, eq),
-            ))
-        }
-        _ => {
-            let __arg3 @ _ = crate::proof_kernel::aver_generated::kernel::types::rigidAll(
-                &crate::proof_kernel::aver_generated::kernel::types::partsOf(&t),
-            );
-            crate::proof_kernel::aver_generated::kernel::types::rebuild(t, &__arg3)
+    {
+        let __t = &t;
+        match __t.view() {
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyVar(__n_fields) => {
+                let n = __n_fields.0.clone();
+                let eq = __n_fields.1.clone();
+                crate::proof_kernel::aver_generated::kernel::term::Ty::TyRigid(
+                    crate::proof_kernel::aver_generated::kernel::term::Ty__TyRigid(n, eq),
+                )
+            }
+            _ => {
+                let __arg3 @ _ = crate::proof_kernel::aver_generated::kernel::types::rigidAll(
+                    &crate::proof_kernel::aver_generated::kernel::types::partsOf(&t),
+                );
+                crate::proof_kernel::aver_generated::kernel::types::rebuild(t, &__arg3)
+            }
         }
     }
 }
@@ -877,14 +910,10 @@ pub fn ctorFields(
                     aver_rt::AverInt::from_i64(0),
                 ),
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyList(
-                    aver_rt::Shared::new(
-                        crate::proof_kernel::aver_generated::kernel::term::Ty__TyList(
-                            crate::proof_kernel::aver_generated::kernel::types::nth(
-                                crate::proof_kernel::aver_generated::kernel::types::partsOf(
-                                    subject,
-                                ),
-                                aver_rt::AverInt::from_i64(0),
-                            ),
+                    crate::proof_kernel::aver_generated::kernel::term::Ty__TyList(
+                        crate::proof_kernel::aver_generated::kernel::types::nth(
+                            crate::proof_kernel::aver_generated::kernel::types::partsOf(subject),
+                            aver_rt::AverInt::from_i64(0),
                         ),
                     ),
                 ),
@@ -965,12 +994,15 @@ pub fn elemOf(
     t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ty,
 ) -> Option<crate::proof_kernel::aver_generated::kernel::term::Ty> {
     crate::proof_kernel::cancel_checkpoint();
-    match t {
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyList(__a_fields) => {
-            let a = __a_fields.0.clone();
-            Some(a)
+    {
+        let __t = t;
+        match __t.view() {
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyList(__a_fields) => {
+                let a = __a_fields.0.clone();
+                Some(a)
+            }
+            _ => None,
         }
-        _ => None,
     }
 }
 
@@ -980,36 +1012,44 @@ pub fn ctorsOf(
     e @ _: &TyEnv,
 ) -> aver_rt::AverList<AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    match t {
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyList(__a_fields) => {
-            let a = __a_fields.0.clone();
-            aver_rt::AverList::from_vec(vec![AverStr::from("nil"), AverStr::from("cons")])
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyOption(__a_fields) => {
-            let a = __a_fields.0.clone();
-            aver_rt::AverList::from_vec(vec![
-                AverStr::from("Option.None"),
-                AverStr::from("Option.Some"),
-            ])
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyResult(__a_fields) => {
-            let a = __a_fields.0.clone();
-            let b = __a_fields.1.clone();
-            aver_rt::AverList::from_vec(vec![
-                AverStr::from("Result.Err"),
-                AverStr::from("Result.Ok"),
-            ])
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(__n_fields) => {
-            let n = __n_fields.0.clone();
-            match crate::proof_kernel::aver_generated::kernel::types::sumNamed(n, e.sums.clone()) {
-                Some(s @ _) => {
-                    crate::proof_kernel::aver_generated::kernel::proof::variantNames(&s.variants)
-                }
-                None => aver_rt::AverList::empty(),
+    {
+        let __t = t;
+        match __t.view() {
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyList(__a_fields) => {
+                let a = __a_fields.0.clone();
+                aver_rt::AverList::from_vec(vec![AverStr::from("nil"), AverStr::from("cons")])
             }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyOption(__a_fields) => {
+                let a = __a_fields.0.clone();
+                aver_rt::AverList::from_vec(vec![
+                    AverStr::from("Option.None"),
+                    AverStr::from("Option.Some"),
+                ])
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyResult(__a_fields) => {
+                let a = __a_fields.0.clone();
+                let b = __a_fields.1.clone();
+                aver_rt::AverList::from_vec(vec![
+                    AverStr::from("Result.Err"),
+                    AverStr::from("Result.Ok"),
+                ])
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyNamed(__n_fields) => {
+                let n = __n_fields.0.clone();
+                match crate::proof_kernel::aver_generated::kernel::types::sumNamed(
+                    n,
+                    e.sums.clone(),
+                ) {
+                    Some(s @ _) => {
+                        crate::proof_kernel::aver_generated::kernel::proof::variantNames(
+                            &s.variants,
+                        )
+                    }
+                    None => aver_rt::AverList::empty(),
+                }
+            }
+            _ => aver_rt::AverList::empty(),
         }
-        _ => aver_rt::AverList::empty(),
     }
 }
 
@@ -1019,110 +1059,114 @@ pub fn typeOf(
     mut e @ _: TyEnv,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Ty, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    match t {
-        crate::proof_kernel::aver_generated::kernel::term::Term::TInt(__n_fields) => {
-            let n = __n_fields.0.clone();
-            Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyInt)
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Term::TBool(__b_fields) => {
-            let b = __b_fields.0.clone();
-            Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyBool)
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Term::TStr(__s_fields) => {
-            let s = __s_fields.0.clone();
-            Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyStr)
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Term::TUnit => {
-            Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyUnit)
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Term::TVar(__n_fields) => {
-            let n = __n_fields.0.clone();
-            crate::proof_kernel::aver_generated::kernel::types::varType(n, &e)
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Term::THole => {
-            Err(AverStr::from("the hole has no type"))
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Term::TGet(__r_fields) => {
-            let r = __r_fields.0.clone();
-            let f = __r_fields.1.clone();
-            crate::proof_kernel::aver_generated::kernel::types::fieldType(
-                &crate::proof_kernel::aver_generated::kernel::types::typeOf(&r, e.clone())?,
-                f,
-                &e,
-            )
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Term::TCall(__f_fields) => {
-            let f = __f_fields.0.clone();
-            let xs = __f_fields.1.clone();
-            crate::proof_kernel::aver_generated::kernel::types::callType(
-                f,
-                &crate::proof_kernel::aver_generated::kernel::types::typesOf(&xs, &e)?,
-                e,
-            )
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Term::TBi(__n_fields) => {
-            let n = __n_fields.0.clone();
-            let xs = __n_fields.1.clone();
-            crate::proof_kernel::aver_generated::kernel::types::builtinType(
-                n,
-                &crate::proof_kernel::aver_generated::kernel::types::typesOf(&xs, &e)?,
-            )
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Term::TOp(__o_fields) => {
-            let o = __o_fields.0.clone();
-            let a = __o_fields.1.clone();
-            let b = __o_fields.2.clone();
-            crate::proof_kernel::aver_generated::kernel::types::opType(
-                o,
-                crate::proof_kernel::aver_generated::kernel::types::typeOf(&a, e.clone())?,
-                crate::proof_kernel::aver_generated::kernel::types::typeOf(&b, e)?,
-            )
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Term::TNeg(__a_fields) => {
-            let a = __a_fields.0.clone();
-            crate::proof_kernel::aver_generated::kernel::types::must(
-                &crate::proof_kernel::aver_generated::kernel::types::typeOf(&a, e)?,
-                crate::proof_kernel::aver_generated::kernel::term::Ty::TyInt,
-                AverStr::from("a negation"),
-            )
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(__c_fields) => {
-            let c = __c_fields.0.clone();
-            let xs = __c_fields.1.clone();
-            crate::proof_kernel::aver_generated::kernel::types::ctorType(
-                c,
-                &crate::proof_kernel::aver_generated::kernel::types::typesOf(&xs, &e)?,
-                e,
-            )
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Term::TMatch(__s_fields) => {
-            let s = __s_fields.0.clone();
-            let arms = __s_fields.1.clone();
-            {
-                let __list_subject = arms.clone();
-                if __list_subject.is_empty() {
-                    Err(AverStr::from("a match with no arms has no type"))
-                } else {
-                    crate::proof_kernel::aver_generated::kernel::types::armsType(
-                        crate::proof_kernel::aver_generated::kernel::types::typeOf(&s, e.clone())?,
-                        arms,
-                        crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny,
-                        e,
-                    )
+    {
+        let __t = t;
+        match __t.view() {
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TInt(__n_fields) => {
+                let n = __n_fields.0.clone();
+                Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyInt)
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TBool(__b_fields) => {
+                let b = __b_fields.0.clone();
+                Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyBool)
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TStr(__s_fields) => {
+                let s = __s_fields.0.clone();
+                Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyStr)
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TUnit => {
+                Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyUnit)
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TVar(__n_fields) => {
+                let n = __n_fields.0.clone();
+                crate::proof_kernel::aver_generated::kernel::types::varType(n, &e)
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::THole => {
+                Err(AverStr::from("the hole has no type"))
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TGet(__r_fields) => {
+                let r = __r_fields.0.clone();
+                let f = __r_fields.1.clone();
+                crate::proof_kernel::aver_generated::kernel::types::fieldType(
+                    &crate::proof_kernel::aver_generated::kernel::types::typeOf(&r, e.clone())?,
+                    f,
+                    &e,
+                )
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TCall(__f_fields) => {
+                let f = __f_fields.0.clone();
+                let xs = __f_fields.1.clone();
+                crate::proof_kernel::aver_generated::kernel::types::callType(
+                    f,
+                    &crate::proof_kernel::aver_generated::kernel::types::typesOf(&xs, &e)?,
+                    e,
+                )
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TBi(__n_fields) => {
+                let n = __n_fields.0.clone();
+                let xs = __n_fields.1.clone();
+                crate::proof_kernel::aver_generated::kernel::types::builtinType(
+                    n,
+                    &crate::proof_kernel::aver_generated::kernel::types::typesOf(&xs, &e)?,
+                )
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TOp(__o_fields) => {
+                let o = __o_fields.0.clone();
+                let a = __o_fields.1.clone();
+                let b = __o_fields.2.clone();
+                crate::proof_kernel::aver_generated::kernel::types::opType(
+                    o,
+                    crate::proof_kernel::aver_generated::kernel::types::typeOf(&a, e.clone())?,
+                    crate::proof_kernel::aver_generated::kernel::types::typeOf(&b, e)?,
+                )
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TNeg(__a_fields) => {
+                let a = __a_fields.0.clone();
+                crate::proof_kernel::aver_generated::kernel::types::must(
+                    &crate::proof_kernel::aver_generated::kernel::types::typeOf(&a, e)?,
+                    crate::proof_kernel::aver_generated::kernel::term::Ty::TyInt,
+                    AverStr::from("a negation"),
+                )
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TCtor(__c_fields) => {
+                let c = __c_fields.0.clone();
+                let xs = __c_fields.1.clone();
+                crate::proof_kernel::aver_generated::kernel::types::ctorType(
+                    c,
+                    &crate::proof_kernel::aver_generated::kernel::types::typesOf(&xs, &e)?,
+                    e,
+                )
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TMatch(__s_fields) => {
+                let s = __s_fields.0.clone();
+                let arms = __s_fields.1.clone();
+                {
+                    let __list_subject = arms.clone();
+                    if __list_subject.is_empty() {
+                        Err(AverStr::from("a match with no arms has no type"))
+                    } else {
+                        crate::proof_kernel::aver_generated::kernel::types::armsType(
+                            crate::proof_kernel::aver_generated::kernel::types::typeOf(
+                                &s,
+                                e.clone(),
+                            )?,
+                            arms,
+                            crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny,
+                            e,
+                        )
+                    }
                 }
             }
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Term::TParts(__xs_fields) => {
-            let xs = __xs_fields.0.clone();
-            crate::proof_kernel::aver_generated::kernel::types::partsType(
-                &crate::proof_kernel::aver_generated::kernel::types::typesOf(&xs, &e)?,
-            )
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Term::TList(__xs_fields) => {
-            let xs = __xs_fields.0.clone();
-            Ok(
-                crate::proof_kernel::aver_generated::kernel::term::Ty::TyList(
-                    aver_rt::Shared::new(
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TParts(__xs_fields) => {
+                let xs = __xs_fields.0.clone();
+                crate::proof_kernel::aver_generated::kernel::types::partsType(
+                    &crate::proof_kernel::aver_generated::kernel::types::typesOf(&xs, &e)?,
+                )
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TList(__xs_fields) => {
+                let xs = __xs_fields.0.clone();
+                Ok(
+                    crate::proof_kernel::aver_generated::kernel::term::Ty::TyList(
                         crate::proof_kernel::aver_generated::kernel::term::Ty__TyList(
                             crate::proof_kernel::aver_generated::kernel::types::joinAll(
                                 crate::proof_kernel::aver_generated::kernel::types::typesOf(
@@ -1132,61 +1176,57 @@ pub fn typeOf(
                             )?,
                         ),
                     ),
-                ),
-            )
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Term::TTuple(__xs_fields) => {
-            let xs = __xs_fields.0.clone();
-            Ok(
-                crate::proof_kernel::aver_generated::kernel::term::Ty::TyTuple(
-                    aver_rt::Shared::new(
+                )
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TTuple(__xs_fields) => {
+                let xs = __xs_fields.0.clone();
+                Ok(
+                    crate::proof_kernel::aver_generated::kernel::term::Ty::TyTuple(
                         crate::proof_kernel::aver_generated::kernel::term::Ty__TyTuple(
                             crate::proof_kernel::aver_generated::kernel::types::typesOf(&xs, &e)?,
                         ),
                     ),
-                ),
-            )
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Term::TRec(__n_fields) => {
-            let n = __n_fields.0.clone();
-            let fs = __n_fields.1.clone();
-            crate::proof_kernel::aver_generated::kernel::types::fieldsFit(
-                n.clone(),
-                fs,
-                crate::proof_kernel::aver_generated::kernel::types::declaredRec(n, &e)?,
-                e,
-            )
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Term::TUpd(__n_fields) => {
-            let n = __n_fields.0.clone();
-            let b = __n_fields.1.clone();
-            let fs = __n_fields.2.clone();
-            crate::proof_kernel::aver_generated::kernel::types::fieldsFit(
-                n.clone(),
-                fs,
-                crate::proof_kernel::aver_generated::kernel::types::must(
-                    &crate::proof_kernel::aver_generated::kernel::types::typeOf(&b, e.clone())?,
-                    crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(
-                        aver_rt::Shared::new(
+                )
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TRec(__n_fields) => {
+                let n = __n_fields.0.clone();
+                let fs = __n_fields.1.clone();
+                crate::proof_kernel::aver_generated::kernel::types::fieldsFit(
+                    n.clone(),
+                    fs,
+                    crate::proof_kernel::aver_generated::kernel::types::declaredRec(n, &e)?,
+                    e,
+                )
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TUpd(__n_fields) => {
+                let n = __n_fields.0.clone();
+                let b = __n_fields.1.clone();
+                let fs = __n_fields.2.clone();
+                crate::proof_kernel::aver_generated::kernel::types::fieldsFit(
+                    n.clone(),
+                    fs,
+                    crate::proof_kernel::aver_generated::kernel::types::must(
+                        &crate::proof_kernel::aver_generated::kernel::types::typeOf(&b, e.clone())?,
+                        crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(
                             crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(
                                 n.clone(),
                             ),
                         ),
-                    ),
-                    aver_rt::AverStr::from({
-                        let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(29)).to_usize().unwrap_or(0),
-                            );
-                            __b.push_str(&AverStr::from("an update of "));
+                        aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = aver_rt::Buffer::with_capacity(
+                                    (aver_rt::AverInt::from_i64(29)).to_usize().unwrap_or(0),
+                                );
+                                __b.push_str(&AverStr::from("an update of "));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
                             __b
-                        };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
-                        __b
-                    }),
-                )?,
-                e,
-            )
+                        }),
+                    )?,
+                    e,
+                )
+            }
         }
     }
 }
@@ -1280,28 +1320,31 @@ pub fn fieldType(
     e @ _: &TyEnv,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Ty, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    match r {
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(__n_fields) => {
-            let n = __n_fields.0.clone();
-            crate::proof_kernel::aver_generated::kernel::types::recField(n, f, e)
-        }
-        _ => Err(aver_rt::AverStr::from({
-            let mut __b = {
+    {
+        let __t = r;
+        match __t.view() {
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyNamed(__n_fields) => {
+                let n = __n_fields.0.clone();
+                crate::proof_kernel::aver_generated::kernel::types::recField(n, f, e)
+            }
+            _ => Err(aver_rt::AverStr::from({
                 let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity(
-                        (aver_rt::AverInt::from_i64(46)).to_usize().unwrap_or(0),
-                    );
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                        &(crate::proof_kernel::aver_generated::kernel::types::show(r)),
-                    )));
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(46)).to_usize().unwrap_or(0),
+                        );
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                            &(crate::proof_kernel::aver_generated::kernel::types::show(r)),
+                        )));
+                        __b
+                    };
+                    __b.push_str(&AverStr::from(" has no field "));
                     __b
                 };
-                __b.push_str(&AverStr::from(" has no field "));
+                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f))));
                 __b
-            };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f))));
-            __b
-        })),
+            })),
+        }
     }
 }
 
@@ -1357,9 +1400,9 @@ pub fn declaredRec(
     crate::proof_kernel::cancel_checkpoint();
     match crate::proof_kernel::aver_generated::kernel::types::recNamed(n.clone(), e.recs.clone()) {
         Some(r @ _) => Ok(
-            crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(aver_rt::Shared::new(
+            crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(
                 crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(n),
-            )),
+            ),
         ),
         None => Err(aver_rt::AverStr::from({
             let mut __b = {
@@ -1380,14 +1423,13 @@ pub fn declaredRec(
 pub fn fieldsFit(
     mut n @ _: AverStr,
     mut fs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Field>,
-    result @ _: crate::proof_kernel::aver_generated::kernel::term::Ty,
+    mut result @ _: crate::proof_kernel::aver_generated::kernel::term::Ty,
     e @ _: TyEnv,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Ty, AverStr> {
-    let result @ _ = aver_rt::Shared::new(result);
     let e @ _ = aver_rt::Shared::new(e);
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        aver_list_match!(fs, [] => { return Ok((*result).clone()); }, [f, rest] => { if crate::proof_kernel::aver_generated::kernel::types::fits(crate::proof_kernel::aver_generated::kernel::types::typeOf(&f.value, (*e).clone())?, crate::proof_kernel::aver_generated::kernel::types::fieldType(&crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(aver_rt::Shared::new(crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(n.clone()))), f.name.clone(), &*e)?) { {
+        aver_list_match!(fs, [] => { return Ok(result); }, [f, rest] => { if crate::proof_kernel::aver_generated::kernel::types::fits(crate::proof_kernel::aver_generated::kernel::types::typeOf(&f.value, (*e).clone())?, crate::proof_kernel::aver_generated::kernel::types::fieldType(&crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(n.clone())), f.name.clone(), &*e)?) { {
             let __tco1 = rest;
             fs = __tco1;
             continue;
@@ -1577,17 +1619,20 @@ pub fn bindVars(
 ) -> Result<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar>, AverStr>
 {
     crate::proof_kernel::cancel_checkpoint();
-    match expected {
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyVar(__n_fields) => {
-            let n = __n_fields.0.clone();
-            let eq = __n_fields.1.clone();
-            crate::proof_kernel::aver_generated::kernel::types::bindVar(
-                n, eq, actual, bound, &e, what,
-            )
+    {
+        let __t = expected;
+        match __t.view() {
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyVar(__n_fields) => {
+                let n = __n_fields.0.clone();
+                let eq = __n_fields.1.clone();
+                crate::proof_kernel::aver_generated::kernel::types::bindVar(
+                    n, eq, actual, bound, &e, what,
+                )
+            }
+            _ => crate::proof_kernel::aver_generated::kernel::types::bindShape(
+                expected, &actual, bound, e, what,
+            ),
         }
-        _ => crate::proof_kernel::aver_generated::kernel::types::bindShape(
-            expected, &actual, bound, e, what,
-        ),
     }
 }
 
@@ -1725,66 +1770,71 @@ pub fn instantiate(
     bound @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar>,
 ) -> crate::proof_kernel::aver_generated::kernel::term::Ty {
     crate::proof_kernel::cancel_checkpoint();
-    match &t {
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyVar(__n_fields) => {
-            let n = __n_fields.0.clone();
-            let eq = __n_fields.1.clone();
-            crate::proof_kernel::aver_generated::kernel::types::find(n, bound.clone())
-                .unwrap_or(crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny)
+    {
+        let __t = &t;
+        match __t.view() {
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyVar(__n_fields) => {
+                let n = __n_fields.0.clone();
+                let eq = __n_fields.1.clone();
+                crate::proof_kernel::aver_generated::kernel::types::find(n, bound.clone())
+                    .unwrap_or(crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny)
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyList(__a_fields) => {
+                let a = __a_fields.0.clone();
+                crate::proof_kernel::aver_generated::kernel::term::Ty::TyList(
+                    crate::proof_kernel::aver_generated::kernel::term::Ty__TyList(
+                        crate::proof_kernel::aver_generated::kernel::types::instantiate(a, bound),
+                    ),
+                )
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyOption(__a_fields) => {
+                let a = __a_fields.0.clone();
+                crate::proof_kernel::aver_generated::kernel::term::Ty::TyOption(
+                    crate::proof_kernel::aver_generated::kernel::term::Ty__TyOption(
+                        crate::proof_kernel::aver_generated::kernel::types::instantiate(a, bound),
+                    ),
+                )
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyVector(__a_fields) => {
+                let a = __a_fields.0.clone();
+                crate::proof_kernel::aver_generated::kernel::term::Ty::TyVector(
+                    crate::proof_kernel::aver_generated::kernel::term::Ty__TyVector(
+                        crate::proof_kernel::aver_generated::kernel::types::instantiate(a, bound),
+                    ),
+                )
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyResult(__a_fields) => {
+                let a = __a_fields.0.clone();
+                let b = __a_fields.1.clone();
+                crate::proof_kernel::aver_generated::kernel::term::Ty::TyResult(
+                    crate::proof_kernel::aver_generated::kernel::term::Ty__TyResult(
+                        crate::proof_kernel::aver_generated::kernel::types::instantiate(a, bound),
+                        crate::proof_kernel::aver_generated::kernel::types::instantiate(b, bound),
+                    ),
+                )
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyMap(__a_fields) => {
+                let a = __a_fields.0.clone();
+                let b = __a_fields.1.clone();
+                crate::proof_kernel::aver_generated::kernel::term::Ty::TyMap(
+                    crate::proof_kernel::aver_generated::kernel::term::Ty__TyMap(
+                        crate::proof_kernel::aver_generated::kernel::types::instantiate(a, bound),
+                        crate::proof_kernel::aver_generated::kernel::types::instantiate(b, bound),
+                    ),
+                )
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyTuple(__xs_fields) => {
+                let xs = __xs_fields.0.clone();
+                crate::proof_kernel::aver_generated::kernel::term::Ty::TyTuple(
+                    crate::proof_kernel::aver_generated::kernel::term::Ty__TyTuple(
+                        crate::proof_kernel::aver_generated::kernel::types::instantiateAll(
+                            &xs, bound,
+                        ),
+                    ),
+                )
+            }
+            _ => t,
         }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyList(__a_fields) => {
-            let a = __a_fields.0.clone();
-            crate::proof_kernel::aver_generated::kernel::term::Ty::TyList(aver_rt::Shared::new(
-                crate::proof_kernel::aver_generated::kernel::term::Ty__TyList(
-                    crate::proof_kernel::aver_generated::kernel::types::instantiate(a, bound),
-                ),
-            ))
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyOption(__a_fields) => {
-            let a = __a_fields.0.clone();
-            crate::proof_kernel::aver_generated::kernel::term::Ty::TyOption(aver_rt::Shared::new(
-                crate::proof_kernel::aver_generated::kernel::term::Ty__TyOption(
-                    crate::proof_kernel::aver_generated::kernel::types::instantiate(a, bound),
-                ),
-            ))
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyVector(__a_fields) => {
-            let a = __a_fields.0.clone();
-            crate::proof_kernel::aver_generated::kernel::term::Ty::TyVector(aver_rt::Shared::new(
-                crate::proof_kernel::aver_generated::kernel::term::Ty__TyVector(
-                    crate::proof_kernel::aver_generated::kernel::types::instantiate(a, bound),
-                ),
-            ))
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyResult(__a_fields) => {
-            let a = __a_fields.0.clone();
-            let b = __a_fields.1.clone();
-            crate::proof_kernel::aver_generated::kernel::term::Ty::TyResult(aver_rt::Shared::new(
-                crate::proof_kernel::aver_generated::kernel::term::Ty__TyResult(
-                    crate::proof_kernel::aver_generated::kernel::types::instantiate(a, bound),
-                    crate::proof_kernel::aver_generated::kernel::types::instantiate(b, bound),
-                ),
-            ))
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyMap(__a_fields) => {
-            let a = __a_fields.0.clone();
-            let b = __a_fields.1.clone();
-            crate::proof_kernel::aver_generated::kernel::term::Ty::TyMap(aver_rt::Shared::new(
-                crate::proof_kernel::aver_generated::kernel::term::Ty__TyMap(
-                    crate::proof_kernel::aver_generated::kernel::types::instantiate(a, bound),
-                    crate::proof_kernel::aver_generated::kernel::types::instantiate(b, bound),
-                ),
-            ))
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyTuple(__xs_fields) => {
-            let xs = __xs_fields.0.clone();
-            crate::proof_kernel::aver_generated::kernel::term::Ty::TyTuple(aver_rt::Shared::new(
-                crate::proof_kernel::aver_generated::kernel::term::Ty__TyTuple(
-                    crate::proof_kernel::aver_generated::kernel::types::instantiateAll(&xs, bound),
-                ),
-            ))
-        }
-        _ => t,
     }
 }
 
@@ -1886,28 +1936,33 @@ pub fn numeric(
     mut result @ _: crate::proof_kernel::aver_generated::kernel::term::Ty,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Ty, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    match (t.clone(), texts) {
-        (crate::proof_kernel::aver_generated::kernel::term::Ty::TyInt, _) => Ok(result),
-        (crate::proof_kernel::aver_generated::kernel::term::Ty::TyFloat, _) => Ok(result),
-        (crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny, _) => Ok(result),
-        (crate::proof_kernel::aver_generated::kernel::term::Ty::TyStr, true) => Ok(result),
-        _ => Err(aver_rt::AverStr::from({
-            let mut __b = {
+    {
+        let __t = (t.clone(), texts);
+        match (__t.0.view(), &__t.1) {
+            (crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyInt, _) => Ok(result),
+            (crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyFloat, _) => Ok(result),
+            (crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyAny, _) => Ok(result),
+            (crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyStr, true) => {
+                Ok(result)
+            }
+            _ => Err(aver_rt::AverStr::from({
                 let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity(
-                        (aver_rt::AverInt::from_i64(47)).to_usize().unwrap_or(0),
-                    );
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(o))));
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(47)).to_usize().unwrap_or(0),
+                        );
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(o))));
+                        __b
+                    };
+                    __b.push_str(&AverStr::from(" does not take "));
                     __b
                 };
-                __b.push_str(&AverStr::from(" does not take "));
+                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                    &(crate::proof_kernel::aver_generated::kernel::types::show(t)),
+                )));
                 __b
-            };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                &(crate::proof_kernel::aver_generated::kernel::types::show(t)),
-            )));
-            __b
-        })),
+            })),
+        }
     }
 }
 
@@ -1926,9 +1981,15 @@ pub fn ctorType(
                 {
                     let __list_subject = __pat1;
                     if __list_subject.is_empty() {
-                        Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyOption(aver_rt::Shared::new(crate::proof_kernel::aver_generated::kernel::term::Ty__TyOption(crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny))))
+                        Ok(
+                            crate::proof_kernel::aver_generated::kernel::term::Ty::TyOption(
+                                crate::proof_kernel::aver_generated::kernel::term::Ty__TyOption(
+                                    crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny,
+                                ),
+                            ),
+                        )
                     } else {
-                        match crate::proof_kernel::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(s @ _) => { match crate::proof_kernel::aver_generated::kernel::types::variantFields(c.clone(), s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(fs @ _) => { Ok(crate::proof_kernel::aver_generated::kernel::types::instantiate(crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(aver_rt::Shared::new(crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(s.name))), &crate::proof_kernel::aver_generated::kernel::types::bindEach(fs, args.clone(), aver_rt::AverList::empty(), e, aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b }; __b.push_str(&AverStr::from(":")); __b }))?)) } } } }
+                        match crate::proof_kernel::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(s @ _) => { match crate::proof_kernel::aver_generated::kernel::types::variantFields(c.clone(), s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(fs @ _) => { Ok(crate::proof_kernel::aver_generated::kernel::types::instantiate(crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(s.name)), &crate::proof_kernel::aver_generated::kernel::types::bindEach(fs, args.clone(), aver_rt::AverList::empty(), e, aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b }; __b.push_str(&AverStr::from(":")); __b }))?)) } } } }
                     }
                 }
             } else {
@@ -1939,13 +2000,13 @@ pub fn ctorType(
                             {
                                 let __list_subject = __pat2;
                                 if __list_subject.is_empty() {
-                                    Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyOption(aver_rt::Shared::new(crate::proof_kernel::aver_generated::kernel::term::Ty__TyOption(a))))
+                                    Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyOption(crate::proof_kernel::aver_generated::kernel::term::Ty__TyOption(a)))
                                 } else {
-                                    match crate::proof_kernel::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(s @ _) => { match crate::proof_kernel::aver_generated::kernel::types::variantFields(c.clone(), s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(fs @ _) => { Ok(crate::proof_kernel::aver_generated::kernel::types::instantiate(crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(aver_rt::Shared::new(crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(s.name))), &crate::proof_kernel::aver_generated::kernel::types::bindEach(fs, args.clone(), aver_rt::AverList::empty(), e, aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b }; __b.push_str(&AverStr::from(":")); __b }))?)) } } } }
+                                    match crate::proof_kernel::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(s @ _) => { match crate::proof_kernel::aver_generated::kernel::types::variantFields(c.clone(), s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(fs @ _) => { Ok(crate::proof_kernel::aver_generated::kernel::types::instantiate(crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(s.name)), &crate::proof_kernel::aver_generated::kernel::types::bindEach(fs, args.clone(), aver_rt::AverList::empty(), e, aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b }; __b.push_str(&AverStr::from(":")); __b }))?)) } } } }
                                 }
                             }
                         } else {
-                            match crate::proof_kernel::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(s @ _) => { match crate::proof_kernel::aver_generated::kernel::types::variantFields(c.clone(), s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(fs @ _) => { Ok(crate::proof_kernel::aver_generated::kernel::types::instantiate(crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(aver_rt::Shared::new(crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(s.name))), &crate::proof_kernel::aver_generated::kernel::types::bindEach(fs, args.clone(), aver_rt::AverList::empty(), e, aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b }; __b.push_str(&AverStr::from(":")); __b }))?)) } } } }
+                            match crate::proof_kernel::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(s @ _) => { match crate::proof_kernel::aver_generated::kernel::types::variantFields(c.clone(), s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(fs @ _) => { Ok(crate::proof_kernel::aver_generated::kernel::types::instantiate(crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(s.name)), &crate::proof_kernel::aver_generated::kernel::types::bindEach(fs, args.clone(), aver_rt::AverList::empty(), e, aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b }; __b.push_str(&AverStr::from(":")); __b }))?)) } } } }
                         }
                     }
                 } else {
@@ -1957,13 +2018,13 @@ pub fn ctorType(
                                 {
                                     let __list_subject = __pat3;
                                     if __list_subject.is_empty() {
-                                        Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyResult(aver_rt::Shared::new(crate::proof_kernel::aver_generated::kernel::term::Ty__TyResult(a, crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny))))
+                                        Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyResult(crate::proof_kernel::aver_generated::kernel::term::Ty__TyResult(a, crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny)))
                                     } else {
-                                        match crate::proof_kernel::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(s @ _) => { match crate::proof_kernel::aver_generated::kernel::types::variantFields(c.clone(), s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(fs @ _) => { Ok(crate::proof_kernel::aver_generated::kernel::types::instantiate(crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(aver_rt::Shared::new(crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(s.name))), &crate::proof_kernel::aver_generated::kernel::types::bindEach(fs, args.clone(), aver_rt::AverList::empty(), e, aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b }; __b.push_str(&AverStr::from(":")); __b }))?)) } } } }
+                                        match crate::proof_kernel::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(s @ _) => { match crate::proof_kernel::aver_generated::kernel::types::variantFields(c.clone(), s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(fs @ _) => { Ok(crate::proof_kernel::aver_generated::kernel::types::instantiate(crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(s.name)), &crate::proof_kernel::aver_generated::kernel::types::bindEach(fs, args.clone(), aver_rt::AverList::empty(), e, aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b }; __b.push_str(&AverStr::from(":")); __b }))?)) } } } }
                                     }
                                 }
                             } else {
-                                match crate::proof_kernel::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(s @ _) => { match crate::proof_kernel::aver_generated::kernel::types::variantFields(c.clone(), s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(fs @ _) => { Ok(crate::proof_kernel::aver_generated::kernel::types::instantiate(crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(aver_rt::Shared::new(crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(s.name))), &crate::proof_kernel::aver_generated::kernel::types::bindEach(fs, args.clone(), aver_rt::AverList::empty(), e, aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b }; __b.push_str(&AverStr::from(":")); __b }))?)) } } } }
+                                match crate::proof_kernel::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(s @ _) => { match crate::proof_kernel::aver_generated::kernel::types::variantFields(c.clone(), s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(fs @ _) => { Ok(crate::proof_kernel::aver_generated::kernel::types::instantiate(crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(s.name)), &crate::proof_kernel::aver_generated::kernel::types::bindEach(fs, args.clone(), aver_rt::AverList::empty(), e, aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b }; __b.push_str(&AverStr::from(":")); __b }))?)) } } } }
                             }
                         }
                     } else {
@@ -1976,17 +2037,17 @@ pub fn ctorType(
                                     {
                                         let __list_subject = __pat4;
                                         if __list_subject.is_empty() {
-                                            Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyResult(aver_rt::Shared::new(crate::proof_kernel::aver_generated::kernel::term::Ty__TyResult(crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny, a))))
+                                            Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyResult(crate::proof_kernel::aver_generated::kernel::term::Ty__TyResult(crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny, a)))
                                         } else {
-                                            match crate::proof_kernel::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(s @ _) => { match crate::proof_kernel::aver_generated::kernel::types::variantFields(c.clone(), s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(fs @ _) => { Ok(crate::proof_kernel::aver_generated::kernel::types::instantiate(crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(aver_rt::Shared::new(crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(s.name))), &crate::proof_kernel::aver_generated::kernel::types::bindEach(fs, args.clone(), aver_rt::AverList::empty(), e, aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b }; __b.push_str(&AverStr::from(":")); __b }))?)) } } } }
+                                            match crate::proof_kernel::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(s @ _) => { match crate::proof_kernel::aver_generated::kernel::types::variantFields(c.clone(), s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(fs @ _) => { Ok(crate::proof_kernel::aver_generated::kernel::types::instantiate(crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(s.name)), &crate::proof_kernel::aver_generated::kernel::types::bindEach(fs, args.clone(), aver_rt::AverList::empty(), e, aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b }; __b.push_str(&AverStr::from(":")); __b }))?)) } } } }
                                         }
                                     }
                                 } else {
-                                    match crate::proof_kernel::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(s @ _) => { match crate::proof_kernel::aver_generated::kernel::types::variantFields(c.clone(), s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(fs @ _) => { Ok(crate::proof_kernel::aver_generated::kernel::types::instantiate(crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(aver_rt::Shared::new(crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(s.name))), &crate::proof_kernel::aver_generated::kernel::types::bindEach(fs, args.clone(), aver_rt::AverList::empty(), e, aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b }; __b.push_str(&AverStr::from(":")); __b }))?)) } } } }
+                                    match crate::proof_kernel::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(s @ _) => { match crate::proof_kernel::aver_generated::kernel::types::variantFields(c.clone(), s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(fs @ _) => { Ok(crate::proof_kernel::aver_generated::kernel::types::instantiate(crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(s.name)), &crate::proof_kernel::aver_generated::kernel::types::bindEach(fs, args.clone(), aver_rt::AverList::empty(), e, aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b }; __b.push_str(&AverStr::from(":")); __b }))?)) } } } }
                                 }
                             }
                         } else {
-                            match crate::proof_kernel::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(s @ _) => { match crate::proof_kernel::aver_generated::kernel::types::variantFields(c.clone(), s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(fs @ _) => { Ok(crate::proof_kernel::aver_generated::kernel::types::instantiate(crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(aver_rt::Shared::new(crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(s.name))), &crate::proof_kernel::aver_generated::kernel::types::bindEach(fs, args.clone(), aver_rt::AverList::empty(), e, aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b }; __b.push_str(&AverStr::from(":")); __b }))?)) } } } }
+                            match crate::proof_kernel::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(s @ _) => { match crate::proof_kernel::aver_generated::kernel::types::variantFields(c.clone(), s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(fs @ _) => { Ok(crate::proof_kernel::aver_generated::kernel::types::instantiate(crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(s.name)), &crate::proof_kernel::aver_generated::kernel::types::bindEach(fs, args.clone(), aver_rt::AverList::empty(), e, aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b }; __b.push_str(&AverStr::from(":")); __b }))?)) } } } }
                         }
                     }
                 }
@@ -2219,18 +2280,17 @@ pub fn namedOne(
 /// The one type every arm's body has, each under the variables its pattern binds.
 #[inline(always)]
 pub fn armsType(
-    subject @ _: crate::proof_kernel::aver_generated::kernel::term::Ty,
+    mut subject @ _: crate::proof_kernel::aver_generated::kernel::term::Ty,
     mut arms @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
     mut acc @ _: crate::proof_kernel::aver_generated::kernel::term::Ty,
     e @ _: TyEnv,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Ty, AverStr> {
-    let subject @ _ = aver_rt::Shared::new(subject);
     let e @ _ = aver_rt::Shared::new(e);
     loop {
         crate::proof_kernel::cancel_checkpoint();
         aver_list_match!(arms, [] => { return Ok(acc); }, [a, rest] => { {
             let __tco1 = rest;
-            let __tco2 = crate::proof_kernel::aver_generated::kernel::types::join(acc, crate::proof_kernel::aver_generated::kernel::types::typeOf(&a.body, crate::proof_kernel::aver_generated::kernel::types::withVars(&*e, &crate::proof_kernel::aver_generated::kernel::types::patVars(a.pattern, (*subject).clone(), (*e).clone())?))?)?;
+            let __tco2 = crate::proof_kernel::aver_generated::kernel::types::join(acc, crate::proof_kernel::aver_generated::kernel::types::typeOf(&a.body, crate::proof_kernel::aver_generated::kernel::types::withVars(&*e, &crate::proof_kernel::aver_generated::kernel::types::patVars(a.pattern, subject.clone(), (*e).clone())?))?)?;
             arms = __tco1;
             acc = __tco2;
             continue;
@@ -2275,8 +2335,8 @@ pub fn eqKept(
     let e @ _ = aver_rt::Shared::new(e);
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        aver_list_match!(ts, [] => { return Ok((*bound).clone()); }, [t, rest] => { match &t {
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyVar(__n_fields) => {
+        aver_list_match!(ts, [] => { return Ok((*bound).clone()); }, [t, rest] => { { let __t = &t; match __t.view() {
+        crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyVar(__n_fields) => {
             let n = __n_fields.0.clone();
             let __pat0 = __n_fields.1.clone();
             if __pat0 { if crate::proof_kernel::aver_generated::kernel::types::hasEq(&crate::proof_kernel::aver_generated::kernel::types::find(n.clone(), (*bound).clone()).unwrap_or(crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny), &*e) { {
@@ -2296,7 +2356,7 @@ pub fn eqKept(
             continue;
         }
         }
-    } })
+    } } })
     }
 }
 
@@ -2307,21 +2367,24 @@ pub fn finOf(
     seen @ _: &aver_rt::AverList<AverStr>,
 ) -> Option<crate::proof_kernel::aver_generated::kernel::term::Fin> {
     crate::proof_kernel::cancel_checkpoint();
-    match t {
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyBool => {
-            Some(crate::proof_kernel::aver_generated::kernel::term::Fin::FBool)
+    {
+        let __t = t;
+        match __t.view() {
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyBool => {
+                Some(crate::proof_kernel::aver_generated::kernel::term::Fin::FBool)
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyTuple(__xs_fields) => {
+                let xs = __xs_fields.0.clone();
+                crate::proof_kernel::aver_generated::kernel::types::finTuple(
+                    &crate::proof_kernel::aver_generated::kernel::types::finAll(&xs, e, seen),
+                )
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyNamed(__n_fields) => {
+                let n = __n_fields.0.clone();
+                crate::proof_kernel::aver_generated::kernel::types::finSeen(n, e, seen)
+            }
+            _ => None,
         }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyTuple(__xs_fields) => {
-            let xs = __xs_fields.0.clone();
-            crate::proof_kernel::aver_generated::kernel::types::finTuple(
-                &crate::proof_kernel::aver_generated::kernel::types::finAll(&xs, e, seen),
-            )
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(__n_fields) => {
-            let n = __n_fields.0.clone();
-            crate::proof_kernel::aver_generated::kernel::types::finSeen(n, e, seen)
-        }
-        _ => None,
     }
 }
 

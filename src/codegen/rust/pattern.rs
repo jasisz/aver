@@ -131,12 +131,18 @@ fn emit_constructor_pattern(
             qualified_type_name,
             variant_name,
         } => {
+            // A thin sum is matched through its view, `T__view` (see
+            // `representation::is_thin_sum`); the subject is `.view()`.
+            let suffix = match thin_ctor(ctor, ctx) {
+                true => "__view",
+                false => "",
+            };
             let rust_name = match resolve_module_call(&qualified_type_name, ctx) {
                 Some((prefix, bare_type_name)) => format!(
-                    "{}::{bare_type_name}::{variant_name}",
+                    "{}::{bare_type_name}{suffix}::{variant_name}",
                     module_prefix_to_rust_path(prefix)
                 ),
-                None => format!("{qualified_type_name}::{variant_name}"),
+                None => format!("{qualified_type_name}{suffix}::{variant_name}"),
             };
             match shared_fields_binder(ctor, bindings, ctx) {
                 Some(binder) => format!("{rust_name}({binder})"),
@@ -158,8 +164,16 @@ fn emit_constructor_pattern(
     }
 }
 
-/// The one binder a constructor pattern writes for the `Shared` that holds its
-/// fields (see `representation::shared_variants`), or `None`
+/// Whether `ctor` is a constructor of a thin sum (see
+/// `representation::is_thin_sum`).
+pub(super) fn thin_ctor(ctor: &ResolvedCtor, ctx: &CodegenContext) -> bool {
+    matches!(ctor, ResolvedCtor::User { type_id, .. }
+        if super::representation::type_is_thin(*type_id, ctx))
+}
+
+/// The one binder a constructor pattern writes for the struct that holds its
+/// fields: behind a `Shared` (see `representation::shared_variants`) or in
+/// the node of a thin sum (see `representation::is_thin_sum`), or `None`
 /// when the constructor keeps its fields inline. It is named after the first
 /// field the arm binds, so two constructors in one tuple pattern get two
 /// names; an arm that binds no field matches `_`.
@@ -175,7 +189,9 @@ pub(super) fn shared_fields_binder(
         return None;
     };
     let variant = &ctx.symbol_table.ctor_entry(*ctor_id).name;
-    if bindings.is_empty() || !super::representation::ctor_is_shared(*type_id, variant, ctx) {
+    if bindings.is_empty()
+        || !(thin_ctor(ctor, ctx) || super::representation::ctor_is_shared(*type_id, variant, ctx))
+    {
         return None;
     }
     Some(match bindings.iter().find(|b| *b != "_") {

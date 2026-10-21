@@ -2145,8 +2145,18 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                             cg,
                         )
                     });
+                    // A thin sum's constructor is a function taking the
+                    // struct of its fields (see `representation::is_thin_sum`);
+                    // one without fields is a constant, written as an enum's.
+                    let thin = emit_ctx.codegen.is_some_and(|cg| {
+                        super::representation::type_is_thin(ctor_entry.owning_type, cg)
+                    });
                     if con.args.is_empty() {
                         Some(format!("{}::{}", head, variant_name))
+                    } else if thin {
+                        Some(format!(
+                            "{head}::{variant_name}({head}__{variant_name}({args_str}))"
+                        ))
                     } else if shared {
                         Some(format!(
                             "{head}::{variant_name}(aver_rt::Shared::new({head}__{variant_name}({args_str})))"
@@ -3554,32 +3564,149 @@ fn emit_mir_match_with(
     // in HIR (`subject_might_be_string` is a `true` stub), so the
     // string-literal-pattern case derefs the subject to `&str`.
     let needs_as_str = true;
-    let match_expr = if needs_as_str && has_string_literal_patterns(&arms) {
+    // A constructor of a thin sum is matched on the value's view (see
+    // `representation::is_thin_sum`): the subject is bound to `__t` first
+    // and each place the arms match such a constructor at reads
+    // `.view()`, which borrows it.
+    let shape = arms.iter().fold(ViewShape::Plain, |shape, arm| {
+        shape.merge(ViewShape::of(&arm.pattern, codegen))
+    });
+    let viewed = !matches!(shape, ViewShape::Plain);
+    let subject_temp = generated_ident("t");
+    // A tuple with a viewed part is matched by reference throughout: its
+    // other parts are borrowed beside the views, and what an arm binds is
+    // cloned out.
+    let by_ref = match_on_ref || matches!(shape, ViewShape::Tuple(_));
+    let match_expr = if viewed {
+        shape.scrutinee(&subject_temp, by_ref)
+    } else if needs_as_str && has_string_literal_patterns(&arms) {
         format!("&*{}", subj)
     } else {
-        subj
+        subj.clone()
     };
 
     let mut arm_strs = Vec::with_capacity(arms.len());
     for (idx, arm) in arms.iter().enumerate() {
-        let (pat, guard) = emit_pattern_with_guard(&arm.pattern, needs_as_str, codegen);
+        // A name bound at a viewed place would bind the view: it matches `_`
+        // and is bound to the value it stands for instead.
+        let mut whole = Vec::new();
+        let pattern = match viewed {
+            true => shape.unbind(&arm.pattern, &subject_temp, by_ref, &mut whole),
+            false => arm.pattern.clone(),
+        };
+        let (pat, guard) = emit_pattern_with_guard(&pattern, needs_as_str, codegen);
         let pat = match guard {
             Some(guard) => format!("{pat} if {guard}"),
             None => pat,
         };
         let body = arm_bodies[idx].clone();
-        let rebindings = emit_pattern_rebindings(&arm.pattern, codegen, match_on_ref);
+        let rebindings = emit_pattern_rebindings(&pattern, codegen, by_ref);
+        let whole: String = whole
+            .iter()
+            .map(|line| format!("{line}\n            "))
+            .collect();
         arm_strs.push(format!(
-            "        {} => {{\n            {}{}\n        }}",
-            pat, rebindings, body
+            "        {} => {{\n            {}{}{}\n        }}",
+            pat, whole, rebindings, body
         ));
     }
 
-    Some(format!(
-        "match {} {{\n{}\n    }}",
-        match_expr,
-        arm_strs.join(",\n")
-    ))
+    let matched = format!("match {} {{\n{}\n    }}", match_expr, arm_strs.join(",\n"));
+    Some(match viewed {
+        true => format!("{{ let {subject_temp} = {subj}; {matched} }}"),
+        false => matched,
+    })
+}
+
+/// Where the arms of a match look into a value of a thin sum (see
+/// `representation::is_thin_sum`): the subject itself, or parts of a tuple.
+enum ViewShape {
+    Plain,
+    View,
+    Tuple(Vec<ViewShape>),
+}
+
+impl ViewShape {
+    fn of(pattern: &ResolvedPattern, ctx: &CodegenContext) -> Self {
+        match pattern {
+            ResolvedPattern::Ctor(ctor, _) if super::pattern::thin_ctor(ctor, ctx) => {
+                ViewShape::View
+            }
+            // A tuple only counts with a viewed place somewhere inside.
+            ResolvedPattern::Tuple(items) => {
+                let items: Vec<Self> = items.iter().map(|item| Self::of(item, ctx)).collect();
+                match items.iter().all(|item| matches!(item, ViewShape::Plain)) {
+                    true => ViewShape::Plain,
+                    false => ViewShape::Tuple(items),
+                }
+            }
+            _ => ViewShape::Plain,
+        }
+    }
+
+    fn merge(self, other: Self) -> Self {
+        match (self, other) {
+            (ViewShape::View, _) | (_, ViewShape::View) => ViewShape::View,
+            (ViewShape::Tuple(a), ViewShape::Tuple(b)) if a.len() == b.len() => {
+                ViewShape::Tuple(a.into_iter().zip(b).map(|(a, b)| a.merge(b)).collect())
+            }
+            (ViewShape::Tuple(a), _) | (_, ViewShape::Tuple(a)) => ViewShape::Tuple(a),
+            (ViewShape::Plain, ViewShape::Plain) => ViewShape::Plain,
+        }
+    }
+
+    /// What the match reads at `place`.
+    fn scrutinee(&self, place: &str, by_ref: bool) -> String {
+        match self {
+            ViewShape::View => format!("{place}.view()"),
+            ViewShape::Plain if by_ref => format!("&{place}"),
+            ViewShape::Plain => place.to_string(),
+            ViewShape::Tuple(items) => {
+                let parts: Vec<String> = items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, item)| item.scrutinee(&format!("{place}.{i}"), by_ref))
+                    .collect();
+                format!("({},)", parts.join(", "))
+            }
+        }
+    }
+
+    /// `pattern` with each name bound at a viewed place, or at a tuple
+    /// holding one, replaced by `_`; `whole` gets the binding of each.
+    fn unbind(
+        &self,
+        pattern: &ResolvedPattern,
+        place: &str,
+        by_ref: bool,
+        whole: &mut Vec<String>,
+    ) -> ResolvedPattern {
+        match (self, pattern) {
+            (ViewShape::Plain, _) => pattern.clone(),
+            (_, ResolvedPattern::Ident(name)) => {
+                let rust = aver_name_to_rust(name);
+                // At the top of a match by value the subject is owned and
+                // moves; anywhere else it is cloned out.
+                let value = match by_ref || place.contains('.') {
+                    true => format!("{place}.clone()"),
+                    false => place.to_string(),
+                };
+                whole.push(format!("let {rust} = {value};"));
+                ResolvedPattern::Wildcard
+            }
+            (ViewShape::Tuple(shapes), ResolvedPattern::Tuple(items)) => ResolvedPattern::Tuple(
+                shapes
+                    .iter()
+                    .zip(items)
+                    .enumerate()
+                    .map(|(i, (shape, item))| {
+                        shape.unbind(item, &format!("{place}.{i}"), by_ref, whole)
+                    })
+                    .collect(),
+            ),
+            _ => pattern.clone(),
+        }
+    }
 }
 
 /// Does this pattern contain a subpattern no Rust `match` arm can spell —
@@ -4320,7 +4447,15 @@ pub(super) fn emit_mir_tco_fn(
     use super::toplevel::{compute_resolved_rc_params, compute_resolved_self_passthrough_params};
 
     let passthrough_indices = compute_resolved_self_passthrough_params(resolved_fd);
-    let rc_indices = compute_resolved_rc_params(std::slice::from_ref(&resolved_fd));
+    // A value of a thin sum is already one shared node: wrapping it in a
+    // `Shared` of its own would only add an allocation.
+    let rc_indices: HashSet<usize> = compute_resolved_rc_params(std::slice::from_ref(&resolved_fd))
+        .into_iter()
+        .filter(|&i| {
+            !matches!(&resolved_fd.params[i].1, Type::Named { id: Some(id), .. }
+                    if super::representation::type_is_thin(*id, ctx))
+        })
+        .collect();
     let rc_names: HashSet<String> = rc_indices
         .iter()
         .filter_map(|&i| resolved_fd.params.get(i).map(|(name, _)| name.clone()))

@@ -694,8 +694,8 @@ fn a_matched_or_handed_on_value_is_not_cloned_whole() {
         for expected in [
             "pub fn weightOf(s @ _: &Shape) -> aver_rt::AverInt {\n    crate::cancel_checkpoint();\n    match s {",
             "Shape::Box(a, b, _) => {\n            let a = a.clone();\n            let b = b.clone();",
-            "pub fn hashOf(t @ _: &Tree) -> aver_rt::AverInt {\n    crate::cancel_checkpoint();\n    match t {",
-            "pub fn leftOf(mut t @ _: Tree) -> Tree {\n    crate::cancel_checkpoint();\n    match &t {",
+            "pub fn hashOf(t @ _: &Tree) -> aver_rt::AverInt {\n    crate::cancel_checkpoint();\n    { let __t = t; match __t.view() {",
+            "pub fn leftOf(mut t @ _: Tree) -> Tree {\n    crate::cancel_checkpoint();\n    { let __t = &t; match __t.view() {",
             "pub fn pairWeight(p @ _: &(Shape, aver_rt::AverInt)) -> aver_rt::AverInt {\n    crate::cancel_checkpoint();\n    match p {",
             "pub fn same(mut r @ _: R) -> R {",
             "pub fn wrap(mut r @ _: R) -> W {",
@@ -711,7 +711,7 @@ fn a_matched_or_handed_on_value_is_not_cloned_whole() {
             }
         }
         if entry.contains(".clone() {\n        Shape::")
-            || entry.contains(".clone() {\n        Tree::")
+            || entry.contains(".clone(); match __t.view()")
         {
             return Err(format!(
                 "{name}: a match clones its whole subject:\n{entry}"

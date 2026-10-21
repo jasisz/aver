@@ -63,12 +63,15 @@ pub fn expectList(
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<aver_rt::AverList<crate::aver_generated::domain::value::Val>, AverStr> {
     crate::cancel_checkpoint();
-    match v {
-        crate::aver_generated::domain::value::Val::ValList(__items_fields) => {
-            let items = __items_fields.0.clone();
-            Ok(items)
+    {
+        let __t = v;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValList(__items_fields) => {
+                let items = __items_fields.0.clone();
+                Ok(items)
+            }
+            _ => Err(AverStr::from("expected list argument")),
         }
-        _ => Err(AverStr::from("expected list argument")),
     }
 }
 
@@ -77,24 +80,30 @@ pub fn expectInt(
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<aver_rt::AverInt, AverStr> {
     crate::cancel_checkpoint();
-    match v {
-        crate::aver_generated::domain::value::Val::ValInt(__n_fields) => {
-            let n = __n_fields.0.clone();
-            Ok(n)
+    {
+        let __t = v;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValInt(__n_fields) => {
+                let n = __n_fields.0.clone();
+                Ok(n)
+            }
+            _ => Err(AverStr::from("expected int argument")),
         }
-        _ => Err(AverStr::from("expected int argument")),
     }
 }
 
 /// Extract string from Val or error.
 pub fn expectStr(v @ _: &crate::aver_generated::domain::value::Val) -> Result<AverStr, AverStr> {
     crate::cancel_checkpoint();
-    match v {
-        crate::aver_generated::domain::value::Val::ValStr(__s_fields) => {
-            let s = __s_fields.0.clone();
-            Ok(s)
+    {
+        let __t = v;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValStr(__s_fields) => {
+                let s = __s_fields.0.clone();
+                Ok(s)
+            }
+            _ => Err(AverStr::from("expected string argument")),
         }
-        _ => Err(AverStr::from("expected string argument")),
     }
 }
 
@@ -103,17 +112,20 @@ pub fn expectBytes(
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<aver_rt::AverIntList, AverStr> {
     crate::cancel_checkpoint();
-    match v {
-        crate::aver_generated::domain::value::Val::ValRecord(__name_fields) => {
-            let name = __name_fields.0.clone();
-            let fields = __name_fields.1.clone();
-            if (&*name == "Bytes") {
-                crate::aver_generated::domain::builtins::helpers::expectBytesFields(fields)
-            } else {
-                Err(AverStr::from("expected Bytes argument"))
+    {
+        let __t = v;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValRecord(__name_fields) => {
+                let name = __name_fields.0.clone();
+                let fields = __name_fields.1.clone();
+                if (&*name == "Bytes") {
+                    crate::aver_generated::domain::builtins::helpers::expectBytesFields(fields)
+                } else {
+                    Err(AverStr::from("expected Bytes argument"))
+                }
             }
+            _ => Err(AverStr::from("expected Bytes argument")),
         }
-        _ => Err(AverStr::from("expected Bytes argument")),
     }
 }
 
@@ -124,15 +136,15 @@ pub fn expectBytesFields(
 ) -> Result<aver_rt::AverIntList, AverStr> {
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(fields, [] => { return Err(AverStr::from("expected Bytes argument")); }, [field, rest] => { { let (name, value) = field; if (&*name == "values") { match value {
-        crate::aver_generated::domain::value::Val::ValList(__items_fields) => {
+        aver_list_match!(fields, [] => { return Err(AverStr::from("expected Bytes argument")); }, [field, rest] => { { let (name, value) = field; if (&*name == "values") { { let __t = value; match __t.view() {
+        crate::aver_generated::domain::value::Val__view::ValList(__items_fields) => {
             let items = __items_fields.0.clone();
             return crate::aver_generated::domain::builtins::helpers::expectByteItems__collected(items, aver_rt::int_list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)));
         },
         _ => {
             return Err(AverStr::from("expected Bytes argument"));
         }
-    } } else { {
+    } } } else { {
             let __tco0 = rest;
             fields = __tco0;
             continue;
@@ -148,8 +160,8 @@ pub fn expectByteItems(
 ) -> Result<aver_rt::AverIntList, AverStr> {
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(items, [] => { return Ok(acc.reverse()); }, [item, rest] => { match item {
-        crate::aver_generated::domain::value::Val::ValInt(__value_fields) => {
+        aver_list_match!(items, [] => { return Ok(acc.reverse()); }, [item, rest] => { { let __t = item; match __t.view() {
+        crate::aver_generated::domain::value::Val__view::ValInt(__value_fields) => {
             let value = __value_fields.0.clone();
             {
             let __tco0 = rest;
@@ -162,7 +174,7 @@ pub fn expectByteItems(
         _ => {
             return Err(AverStr::from("expected Bytes argument"));
         }
-    } })
+    } } })
     }
 }
 
@@ -174,8 +186,8 @@ pub fn expectByteItems__collected(
 ) -> Result<aver_rt::AverIntList, AverStr> {
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(items, [] => { return Ok(aver_rt::int_list_builder_finalize(acc)); }, [item, rest] => { match item {
-        crate::aver_generated::domain::value::Val::ValInt(__value_fields) => {
+        aver_list_match!(items, [] => { return Ok(aver_rt::int_list_builder_finalize(acc)); }, [item, rest] => { { let __t = item; match __t.view() {
+        crate::aver_generated::domain::value::Val__view::ValInt(__value_fields) => {
             let value = __value_fields.0.clone();
             {
             let __tco0 = rest;
@@ -188,6 +200,6 @@ pub fn expectByteItems__collected(
         _ => {
             return Err(AverStr::from("expected Bytes argument"));
         }
-    } })
+    } } })
     }
 }

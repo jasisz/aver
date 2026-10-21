@@ -1,0 +1,108 @@
+module RecursiveSumApp
+    intent =
+        "A recursive sum in the Rust backend: matching on it alone and in tuples, a name bound to a matched value, equality with shared nodes, ordering as a Map key, a record on the cycle, constructors without fields."
+    effects [Console]
+
+type Expr
+    Num(Int)
+    Nil
+    Neg(Expr)
+    Add(Expr, Expr)
+    Let(String, Expr, Expr)
+    Opt(Option<Expr>)
+
+record Node
+    tree: Tree
+    weight: Int
+
+type Tree
+    Leaf
+    Branch(Node, Node)
+
+fn show(e: Expr) -> String
+    match e
+        Expr.Num(n) -> "{n}"
+        Expr.Nil -> "nil"
+        Expr.Neg(x) -> "-{show(x)}"
+        Expr.Add(a, b) -> "({show(a)} + {show(b)})"
+        Expr.Let(n, v, b) -> "let {n} = {show(v)} in {show(b)}"
+        Expr.Opt(o) -> match o
+            Option.Some(x) -> "some {show(x)}"
+            Option.None -> "none"
+
+fn eval(e: Expr) -> Int
+    match e
+        Expr.Num(n) -> n
+        Expr.Nil -> 0
+        Expr.Neg(x) -> 0 - eval(x)
+        Expr.Add(a, b) -> eval(a) + eval(b)
+        Expr.Let(_, v, b) -> eval(v) + eval(b)
+        other -> size(other)
+
+fn size(e: Expr) -> Int
+    match e
+        Expr.Add(a, b) -> 1 + size(a) + size(b)
+        Expr.Neg(x) -> 1 + size(x)
+        Expr.Opt(o) -> match o
+            Option.Some(x) -> 1 + size(x)
+            Option.None -> 1
+        _ -> 1
+
+fn sameShape(a: Expr, b: Expr) -> Bool
+    match (a, b)
+        (Expr.Num(_), Expr.Num(_)) -> true
+        (Expr.Nil, Expr.Nil) -> true
+        (Expr.Neg(x), Expr.Neg(y)) -> sameShape(x, y)
+        (Expr.Add(x1, x2), Expr.Add(y1, y2)) -> Bool.and(sameShape(x1, y1), sameShape(x2, y2))
+        (left, _) -> size(left) == 0
+
+fn pairUp(a: Expr, n: Int) -> String
+    match (a, n)
+        (Expr.Nil, k) -> "nil {k}"
+        (whole, k) -> "{show(whole)} {k}"
+
+fn depthLoop(e: Expr, acc: Int) -> Int
+    match e
+        Expr.Neg(x) -> depthLoop(x, acc + 1)
+        Expr.Add(x, _) -> depthLoop(x, acc + 1)
+        _ -> acc
+
+fn build(n: Int) -> Expr
+    match n <= 0
+        true -> Expr.Nil
+        false -> Expr.Add(build(n - 1), Expr.Num(n))
+
+fn countTree(t: Tree) -> Int
+    match t
+        Tree.Leaf -> 1
+        Tree.Branch(l, r) -> countTree(l.tree) + countTree(r.tree) + l.weight + r.weight
+
+fn tally(es: List<Expr>, m: Map<Expr, Int>) -> Map<Expr, Int>
+    match es
+        [] -> m
+        [e, ..rest] -> match Map.get(m, e)
+            Option.Some(k) -> tally(rest, Map.set(m, e, k + 1))
+            Option.None -> tally(rest, Map.set(m, e, 1))
+
+fn showEntries(es: List<Tuple<Expr, Int>>) -> String
+    match es
+        [] -> ""
+        [(e, k), ..rest] -> "[{show(e)}: {k}]" + showEntries(rest)
+
+fn main()
+    ! [Console.print]
+    x = Expr.Add(Expr.Num(1), Expr.Neg(Expr.Num(2)))
+    y = Expr.Let("v", x, Expr.Add(x, x))
+    z = Expr.Opt(Option.Some(y))
+    Console.print(show(z))
+    Console.print("eval {eval(y)} size {size(z)} other {eval(z)}")
+    Console.print("eq {x == Expr.Add(Expr.Num(1), Expr.Neg(Expr.Num(2)))} {x == y} {Expr.Nil == Expr.Nil}")
+    Console.print("shape {sameShape(x, x)} {sameShape(x, y)} {sameShape(Expr.Nil, Expr.Nil)}")
+    Console.print(pairUp(Expr.Nil, 3) + " / " + pairUp(x, 4))
+    Console.print("depth {depthLoop(build(100000), 0)}")
+    big = build(2000)
+    Console.print("big eq {big == build(2000)} {big == build(1999)}")
+    t = Tree.Branch(Node(tree = Tree.Leaf, weight = 2), Node(tree = Tree.Branch(Node(tree = Tree.Leaf, weight = 1), Node(tree = Tree.Leaf, weight = 1)), weight = 3))
+    Console.print("tree {countTree(t)}")
+    m = tally([x, Expr.Nil, y, x, Expr.Num(7), Expr.Nil, Expr.Neg(Expr.Nil), Expr.Num(-1)], {})
+    Console.print(showEntries(Map.entries(m)))

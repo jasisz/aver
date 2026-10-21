@@ -2,33 +2,49 @@
 use crate::proof_kernel::*;
 use ::aver_rt::aver_list_match;
 
-#[derive(Clone, Debug, Eq, Hash)]
-pub enum Proof {
-    PRefl(aver_rt::Shared<Proof__PRefl>),
-    PSymm(aver_rt::Shared<Proof__PSymm>),
-    PTrans(aver_rt::Shared<Proof__PTrans>),
-    PCongr(aver_rt::Shared<Proof__PCongr>),
-    PUnfold(aver_rt::Shared<Proof__PUnfold>),
-    PConst(aver_rt::Shared<Proof__PConst>),
-    PArm(aver_rt::Shared<Proof__PArm>),
-    PProj(aver_rt::Shared<Proof__PProj>),
-    PCell(aver_rt::Shared<Proof__PCell>),
-    PHyp(aver_rt::Shared<Proof__PHyp>),
-    PRule(aver_rt::Shared<Proof__PRule>),
-    PLaw(aver_rt::Shared<Proof__PLaw>),
-    PCompute(aver_rt::Shared<Proof__PCompute>),
-    PCases(aver_rt::Shared<Proof__PCases>),
-    PSplit(aver_rt::Shared<Proof__PSplit>),
-    PHave(aver_rt::Shared<Proof__PHave>),
-    PEnum(aver_rt::Shared<Proof__PEnum>),
-    PAbsurd(aver_rt::Shared<Proof__PAbsurd>),
-    PInduct(aver_rt::Shared<Proof__PInduct>),
-    PListInduct(aver_rt::Shared<Proof__PListInduct>),
-    PListCases(aver_rt::Shared<Proof__PListCases>),
-    PLenInduct(aver_rt::Shared<Proof__PLenInduct>),
-    PRing(aver_rt::Shared<Proof__PRing>),
-    PLinear(aver_rt::Shared<Proof__PLinear>),
+::aver_rt::thin_sum! {
+    #[derive(Debug, Hash)]
+    pub Proof / Proof__view / Proof__pair {
+        0 PRefl(Proof__PRefl),
+        1 PSymm(Proof__PSymm),
+        2 PTrans(Proof__PTrans),
+        3 PCongr(Proof__PCongr),
+        4 PUnfold(Proof__PUnfold),
+        5 PConst(Proof__PConst),
+        6 PArm(Proof__PArm),
+        7 PProj(Proof__PProj),
+        8 PCell(Proof__PCell),
+        9 PHyp(Proof__PHyp),
+        10 PRule(Proof__PRule),
+        11 PLaw(Proof__PLaw),
+        12 PCompute(Proof__PCompute),
+        13 PCases(Proof__PCases),
+        14 PSplit(Proof__PSplit),
+        15 PHave(Proof__PHave),
+        16 PEnum(Proof__PEnum),
+        17 PAbsurd(Proof__PAbsurd),
+        18 PInduct(Proof__PInduct),
+        19 PListInduct(Proof__PListInduct),
+        20 PListCases(Proof__PListCases),
+        21 PLenInduct(Proof__PLenInduct),
+        22 PRing(Proof__PRing),
+        23 PLinear(Proof__PLinear),
+    }
 }
+
+impl std::fmt::Debug for Proof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.view(), f)
+    }
+}
+
+impl std::hash::Hash for Proof {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.view().hash(state)
+    }
+}
+
+impl Eq for Proof {}
 
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Proof__PRefl(pub crate::proof_kernel::aver_generated::kernel::term::Term);
@@ -549,34 +565,69 @@ impl aver_rt::WalkEq for Proof__PLinear {
 
 impl aver_rt::WalkEq for Proof {
     fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-            && match (self, other) {
-                (Proof::PRefl(a0), Proof::PRefl(b0)) => walk.shared(a0, b0, true),
-                (Proof::PSymm(a0), Proof::PSymm(b0)) => walk.shared(a0, b0, true),
-                (Proof::PTrans(a0), Proof::PTrans(b0)) => a0 == b0,
-                (Proof::PCongr(a0), Proof::PCongr(b0)) => walk.shared(a0, b0, true),
-                (Proof::PUnfold(a0), Proof::PUnfold(b0)) => a0 == b0,
-                (Proof::PConst(a0), Proof::PConst(b0)) => a0 == b0,
-                (Proof::PArm(a0), Proof::PArm(b0)) => walk.shared(a0, b0, true),
-                (Proof::PProj(a0), Proof::PProj(b0)) => walk.shared(a0, b0, true),
-                (Proof::PCell(a0), Proof::PCell(b0)) => walk.shared(a0, b0, true),
-                (Proof::PHyp(a0), Proof::PHyp(b0)) => a0 == b0,
-                (Proof::PRule(a0), Proof::PRule(b0)) => a0 == b0,
-                (Proof::PLaw(a0), Proof::PLaw(b0)) => a0 == b0,
-                (Proof::PCompute(a0), Proof::PCompute(b0)) => walk.shared(a0, b0, true),
-                (Proof::PCases(a0), Proof::PCases(b0)) => walk.shared(a0, b0, true),
-                (Proof::PSplit(a0), Proof::PSplit(b0)) => walk.shared(a0, b0, true),
-                (Proof::PHave(a0), Proof::PHave(b0)) => walk.shared(a0, b0, true),
-                (Proof::PEnum(a0), Proof::PEnum(b0)) => walk.shared(a0, b0, true),
-                (Proof::PAbsurd(a0), Proof::PAbsurd(b0)) => walk.shared(a0, b0, true),
-                (Proof::PInduct(a0), Proof::PInduct(b0)) => walk.shared(a0, b0, true),
-                (Proof::PListInduct(a0), Proof::PListInduct(b0)) => walk.shared(a0, b0, true),
-                (Proof::PListCases(a0), Proof::PListCases(b0)) => walk.shared(a0, b0, true),
-                (Proof::PLenInduct(a0), Proof::PLenInduct(b0)) => walk.shared(a0, b0, true),
-                (Proof::PRing(a0), Proof::PRing(b0)) => walk.shared(a0, b0, true),
-                (Proof::PLinear(a0), Proof::PLinear(b0)) => walk.shared(a0, b0, true),
-                _ => false,
+        match Proof::view_pair(self, other) {
+            Some(Proof__pair::PRefl(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
             }
+            Some(Proof__pair::PSymm(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Proof__pair::PTrans(a0, b0)) => a0 == b0,
+            Some(Proof__pair::PCongr(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Proof__pair::PUnfold(a0, b0)) => a0 == b0,
+            Some(Proof__pair::PConst(a0, b0)) => a0 == b0,
+            Some(Proof__pair::PArm(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Proof__pair::PProj(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Proof__pair::PCell(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Proof__pair::PHyp(a0, b0)) => a0 == b0,
+            Some(Proof__pair::PRule(a0, b0)) => a0 == b0,
+            Some(Proof__pair::PLaw(a0, b0)) => a0 == b0,
+            Some(Proof__pair::PCompute(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Proof__pair::PCases(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Proof__pair::PSplit(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Proof__pair::PHave(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Proof__pair::PEnum(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Proof__pair::PAbsurd(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Proof__pair::PInduct(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Proof__pair::PListInduct(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Proof__pair::PListCases(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Proof__pair::PLenInduct(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Proof__pair::PRing(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Proof__pair::PLinear(a0, b0)) => {
+                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+            }
+            None => false,
+        }
     }
 }
 
@@ -589,31 +640,31 @@ impl PartialEq for Proof {
 
 impl Proof {
     fn aver_key_rank(&self) -> usize {
-        match self {
-            Proof::PAbsurd(..) => 0,
-            Proof::PArm(..) => 1,
-            Proof::PCases(..) => 2,
-            Proof::PCell(..) => 3,
-            Proof::PCompute(..) => 4,
-            Proof::PCongr(..) => 5,
-            Proof::PConst(..) => 6,
-            Proof::PEnum(..) => 7,
-            Proof::PHave(..) => 8,
-            Proof::PHyp(..) => 9,
-            Proof::PInduct(..) => 10,
-            Proof::PLaw(..) => 11,
-            Proof::PLenInduct(..) => 12,
-            Proof::PLinear(..) => 13,
-            Proof::PListCases(..) => 14,
-            Proof::PListInduct(..) => 15,
-            Proof::PProj(..) => 16,
-            Proof::PRefl(..) => 17,
-            Proof::PRing(..) => 18,
-            Proof::PRule(..) => 19,
-            Proof::PSplit(..) => 20,
-            Proof::PSymm(..) => 21,
-            Proof::PTrans(..) => 22,
-            Proof::PUnfold(..) => 23,
+        match self.view() {
+            Proof__view::PAbsurd(..) => 0,
+            Proof__view::PArm(..) => 1,
+            Proof__view::PCases(..) => 2,
+            Proof__view::PCell(..) => 3,
+            Proof__view::PCompute(..) => 4,
+            Proof__view::PCongr(..) => 5,
+            Proof__view::PConst(..) => 6,
+            Proof__view::PEnum(..) => 7,
+            Proof__view::PHave(..) => 8,
+            Proof__view::PHyp(..) => 9,
+            Proof__view::PInduct(..) => 10,
+            Proof__view::PLaw(..) => 11,
+            Proof__view::PLenInduct(..) => 12,
+            Proof__view::PLinear(..) => 13,
+            Proof__view::PListCases(..) => 14,
+            Proof__view::PListInduct(..) => 15,
+            Proof__view::PProj(..) => 16,
+            Proof__view::PRefl(..) => 17,
+            Proof__view::PRing(..) => 18,
+            Proof__view::PRule(..) => 19,
+            Proof__view::PSplit(..) => 20,
+            Proof__view::PSymm(..) => 21,
+            Proof__view::PTrans(..) => 22,
+            Proof__view::PUnfold(..) => 23,
         }
     }
 }
@@ -630,58 +681,58 @@ impl Ord for Proof {
         if rank != std::cmp::Ordering::Equal {
             return rank;
         }
-        match (self, other) {
-            (Proof::PAbsurd(a), Proof::PAbsurd(b)) => std::cmp::Ordering::Equal
+        match Proof::view_pair(self, other) {
+            Some(Proof__pair::PAbsurd(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1)))
                 .then_with(|| (&a.2).cmp((&b.2))),
-            (Proof::PArm(a), Proof::PArm(b)) => std::cmp::Ordering::Equal
+            Some(Proof__pair::PArm(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1)))
                 .then_with(|| (&a.2).cmp((&b.2)))
                 .then_with(|| (&a.3).cmp((&b.3))),
-            (Proof::PCases(a), Proof::PCases(b)) => std::cmp::Ordering::Equal
+            Some(Proof__pair::PCases(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1)))
                 .then_with(|| (&a.2).cmp((&b.2)))
                 .then_with(|| (&a.3).cmp((&b.3))),
-            (Proof::PCell(a), Proof::PCell(b)) => {
+            Some(Proof__pair::PCell(a, b)) => {
                 std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Proof::PCompute(a), Proof::PCompute(b)) => std::cmp::Ordering::Equal
+            Some(Proof__pair::PCompute(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1))),
-            (Proof::PCongr(a), Proof::PCongr(b)) => std::cmp::Ordering::Equal
+            Some(Proof__pair::PCongr(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1))),
-            (Proof::PConst(a), Proof::PConst(b)) => {
+            Some(Proof__pair::PConst(a, b)) => {
                 std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Proof::PEnum(a), Proof::PEnum(b)) => std::cmp::Ordering::Equal
+            Some(Proof__pair::PEnum(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1)))
                 .then_with(|| (&a.2).cmp((&b.2)))
                 .then_with(|| (&a.3).cmp((&b.3))),
-            (Proof::PHave(a), Proof::PHave(b)) => std::cmp::Ordering::Equal
+            Some(Proof__pair::PHave(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1)))
                 .then_with(|| (&a.2).cmp((&b.2)))
                 .then_with(|| (&a.3).cmp((&b.3))),
-            (Proof::PHyp(a), Proof::PHyp(b)) => {
+            Some(Proof__pair::PHyp(a, b)) => {
                 std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Proof::PInduct(a), Proof::PInduct(b)) => std::cmp::Ordering::Equal
+            Some(Proof__pair::PInduct(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1)))
                 .then_with(|| (&a.2).cmp((&b.2)))
                 .then_with(|| (&a.3).cmp((&b.3)))
                 .then_with(|| (&a.4).cmp((&b.4)))
                 .then_with(|| (&a.5).cmp((&b.5))),
-            (Proof::PLaw(a), Proof::PLaw(b)) => std::cmp::Ordering::Equal
+            Some(Proof__pair::PLaw(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1)))
                 .then_with(|| (&a.2).cmp((&b.2))),
-            (Proof::PLenInduct(a), Proof::PLenInduct(b)) => std::cmp::Ordering::Equal
+            Some(Proof__pair::PLenInduct(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1)))
                 .then_with(|| (&a.2).cmp((&b.2)))
@@ -691,13 +742,13 @@ impl Ord for Proof {
                 .then_with(|| (&a.6).cmp((&b.6)))
                 .then_with(|| (&a.7).cmp((&b.7)))
                 .then_with(|| (&a.8).cmp((&b.8))),
-            (Proof::PLinear(a), Proof::PLinear(b)) => std::cmp::Ordering::Equal
+            Some(Proof__pair::PLinear(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1)))
                 .then_with(|| (&a.2).cmp((&b.2)))
                 .then_with(|| (&a.3).cmp((&b.3)))
                 .then_with(|| (&a.4).cmp((&b.4))),
-            (Proof::PListCases(a), Proof::PListCases(b)) => std::cmp::Ordering::Equal
+            Some(Proof__pair::PListCases(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1)))
                 .then_with(|| (&a.2).cmp((&b.2)))
@@ -705,7 +756,7 @@ impl Ord for Proof {
                 .then_with(|| (&a.4).cmp((&b.4)))
                 .then_with(|| (&a.5).cmp((&b.5)))
                 .then_with(|| (&a.6).cmp((&b.6))),
-            (Proof::PListInduct(a), Proof::PListInduct(b)) => std::cmp::Ordering::Equal
+            Some(Proof__pair::PListInduct(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1)))
                 .then_with(|| (&a.2).cmp((&b.2)))
@@ -716,31 +767,31 @@ impl Ord for Proof {
                 .then_with(|| (&a.7).cmp((&b.7)))
                 .then_with(|| (&a.8).cmp((&b.8)))
                 .then_with(|| (&a.9).cmp((&b.9))),
-            (Proof::PProj(a), Proof::PProj(b)) => {
+            Some(Proof__pair::PProj(a, b)) => {
                 std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Proof::PRefl(a), Proof::PRefl(b)) => {
+            Some(Proof__pair::PRefl(a, b)) => {
                 std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Proof::PRing(a), Proof::PRing(b)) => std::cmp::Ordering::Equal
+            Some(Proof__pair::PRing(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1))),
-            (Proof::PRule(a), Proof::PRule(b)) => std::cmp::Ordering::Equal
+            Some(Proof__pair::PRule(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1)))
                 .then_with(|| (&a.2).cmp((&b.2))),
-            (Proof::PSplit(a), Proof::PSplit(b)) => std::cmp::Ordering::Equal
+            Some(Proof__pair::PSplit(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1)))
                 .then_with(|| (&a.2).cmp((&b.2)))
                 .then_with(|| (&a.3).cmp((&b.3))),
-            (Proof::PSymm(a), Proof::PSymm(b)) => {
+            Some(Proof__pair::PSymm(a, b)) => {
                 std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
-            (Proof::PTrans(a), Proof::PTrans(b)) => std::cmp::Ordering::Equal
+            Some(Proof__pair::PTrans(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1))),
-            (Proof::PUnfold(a), Proof::PUnfold(b)) => std::cmp::Ordering::Equal
+            Some(Proof__pair::PUnfold(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1)))
                 .then_with(|| (&a.2).cmp((&b.2)))
@@ -753,18 +804,18 @@ impl Ord for Proof {
 
 impl aver_rt::AverDisplay for Proof {
     fn aver_display(&self) -> String {
-        match self {
-            Proof::PRefl(f) => format!("PRefl({})", (&f.0).aver_display_inner()),
-            Proof::PSymm(f) => format!("PSymm({})", (&f.0).aver_display_inner()),
-            Proof::PTrans(f) => format!(
+        match self.view() {
+            Proof__view::PRefl(f) => format!("PRefl({})", (&f.0).aver_display_inner()),
+            Proof__view::PSymm(f) => format!("PSymm({})", (&f.0).aver_display_inner()),
+            Proof__view::PTrans(f) => format!(
                 "PTrans({})",
                 vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Proof::PCongr(f) => format!(
+            Proof__view::PCongr(f) => format!(
                 "PCongr({})",
                 vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Proof::PUnfold(f) => format!(
+            Proof__view::PUnfold(f) => format!(
                 "PUnfold({})",
                 vec![
                     (&f.0).aver_display_inner(),
@@ -775,8 +826,8 @@ impl aver_rt::AverDisplay for Proof {
                 ]
                 .join(", ")
             ),
-            Proof::PConst(f) => format!("PConst({})", (&f.0).aver_display_inner()),
-            Proof::PArm(f) => format!(
+            Proof__view::PConst(f) => format!("PConst({})", (&f.0).aver_display_inner()),
+            Proof__view::PArm(f) => format!(
                 "PArm({})",
                 vec![
                     (&f.0).aver_display_inner(),
@@ -786,10 +837,10 @@ impl aver_rt::AverDisplay for Proof {
                 ]
                 .join(", ")
             ),
-            Proof::PProj(f) => format!("PProj({})", (&f.0).aver_display_inner()),
-            Proof::PCell(f) => format!("PCell({})", (&f.0).aver_display_inner()),
-            Proof::PHyp(f) => format!("PHyp({})", (&f.0).aver_display_inner()),
-            Proof::PRule(f) => format!(
+            Proof__view::PProj(f) => format!("PProj({})", (&f.0).aver_display_inner()),
+            Proof__view::PCell(f) => format!("PCell({})", (&f.0).aver_display_inner()),
+            Proof__view::PHyp(f) => format!("PHyp({})", (&f.0).aver_display_inner()),
+            Proof__view::PRule(f) => format!(
                 "PRule({})",
                 vec![
                     (&f.0).aver_display_inner(),
@@ -798,7 +849,7 @@ impl aver_rt::AverDisplay for Proof {
                 ]
                 .join(", ")
             ),
-            Proof::PLaw(f) => format!(
+            Proof__view::PLaw(f) => format!(
                 "PLaw({})",
                 vec![
                     (&f.0).aver_display_inner(),
@@ -807,11 +858,11 @@ impl aver_rt::AverDisplay for Proof {
                 ]
                 .join(", ")
             ),
-            Proof::PCompute(f) => format!(
+            Proof__view::PCompute(f) => format!(
                 "PCompute({})",
                 vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Proof::PCases(f) => format!(
+            Proof__view::PCases(f) => format!(
                 "PCases({})",
                 vec![
                     (&f.0).aver_display_inner(),
@@ -821,7 +872,7 @@ impl aver_rt::AverDisplay for Proof {
                 ]
                 .join(", ")
             ),
-            Proof::PSplit(f) => format!(
+            Proof__view::PSplit(f) => format!(
                 "PSplit({})",
                 vec![
                     (&f.0).aver_display_inner(),
@@ -831,7 +882,7 @@ impl aver_rt::AverDisplay for Proof {
                 ]
                 .join(", ")
             ),
-            Proof::PHave(f) => format!(
+            Proof__view::PHave(f) => format!(
                 "PHave({})",
                 vec![
                     (&f.0).aver_display_inner(),
@@ -841,7 +892,7 @@ impl aver_rt::AverDisplay for Proof {
                 ]
                 .join(", ")
             ),
-            Proof::PEnum(f) => format!(
+            Proof__view::PEnum(f) => format!(
                 "PEnum({})",
                 vec![
                     (&f.0).aver_display_inner(),
@@ -851,7 +902,7 @@ impl aver_rt::AverDisplay for Proof {
                 ]
                 .join(", ")
             ),
-            Proof::PAbsurd(f) => format!(
+            Proof__view::PAbsurd(f) => format!(
                 "PAbsurd({})",
                 vec![
                     (&f.0).aver_display_inner(),
@@ -860,7 +911,7 @@ impl aver_rt::AverDisplay for Proof {
                 ]
                 .join(", ")
             ),
-            Proof::PInduct(f) => format!(
+            Proof__view::PInduct(f) => format!(
                 "PInduct({})",
                 vec![
                     (&f.0).aver_display_inner(),
@@ -872,7 +923,7 @@ impl aver_rt::AverDisplay for Proof {
                 ]
                 .join(", ")
             ),
-            Proof::PListInduct(f) => format!(
+            Proof__view::PListInduct(f) => format!(
                 "PListInduct({})",
                 vec![
                     (&f.0).aver_display_inner(),
@@ -888,7 +939,7 @@ impl aver_rt::AverDisplay for Proof {
                 ]
                 .join(", ")
             ),
-            Proof::PListCases(f) => format!(
+            Proof__view::PListCases(f) => format!(
                 "PListCases({})",
                 vec![
                     (&f.0).aver_display_inner(),
@@ -901,7 +952,7 @@ impl aver_rt::AverDisplay for Proof {
                 ]
                 .join(", ")
             ),
-            Proof::PLenInduct(f) => format!(
+            Proof__view::PLenInduct(f) => format!(
                 "PLenInduct({})",
                 vec![
                     (&f.0).aver_display_inner(),
@@ -916,11 +967,11 @@ impl aver_rt::AverDisplay for Proof {
                 ]
                 .join(", ")
             ),
-            Proof::PRing(f) => format!(
+            Proof__view::PRing(f) => format!(
                 "PRing({})",
                 vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            Proof::PLinear(f) => format!(
+            Proof__view::PLinear(f) => format!(
                 "PLinear({})",
                 vec![
                     (&f.0).aver_display_inner(),

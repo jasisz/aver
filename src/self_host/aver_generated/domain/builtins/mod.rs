@@ -21,15 +21,15 @@ fn __mutual_tco_trampoline_1(
         __state = match __state {
             __MutualTco1::TuplesToMap(mut items @ _, mut acc @ _) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(items, [] => { return acc }, [item, rest] => { match item {
-        crate::aver_generated::domain::value::Val::ValTuple(__parts_fields) => {
+                aver_list_match!(items, [] => { return acc }, [item, rest] => { { let __t = item; match __t.view() {
+        crate::aver_generated::domain::value::Val__view::ValTuple(__parts_fields) => {
             let parts = __parts_fields.0.clone();
             __MutualTco1::TuplesToMapOne(parts, rest, acc)
         },
         _ => {
             __MutualTco1::TuplesToMap(rest, acc)
         }
-    } })
+    } } })
             }
             __MutualTco1::TuplesToMapOne(mut parts @ _, mut rest @ _, mut acc @ _) => {
                 crate::cancel_checkpoint();
@@ -320,18 +320,18 @@ pub fn builtinConsoleReadLine(
         )
     } {
         Ok(line @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValOk(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(line),
-                )),
-            )),
+                ),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -366,18 +366,18 @@ pub fn builtinDiskReadText(
         )
     } {
         Ok(content @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValOk(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(content),
-                )),
-            )),
+                ),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -405,12 +405,12 @@ pub fn builtinArgsGet(
         )
     };
     Ok(crate::aver_generated::domain::value::Val::ValList(
-        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValList(
+        crate::aver_generated::domain::value::Val__ValList(
             crate::aver_generated::domain::builtins::stringsToVals__collected(
                 rawArgs,
                 aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
             ),
-        )),
+        ),
     ))
 }
 
@@ -444,11 +444,11 @@ pub fn builtinEnvGet(
         )
     } {
         Some(value @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValSome(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValSome(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(value),
-                )),
-            )),
+                ),
+            ),
         )),
         None => Ok(crate::aver_generated::domain::value::Val::ValNone),
     }
@@ -502,16 +502,16 @@ pub fn builtinEnvSetInner(
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+            crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValUnit,
-            )),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -526,7 +526,7 @@ pub fn stringsToVals(
         crate::cancel_checkpoint();
         aver_list_match!(strs, [] => { return acc.reverse(); }, [s, rest] => { {
             let __tco0 = rest;
-            let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValStr(s))), &acc);
+            let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::value::Val::ValStr(crate::aver_generated::domain::value::Val__ValStr(s)), &acc);
             strs = __tco0;
             acc = __tco1;
             continue;
@@ -540,26 +540,29 @@ pub fn builtinMapEntries(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
-    match v {
-        crate::aver_generated::domain::value::Val::ValMap(__m_fields) => {
-            let m = __m_fields.0.clone();
-            Ok(crate::aver_generated::domain::value::Val::ValList(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValList(
-                    crate::aver_generated::domain::builtins::mapEntriesToTuples__collected(
-                        {
-                            let mut es: Vec<_> =
-                                m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                            es.sort_by(|a, b| a.0.cmp(&b.0));
-                            aver_rt::AverList::from_vec(es)
-                        },
-                        aver_rt::list_builder_new(
-                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+    {
+        let __t = v;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
+                let m = __m_fields.0.clone();
+                Ok(crate::aver_generated::domain::value::Val::ValList(
+                    crate::aver_generated::domain::value::Val__ValList(
+                        crate::aver_generated::domain::builtins::mapEntriesToTuples__collected(
+                            {
+                                let mut es: Vec<_> =
+                                    m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                                es.sort_by(|a, b| a.0.cmp(&b.0));
+                                aver_rt::AverList::from_vec(es)
+                            },
+                            aver_rt::list_builder_new(
+                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                            ),
                         ),
                     ),
-                )),
-            ))
+                ))
+            }
+            _ => Err(AverStr::from("Map.entries requires a Map")),
         }
-        _ => Err(AverStr::from("Map.entries requires a Map")),
     }
 }
 
@@ -573,7 +576,7 @@ pub fn mapEntriesToTuples(
         crate::cancel_checkpoint();
         aver_list_match!(entries, [] => { return acc.reverse(); }, [pair, rest] => { { let (k, v) = pair; {
             let __tco0 = rest;
-            let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::value::Val::ValTuple(aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValTuple(aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValStr(k))), v])))), &acc);
+            let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::value::Val::ValTuple(crate::aver_generated::domain::value::Val__ValTuple(aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::value::Val::ValStr(crate::aver_generated::domain::value::Val__ValStr(k)), v]))), &acc);
             entries = __tco0;
             acc = __tco1;
             continue;
@@ -587,25 +590,28 @@ pub fn builtinMapKeys(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
-    match v {
-        crate::aver_generated::domain::value::Val::ValMap(__m_fields) => {
-            let m = __m_fields.0.clone();
-            Ok(crate::aver_generated::domain::value::Val::ValList(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValList(
-                    crate::aver_generated::domain::builtins::stringsToVals__collected(
-                        {
-                            let mut ks: Vec<_> = m.keys().cloned().collect();
-                            ks.sort();
-                            aver_rt::AverList::from_vec(ks)
-                        },
-                        aver_rt::list_builder_new(
-                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+    {
+        let __t = v;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
+                let m = __m_fields.0.clone();
+                Ok(crate::aver_generated::domain::value::Val::ValList(
+                    crate::aver_generated::domain::value::Val__ValList(
+                        crate::aver_generated::domain::builtins::stringsToVals__collected(
+                            {
+                                let mut ks: Vec<_> = m.keys().cloned().collect();
+                                ks.sort();
+                                aver_rt::AverList::from_vec(ks)
+                            },
+                            aver_rt::list_builder_new(
+                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                            ),
                         ),
                     ),
-                )),
-            ))
+                ))
+            }
+            _ => Err(AverStr::from("Map.keys requires a Map")),
         }
-        _ => Err(AverStr::from("Map.keys requires a Map")),
     }
 }
 
@@ -615,18 +621,24 @@ pub fn builtinMapValues(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
-    match v {
-        crate::aver_generated::domain::value::Val::ValMap(__m_fields) => {
-            let m = __m_fields.0.clone();
-            Ok(crate::aver_generated::domain::value::Val::ValList(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValList({
-                    let mut es: Vec<_> = m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                    es.sort_by(|a, b| a.0.cmp(&b.0));
-                    aver_rt::AverList::from_vec(es.into_iter().map(|(_, v)| v).collect::<Vec<_>>())
-                })),
-            ))
+    {
+        let __t = v;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
+                let m = __m_fields.0.clone();
+                Ok(crate::aver_generated::domain::value::Val::ValList(
+                    crate::aver_generated::domain::value::Val__ValList({
+                        let mut es: Vec<_> =
+                            m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                        es.sort_by(|a, b| a.0.cmp(&b.0));
+                        aver_rt::AverList::from_vec(
+                            es.into_iter().map(|(_, v)| v).collect::<Vec<_>>(),
+                        )
+                    }),
+                ))
+            }
+            _ => Err(AverStr::from("Map.values requires a Map")),
         }
-        _ => Err(AverStr::from("Map.values requires a Map")),
     }
 }
 
@@ -638,9 +650,9 @@ pub fn builtinMapFromList(
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let items @ _ = crate::aver_generated::domain::builtins::helpers::expectList(&v)?;
     Ok(crate::aver_generated::domain::value::Val::ValMap(
-        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValMap(
+        crate::aver_generated::domain::value::Val__ValMap(
             crate::aver_generated::domain::builtins::tuplesToMap(items, HashMap::new()),
-        )),
+        ),
     ))
 }
 
@@ -650,16 +662,19 @@ pub fn builtinMapSize(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
-    match v {
-        crate::aver_generated::domain::value::Val::ValMap(__m_fields) => {
-            let m = __m_fields.0.clone();
-            Ok(crate::aver_generated::domain::value::Val::ValInt(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt(
-                    aver_rt::AverInt::from_i64(m.len() as i64),
-                )),
-            ))
+    {
+        let __t = v;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
+                let m = __m_fields.0.clone();
+                Ok(crate::aver_generated::domain::value::Val::ValInt(
+                    crate::aver_generated::domain::value::Val__ValInt(aver_rt::AverInt::from_i64(
+                        m.len() as i64,
+                    )),
+                ))
+            }
+            _ => Err(AverStr::from("Map.size requires a Map")),
         }
-        _ => Err(AverStr::from("Map.size requires a Map")),
     }
 }
 
@@ -681,16 +696,19 @@ pub fn builtinMapRemoveInner(
     keyV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match mapV {
-        crate::aver_generated::domain::value::Val::ValMap(__m_fields) => {
-            let m = __m_fields.0.clone();
-            Ok(crate::aver_generated::domain::value::Val::ValMap(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValMap(
-                    m.remove_owned(&crate::aver_generated::domain::value::mapKeyRepr(keyV)),
-                )),
-            ))
+    {
+        let __t = mapV;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
+                let m = __m_fields.0.clone();
+                Ok(crate::aver_generated::domain::value::Val::ValMap(
+                    crate::aver_generated::domain::value::Val__ValMap(
+                        m.remove_owned(&crate::aver_generated::domain::value::mapKeyRepr(keyV)),
+                    ),
+                ))
+            }
+            _ => Err(AverStr::from("Map.remove requires a Map")),
         }
-        _ => Err(AverStr::from("Map.remove requires a Map")),
     }
 }
 
@@ -755,18 +773,18 @@ pub fn builtinRandomIntInner(
         )
     } {
         Ok(value @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
-                crate::aver_generated::domain::value::Val::ValInt(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValOk(
+                crate::aver_generated::domain::value::Val::ValInt(
                     crate::aver_generated::domain::value::Val__ValInt(value),
-                )),
-            )),
+                ),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -801,16 +819,16 @@ pub fn builtinTimeSleep(
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+            crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValUnit,
-            )),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -821,7 +839,7 @@ pub fn builtinTimeUnixMs(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     Ok(crate::aver_generated::domain::value::Val::ValInt(
-        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt({
+        crate::aver_generated::domain::value::Val__ValInt({
             crate::cancel_checkpoint();
             crate::aver_replay::invoke_capability_effect(
                 "Time.unixMs",
@@ -837,7 +855,7 @@ pub fn builtinTimeUnixMs(
                     )
                 },
             )
-        })),
+        }),
     ))
 }
 
@@ -875,16 +893,16 @@ pub fn termClear() -> Result<crate::aver_generated::domain::value::Val, AverStr>
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+            crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValUnit,
-            )),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -910,16 +928,16 @@ pub fn termFlush() -> Result<crate::aver_generated::domain::value::Val, AverStr>
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+            crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValUnit,
-            )),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -945,16 +963,16 @@ pub fn termEnableRawMode() -> Result<crate::aver_generated::domain::value::Val, 
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+            crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValUnit,
-            )),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -980,16 +998,16 @@ pub fn termDisableRawMode() -> Result<crate::aver_generated::domain::value::Val,
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+            crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValUnit,
-            )),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -1015,16 +1033,16 @@ pub fn termHideCursor() -> Result<crate::aver_generated::domain::value::Val, Ave
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+            crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValUnit,
-            )),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -1050,16 +1068,16 @@ pub fn termShowCursor() -> Result<crate::aver_generated::domain::value::Val, Ave
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+            crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValUnit,
-            )),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -1085,16 +1103,16 @@ pub fn termResetColor() -> Result<crate::aver_generated::domain::value::Val, Ave
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+            crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValUnit,
-            )),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -1123,30 +1141,28 @@ pub fn builtinTerminalReadKey(
     } {
         Ok(key @ _) => match key {
             Some(k @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
-                    crate::aver_generated::domain::value::Val::ValSome(aver_rt::Shared::new(
+                crate::aver_generated::domain::value::Val__ValOk(
+                    crate::aver_generated::domain::value::Val::ValSome(
                         crate::aver_generated::domain::value::Val__ValSome(
                             crate::aver_generated::domain::value::Val::ValStr(
-                                aver_rt::Shared::new(
-                                    crate::aver_generated::domain::value::Val__ValStr(k),
-                                ),
+                                crate::aver_generated::domain::value::Val__ValStr(k),
                             ),
                         ),
-                    )),
-                )),
+                    ),
+                ),
             )),
             None => Ok(crate::aver_generated::domain::value::Val::ValOk(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+                crate::aver_generated::domain::value::Val__ValOk(
                     crate::aver_generated::domain::value::Val::ValNone,
-                )),
+                ),
             )),
         },
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -1176,40 +1192,34 @@ pub fn builtinTerminalSize(
         )
     } {
         Ok(sz @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
-                crate::aver_generated::domain::value::Val::ValRecord(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValOk(
+                crate::aver_generated::domain::value::Val::ValRecord(
                     crate::aver_generated::domain::value::Val__ValRecord(
                         AverStr::from("TerminalSize"),
                         aver_rt::AverList::from_vec(vec![
                             (
                                 AverStr::from("width"),
                                 crate::aver_generated::domain::value::Val::ValInt(
-                                    aver_rt::Shared::new(
-                                        crate::aver_generated::domain::value::Val__ValInt(sz.width),
-                                    ),
+                                    crate::aver_generated::domain::value::Val__ValInt(sz.width),
                                 ),
                             ),
                             (
                                 AverStr::from("height"),
                                 crate::aver_generated::domain::value::Val::ValInt(
-                                    aver_rt::Shared::new(
-                                        crate::aver_generated::domain::value::Val__ValInt(
-                                            sz.height,
-                                        ),
-                                    ),
+                                    crate::aver_generated::domain::value::Val__ValInt(sz.height),
                                 ),
                             ),
                         ]),
                     ),
-                )),
-            )),
+                ),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -1220,14 +1230,17 @@ pub fn builtinTerminalPrint(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
-    match &v {
-        crate::aver_generated::domain::value::Val::ValStr(__s_fields) => {
-            let s = __s_fields.0.clone();
-            crate::aver_generated::domain::builtins::termPrintStr(s)
+    {
+        let __t = &v;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValStr(__s_fields) => {
+                let s = __s_fields.0.clone();
+                crate::aver_generated::domain::builtins::termPrintStr(s)
+            }
+            _ => crate::aver_generated::domain::builtins::termPrintStr(
+                crate::aver_generated::domain::value::valRepr(&v),
+            ),
         }
-        _ => crate::aver_generated::domain::builtins::termPrintStr(
-            crate::aver_generated::domain::value::valRepr(&v),
-        ),
     }
 }
 
@@ -1257,16 +1270,16 @@ pub fn termPrintStr(s @ _: AverStr) -> Result<crate::aver_generated::domain::val
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+            crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValUnit,
-            )),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -1301,16 +1314,16 @@ pub fn builtinTerminalSetColor(
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+            crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValUnit,
-            )),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -1363,16 +1376,16 @@ pub fn builtinTerminalMoveToInner(
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+            crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValUnit,
-            )),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -1425,16 +1438,16 @@ pub fn builtinDiskWriteTextInner(
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+            crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValUnit,
-            )),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -1487,16 +1500,16 @@ pub fn builtinDiskAppendTextInner(
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+            crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValUnit,
-            )),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -1531,16 +1544,16 @@ pub fn builtinDiskDelete(
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+            crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValUnit,
-            )),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -1575,16 +1588,16 @@ pub fn builtinDiskDeleteDir(
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+            crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValUnit,
-            )),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -1619,16 +1632,16 @@ pub fn builtinDiskMakeDir(
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+            crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValUnit,
-            )),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -1641,7 +1654,7 @@ pub fn builtinDiskExists(
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let path @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
     Ok(crate::aver_generated::domain::value::Val::ValBool(
-        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValBool({
+        crate::aver_generated::domain::value::Val__ValBool({
             let __provider_arg0: AverStr = path;
             crate::cancel_checkpoint();
             crate::aver_replay::invoke_capability_effect(
@@ -1662,7 +1675,7 @@ pub fn builtinDiskExists(
                     )
                 },
             )
-        })),
+        }),
     ))
 }
 
@@ -1696,8 +1709,8 @@ pub fn builtinDiskListDir(
         )
     } {
         Ok(entries @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
-                crate::aver_generated::domain::value::Val::ValList(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValOk(
+                crate::aver_generated::domain::value::Val::ValList(
                     crate::aver_generated::domain::value::Val__ValList(
                         crate::aver_generated::domain::builtins::stringsToVals__collected(
                             entries,
@@ -1706,15 +1719,15 @@ pub fn builtinDiskListDir(
                             ),
                         ),
                     ),
-                )),
-            )),
+                ),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -1777,30 +1790,32 @@ pub fn builtinBoolOrInner(
     bV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match aV {
-        crate::aver_generated::domain::value::Val::ValBool(__a_fields) => {
-            let a = __a_fields.0.clone();
-            match bV {
-                crate::aver_generated::domain::value::Val::ValBool(__b_fields) => {
-                    let b = __b_fields.0.clone();
-                    if a {
-                        Ok(crate::aver_generated::domain::value::Val::ValBool(
-                            aver_rt::Shared::new(
-                                crate::aver_generated::domain::value::Val__ValBool(true),
-                            ),
-                        ))
-                    } else {
-                        Ok(crate::aver_generated::domain::value::Val::ValBool(
-                            aver_rt::Shared::new(
-                                crate::aver_generated::domain::value::Val__ValBool(b),
-                            ),
-                        ))
+    {
+        let __t = aV;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValBool(__a_fields) => {
+                let a = __a_fields.0.clone();
+                {
+                    let __t = bV;
+                    match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValBool(__b_fields) => {
+                            let b = __b_fields.0.clone();
+                            if a {
+                                Ok(crate::aver_generated::domain::value::Val::ValBool(
+                                    crate::aver_generated::domain::value::Val__ValBool(true),
+                                ))
+                            } else {
+                                Ok(crate::aver_generated::domain::value::Val::ValBool(
+                                    crate::aver_generated::domain::value::Val__ValBool(b),
+                                ))
+                            }
+                        }
+                        _ => Err(AverStr::from("Bool.or requires Bool arguments")),
                     }
                 }
-                _ => Err(AverStr::from("Bool.or requires Bool arguments")),
             }
+            _ => Err(AverStr::from("Bool.or requires Bool arguments")),
         }
-        _ => Err(AverStr::from("Bool.or requires Bool arguments")),
     }
 }
 
@@ -1822,30 +1837,32 @@ pub fn builtinBoolAndInner(
     bV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match aV {
-        crate::aver_generated::domain::value::Val::ValBool(__a_fields) => {
-            let a = __a_fields.0.clone();
-            match bV {
-                crate::aver_generated::domain::value::Val::ValBool(__b_fields) => {
-                    let b = __b_fields.0.clone();
-                    if a {
-                        Ok(crate::aver_generated::domain::value::Val::ValBool(
-                            aver_rt::Shared::new(
-                                crate::aver_generated::domain::value::Val__ValBool(b),
-                            ),
-                        ))
-                    } else {
-                        Ok(crate::aver_generated::domain::value::Val::ValBool(
-                            aver_rt::Shared::new(
-                                crate::aver_generated::domain::value::Val__ValBool(false),
-                            ),
-                        ))
+    {
+        let __t = aV;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValBool(__a_fields) => {
+                let a = __a_fields.0.clone();
+                {
+                    let __t = bV;
+                    match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValBool(__b_fields) => {
+                            let b = __b_fields.0.clone();
+                            if a {
+                                Ok(crate::aver_generated::domain::value::Val::ValBool(
+                                    crate::aver_generated::domain::value::Val__ValBool(b),
+                                ))
+                            } else {
+                                Ok(crate::aver_generated::domain::value::Val::ValBool(
+                                    crate::aver_generated::domain::value::Val__ValBool(false),
+                                ))
+                            }
+                        }
+                        _ => Err(AverStr::from("Bool.and requires Bool arguments")),
                     }
                 }
-                _ => Err(AverStr::from("Bool.and requires Bool arguments")),
             }
+            _ => Err(AverStr::from("Bool.and requires Bool arguments")),
         }
-        _ => Err(AverStr::from("Bool.and requires Bool arguments")),
     }
 }
 
@@ -1855,20 +1872,23 @@ pub fn builtinBoolNot(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
-    match v {
-        crate::aver_generated::domain::value::Val::ValBool(__b_fields) => {
-            let b = __b_fields.0.clone();
-            if b {
-                Ok(crate::aver_generated::domain::value::Val::ValBool(
-                    aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValBool(false)),
-                ))
-            } else {
-                Ok(crate::aver_generated::domain::value::Val::ValBool(
-                    aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValBool(true)),
-                ))
+    {
+        let __t = v;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValBool(__b_fields) => {
+                let b = __b_fields.0.clone();
+                if b {
+                    Ok(crate::aver_generated::domain::value::Val::ValBool(
+                        crate::aver_generated::domain::value::Val__ValBool(false),
+                    ))
+                } else {
+                    Ok(crate::aver_generated::domain::value::Val::ValBool(
+                        crate::aver_generated::domain::value::Val__ValBool(true),
+                    ))
+                }
             }
+            _ => Err(AverStr::from("Bool.not requires Bool argument")),
         }
-        _ => Err(AverStr::from("Bool.not requires Bool argument")),
     }
 }
 
@@ -1910,19 +1930,20 @@ pub fn builtinMapSetInner(
     valV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match mapV {
-        crate::aver_generated::domain::value::Val::ValMap(__m_fields) => {
-            let m = __m_fields.0.clone();
-            Ok(crate::aver_generated::domain::value::Val::ValMap(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValMap(
-                    m.insert_owned(
+    {
+        let __t = mapV;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
+                let m = __m_fields.0.clone();
+                Ok(crate::aver_generated::domain::value::Val::ValMap(
+                    crate::aver_generated::domain::value::Val__ValMap(m.insert_owned(
                         crate::aver_generated::domain::value::mapKeyRepr(keyV),
                         valV.clone(),
-                    ),
-                )),
-            ))
+                    )),
+                ))
+            }
+            _ => Err(AverStr::from("Map.set requires a Map")),
         }
-        _ => Err(AverStr::from("Map.set requires a Map")),
     }
 }
 
@@ -1944,20 +1965,23 @@ pub fn builtinMapGetInner(
     keyV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match mapV {
-        crate::aver_generated::domain::value::Val::ValMap(__m_fields) => {
-            let m = __m_fields.0.clone();
-            match m
-                .get(&crate::aver_generated::domain::value::mapKeyRepr(keyV))
-                .cloned()
-            {
-                Some(v @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
-                    aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValSome(v)),
-                )),
-                None => Ok(crate::aver_generated::domain::value::Val::ValNone),
+    {
+        let __t = mapV;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
+                let m = __m_fields.0.clone();
+                match m
+                    .get(&crate::aver_generated::domain::value::mapKeyRepr(keyV))
+                    .cloned()
+                {
+                    Some(v @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
+                        crate::aver_generated::domain::value::Val__ValSome(v),
+                    )),
+                    None => Ok(crate::aver_generated::domain::value::Val::ValNone),
+                }
             }
+            _ => Err(AverStr::from("Map.get requires a Map")),
         }
-        _ => Err(AverStr::from("Map.get requires a Map")),
     }
 }
 
@@ -1979,16 +2003,19 @@ pub fn builtinMapHasInner(
     keyV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match mapV {
-        crate::aver_generated::domain::value::Val::ValMap(__m_fields) => {
-            let m = __m_fields.0.clone();
-            Ok(crate::aver_generated::domain::value::Val::ValBool(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValBool(
-                    m.contains_key(&crate::aver_generated::domain::value::mapKeyRepr(keyV)),
-                )),
-            ))
+    {
+        let __t = mapV;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
+                let m = __m_fields.0.clone();
+                Ok(crate::aver_generated::domain::value::Val::ValBool(
+                    crate::aver_generated::domain::value::Val__ValBool(
+                        m.contains_key(&crate::aver_generated::domain::value::mapKeyRepr(keyV)),
+                    ),
+                ))
+            }
+            _ => Err(AverStr::from("Map.has requires a Map")),
         }
-        _ => Err(AverStr::from("Map.has requires a Map")),
     }
 }
 
@@ -1998,7 +2025,7 @@ pub fn builtinTimeNow(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     Ok(crate::aver_generated::domain::value::Val::ValStr(
-        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValStr({
+        crate::aver_generated::domain::value::Val__ValStr({
             crate::cancel_checkpoint();
             crate::aver_replay::invoke_capability_effect(
                 "Time.now",
@@ -2014,7 +2041,7 @@ pub fn builtinTimeNow(
                     )
                 },
             )
-        })),
+        }),
     ))
 }
 
@@ -2316,30 +2343,22 @@ pub fn httpResponseToVal(
 ) -> crate::aver_generated::domain::value::Val {
     crate::cancel_checkpoint();
     match result.clone() {
-        Ok(resp @ _) => crate::aver_generated::domain::value::Val::ValOk(aver_rt::Shared::new(
+        Ok(resp @ _) => crate::aver_generated::domain::value::Val::ValOk(
             crate::aver_generated::domain::value::Val__ValOk(
-                crate::aver_generated::domain::value::Val::ValRecord(aver_rt::Shared::new(
+                crate::aver_generated::domain::value::Val::ValRecord(
                     crate::aver_generated::domain::value::Val__ValRecord(
                         AverStr::from("Http.Response"),
                         aver_rt::AverList::from_vec(vec![
                             (
                                 AverStr::from("status"),
                                 crate::aver_generated::domain::value::Val::ValInt(
-                                    aver_rt::Shared::new(
-                                        crate::aver_generated::domain::value::Val__ValInt(
-                                            resp.status,
-                                        ),
-                                    ),
+                                    crate::aver_generated::domain::value::Val__ValInt(resp.status),
                                 ),
                             ),
                             (
                                 AverStr::from("body"),
                                 crate::aver_generated::domain::value::Val::ValStr(
-                                    aver_rt::Shared::new(
-                                        crate::aver_generated::domain::value::Val__ValStr(
-                                            resp.body,
-                                        ),
-                                    ),
+                                    crate::aver_generated::domain::value::Val__ValStr(resp.body),
                                 ),
                             ),
                             (
@@ -2350,16 +2369,16 @@ pub fn httpResponseToVal(
                             ),
                         ]),
                     ),
-                )),
+                ),
             ),
-        )),
-        Err(e @ _) => crate::aver_generated::domain::value::Val::ValErr(aver_rt::Shared::new(
+        ),
+        Err(e @ _) => crate::aver_generated::domain::value::Val::ValErr(
             crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
+                ),
             ),
-        )),
+        ),
     }
 }
 
@@ -2368,7 +2387,7 @@ pub fn headersToVal(
     headers @ _: &aver_rt::AverMap<AverStr, aver_rt::AverList<AverStr>>,
 ) -> crate::aver_generated::domain::value::Val {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::value::Val::ValMap(aver_rt::Shared::new(
+    crate::aver_generated::domain::value::Val::ValMap(
         crate::aver_generated::domain::value::Val__ValMap(
             crate::aver_generated::domain::builtins::headersToValMap(
                 headers.clone(),
@@ -2380,7 +2399,7 @@ pub fn headersToVal(
                 HashMap::new(),
             ),
         ),
-    ))
+    )
 }
 
 /// Walk header keys, converting each value list to a Val.ValList.
@@ -2395,13 +2414,13 @@ pub fn headersToValMap(
         crate::cancel_checkpoint();
         aver_list_match!(names, [] => { return acc; }, [name, rest] => { match headers.get(&name).cloned() { Some(values @ _) => { {
             let __tco1 = rest;
-            let __tco2 = acc.insert_owned(name, crate::aver_generated::domain::value::Val::ValList(aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValList(crate::aver_generated::domain::builtins::stringsToValStrs__collected(values, aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)))))));
+            let __tco2 = acc.insert_owned(name, crate::aver_generated::domain::value::Val::ValList(crate::aver_generated::domain::value::Val__ValList(crate::aver_generated::domain::builtins::stringsToValStrs__collected(values, aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0))))));
             names = __tco1;
             acc = __tco2;
             continue;
         } }, None => { {
             let __tco1 = rest;
-            let __tco2 = acc.insert_owned(name, crate::aver_generated::domain::value::Val::ValList(aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValList(aver_rt::AverList::empty()))));
+            let __tco2 = acc.insert_owned(name, crate::aver_generated::domain::value::Val::ValList(crate::aver_generated::domain::value::Val__ValList(aver_rt::AverList::empty())));
             names = __tco1;
             acc = __tco2;
             continue;
@@ -2419,7 +2438,7 @@ pub fn stringsToValStrs(
         crate::cancel_checkpoint();
         aver_list_match!(values, [] => { return acc.reverse(); }, [v, rest] => { {
             let __tco0 = rest;
-            let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValStr(v))), &acc);
+            let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::value::Val::ValStr(crate::aver_generated::domain::value::Val__ValStr(v)), &acc);
             values = __tco0;
             acc = __tco1;
             continue;
@@ -2499,18 +2518,18 @@ pub fn builtinTcpSendInner(
         )
     } {
         Ok(resp @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValOk(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(resp),
-                )),
-            )),
+                ),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -2563,16 +2582,16 @@ pub fn builtinTcpPingInner(
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+            crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValUnit,
-            )),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -2627,16 +2646,16 @@ pub fn builtinTcpConnectInner(
         )
     } {
         Ok(conn @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+            crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::builtins::tcpConnToVal(conn),
-            )),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -2646,9 +2665,9 @@ pub fn tcpConnToVal(
     mut conn @ _: crate::aver_generated::tcp::Connection,
 ) -> crate::aver_generated::domain::value::Val {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::value::Val::ValTcpConnection(aver_rt::Shared::new(
+    crate::aver_generated::domain::value::Val::ValTcpConnection(
         crate::aver_generated::domain::value::Val__ValTcpConnection(conn),
-    ))
+    )
 }
 
 /// Recover an opaque host Tcp.Connection resource from Val.
@@ -2656,12 +2675,15 @@ pub fn valToTcpConn(
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::tcp::Connection, AverStr> {
     crate::cancel_checkpoint();
-    match v {
-        crate::aver_generated::domain::value::Val::ValTcpConnection(__conn_fields) => {
-            let conn = __conn_fields.0.clone();
-            Ok(conn)
+    {
+        let __t = v;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValTcpConnection(__conn_fields) => {
+                let conn = __conn_fields.0.clone();
+                Ok(conn)
+            }
+            _ => Err(AverStr::from("expected Tcp.Connection resource")),
         }
-        _ => Err(AverStr::from("expected Tcp.Connection resource")),
     }
 }
 
@@ -2713,18 +2735,18 @@ pub fn builtinTcpBeginConnectInner(
         )
     } {
         Ok(dial @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
-                crate::aver_generated::domain::value::Val::ValTcpDial(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValOk(
+                crate::aver_generated::domain::value::Val::ValTcpDial(
                     crate::aver_generated::domain::value::Val__ValTcpDial(dial),
-                )),
-            )),
+                ),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -2734,12 +2756,15 @@ pub fn valToTcpDial(
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::tcp::Dial, AverStr> {
     crate::cancel_checkpoint();
-    match v {
-        crate::aver_generated::domain::value::Val::ValTcpDial(__dial_fields) => {
-            let dial = __dial_fields.0.clone();
-            Ok(dial)
+    {
+        let __t = v;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValTcpDial(__dial_fields) => {
+                let dial = __dial_fields.0.clone();
+                Ok(dial)
+            }
+            _ => Err(AverStr::from("expected Tcp.Dial resource")),
         }
-        _ => Err(AverStr::from("expected Tcp.Dial resource")),
     }
 }
 
@@ -2776,26 +2801,26 @@ pub fn builtinTcpDialled(
     } {
         Ok(settled @ _) => match settled {
             None => Ok(crate::aver_generated::domain::value::Val::ValOk(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+                crate::aver_generated::domain::value::Val__ValOk(
                     crate::aver_generated::domain::value::Val::ValNone,
-                )),
+                ),
             )),
             Some(conn @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
-                    crate::aver_generated::domain::value::Val::ValSome(aver_rt::Shared::new(
+                crate::aver_generated::domain::value::Val__ValOk(
+                    crate::aver_generated::domain::value::Val::ValSome(
                         crate::aver_generated::domain::value::Val__ValSome(
                             crate::aver_generated::domain::builtins::tcpConnToVal(conn),
                         ),
-                    )),
-                )),
+                    ),
+                ),
             )),
         },
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -2850,18 +2875,18 @@ pub fn builtinTcpListenInner(
         )
     } {
         Ok(listener @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
-                crate::aver_generated::domain::value::Val::ValTcpListener(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValOk(
+                crate::aver_generated::domain::value::Val::ValTcpListener(
                     crate::aver_generated::domain::value::Val__ValTcpListener(listener),
-                )),
-            )),
+                ),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -2871,12 +2896,15 @@ pub fn valToTcpListener(
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::tcp::Listener, AverStr> {
     crate::cancel_checkpoint();
-    match v {
-        crate::aver_generated::domain::value::Val::ValTcpListener(__listener_fields) => {
-            let listener = __listener_fields.0.clone();
-            Ok(listener)
+    {
+        let __t = v;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValTcpListener(__listener_fields) => {
+                let listener = __listener_fields.0.clone();
+                Ok(listener)
+            }
+            _ => Err(AverStr::from("expected Tcp.Listener resource")),
         }
-        _ => Err(AverStr::from("expected Tcp.Listener resource")),
     }
 }
 
@@ -2913,26 +2941,26 @@ pub fn builtinTcpAccept(
     } {
         Ok(accepted @ _) => match accepted {
             None => Ok(crate::aver_generated::domain::value::Val::ValOk(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+                crate::aver_generated::domain::value::Val__ValOk(
                     crate::aver_generated::domain::value::Val::ValNone,
-                )),
+                ),
             )),
             Some(conn @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
-                    crate::aver_generated::domain::value::Val::ValSome(aver_rt::Shared::new(
+                crate::aver_generated::domain::value::Val__ValOk(
+                    crate::aver_generated::domain::value::Val::ValSome(
                         crate::aver_generated::domain::value::Val__ValSome(
                             crate::aver_generated::domain::builtins::tcpConnToVal(conn),
                         ),
-                    )),
-                )),
+                    ),
+                ),
             )),
         },
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -2967,18 +2995,18 @@ pub fn builtinTcpPeerAddress(
         )
     } {
         Ok(address @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValOk(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(address),
-                )),
-            )),
+                ),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -2988,13 +3016,16 @@ pub fn valToTcpSocket(
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::tcp::Socket, AverStr> {
     crate::cancel_checkpoint();
-    match v {
-        crate::aver_generated::domain::value::Val::ValVariant(__name_fields) => {
-            let name = __name_fields.1.clone();
-            let fields = __name_fields.2.clone();
-            crate::aver_generated::domain::builtins::valVariantToTcpSocket(name, &fields)
+    {
+        let __t = v;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValVariant(__name_fields) => {
+                let name = __name_fields.1.clone();
+                let fields = __name_fields.2.clone();
+                crate::aver_generated::domain::builtins::valVariantToTcpSocket(name, &fields)
+            }
+            _ => Err(AverStr::from("expected Tcp.Socket value")),
         }
-        _ => Err(AverStr::from("expected Tcp.Socket value")),
     }
 }
 
@@ -3075,7 +3106,7 @@ pub fn tcpReadyKeysToVals(
         crate::cancel_checkpoint();
         aver_list_match!(keys, [] => { return acc.reverse(); }, [key, rest] => { {
             let __tco0 = rest;
-            let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::value::Val::ValInt(aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt(key))), &acc);
+            let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::value::Val::ValInt(crate::aver_generated::domain::value::Val__ValInt(key)), &acc);
             keys = __tco0;
             acc = __tco1;
             continue;
@@ -3091,14 +3122,17 @@ pub fn builtinTcpPoll(
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
         let (socketsV, timeoutV) = pair;
-        match socketsV {
-            crate::aver_generated::domain::value::Val::ValMap(__sockets_fields) => {
-                let sockets = __sockets_fields.0.clone();
-                crate::aver_generated::domain::builtins::builtinTcpPollInner(sockets, &timeoutV)
+        {
+            let __t = socketsV;
+            match __t.view() {
+                crate::aver_generated::domain::value::Val__view::ValMap(__sockets_fields) => {
+                    let sockets = __sockets_fields.0.clone();
+                    crate::aver_generated::domain::builtins::builtinTcpPollInner(sockets, &timeoutV)
+                }
+                _ => Err(AverStr::from(
+                    "Tcp.poll requires a Map as its first argument",
+                )),
             }
-            _ => Err(AverStr::from(
-                "Tcp.poll requires a Map as its first argument",
-            )),
         }
     }
 }
@@ -3152,8 +3186,8 @@ pub fn builtinTcpPollInner(
         )
     } {
         Ok(keys @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
-                crate::aver_generated::domain::value::Val::ValList(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValOk(
+                crate::aver_generated::domain::value::Val::ValList(
                     crate::aver_generated::domain::value::Val__ValList(
                         crate::aver_generated::domain::builtins::tcpReadyKeysToVals__collected(
                             keys,
@@ -3162,15 +3196,15 @@ pub fn builtinTcpPollInner(
                             ),
                         ),
                     ),
-                )),
-            )),
+                ),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -3205,16 +3239,16 @@ pub fn builtinTcpCloseDial(
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+            crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValUnit,
-            )),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -3249,16 +3283,16 @@ pub fn builtinTcpCloseListener(
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+            crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValUnit,
-            )),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -3311,16 +3345,16 @@ pub fn builtinTcpWriteLineInner(
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+            crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValUnit,
-            )),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -3355,18 +3389,18 @@ pub fn builtinTcpReadLine(
         )
     } {
         Ok(line @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValOk(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(line),
-                )),
-            )),
+                ),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -3401,16 +3435,16 @@ pub fn builtinTcpClose(
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+            crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValUnit,
-            )),
+            ),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(e),
-                )),
-            )),
+                ),
+            ),
         )),
     }
 }
@@ -3849,11 +3883,11 @@ pub fn tryVariantConstructor__indexed(
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::builtins::splitDotted__indexed(name.clone(), __str_index) {
         Some(_) => Ok(crate::aver_generated::domain::value::Val::ValVariant(
-            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValVariant(
+            crate::aver_generated::domain::value::Val__ValVariant(
                 crate::aver_generated::domain::ast::ctorNameToTag(name.clone()),
                 name,
                 args.clone(),
-            )),
+            ),
         )),
         None => Err(aver_rt::AverStr::from({
             let mut __b = {
@@ -3941,7 +3975,7 @@ pub fn stringsToVals__collected(
         crate::cancel_checkpoint();
         aver_list_match!(strs, [] => { return aver_rt::list_builder_finalize(acc); }, [s, rest] => { {
             let __tco0 = rest;
-            let __tco1 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValStr(s))));
+            let __tco1 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::value::Val::ValStr(crate::aver_generated::domain::value::Val__ValStr(s)));
             strs = __tco0;
             acc = __tco1;
             continue;
@@ -3959,7 +3993,7 @@ pub fn mapEntriesToTuples__collected(
         crate::cancel_checkpoint();
         aver_list_match!(entries, [] => { return aver_rt::list_builder_finalize(acc); }, [pair, rest] => { { let (k, v) = pair; {
             let __tco0 = rest;
-            let __tco1 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::value::Val::ValTuple(aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValTuple(aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValStr(k))), v])))));
+            let __tco1 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::value::Val::ValTuple(crate::aver_generated::domain::value::Val__ValTuple(aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::value::Val::ValStr(crate::aver_generated::domain::value::Val__ValStr(k)), v]))));
             entries = __tco0;
             acc = __tco1;
             continue;
@@ -3977,7 +4011,7 @@ pub fn stringsToValStrs__collected(
         crate::cancel_checkpoint();
         aver_list_match!(values, [] => { return aver_rt::list_builder_finalize(acc); }, [v, rest] => { {
             let __tco0 = rest;
-            let __tco1 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValStr(v))));
+            let __tco1 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::value::Val::ValStr(crate::aver_generated::domain::value::Val__ValStr(v)));
             values = __tco0;
             acc = __tco1;
             continue;
@@ -3995,7 +4029,7 @@ pub fn tcpReadyKeysToVals__collected(
         crate::cancel_checkpoint();
         aver_list_match!(keys, [] => { return aver_rt::list_builder_finalize(acc); }, [key, rest] => { {
             let __tco0 = rest;
-            let __tco1 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::value::Val::ValInt(aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt(key))));
+            let __tco1 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::value::Val::ValInt(crate::aver_generated::domain::value::Val__ValInt(key)));
             keys = __tco0;
             acc = __tco1;
             continue;

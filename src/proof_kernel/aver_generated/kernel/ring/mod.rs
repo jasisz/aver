@@ -98,56 +98,62 @@ pub fn readPoly(
     atoms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
 ) -> Read {
     crate::proof_kernel::cancel_checkpoint();
-    match &t {
-        crate::proof_kernel::aver_generated::kernel::term::Term::TInt(__n_fields) => {
-            let n = __n_fields.0.clone();
-            crate::proof_kernel::aver_generated::kernel::ring::Read {
-                poly: crate::proof_kernel::aver_generated::kernel::ring::constant(n),
-                atoms: atoms.clone(),
+    {
+        let __t = &t;
+        match __t.view() {
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TInt(__n_fields) => {
+                let n = __n_fields.0.clone();
+                crate::proof_kernel::aver_generated::kernel::ring::Read {
+                    poly: crate::proof_kernel::aver_generated::kernel::ring::constant(n),
+                    atoms: atoms.clone(),
+                }
             }
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Term::TOp(____pat0_fields) => {
-            let __pat0 = ____pat0_fields.0.clone();
-            let a = ____pat0_fields.1.clone();
-            let b = ____pat0_fields.2.clone();
-            {
-                let __dispatch_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&__pat0));
-                if __dispatch_subject == aver_rt::AverInt::from_i64(43) {
-                    crate::proof_kernel::aver_generated::kernel::ring::combine(
-                        crate::proof_kernel::aver_generated::kernel::ring::readPoly(a, atoms),
-                        b,
-                        aver_rt::AverInt::from_i64(0),
-                    )
-                } else {
-                    if __dispatch_subject == aver_rt::AverInt::from_i64(45) {
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TOp(____pat0_fields) => {
+                let __pat0 = ____pat0_fields.0.clone();
+                let a = ____pat0_fields.1.clone();
+                let b = ____pat0_fields.2.clone();
+                {
+                    let __dispatch_subject =
+                        aver_rt::AverInt::from_i64(aver_rt::str_code1(&__pat0));
+                    if __dispatch_subject == aver_rt::AverInt::from_i64(43) {
                         crate::proof_kernel::aver_generated::kernel::ring::combine(
                             crate::proof_kernel::aver_generated::kernel::ring::readPoly(a, atoms),
                             b,
-                            aver_rt::AverInt::from_i64(1),
+                            aver_rt::AverInt::from_i64(0),
                         )
                     } else {
-                        if __dispatch_subject == aver_rt::AverInt::from_i64(42) {
+                        if __dispatch_subject == aver_rt::AverInt::from_i64(45) {
                             crate::proof_kernel::aver_generated::kernel::ring::combine(
                                 crate::proof_kernel::aver_generated::kernel::ring::readPoly(
                                     a, atoms,
                                 ),
                                 b,
-                                aver_rt::AverInt::from_i64(2),
+                                aver_rt::AverInt::from_i64(1),
                             )
                         } else {
-                            crate::proof_kernel::aver_generated::kernel::ring::atom(t, atoms)
+                            if __dispatch_subject == aver_rt::AverInt::from_i64(42) {
+                                crate::proof_kernel::aver_generated::kernel::ring::combine(
+                                    crate::proof_kernel::aver_generated::kernel::ring::readPoly(
+                                        a, atoms,
+                                    ),
+                                    b,
+                                    aver_rt::AverInt::from_i64(2),
+                                )
+                            } else {
+                                crate::proof_kernel::aver_generated::kernel::ring::atom(t, atoms)
+                            }
                         }
                     }
                 }
             }
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TNeg(__a_fields) => {
+                let a = __a_fields.0.clone();
+                crate::proof_kernel::aver_generated::kernel::ring::negated(
+                    &crate::proof_kernel::aver_generated::kernel::ring::readPoly(a, atoms),
+                )
+            }
+            _ => crate::proof_kernel::aver_generated::kernel::ring::atom(t, atoms),
         }
-        crate::proof_kernel::aver_generated::kernel::term::Term::TNeg(__a_fields) => {
-            let a = __a_fields.0.clone();
-            crate::proof_kernel::aver_generated::kernel::ring::negated(
-                &crate::proof_kernel::aver_generated::kernel::ring::readPoly(a, atoms),
-            )
-        }
-        _ => crate::proof_kernel::aver_generated::kernel::ring::atom(t, atoms),
     }
 }
 
@@ -260,14 +266,13 @@ pub fn atom(
 /// Where an atom is, if it is there.
 #[inline(always)]
 pub fn indexOf(
-    t @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
+    mut t @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     mut atoms @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     mut i @ _: aver_rt::AverInt,
 ) -> Option<aver_rt::AverInt> {
-    let t @ _ = aver_rt::Shared::new(t);
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        aver_list_match!(atoms, [] => { return None; }, [a, rest] => { if (&(a) == &*t) { return Some(i); } else { {
+        aver_list_match!(atoms, [] => { return None; }, [a, rest] => { if (a == t) { return Some(i); } else { {
             let __tco1 = rest;
             let __tco2 = i.add(&aver_rt::AverInt::from_i64(1));
             atoms = __tco1;
@@ -459,7 +464,7 @@ pub fn readRows(
 ) -> Option<aver_rt::AverList<aver_rt::AverList<Mono>>> {
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        aver_list_match!(facts, [] => { return Some(rows); }, [f, fs] => { if crate::proof_kernel::aver_generated::kernel::ring::isTruth(&f.rhs) { match crate::proof_kernel::aver_generated::kernel::ring::asNonneg(&f.lhs, (f.rhs == crate::proof_kernel::aver_generated::kernel::term::Term::TBool(aver_rt::Shared::new(crate::proof_kernel::aver_generated::kernel::term::Term__TBool(true)))), &atoms) { None => { return None; }, Some(read @ _) => { {
+        aver_list_match!(facts, [] => { return Some(rows); }, [f, fs] => { if crate::proof_kernel::aver_generated::kernel::ring::isTruth(&f.rhs) { match crate::proof_kernel::aver_generated::kernel::ring::asNonneg(&f.lhs, (f.rhs == crate::proof_kernel::aver_generated::kernel::term::Term::TBool(crate::proof_kernel::aver_generated::kernel::term::Term__TBool(true))), &atoms) { None => { return None; }, Some(read @ _) => { {
             let __tco0 = fs;
             let __tco1 = aver_rt::AverList::concat(&rows, &aver_rt::AverList::from_vec(vec![read.poly]));
             let __tco2 = read.atoms;
@@ -579,12 +584,15 @@ pub fn roundedBy(
 /// A Bool literal.
 pub fn isTruth(t @ _: &crate::proof_kernel::aver_generated::kernel::term::Term) -> bool {
     crate::proof_kernel::cancel_checkpoint();
-    match t {
-        crate::proof_kernel::aver_generated::kernel::term::Term::TBool(__b_fields) => {
-            let b = __b_fields.0.clone();
-            true
+    {
+        let __t = t;
+        match __t.view() {
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TBool(__b_fields) => {
+                let b = __b_fields.0.clone();
+                true
+            }
+            _ => false,
         }
-        _ => false,
     }
 }
 
@@ -595,35 +603,22 @@ pub fn asNonneg(
     atoms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
 ) -> Option<Read> {
     crate::proof_kernel::cancel_checkpoint();
-    match t {
-        crate::proof_kernel::aver_generated::kernel::term::Term::TOp(____pat0_fields) => {
-            let __pat0 = ____pat0_fields.0.clone();
-            let a = ____pat0_fields.1.clone();
-            let b = ____pat0_fields.2.clone();
-            {
-                let __dispatch_subject = __pat0;
-                if &*__dispatch_subject == "<" {
-                    Some(
-                        crate::proof_kernel::aver_generated::kernel::ring::difference(
-                            b.clone(),
-                            a.clone(),
-                            crate::proof_kernel::aver_generated::kernel::ring::strictWhen(
-                                value, true,
-                            ),
-                            atoms,
-                            value,
-                            a,
-                            b,
-                        ),
-                    )
-                } else {
-                    if &*__dispatch_subject == "<=" {
+    {
+        let __t = t;
+        match __t.view() {
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TOp(____pat0_fields) => {
+                let __pat0 = ____pat0_fields.0.clone();
+                let a = ____pat0_fields.1.clone();
+                let b = ____pat0_fields.2.clone();
+                {
+                    let __dispatch_subject = __pat0;
+                    if &*__dispatch_subject == "<" {
                         Some(
                             crate::proof_kernel::aver_generated::kernel::ring::difference(
                                 b.clone(),
                                 a.clone(),
                                 crate::proof_kernel::aver_generated::kernel::ring::strictWhen(
-                                    value, false,
+                                    value, true,
                                 ),
                                 atoms,
                                 value,
@@ -632,32 +627,36 @@ pub fn asNonneg(
                             ),
                         )
                     } else {
-                        if &*__dispatch_subject == ">" {
+                        if &*__dispatch_subject == "<=" {
                             Some(
                                 crate::proof_kernel::aver_generated::kernel::ring::difference(
-                                    a.clone(),
                                     b.clone(),
+                                    a.clone(),
                                     crate::proof_kernel::aver_generated::kernel::ring::strictWhen(
-                                        value, true,
+                                        value, false,
                                     ),
                                     atoms,
                                     value,
-                                    b,
                                     a,
+                                    b,
                                 ),
                             )
                         } else {
-                            if &*__dispatch_subject == ">=" {
-                                Some(crate::proof_kernel::aver_generated::kernel::ring::difference(a.clone(), b.clone(), crate::proof_kernel::aver_generated::kernel::ring::strictWhen(value, false), atoms, value, b, a))
+                            if &*__dispatch_subject == ">" {
+                                Some(crate::proof_kernel::aver_generated::kernel::ring::difference(a.clone(), b.clone(), crate::proof_kernel::aver_generated::kernel::ring::strictWhen(value, true), atoms, value, b, a))
                             } else {
-                                None
+                                if &*__dispatch_subject == ">=" {
+                                    Some(crate::proof_kernel::aver_generated::kernel::ring::difference(a.clone(), b.clone(), crate::proof_kernel::aver_generated::kernel::ring::strictWhen(value, false), atoms, value, b, a))
+                                } else {
+                                    None
+                                }
                             }
                         }
                     }
                 }
             }
+            _ => None,
         }
-        _ => None,
     }
 }
 
@@ -687,13 +686,13 @@ pub fn difference(
     if value {
         crate::proof_kernel::aver_generated::kernel::ring::lessConstant(
             &crate::proof_kernel::aver_generated::kernel::ring::readPoly(
-                crate::proof_kernel::aver_generated::kernel::term::Term::TOp(aver_rt::Shared::new(
+                crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
                     crate::proof_kernel::aver_generated::kernel::term::Term__TOp(
                         AverStr::from("-"),
                         upper,
                         lower,
                     ),
-                )),
+                ),
                 atoms,
             ),
             k,
@@ -701,13 +700,13 @@ pub fn difference(
     } else {
         crate::proof_kernel::aver_generated::kernel::ring::lessConstant(
             &crate::proof_kernel::aver_generated::kernel::ring::readPoly(
-                crate::proof_kernel::aver_generated::kernel::term::Term::TOp(aver_rt::Shared::new(
+                crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
                     crate::proof_kernel::aver_generated::kernel::term::Term__TOp(
                         AverStr::from("-"),
                         otherUpper,
                         otherLower,
                     ),
-                )),
+                ),
                 atoms,
             ),
             k,

@@ -52,18 +52,14 @@ fn __mutual_tco_trampoline_1(
                         __MutualTco1::ParseAddExprTail(
                             pos2,
                             crate::aver_generated::domain::ast::Expr::ExprAdd(
-                                aver_rt::Shared::new(
-                                    crate::aver_generated::domain::ast::Expr__ExprAdd(left, right),
-                                ),
+                                crate::aver_generated::domain::ast::Expr__ExprAdd(left, right),
                             ),
                         )
                     } else {
                         __MutualTco1::ParseAddExprTail(
                             pos2,
                             crate::aver_generated::domain::ast::Expr::ExprSub(
-                                aver_rt::Shared::new(
-                                    crate::aver_generated::domain::ast::Expr__ExprSub(left, right),
-                                ),
+                                crate::aver_generated::domain::ast::Expr__ExprSub(left, right),
                             ),
                         )
                     }
@@ -141,18 +137,14 @@ fn __mutual_tco_trampoline_2(
                         __MutualTco2::ParseMulExprTail(
                             pos2,
                             crate::aver_generated::domain::ast::Expr::ExprMul(
-                                aver_rt::Shared::new(
-                                    crate::aver_generated::domain::ast::Expr__ExprMul(left, right),
-                                ),
+                                crate::aver_generated::domain::ast::Expr__ExprMul(left, right),
                             ),
                         )
                     } else {
                         __MutualTco2::ParseMulExprTail(
                             pos2,
                             crate::aver_generated::domain::ast::Expr::ExprDiv(
-                                aver_rt::Shared::new(
-                                    crate::aver_generated::domain::ast::Expr__ExprDiv(left, right),
-                                ),
+                                crate::aver_generated::domain::ast::Expr__ExprDiv(left, right),
                             ),
                         )
                     }
@@ -227,10 +219,8 @@ fn __mutual_tco_trampoline_3(
                         pos3,
                         aver_rt::AverList::prepend(
                             crate::aver_generated::domain::ast::Expr::ExprTuple(
-                                aver_rt::Shared::new(
-                                    crate::aver_generated::domain::ast::Expr__ExprTuple(
-                                        aver_rt::AverList::from_vec(vec![keyExpr, valExpr]),
-                                    ),
+                                crate::aver_generated::domain::ast::Expr__ExprTuple(
+                                    aver_rt::AverList::from_vec(vec![keyExpr, valExpr]),
                                 ),
                             ),
                             &acc,
@@ -255,19 +245,15 @@ fn __mutual_tco_trampoline_3(
                     crate::aver_generated::domain::token::Token::TkRBrace => {
                         return Ok((
                             crate::aver_generated::domain::ast::Expr::ExprCall(
-                                aver_rt::Shared::new(
-                                    crate::aver_generated::domain::ast::Expr__ExprCall(
-                                        AverStr::from("Map.fromList"),
-                                        aver_rt::AverList::from_vec(vec![
-                                    crate::aver_generated::domain::ast::Expr::ExprList(
-                                        aver_rt::Shared::new(
+                                crate::aver_generated::domain::ast::Expr__ExprCall(
+                                    AverStr::from("Map.fromList"),
+                                    aver_rt::AverList::from_vec(vec![
+                                        crate::aver_generated::domain::ast::Expr::ExprList(
                                             crate::aver_generated::domain::ast::Expr__ExprList(
                                                 acc.reverse(),
                                             ),
                                         ),
-                                    ),
-                                ]),
-                                    ),
+                                    ]),
                                 ),
                             ),
                             pos2.add(&aver_rt::AverInt::from_i64(1)),
@@ -363,9 +349,7 @@ fn __mutual_tco_trampoline_4(
                             nextPos,
                             aver_rt::AverList::prepend(
                                 crate::aver_generated::domain::ast::Expr::ExprStr(
-                                    aver_rt::Shared::new(
-                                        crate::aver_generated::domain::ast::Expr__ExprStr(s),
-                                    ),
+                                    crate::aver_generated::domain::ast::Expr__ExprStr(s),
                                 ),
                                 &acc,
                             ),
@@ -377,11 +361,7 @@ fn __mutual_tco_trampoline_4(
                     _ => {
                         return Ok((
                             crate::aver_generated::domain::ast::Expr::ExprConcat(
-                                aver_rt::Shared::new(
-                                    crate::aver_generated::domain::ast::Expr__ExprConcat(
-                                        acc.reverse(),
-                                    ),
-                                ),
+                                crate::aver_generated::domain::ast::Expr__ExprConcat(acc.reverse()),
                             ),
                             pos,
                         ));
@@ -397,11 +377,7 @@ fn __mutual_tco_trampoline_4(
                     _ => {
                         return Ok((
                             crate::aver_generated::domain::ast::Expr::ExprConcat(
-                                aver_rt::Shared::new(
-                                    crate::aver_generated::domain::ast::Expr__ExprConcat(
-                                        acc.reverse(),
-                                    ),
-                                ),
+                                crate::aver_generated::domain::ast::Expr__ExprConcat(acc.reverse()),
                             ),
                             pos,
                         ));
@@ -495,11 +471,7 @@ fn __mutual_tco_trampoline_5(
                     crate::aver_generated::domain::token::Token::TkRBracket => {
                         return Ok((
                             crate::aver_generated::domain::ast::Expr::ExprList(
-                                aver_rt::Shared::new(
-                                    crate::aver_generated::domain::ast::Expr__ExprList(
-                                        items.reverse(),
-                                    ),
-                                ),
+                                crate::aver_generated::domain::ast::Expr__ExprList(items.reverse()),
                             ),
                             pos.add(&aver_rt::AverInt::from_i64(1)),
                         ));
@@ -513,9 +485,7 @@ fn __mutual_tco_trampoline_5(
                     crate::aver_generated::domain::token::Token::TkRBracket => {
                         return Ok((
                             crate::aver_generated::domain::ast::Expr::ExprList(
-                                aver_rt::Shared::new(
-                                    crate::aver_generated::domain::ast::Expr__ExprList(items),
-                                ),
+                                crate::aver_generated::domain::ast::Expr__ExprList(items),
                             ),
                             pos.add(&aver_rt::AverInt::from_i64(1)),
                         ));
@@ -671,10 +641,8 @@ fn __mutual_tco_trampoline_7(
                         __MutualTco7::ParseFieldAccessTail(
                             pos.add(&aver_rt::AverInt::from_i64(1)),
                             crate::aver_generated::domain::ast::Expr::ExprFieldAccess(
-                                aver_rt::Shared::new(
-                                    crate::aver_generated::domain::ast::Expr__ExprFieldAccess(
-                                        obj, field,
-                                    ),
+                                crate::aver_generated::domain::ast::Expr__ExprFieldAccess(
+                                    obj, field,
                                 ),
                             ),
                         )
@@ -801,11 +769,9 @@ fn __mutual_tco_trampoline_8(
                     crate::aver_generated::domain::token::Token::TkRParen => {
                         return Ok((
                             crate::aver_generated::domain::ast::Expr::ExprRecord(
-                                aver_rt::Shared::new(
-                                    crate::aver_generated::domain::ast::Expr__ExprRecord(
-                                        name,
-                                        fields.reverse(),
-                                    ),
+                                crate::aver_generated::domain::ast::Expr__ExprRecord(
+                                    name,
+                                    fields.reverse(),
                                 ),
                             ),
                             pos2.add(&aver_rt::AverInt::from_i64(1)),
@@ -820,11 +786,7 @@ fn __mutual_tco_trampoline_8(
                     crate::aver_generated::domain::token::Token::TkRParen => {
                         return Ok((
                             crate::aver_generated::domain::ast::Expr::ExprRecord(
-                                aver_rt::Shared::new(
-                                    crate::aver_generated::domain::ast::Expr__ExprRecord(
-                                        name, fields,
-                                    ),
-                                ),
+                                crate::aver_generated::domain::ast::Expr__ExprRecord(name, fields),
                             ),
                             pos.add(&aver_rt::AverInt::from_i64(1)),
                         ));
@@ -947,11 +909,9 @@ fn __mutual_tco_trampoline_9(
                     crate::aver_generated::domain::token::Token::TkRParen => {
                         return Ok((
                             crate::aver_generated::domain::ast::Expr::ExprCall(
-                                aver_rt::Shared::new(
-                                    crate::aver_generated::domain::ast::Expr__ExprCall(
-                                        name,
-                                        args.reverse(),
-                                    ),
+                                crate::aver_generated::domain::ast::Expr__ExprCall(
+                                    name,
+                                    args.reverse(),
                                 ),
                             ),
                             pos.add(&aver_rt::AverInt::from_i64(1)),
@@ -966,11 +926,9 @@ fn __mutual_tco_trampoline_9(
                     crate::aver_generated::domain::token::Token::TkRParen => {
                         return Ok((
                             crate::aver_generated::domain::ast::Expr::ExprCall(
-                                aver_rt::Shared::new(
-                                    crate::aver_generated::domain::ast::Expr__ExprCall(
-                                        name,
-                                        args.reverse(),
-                                    ),
+                                crate::aver_generated::domain::ast::Expr__ExprCall(
+                                    name,
+                                    args.reverse(),
                                 ),
                             ),
                             pos.add(&aver_rt::AverInt::from_i64(1)),
@@ -1089,16 +1047,41 @@ fn __mutual_tco_trampoline_10(
             __MutualTco10::ParseNamedArgs(mut pos @ _, mut name @ _, mut namedAcc @ _) => {
                 crate::cancel_checkpoint();
                 match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
-        crate::aver_generated::domain::token::Token::TkIdent(field) => {
-            __MutualTco10::ParseNamedArgField(pos.add(&aver_rt::AverInt::from_i64(1)), name, namedAcc, field)
-        },
-        crate::aver_generated::domain::token::Token::TkRParen => {
-            return Ok((crate::aver_generated::domain::ast::Expr::ExprCall(aver_rt::Shared::new(crate::aver_generated::domain::ast::Expr__ExprCall(name, aver_rt::AverList::concat(&positionalArgs.reverse(), &aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::ast::Expr::ExprRecord(aver_rt::Shared::new(crate::aver_generated::domain::ast::Expr__ExprRecord(AverStr::from("_named"), namedAcc.reverse())))]))))), pos.add(&aver_rt::AverInt::from_i64(1))))
-        },
-        _ => {
-            return Err(AverStr::from("Expected field name or ')' in named arguments"))
-        }
-    }
+                    crate::aver_generated::domain::token::Token::TkIdent(field) => {
+                        __MutualTco10::ParseNamedArgField(
+                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            name,
+                            namedAcc,
+                            field,
+                        )
+                    }
+                    crate::aver_generated::domain::token::Token::TkRParen => {
+                        return Ok((
+                            crate::aver_generated::domain::ast::Expr::ExprCall(
+                                crate::aver_generated::domain::ast::Expr__ExprCall(
+                                    name,
+                                    aver_rt::AverList::concat(
+                                        &positionalArgs.reverse(),
+                                        &aver_rt::AverList::from_vec(vec![
+                                        crate::aver_generated::domain::ast::Expr::ExprRecord(
+                                            crate::aver_generated::domain::ast::Expr__ExprRecord(
+                                                AverStr::from("_named"),
+                                                namedAcc.reverse(),
+                                            ),
+                                        ),
+                                    ]),
+                                    ),
+                                ),
+                            ),
+                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                        ));
+                    }
+                    _ => {
+                        return Err(AverStr::from(
+                            "Expected field name or ')' in named arguments",
+                        ));
+                    }
+                }
             }
             __MutualTco10::ParseNamedArgField(
                 mut pos @ _,
@@ -1127,16 +1110,39 @@ fn __mutual_tco_trampoline_10(
                 let pos @ _ =
                     crate::aver_generated::domain::parser::expr::skipNl((*tokens).clone(), pos0);
                 match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
-        crate::aver_generated::domain::token::Token::TkComma => {
-            __MutualTco10::ParseNamedArgs(crate::aver_generated::domain::parser::expr::skipNl((*tokens).clone(), pos.add(&aver_rt::AverInt::from_i64(1))), name, namedAcc)
-        },
-        crate::aver_generated::domain::token::Token::TkRParen => {
-            return Ok((crate::aver_generated::domain::ast::Expr::ExprCall(aver_rt::Shared::new(crate::aver_generated::domain::ast::Expr__ExprCall(name, aver_rt::AverList::concat(&positionalArgs.reverse(), &aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::ast::Expr::ExprRecord(aver_rt::Shared::new(crate::aver_generated::domain::ast::Expr__ExprRecord(AverStr::from("_named"), namedAcc.reverse())))]))))), pos.add(&aver_rt::AverInt::from_i64(1))))
-        },
-        _ => {
-            return Err(AverStr::from("Expected ',' or ')' in named arguments"))
-        }
-    }
+                    crate::aver_generated::domain::token::Token::TkComma => {
+                        __MutualTco10::ParseNamedArgs(
+                            crate::aver_generated::domain::parser::expr::skipNl(
+                                (*tokens).clone(),
+                                pos.add(&aver_rt::AverInt::from_i64(1)),
+                            ),
+                            name,
+                            namedAcc,
+                        )
+                    }
+                    crate::aver_generated::domain::token::Token::TkRParen => {
+                        return Ok((
+                            crate::aver_generated::domain::ast::Expr::ExprCall(
+                                crate::aver_generated::domain::ast::Expr__ExprCall(
+                                    name,
+                                    aver_rt::AverList::concat(
+                                        &positionalArgs.reverse(),
+                                        &aver_rt::AverList::from_vec(vec![
+                                        crate::aver_generated::domain::ast::Expr::ExprRecord(
+                                            crate::aver_generated::domain::ast::Expr__ExprRecord(
+                                                AverStr::from("_named"),
+                                                namedAcc.reverse(),
+                                            ),
+                                        ),
+                                    ]),
+                                    ),
+                                ),
+                            ),
+                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                        ));
+                    }
+                    _ => return Err(AverStr::from("Expected ',' or ')' in named arguments")),
+                }
             }
         };
     }
@@ -1226,11 +1232,9 @@ fn __mutual_tco_trampoline_11(
                         } else {
                             return Ok((
                                 crate::aver_generated::domain::ast::Expr::ExprMatch(
-                                    aver_rt::Shared::new(
-                                        crate::aver_generated::domain::ast::Expr__ExprMatch(
-                                            (*subject).clone(),
-                                            acc.reverse(),
-                                        ),
+                                    crate::aver_generated::domain::ast::Expr__ExprMatch(
+                                        (*subject).clone(),
+                                        acc.reverse(),
                                     ),
                                 ),
                                 pos2.add(&aver_rt::AverInt::from_i64(1)),
@@ -1244,11 +1248,9 @@ fn __mutual_tco_trampoline_11(
                         } else {
                             return Ok((
                                 crate::aver_generated::domain::ast::Expr::ExprMatch(
-                                    aver_rt::Shared::new(
-                                        crate::aver_generated::domain::ast::Expr__ExprMatch(
-                                            (*subject).clone(),
-                                            acc.reverse(),
-                                        ),
+                                    crate::aver_generated::domain::ast::Expr__ExprMatch(
+                                        (*subject).clone(),
+                                        acc.reverse(),
                                     ),
                                 ),
                                 pos2,
@@ -1369,11 +1371,9 @@ fn __mutual_tco_trampoline_12(
                         } else {
                             return Ok((
                                 crate::aver_generated::domain::ast::Expr::ExprMatch(
-                                    aver_rt::Shared::new(
-                                        crate::aver_generated::domain::ast::Expr__ExprMatch(
-                                            (*subject).clone(),
-                                            acc.reverse(),
-                                        ),
+                                    crate::aver_generated::domain::ast::Expr__ExprMatch(
+                                        (*subject).clone(),
+                                        acc.reverse(),
                                     ),
                                 ),
                                 pos,
@@ -1483,9 +1483,9 @@ pub fn parsePostfixQuestion(
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::parser_match::continuationAt(tokens, pos.clone()) {
         crate::aver_generated::domain::token::Token::TkQuestion => (
-            crate::aver_generated::domain::ast::Expr::ExprPropagate(aver_rt::Shared::new(
+            crate::aver_generated::domain::ast::Expr::ExprPropagate(
                 crate::aver_generated::domain::ast::Expr__ExprPropagate(expr),
-            )),
+            ),
             pos.add(&aver_rt::AverInt::from_i64(1)),
         ),
         _ => (expr, pos),
@@ -1594,44 +1594,40 @@ pub fn buildCmpExpr(
         let __dispatch_subject = op;
         if __dispatch_subject == aver_rt::AverInt::from_i64(0) {
             Ok((
-                crate::aver_generated::domain::ast::Expr::ExprEq(aver_rt::Shared::new(
+                crate::aver_generated::domain::ast::Expr::ExprEq(
                     crate::aver_generated::domain::ast::Expr__ExprEq(left, right),
-                )),
+                ),
                 pos,
             ))
         } else {
             if __dispatch_subject == aver_rt::AverInt::from_i64(1) {
                 Ok((
-                    crate::aver_generated::domain::ast::Expr::ExprNeq(aver_rt::Shared::new(
+                    crate::aver_generated::domain::ast::Expr::ExprNeq(
                         crate::aver_generated::domain::ast::Expr__ExprNeq(left, right),
-                    )),
+                    ),
                     pos,
                 ))
             } else {
                 if __dispatch_subject == aver_rt::AverInt::from_i64(2) {
                     Ok((
-                        crate::aver_generated::domain::ast::Expr::ExprLt(aver_rt::Shared::new(
+                        crate::aver_generated::domain::ast::Expr::ExprLt(
                             crate::aver_generated::domain::ast::Expr__ExprLt(left, right),
-                        )),
+                        ),
                         pos,
                     ))
                 } else {
                     if __dispatch_subject == aver_rt::AverInt::from_i64(3) {
                         Ok((
-                            crate::aver_generated::domain::ast::Expr::ExprGt(aver_rt::Shared::new(
+                            crate::aver_generated::domain::ast::Expr::ExprGt(
                                 crate::aver_generated::domain::ast::Expr__ExprGt(left, right),
-                            )),
+                            ),
                             pos,
                         ))
                     } else {
                         if __dispatch_subject == aver_rt::AverInt::from_i64(4) {
                             Ok((
                                 crate::aver_generated::domain::ast::Expr::ExprLte(
-                                    aver_rt::Shared::new(
-                                        crate::aver_generated::domain::ast::Expr__ExprLte(
-                                            left, right,
-                                        ),
-                                    ),
+                                    crate::aver_generated::domain::ast::Expr__ExprLte(left, right),
                                 ),
                                 pos,
                             ))
@@ -1639,10 +1635,8 @@ pub fn buildCmpExpr(
                             if __dispatch_subject == aver_rt::AverInt::from_i64(5) {
                                 Ok((
                                     crate::aver_generated::domain::ast::Expr::ExprGte(
-                                        aver_rt::Shared::new(
-                                            crate::aver_generated::domain::ast::Expr__ExprGte(
-                                                left, right,
-                                            ),
+                                        crate::aver_generated::domain::ast::Expr__ExprGte(
+                                            left, right,
                                         ),
                                     ),
                                     pos,
@@ -1699,18 +1693,18 @@ pub fn parseAtom(
         crate::aver_generated::domain::token::Token::TkInt(n) => {
             let n = n.clone();
             Ok((
-                crate::aver_generated::domain::ast::Expr::ExprInt(aver_rt::Shared::new(
+                crate::aver_generated::domain::ast::Expr::ExprInt(
                     crate::aver_generated::domain::ast::Expr__ExprInt(n),
-                )),
+                ),
                 nextPos,
             ))
         }
         crate::aver_generated::domain::token::Token::TkFloat(f) => {
             let f = f.clone();
             Ok((
-                crate::aver_generated::domain::ast::Expr::ExprFloat(aver_rt::Shared::new(
+                crate::aver_generated::domain::ast::Expr::ExprFloat(
                     crate::aver_generated::domain::ast::Expr__ExprFloat(f),
-                )),
+                ),
                 nextPos,
             ))
         }
@@ -1719,15 +1713,15 @@ pub fn parseAtom(
             crate::aver_generated::domain::parser::expr::parseStringOrInterp(tokens, nextPos, s)
         }
         crate::aver_generated::domain::token::Token::TkTrue => Ok((
-            crate::aver_generated::domain::ast::Expr::ExprBool(aver_rt::Shared::new(
+            crate::aver_generated::domain::ast::Expr::ExprBool(
                 crate::aver_generated::domain::ast::Expr__ExprBool(true),
-            )),
+            ),
             nextPos,
         )),
         crate::aver_generated::domain::token::Token::TkFalse => Ok((
-            crate::aver_generated::domain::ast::Expr::ExprBool(aver_rt::Shared::new(
+            crate::aver_generated::domain::ast::Expr::ExprBool(
                 crate::aver_generated::domain::ast::Expr__ExprBool(false),
-            )),
+            ),
             nextPos,
         )),
         crate::aver_generated::domain::token::Token::TkLBracket => {
@@ -1771,18 +1765,18 @@ pub fn parseMapLiteral(
     let pos2 @ _ = crate::aver_generated::domain::parser::expr::skipNl(tokens.clone(), pos);
     match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos2.clone()) {
         crate::aver_generated::domain::token::Token::TkRBrace => Ok((
-            crate::aver_generated::domain::ast::Expr::ExprCall(aver_rt::Shared::new(
+            crate::aver_generated::domain::ast::Expr::ExprCall(
                 crate::aver_generated::domain::ast::Expr__ExprCall(
                     AverStr::from("Map.fromList"),
                     aver_rt::AverList::from_vec(vec![
-                        crate::aver_generated::domain::ast::Expr::ExprList(aver_rt::Shared::new(
+                        crate::aver_generated::domain::ast::Expr::ExprList(
                             crate::aver_generated::domain::ast::Expr__ExprList(
                                 aver_rt::AverList::empty(),
                             ),
-                        )),
+                        ),
                     ]),
                 ),
-            )),
+            ),
             pos2.add(&aver_rt::AverInt::from_i64(1)),
         )),
         _ => crate::aver_generated::domain::parser::expr::parseMapEntries(
@@ -1803,9 +1797,9 @@ pub fn parseNegAtom(
     {
         let (expr, pos2) = r;
         Ok((
-            crate::aver_generated::domain::ast::Expr::ExprNeg(aver_rt::Shared::new(
+            crate::aver_generated::domain::ast::Expr::ExprNeg(
                 crate::aver_generated::domain::ast::Expr__ExprNeg(expr),
-            )),
+            ),
             pos2,
         ))
     }
@@ -1824,16 +1818,16 @@ pub fn parseStringOrInterp(
                 tokens,
                 pos.add(&aver_rt::AverInt::from_i64(1)),
                 aver_rt::AverList::from_vec(vec![
-                    crate::aver_generated::domain::ast::Expr::ExprStr(aver_rt::Shared::new(
+                    crate::aver_generated::domain::ast::Expr::ExprStr(
                         crate::aver_generated::domain::ast::Expr__ExprStr(prefix),
-                    )),
+                    ),
                 ]),
             )
         }
         _ => Ok((
-            crate::aver_generated::domain::ast::Expr::ExprStr(aver_rt::Shared::new(
+            crate::aver_generated::domain::ast::Expr::ExprStr(
                 crate::aver_generated::domain::ast::Expr__ExprStr(prefix),
-            )),
+            ),
             pos,
         )),
     }
@@ -1848,9 +1842,9 @@ pub fn parseListExpr(
     let pos @ _ = crate::aver_generated::domain::parser::expr::skipNl(tokens.clone(), pos0);
     match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
         crate::aver_generated::domain::token::Token::TkRBracket => Ok((
-            crate::aver_generated::domain::ast::Expr::ExprList(aver_rt::Shared::new(
+            crate::aver_generated::domain::ast::Expr::ExprList(
                 crate::aver_generated::domain::ast::Expr__ExprList(aver_rt::AverList::empty()),
-            )),
+            ),
             pos.add(&aver_rt::AverInt::from_i64(1)),
         )),
         _ => crate::aver_generated::domain::parser::expr::parseListItems(
@@ -1901,19 +1895,17 @@ pub fn finishTupleOrProduct(
             ) {
                 crate::aver_generated::domain::token::Token::TkBang => Ok((
                     crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(
-                        aver_rt::Shared::new(
-                            crate::aver_generated::domain::ast::Expr__ExprIndependentProduct(
-                                items.clone(),
-                                true,
-                            ),
+                        crate::aver_generated::domain::ast::Expr__ExprIndependentProduct(
+                            items.clone(),
+                            true,
                         ),
                     ),
                     pos.add(&aver_rt::AverInt::from_i64(2)),
                 )),
                 _ => Ok((
-                    crate::aver_generated::domain::ast::Expr::ExprTuple(aver_rt::Shared::new(
+                    crate::aver_generated::domain::ast::Expr::ExprTuple(
                         crate::aver_generated::domain::ast::Expr__ExprTuple(items.clone()),
-                    )),
+                    ),
                     pos,
                 )),
             }
@@ -1924,18 +1916,16 @@ pub fn finishTupleOrProduct(
                 pos.add(&aver_rt::AverInt::from_i64(1)),
             ) {
                 crate::aver_generated::domain::token::Token::TkLBracket => Ok((
-                    crate::aver_generated::domain::ast::Expr::ExprTuple(aver_rt::Shared::new(
+                    crate::aver_generated::domain::ast::Expr::ExprTuple(
                         crate::aver_generated::domain::ast::Expr__ExprTuple(items.clone()),
-                    )),
+                    ),
                     pos,
                 )),
                 _ => Ok((
                     crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(
-                        aver_rt::Shared::new(
-                            crate::aver_generated::domain::ast::Expr__ExprIndependentProduct(
-                                items.clone(),
-                                false,
-                            ),
+                        crate::aver_generated::domain::ast::Expr__ExprIndependentProduct(
+                            items.clone(),
+                            false,
                         ),
                     ),
                     pos.add(&aver_rt::AverInt::from_i64(1)),
@@ -1943,9 +1933,9 @@ pub fn finishTupleOrProduct(
             }
         }
         _ => Ok((
-            crate::aver_generated::domain::ast::Expr::ExprTuple(aver_rt::Shared::new(
+            crate::aver_generated::domain::ast::Expr::ExprTuple(
                 crate::aver_generated::domain::ast::Expr__ExprTuple(items.clone()),
-            )),
+            ),
             pos,
         )),
     }
@@ -1967,15 +1957,15 @@ pub fn parseIdentOrCall(
             crate::aver_generated::domain::parser::expr::parseFieldAccess(
                 tokens,
                 nextPos,
-                crate::aver_generated::domain::ast::Expr::ExprVar(aver_rt::Shared::new(
+                crate::aver_generated::domain::ast::Expr::ExprVar(
                     crate::aver_generated::domain::ast::Expr__ExprVar(name),
-                )),
+                ),
             )
         }
         _ => Ok((
-            crate::aver_generated::domain::ast::Expr::ExprVar(aver_rt::Shared::new(
+            crate::aver_generated::domain::ast::Expr::ExprVar(
                 crate::aver_generated::domain::ast::Expr__ExprVar(name),
-            )),
+            ),
             pos,
         )),
     }
@@ -2037,12 +2027,12 @@ pub fn parseCallOrRecord(
     let pos2 @ _ = crate::aver_generated::domain::parser::expr::skipNl(tokens.clone(), pos);
     match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos2.clone()) {
         crate::aver_generated::domain::token::Token::TkRParen => Ok((
-            crate::aver_generated::domain::ast::Expr::ExprCall(aver_rt::Shared::new(
+            crate::aver_generated::domain::ast::Expr::ExprCall(
                 crate::aver_generated::domain::ast::Expr__ExprCall(
                     name,
                     aver_rt::AverList::empty(),
                 ),
-            )),
+            ),
             pos2.add(&aver_rt::AverInt::from_i64(1)),
         )),
         crate::aver_generated::domain::token::Token::TkIdent(first) => {

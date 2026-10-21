@@ -56,38 +56,42 @@ impl aver_rt::AverDisplay for Val {
 /// The value of a closed term, if it is one this evaluator knows.
 pub fn evalClosed(t @ _: &crate::proof_kernel::aver_generated::kernel::term::Term) -> Option<Val> {
     crate::proof_kernel::cancel_checkpoint();
-    match t {
-        crate::proof_kernel::aver_generated::kernel::term::Term::TInt(__n_fields) => {
-            let n = __n_fields.0.clone();
-            Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(n))
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Term::TBool(__b_fields) => {
-            let b = __b_fields.0.clone();
-            Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VBool(b))
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Term::TOp(__o_fields) => {
-            let o = __o_fields.0.clone();
-            let a = __o_fields.1.clone();
-            let b = __o_fields.2.clone();
-            match &a {
-                crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(__c_fields) => {
-                    let c = __c_fields.0.clone();
-                    let xs = __c_fields.1.clone();
-                    match &b {
-                        crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(
-                            __d_fields,
+    {
+        let __t = t;
+        match __t.view() {
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TInt(__n_fields) => {
+                let n = __n_fields.0.clone();
+                Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(n))
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TBool(__b_fields) => {
+                let b = __b_fields.0.clone();
+                Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VBool(b))
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TOp(__o_fields) => {
+                let o = __o_fields.0.clone();
+                let a = __o_fields.1.clone();
+                let b = __o_fields.2.clone();
+                {
+                    let __t = &a;
+                    match __t.view() {
+                        crate::proof_kernel::aver_generated::kernel::term::Term__view::TCtor(
+                            __c_fields,
                         ) => {
-                            let d = __d_fields.0.clone();
-                            let ys = __d_fields.1.clone();
-                            crate::proof_kernel::aver_generated::kernel::eval::ctorOp(
-                                o,
-                                &crate::proof_kernel::aver_generated::kernel::eval::sameCtor(
-                                    c,
-                                    d,
-                                    aver_rt::AverInt::from_i64(xs.len() as i64)
-                                        .add(&aver_rt::AverInt::from_i64(ys.len() as i64)),
-                                ),
-                            )
+                            let c = __c_fields.0.clone();
+                            let xs = __c_fields.1.clone();
+                            {
+                                let __t = &b;
+                                match __t.view() {
+        crate::proof_kernel::aver_generated::kernel::term::Term__view::TCtor(__d_fields) => {
+            let d = __d_fields.0.clone();
+            let ys = __d_fields.1.clone();
+            crate::proof_kernel::aver_generated::kernel::eval::ctorOp(o, &crate::proof_kernel::aver_generated::kernel::eval::sameCtor(c, d, aver_rt::AverInt::from_i64(xs.len() as i64).add(&aver_rt::AverInt::from_i64(ys.len() as i64))))
+        },
+        _ => {
+            crate::proof_kernel::aver_generated::kernel::eval::evalOp(o, &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&a), &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&b))
+        }
+    }
+                            }
                         }
                         _ => crate::proof_kernel::aver_generated::kernel::eval::evalOp(
                             o,
@@ -96,31 +100,26 @@ pub fn evalClosed(t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ter
                         ),
                     }
                 }
-                _ => crate::proof_kernel::aver_generated::kernel::eval::evalOp(
-                    o,
-                    &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&a),
-                    &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&b),
-                ),
             }
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TNeg(__a_fields) => {
+                let a = __a_fields.0.clone();
+                crate::proof_kernel::aver_generated::kernel::eval::negated(
+                    &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&a),
+                )
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TList(__xs_fields) => {
+                let xs = __xs_fields.0.clone();
+                crate::proof_kernel::aver_generated::kernel::eval::listOf(
+                    &crate::proof_kernel::aver_generated::kernel::eval::evalAll(&xs),
+                )
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TBi(__name_fields) => {
+                let name = __name_fields.0.clone();
+                let args = __name_fields.1.clone();
+                crate::proof_kernel::aver_generated::kernel::eval::evalBuiltin(name, &args)
+            }
+            _ => None,
         }
-        crate::proof_kernel::aver_generated::kernel::term::Term::TNeg(__a_fields) => {
-            let a = __a_fields.0.clone();
-            crate::proof_kernel::aver_generated::kernel::eval::negated(
-                &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&a),
-            )
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Term::TList(__xs_fields) => {
-            let xs = __xs_fields.0.clone();
-            crate::proof_kernel::aver_generated::kernel::eval::listOf(
-                &crate::proof_kernel::aver_generated::kernel::eval::evalAll(&xs),
-            )
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Term::TBi(__name_fields) => {
-            let name = __name_fields.0.clone();
-            let args = __name_fields.1.clone();
-            crate::proof_kernel::aver_generated::kernel::eval::evalBuiltin(name, &args)
-        }
-        _ => None,
     }
 }
 

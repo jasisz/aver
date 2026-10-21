@@ -54,15 +54,15 @@ pub fn isNamedSentinelInner(
     rest @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> bool {
     crate::cancel_checkpoint();
-    aver_list_match!(rest.clone(), [] => false, [v, ignored] => { match v {
-        crate::aver_generated::domain::value::Val::ValRecord(__typeName_fields) => {
+    aver_list_match!(rest.clone(), [] => false, [v, ignored] => { { let __t = v; match __t.view() {
+        crate::aver_generated::domain::value::Val__view::ValRecord(__typeName_fields) => {
             let typeName = __typeName_fields.0.clone();
             (&*typeName == "_named")
         },
         _ => {
             false
         }
-    } })
+    } } })
 }
 
 /// Perform record update: merge named fields into base record.
@@ -81,15 +81,15 @@ pub fn doRecordUpdateInner(
     rest @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    aver_list_match!(rest.clone(), [] => Err(AverStr::from("record update requires named fields")), [namedVal, ignored] => { match namedVal {
-        crate::aver_generated::domain::value::Val::ValRecord(__namedFields_fields) => {
+    aver_list_match!(rest.clone(), [] => Err(AverStr::from("record update requires named fields")), [namedVal, ignored] => { { let __t = namedVal; match __t.view() {
+        crate::aver_generated::domain::value::Val__view::ValRecord(__namedFields_fields) => {
             let namedFields = __namedFields_fields.1.clone();
             crate::aver_generated::domain::eval::records::applyRecordUpdate(baseVal, &namedFields)
         },
         _ => {
             Err(AverStr::from("record update requires named fields"))
         }
-    } })
+    } } })
 }
 
 /// Override fields in a record value.
@@ -98,21 +98,24 @@ pub fn applyRecordUpdate(
     namedFields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match baseVal {
-        crate::aver_generated::domain::value::Val::ValRecord(__typeName_fields) => {
-            let typeName = __typeName_fields.0.clone();
-            let existingFields = __typeName_fields.1.clone();
-            Ok(crate::aver_generated::domain::value::Val::ValRecord(
-                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValRecord(
-                    typeName,
-                    crate::aver_generated::domain::eval::records::mergeRecordFields(
-                        &existingFields,
-                        namedFields,
+    {
+        let __t = baseVal;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValRecord(__typeName_fields) => {
+                let typeName = __typeName_fields.0.clone();
+                let existingFields = __typeName_fields.1.clone();
+                Ok(crate::aver_generated::domain::value::Val::ValRecord(
+                    crate::aver_generated::domain::value::Val__ValRecord(
+                        typeName,
+                        crate::aver_generated::domain::eval::records::mergeRecordFields(
+                            &existingFields,
+                            namedFields,
+                        ),
                     ),
-                )),
-            ))
+                ))
+            }
+            _ => Err(AverStr::from("update requires a record value")),
         }
-        _ => Err(AverStr::from("update requires a record value")),
     }
 }
 
