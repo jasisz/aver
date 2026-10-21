@@ -1365,6 +1365,32 @@ fn colliding_map_keys_stay_two_keys_self_host() {
     );
 }
 
+/// A `withDefault` / `fromOption` fallback with an effect runs before the
+/// value is looked at, so its effect shows for a present value too, after
+/// the value's own. wasm-gc ran it only when the value was missing.
+/// `tests/wasip2_stress.rs` and `tests/rust_codegen_differential.rs` hold
+/// wasip2 and Rust to the same output.
+const EFFECTFUL_FALLBACK_SRC: &str = include_str!("fixtures/effectful_fallback_app.av");
+const EFFECTFUL_FALLBACK_OUT: &str = include_str!("fixtures/effectful_fallback_app.expected");
+
+#[test]
+fn effectful_fallback_runs_first_vm() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-fallback-vm", EFFECTFUL_FALLBACK_SRC),
+        EFFECTFUL_FALLBACK_OUT.trim(),
+    );
+}
+
+#[test]
+fn effectful_fallback_runs_first_wasm_gc() {
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-fallback-wasmgc", EFFECTFUL_FALLBACK_SRC),
+        EFFECTFUL_FALLBACK_OUT.trim(),
+    );
+}
+
 // ─── How deep non-tail recursion may go ────────────────────────────────
 
 /// Non-tail recursion as deep as its first argument says; without one it

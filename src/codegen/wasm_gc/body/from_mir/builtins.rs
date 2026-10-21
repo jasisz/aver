@@ -668,6 +668,11 @@ pub(crate) fn emit_mir_option_with_default(
         "Option.withDefault (boxed) needs a scratch slot but none was reserved".into(),
     ))?;
     e!(opt_arg);
+    let parked = park_effectful_fallback(default, elem_val, slots, ctx);
+    if let Some(local) = parked {
+        e!(default);
+        func.instruction(&Instruction::LocalSet(local));
+    }
     func.instruction(&Instruction::LocalSet(scratch));
     func.instruction(&Instruction::LocalGet(scratch));
     func.instruction(&Instruction::RefCastNonNull(
@@ -689,9 +694,31 @@ pub(crate) fn emit_mir_option_with_default(
         field_index: 1,
     });
     func.instruction(&Instruction::Else);
-    e!(default);
+    match parked {
+        Some(local) => {
+            func.instruction(&Instruction::LocalGet(local));
+        }
+        None => e!(default),
+    }
     func.instruction(&Instruction::End);
     Ok(MirBuiltinEmit::Produced(true))
+}
+
+/// A fresh local for the fallback of a boxed `withDefault` when it has an
+/// effect (`MirProgram::fallback_has_effect`): it then runs right after the
+/// value, before the value is looked at, as on the VM and in Rust, and the
+/// missing branch reads it from the local. It is stored before the value is,
+/// so a nested use of the subject scratch is over before this one writes it.
+/// `None` for a fallback without an effect, which runs only when missing.
+fn park_effectful_fallback(
+    fallback: &Spanned<MirExpr>,
+    ty: ValType,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Option<u32> {
+    ctx.mir_program
+        .is_some_and(|program| program.fallback_has_effect(&fallback.node))
+        .then(|| slots.match_subject_local(ty))
 }
 
 /// The versioned helpers of one `Vector<T>` (`vectors.rs`).
@@ -1691,6 +1718,11 @@ pub(crate) fn emit_mir_result_with_default(
     ))?;
 
     e!(res_arg);
+    let parked = park_effectful_fallback(default, elem_val, slots, ctx);
+    if let Some(local) = parked {
+        e!(default);
+        func.instruction(&Instruction::LocalSet(local));
+    }
     func.instruction(&Instruction::LocalSet(scratch));
     func.instruction(&Instruction::LocalGet(scratch));
     func.instruction(&Instruction::RefCastNonNull(
@@ -1712,7 +1744,12 @@ pub(crate) fn emit_mir_result_with_default(
         field_index: 1,
     });
     func.instruction(&Instruction::Else);
-    e!(default);
+    match parked {
+        Some(local) => {
+            func.instruction(&Instruction::LocalGet(local));
+        }
+        None => e!(default),
+    }
     func.instruction(&Instruction::End);
     Ok(MirBuiltinEmit::Produced(true))
 }

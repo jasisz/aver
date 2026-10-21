@@ -114,6 +114,25 @@ fn colliding_map_keys_stay_two_keys() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A fallback with an effect runs before the value is looked at, present or
+/// missing. `cross_backend_stress` holds the VM and wasm-gc to the same output.
+#[test]
+fn effectful_fallback_runs_first() {
+    let dir = tempdir("fallback");
+    let fixture = write_fixture(
+        &dir,
+        "fallback.av",
+        include_str!("fixtures/effectful_fallback_app.av"),
+    );
+    let out = run_wasip2(&dir, &fixture, &[]);
+    assert_ok(&out, "fallback.av");
+    assert_eq!(
+        stdout(&out).trim(),
+        include_str!("fixtures/effectful_fallback_app.expected").trim()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 200 000 nested calls fit, and a recursion that never ends is Wasmtime's
 /// stack-overflow trap, said as an Aver error with exit status 1 rather than
 /// a host abort. `cross_backend_stress` holds the VM and wasm-gc to the same.

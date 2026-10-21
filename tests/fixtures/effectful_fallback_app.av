@@ -1,0 +1,77 @@
+module EffectfulFallbackApp
+    intent =
+        "A fallback with an effect runs before the value is looked at, present or missing, on every backend."
+
+fn noisy(n: Int) -> Int
+    ? "Says it ran and returns n."
+    ! [Console.print]
+    Console.print("fallback {n} ran")
+    n
+
+fn noisyText(n: Int) -> String
+    ? "Says it ran and returns n as text."
+    ! [Console.print]
+    Console.print("fallback {n} ran")
+    String.fromInt(n)
+
+fn noisyValue(o: Option<Int>) -> Option<Int>
+    ? "Says the value ran and returns it, so the order of the two effects shows."
+    ! [Console.print]
+    Console.print("value ran")
+    o
+
+fn pick(o: Option<Int>) -> Int
+    ? "The value, or 1 after saying so."
+    ! [Console.print]
+    Option.withDefault(o, noisy(1))
+
+fn pickOk(r: Result<Int, String>) -> Int
+    ? "The value, or 2 after saying so."
+    ! [Console.print]
+    Result.withDefault(r, noisy(2))
+
+fn found(o: Option<Int>) -> Result<Int, String>
+    ? "The value, or 3 as the error after saying so."
+    ! [Console.print]
+    Result.fromOption(o, noisyText(3))
+
+fn lookup(m: Map<String, Int>, k: String) -> Int
+    ? "The entry, or 4 after saying so."
+    ! [Console.print]
+    Option.withDefault(Map.get(m, k), noisy(4))
+
+fn ordered(o: Option<Int>) -> Int
+    ? "The value runs before the fallback."
+    ! [Console.print]
+    Option.withDefault(noisyValue(o), noisy(5))
+
+fn nested(o: Option<Int>, p: Option<Int>) -> Int
+    ? "A fallback that holds another one."
+    ! [Console.print]
+    Option.withDefault(o, noisy(Option.withDefault(p, noisy(6))))
+
+fn show(r: Result<Int, String>) -> String
+    ? "Ok or Err with its payload."
+    match r
+        Result.Ok(n) -> "ok {n}"
+        Result.Err(message) -> "err {message}"
+
+verify show
+    show(Result.Ok(1)) => "ok 1"
+    show(Result.Err("e")) => "err e"
+
+fn main() -> Unit
+    ? "Prints every result after the effects its fallback had."
+    ! [Console.print]
+    Console.print("pick {pick(Option.Some(10))}")
+    Console.print("pick {pick(Option.None)}")
+    Console.print("pickOk {pickOk(Result.Ok(20))}")
+    Console.print("pickOk {pickOk(Result.Err("no"))}")
+    Console.print("found {show(found(Option.Some(30)))}")
+    Console.print("found {show(found(Option.None))}")
+    m = Map.fromList([("a", 40)])
+    Console.print("lookup {lookup(m, "a")}")
+    Console.print("lookup {lookup(m, "b")}")
+    Console.print("ordered {ordered(Option.Some(50))}")
+    Console.print("nested {nested(Option.Some(60), Option.Some(7))}")
+    Console.print("nested {nested(Option.None, Option.None)}")

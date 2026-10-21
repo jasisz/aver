@@ -533,6 +533,21 @@ fn a_computed_fallback_runs_only_when_missing_on_rust_and_vm() {
     );
 }
 
+/// A fallback with an effect runs before the value is looked at, present or
+/// missing: Rust prints the written output, the same `cross_backend_stress`
+/// and `wasip2_stress` hold the VM, wasm-gc and wasip2 to.
+#[test]
+fn effectful_fallback_runs_first_on_rust() {
+    let relative = "tests/fixtures/effectful_fallback_app.av";
+    let expected = include_str!("fixtures/effectful_fallback_app.expected").trim();
+    assert_plain_parity_then(relative, None, |_, stdout| {
+        (stdout == expected)
+            .then_some(())
+            .ok_or_else(|| format!("unexpected output:\n{stdout}"))
+    })
+    .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A two-arm bool `match` whose default arm NAMES the matched value
 /// (`other -> …`) instead of spelling `false` or `_`.
 ///
