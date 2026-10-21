@@ -214,6 +214,47 @@ fn bits_pop_count_matches_expected() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `==` on recursive values sharing subterms, built apart, compares each
+/// shared pair once: at 64 levels it answers as at 12, within a minute.
+/// `cross_backend_stress` runs the same file on wasm-gc.
+#[test]
+fn shared_recursive_sum_equality_ends() {
+    let dir = tempdir("shared-sum");
+    let fixture = write_fixture(
+        &dir,
+        "shared.av",
+        include_str!("fixtures/shared_recursive_sum_app.av"),
+    );
+    let run = |depth: &str| {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_aver"))
+            .current_dir(&dir)
+            .args(["run", "--wasip2"])
+            .arg(&fixture)
+            .args(["--", depth])
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("aver run --wasip2 to launch");
+        let started = std::time::Instant::now();
+        while child.try_wait().expect("run is waitable").is_none() {
+            if started.elapsed() > std::time::Duration::from_secs(60) {
+                let _ = child.kill();
+                panic!("depth {depth} did not end within a minute");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let out = child.wait_with_output().expect("run output");
+        assert_ok(&out, "shared.av");
+        stdout(&out).trim().to_string()
+    };
+    let shallow = run("12");
+    assert!(
+        shallow.ends_with("dag true false\nrecord true\nmutual true false"),
+        "{shallow}"
+    );
+    assert_eq!(run("64"), shallow);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn roundtrip_100x() {
     let dir = tempdir("rt100");

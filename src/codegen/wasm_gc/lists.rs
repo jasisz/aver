@@ -1990,6 +1990,7 @@ fn emit_list_contains(
                 string_eq_fn_idx,
                 eq_helper_fn_idx,
                 None,
+                EqFold::And,
             )?;
         }
         ListEqKind::SumEq(parent_name) => {
@@ -2012,6 +2013,7 @@ fn emit_list_contains(
                 string_eq_fn_idx,
                 eq_helper_fn_idx,
                 None,
+                EqFold::And,
             )?;
         }
         ListEqKind::CarrierEq(canonical) => {
@@ -2088,6 +2090,100 @@ fn emit_list_contains(
     Ok(f)
 }
 
+/// How a structural `==` emitter folds the answers of a value's fields.
+#[derive(Clone, Copy)]
+pub(super) enum EqFold<'a> {
+    /// Every field is compared and the answers are and-ed.
+    And,
+    /// The first field that differs returns 0 from the function.
+    FirstDifference,
+    /// One step of a comparison against a budget (`body::eq_helpers`).
+    Budget(&'a BudgetFold<'a>),
+}
+
+/// A comparison against the budget held in local `budget`.
+pub(super) struct BudgetFold<'a> {
+    pub(super) budget: u32,
+    /// The helpers that walk. A field of such a type is compared by its
+    /// walk, which takes the budget and returns what is left (at least 1:
+    /// equal), 0 (different) or -1 (out of budget).
+    pub(super) walked: &'a std::collections::HashSet<String>,
+    /// At the start of a comparison, the walk with memory of this value and
+    /// the clear of its pairs, to start again with when the budget ran out.
+    /// Without it the step passes a 0 or -1 up and answers the budget left.
+    pub(super) restart: Option<(u32, u32)>,
+}
+
+impl EqFold<'_> {
+    /// Pushes the budget before the call to the helper of `name` when that
+    /// helper walks; says whether it did.
+    fn walk_call(self, f: &mut Function, name: &str) -> bool {
+        match self {
+            EqFold::Budget(fold) if fold.walked.contains(name) => {
+                f.instruction(&Instruction::LocalGet(fold.budget));
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Folds the answer of field `i`, the result of a walk when `walked`.
+    fn field(self, f: &mut Function, i: usize, walked: bool) {
+        match self {
+            EqFold::And => {
+                if i > 0 {
+                    f.instruction(&Instruction::I32And);
+                }
+            }
+            EqFold::Budget(fold) if walked => {
+                f.instruction(&Instruction::LocalTee(fold.budget));
+                f.instruction(&Instruction::I32Const(1));
+                f.instruction(&Instruction::I32LtS);
+                f.instruction(&Instruction::If(BlockType::Empty));
+                f.instruction(&Instruction::LocalGet(fold.budget));
+                if let Some((memory, clear)) = fold.restart {
+                    f.instruction(&Instruction::I32Eqz);
+                    f.instruction(&Instruction::If(BlockType::Empty));
+                    f.instruction(&Instruction::I32Const(0));
+                    f.instruction(&Instruction::Return);
+                    f.instruction(&Instruction::End);
+                    f.instruction(&Instruction::LocalGet(0));
+                    f.instruction(&Instruction::LocalGet(1));
+                    f.instruction(&Instruction::Call(memory));
+                    f.instruction(&Instruction::Call(clear));
+                }
+                f.instruction(&Instruction::Return);
+                f.instruction(&Instruction::End);
+            }
+            EqFold::FirstDifference | EqFold::Budget(_) => {
+                f.instruction(&Instruction::I32Eqz);
+                f.instruction(&Instruction::If(BlockType::Empty));
+                f.instruction(&Instruction::I32Const(0));
+                f.instruction(&Instruction::Return);
+                f.instruction(&Instruction::End);
+            }
+        }
+    }
+
+    /// Pushes the answer of a value whose fields all matched; with `And`
+    /// that answer is already on the stack unless there were no fields.
+    fn equal(self, f: &mut Function, no_fields: bool) {
+        match self {
+            EqFold::And if !no_fields => {}
+            EqFold::Budget(BudgetFold {
+                budget,
+                restart: None,
+                ..
+            }) => {
+                f.instruction(&Instruction::LocalGet(*budget));
+            }
+            _ => {
+                f.instruction(&Instruction::I32Const(1));
+            }
+        }
+    }
+}
+
 /// Inline field-by-field eq for two records held in scratch locals.
 /// Pushes a single i32 (1=eq, 0=ne) onto the stack. Field type
 /// dispatch covers `{Int, Float, Bool, String}` plus any type with a
@@ -2103,6 +2199,7 @@ pub(super) fn emit_record_eq_inline(
     string_eq_fn_idx: Option<u32>,
     eq_helper_fn_idx: &std::collections::HashMap<String, u32>,
     self_fn_idx: Option<u32>,
+    fold: EqFold,
 ) -> Result<(), WasmGcError> {
     let record_idx = registry
         .record_type_idx(record_name)
@@ -2117,7 +2214,7 @@ pub(super) fn emit_record_eq_inline(
         )))?;
     if fields.is_empty() {
         // Two empty records always equal.
-        f.instruction(&Instruction::I32Const(1));
+        fold.equal(f, true);
         return Ok(());
     }
     for (i, (field_name, field_ty)) in fields.iter().enumerate() {
@@ -2142,9 +2239,7 @@ pub(super) fn emit_record_eq_inline(
         // match.
         if registry.is_eligible_carrier(field_ty.trim()) {
             f.instruction(&Instruction::I64Eq);
-            if i > 0 {
-                f.instruction(&Instruction::I32And);
-            }
+            fold.field(f, i, false);
             continue;
         }
         // A field whose declared type is newtype-erased is stored as the
@@ -2152,6 +2247,7 @@ pub(super) fn emit_record_eq_inline(
         // same resolution the hash emitters do.
         let declared = field_ty.trim();
         let resolved = registry.newtype_underlying(declared).unwrap_or(declared);
+        let mut walked = false;
         match resolved {
             "Int" if declared == "Int" => {
                 // ETAP-2 multi-field carrier-`i64`: a bounded Int field erased
@@ -2192,6 +2288,7 @@ pub(super) fn emit_record_eq_inline(
             }
             other if other == record_name && self_fn_idx.is_some() => {
                 // Recursive ref to the same record — call self.
+                walked = fold.walk_call(f, other);
                 f.instruction(&Instruction::Call(self_fn_idx.unwrap()));
             }
             other => {
@@ -2210,6 +2307,7 @@ pub(super) fn emit_record_eq_inline(
                 };
                 if let Some(k) = key {
                     let idx = eq_helper_fn_idx[k.as_str()];
+                    walked = fold.walk_call(f, &k);
                     f.instruction(&Instruction::Call(idx));
                 } else {
                     return Err(WasmGcError::Validation(format!(
@@ -2220,10 +2318,9 @@ pub(super) fn emit_record_eq_inline(
                 }
             }
         }
-        if i > 0 {
-            f.instruction(&Instruction::I32And);
-        }
+        fold.field(f, i, walked);
     }
+    fold.equal(f, false);
     Ok(())
 }
 
@@ -2244,6 +2341,7 @@ pub(super) fn emit_sum_eq_inline(
     string_eq_fn_idx: Option<u32>,
     eq_helper_fn_idx: &std::collections::HashMap<String, u32>,
     self_fn_idx: Option<u32>,
+    fold: EqFold,
 ) -> Result<(), WasmGcError> {
     // Collect all variants of this sum (use a stable order — names
     // sorted ascending — so two compiler runs produce identical wasm).
@@ -2275,7 +2373,7 @@ pub(super) fn emit_sum_eq_inline(
         f.instruction(&Instruction::If(BlockType::Empty));
         // both V — compare fields. If no fields, push 1.
         if info.fields.is_empty() {
-            f.instruction(&Instruction::I32Const(1));
+            fold.equal(f, true);
         } else {
             for (i, field_ty) in info.fields.iter().enumerate() {
                 f.instruction(&Instruction::LocalGet(head_local));
@@ -2294,9 +2392,7 @@ pub(super) fn emit_sum_eq_inline(
                 // native `i64` → raw `i64.eq`.
                 if registry.is_eligible_carrier(field_ty.trim()) {
                     f.instruction(&Instruction::I64Eq);
-                    if i > 0 {
-                        f.instruction(&Instruction::I32And);
-                    }
+                    fold.field(f, i, false);
                     continue;
                 }
                 // A field whose declared type is newtype-erased is stored
@@ -2305,6 +2401,7 @@ pub(super) fn emit_sum_eq_inline(
                 let resolved = registry
                     .newtype_underlying(field_ty.trim())
                     .unwrap_or(field_ty.trim());
+                let mut walked = false;
                 match resolved {
                     "Int" => {
                         emit_aint_field_eq(f, registry)?;
@@ -2337,6 +2434,7 @@ pub(super) fn emit_sum_eq_inline(
                     other if other == parent_name && self_fn_idx.is_some() => {
                         // Recursive ref to the same sum (Tree.Node carrying
                         // Tree fields, ditto Cons-cell shapes) — call self.
+                        walked = fold.walk_call(f, other);
                         f.instruction(&Instruction::Call(self_fn_idx.unwrap()));
                     }
                     other => {
@@ -2359,13 +2457,13 @@ pub(super) fn emit_sum_eq_inline(
                             )));
                         };
                         let idx = eq_helper_fn_idx[key];
+                        walked = fold.walk_call(f, key);
                         f.instruction(&Instruction::Call(idx));
                     }
                 }
-                if i > 0 {
-                    f.instruction(&Instruction::I32And);
-                }
+                fold.field(f, i, walked);
             }
+            fold.equal(f, false);
         }
         f.instruction(&Instruction::Br(2)); // out of outer Block(result i32)
         f.instruction(&Instruction::Else);

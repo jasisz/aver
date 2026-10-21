@@ -1509,3 +1509,51 @@ fn runaway_recursion_is_an_aver_error_on_wasm_gc() {
         format_output(&out)
     );
 }
+
+/// Runs `source` like [`run_with_args`], killed after `limit`.
+fn run_within(source: &str, mode: &[&str], args: &[&str], limit: std::time::Duration) -> String {
+    let path = temp_module("aver-cross-shared-sum", source);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+        .arg("run")
+        .arg(&path)
+        .args(mode)
+        .arg("--")
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("expected `aver run` to start");
+    let started = std::time::Instant::now();
+    while child.try_wait().expect("run is waitable").is_none() {
+        if started.elapsed() > limit {
+            let _ = child.kill();
+            cleanup(&path);
+            panic!("{mode:?} {args:?} did not end within {limit:?}");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let out = child.wait_with_output().expect("run output");
+    cleanup(&path);
+    assert!(
+        out.status.success(),
+        "{mode:?} {args:?}: {}",
+        format_output(&out)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// `==` on two values of a recursive type built apart, each holding one
+/// subterm under both fields of a node, compares each shared pair once on
+/// wasm-gc: at 64 levels a walk of the unfolded tree would not end, so it
+/// must answer as at 12 within a minute, a difference at the last leaf too.
+#[test]
+fn shared_recursive_sum_equality_ends_on_wasm_gc() {
+    let source = include_str!("fixtures/shared_recursive_sum_app.av");
+    let minute = std::time::Duration::from_secs(60);
+    let shallow = run_within(source, &["--wasm-gc"], &["12"], minute);
+    assert!(
+        shallow.ends_with("dag true false\nrecord true\nmutual true false"),
+        "{shallow}"
+    );
+    assert_eq!(run_within(source, &["--wasm-gc"], &["64"], minute), shallow);
+}
