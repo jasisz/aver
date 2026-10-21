@@ -545,7 +545,7 @@ pub fn evalVectorSetMaybeDefault(
                                 if (idx < aver_rt::AverInt::from_i64(vec.len() as i64)) {
                                     Ok(Some(crate::aver_generated::domain::value::Val::ValVector(
                                         crate::aver_generated::domain::value::Val__ValVector({
-                                            let __vec = vec.clone();
+                                            let __vec = vec;
                                             match (idx).to_usize() {
                                                 Some(__idx) if __idx < __vec.len() => {
                                                     __vec.set_unchecked(__idx, valueV.clone())

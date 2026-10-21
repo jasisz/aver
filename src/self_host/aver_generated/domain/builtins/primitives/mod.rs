@@ -1429,9 +1429,8 @@ pub fn stringToCharList__indexed(
     mut pos @ _: aver_rt::AverInt,
     mut total @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    __str_index @ _: aver_rt::StringIndex,
+    mut __str_index @ _: aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
-    let __str_index @ _ = aver_rt::Shared::new(__str_index);
     loop {
         crate::cancel_checkpoint();
         let reversed @ _ = acc.reverse();

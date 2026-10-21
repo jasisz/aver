@@ -1577,10 +1577,9 @@ pub fn resolveVar(
 #[inline(always)]
 pub fn resolveExprs(
     exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
-    slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Expr> {
-    let slots @ _ = aver_rt::Shared::new(slots);
     let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>;
     let mut exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr> = exprs;
     loop {
@@ -1596,7 +1595,7 @@ pub fn resolveExprs(
                         let __tco2 = aver_rt::AverList::prepend(
                             crate::aver_generated::domain::resolver::core::resolveExprSimple(
                                 e,
-                                (*slots).clone(),
+                                slots.clone(),
                             ),
                             &acc,
                         );
@@ -1617,10 +1616,9 @@ pub fn resolveExprs(
 #[inline(always)]
 pub fn resolveFields(
     fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
-    slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> {
-    let slots @ _ = aver_rt::Shared::new(slots);
     let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>;
     let mut fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> =
         fields;
@@ -1636,7 +1634,7 @@ pub fn resolveFields(
                         let (name, expr) = pair.clone();
                         {
                             let __tco0 = rest;
-                            let __tco2 = aver_rt::AverList::prepend((name, crate::aver_generated::domain::resolver::core::resolveExprSimple(expr, (*slots).clone())), &acc);
+                            let __tco2 = aver_rt::AverList::prepend((name, crate::aver_generated::domain::resolver::core::resolveExprSimple(expr, slots.clone())), &acc);
                             __hold0 = __tco0;
                             fields = &__hold0;
                             acc = __tco2;
@@ -1655,13 +1653,12 @@ pub fn resolveFields(
 #[inline(always)]
 pub fn resolveArms(
     arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
-    slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> (
     aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) {
-    let slots @ _ = aver_rt::Shared::new(slots);
     let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>;
     let mut arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> = arms;
     loop {
@@ -1669,12 +1666,12 @@ pub fn resolveArms(
         {
             let __list_subject = arms;
             if __list_subject.is_empty() {
-                return (acc.reverse(), (*slots).clone());
+                return (acc.reverse(), slots);
             } else {
                 if let Some((arm, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
                     {
                         let (__stp0, _) =
-                            crate::aver_generated::domain::resolver::core::resolveArm(arm, &*slots);
+                            crate::aver_generated::domain::resolver::core::resolveArm(arm, &slots);
                         {
                             let __tco0 = rest;
                             let __tco2 = aver_rt::AverList::prepend(__stp0, &acc);
@@ -2242,10 +2239,9 @@ pub fn resolveStmts__collected(
 #[inline(always)]
 pub fn resolveExprs__collected(
     exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
-    slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Expr> {
-    let slots @ _ = aver_rt::Shared::new(slots);
     let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>;
     let mut exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr> = exprs;
     loop {
@@ -2262,7 +2258,7 @@ pub fn resolveExprs__collected(
                             acc,
                             crate::aver_generated::domain::resolver::core::resolveExprSimple(
                                 e,
-                                (*slots).clone(),
+                                slots.clone(),
                             ),
                         );
                         __hold0 = __tco0;
@@ -2282,10 +2278,9 @@ pub fn resolveExprs__collected(
 #[inline(always)]
 pub fn resolveFields__collected(
     fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
-    slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> {
-    let slots @ _ = aver_rt::Shared::new(slots);
     let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>;
     let mut fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> =
         fields;
@@ -2301,7 +2296,7 @@ pub fn resolveFields__collected(
                         let (name, expr) = pair.clone();
                         {
                             let __tco0 = rest;
-                            let __tco2 = aver_rt::list_builder_push(acc, (name, crate::aver_generated::domain::resolver::core::resolveExprSimple(expr, (*slots).clone())));
+                            let __tco2 = aver_rt::list_builder_push(acc, (name, crate::aver_generated::domain::resolver::core::resolveExprSimple(expr, slots.clone())));
                             __hold0 = __tco0;
                             fields = &__hold0;
                             acc = __tco2;
@@ -2320,13 +2315,12 @@ pub fn resolveFields__collected(
 #[inline(always)]
 pub fn resolveArms__collected(
     arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
-    slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> (
     aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) {
-    let slots @ _ = aver_rt::Shared::new(slots);
     let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>;
     let mut arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> = arms;
     loop {
@@ -2334,12 +2328,12 @@ pub fn resolveArms__collected(
         {
             let __list_subject = arms;
             if __list_subject.is_empty() {
-                return (aver_rt::list_builder_finalize(acc), (*slots).clone());
+                return (aver_rt::list_builder_finalize(acc), slots);
             } else {
                 if let Some((arm, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
                     {
                         let (__stp0, _) =
-                            crate::aver_generated::domain::resolver::core::resolveArm(arm, &*slots);
+                            crate::aver_generated::domain::resolver::core::resolveArm(arm, &slots);
                         {
                             let __tco0 = rest;
                             let __tco2 = aver_rt::list_builder_push(acc, __stp0);

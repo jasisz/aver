@@ -385,9 +385,8 @@ pub fn freeVarsArms(
 #[inline(always)]
 pub fn without(
     ns @ _: &aver_rt::AverList<AverStr>,
-    drop @ _: aver_rt::AverList<AverStr>,
+    mut drop @ _: aver_rt::AverList<AverStr>,
 ) -> aver_rt::AverList<AverStr> {
-    let drop @ _ = aver_rt::Shared::new(drop);
     let mut __hold0: aver_rt::AverList<AverStr>;
     let mut ns @ _: &aver_rt::AverList<AverStr> = ns;
     loop {
@@ -408,10 +407,7 @@ pub fn without(
                     } else {
                         return aver_rt::AverList::prepend(
                             n,
-                            &crate::proof_std::aver_generated::kernel::subst::without(
-                                &rest,
-                                (*drop).clone(),
-                            ),
+                            &crate::proof_std::aver_generated::kernel::subst::without(&rest, drop),
                         );
                     }
                 } else {
@@ -821,9 +817,8 @@ pub fn substArm(
 #[inline(always)]
 pub fn unbind(
     bs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding>,
-    names @ _: aver_rt::AverList<AverStr>,
+    mut names @ _: aver_rt::AverList<AverStr>,
 ) -> aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding> {
-    let names @ _ = aver_rt::Shared::new(names);
     let mut __hold0: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding>;
     let mut bs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding> =
         bs;
@@ -845,10 +840,7 @@ pub fn unbind(
                     } else {
                         return aver_rt::AverList::prepend(
                             b,
-                            &crate::proof_std::aver_generated::kernel::subst::unbind(
-                                &rest,
-                                (*names).clone(),
-                            ),
+                            &crate::proof_std::aver_generated::kernel::subst::unbind(&rest, names),
                         );
                     }
                 } else {
@@ -863,9 +855,8 @@ pub fn unbind(
 #[inline(always)]
 pub fn firstShared(
     ns @ _: &aver_rt::AverList<AverStr>,
-    others @ _: aver_rt::AverList<AverStr>,
+    mut others @ _: aver_rt::AverList<AverStr>,
 ) -> Option<AverStr> {
-    let others @ _ = aver_rt::Shared::new(others);
     let mut __hold0: aver_rt::AverList<AverStr>;
     let mut ns @ _: &aver_rt::AverList<AverStr> = ns;
     loop {

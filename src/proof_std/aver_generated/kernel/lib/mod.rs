@@ -2300,10 +2300,9 @@ pub fn fresh(base @ _: AverStr, used @ _: &aver_rt::AverList<AverStr>) -> AverSt
 #[inline(always)]
 pub fn freshFrom(
     mut base @ _: AverStr,
-    used @ _: aver_rt::AverList<AverStr>,
+    mut used @ _: aver_rt::AverList<AverStr>,
     mut k @ _: aver_rt::AverInt,
 ) -> AverStr {
-    let used @ _ = aver_rt::Shared::new(used);
     loop {
         crate::proof_std::cancel_checkpoint();
         let name @ _ = aver_rt::AverStr::from({

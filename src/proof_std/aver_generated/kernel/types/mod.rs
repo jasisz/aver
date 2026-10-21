@@ -1692,11 +1692,10 @@ pub fn callType(
 #[inline(always)]
 pub fn sigType(
     mut f @ _: AverStr,
-    args @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Ty>,
+    mut args @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Ty>,
     sigs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::FnSig>,
     e @ _: &TyEnv,
 ) -> Result<crate::proof_std::aver_generated::kernel::term::Ty, AverStr> {
-    let args @ _ = aver_rt::Shared::new(args);
     let mut __hold2: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::FnSig>;
     let mut sigs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::FnSig> =
         sigs;
@@ -1721,7 +1720,7 @@ pub fn sigType(
                     if (s.name == f) {
                         match crate::proof_std::aver_generated::kernel::types::bindEach(
                             &s.params,
-                            (*args).clone(),
+                            args,
                             aver_rt::AverList::empty(),
                             e,
                             aver_rt::AverStr::from({
@@ -2696,11 +2695,10 @@ pub fn bindTyped(
 #[inline(always)]
 pub fn eqKept(
     ts @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Ty>,
-    bound @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>,
+    mut bound @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>,
     e @ _: &TyEnv,
     mut what @ _: AverStr,
 ) -> Result<aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>, AverStr> {
-    let bound @ _ = aver_rt::Shared::new(bound);
     let mut __hold0: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Ty>;
     let mut ts @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Ty> = ts;
     loop {
@@ -2708,7 +2706,7 @@ pub fn eqKept(
         {
             let __list_subject = ts;
             if __list_subject.is_empty() {
-                return Ok((*bound).clone());
+                return Ok(bound);
             } else {
                 if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
@@ -2720,12 +2718,12 @@ pub fn eqKept(
                                 let n = __n_fields.0.clone();
                                 let __pat0 = __n_fields.1.clone();
                                 if __pat0 {
-                                    if crate::proof_std::aver_generated::kernel::types::hasEq(&crate::proof_std::aver_generated::kernel::types::find(n.clone(), &*bound).unwrap_or(crate::proof_std::aver_generated::kernel::term::Ty::TyAny), e) { {
+                                    if crate::proof_std::aver_generated::kernel::types::hasEq(&crate::proof_std::aver_generated::kernel::types::find(n.clone(), &bound).unwrap_or(crate::proof_std::aver_generated::kernel::term::Ty::TyAny), e) { {
             let __tco0 = rest;
             __hold0 = __tco0;
             ts = &__hold0;
             continue;
-        } } else { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(56)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(what)))); __b }; __b.push_str(&AverStr::from(": == on ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::types::show(&crate::proof_std::aver_generated::kernel::types::find(n, &*bound).unwrap_or(crate::proof_std::aver_generated::kernel::term::Ty::TyAny)))))); __b }; __b.push_str(&AverStr::from(" is not equality")); __b })); }
+        } } else { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(56)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(what)))); __b }; __b.push_str(&AverStr::from(": == on ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::types::show(&crate::proof_std::aver_generated::kernel::types::find(n, &bound).unwrap_or(crate::proof_std::aver_generated::kernel::term::Ty::TyAny)))))); __b }; __b.push_str(&AverStr::from(" is not equality")); __b })); }
                                 } else {
                                     {
                                         let __tco0 = aver_rt::AverList::concat(&crate::proof_std::aver_generated::kernel::types::partsOf(t), &rest);

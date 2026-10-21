@@ -2181,9 +2181,8 @@ pub fn tokenizeInterpString__indexed(
     mut src @ _: AverStr,
     mut pos @ _: aver_rt::AverInt,
     mut acc @ _: AverStr,
-    __str_index @ _: aver_rt::StringIndex,
+    mut __str_index @ _: aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    let __str_index @ _ = aver_rt::Shared::new(__str_index);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
@@ -2196,7 +2195,7 @@ pub fn tokenizeInterpString__indexed(
                             &crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
                                 src,
                                 nextPos,
-                                &*__str_index,
+                                &__str_index,
                             ),
                         );
                     } else {
@@ -2215,7 +2214,7 @@ pub fn tokenizeInterpString__indexed(
                         &crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
                             src,
                             pos,
-                            &*__str_index,
+                            &__str_index,
                         ),
                     );
                 }
@@ -2226,7 +2225,7 @@ pub fn tokenizeInterpString__indexed(
                 &crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
                     src,
                     pos,
-                    &*__str_index,
+                    &__str_index,
                 ),
             );
         }
@@ -2419,9 +2418,8 @@ pub fn tokenizeSlashOrComment__indexed(
 pub fn skipLineComment__indexed(
     mut src @ _: AverStr,
     mut pos @ _: aver_rt::AverInt,
-    __str_index @ _: aver_rt::StringIndex,
+    mut __str_index @ _: aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    let __str_index @ _ = aver_rt::Shared::new(__str_index);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
@@ -2432,7 +2430,7 @@ pub fn skipLineComment__indexed(
                         return crate::aver_generated::domain::lexer::tokenizeNewline__indexed(
                             src,
                             nextPos,
-                            &*__str_index,
+                            &__str_index,
                         );
                     } else {
                         {

@@ -112,13 +112,11 @@ pub struct MirEmitCtx<'a> {
     /// Local variable types (fn params + let bindings) for
     /// copy-type elision. Empty on the coverage path.
     pub local_types: &'a HashMap<String, Type>,
-    /// Params passed as `Rc<T>` (self-TCO) / `&T` (mutual-TCO).
+    /// Mutual-TCO invariants, passed to the trampoline as `&T`.
     pub rc_wrapped: &'a HashSet<String>,
-    /// Whether `rc_wrapped` params are represented as `&T`. This is true
-    /// only while emitting mutual-TCO trampoline arms; self-TCO wraps the
-    /// same policy class in `Shared<T>` instead. Equality uses this distinction
-    /// to align an owned operand with a borrowed invariant without changing
-    /// clone policy for either TCO shape.
+    /// Whether `rc_wrapped` params are represented as `&T`: true while
+    /// emitting mutual-TCO trampoline arms. Equality uses it to align an
+    /// owned operand with a borrowed invariant.
     pub rc_wrapped_are_borrowed_refs: bool,
     /// Params emitted as `&T` (borrow-by-default for non-Copy,
     /// non-Str params).
@@ -1174,6 +1172,13 @@ fn consumes_local(expr: &MirExpr, cx: &Consumption<'_>) -> bool {
                     .args
                     .iter()
                     .any(|arg| consumes_local(&arg.node, cx))
+        }
+        // `match Vector.set(v, i, x)` that moves `v` (see `local_set_moves`).
+        MirExpr::Match(m)
+            if crate::ir::mir::field_moves::local_vector_set_match(&m.node, cx.builtins)
+                .is_some_and(|set| set_moves_local(&m.node, &set, slot)) =>
+        {
+            true
         }
         // A match on the local at its last use moves the parts its arms
         // bind out of it: a Map or Vector part updated in place there
@@ -3613,9 +3618,12 @@ fn emit_mir_match_with(
     // `None` arm, which may read `s` whole, then still finds the field there,
     // and the `Some` arm hands `set_unchecked` the only reference.
     if let Some(set) = crate::ir::mir::field_moves::vector_set_match(m, emit_ctx.mir_builtins)
-        && super::ownership::projection_root_local(&set.target.node).is_some_and(|root| {
-            super::ownership::projection_moves(&set.target.node, root, emit_ctx)
+        .filter(|set| {
+            super::ownership::projection_root_local(&set.target.node).is_some_and(|root| {
+                super::ownership::projection_moves(&set.target.node, root, emit_ctx)
+            })
         })
+        .or_else(|| local_set_moves(m, emit_ctx))
     {
         let index = emit_mir_expr(set.index, emit_ctx)?;
         let value = mir_clone_arg(
@@ -3624,7 +3632,11 @@ fn emit_mir_match_with(
             emit_ctx,
         );
         let target = emit_mir_expr(set.target, emit_ctx)?;
-        let moved = mir_clone_arg(target.clone(), &set.target.node, emit_ctx);
+        let moved = match local_of(&set.target.node) {
+            // An owned local the `Some` arm does not read again.
+            Some(_) => target.clone(),
+            None => mir_clone_arg(target.clone(), &set.target.node, emit_ctx),
+        };
         let updated = match set.updated {
             Some((_, name)) if name != "_" => aver_name_to_rust(name),
             _ => "_".to_string(),
@@ -3871,6 +3883,58 @@ fn emit_mir_match_with(
     })
 }
 
+/// `match Vector.set(v, i, x)` on an owned local `v` the `Some` arm does not
+/// read again: `v` moves into the set, and the `None` arm, taken when the
+/// index is out of range and nothing changed, still finds it.
+fn local_set_moves<'a>(
+    m: &'a MirMatch,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<crate::ir::mir::field_moves::VectorSetMatch<'a>> {
+    let set = crate::ir::mir::field_moves::local_vector_set_match(m, ctx.mir_builtins)?;
+    let local = local_of(&set.target.node)?;
+    (super::ownership::root_is_owned(local, ctx) && set_moves_local(m, &set, local.slot))
+        .then_some(set)
+}
+
+/// Whether a matched `Vector.set` on the local in `slot` is where the local
+/// ends: the `Some` arm does not read it, and either the target is its last
+/// read or the `None` arm holds its last read.
+fn set_moves_local(
+    m: &MirMatch,
+    set: &crate::ir::mir::field_moves::VectorSetMatch<'_>,
+    slot: LocalId,
+) -> bool {
+    local_of(&set.target.node).is_some_and(|local| {
+        local.slot == slot
+            && !reads_local(&m.arms[set.some_arm].body.node, slot)
+            && (local.last_use || has_last_use(&m.arms[set.none_arm].body.node, slot))
+    })
+}
+
+/// Whether `expr` reads the local in `slot`.
+fn reads_local(expr: &MirExpr, slot: LocalId) -> bool {
+    if local_of(expr).is_some_and(|local| local.slot == slot) {
+        return true;
+    }
+    let mut found = false;
+    crate::ir::mir::expr::walk_children(expr, &mut |child| {
+        found = found || reads_local(child, slot);
+    });
+    found
+}
+
+/// Whether `expr` holds the last read of the local in `slot`.
+fn has_last_use(expr: &MirExpr, slot: LocalId) -> bool {
+    if let Some(local) = local_of(expr) {
+        return local.slot == slot && local.last_use;
+    }
+    let mut found = false;
+    crate::ir::mir::expr::walk_children(expr, &mut |child| {
+        found = found || has_last_use(child, slot);
+    });
+    found
+}
+
 /// Which way [`emit_mir_match_with`] renders a match, as far as the arms'
 /// bindings go. Mirrors that function's choice of path.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3895,7 +3959,8 @@ fn match_path(m: &MirMatch, arms: &[ResolvedMatchArm], emit_ctx: &MirEmitCtx<'_>
             super::ownership::projection_root_local(&set.target.node).is_some_and(|root| {
                 super::ownership::projection_moves(&set.target.node, root, emit_ctx)
             })
-        });
+        })
+        || local_set_moves(m, emit_ctx).is_some();
     let single = arms.len() == 1 && resolved_pattern_is_irrefutable(&arms[0].pattern);
     let any_int_literal_pattern = arms
         .iter()
@@ -4921,14 +4986,14 @@ fn ty_is_int(ty: Option<&Type>) -> bool {
 //     rebinds (`arg == param`) and pass-through (rc) params are skipped.
 //   * **No loop-invariant hoisting** (correctness needs none).
 //
-// The ownership / borrow facts (rc pass-through params `Shared`-wrapped on
-// the self-loop / `&T` extra trampoline args; non-rc owned params `mut`
-// with NO borrow-by-default) come from resolved HIR for both self- and
+// The ownership / borrow facts (lent params `&T` on the self-loop, `&T`
+// extra trampoline args for mutual invariants; other params owned `mut`)
+// come from resolved HIR for both self- and
 // mutual-TCO. Tail-call membership is therefore always an `FnId` decision.
 // Get the ownership wrong → rustc rejects, which the build gate catches.
 
 /// Emit a self-TCO fn entirely from MIR: the public signature
-/// (`mut`-owned params, rc params `Shared`-wrapped before the loop) + the
+/// (`mut`-owned params, lent params `&T`) + the
 /// `loop { cancel_checkpoint(); <tco-body> }` wrapper, where the body
 /// renders self-`TailCall` arms as `{ rebind; continue }` and value arms
 /// as `return <expr>;`.
@@ -4948,42 +5013,21 @@ pub(super) fn emit_mir_tco_fn(
     scope: Option<&str>,
     ctx: &CodegenContext,
 ) -> Option<String> {
-    use super::toplevel::{compute_resolved_rc_params, compute_resolved_self_passthrough_params};
+    use super::toplevel::compute_resolved_self_passthrough_params;
 
     let passthrough_indices = compute_resolved_self_passthrough_params(resolved_fd);
     // The params the loop only reads are borrowed (see [`self_loop_lends`]).
     let lent: Vec<usize> = (0..resolved_fd.params.len())
         .filter(|&i| self_loop_lends(ctx, resolved_fd.fn_id, i))
         .collect();
-    // A value of a thin sum is already one shared node: wrapping it in a
-    // `Shared` of its own would only add an allocation. A lent param is a
-    // borrow already.
-    let rc_indices: HashSet<usize> = compute_resolved_rc_params(std::slice::from_ref(&resolved_fd))
-        .into_iter()
-        .filter(|&i| {
-            !lent.contains(&i)
-                && !matches!(&resolved_fd.params[i].1, Type::Named { id: Some(id), .. }
-                    if super::representation::type_is_thin(*id, ctx))
-        })
-        .collect();
-    let rc_names: HashSet<String> = rc_indices
-        .iter()
-        .filter_map(|&i| resolved_fd.params.get(i).map(|(name, _)| name.clone()))
-        .collect();
-
-    // Borrow policy: no borrow-by-default (owned `mut` params), rc
-    // params wrapped (`(*x).clone()` on read). Mirror of
-    // `emit_tco_fn`'s `build_fn_ectx_no_borrow_from_resolved` and its
-    // Rc-wrapped-parameter policy.
+    // Borrow policy: owned `mut` params, except the lent ones. A param every
+    // step passes on unchanged stays a plain owned local of the loop: the
+    // loop owns it, so the exit that hands it on moves it out instead of
+    // cloning it (a `Shared` wrapper kept a second owner alive there).
     let mut policy = MirFnEmitPolicy::from_resolved(resolved_fd, scope, /* borrow */ false);
-    policy.rc_wrapped = rc_names.clone();
     // own_param-proven collection params are already `mut`-owned in the
     // TCO signature (`emit_tco_params_mir`); graduating them only flips
-    // the body's clone-skip on. A pass-through param `Shared`-wrapped via
-    // `rc_wrapped` keeps its `&T` / `(*x).clone()` shape — rc-wrapping is
-    // a structural TCO decision that takes precedence, so drop any
-    // rc-wrapped name back out of `owned_params` to keep signature and
-    // body consistent.
+    // the body's clone-skip on.
     policy.apply_own_param(mir_fn, ctx);
     // Int unboxing: a bare `i64` counter param is `Copy`-by-value, so it
     // is never rc-wrapped — a param bare in the summary is disjoint from
@@ -4991,9 +5035,6 @@ pub(super) fn emit_mir_tco_fn(
     // collection params). The signature emit (`emit_tco_params_mir`)
     // reads the same per-fn facts so both agree.
     policy.apply_bare_i64(mir_fn.fn_id, ctx);
-    for n in &rc_names {
-        policy.owned_params.remove(n);
-    }
     for &i in &lent {
         let name = &resolved_fd.params[i].0;
         policy.owned_params.remove(&aver_name_to_rust(name));
@@ -5023,18 +5064,13 @@ pub(super) fn emit_mir_tco_fn(
     // the body emit applied (`apply_bare_i64`). Every caller converts at the
     // boundary, so the ABI stays self-consistent.
     let bare_facts = ctx.bare_i64.for_fn(mir_fn.fn_id);
-    let params = emit_tco_params_mir(&fd.params, &rc_indices, &lent, bare_facts, ctx, scope);
+    let params = emit_tco_params_mir(&fd.params, &lent, bare_facts, ctx, scope);
     let ret_type = bare_return_type(ret_type, bare_facts);
     let mut lines = Vec::new();
     lines.push(format!(
         "{}fn {}({}) -> {} {{",
         visibility, fn_name, params, ret_type
     ));
-    // Wrap pass-through params in `Shared` before the loop (shadowing the
-    // original binding). Mirror of `emit_tco_fn`. Emit in source-param
-    // order: `rc_indices` is a HashSet, and iterating it directly made
-    // checked-in self-host regeneration differ across processes.
-    lines.extend(emit_self_tco_rc_wraps(&fd.params, &rc_indices));
     // A lent param the loop rebinds gets a slot for a value a step computes,
     // and its borrow becomes rebindable.
     for &i in lent.iter().filter(|i| !passthrough_indices.contains(i)) {
@@ -5057,32 +5093,13 @@ pub(super) fn emit_mir_tco_fn(
     Some(lines.join("\n"))
 }
 
-fn emit_self_tco_rc_wraps(params: &[(String, String)], rc_indices: &HashSet<usize>) -> Vec<String> {
-    assert!(
-        rc_indices.iter().all(|index| *index < params.len()),
-        "self-TCO rc parameter index must refer to a declared parameter"
-    );
-    params
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| rc_indices.contains(i))
-        .map(|(_, (name, _))| {
-            let rust_name = aver_name_to_rust(name);
-            let binding = explicit_binding_pattern(name);
-            format!("    let {} = aver_rt::Shared::new({});", binding, rust_name)
-        })
-        .collect()
-}
-
-/// Self-TCO param signature: non-rc params are `mut T` (rebound in the
-/// loop), rc params are plain `T` (shadowed by the `Shared::new` binding),
-/// lent params are `&T` (see [`self_loop_lends`]).
+/// Self-TCO param signature: params are `mut T` (rebound in the loop), lent
+/// params are `&T` (see [`self_loop_lends`]).
 /// Mirror of `emit_fn_params_tco`. A param the unboxing analysis proved
 /// bare (`bare_facts.param_is_bare(i)`) emits `mut p: i64` instead of
 /// `mut p: aver_rt::AverInt`.
 fn emit_tco_params_mir(
     params: &[(String, String)],
-    rc_indices: &std::collections::HashSet<usize>,
     lent: &[usize],
     bare_facts: Option<&crate::ir::mir::FnBareFacts>,
     ctx: &CodegenContext,
@@ -5104,8 +5121,6 @@ fn emit_tco_params_mir(
                     explicit_parameter_pattern(name, false),
                     rust_type
                 )
-            } else if rc_indices.contains(&i) {
-                format!("{}: {}", explicit_parameter_pattern(name, false), rust_type)
             } else {
                 format!("{}: {}", explicit_parameter_pattern(name, true), rust_type)
             }
@@ -6186,12 +6201,10 @@ fn try_emit_mir_fusion(
             let move_vec = match (set_local, default_local) {
                 _ if same_field => projection_root_local(&inner_args[0].node)
                     .is_some_and(|root| projection_moves(&inner_args[0].node, root, ctx)),
+                // An owned local (a `let`, or a param taken by value) named
+                // only here moves in: either occurrence may be its last use.
                 (Some(sv), Some(dv)) => {
-                    ctx.owned_params.contains(sv.name.as_str())
-                        && !ctx.is_borrowed_param(&sv.name)
-                        && !ctx.is_rc_wrapped(&sv.name)
-                        && !ctx.is_loop_carried_param(&sv.name)
-                        && (sv.last_use || dv.last_use)
+                    super::ownership::root_is_owned(sv, ctx) && (sv.last_use || dv.last_use)
                 }
                 _ => false,
             };
@@ -7255,24 +7268,6 @@ mod tests {
             SYMBOLS.get_or_init(SymbolTable::default),
             PREFIXES.get_or_init(HashSet::new),
         )
-    }
-
-    #[test]
-    fn self_tco_rc_wraps_follow_source_parameter_order() {
-        let params = vec![
-            ("first".to_string(), "List<Int>".to_string()),
-            ("second".to_string(), "Map<String,Int>".to_string()),
-            ("third".to_string(), "Vector<Int>".to_string()),
-        ];
-        let rc_indices = HashSet::from([2, 0, 1]);
-        assert_eq!(
-            emit_self_tco_rc_wraps(&params, &rc_indices),
-            [
-                "    let first @ _ = aver_rt::Shared::new(first);",
-                "    let second @ _ = aver_rt::Shared::new(second);",
-                "    let third @ _ = aver_rt::Shared::new(third);",
-            ]
-        );
     }
 
     #[test]

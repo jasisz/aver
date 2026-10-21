@@ -4097,9 +4097,8 @@ pub fn splitDottedLoop__indexed(
     mut name @ _: AverStr,
     mut pos @ _: aver_rt::AverInt,
     mut total @ _: aver_rt::AverInt,
-    __str_index @ _: aver_rt::StringIndex,
+    mut __str_index @ _: aver_rt::StringIndex,
 ) -> Option<(AverStr, AverStr)> {
-    let __str_index @ _ = aver_rt::Shared::new(__str_index);
     loop {
         crate::cancel_checkpoint();
         if (pos < total) {

@@ -191,18 +191,22 @@ pub fn builtinVectorSetInBounds(
     valV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match (idx)
-        .to_usize()
-        .and_then(|__i| vec.set_owned(__i, valV.clone()))
     {
-        Some(newVec @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
-            crate::aver_generated::domain::value::Val__ValSome(
-                crate::aver_generated::domain::value::Val::ValVector(
-                    crate::aver_generated::domain::value::Val__ValVector(newVec),
-                ),
-            ),
-        )),
-        None => Err(AverStr::from("Vector.set: index out of bounds")),
+        let __idx = (idx).to_usize();
+        let __value = valV.clone();
+        match __idx.filter(|__idx| *__idx < vec.len()) {
+            Some(__idx) => {
+                let newVec = vec.set_unchecked(__idx, __value);
+                Ok(crate::aver_generated::domain::value::Val::ValSome(
+                    crate::aver_generated::domain::value::Val__ValSome(
+                        crate::aver_generated::domain::value::Val::ValVector(
+                            crate::aver_generated::domain::value::Val__ValVector(newVec),
+                        ),
+                    ),
+                ))
+            }
+            None => Err(AverStr::from("Vector.set: index out of bounds")),
+        }
     }
 }
 
