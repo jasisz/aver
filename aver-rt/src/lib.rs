@@ -10,7 +10,7 @@ pub mod http;
 pub mod int;
 pub mod int_list;
 pub mod listbuilder;
-#[cfg(any(feature = "mimalloc", test))]
+#[cfg(all(not(target_family = "wasm"), any(feature = "mimalloc", test)))]
 mod mimalloc;
 pub mod packed_u8;
 #[cfg(feature = "random")]
@@ -39,7 +39,7 @@ pub use int_list::{
     int_list_builder_push, into_packed_u8,
 };
 pub use listbuilder::{list_builder_finalize, list_builder_new, list_builder_push};
-#[cfg(feature = "mimalloc")]
+#[cfg(all(not(target_family = "wasm"), feature = "mimalloc"))]
 pub use mimalloc::MiMalloc;
 pub use packed_u8::AverPackedU8;
 pub use runtime::{
