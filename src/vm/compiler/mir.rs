@@ -498,12 +498,7 @@ pub(super) fn compile_mir_expr(
                         // Nothing after this read overlaps the field
                         // (`field_moves`): only the local's own cell may
                         // hold the record.
-                        None if fc
-                            .movable_in_place
-                            .contains(&(&expr.node as *const MirExpr as usize)) =>
-                        {
-                            Some(1)
-                        }
+                        None if takes_where_read(fc, expr) => Some(1),
                         None => None,
                     }
                 }
@@ -1810,6 +1805,20 @@ fn compile_vector_set_field(
     Ok(true)
 }
 
+/// Whether `expr`, a field read nothing after it overlaps (`field_moves`),
+/// takes the field where it is read. Only a value that can hold a Map, a
+/// Vector or a record is worth asking the runtime about; a scalar is read in
+/// place.
+fn takes_where_read(fc: &FnCompiler<'_>, expr: &Spanned<MirExpr>) -> bool {
+    use crate::types::Type;
+    !matches!(
+        expr.ty(),
+        Some(Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit)
+    ) && fc
+        .movable_in_place
+        .contains(&(&expr.node as *const MirExpr as usize))
+}
+
 /// Compile `local.f1.….fn`, `n >= 2`, as one `RECORD_TAKE_PATH` when a record
 /// literal or update being compiled plans to take it, when the read is the
 /// local's last use, or when nothing after it reads the path again. Returns
@@ -1851,21 +1860,16 @@ fn compile_path_take(
         // Nothing after this read overlaps the path (`field_moves`): the
         // local's own cell holds the root, each record below stays in its
         // parent, and only the last field is taken.
-        None if fc
-            .movable_in_place
-            .contains(&(&expr.node as *const MirExpr as usize)) =>
-        {
-            (
-                1,
-                vec![
-                    super::field_take::PathLevel {
-                        detach: false,
-                        holders: 0,
-                    };
-                    fields.len() - 1
-                ],
-            )
-        }
+        None if takes_where_read(fc, expr) => (
+            1,
+            vec![
+                super::field_take::PathLevel {
+                    detach: false,
+                    holders: 0,
+                };
+                fields.len() - 1
+            ],
+        ),
         None => return Ok(false),
     };
     let depth = operand_u8(fields.len(), "record field path depth")?;
