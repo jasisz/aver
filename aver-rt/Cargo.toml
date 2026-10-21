@@ -29,7 +29,6 @@ all-features = true
 [dependencies]
 ahash = { version = "0.8", default-features = false, features = ["std", "runtime-rng"] }
 crossterm = { version = "0.28", optional = true }
-libmimalloc-sys = { version = "0.1.49", default-features = false, optional = true }
 num-bigint = "0.4"
 num-integer = "0.1"
 num-traits = "0.2"
@@ -44,6 +43,7 @@ signal-hook = "0.3"
 ctrlc = "3.5"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
+libmimalloc-sys = { version = "0.1.49", default-features = false, optional = true }
 polling = "3.11"
 socket2 = "0.6"
 
