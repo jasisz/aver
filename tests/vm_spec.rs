@@ -2061,3 +2061,85 @@ fn main() -> Unit
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(out, "same true zero true\nnan false tree true");
 }
+
+// ---------------------------------------------------------------------------
+// Values of recursive sums far deeper than the Rust stack
+// ---------------------------------------------------------------------------
+
+/// The fixture the Rust backend lets go of at a million levels, on the VM at
+/// a hundred thousand: a chain, a tree leaning either way, a chain through a
+/// record and an `Option`, and two sums on one cycle, built, read, carried
+/// across frame boundaries and let go whole. Every walk the VM makes over
+/// one of them — moving it into the yard or the handoff region at a return —
+/// used to recurse once per level, and a few thousand levels overflowed the
+/// main thread's stack. The output is the one the Rust backend prints.
+#[test]
+fn vm_carries_a_deep_recursive_sum_value_across_frames() {
+    let file =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/deep_recursive_sum_drop_app.av");
+    let expected = ["chain", "left", "right", "linked", "ping"]
+        .map(|case| format!("{case} 100000"))
+        .join("\n");
+    assert_eq!(aver_run_within_a_minute(&file, &["100000"]), expected);
+}
+
+/// `==` on two such values built apart, equal and unequal, a chain built by
+/// a call that is not a tail call, and two deep values handed back from the
+/// branches of an independent product, which copies them between arenas.
+#[test]
+fn vm_compares_and_imports_deep_recursive_sum_values() {
+    let dir = temp_module_root("deep_eq");
+    let file = dir.join("main.av");
+    std::fs::write(
+        &file,
+        r#"module DeepEq
+    intent = "Equality and independent products on deep values."
+    effects [Console.print]
+
+type Level
+    Zero
+    Succ(Level)
+
+record Link
+    next: Option<Linked>
+    weight: Int
+
+type Linked
+    End
+    Step(Link)
+
+fn chain(n: Int, acc: Level) -> Level
+    ? "Puts n more Succ on top of acc."
+    match n <= 0
+        true -> acc
+        false -> chain(n - 1, Level.Succ(acc))
+
+fn build(n: Int) -> Level
+    ? "A chain of n, each level returned by the call below it."
+    match n <= 0
+        true -> Level.Zero
+        false -> Level.Succ(build(n - 1))
+
+fn linked(n: Int, acc: Linked) -> Linked
+    ? "Puts n more steps on top of acc."
+    match n <= 0
+        true -> acc
+        false -> linked(n - 1, Linked.Step(Link(next = Option.Some(acc), weight = n)))
+
+fn main() -> Unit
+    ! [Console.print]
+    n = 100000
+    Console.print("chain {chain(n, Level.Zero) == build(n)} {chain(n, Level.Zero) == chain(n + 1, Level.Zero)}")
+    Console.print("linked {linked(n, Linked.End) == linked(n, Linked.End)} {linked(n, Linked.End) == linked(n, Linked.Step(Link(next = Option.None, weight = 0)))}")
+    match (chain(n, Level.Zero), linked(n, Linked.End))!
+        (c, l) -> Console.print("product {c == build(n)} {l == linked(n, Linked.End)}")
+"#,
+    )
+    .expect("write Aver source");
+    let out = aver_run_within_a_minute(&file, &[]);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        out,
+        "chain true false\nlinked true false\nproduct true true"
+    );
+}

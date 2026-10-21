@@ -11,8 +11,8 @@
 //!
 //! - `Arena::evacuate_local_root` (`aver-memory/src/memory.rs`) returns an
 //!   out-of-region root untouched instead of descending into it, unlike its
-//!   siblings `rewrite_young_refs_in_place` (relocation) and
-//!   `rewrite_promoted_young_refs_in_place` (promotion), which both do descend;
+//!   siblings `rewrite_young_refs_in_place` (relocation) and the promotion
+//!   walk, which both do descend;
 //! - `VM::can_fast_return_with_young_truncate` (`src/vm/execute/boundary.rs`)
 //!   decides "nothing frame-local escapes" from the RESULT HANDLE alone and
 //!   truncates young with no rewrite at all.

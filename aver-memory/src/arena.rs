@@ -1,5 +1,27 @@
 use super::*;
 
+/// A value [`Arena::deep_import`] has opened: what it was, the values it
+/// holds, and the imports of the ones done so far.
+struct OpenImport<T: ArenaTypes> {
+    shape: ImportShape<T>,
+    children: Vec<NanValue>,
+    imported: Vec<NanValue>,
+}
+
+/// What an [`OpenImport`] becomes once its children are imported.
+enum ImportShape<T: ArenaTypes> {
+    Tuple,
+    List,
+    /// The source map, for its hashes: `children` holds its keys and values in
+    /// turn, in the order it iterates.
+    Map(T::Map),
+    Vector,
+    Record(u32),
+    Variant(u32, u16),
+    /// The tag of the boxed value.
+    Boxed(u64),
+}
+
 impl<T: ArenaTypes> Arena<T> {
     pub fn new() -> Self {
         Arena {
@@ -184,37 +206,98 @@ impl<T: ArenaTypes> Arena<T> {
 
     /// Deep-import a NanValue from `source` arena into `self`.
     /// Inline values (int, float, bool, unit, none, empty containers) are returned as-is.
-    /// Heap-referenced values are recursively copied into `self` with new indices.
+    /// Heap-referenced values are copied into `self` with new indices, each
+    /// after everything it holds, on a work list rather than the Rust call
+    /// stack: a value of a recursive sum a million levels deep is a million
+    /// open imports on `open`, not a million Rust frames.
     pub fn deep_import(&mut self, value: NanValue, source: &Arena<T>) -> NanValue {
+        let mut open: Vec<OpenImport<T>> = Vec::new();
+        let mut done = self.open_import(value, source, &mut open);
+        loop {
+            let frame = match (done.take(), open.last_mut()) {
+                (Some(value), None) => return value,
+                (Some(value), Some(frame)) => {
+                    frame.imported.push(value);
+                    frame
+                }
+                (None, frame) => frame.expect("an import is open"),
+            };
+            match frame.children.get(frame.imported.len()) {
+                Some(&child) => done = self.open_import(child, source, &mut open),
+                None => {
+                    let frame = open.pop().expect("an import is open");
+                    done = Some(self.close_import(frame));
+                }
+            }
+        }
+    }
+
+    /// The import of `value` if it holds nothing to import first, or else
+    /// `None`, with what it holds left on `open`.
+    fn open_import(
+        &mut self,
+        value: NanValue,
+        source: &Arena<T>,
+        open: &mut Vec<OpenImport<T>>,
+    ) -> Option<NanValue> {
         // Not NaN-boxed = plain float, return as-is
         if !value.is_nan_boxed() {
-            return value;
+            return Some(value);
         }
         // Check if it has a heap index — if not, it's inline
         let heap_idx = match value.heap_index() {
             Some(idx) => idx,
-            None => return value, // inline int, bool, unit, none, empty list/map/etc
+            None => return Some(value), // inline int, bool, unit, none, empty list/map/etc
         };
 
-        let entry = source.get(heap_idx).clone();
-        match entry {
-            ArenaEntry::Int(i) => NanValue::new_int(i, self),
-            ArenaEntry::BigInt(b) => NanValue::new_big_int(*b, self),
+        let (shape, children) = match source.get(heap_idx) {
+            ArenaEntry::Int(i) => return Some(NanValue::new_int(*i, self)),
+            ArenaEntry::BigInt(b) => return Some(NanValue::new_big_int((**b).clone(), self)),
             ArenaEntry::String(s) => {
-                let idx = self.push(ArenaEntry::String(s));
-                NanValue::new_string(idx)
+                let idx = self.push(ArenaEntry::String(s.clone()));
+                return Some(NanValue::new_string(idx));
             }
-            ArenaEntry::Tuple { items, .. } => {
-                let imported: Vec<NanValue> =
-                    items.iter().map(|v| self.deep_import(*v, source)).collect();
+            // Fn/Builtin/Namespace — should not appear in independent product results
+            ArenaEntry::Fn(_) | ArenaEntry::Builtin(_) | ArenaEntry::Namespace { .. } => {
+                return Some(value);
+            }
+            ArenaEntry::Tuple { items, .. } => (ImportShape::Tuple, items.clone()),
+            // Flatten list and re-import as a fresh flat list
+            ArenaEntry::List(_) => (ImportShape::List, source.list_to_vec_value(value)),
+            ArenaEntry::Map { map, .. } => {
+                let children = map.iter().flat_map(|(_, (k, v))| [*k, *v]).collect();
+                (ImportShape::Map(map.clone()), children)
+            }
+            ArenaEntry::Vector { items, .. } => (ImportShape::Vector, items.clone()),
+            ArenaEntry::Record {
+                type_id, fields, ..
+            } => (ImportShape::Record(*type_id), fields.clone()),
+            ArenaEntry::Variant {
+                type_id,
+                variant_id,
+                fields,
+            } => (ImportShape::Variant(*type_id, *variant_id), fields.clone()),
+            ArenaEntry::Boxed { value: inner, .. } => {
+                (ImportShape::Boxed(value.tag()), vec![*inner])
+            }
+        };
+        open.push(OpenImport {
+            shape,
+            imported: Vec::with_capacity(children.len()),
+            children,
+        });
+        None
+    }
+
+    /// The import of a value whose parts are all imported.
+    fn close_import(&mut self, frame: OpenImport<T>) -> NanValue {
+        let imported = frame.imported;
+        match frame.shape {
+            ImportShape::Tuple => {
                 let idx = self.push_tuple(imported);
                 NanValue::new_tuple(idx)
             }
-            ArenaEntry::List(_) => {
-                // Flatten list and re-import as a fresh flat list
-                let flat = source.list_to_vec_value(value);
-                let imported: Vec<NanValue> =
-                    flat.iter().map(|v| self.deep_import(*v, source)).collect();
+            ImportShape::List => {
                 if imported.is_empty() {
                     NanValue::EMPTY_LIST
                 } else {
@@ -228,12 +311,10 @@ impl<T: ArenaTypes> Arena<T> {
                     NanValue::new_list(idx)
                 }
             }
-            ArenaEntry::Map { map, .. } => {
+            ImportShape::Map(map) => {
                 let mut new_map = T::Map::new();
                 let mut table = new_map.table_id();
-                for (hash, (k, v)) in map.iter() {
-                    let ik = self.deep_import(*k, source);
-                    let iv = self.deep_import(*v, source);
+                for ((hash, _), [key, value]) in map.iter().zip(imported.as_chunks::<2>().0) {
                     let entries_before = new_map.len();
                     // The map under construction is a local of this call, so it
                     // goes in through the owned path. `insert` — which is what
@@ -244,7 +325,7 @@ impl<T: ArenaTypes> Arena<T> {
                     // The bump is driven by `table_id`, so it counts a rebuild
                     // that happened rather than inferring one from the method
                     // name.
-                    new_map = new_map.insert_owned(*hash, (ik, iv));
+                    new_map = new_map.insert_owned(*hash, (*key, *value));
                     let table_after = new_map.table_id();
                     if table_after != table {
                         self.note_map_entries_copied(entries_before);
@@ -257,21 +338,13 @@ impl<T: ArenaTypes> Arena<T> {
                 let idx = self.push_map(new_map);
                 NanValue::new_map(idx)
             }
-            ArenaEntry::Vector { items, .. } => {
-                let imported: Vec<NanValue> =
-                    items.iter().map(|v| self.deep_import(*v, source)).collect();
+            ImportShape::Vector => {
                 // Through `push_vector`, so imported children that are
                 // themselves collections get their held-elsewhere mark.
                 let idx = self.push_vector(imported);
                 NanValue::new_vector(idx)
             }
-            ArenaEntry::Record {
-                type_id, fields, ..
-            } => {
-                let imported: Vec<NanValue> = fields
-                    .iter()
-                    .map(|v| self.deep_import(*v, source))
-                    .collect();
+            ImportShape::Record(type_id) => {
                 let idx = self.push(ArenaEntry::Record {
                     type_id,
                     fields: imported,
@@ -279,15 +352,7 @@ impl<T: ArenaTypes> Arena<T> {
                 });
                 NanValue::new_record(idx)
             }
-            ArenaEntry::Variant {
-                type_id,
-                variant_id,
-                fields,
-            } => {
-                let imported: Vec<NanValue> = fields
-                    .iter()
-                    .map(|v| self.deep_import(*v, source))
-                    .collect();
+            ImportShape::Variant(type_id, variant_id) => {
                 let idx = self.push(ArenaEntry::Variant {
                     type_id,
                     variant_id,
@@ -295,13 +360,10 @@ impl<T: ArenaTypes> Arena<T> {
                 });
                 NanValue::new_variant(idx)
             }
-            ArenaEntry::Boxed { value: inner, .. } => {
-                let imported = self.deep_import(inner, source);
-                let idx = self.push_boxed(imported);
-                NanValue::encode(value.tag(), ARENA_REF_BIT | (idx as u64))
+            ImportShape::Boxed(tag) => {
+                let idx = self.push_boxed(imported[0]);
+                NanValue::encode(tag, ARENA_REF_BIT | (idx as u64))
             }
-            // Fn/Builtin/Namespace — should not appear in independent product results
-            ArenaEntry::Fn(_) | ArenaEntry::Builtin(_) | ArenaEntry::Namespace { .. } => value,
         }
     }
 
