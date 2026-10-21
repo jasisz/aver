@@ -1222,6 +1222,7 @@ pub(super) fn emit_module_with(
     // Per-(record/sum) `__eq_<TypeName>` helpers — slot allocation +
     // type emit. Bodies emitted after list helpers (they may call
     // `__wasmgc_string_eq` registered above).
+    eq_helpers_registry.find_walks(&registry);
     eq_helpers_registry.assign_slots(&mut next_builtin_fn_idx, &mut next_type_idx);
     eq_helpers_registry.emit_helper_types(&mut types);
     hash_helpers_registry.assign_slots(&mut next_builtin_fn_idx, &mut next_type_idx);
@@ -2483,11 +2484,9 @@ pub(super) fn emit_module_with(
     map_helpers.emit_function_section(&mut funcs);
     list_helpers.emit_function_section(&mut funcs);
     packed_sequence_helpers.emit_function_section(&mut funcs);
-    // Eq helpers — one fn entry per registered `__eq_<TypeName>` slot.
-    for (name, _kind) in eq_helpers_registry.iter() {
-        let t_idx = eq_helpers_registry
-            .lookup_type_idx(name)
-            .expect("registered eq helper has type idx after assign_slots");
+    // Eq helpers — one fn entry per registered `__eq_<TypeName>` slot,
+    // then the walks of recursive types and their remembered pairs.
+    for t_idx in eq_helpers_registry.function_types() {
         funcs.function(t_idx);
     }
     // Hash helpers — same shape (one entry per registered slot).
@@ -2986,6 +2985,9 @@ pub(super) fn emit_module_with(
     } else {
         None
     };
+    // The state of a comparison of recursive values, after every other
+    // global and only for a program that compares one.
+    let eq_walk_globals = eq_helpers_registry.emit_walk_globals(&mut globals, &mut next_global_idx);
     if next_global_idx > 0 {
         module.section(&globals);
     }
@@ -4091,6 +4093,7 @@ pub(super) fn emit_module_with(
         &registry,
         string_eq_fn_idx,
         &compound_eq_lookup,
+        eq_walk_globals.as_ref(),
     )?;
     // `__hash_<X>` helper bodies — emitted right after eq helpers so
     // every nominal/carrier hash dispatch finds its target fn_idx.

@@ -96,6 +96,10 @@ Every `Expr::TailCall` in IR lowers to:
 
 No trampoline. No dispatch loop. Engine handles frame reuse.
 
+## Equality of recursive values
+
+`==` on a record or sum compares field by field through a per-type helper `__eq_<T>` (`body/eq_helpers.rs`). A value of a recursive type can hold one subterm under many nodes, and two equal values built apart are different objects all the way down, so a plain walk meets a shared subterm once for every path to it: exponential in the depth of the sharing. A record or sum that reaches itself through its fields, directly or through an `Option`, is therefore compared in steps, as the Rust backend does. `__eq_<T>` compares the two roots and passes a budget of 1024 steps down the walk, as a parameter, and the walk returns at the first field that differs. A comparison that runs out of budget starts again with steps that remember pairs of nodes found equal and do not compare them again. Wasm-gc has no addresses to key a table on, so the memory is the last two pairs found equal, kept in globals and found by `ref.eq`. That catches the usual sharing, one subterm under several fields of a node (`Pair(t, t)`, a record on the cycle, two sums on one cycle, an `Option` between), at the cost of the graph rather than the tree. The guarantee is weaker than the Rust backend's, which remembers every shared pair: sharing whose second visit comes after more than two other equal pairs is compared again, and a value built to defeat the memory can still cost the tree. A comparison of more than 1024 equal nodes pays the memory at every node, about a sixth more than a plain walk. A field that holds such a type inside a collection begins a comparison of its own, and a program that compares no recursive type emits the same bytes as before. `__hash_<T>` still walks the tree.
+
 ## Baseline assumption: modern wasm runtime
 
 This backend assumes the host runtime supports:
