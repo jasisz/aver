@@ -55,7 +55,7 @@ pub fn builtinResultOk(
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     Ok(crate::aver_generated::domain::value::Val::ValOk(
-        std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValOk(v)),
+        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(v)),
     ))
 }
 
@@ -66,7 +66,7 @@ pub fn builtinResultErr(
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     Ok(crate::aver_generated::domain::value::Val::ValErr(
-        std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValErr(v)),
+        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(v)),
     ))
 }
 
@@ -96,7 +96,7 @@ pub fn builtinOptionSome(
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     Ok(crate::aver_generated::domain::value::Val::ValSome(
-        std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValSome(v)),
+        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValSome(v)),
     ))
 }
 
@@ -131,12 +131,12 @@ pub fn callResultFromOption(
             crate::aver_generated::domain::value::Val::ValSome(__inner_fields) => {
                 let inner = __inner_fields.0.clone();
                 Ok(crate::aver_generated::domain::value::Val::ValOk(
-                    std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValOk(inner)),
+                    aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(inner)),
                 ))
             }
             crate::aver_generated::domain::value::Val::ValNone => {
                 Ok(crate::aver_generated::domain::value::Val::ValErr(
-                    std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValErr(errV)),
+                    aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(errV)),
                 ))
             }
             _ => Err(AverStr::from("Result.fromOption requires Option value")),

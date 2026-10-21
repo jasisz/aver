@@ -11,12 +11,12 @@ pub fn values(
         crate::proof_kernel::aver_generated::kernel::term::Fin::FBool => {
             aver_rt::AverList::from_vec(vec![
                 crate::proof_kernel::aver_generated::kernel::term::Term::TBool(
-                    std::sync::Arc::new(
+                    aver_rt::Shared::new(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TBool(false),
                     ),
                 ),
                 crate::proof_kernel::aver_generated::kernel::term::Term::TBool(
-                    std::sync::Arc::new(
+                    aver_rt::Shared::new(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TBool(true),
                     ),
                 ),
@@ -54,7 +54,7 @@ pub fn ctorValues(
     cs @ _: &aver_rt::AverList<AverStr>,
 ) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(cs.clone(), [] => aver_rt::AverList::empty(), [c, rest] => aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::term::Term__TCtor(c, aver_rt::AverList::empty()))), &crate::proof_kernel::aver_generated::kernel::finite::ctorValues(&rest)))
+    aver_list_match!(cs.clone(), [] => aver_rt::AverList::empty(), [c, rest] => aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(aver_rt::Shared::new(crate::proof_kernel::aver_generated::kernel::term::Term__TCtor(c, aver_rt::AverList::empty()))), &crate::proof_kernel::aver_generated::kernel::finite::ctorValues(&rest)))
 }
 
 /// The field names, in order.
@@ -129,7 +129,7 @@ pub fn recValues(
     >,
 ) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(rows.clone(), [] => aver_rt::AverList::empty(), [r, rest] => aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::term::Term::TRec(std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::term::Term__TRec(n.clone(), crate::proof_kernel::aver_generated::kernel::finite::zipFields(names, &r)))), &crate::proof_kernel::aver_generated::kernel::finite::recValues(n, names, &rest)))
+    aver_list_match!(rows.clone(), [] => aver_rt::AverList::empty(), [r, rest] => aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::term::Term::TRec(aver_rt::Shared::new(crate::proof_kernel::aver_generated::kernel::term::Term__TRec(n.clone(), crate::proof_kernel::aver_generated::kernel::finite::zipFields(names, &r)))), &crate::proof_kernel::aver_generated::kernel::finite::recValues(n, names, &rest)))
 }
 
 /// Pair field names with values.
@@ -166,5 +166,5 @@ pub fn tupleValues(
     >,
 ) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(rows.clone(), [] => aver_rt::AverList::empty(), [r, rest] => aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::term::Term::TTuple(std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::term::Term__TTuple(r))), &crate::proof_kernel::aver_generated::kernel::finite::tupleValues(&rest)))
+    aver_list_match!(rows.clone(), [] => aver_rt::AverList::empty(), [r, rest] => aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::term::Term::TTuple(aver_rt::Shared::new(crate::proof_kernel::aver_generated::kernel::term::Term__TTuple(r))), &crate::proof_kernel::aver_generated::kernel::finite::tupleValues(&rest)))
 }

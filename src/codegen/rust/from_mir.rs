@@ -116,7 +116,7 @@ pub struct MirEmitCtx<'a> {
     pub rc_wrapped: &'a HashSet<String>,
     /// Whether `rc_wrapped` params are represented as `&T`. This is true
     /// only while emitting mutual-TCO trampoline arms; self-TCO wraps the
-    /// same policy class in `Arc<T>` instead. Equality uses this distinction
+    /// same policy class in `Shared<T>` instead. Equality uses this distinction
     /// to align an owned operand with a borrowed invariant without changing
     /// clone policy for either TCO shape.
     pub rc_wrapped_are_borrowed_refs: bool,
@@ -2135,7 +2135,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                     } else {
                         qualified
                     };
-                    // A shared constructor's fields go into one `Arc` (see
+                    // A shared constructor's fields go into one `Shared` (see
                     // `representation::shared_variants`). The coverage walk
                     // has no codegen context and only asks whether this renders.
                     let shared = emit_ctx.codegen.is_some_and(|cg| {
@@ -2149,7 +2149,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                         Some(format!("{}::{}", head, variant_name))
                     } else if shared {
                         Some(format!(
-                            "{head}::{variant_name}(std::sync::Arc::new({head}__{variant_name}({args_str})))"
+                            "{head}::{variant_name}(aver_rt::Shared::new({head}__{variant_name}({args_str})))"
                         ))
                     } else {
                         Some(format!("{}::{}({})", head, variant_name, args_str))
@@ -4290,14 +4290,14 @@ fn ty_is_int(ty: Option<&Type>) -> bool {
 //     rebinds (`arg == param`) and pass-through (rc) params are skipped.
 //   * **No loop-invariant hoisting** (correctness needs none).
 //
-// The ownership / borrow facts (rc pass-through params Arc-wrapped on
+// The ownership / borrow facts (rc pass-through params `Shared`-wrapped on
 // the self-loop / `&T` extra trampoline args; non-rc owned params `mut`
 // with NO borrow-by-default) come from resolved HIR for both self- and
 // mutual-TCO. Tail-call membership is therefore always an `FnId` decision.
 // Get the ownership wrong → rustc rejects, which the build gate catches.
 
 /// Emit a self-TCO fn entirely from MIR: the public signature
-/// (`mut`-owned params, rc params Arc-wrapped before the loop) + the
+/// (`mut`-owned params, rc params `Shared`-wrapped before the loop) + the
 /// `loop { cancel_checkpoint(); <tco-body> }` wrapper, where the body
 /// renders self-`TailCall` arms as `{ rebind; continue }` and value arms
 /// as `return <expr>;`.
@@ -4334,7 +4334,7 @@ pub(super) fn emit_mir_tco_fn(
     policy.rc_wrapped = rc_names.clone();
     // own_param-proven collection params are already `mut`-owned in the
     // TCO signature (`emit_tco_params_mir`); graduating them only flips
-    // the body's clone-skip on. A pass-through param Arc-wrapped via
+    // the body's clone-skip on. A pass-through param `Shared`-wrapped via
     // `rc_wrapped` keeps its `&T` / `(*x).clone()` shape — rc-wrapping is
     // a structural TCO decision that takes precedence, so drop any
     // rc-wrapped name back out of `owned_params` to keep signature and
@@ -4380,7 +4380,7 @@ pub(super) fn emit_mir_tco_fn(
         "{}fn {}({}) -> {} {{",
         visibility, fn_name, params, ret_type
     ));
-    // Wrap pass-through params in Arc before the loop (shadowing the
+    // Wrap pass-through params in `Shared` before the loop (shadowing the
     // original binding). Mirror of `emit_tco_fn`. Emit in source-param
     // order: `rc_indices` is a HashSet, and iterating it directly made
     // checked-in self-host regeneration differ across processes.
@@ -4404,13 +4404,13 @@ fn emit_self_tco_rc_wraps(params: &[(String, String)], rc_indices: &HashSet<usiz
         .map(|(_, (name, _))| {
             let rust_name = aver_name_to_rust(name);
             let binding = explicit_binding_pattern(name);
-            format!("    let {} = std::sync::Arc::new({});", binding, rust_name)
+            format!("    let {} = aver_rt::Shared::new({});", binding, rust_name)
         })
         .collect()
 }
 
 /// Self-TCO param signature: non-rc params are `mut T` (rebound in the
-/// loop), rc params are plain `T` (shadowed by the Arc::new binding).
+/// loop), rc params are plain `T` (shadowed by the `Shared::new` binding).
 /// Mirror of `emit_fn_params_tco`. A param the unboxing analysis proved
 /// bare (`bare_facts.param_is_bare(i)`) emits `mut p: i64` instead of
 /// `mut p: aver_rt::AverInt`.
@@ -4557,7 +4557,7 @@ fn emit_mir_tco_if_then_else(
 /// Render a value expression for a `return` in a TCO / trampoline base
 /// case. Mirror of `emit_mir_expr` + the owning-position `maybe_clone`,
 /// plus the HIR `emit_tco_expr` `_` arm's bare-rc-ident deref-clone:
-/// returning a pass-through param (Arc<T> / &T) needs `(*x).clone()` to
+/// returning a pass-through param (`Shared<T>` / `&T`) needs `(*x).clone()` to
 /// yield an owned `T`.
 fn emit_mir_value_return(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String> {
     // Int unboxing: when the fn's return type is bare `i64`, the base-case
@@ -4784,7 +4784,7 @@ pub(super) fn emit_mir_mutual_tco_block(
         );
         let mut arm_ctx = MirEmitCtx::for_fn(ctx, &policy);
         // Mutual invariants are `rc_wrapped` for owning reads, but unlike
-        // self-TCO's `Arc<T>` representation they are extra `&T` trampoline
+        // self-TCO's `Shared<T>` representation they are extra `&T` trampoline
         // parameters. Tell equality's operand-shape classifier about that
         // representation; no general clone policy changes.
         arm_ctx.rc_wrapped_are_borrowed_refs = true;
@@ -6576,9 +6576,9 @@ mod tests {
         assert_eq!(
             emit_self_tco_rc_wraps(&params, &rc_indices),
             [
-                "    let first @ _ = std::sync::Arc::new(first);",
-                "    let second @ _ = std::sync::Arc::new(second);",
-                "    let third @ _ = std::sync::Arc::new(third);",
+                "    let first @ _ = aver_rt::Shared::new(first);",
+                "    let second @ _ = aver_rt::Shared::new(second);",
+                "    let third @ _ = aver_rt::Shared::new(third);",
             ]
         );
     }
@@ -7353,7 +7353,7 @@ mod tests {
         assert_eq!(
             materialize_scoped_thread_capture("network".to_string(), &local, &ctx),
             "network.clone()",
-            "a self-TCO Arc<T> carrier is cloned"
+            "a self-TCO Shared<T> carrier is cloned"
         );
 
         ctx.rc_wrapped_are_borrowed_refs = true;

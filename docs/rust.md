@@ -93,6 +93,10 @@ The Rust backend derives representation traits from an explicit capability contr
 
 `Hash` and ordering are separate capabilities. A representation can be hashable and still not be an admissible ordered map key. Provider resource carriers keep the host-side comparison they need to move and clone composites. That implementation detail does not make resource identity observable in Aver: source equality, hashing, and any resource-containing operation that would expose it are rejected before Rust is emitted.
 
+### Shared constructors
+
+A constructor of a recursive sum, and a constructor of any other sum much larger than its siblings, keeps its fields in one struct `T__Variant` behind an `aver_rt::Shared<T__Variant>`, so copying the value copies a pointer. `Shared` is `std::sync::Arc` without weak references: its node is one atomic count followed by the fields, 8 bytes of header instead of the 16 of an `Arc`, and the atomic operations are those of `Arc`'s strong count, because values cross threads in `(a, b)!`. It has the `Arc` methods generated code uses (`new`, `clone`, `ptr_eq`, `as_ptr`, `strong_count`, `get_mut`, `make_mut`, `try_unwrap`, `unwrap_or_clone`) and `Deref`, `AsRef<T>`, `Borrow<T>`, `Clone`, `Debug`, `Display`, `PartialEq`, `Eq`, `PartialOrd`, `Ord`, `Hash` and `Default`, all reading the value. Its `==` never compares addresses; a payload whose `==` is reflexive (no `Float` inside) starts its own `==` with `std::ptr::eq`, which is what `Arc` does for such a type. Hand-written Rust that holds an `Arc<T>` converts with `Shared::from(arc)` and `Arc::from(shared)`: the value moves when the source is its only owner and is cloned otherwise. Provider objects are still registered as `std::sync::Arc<dyn CapabilityProvider>`, and the runtime's containers (`AverList`, `AverVector`, `AverMap`, `AverStr`) and its work engine keep `Arc`.
+
 ## Runtime dependency
 
 `Cargo.toml` is generated around the shared `aver-rt` runtime crate. Service-specific runtime features are turned on only when needed:

@@ -306,7 +306,7 @@ pub fn withinAll(
     mut acc @ _: aver_rt::AverList<Sexp>,
     mut size @ _: aver_rt::AverInt,
 ) -> Result<(Sexp, aver_rt::AverInt), AverStr> {
-    let table @ _ = std::sync::Arc::new(table);
+    let table @ _ = aver_rt::Shared::new(table);
     loop {
         crate::proof_kernel::cancel_checkpoint();
         aver_list_match!(xs, [] => { return Ok((crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(acc.reverse()), size)); }, [x, rest] => { { let (y, n) = crate::proof_kernel::aver_generated::kernel::sexp::within(x, &*table)?; {

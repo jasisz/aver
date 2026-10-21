@@ -231,7 +231,7 @@ pub fn matchPatCons(
     match v {
         crate::aver_generated::domain::value::Val::ValList(__items_fields) => {
             let items = __items_fields.0.clone();
-            aver_list_match!(items, [] => Err(AverStr::from("no match")), [head, tail] => Ok(aver_rt::AverList::from_vec(vec![(h, head), (t, crate::aver_generated::domain::value::Val::ValList(std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValList(tail))))])))
+            aver_list_match!(items, [] => Err(AverStr::from("no match")), [head, tail] => Ok(aver_rt::AverList::from_vec(vec![(h, head), (t, crate::aver_generated::domain::value::Val::ValList(aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValList(tail))))])))
         }
         _ => Err(AverStr::from("no match")),
     }

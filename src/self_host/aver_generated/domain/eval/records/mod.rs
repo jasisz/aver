@@ -103,7 +103,7 @@ pub fn applyRecordUpdate(
             let typeName = __typeName_fields.0.clone();
             let existingFields = __typeName_fields.1.clone();
             Ok(crate::aver_generated::domain::value::Val::ValRecord(
-                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValRecord(
+                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValRecord(
                     typeName,
                     crate::aver_generated::domain::eval::records::mergeRecordFields(
                         &existingFields,

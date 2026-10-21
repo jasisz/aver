@@ -587,7 +587,7 @@ pub fn skipNewlines(
     tokens @ _: aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     mut pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let tokens @ _ = std::sync::Arc::new(tokens);
+    let tokens @ _ = aver_rt::Shared::new(tokens);
     loop {
         crate::cancel_checkpoint();
         match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
@@ -608,7 +608,7 @@ pub fn skipNewlinesAndDedents(
     tokens @ _: aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     mut pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let tokens @ _ = std::sync::Arc::new(tokens);
+    let tokens @ _ = aver_rt::Shared::new(tokens);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
@@ -851,7 +851,7 @@ pub fn skipTypeExprTail(
     tokens @ _: aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     mut pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let tokens @ _ = std::sync::Arc::new(tokens);
+    let tokens @ _ = aver_rt::Shared::new(tokens);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
@@ -889,7 +889,7 @@ pub fn skipUntilGt(
     mut pos @ _: aver_rt::AverInt,
     mut depth @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let tokens @ _ = std::sync::Arc::new(tokens);
+    let tokens @ _ = aver_rt::Shared::new(tokens);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
@@ -931,7 +931,7 @@ pub fn skipUntilClose(
     mut pos @ _: aver_rt::AverInt,
     mut depth @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let tokens @ _ = std::sync::Arc::new(tokens);
+    let tokens @ _ = aver_rt::Shared::new(tokens);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
@@ -988,7 +988,7 @@ pub fn skipDescAndEffects(
     tokens @ _: aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     mut pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let tokens @ _ = std::sync::Arc::new(tokens);
+    let tokens @ _ = aver_rt::Shared::new(tokens);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
@@ -1037,7 +1037,7 @@ pub fn skipUntilRBracket(
     tokens @ _: aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     mut pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let tokens @ _ = std::sync::Arc::new(tokens);
+    let tokens @ _ = aver_rt::Shared::new(tokens);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
@@ -1065,7 +1065,7 @@ pub fn skipToNextLine(
     tokens @ _: aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     mut pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let tokens @ _ = std::sync::Arc::new(tokens);
+    let tokens @ _ = aver_rt::Shared::new(tokens);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
@@ -1111,7 +1111,7 @@ pub fn skipIndentBlock(
     mut pos @ _: aver_rt::AverInt,
     mut depth @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let tokens @ _ = std::sync::Arc::new(tokens);
+    let tokens @ _ = aver_rt::Shared::new(tokens);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
@@ -1170,7 +1170,7 @@ pub fn findDependsInRange(
     mut pos @ _: aver_rt::AverInt,
     mut endPos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<AverStr> {
-    let tokens @ _ = std::sync::Arc::new(tokens);
+    let tokens @ _ = aver_rt::Shared::new(tokens);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
@@ -1229,7 +1229,7 @@ pub fn collectDependsNames(
     mut endPos @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverList<AverStr>,
 ) -> aver_rt::AverList<AverStr> {
-    let tokens @ _ = std::sync::Arc::new(tokens);
+    let tokens @ _ = aver_rt::Shared::new(tokens);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));

@@ -118,6 +118,26 @@ impl<T: ProviderCodec + Clone> ProviderCodec for Arc<T> {
     }
 }
 
+/// The box a user value of a shared constructor sits in (see [`crate::Shared`]).
+impl<T: ProviderCodec + Clone> ProviderCodec for crate::Shared<T> {
+    fn into_provider_value(
+        self,
+        registry: &NativeProviderRegistry,
+        capability: &str,
+    ) -> Result<ProviderValue, String> {
+        crate::Shared::unwrap_or_clone(self).into_provider_value(registry, capability)
+    }
+
+    fn from_provider_value(
+        value: ProviderValue,
+        registry: &NativeProviderRegistry,
+        capability: &str,
+        minted_resource: Option<&str>,
+    ) -> Result<Self, String> {
+        T::from_provider_value(value, registry, capability, minted_resource).map(crate::Shared::new)
+    }
+}
+
 impl<T: ProviderCodec> ProviderCodec for Option<T> {
     fn into_provider_value(
         self,

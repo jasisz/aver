@@ -654,7 +654,7 @@ fn emit_list_arm_body(arm: &ResolvedMatchArm, ctx: &CodegenContext, body: String
     }
 }
 
-/// A constructor of a shared sum binds the one `Arc` that holds its fields
+/// A constructor of a shared sum binds the one `Shared` that holds its fields
 /// (see `pattern::shared_fields_binder`), so an arm that uses a field needs
 /// it out of there. Emit `let b = __b_fields.1.clone();` for each such field,
 /// wherever in the pattern its constructor stands: at the top or inside a

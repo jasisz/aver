@@ -1649,14 +1649,14 @@ fn helper(n: Int) -> Int
     }
 
     /// A value of a recursive sum used as both fields of a new node is one
-    /// allocation: the constructor's fields share one `Arc`, and copying the
+    /// allocation: the constructor's fields share one `aver_rt::Shared`, and copying the
     /// value copies the pointer, so the node holds two pointers to the one
     /// `x` instead of two fresh copies of it. A record on the cycle (`E`
     /// holds `Node`, `Node` holds `E`) gets its fixed size from the same
     /// pointer, and a sum that recurses only through a list keeps its fields
     /// inline.
     #[test]
-    fn recursive_sum_fields_share_one_arc() {
+    fn recursive_sum_fields_share_one_node() {
         let mut ctx = ctx_from_source(
             r#"
 module Demo
@@ -1691,26 +1691,26 @@ fn left(t: T) -> T
         let entry = generated_rust_entry_file(&out);
 
         for expected in [
-            "Pair(std::sync::Arc<T__Pair>),",
+            "Pair(aver_rt::Shared<T__Pair>),",
             "pub struct T__Pair(pub T, pub T);",
-            "T::Pair(std::sync::Arc::new(T__Pair(x.clone(), x)))",
+            "T::Pair(aver_rt::Shared::new(T__Pair(x.clone(), x)))",
             "T::Pair(__a_fields) => {",
             "let a = __a_fields.0.clone();",
             "pub node: Node,",
-            "App(std::sync::Arc<Node__App>),",
+            "App(aver_rt::Shared<Node__App>),",
             "pub struct Node__App(pub E, pub E);",
             "Rose(aver_rt::AverInt, aver_rt::AverList<Rose>),",
         ] {
             assert!(entry.contains(expected), "missing `{expected}`:\n{entry}");
         }
         assert!(
-            !entry.contains("Arc::new(x.clone())"),
-            "a field copies its value into a fresh Arc:\n{entry}"
+            !entry.contains("Shared::new(x.clone())"),
+            "a field copies its value into a fresh Shared:\n{entry}"
         );
     }
 
     /// In a sum that is not recursive only a constructor much larger than
-    /// every other one goes behind an `Arc`, so a value of a small one does
+    /// every other one goes behind a `Shared`, so a value of a small one does
     /// not carry its room; a sum of small constructors keeps them all inline.
     /// `==` compares the fields that answer at once (scalars, strings,
     /// field-less sums) before a subtree or a list, whatever order they are
@@ -1766,12 +1766,12 @@ fn width(s: Shape) -> Int
         let entry = generated_rust_entry_file(&out);
 
         for expected in [
-            "    Dot(aver_rt::AverInt),\n    Label(std::sync::Arc<Shape__Label>),\n    Blank,",
-            "Shape::Label(std::sync::Arc::new(Shape__Label(",
+            "    Dot(aver_rt::AverInt),\n    Label(aver_rt::Shared<Shape__Label>),\n    Blank,",
+            "Shape::Label(aver_rt::Shared::new(Shape__Label(",
             "Shape::Label(__w_fields) => {",
             "    One(aver_rt::AverInt),\n    Two(aver_rt::AverInt, aver_rt::AverInt),",
             "#[derive(Clone, Debug, Eq, Hash)]\npub struct Tree__Node(pub Tree, pub Tree, pub aver_rt::AverInt);",
-            "impl PartialEq for Tree__Node {\n    fn eq(&self, other: &Self) -> bool {\n        self.2 == other.2 && self.0 == other.0 && self.1 == other.1\n    }\n}",
+            "impl PartialEq for Tree__Node {\n    fn eq(&self, other: &Self) -> bool {\n        std::ptr::eq(self, other) || self.2 == other.2 && self.0 == other.0 && self.1 == other.1\n    }\n}",
             "(Tree::Node(a0), Tree::Node(b0)) => walk.shared(a0, b0, true),",
             "(Tree::Leaf(a0), Tree::Leaf(b0)) => a0 == b0,",
             "impl aver_rt::WalkEq for Tree__Node {\n    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {\n        self.2 == other.2 && self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)\n    }\n}",
@@ -1784,7 +1784,7 @@ fn width(s: Shape) -> Int
         }
         assert!(
             !entry.contains("impl PartialEq for Point")
-                && !entry.contains("impl PartialEq for Shape"),
+                && !entry.contains("impl PartialEq for Shape {"),
             "an equality already in cheap-first order is not hand-written:\n{entry}"
         );
     }

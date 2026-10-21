@@ -282,7 +282,7 @@ pub fn without(
     mut ns @ _: aver_rt::AverList<AverStr>,
     drop @ _: aver_rt::AverList<AverStr>,
 ) -> aver_rt::AverList<AverStr> {
-    let drop @ _ = std::sync::Arc::new(drop);
+    let drop @ _ = aver_rt::Shared::new(drop);
     loop {
         crate::proof_kernel::cancel_checkpoint();
         aver_list_match!(ns, [] => { return aver_rt::AverList::empty(); }, [n, rest] => { if drop.contains(&n) { {
@@ -433,12 +433,14 @@ pub fn subst(
             let o = __o_fields.0.clone();
             let f = __o_fields.1.clone();
             Ok(
-                crate::proof_kernel::aver_generated::kernel::term::Term::TGet(std::sync::Arc::new(
-                    crate::proof_kernel::aver_generated::kernel::term::Term__TGet(
-                        crate::proof_kernel::aver_generated::kernel::subst::subst(o, bs)?,
-                        f,
+                crate::proof_kernel::aver_generated::kernel::term::Term::TGet(
+                    aver_rt::Shared::new(
+                        crate::proof_kernel::aver_generated::kernel::term::Term__TGet(
+                            crate::proof_kernel::aver_generated::kernel::subst::subst(o, bs)?,
+                            f,
+                        ),
                     ),
-                )),
+                ),
             )
         }
         crate::proof_kernel::aver_generated::kernel::term::Term::TCall(__f_fields) => {
@@ -446,7 +448,7 @@ pub fn subst(
             let xs = __f_fields.1.clone();
             Ok(
                 crate::proof_kernel::aver_generated::kernel::term::Term::TCall(
-                    std::sync::Arc::new(
+                    aver_rt::Shared::new(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TCall(
                             f,
                             crate::proof_kernel::aver_generated::kernel::subst::substAll(&xs, bs)?,
@@ -459,7 +461,7 @@ pub fn subst(
             let f = __f_fields.0.clone();
             let xs = __f_fields.1.clone();
             Ok(
-                crate::proof_kernel::aver_generated::kernel::term::Term::TBi(std::sync::Arc::new(
+                crate::proof_kernel::aver_generated::kernel::term::Term::TBi(aver_rt::Shared::new(
                     crate::proof_kernel::aver_generated::kernel::term::Term__TBi(
                         f,
                         crate::proof_kernel::aver_generated::kernel::subst::substAll(&xs, bs)?,
@@ -472,7 +474,7 @@ pub fn subst(
             let a = __o_fields.1.clone();
             let b = __o_fields.2.clone();
             Ok(
-                crate::proof_kernel::aver_generated::kernel::term::Term::TOp(std::sync::Arc::new(
+                crate::proof_kernel::aver_generated::kernel::term::Term::TOp(aver_rt::Shared::new(
                     crate::proof_kernel::aver_generated::kernel::term::Term__TOp(
                         o,
                         crate::proof_kernel::aver_generated::kernel::subst::subst(a, bs)?,
@@ -484,11 +486,13 @@ pub fn subst(
         crate::proof_kernel::aver_generated::kernel::term::Term::TNeg(__a_fields) => {
             let a = __a_fields.0.clone();
             Ok(
-                crate::proof_kernel::aver_generated::kernel::term::Term::TNeg(std::sync::Arc::new(
-                    crate::proof_kernel::aver_generated::kernel::term::Term__TNeg(
-                        crate::proof_kernel::aver_generated::kernel::subst::subst(a, bs)?,
+                crate::proof_kernel::aver_generated::kernel::term::Term::TNeg(
+                    aver_rt::Shared::new(
+                        crate::proof_kernel::aver_generated::kernel::term::Term__TNeg(
+                            crate::proof_kernel::aver_generated::kernel::subst::subst(a, bs)?,
+                        ),
                     ),
-                )),
+                ),
             )
         }
         crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(__c_fields) => {
@@ -496,7 +500,7 @@ pub fn subst(
             let xs = __c_fields.1.clone();
             Ok(
                 crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(
-                    std::sync::Arc::new(
+                    aver_rt::Shared::new(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TCtor(
                             c,
                             crate::proof_kernel::aver_generated::kernel::subst::substAll(&xs, bs)?,
@@ -510,7 +514,7 @@ pub fn subst(
             let arms = __s_fields.1.clone();
             Ok(
                 crate::proof_kernel::aver_generated::kernel::term::Term::TMatch(
-                    std::sync::Arc::new(
+                    aver_rt::Shared::new(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TMatch(
                             crate::proof_kernel::aver_generated::kernel::subst::subst(s, bs)?,
                             crate::proof_kernel::aver_generated::kernel::subst::substArms(
@@ -525,7 +529,7 @@ pub fn subst(
             let xs = __xs_fields.0.clone();
             Ok(
                 crate::proof_kernel::aver_generated::kernel::term::Term::TParts(
-                    std::sync::Arc::new(
+                    aver_rt::Shared::new(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TParts(
                             crate::proof_kernel::aver_generated::kernel::subst::substAll(&xs, bs)?,
                         ),
@@ -537,7 +541,7 @@ pub fn subst(
             let xs = __xs_fields.0.clone();
             Ok(
                 crate::proof_kernel::aver_generated::kernel::term::Term::TList(
-                    std::sync::Arc::new(
+                    aver_rt::Shared::new(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TList(
                             crate::proof_kernel::aver_generated::kernel::subst::substAll(&xs, bs)?,
                         ),
@@ -549,7 +553,7 @@ pub fn subst(
             let xs = __xs_fields.0.clone();
             Ok(
                 crate::proof_kernel::aver_generated::kernel::term::Term::TTuple(
-                    std::sync::Arc::new(
+                    aver_rt::Shared::new(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TTuple(
                             crate::proof_kernel::aver_generated::kernel::subst::substAll(&xs, bs)?,
                         ),
@@ -561,12 +565,16 @@ pub fn subst(
             let n = __n_fields.0.clone();
             let fs = __n_fields.1.clone();
             Ok(
-                crate::proof_kernel::aver_generated::kernel::term::Term::TRec(std::sync::Arc::new(
-                    crate::proof_kernel::aver_generated::kernel::term::Term__TRec(
-                        n,
-                        crate::proof_kernel::aver_generated::kernel::subst::substFields(&fs, bs)?,
+                crate::proof_kernel::aver_generated::kernel::term::Term::TRec(
+                    aver_rt::Shared::new(
+                        crate::proof_kernel::aver_generated::kernel::term::Term__TRec(
+                            n,
+                            crate::proof_kernel::aver_generated::kernel::subst::substFields(
+                                &fs, bs,
+                            )?,
+                        ),
                     ),
-                )),
+                ),
             )
         }
         crate::proof_kernel::aver_generated::kernel::term::Term::TUpd(__n_fields) => {
@@ -574,13 +582,17 @@ pub fn subst(
             let b = __n_fields.1.clone();
             let fs = __n_fields.2.clone();
             Ok(
-                crate::proof_kernel::aver_generated::kernel::term::Term::TUpd(std::sync::Arc::new(
-                    crate::proof_kernel::aver_generated::kernel::term::Term__TUpd(
-                        n,
-                        crate::proof_kernel::aver_generated::kernel::subst::subst(b, bs)?,
-                        crate::proof_kernel::aver_generated::kernel::subst::substFields(&fs, bs)?,
+                crate::proof_kernel::aver_generated::kernel::term::Term::TUpd(
+                    aver_rt::Shared::new(
+                        crate::proof_kernel::aver_generated::kernel::term::Term__TUpd(
+                            n,
+                            crate::proof_kernel::aver_generated::kernel::subst::subst(b, bs)?,
+                            crate::proof_kernel::aver_generated::kernel::subst::substFields(
+                                &fs, bs,
+                            )?,
+                        ),
                     ),
-                )),
+                ),
             )
         }
         _ => Ok(t),
@@ -643,7 +655,7 @@ pub fn unbind(
     mut bs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
     names @ _: aver_rt::AverList<AverStr>,
 ) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding> {
-    let names @ _ = std::sync::Arc::new(names);
+    let names @ _ = aver_rt::Shared::new(names);
     loop {
         crate::proof_kernel::cancel_checkpoint();
         aver_list_match!(bs, [] => { return aver_rt::AverList::empty(); }, [b, rest] => { if names.contains(&b.name) { {
@@ -660,7 +672,7 @@ pub fn firstShared(
     mut ns @ _: aver_rt::AverList<AverStr>,
     others @ _: aver_rt::AverList<AverStr>,
 ) -> Option<AverStr> {
-    let others @ _ = std::sync::Arc::new(others);
+    let others @ _ = aver_rt::Shared::new(others);
     loop {
         crate::proof_kernel::cancel_checkpoint();
         aver_list_match!(ns, [] => { return None; }, [n, rest] => { if others.contains(&n) { return Some(n); } else { {

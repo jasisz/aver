@@ -340,7 +340,7 @@ pub fn readNumberLoop__indexed(
     mut acc @ _: aver_rt::AverInt,
     __str_index @ _: aver_rt::StringIndex,
 ) -> (aver_rt::AverInt, aver_rt::AverInt) {
-    let __str_index @ _ = std::sync::Arc::new(__str_index);
+    let __str_index @ _ = aver_rt::Shared::new(__str_index);
     loop {
         crate::cancel_checkpoint();
         if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
@@ -393,7 +393,7 @@ pub fn readIdentLoopDotted__indexed(
     mut acc @ _: AverStr,
     __str_index @ _: aver_rt::StringIndex,
 ) -> (AverStr, aver_rt::AverInt) {
-    let __str_index @ _ = std::sync::Arc::new(__str_index);
+    let __str_index @ _ = aver_rt::Shared::new(__str_index);
     loop {
         crate::cancel_checkpoint();
         if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
@@ -429,7 +429,7 @@ pub fn readIdentLoopPlain__indexed(
     mut acc @ _: AverStr,
     __str_index @ _: aver_rt::StringIndex,
 ) -> (AverStr, aver_rt::AverInt) {
-    let __str_index @ _ = std::sync::Arc::new(__str_index);
+    let __str_index @ _ = aver_rt::Shared::new(__str_index);
     loop {
         crate::cancel_checkpoint();
         if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {

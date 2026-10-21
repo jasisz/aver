@@ -66,7 +66,7 @@ pub fn builtinVectorNew(
         (crate::aver_generated::domain::value::Val::ValInt(__size_fields), defaultVal) => {
             let size = __size_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValVector(
-                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValVector(
+                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValVector(
                     match aver_rt::checked_vector_size(&(size)) {
                         Some(__n) => Ok(aver_rt::AverVector::new(__n, defaultVal)),
                         None => Err(aver_rt::AverStr::from(aver_rt::vector_size_error_message())),
@@ -93,7 +93,7 @@ pub fn builtinVectorGet(
             let idx = __idx_fields.0.clone();
             match (idx).to_usize().and_then(|__i| vec.get(__i).cloned()) {
                 Some(v @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
-                    std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValSome(v)),
+                    aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValSome(v)),
                 )),
                 None => Ok(crate::aver_generated::domain::value::Val::ValNone),
             }
@@ -177,8 +177,8 @@ pub fn builtinVectorSetInBounds(
         .and_then(|__i| vec.set_owned(__i, valV.clone()))
     {
         Some(newVec @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
-            std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValSome(
-                crate::aver_generated::domain::value::Val::ValVector(std::sync::Arc::new(
+            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValSome(
+                crate::aver_generated::domain::value::Val::ValVector(aver_rt::Shared::new(
                     crate::aver_generated::domain::value::Val__ValVector(newVec),
                 )),
             )),
@@ -197,7 +197,7 @@ pub fn builtinVectorLen(
         crate::aver_generated::domain::value::Val::ValVector(__vec_fields) => {
             let vec = __vec_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValInt(
-                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValInt(
+                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt(
                     aver_rt::AverInt::from_i64(vec.len() as i64),
                 )),
             ))
@@ -216,7 +216,7 @@ pub fn builtinVectorFromList(
         crate::aver_generated::domain::value::Val::ValList(__items_fields) => {
             let items = __items_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValVector(
-                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValVector(
+                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValVector(
                     aver_rt::AverVector::from_vec(items.to_vec()),
                 )),
             ))
@@ -235,7 +235,7 @@ pub fn builtinVectorToList(
         crate::aver_generated::domain::value::Val::ValVector(__vec_fields) => {
             let vec = __vec_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValList(
-                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValList(
+                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValList(
                     vec.to_list(),
                 )),
             ))

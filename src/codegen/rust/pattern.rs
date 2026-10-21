@@ -158,7 +158,7 @@ fn emit_constructor_pattern(
     }
 }
 
-/// The one binder a constructor pattern writes for the `Arc` that holds its
+/// The one binder a constructor pattern writes for the `Shared` that holds its
 /// fields (see `representation::shared_variants`), or `None`
 /// when the constructor keeps its fields inline. It is named after the first
 /// field the arm binds, so two constructors in one tuple pattern get two
