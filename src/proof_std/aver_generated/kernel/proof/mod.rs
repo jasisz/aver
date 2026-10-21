@@ -61,6 +61,12 @@ impl aver_rt::WalkEq for Proof__PRefl {
     }
 }
 
+impl aver_rt::thin::HandOver for Proof__PRefl {
+    fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
+        aver_rt::thin::HandOver::hand_over(self.0, pending);
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Proof__PSymm(pub Proof);
 
@@ -76,6 +82,12 @@ impl aver_rt::WalkEq for Proof__PSymm {
     }
 }
 
+impl aver_rt::thin::HandOver for Proof__PSymm {
+    fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
+        aver_rt::thin::HandOver::hand_over(self.0, pending);
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Proof__PTrans(
     pub aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
@@ -87,6 +99,8 @@ impl PartialEq for Proof__PTrans {
         std::ptr::eq(self, other) || self.0 == other.0 && self.1 == other.1
     }
 }
+
+impl aver_rt::thin::HandOver for Proof__PTrans {}
 
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Proof__PCongr(
@@ -103,6 +117,13 @@ impl PartialEq for Proof__PCongr {
 impl aver_rt::WalkEq for Proof__PCongr {
     fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
         self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
+    }
+}
+
+impl aver_rt::thin::HandOver for Proof__PCongr {
+    fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
+        aver_rt::thin::HandOver::hand_over(self.0, pending);
+        aver_rt::thin::HandOver::hand_over(self.1, pending);
     }
 }
 
@@ -126,6 +147,8 @@ impl PartialEq for Proof__PUnfold {
     }
 }
 
+impl aver_rt::thin::HandOver for Proof__PUnfold {}
+
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Proof__PConst(pub AverStr);
 
@@ -134,6 +157,8 @@ impl PartialEq for Proof__PConst {
         std::ptr::eq(self, other) || self.0 == other.0
     }
 }
+
+impl aver_rt::thin::HandOver for Proof__PConst {}
 
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Proof__PArm(
@@ -159,6 +184,13 @@ impl aver_rt::WalkEq for Proof__PArm {
     }
 }
 
+impl aver_rt::thin::HandOver for Proof__PArm {
+    fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
+        aver_rt::thin::HandOver::hand_over(self.2, pending);
+        aver_rt::thin::HandOver::hand_over(self.3, pending);
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Proof__PProj(pub crate::proof_std::aver_generated::kernel::term::Term);
 
@@ -171,6 +203,12 @@ impl PartialEq for Proof__PProj {
 impl aver_rt::WalkEq for Proof__PProj {
     fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
         self.0.walk_eq(&other.0, walk)
+    }
+}
+
+impl aver_rt::thin::HandOver for Proof__PProj {
+    fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
+        aver_rt::thin::HandOver::hand_over(self.0, pending);
     }
 }
 
@@ -189,6 +227,12 @@ impl aver_rt::WalkEq for Proof__PCell {
     }
 }
 
+impl aver_rt::thin::HandOver for Proof__PCell {
+    fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
+        aver_rt::thin::HandOver::hand_over(self.0, pending);
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Proof__PHyp(pub AverStr);
 
@@ -197,6 +241,8 @@ impl PartialEq for Proof__PHyp {
         std::ptr::eq(self, other) || self.0 == other.0
     }
 }
+
+impl aver_rt::thin::HandOver for Proof__PHyp {}
 
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Proof__PRule(
@@ -211,6 +257,8 @@ impl PartialEq for Proof__PRule {
     }
 }
 
+impl aver_rt::thin::HandOver for Proof__PRule {}
+
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Proof__PLaw(
     pub AverStr,
@@ -223,6 +271,8 @@ impl PartialEq for Proof__PLaw {
         std::ptr::eq(self, other) || self.0 == other.0 && self.1 == other.1 && self.2 == other.2
     }
 }
+
+impl aver_rt::thin::HandOver for Proof__PLaw {}
 
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Proof__PCompute(
@@ -239,6 +289,13 @@ impl PartialEq for Proof__PCompute {
 impl aver_rt::WalkEq for Proof__PCompute {
     fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
         self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
+    }
+}
+
+impl aver_rt::thin::HandOver for Proof__PCompute {
+    fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
+        aver_rt::thin::HandOver::hand_over(self.0, pending);
+        aver_rt::thin::HandOver::hand_over(self.1, pending);
     }
 }
 
@@ -266,6 +323,14 @@ impl aver_rt::WalkEq for Proof__PCases {
     }
 }
 
+impl aver_rt::thin::HandOver for Proof__PCases {
+    fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
+        aver_rt::thin::HandOver::hand_over(self.0, pending);
+        aver_rt::thin::HandOver::hand_over(self.2, pending);
+        aver_rt::thin::HandOver::hand_over(self.3, pending);
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Proof__PSplit(
     pub crate::proof_std::aver_generated::kernel::term::Term,
@@ -287,6 +352,12 @@ impl aver_rt::WalkEq for Proof__PSplit {
             && self.0.walk_eq(&other.0, walk)
             && self.2 == other.2
             && self.3 == other.3
+    }
+}
+
+impl aver_rt::thin::HandOver for Proof__PSplit {
+    fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
+        aver_rt::thin::HandOver::hand_over(self.0, pending);
     }
 }
 
@@ -314,6 +385,14 @@ impl aver_rt::WalkEq for Proof__PHave {
     }
 }
 
+impl aver_rt::thin::HandOver for Proof__PHave {
+    fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
+        aver_rt::thin::HandOver::hand_over(self.1, pending);
+        aver_rt::thin::HandOver::hand_over(self.2, pending);
+        aver_rt::thin::HandOver::hand_over(self.3, pending);
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Proof__PEnum(
     pub AverStr,
@@ -338,6 +417,13 @@ impl aver_rt::WalkEq for Proof__PEnum {
     }
 }
 
+impl aver_rt::thin::HandOver for Proof__PEnum {
+    fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
+        aver_rt::thin::HandOver::hand_over(self.1, pending);
+        aver_rt::thin::HandOver::hand_over(self.2, pending);
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Proof__PAbsurd(
     pub Proof,
@@ -356,6 +442,14 @@ impl aver_rt::WalkEq for Proof__PAbsurd {
         self.0.walk_eq(&other.0, walk)
             && self.1.walk_eq(&other.1, walk)
             && self.2.walk_eq(&other.2, walk)
+    }
+}
+
+impl aver_rt::thin::HandOver for Proof__PAbsurd {
+    fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
+        aver_rt::thin::HandOver::hand_over(self.0, pending);
+        aver_rt::thin::HandOver::hand_over(self.1, pending);
+        aver_rt::thin::HandOver::hand_over(self.2, pending);
     }
 }
 
@@ -389,6 +483,13 @@ impl aver_rt::WalkEq for Proof__PInduct {
             && self.3.walk_eq(&other.3, walk)
             && self.4 == other.4
             && self.5 == other.5
+    }
+}
+
+impl aver_rt::thin::HandOver for Proof__PInduct {
+    fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
+        aver_rt::thin::HandOver::hand_over(self.2, pending);
+        aver_rt::thin::HandOver::hand_over(self.3, pending);
     }
 }
 
@@ -437,6 +538,15 @@ impl aver_rt::WalkEq for Proof__PListInduct {
     }
 }
 
+impl aver_rt::thin::HandOver for Proof__PListInduct {
+    fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
+        aver_rt::thin::HandOver::hand_over(self.1, pending);
+        aver_rt::thin::HandOver::hand_over(self.2, pending);
+        aver_rt::thin::HandOver::hand_over(self.4, pending);
+        aver_rt::thin::HandOver::hand_over(self.9, pending);
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Proof__PListCases(
     pub AverStr,
@@ -470,6 +580,15 @@ impl aver_rt::WalkEq for Proof__PListCases {
             && self.2.walk_eq(&other.2, walk)
             && self.3.walk_eq(&other.3, walk)
             && self.6.walk_eq(&other.6, walk)
+    }
+}
+
+impl aver_rt::thin::HandOver for Proof__PListCases {
+    fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
+        aver_rt::thin::HandOver::hand_over(self.1, pending);
+        aver_rt::thin::HandOver::hand_over(self.2, pending);
+        aver_rt::thin::HandOver::hand_over(self.3, pending);
+        aver_rt::thin::HandOver::hand_over(self.6, pending);
     }
 }
 
@@ -515,6 +634,14 @@ impl aver_rt::WalkEq for Proof__PLenInduct {
     }
 }
 
+impl aver_rt::thin::HandOver for Proof__PLenInduct {
+    fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
+        aver_rt::thin::HandOver::hand_over(self.1, pending);
+        aver_rt::thin::HandOver::hand_over(self.2, pending);
+        aver_rt::thin::HandOver::hand_over(self.8, pending);
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Proof__PRing(
     pub crate::proof_std::aver_generated::kernel::term::Term,
@@ -530,6 +657,13 @@ impl PartialEq for Proof__PRing {
 impl aver_rt::WalkEq for Proof__PRing {
     fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
         self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
+    }
+}
+
+impl aver_rt::thin::HandOver for Proof__PRing {
+    fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
+        aver_rt::thin::HandOver::hand_over(self.0, pending);
+        aver_rt::thin::HandOver::hand_over(self.1, pending);
     }
 }
 
@@ -560,6 +694,12 @@ impl aver_rt::WalkEq for Proof__PLinear {
             && self.2 == other.2
             && self.3 == other.3
             && self.4 == other.4
+    }
+}
+
+impl aver_rt::thin::HandOver for Proof__PLinear {
+    fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
+        aver_rt::thin::HandOver::hand_over(self.0, pending);
     }
 }
 

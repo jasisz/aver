@@ -498,6 +498,44 @@ fn shared_recursive_sum_matches_between_rust_and_vm() {
     .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A value of a recursive sum a million levels deep is let go whole: a chain,
+/// a tree leaning either way, a chain through a record and an `Option`, and
+/// two sums on one cycle. Each node freed inside its parent's free would take
+/// more than the 256 MB of stack `main` has in a debug build; the binary
+/// must end within a minute and print the depths.
+#[test]
+fn a_deep_recursive_sum_value_is_freed_on_rust() {
+    assert_plain_parity_then(
+        "tests/fixtures/deep_recursive_sum_drop_app.av",
+        None,
+        |bin, _| {
+            let mut child = Command::new(bin)
+                .arg("1000000")
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+            let started = std::time::Instant::now();
+            while child.try_wait().expect("binary is waitable").is_none() {
+                if started.elapsed() > std::time::Duration::from_secs(60) {
+                    let _ = child.kill();
+                    return Err("a million levels did not end within a minute".into());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            let out = child.wait_with_output().expect("binary output");
+            let expected = ["chain", "left", "right", "linked", "ping"]
+                .map(|case| format!("{case} 1000000"))
+                .join("\n");
+            match out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == expected {
+                true => Ok(()),
+                false => Err(format!("at a million levels:\n{}", format_output(&out))),
+            }
+        },
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A constructor much larger than the others in a sum that is not recursive
 /// goes behind an `Arc`, and `==` compares a node's scalar fields before its
 /// children. The fixture builds, matches, compares and keys a map on the

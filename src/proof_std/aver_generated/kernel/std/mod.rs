@@ -44,6 +44,12 @@ impl aver_rt::WalkEq for Tactic__Cases {
     }
 }
 
+impl aver_rt::thin::HandOver for Tactic__Cases {
+    fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
+        aver_rt::thin::HandOver::hand_over(self.0, pending);
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Tactic__Induction(
     pub AverStr,
@@ -71,6 +77,13 @@ impl aver_rt::WalkEq for Tactic__Induction {
             && self.2 == other.2
             && self.3.walk_eq(&other.3, walk)
             && self.4.walk_eq(&other.4, walk)
+    }
+}
+
+impl aver_rt::thin::HandOver for Tactic__Induction {
+    fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
+        aver_rt::thin::HandOver::hand_over(self.3, pending);
+        aver_rt::thin::HandOver::hand_over(self.4, pending);
     }
 }
 
@@ -104,6 +117,13 @@ impl aver_rt::WalkEq for Tactic__Split {
     }
 }
 
+impl aver_rt::thin::HandOver for Tactic__Split {
+    fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
+        aver_rt::thin::HandOver::hand_over(self.3, pending);
+        aver_rt::thin::HandOver::hand_over(self.4, pending);
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Tactic__SplitBool(
     pub crate::proof_std::aver_generated::kernel::term::Term,
@@ -125,6 +145,14 @@ impl aver_rt::WalkEq for Tactic__SplitBool {
     }
 }
 
+impl aver_rt::thin::HandOver for Tactic__SplitBool {
+    fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
+        aver_rt::thin::HandOver::hand_over(self.0, pending);
+        aver_rt::thin::HandOver::hand_over(self.1, pending);
+        aver_rt::thin::HandOver::hand_over(self.2, pending);
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Tactic__First(pub aver_rt::AverList<Tactic>);
 
@@ -134,6 +162,8 @@ impl PartialEq for Tactic__First {
     }
 }
 
+impl aver_rt::thin::HandOver for Tactic__First {}
+
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Tactic__Plan(pub AverStr);
 
@@ -142,6 +172,8 @@ impl PartialEq for Tactic__Plan {
         std::ptr::eq(self, other) || self.0 == other.0
     }
 }
+
+impl aver_rt::thin::HandOver for Tactic__Plan {}
 
 impl aver_rt::WalkEq for Tactic {
     fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {

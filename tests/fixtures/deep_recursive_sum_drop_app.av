@@ -1,0 +1,145 @@
+module DeepRecursiveSumDrop
+    intent =
+        "Fixture: values of recursive sums as deep as the first argument says are built, read and let go whole: a chain, a tree leaning left and one leaning right, a chain through a record and an Option, and two sums that hold each other."
+    effects [Console.print, Args.get]
+
+type Level
+    Zero
+    Succ(Level)
+
+type Tree
+    Tip
+    Node(Tree, Int, Tree)
+
+record Link
+    next: Option<Linked>
+    weight: Int
+
+type Linked
+    End
+    Step(Link)
+
+type Ping
+    Done
+    Ping(Pong)
+
+type Pong
+    Pong(Ping)
+
+fn chain(n: Int, acc: Level) -> Level
+    ? "Puts n more Succ on top of acc."
+    match n <= 0
+        true -> acc
+        false -> chain(n - 1, Level.Succ(acc))
+
+fn levels(l: Level, acc: Int) -> Int
+    ? "Counts the Succ of a chain."
+    match l
+        Level.Zero -> acc
+        Level.Succ(x) -> levels(x, acc + 1)
+
+fn leanLeft(n: Int, acc: Tree) -> Tree
+    ? "Puts n more nodes on top of acc, each with acc on its left."
+    match n <= 0
+        true -> acc
+        false -> leanLeft(n - 1, Tree.Node(acc, n, Tree.Tip))
+
+fn leanRight(n: Int, acc: Tree) -> Tree
+    ? "Puts n more nodes on top of acc, each with acc on its right."
+    match n <= 0
+        true -> acc
+        false -> leanRight(n - 1, Tree.Node(Tree.Tip, n, acc))
+
+fn leftDepth(t: Tree, acc: Int) -> Int
+    ? "Counts the nodes along the left edge."
+    match t
+        Tree.Tip -> acc
+        Tree.Node(l, _, _) -> leftDepth(l, acc + 1)
+
+fn rightDepth(t: Tree, acc: Int) -> Int
+    ? "Counts the nodes along the right edge."
+    match t
+        Tree.Tip -> acc
+        Tree.Node(_, _, r) -> rightDepth(r, acc + 1)
+
+fn linked(n: Int, acc: Linked) -> Linked
+    ? "Puts n more steps on top of acc."
+    match n <= 0
+        true -> acc
+        false -> linked(n - 1, Linked.Step(Link(next = Option.Some(acc), weight = n)))
+
+fn steps(l: Linked, acc: Int) -> Int
+    ? "Counts the steps."
+    match l
+        Linked.End -> acc
+        Linked.Step(link) -> match link.next
+            Option.Some(x) -> steps(x, acc + 1)
+            Option.None -> acc + 1
+
+fn pingPong(n: Int, acc: Ping) -> Ping
+    ? "Puts n more Ping(Pong(..)) on top of acc."
+    match n <= 0
+        true -> acc
+        false -> pingPong(n - 1, Ping.Ping(Pong.Pong(acc)))
+
+fn pings(p: Ping, acc: Int) -> Int
+    ? "Counts the Ping."
+    match p
+        Ping.Done -> acc
+        Ping.Ping(Pong.Pong(x)) -> pings(x, acc + 1)
+
+fn chainDepth(n: Int) -> Int
+    ? "Counts a chain of n, then lets it go whole."
+    c = chain(n, Level.Zero)
+    k = levels(c, 0)
+    match c
+        Level.Zero -> k
+        Level.Succ(_) -> k
+
+fn leftTreeDepth(n: Int) -> Int
+    ? "Counts a tree of n leaning left, then lets it go whole."
+    t = leanLeft(n, Tree.Tip)
+    k = leftDepth(t, 0)
+    match t
+        Tree.Tip -> k
+        Tree.Node(_, _, _) -> k
+
+fn rightTreeDepth(n: Int) -> Int
+    ? "Counts a tree of n leaning right, then lets it go whole."
+    t = leanRight(n, Tree.Tip)
+    k = rightDepth(t, 0)
+    match t
+        Tree.Tip -> k
+        Tree.Node(_, _, _) -> k
+
+fn linkedDepth(n: Int) -> Int
+    ? "Counts n steps through a record and an Option, then lets them go whole."
+    l = linked(n, Linked.End)
+    k = steps(l, 0)
+    match l
+        Linked.End -> k
+        Linked.Step(_) -> k
+
+fn pingDepth(n: Int) -> Int
+    ? "Counts n Ping(Pong(..)), then lets them go whole."
+    p = pingPong(n, Ping.Done)
+    k = pings(p, 0)
+    match p
+        Ping.Done -> k
+        Ping.Ping(_) -> k
+
+fn depth() -> Int
+    ? "The first argument as a number, 300 without one."
+    ! [Args.get]
+    match Vector.get(Vector.fromList(Args.get()), 0)
+        Option.Some(text) -> Result.withDefault(Int.fromString(text), 300)
+        Option.None -> 300
+
+fn main()
+    ! [Console.print, Args.get]
+    n = depth()
+    Console.print("chain {chainDepth(n)}")
+    Console.print("left {leftTreeDepth(n)}")
+    Console.print("right {rightTreeDepth(n)}")
+    Console.print("linked {linkedDepth(n)}")
+    Console.print("ping {pingDepth(n)}")

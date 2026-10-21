@@ -26,6 +26,7 @@
 //! pointers to it alone.
 
 use std::marker::PhantomData;
+use std::mem::ManuallyDrop;
 use std::ptr::NonNull;
 use std::sync::atomic::{self, AtomicU32, Ordering};
 
@@ -61,12 +62,13 @@ pub unsafe trait ThinSum: Sized + 'static {
     /// when they all are.
     type Fields;
 
-    /// Drops and frees a node of constructor `tag` whose count reached 0.
+    /// Frees a node of constructor `tag` whose count reached 0: hands its
+    /// fields over to `pending` (see [`HandOver`]) and gives back its memory.
     ///
     /// # Safety
     /// The node was made by `Thin::new` for constructor `tag`, and no owner
     /// is left.
-    unsafe fn free(node: NonNull<Header>, tag: u32);
+    unsafe fn free(node: NonNull<Header>, tag: u32, pending: Pending<'_>);
 }
 
 /// One value of the recursive sum `S` (see the module docs).
@@ -179,13 +181,15 @@ impl<S: ThinSum> Thin<S> {
         }
     }
 
-    /// For [`ThinSum::free`]: drops and frees a node made by `new::<P>`.
+    /// For [`ThinSum::free`]: frees a node made by `new::<P>` and hands its
+    /// fields over to `pending`.
     ///
     /// # Safety
     /// The node was made by `new::<P>` and its count is 0.
     #[inline]
-    pub unsafe fn free_node<P>(node: NonNull<Header>) {
-        drop(unsafe { Box::from_raw(node.cast::<Node<P>>().as_ptr()) });
+    pub unsafe fn free_node<P: HandOver>(node: NonNull<Header>, pending: Pending<'_>) {
+        let Node { fields, .. } = *unsafe { Box::from_raw(node.cast::<Node<P>>().as_ptr()) };
+        fields.hand_over(pending);
     }
 
     /// The last owner's part of `drop`, kept out of line as
@@ -195,7 +199,101 @@ impl<S: ThinSum> Thin<S> {
     #[inline(never)]
     fn drop_slow(&mut self, tag: u32) {
         atomic::fence(Ordering::Acquire);
-        unsafe { S::free(self.ptr, tag) }
+        let mut put_aside = Vec::new();
+        unsafe { S::free(self.ptr, tag, Pending::new(&mut put_aside)) };
+        while let Some((node, release)) = put_aside.pop() {
+            unsafe { release(node, Pending::new(&mut put_aside)) };
+        }
+    }
+}
+
+/// How many frees of nodes run inside one another before [`Pending`] puts
+/// the next owner aside.
+const NESTED_FREES: u32 = 64;
+
+/// One owner of a node, and how to drop it: [`release`] for the node's sum.
+type Owner = (NonNull<Header>, unsafe fn(NonNull<Header>, Pending<'_>));
+
+/// Drops one owner of a node of `S`, and frees the node if it was the last.
+///
+/// # Safety
+/// `node` is a node of `S`, and the owner is the caller's to drop.
+#[inline]
+unsafe fn release<S: ThinSum>(node: NonNull<Header>, pending: Pending<'_>) {
+    let header = unsafe { node.as_ref() };
+    if header.count.fetch_sub(1, Ordering::Release) != 1 {
+        return;
+    }
+    atomic::fence(Ordering::Acquire);
+    unsafe { S::free(node, header.tag, pending) }
+}
+
+/// How the drop of a value frees its nodes.
+///
+/// Dropping a node's fields as they are would free a child no one else owns
+/// inside its parent's free, and its child inside that, so a chain a million
+/// nodes deep would take a million frames of stack. Instead a free hands
+/// its children over to the `Pending` it was given, which frees them inside
+/// it only up to [`NESTED_FREES`] deep; past that it puts them aside on a
+/// list of the drop that began it, which frees them one at a time once the
+/// first free returns. Dropping a shallow value puts nothing aside and
+/// allocates nothing. It is passed by value, the depth in a register.
+#[derive(Clone, Copy)]
+pub struct Pending<'a> {
+    depth: u32,
+    put_aside: NonNull<Vec<Owner>>,
+    /// Borrows the list for as long as the free runs.
+    phantom: PhantomData<&'a mut Vec<Owner>>,
+}
+
+impl<'a> Pending<'a> {
+    #[inline]
+    fn new(put_aside: &'a mut Vec<Owner>) -> Self {
+        Pending {
+            depth: 0,
+            put_aside: NonNull::from(put_aside),
+            phantom: PhantomData,
+        }
+    }
+
+    /// Takes `value`, to drop now or once the first free returns.
+    #[inline]
+    pub fn take<S: ThinSum>(self, value: Thin<S>) {
+        let value = ManuallyDrop::new(value);
+        if value.is_empty_ctor() {
+            return;
+        }
+        if self.depth == NESTED_FREES {
+            // The list is borrowed for `'a` and only through a `Pending`,
+            // all of them on this thread, none of them using it meanwhile.
+            unsafe { (*self.put_aside.as_ptr()).push((value.ptr, release::<S>)) };
+            return;
+        }
+        let deeper = Pending {
+            depth: self.depth + 1,
+            ..self
+        };
+        unsafe { release::<S>(value.ptr, deeper) };
+    }
+}
+
+/// What a node's fields do when it is freed (see [`Pending`]): a value of a
+/// recursive sum hands its node over, an `Option` and a record on the cycle
+/// of a recursive sum hand over what they hold, and every other field is
+/// dropped as it is, which the default does. [`thin_sum!`] implements it for
+/// the sum; the Rust backend for each constructor's field struct and each
+/// such record.
+pub trait HandOver: Sized {
+    #[inline]
+    fn hand_over(self, _pending: Pending<'_>) {}
+}
+
+impl<T: HandOver> HandOver for Option<T> {
+    #[inline]
+    fn hand_over(self, pending: Pending<'_>) {
+        if let Some(value) = self {
+            value.hand_over(pending);
+        }
     }
 }
 
@@ -247,6 +345,12 @@ impl<S: ThinSum> crate::NodeId for Thin<S> {
 /// # #![allow(non_camel_case_types)]
 /// pub struct List__Cons(pub i64, pub List);
 ///
+/// impl aver_rt::thin::HandOver for List__Cons {
+///     fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
+///         self.1.hand_over(pending);
+///     }
+/// }
+///
 /// aver_rt::thin_sum! {
 ///     pub List / List__View / List__Pair {
 ///         0 Nil,
@@ -264,6 +368,12 @@ impl<S: ThinSum> crate::NodeId for Thin<S> {
 /// let list = List::Cons(List__Cons(2, List::Cons(List__Cons(3, List::Nil))));
 /// assert_eq!(sum(&list), 5);
 /// assert_eq!(size_of::<List>(), 8);
+///
+/// let mut long = List::Nil;
+/// for i in 0..1_000_000 {
+///     long = List::Cons(List__Cons(i, long));
+/// }
+/// drop(long);
 /// ```
 ///
 /// It defines the type `List` (cloned by copying the pointer), the view
@@ -273,7 +383,10 @@ impl<S: ThinSum> crate::NodeId for Thin<S> {
 /// same constructor), one function per constructor with fields that builds a
 /// value and one constant per constructor without (as an enum spells them),
 /// and `view`, `view_pair`, `tag`, `ptr_eq`. The tags are the declaration order
-/// 0, 1, 2, …, at most [`MAX_TAGS`] of them, checked at compile time.
+/// 0, 1, 2, …, at most [`MAX_TAGS`] of them, checked at compile time. Each
+/// field struct implements [`HandOver`], handing over the fields that hold
+/// values of the sum, so that dropping a value takes no stack however deep it
+/// is (see [`Pending`]).
 #[macro_export]
 macro_rules! thin_sum {
     (
@@ -312,11 +425,22 @@ macro_rules! thin_sum {
         unsafe impl $crate::thin::ThinSum for $name {
             type Fields = ( $( $( $fields, )? )+ );
 
-            unsafe fn free(node: ::std::ptr::NonNull<$crate::thin::Header>, tag: u32) {
+            unsafe fn free(
+                node: ::std::ptr::NonNull<$crate::thin::Header>,
+                tag: u32,
+                pending: $crate::thin::Pending<'_>,
+            ) {
                 match tag {
-                    $( $tag => $crate::thin_sum!(@free $name node $( $fields )?), )+
+                    $( $tag => $crate::thin_sum!(@free $name node pending $( $fields )?), )+
                     _ => unreachable!("no constructor has tag {tag}"),
                 }
+            }
+        }
+
+        impl $crate::thin::HandOver for $name {
+            #[inline]
+            fn hand_over(self, pending: $crate::thin::Pending<'_>) {
+                pending.take(self.0)
             }
         }
 
@@ -372,10 +496,10 @@ macro_rules! thin_sum {
             }
         }
     };
-    (@free $name:ident $node:ident $fields:ty) => {
-        unsafe { $crate::thin::Thin::<$name>::free_node::<$fields>($node) }
+    (@free $name:ident $node:ident $pending:ident $fields:ty) => {
+        unsafe { $crate::thin::Thin::<$name>::free_node::<$fields>($node, $pending) }
     };
-    (@free $name:ident $node:ident) => {
+    (@free $name:ident $node:ident $pending:ident) => {
         unreachable!("a constructor without fields has no node")
     };
     (@ctor $vis:vis $name:ident $tag:literal $ctor:ident $fields:ty) => {
@@ -417,6 +541,23 @@ mod tests {
     pub struct T__Leaf(Counted);
     #[derive(Debug)]
     pub struct T__Pair(T, T, u8);
+    #[derive(Debug)]
+    pub struct T__Opt(Option<T>);
+
+    impl super::HandOver for T__Leaf {}
+
+    impl super::HandOver for T__Pair {
+        fn hand_over(self, pending: super::Pending<'_>) {
+            self.0.hand_over(pending);
+            self.1.hand_over(pending);
+        }
+    }
+
+    impl super::HandOver for T__Opt {
+        fn hand_over(self, pending: super::Pending<'_>) {
+            self.0.hand_over(pending);
+        }
+    }
 
     crate::thin_sum! {
         #[derive(Debug)]
@@ -425,6 +566,7 @@ mod tests {
             1 Nil,
             2 Pair(T__Pair),
             3 Unit,
+            4 Opt(T__Opt),
         }
     }
 
@@ -440,6 +582,7 @@ mod tests {
                 None => false,
                 Some(T__Pairs::Leaf(a, b)) => a == b,
                 Some(T__Pairs::Nil | T__Pairs::Unit) => true,
+                Some(T__Pairs::Opt(a, b)) => a.0.walk_eq(&b.0, walk),
                 Some(T__Pairs::Pair(a, b)) => walk.node(self, other, true, |walk| {
                     a.2 == b.2 && a.0.walk_eq(&b.0, walk) && a.1.walk_eq(&b.1, walk)
                 }),
@@ -460,6 +603,7 @@ mod tests {
             T__View::Leaf(l) => l.0.1,
             T__View::Nil | T__View::Unit => 0,
             T__View::Pair(p) => sum(&p.0) + sum(&p.1) + p.2 as u64,
+            T__View::Opt(o) => o.0.as_ref().map_or(0, sum),
         }
     }
 
@@ -583,6 +727,47 @@ mod tests {
         assert_eq!(super::Thin::strong_count(&root.0), 1);
         drop(root);
         assert_eq!(drops.load(Ordering::SeqCst), 1);
+    }
+
+    /// Deep enough to overflow a test thread's stack were each node freed
+    /// inside its parent's free; under Miri, past `NESTED_FREES` a few times.
+    const DEEP: u64 = if cfg!(miri) { 300 } else { 1_000_000 };
+
+    #[test]
+    fn a_deep_chain_frees_without_deep_recursion() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let mut left = leaf(&drops, 1);
+        let mut right = leaf(&drops, 2);
+        let mut some = leaf(&drops, 3);
+        for i in 0..DEEP {
+            left = pair(left, T::Nil, i as u8);
+            right = pair(T::Unit, right, i as u8);
+            some = T::Opt(T__Opt(Some(some)));
+        }
+        drop(left);
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+        drop(right);
+        assert_eq!(drops.load(Ordering::SeqCst), 2);
+        drop(some);
+        assert_eq!(drops.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn a_shared_part_of_a_deep_chain_outlives_the_rest() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let mut t = leaf(&drops, 1);
+        let mut kept = T::Nil;
+        for i in 0..DEEP {
+            if i == DEEP / 2 {
+                kept = t.clone();
+            }
+            t = pair(t, leaf(&drops, 0), 0);
+        }
+        drop(t);
+        assert_eq!(drops.load(Ordering::SeqCst), (DEEP - DEEP / 2) as usize);
+        assert_eq!(super::Thin::strong_count(&kept.0), 1);
+        drop(kept);
+        assert_eq!(drops.load(Ordering::SeqCst), DEEP as usize + 1);
     }
 
     #[test]

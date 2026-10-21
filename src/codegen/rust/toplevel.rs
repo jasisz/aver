@@ -1,8 +1,9 @@
 use super::emit_ctx::{EmitCtx, should_borrow_param};
 use super::expr::{aver_name_to_rust, classify_thin_fn_def_for_rust, explicit_parameter_pattern};
 use super::representation::{
-    RepresentationCapabilities, RepresentationContract, cheap_fields_first, is_thin_sum,
-    shared_variants, type_def_contract, variant_field_refs, walking_def, walks,
+    RepresentationCapabilities, RepresentationContract, cheap_fields_first, hands_over,
+    is_thin_sum, on_cycle, shared_variants, type_def_contract, variant_field_refs, walking_def,
+    walks,
 };
 use super::types::type_annotation_to_rust_scoped;
 use crate::ast::*;
@@ -94,6 +95,7 @@ fn emit_type_def_with_visibility(td: &TypeDef, public: bool, ctx: &CodegenContex
             ctx,
             scope,
             walking_def(td, ctx),
+            on_cycle(td, ctx),
             representation,
         ),
     }
@@ -153,6 +155,36 @@ fn walk_eq_impl(name: &str, test: &str) -> String {
     format!(
         "\nimpl aver_rt::WalkEq for {name} {{\n    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {{\n        {test}\n    }}\n}}\n"
     )
+}
+
+/// The `aver_rt::thin::HandOver` of a constructor's payload in a recursive
+/// sum, or of a record on the cycle of one: the fields of `types` that hold
+/// its nodes (see `hands_over`), named by `field`, hand them over; the rest
+/// are dropped as they are.
+fn hand_over_impl(
+    name: &str,
+    types: &[&str],
+    field: impl Fn(usize) -> String,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> String {
+    let mut body = String::new();
+    for (i, ty) in types.iter().enumerate() {
+        if hands_over(&parse_type_str(ty), ctx, scope) {
+            let field = field(i);
+            write!(
+                body,
+                "\n        aver_rt::thin::HandOver::hand_over(self.{field}, pending);"
+            )
+            .unwrap();
+        }
+    }
+    match body.is_empty() {
+        true => format!("\nimpl aver_rt::thin::HandOver for {name} {{}}\n"),
+        false => format!(
+            "\nimpl aver_rt::thin::HandOver for {name} {{\n    fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {{{body}\n    }}\n}}\n"
+        ),
+    }
 }
 
 /// For each of `types`, whether its `==` carries the comparison's walk.
@@ -284,6 +316,16 @@ fn emit_sum_type(
                     .unwrap_or_else(|| (0..v.fields.len()).collect());
                 let test = fields_equal(&order, &walking[i], this, that);
                 payloads.push_str(&walk_eq_impl(&payload, &test));
+            }
+            if thin {
+                let types: Vec<&str> = v.fields.iter().map(String::as_str).collect();
+                payloads.push_str(&hand_over_impl(
+                    &payload,
+                    &types,
+                    |i| i.to_string(),
+                    ctx,
+                    scope,
+                ));
             }
         } else {
             writeln!(body, "    {}({}),", v.name, field_types.join(", ")).unwrap();
@@ -530,6 +572,7 @@ fn emit_sum_type(
     out.trim_end().to_string()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_product_type(
     name: &str,
     fields: &[(String, String)],
@@ -537,6 +580,7 @@ fn emit_product_type(
     ctx: &CodegenContext,
     scope: Option<&str>,
     walking: bool,
+    cyclic: bool,
     representation: RepresentationContract,
 ) -> String {
     let packed_u8 = super::uses_packed_u8(ctx, name);
@@ -589,6 +633,10 @@ fn emit_product_type(
             |i| format!("other.{}", field(i)),
         );
         out.push_str(&walk_eq_impl(name, &test));
+    }
+    if cyclic {
+        let field = |i: usize| aver_name_to_rust(&fields[i].0);
+        out.push_str(&hand_over_impl(name, &types, field, ctx, scope));
     }
 
     // A record can key a map, and a map iterates sorted by key, so the
