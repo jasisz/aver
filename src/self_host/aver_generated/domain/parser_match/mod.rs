@@ -465,7 +465,7 @@ pub fn tokenAt(
 ) -> crate::aver_generated::domain::token::Token {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::parser_match::tokenAtWalk(
-        tokens.clone(),
+        tokens,
         pos,
         aver_rt::AverInt::from_i64(0),
     )
@@ -474,19 +474,37 @@ pub fn tokenAt(
 /// Walk the list to find token at target index.
 #[inline(always)]
 pub fn tokenAtWalk(
-    mut tokens @ _: aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     mut target @ _: aver_rt::AverInt,
     mut idx @ _: aver_rt::AverInt,
 ) -> crate::aver_generated::domain::token::Token {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::token::Token>;
+    let mut tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token> = tokens;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(tokens, [] => { return crate::aver_generated::domain::token::Token::TkEof; }, [t, rest] => { if (idx == target) { return t; } else { {
-            let __tco0 = rest;
-            let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
-            tokens = __tco0;
-            idx = __tco2;
-            continue;
-        } } })
+        {
+            let __list_subject = tokens;
+            if __list_subject.is_empty() {
+                return crate::aver_generated::domain::token::Token::TkEof;
+            } else {
+                if let Some((t, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    if (idx == target) {
+                        return t;
+                    } else {
+                        {
+                            let __tco0 = rest;
+                            let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
+                            __hold0 = __tco0;
+                            tokens = &__hold0;
+                            idx = __tco2;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
@@ -501,7 +519,7 @@ pub fn continuationAt(
         crate::aver_generated::domain::parser_match::tokenAt(tokens, pos)
     } else {
         crate::aver_generated::domain::parser_match::continuationAtWalk(
-            tokens.clone(),
+            tokens,
             pos,
             aver_rt::AverInt::from_i64(1),
         )
@@ -511,26 +529,47 @@ pub fn continuationAt(
 /// Walk to the token before target; a DEDENT there ends the expression, anything else hands over the token at target.
 #[inline(always)]
 pub fn continuationAtWalk(
-    mut tokens @ _: aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     mut target @ _: aver_rt::AverInt,
     mut idx @ _: aver_rt::AverInt,
 ) -> crate::aver_generated::domain::token::Token {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::token::Token>;
+    let mut tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token> = tokens;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(tokens, [] => { return crate::aver_generated::domain::token::Token::TkEof; }, [t, rest] => { if (idx == target) { match t {
-        crate::aver_generated::domain::token::Token::TkDedent => {
-            return crate::aver_generated::domain::token::Token::TkNewline;
-        },
-        _ => {
-            return crate::aver_generated::domain::parser_match::tokenAt(&rest, aver_rt::AverInt::from_i64(0));
+        {
+            let __list_subject = tokens;
+            if __list_subject.is_empty() {
+                return crate::aver_generated::domain::token::Token::TkEof;
+            } else {
+                if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    if (idx == target) {
+                        match t {
+                            crate::aver_generated::domain::token::Token::TkDedent => {
+                                return crate::aver_generated::domain::token::Token::TkNewline;
+                            }
+                            _ => {
+                                return crate::aver_generated::domain::parser_match::tokenAt(
+                                    &rest,
+                                    aver_rt::AverInt::from_i64(0),
+                                );
+                            }
+                        }
+                    } else {
+                        {
+                            let __tco0 = rest;
+                            let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
+                            __hold0 = __tco0;
+                            tokens = &__hold0;
+                            idx = __tco2;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
         }
-    } } else { {
-            let __tco0 = rest;
-            let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
-            tokens = __tco0;
-            idx = __tco2;
-            continue;
-        } } })
     }
 }
 
@@ -584,13 +623,12 @@ pub fn expect(
 
 /// Skip past any newline tokens.
 pub fn skipNewlines(
-    tokens @ _: aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     mut pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let tokens @ _ = aver_rt::Shared::new(tokens);
     loop {
         crate::cancel_checkpoint();
-        match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
+        match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
             crate::aver_generated::domain::token::Token::TkNewline => {
                 let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
                 pos = __tco1;
@@ -605,14 +643,13 @@ pub fn skipNewlines(
 
 /// Skip newlines and stray DEDENT tokens at top level.
 pub fn skipNewlinesAndDedents(
-    tokens @ _: aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     mut pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let tokens @ _ = aver_rt::Shared::new(tokens);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
-        match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
+        match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
             crate::aver_generated::domain::token::Token::TkNewline => {
                 let __tco1 = nextPos;
                 pos = __tco1;
@@ -833,11 +870,11 @@ pub fn skipTypeExpr(
     let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
     match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
         crate::aver_generated::domain::token::Token::TkIdent(_) => {
-            crate::aver_generated::domain::parser_match::skipTypeExprTail(tokens.clone(), nextPos)
+            crate::aver_generated::domain::parser_match::skipTypeExprTail(tokens, nextPos)
         }
         crate::aver_generated::domain::token::Token::TkLParen => {
             crate::aver_generated::domain::parser_match::skipUntilClose(
-                tokens.clone(),
+                tokens,
                 nextPos,
                 aver_rt::AverInt::from_i64(1),
             )
@@ -848,23 +885,22 @@ pub fn skipTypeExpr(
 
 /// After type ident: possibly <...> generics or .Qualified.
 pub fn skipTypeExprTail(
-    tokens @ _: aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     mut pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let tokens @ _ = aver_rt::Shared::new(tokens);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
-        match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
+        match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
             crate::aver_generated::domain::token::Token::TkLt => {
                 return crate::aver_generated::domain::parser_match::skipUntilGt(
-                    (*tokens).clone(),
+                    tokens,
                     nextPos,
                     aver_rt::AverInt::from_i64(1),
                 );
             }
             crate::aver_generated::domain::token::Token::TkDot => {
-                match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, nextPos) {
+                match crate::aver_generated::domain::parser_match::tokenAt(tokens, nextPos) {
                     crate::aver_generated::domain::token::Token::TkIdent(_) => {
                         let __tco1 = pos.add(&aver_rt::AverInt::from_i64(2));
                         pos = __tco1;
@@ -885,18 +921,17 @@ pub fn skipTypeExprTail(
 /// Skip until matching > for generic type params.
 #[inline(always)]
 pub fn skipUntilGt(
-    tokens @ _: aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     mut pos @ _: aver_rt::AverInt,
     mut depth @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let tokens @ _ = aver_rt::Shared::new(tokens);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
         if (depth == aver_rt::AverInt::from_i64(0)) {
             return pos;
         } else {
-            match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
+            match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
                 crate::aver_generated::domain::token::Token::TkEof => {
                     return pos;
                 }
@@ -927,18 +962,17 @@ pub fn skipUntilGt(
 /// Skip until matching ) for tuple types.
 #[inline(always)]
 pub fn skipUntilClose(
-    tokens @ _: aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     mut pos @ _: aver_rt::AverInt,
     mut depth @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let tokens @ _ = aver_rt::Shared::new(tokens);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
         if (depth == aver_rt::AverInt::from_i64(0)) {
             return pos;
         } else {
-            match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
+            match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
                 crate::aver_generated::domain::token::Token::TkEof => {
                     return pos;
                 }
@@ -985,26 +1019,22 @@ pub fn skipReturnType(
 
 /// Skip optional ? description and ! [effects] lines (including multi-line effects).
 pub fn skipDescAndEffects(
-    tokens @ _: aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     mut pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let tokens @ _ = aver_rt::Shared::new(tokens);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
-        match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
+        match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
             crate::aver_generated::domain::token::Token::TkQuestion => {
-                let __tco1 = crate::aver_generated::domain::parser_match::skipToNextLine(
-                    (*tokens).clone(),
-                    nextPos,
-                );
+                let __tco1 =
+                    crate::aver_generated::domain::parser_match::skipToNextLine(tokens, nextPos);
                 pos = __tco1;
                 continue;
             }
             crate::aver_generated::domain::token::Token::TkBang => {
-                let __tco1 = crate::aver_generated::domain::parser_match::skipEffectsBlock(
-                    &*tokens, nextPos,
-                );
+                let __tco1 =
+                    crate::aver_generated::domain::parser_match::skipEffectsBlock(tokens, nextPos);
                 pos = __tco1;
                 continue;
             }
@@ -1024,32 +1054,28 @@ pub fn skipEffectsBlock(
     match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
         crate::aver_generated::domain::token::Token::TkLBracket => {
             crate::aver_generated::domain::parser_match::skipUntilRBracket(
-                tokens.clone(),
+                tokens,
                 pos.add(&aver_rt::AverInt::from_i64(1)),
             )
         }
-        _ => crate::aver_generated::domain::parser_match::skipToNextLine(tokens.clone(), pos),
+        _ => crate::aver_generated::domain::parser_match::skipToNextLine(tokens, pos),
     }
 }
 
 /// Skip tokens until ] then past any trailing newline.
 pub fn skipUntilRBracket(
-    tokens @ _: aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     mut pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let tokens @ _ = aver_rt::Shared::new(tokens);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
-        match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
+        match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
             crate::aver_generated::domain::token::Token::TkEof => {
                 return pos;
             }
             crate::aver_generated::domain::token::Token::TkRBracket => {
-                return crate::aver_generated::domain::parser_match::skipNewlines(
-                    (*tokens).clone(),
-                    nextPos,
-                );
+                return crate::aver_generated::domain::parser_match::skipNewlines(tokens, nextPos);
             }
             _ => {
                 let __tco1 = nextPos;
@@ -1062,14 +1088,13 @@ pub fn skipUntilRBracket(
 
 /// Skip tokens until newline, then past it.
 pub fn skipToNextLine(
-    tokens @ _: aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     mut pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let tokens @ _ = aver_rt::Shared::new(tokens);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
-        match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
+        match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
             crate::aver_generated::domain::token::Token::TkEof => {
                 return pos;
             }
@@ -1091,11 +1116,11 @@ pub fn skipBlock(
     pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    let pos2 @ _ = crate::aver_generated::domain::parser_match::skipNewlines(tokens.clone(), pos);
+    let pos2 @ _ = crate::aver_generated::domain::parser_match::skipNewlines(tokens, pos);
     match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos2.clone()) {
         crate::aver_generated::domain::token::Token::TkIndent => {
             crate::aver_generated::domain::parser_match::skipIndentBlock(
-                tokens.clone(),
+                tokens,
                 pos2.add(&aver_rt::AverInt::from_i64(1)),
                 aver_rt::AverInt::from_i64(1),
             )
@@ -1107,15 +1132,14 @@ pub fn skipBlock(
 
 /// Skip until matching DEDENT.
 pub fn skipIndentBlock(
-    tokens @ _: aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     mut pos @ _: aver_rt::AverInt,
     mut depth @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let tokens @ _ = aver_rt::Shared::new(tokens);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
-        match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
+        match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
             crate::aver_generated::domain::token::Token::TkEof => {
                 return pos;
             }
@@ -1156,7 +1180,7 @@ pub fn parseModuleHeader(
     crate::cancel_checkpoint();
     let endPos @ _ = crate::aver_generated::domain::parser_match::skipBlock(tokens, pos.clone());
     let depList @ _ = crate::aver_generated::domain::parser_match::findDependsInRange(
-        tokens.clone(),
+        tokens,
         pos,
         endPos.clone(),
     );
@@ -1166,20 +1190,19 @@ pub fn parseModuleHeader(
 /// Scan token range for depends [...] and extract module names.
 #[inline(always)]
 pub fn findDependsInRange(
-    tokens @ _: aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     mut pos @ _: aver_rt::AverInt,
     mut endPos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<AverStr> {
-    let tokens @ _ = aver_rt::Shared::new(tokens);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
         if (pos < endPos) {
-            match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos) {
+            match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos) {
                 crate::aver_generated::domain::token::Token::TkIdent(kw) => {
                     if (&*kw == "depends") {
                         return crate::aver_generated::domain::parser_match::findDependsListAt(
-                            &*tokens, nextPos, endPos,
+                            tokens, nextPos, endPos,
                         );
                     } else {
                         {
@@ -1211,7 +1234,7 @@ pub fn findDependsListAt(
     match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
         crate::aver_generated::domain::token::Token::TkLBracket => {
             crate::aver_generated::domain::parser_match::collectDependsNames(
-                tokens.clone(),
+                tokens,
                 pos.add(&aver_rt::AverInt::from_i64(1)),
                 endPos,
                 aver_rt::AverList::empty(),
@@ -1224,17 +1247,16 @@ pub fn findDependsListAt(
 /// Collect module names until ].
 #[inline(always)]
 pub fn collectDependsNames(
-    tokens @ _: aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     mut pos @ _: aver_rt::AverInt,
     mut endPos @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverList<AverStr>,
 ) -> aver_rt::AverList<AverStr> {
-    let tokens @ _ = aver_rt::Shared::new(tokens);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
         if (pos < endPos) {
-            match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos) {
+            match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos) {
                 crate::aver_generated::domain::token::Token::TkRBracket => {
                     return acc.reverse();
                 }

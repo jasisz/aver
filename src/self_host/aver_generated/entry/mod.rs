@@ -121,7 +121,7 @@ pub fn prepareProgramWithModules(
     let prog @ _ = crate::aver_generated::domain::parser::parse(&tokens)?;
     let resolved @ _ = crate::aver_generated::domain::resolver::resolveProgram(prog);
     let r @ _ = loadModules(
-        resolved.deps.clone(),
+        &resolved.deps,
         moduleRoot,
         aver_rt::AverList::empty(),
         HashMap::new(),
@@ -175,7 +175,7 @@ pub fn runGuestCliProgram(
 
 /// Load all module dependencies, skipping already-loaded modules.
 pub fn loadModules(
-    mut deps @ _: aver_rt::AverList<AverStr>,
+    deps @ _: &aver_rt::AverList<AverStr>,
     mut moduleRoot @ _: AverStr,
     acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     loaded @ _: aver_rt::AverMap<AverStr, bool>,
@@ -188,13 +188,31 @@ pub fn loadModules(
 > {
     let acc @ _ = aver_rt::Shared::new(acc);
     let loaded @ _ = aver_rt::Shared::new(loaded);
+    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut deps @ _: &aver_rt::AverList<AverStr> = deps;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(deps, [] => { return Ok(((*acc).clone(), (*loaded).clone())); }, [dep, rest] => { if loaded.contains_key(&dep) { {
-            let __tco0 = rest;
-            deps = __tco0;
-            continue;
-        } } else { return loadOneModule(dep, &rest, moduleRoot, &*acc, (*loaded).clone()); } })
+        {
+            let __list_subject = deps;
+            if __list_subject.is_empty() {
+                return Ok(((*acc).clone(), (*loaded).clone()));
+            } else {
+                if let Some((dep, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    if loaded.contains_key(&dep) {
+                        {
+                            let __tco0 = rest;
+                            __hold0 = __tco0;
+                            deps = &__hold0;
+                            continue;
+                        }
+                    } else {
+                        return loadOneModule(dep, &rest, moduleRoot, &*acc, (*loaded).clone());
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
@@ -226,7 +244,7 @@ pub fn loadOneModule(
 /// Find module file, trying root then parent dirs.
 pub fn findModulePath(dep @ _: AverStr, root @ _: AverStr, depth @ _: aver_rt::AverInt) -> AverStr {
     crate::cancel_checkpoint();
-    findModulePath__indexed(dep.clone(), root, depth, aver_rt::string_index_build(&dep))
+    findModulePath__indexed(dep.clone(), root, depth, &aver_rt::string_index_build(&dep))
 }
 
 /// Convert Module.Name to file path: Domain.Foo -> domain/foo.av
@@ -301,19 +319,34 @@ pub fn resolveQualifiedModuleFns(
 /// Shift module-local direct-call ids so they point into the final combined function store.
 #[inline(always)]
 pub fn shiftFnIdsInFns(
-    mut fns @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     mut offset @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>;
+    let mut fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> = fns;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(fns, [] => { return acc.reverse(); }, [fd, rest] => { {
-            let __tco0 = rest;
-            let __tco2 = aver_rt::AverList::prepend(shiftFnIdsInFn(fd, offset.clone()), &acc);
-            fns = __tco0;
-            acc = __tco2;
-            continue;
-        } })
+        {
+            let __list_subject = fns;
+            if __list_subject.is_empty() {
+                return acc.reverse();
+            } else {
+                if let Some((fd, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    {
+                        let __tco0 = rest;
+                        let __tco2 =
+                            aver_rt::AverList::prepend(shiftFnIdsInFn(fd, offset.clone()), &acc);
+                        __hold0 = __tco0;
+                        fns = &__hold0;
+                        acc = __tco2;
+                        continue;
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
@@ -326,12 +359,12 @@ pub fn shiftFnIdsInProgram(
     crate::aver_generated::domain::ast::Program {
         deps: prog.deps,
         fns: shiftFnIdsInFns__collected(
-            prog.fns,
+            &prog.fns,
             offset.clone(),
             aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
         ),
         stmts: shiftFnIdsInStmts__collected(
-            prog.stmts,
+            &prog.stmts,
             offset,
             aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
         ),
@@ -348,7 +381,7 @@ pub fn shiftFnIdsInFn(
         name: fd.name,
         params: fd.params,
         body: shiftFnIdsInStmts__collected(
-            fd.body,
+            &fd.body,
             offset.clone(),
             aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
         ),
@@ -381,19 +414,36 @@ pub fn shiftFnIdsInFastPath(
 /// Shift direct-call ids through a statement list.
 #[inline(always)]
 pub fn shiftFnIdsInStmts(
-    mut stmts @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    stmts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
     mut offset @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>;
+    let mut stmts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> = stmts;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(stmts, [] => { return acc.reverse(); }, [stmt, rest] => { {
-            let __tco0 = rest;
-            let __tco2 = aver_rt::AverList::prepend(shiftFnIdsInStmt(&stmt, offset.clone()), &acc);
-            stmts = __tco0;
-            acc = __tco2;
-            continue;
-        } })
+        {
+            let __list_subject = stmts;
+            if __list_subject.is_empty() {
+                return acc.reverse();
+            } else {
+                if let (Some(stmt), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    {
+                        let __tco0 = rest;
+                        let __tco2 = aver_rt::AverList::prepend(
+                            shiftFnIdsInStmt(stmt, offset.clone()),
+                            &acc,
+                        );
+                        __hold0 = __tco0;
+                        stmts = &__hold0;
+                        acc = __tco2;
+                        continue;
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
@@ -586,7 +636,7 @@ pub fn shiftFnIdsInExprTail(
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprConcat(__parts_fields) => {
-                let parts = __parts_fields.0.clone();
+                let parts = &__parts_fields.0;
                 crate::aver_generated::domain::ast::Expr::ExprConcat(
                     crate::aver_generated::domain::ast::Expr__ExprConcat(
                         shiftFnIdsInExprs__collected(
@@ -600,7 +650,7 @@ pub fn shiftFnIdsInExprTail(
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprTuple(__exprs_fields) => {
-                let exprs = __exprs_fields.0.clone();
+                let exprs = &__exprs_fields.0;
                 crate::aver_generated::domain::ast::Expr::ExprTuple(
                     crate::aver_generated::domain::ast::Expr__ExprTuple(
                         shiftFnIdsInExprs__collected(
@@ -614,7 +664,7 @@ pub fn shiftFnIdsInExprTail(
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprList(__exprs_fields) => {
-                let exprs = __exprs_fields.0.clone();
+                let exprs = &__exprs_fields.0;
                 crate::aver_generated::domain::ast::Expr::ExprList(
                     crate::aver_generated::domain::ast::Expr__ExprList(
                         shiftFnIdsInExprs__collected(
@@ -629,7 +679,7 @@ pub fn shiftFnIdsInExprTail(
             }
             crate::aver_generated::domain::ast::Expr__view::ExprRecord(__name_fields) => {
                 let name = __name_fields.0.clone();
-                let fields = __name_fields.1.clone();
+                let fields = &__name_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprRecord(
                     crate::aver_generated::domain::ast::Expr__ExprRecord(
                         name,
@@ -669,7 +719,7 @@ pub fn shiftFnIdsInExprCalls(
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCall(__name_fields) => {
                 let name = __name_fields.0.clone();
-                let args = __name_fields.1.clone();
+                let args = &__name_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprCall(
                     crate::aver_generated::domain::ast::Expr__ExprCall(
                         name,
@@ -685,7 +735,7 @@ pub fn shiftFnIdsInExprCalls(
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallDirect(__fnId_fields) => {
                 let fnId = __fnId_fields.0.clone();
-                let args = __fnId_fields.1.clone();
+                let args = &__fnId_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprCallDirect(
                     crate::aver_generated::domain::ast::Expr__ExprCallDirect(
                         fnId.add(&offset),
@@ -701,7 +751,7 @@ pub fn shiftFnIdsInExprCalls(
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltin(__name_fields) => {
                 let name = __name_fields.0.clone();
-                let args = __name_fields.1.clone();
+                let args = &__name_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                     crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
                         name,
@@ -717,7 +767,7 @@ pub fn shiftFnIdsInExprCalls(
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltinId(__id_fields) => {
                 let id = __id_fields.0.clone();
-                let args = __id_fields.1.clone();
+                let args = &__id_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(
                     crate::aver_generated::domain::ast::Expr__ExprCallBuiltinId(
                         id,
@@ -733,7 +783,7 @@ pub fn shiftFnIdsInExprCalls(
             }
             crate::aver_generated::domain::ast::Expr__view::ExprMatch(__scrutinee_fields) => {
                 let scrutinee = __scrutinee_fields.0.clone();
-                let arms = __scrutinee_fields.1.clone();
+                let arms = &__scrutinee_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprMatch(
                     crate::aver_generated::domain::ast::Expr__ExprMatch(
                         shiftFnIdsInExpr(scrutinee, offset.clone()),
@@ -758,7 +808,7 @@ pub fn shiftFnIdsInExprCalls(
             crate::aver_generated::domain::ast::Expr__view::ExprIndependentProduct(
                 __exprs_fields,
             ) => {
-                let exprs = __exprs_fields.0.clone();
+                let exprs = &__exprs_fields.0;
                 let unwrap = __exprs_fields.1.clone();
                 crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(
                     crate::aver_generated::domain::ast::Expr__ExprIndependentProduct(
@@ -781,57 +831,116 @@ pub fn shiftFnIdsInExprCalls(
 /// Shift direct-call ids in a list of expressions.
 #[inline(always)]
 pub fn shiftFnIdsInExprs(
-    mut exprs @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
     mut offset @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Expr> {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>;
+    let mut exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr> = exprs;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(exprs, [] => { return acc.reverse(); }, [expr, rest] => { {
-            let __tco0 = rest;
-            let __tco2 = aver_rt::AverList::prepend(shiftFnIdsInExpr(expr, offset.clone()), &acc);
-            exprs = __tco0;
-            acc = __tco2;
-            continue;
-        } })
+        {
+            let __list_subject = exprs;
+            if __list_subject.is_empty() {
+                return acc.reverse();
+            } else {
+                if let Some((expr, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    {
+                        let __tco0 = rest;
+                        let __tco2 = aver_rt::AverList::prepend(
+                            shiftFnIdsInExpr(expr, offset.clone()),
+                            &acc,
+                        );
+                        __hold0 = __tco0;
+                        exprs = &__hold0;
+                        acc = __tco2;
+                        continue;
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
 /// Shift direct-call ids in record field expressions.
 #[inline(always)]
 pub fn shiftFnIdsInFields(
-    mut fields @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
+    fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
     mut offset @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> {
+    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>;
+    let mut fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> =
+        fields;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(fields, [] => { return acc.reverse(); }, [pair, rest] => { { let (name, expr) = pair; {
-            let __tco0 = rest;
-            let __tco2 = aver_rt::AverList::prepend((name, shiftFnIdsInExpr(expr, offset.clone())), &acc);
-            fields = __tco0;
-            acc = __tco2;
-            continue;
-        } } })
+        {
+            let __list_subject = fields;
+            if __list_subject.is_empty() {
+                return acc.reverse();
+            } else {
+                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    {
+                        let (name, expr) = pair.clone();
+                        {
+                            let __tco0 = rest;
+                            let __tco2 = aver_rt::AverList::prepend(
+                                (name, shiftFnIdsInExpr(expr, offset.clone())),
+                                &acc,
+                            );
+                            __hold0 = __tco0;
+                            fields = &__hold0;
+                            acc = __tco2;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
 /// Shift direct-call ids in match arm bodies.
 #[inline(always)]
 pub fn shiftFnIdsInArms(
-    mut arms @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
     mut offset @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>;
+    let mut arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> = arms;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(arms, [] => { return acc.reverse(); }, [arm, rest] => { {
-            let __tco0 = rest;
-            let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern, body: shiftFnIdsInExpr(arm.body, offset.clone()), bindingSlots: arm.bindingSlots }, &acc);
-            arms = __tco0;
-            acc = __tco2;
-            continue;
-        } })
+        {
+            let __list_subject = arms;
+            if __list_subject.is_empty() {
+                return acc.reverse();
+            } else {
+                if let Some((arm, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    {
+                        let __tco0 = rest;
+                        let __tco2 = aver_rt::AverList::prepend(
+                            crate::aver_generated::domain::ast::MatchArm {
+                                pattern: arm.pattern,
+                                body: shiftFnIdsInExpr(arm.body, offset.clone()),
+                                bindingSlots: arm.bindingSlots,
+                            },
+                            &acc,
+                        );
+                        __hold0 = __tco0;
+                        arms = &__hold0;
+                        acc = __tco2;
+                        continue;
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
@@ -921,7 +1030,18 @@ pub fn runFromFileWithRest(
     rest @ _: &aver_rt::AverList<AverStr>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    aver_list_match!(rest.clone(), [] => runCliFile(path, AverStr::from("."), &aver_rt::AverList::empty()), [moduleRoot, guestArgs] => runCliFile(path, moduleRoot, &guestArgs))
+    {
+        let __list_subject = rest;
+        if let Some((moduleRoot, guestArgs)) = aver_rt::list_uncons_cloned(__list_subject) {
+            runCliFile(path, moduleRoot, &guestArgs)
+        } else {
+            if __list_subject.is_empty() {
+                runCliFile(path, AverStr::from("."), &aver_rt::AverList::empty())
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// Load a guest file outside scope, then execute the guest program inside the guest boundary. Propagates the user main()'s return Val unchanged.
@@ -948,7 +1068,7 @@ pub fn finishCliRun(
     mut result @ _: crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    if hasLocalMain(localFns.clone()) {
+    if hasLocalMain(localFns) {
         finishCliMainResult(result)
     } else {
         Ok(result)
@@ -964,9 +1084,9 @@ pub fn finishCliMainResult(
         let __t = &result;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValErr(__err_fields) => {
-                let err = __err_fields.0.clone();
+                let err = &__err_fields.0;
                 Err((AverStr::from("Main returned error: ")
-                    + &crate::aver_generated::domain::value::valRepr(&err)))
+                    + &crate::aver_generated::domain::value::valRepr(err)))
             }
             _ => Ok(result),
         }
@@ -976,15 +1096,33 @@ pub fn finishCliMainResult(
 /// Check whether the entry program defines its own main().
 #[inline(always)]
 pub fn hasLocalMain(
-    mut fns @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> bool {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>;
+    let mut fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> = fns;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(fns, [] => { return false; }, [f, rest] => { if (&*f.name == "main") { return true; } else { {
-            let __tco0 = rest;
-            fns = __tco0;
-            continue;
-        } } })
+        {
+            let __list_subject = fns;
+            if __list_subject.is_empty() {
+                return false;
+            } else {
+                if let Some((f, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    if (&*f.name == "main") {
+                        return true;
+                    } else {
+                        {
+                            let __tco0 = rest;
+                            __hold0 = __tco0;
+                            fns = &__hold0;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
@@ -1283,7 +1421,7 @@ pub fn loadOneModule__indexed(
         dep.clone(),
         moduleRoot.clone(),
         aver_rt::AverInt::from_i64(0),
-        __str_index.clone(),
+        __str_index,
     );
     let source @ _ = {
         let __provider_arg0: AverStr = path;
@@ -1311,16 +1449,16 @@ pub fn loadOneModule__indexed(
     let prog @ _ = crate::aver_generated::domain::parser::parse(&tokens)?;
     let moduleFns @ _ = resolveQualifiedModuleFns__indexed(&prog, dep.clone(), __str_index);
     let loaded2 @ _ = loaded.insert_owned(dep, true);
-    let innerResult @ _ = loadModules(prog.deps, moduleRoot.clone(), acc.clone(), loaded2)?;
+    let innerResult @ _ = loadModules(&prog.deps, moduleRoot.clone(), acc.clone(), loaded2)?;
     {
         let (accWithInner, loaded3) = innerResult;
         loadModules(
-            rest.clone(),
+            rest,
             moduleRoot,
             aver_rt::AverList::concat(
                 &accWithInner.clone(),
                 &shiftFnIdsInFns__collected(
-                    moduleFns,
+                    &moduleFns,
                     aver_rt::AverInt::from_i64(accWithInner.len() as i64),
                     aver_rt::list_builder_new(
                         (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
@@ -1337,13 +1475,11 @@ pub fn findModulePath__indexed(
     mut dep @ _: AverStr,
     mut root @ _: AverStr,
     mut depth @ _: aver_rt::AverInt,
-    __str_index @ _: aver_rt::StringIndex,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> AverStr {
-    let __str_index @ _ = aver_rt::Shared::new(__str_index);
     loop {
         crate::cancel_checkpoint();
-        let path @ _ =
-            modulePathFromName__indexed(dep.clone(), root.clone(), (*__str_index).clone());
+        let path @ _ = modulePathFromName__indexed(dep.clone(), root.clone(), __str_index.clone());
         if {
             let __provider_arg0: AverStr = path.clone();
             crate::cancel_checkpoint();
@@ -1468,95 +1604,182 @@ pub fn resolveQualifiedModuleFns__indexed(
 /// Synthesized collecting variant of `shiftFnIdsInFns`. Appends to a builder where `shiftFnIdsInFns` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn shiftFnIdsInFns__collected(
-    mut fns @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     mut offset @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>;
+    let mut fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> = fns;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(fns, [] => { return aver_rt::list_builder_finalize(acc); }, [fd, rest] => { {
-            let __tco0 = rest;
-            let __tco2 = aver_rt::list_builder_push(acc, shiftFnIdsInFn(fd, offset.clone()));
-            fns = __tco0;
-            acc = __tco2;
-            continue;
-        } })
+        {
+            let __list_subject = fns;
+            if __list_subject.is_empty() {
+                return aver_rt::list_builder_finalize(acc);
+            } else {
+                if let Some((fd, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    {
+                        let __tco0 = rest;
+                        let __tco2 =
+                            aver_rt::list_builder_push(acc, shiftFnIdsInFn(fd, offset.clone()));
+                        __hold0 = __tco0;
+                        fns = &__hold0;
+                        acc = __tco2;
+                        continue;
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
 /// Synthesized collecting variant of `shiftFnIdsInStmts`. Appends to a builder where `shiftFnIdsInStmts` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn shiftFnIdsInStmts__collected(
-    mut stmts @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    stmts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
     mut offset @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>;
+    let mut stmts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> = stmts;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(stmts, [] => { return aver_rt::list_builder_finalize(acc); }, [stmt, rest] => { {
-            let __tco0 = rest;
-            let __tco2 = aver_rt::list_builder_push(acc, shiftFnIdsInStmt(&stmt, offset.clone()));
-            stmts = __tco0;
-            acc = __tco2;
-            continue;
-        } })
+        {
+            let __list_subject = stmts;
+            if __list_subject.is_empty() {
+                return aver_rt::list_builder_finalize(acc);
+            } else {
+                if let (Some(stmt), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    {
+                        let __tco0 = rest;
+                        let __tco2 =
+                            aver_rt::list_builder_push(acc, shiftFnIdsInStmt(stmt, offset.clone()));
+                        __hold0 = __tco0;
+                        stmts = &__hold0;
+                        acc = __tco2;
+                        continue;
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
 /// Synthesized collecting variant of `shiftFnIdsInExprs`. Appends to a builder where `shiftFnIdsInExprs` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn shiftFnIdsInExprs__collected(
-    mut exprs @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
     mut offset @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Expr> {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>;
+    let mut exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr> = exprs;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(exprs, [] => { return aver_rt::list_builder_finalize(acc); }, [expr, rest] => { {
-            let __tco0 = rest;
-            let __tco2 = aver_rt::list_builder_push(acc, shiftFnIdsInExpr(expr, offset.clone()));
-            exprs = __tco0;
-            acc = __tco2;
-            continue;
-        } })
+        {
+            let __list_subject = exprs;
+            if __list_subject.is_empty() {
+                return aver_rt::list_builder_finalize(acc);
+            } else {
+                if let Some((expr, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    {
+                        let __tco0 = rest;
+                        let __tco2 =
+                            aver_rt::list_builder_push(acc, shiftFnIdsInExpr(expr, offset.clone()));
+                        __hold0 = __tco0;
+                        exprs = &__hold0;
+                        acc = __tco2;
+                        continue;
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
 /// Synthesized collecting variant of `shiftFnIdsInFields`. Appends to a builder where `shiftFnIdsInFields` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn shiftFnIdsInFields__collected(
-    mut fields @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
+    fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
     mut offset @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> {
+    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>;
+    let mut fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> =
+        fields;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(fields, [] => { return aver_rt::list_builder_finalize(acc); }, [pair, rest] => { { let (name, expr) = pair; {
-            let __tco0 = rest;
-            let __tco2 = aver_rt::list_builder_push(acc, (name, shiftFnIdsInExpr(expr, offset.clone())));
-            fields = __tco0;
-            acc = __tco2;
-            continue;
-        } } })
+        {
+            let __list_subject = fields;
+            if __list_subject.is_empty() {
+                return aver_rt::list_builder_finalize(acc);
+            } else {
+                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    {
+                        let (name, expr) = pair.clone();
+                        {
+                            let __tco0 = rest;
+                            let __tco2 = aver_rt::list_builder_push(
+                                acc,
+                                (name, shiftFnIdsInExpr(expr, offset.clone())),
+                            );
+                            __hold0 = __tco0;
+                            fields = &__hold0;
+                            acc = __tco2;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
 /// Synthesized collecting variant of `shiftFnIdsInArms`. Appends to a builder where `shiftFnIdsInArms` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn shiftFnIdsInArms__collected(
-    mut arms @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
     mut offset @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>;
+    let mut arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> = arms;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(arms, [] => { return aver_rt::list_builder_finalize(acc); }, [arm, rest] => { {
-            let __tco0 = rest;
-            let __tco2 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern, body: shiftFnIdsInExpr(arm.body, offset.clone()), bindingSlots: arm.bindingSlots });
-            arms = __tco0;
-            acc = __tco2;
-            continue;
-        } })
+        {
+            let __list_subject = arms;
+            if __list_subject.is_empty() {
+                return aver_rt::list_builder_finalize(acc);
+            } else {
+                if let Some((arm, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    {
+                        let __tco0 = rest;
+                        let __tco2 = aver_rt::list_builder_push(
+                            acc,
+                            crate::aver_generated::domain::ast::MatchArm {
+                                pattern: arm.pattern,
+                                body: shiftFnIdsInExpr(arm.body, offset.clone()),
+                                bindingSlots: arm.bindingSlots,
+                            },
+                        );
+                        __hold0 = __tco0;
+                        arms = &__hold0;
+                        acc = __tco2;
+                        continue;
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 

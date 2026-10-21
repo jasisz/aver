@@ -244,6 +244,8 @@ enum Branching {
     Sequence,
     /// A call: its value holds nothing of what its arguments read.
     Call,
+    /// A record, constructor, tuple or list: its parts run in order.
+    Ordered,
     Other,
 }
 
@@ -529,6 +531,9 @@ fn collect(
         MirExpr::Match(_) | MirExpr::IfThenElse(_) => Branching::Alternatives,
         MirExpr::Let(_) => Branching::Sequence,
         MirExpr::Call(_) => Branching::Call,
+        MirExpr::RecordCreate(_) | MirExpr::Construct(_) | MirExpr::Tuple(_) | MirExpr::List(_) => {
+            Branching::Ordered
+        }
         _ => Branching::Other,
     };
     let in_product = in_product || matches!(expr, MirExpr::IndependentProduct(_));
@@ -791,6 +796,15 @@ fn apart(o: &Read, q: &Read) -> bool {
                             .any(|(_, _, below)| *below == Branching::Call))
             }
             Branching::Sequence => o_child == 0 && q_child == 1,
+            // Parts that run in order: a read inside a call in an earlier
+            // part is over once that call returns, as for a subject above
+            // (`R(o = f(s.a), a = s.a)`).
+            Branching::Ordered => {
+                o_child < q_child
+                    && o.trail[depth + 1..]
+                        .iter()
+                        .any(|(_, _, below)| *below == Branching::Call)
+            }
             Branching::Call | Branching::Other => false,
         };
     }
@@ -883,6 +897,27 @@ mod tests {
         ]);
         let movable = movable_projections(&body.node, &[]);
         assert!(movable.is_empty());
+    }
+
+    #[test]
+    fn a_read_inside_a_call_in_an_earlier_part_lets_a_later_part_move() {
+        // R(o = f(s.st), st = s.st): the call returns before `st` is read.
+        let body = sp(MirExpr::Tuple(vec![
+            call(vec![project(local(0, false), "st")]),
+            project(local(0, true), "st"),
+        ]));
+        let movable = movable_projections(&body.node, &[]);
+        let MirExpr::Tuple(parts) = &body.node else {
+            unreachable!()
+        };
+        assert_eq!(movable.len(), 1);
+        assert!(movable.contains(&addr(&parts[1])));
+        // A bare read in the earlier part still holds the field.
+        let body = sp(MirExpr::Tuple(vec![
+            project(local(0, false), "st"),
+            project(local(0, true), "st"),
+        ]));
+        assert!(movable_projections(&body.node, &[]).is_empty());
     }
 
     #[test]

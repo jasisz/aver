@@ -185,39 +185,85 @@ pub fn lookupFn(
 /// Build env map from parameter names and argument values.
 #[inline(always)]
 pub fn zipArgs(
-    mut params @ _: aver_rt::AverList<AverStr>,
-    mut args @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    params @ _: &aver_rt::AverList<AverStr>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     mut acc @ _: aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val> {
+    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut params @ _: &aver_rt::AverList<AverStr> = params;
+    let mut __hold1: aver_rt::AverList<crate::aver_generated::domain::value::Val>;
+    let mut args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val> = args;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(params, [] => { return acc; }, [p, ps] => { aver_list_match!(args, [] => { return acc; }, [a, as_] => { {
-            let __tco0 = ps;
-            let __tco1 = as_;
-            let __tco2 = acc.insert_owned(p, a);
-            params = __tco0;
-            args = __tco1;
-            acc = __tco2;
-            continue;
-        } }) })
+        {
+            let __list_subject = params;
+            if __list_subject.is_empty() {
+                return acc;
+            } else {
+                if let Some((p, ps)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    {
+                        let __list_subject = args;
+                        if __list_subject.is_empty() {
+                            return acc;
+                        } else {
+                            if let Some((a, as_)) = aver_rt::list_uncons_cloned(__list_subject) {
+                                {
+                                    let __tco0 = ps;
+                                    let __tco1 = as_;
+                                    let __tco2 = acc.insert_owned(p, a);
+                                    __hold0 = __tco0;
+                                    params = &__hold0;
+                                    __hold1 = __tco1;
+                                    args = &__hold1;
+                                    acc = __tco2;
+                                    continue;
+                                }
+                            } else {
+                                panic!("Aver Rust codegen: non-exhaustive list match")
+                            }
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
 /// Add pattern match bindings to an env map.
 #[inline(always)]
 pub fn mergeBindings(
-    mut bindings @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    bindings @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
     mut env @ _: aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val> {
+    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>;
+    let mut bindings @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> =
+        bindings;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(bindings, [] => { return env; }, [pair, rest] => { { let (k, v) = pair; {
-            let __tco0 = rest;
-            let __tco1 = env.insert_owned(k, v);
-            bindings = __tco0;
-            env = __tco1;
-            continue;
-        } } })
+        {
+            let __list_subject = bindings;
+            if __list_subject.is_empty() {
+                return env;
+            } else {
+                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    {
+                        let (k, v) = pair.clone();
+                        {
+                            let __tco0 = rest;
+                            let __tco1 = env.insert_owned(k, v);
+                            __hold0 = __tco0;
+                            bindings = &__hold0;
+                            env = __tco1;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
@@ -227,7 +273,7 @@ pub fn fnsToStore(
 ) -> FnStore {
     crate::cancel_checkpoint();
     let nameToId @ _ = crate::aver_generated::domain::eval::store::fnsToIdMap(
-        fns.clone(),
+        fns,
         HashMap::new(),
         aver_rt::AverInt::from_i64(0),
     );
@@ -241,20 +287,34 @@ pub fn fnsToStore(
 /// Convert a list of FnDefs to a name->id map. Later defs shadow earlier ones.
 #[inline(always)]
 pub fn fnsToIdMap(
-    mut fns @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     mut acc @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut idx @ _: aver_rt::AverInt,
 ) -> aver_rt::AverMap<AverStr, aver_rt::AverInt> {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>;
+    let mut fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> = fns;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(fns, [] => { return acc; }, [f, rest] => { {
-            let __tco0 = rest;
-            let __tco1 = acc.insert_owned(f.name, idx.clone());
-            let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
-            fns = __tco0;
-            acc = __tco1;
-            idx = __tco2;
-            continue;
-        } })
+        {
+            let __list_subject = fns;
+            if __list_subject.is_empty() {
+                return acc;
+            } else {
+                if let Some((f, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    {
+                        let __tco0 = rest;
+                        let __tco1 = acc.insert_owned(f.name, idx.clone());
+                        let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
+                        __hold0 = __tco0;
+                        fns = &__hold0;
+                        acc = __tco1;
+                        idx = __tco2;
+                        continue;
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }

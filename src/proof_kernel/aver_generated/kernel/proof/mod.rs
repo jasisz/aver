@@ -2245,19 +2245,51 @@ pub fn givenNames(
     gs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar>,
 ) -> aver_rt::AverList<AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(gs.clone(), [] => aver_rt::AverList::empty(), [g, rest] => aver_rt::AverList::prepend(g.name, &crate::proof_kernel::aver_generated::kernel::proof::givenNames(&rest)))
+    {
+        let __list_subject = gs;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let Some((g, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                aver_rt::AverList::prepend(
+                    g.name,
+                    &crate::proof_kernel::aver_generated::kernel::proof::givenNames(&rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// A definition by name.
 #[inline(always)]
-pub fn findDef(mut name @ _: AverStr, mut ds @ _: aver_rt::AverList<Def>) -> Option<Def> {
+pub fn findDef(mut name @ _: AverStr, ds @ _: &aver_rt::AverList<Def>) -> Option<Def> {
+    let mut __hold1: aver_rt::AverList<Def>;
+    let mut ds @ _: &aver_rt::AverList<Def> = ds;
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        aver_list_match!(ds, [] => { return None; }, [d, rest] => { if (d.name == name) { return Some(d); } else { {
-            let __tco1 = rest;
-            ds = __tco1;
-            continue;
-        } } })
+        {
+            let __list_subject = ds;
+            if __list_subject.is_empty() {
+                return None;
+            } else {
+                if let Some((d, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    if (d.name == name) {
+                        return Some(d);
+                    } else {
+                        {
+                            let __tco1 = rest;
+                            __hold1 = __tco1;
+                            ds = &__hold1;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
@@ -2265,5 +2297,19 @@ pub fn findDef(mut name @ _: AverStr, mut ds @ _: aver_rt::AverList<Def>) -> Opt
 #[inline(always)]
 pub fn variantNames(vs @ _: &aver_rt::AverList<Variant>) -> aver_rt::AverList<AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(vs.clone(), [] => aver_rt::AverList::empty(), [v, rest] => aver_rt::AverList::prepend(v.name, &crate::proof_kernel::aver_generated::kernel::proof::variantNames(&rest)))
+    {
+        let __list_subject = vs;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let Some((v, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                aver_rt::AverList::prepend(
+                    v.name,
+                    &crate::proof_kernel::aver_generated::kernel::proof::variantNames(&rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }

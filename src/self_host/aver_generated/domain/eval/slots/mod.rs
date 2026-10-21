@@ -9,7 +9,7 @@ pub fn buildSlotEnv(
     crate::cancel_checkpoint();
     Ok(
         crate::aver_generated::domain::eval::slots::buildSlotEnvLoop(
-            args.clone(),
+            args,
             match aver_rt::checked_vector_size(&(slotCount)) {
                 Some(__n) => Ok(aver_rt::AverVector::new(
                     __n,
@@ -25,21 +25,41 @@ pub fn buildSlotEnv(
 /// Fill slot env from arg list.
 #[inline(always)]
 pub fn buildSlotEnvLoop(
-    mut args @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     mut acc @ _: aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
     mut idx @ _: aver_rt::AverInt,
 ) -> aver_rt::AverVector<crate::aver_generated::domain::value::Val> {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val>;
+    let mut args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val> = args;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(args, [] => { return acc; }, [a, rest] => { {
-            let __tco0 = rest;
-            let __tco1 = { let __vec = acc; match (idx).to_usize() { Some(__idx) if __idx < __vec.len() => __vec.set_unchecked(__idx, a), _ => __vec } };
-            let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
-            args = __tco0;
-            acc = __tco1;
-            idx = __tco2;
-            continue;
-        } })
+        {
+            let __list_subject = args;
+            if __list_subject.is_empty() {
+                return acc;
+            } else {
+                if let Some((a, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    {
+                        let __tco0 = rest;
+                        let __tco1 = {
+                            let __vec = acc;
+                            match (idx).to_usize() {
+                                Some(__idx) if __idx < __vec.len() => __vec.set_unchecked(__idx, a),
+                                _ => __vec,
+                            }
+                        };
+                        let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
+                        __hold0 = __tco0;
+                        args = &__hold0;
+                        acc = __tco1;
+                        idx = __tco2;
+                        continue;
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 

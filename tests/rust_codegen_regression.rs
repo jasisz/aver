@@ -204,7 +204,7 @@ fn rust_codegen_builds_embedded_bytes_crypto_fixture() {
         .find("if let Some(__packed) = xs.as_packed()")
         .expect("Bytes.fromList should recognize an already-packed Rust carrier");
     let range_walk = bytes_module
-        .find("allInRange(xs.clone())")
+        .find("allInRange(xs)")
         .expect("Bytes.fromList should retain validation for a Wide carrier");
     assert!(
         packed_fast_path < range_walk,

@@ -37,7 +37,7 @@ pub fn goalOf(
             facts: s.facts.clone(),
             hyps: aver_rt::AverList::empty(),
         },
-        s.obligation.givens.clone(),
+        &s.obligation.givens,
     )
 }
 
@@ -45,17 +45,33 @@ pub fn goalOf(
 #[inline(always)]
 pub fn withGivens(
     mut g0 @ _: crate::proof_std::aver_generated::kernel::proof::Goal,
-    mut gs @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>,
+    gs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>,
 ) -> crate::proof_std::aver_generated::kernel::proof::Goal {
+    let mut __hold1: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>;
+    let mut gs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar> =
+        gs;
     loop {
         crate::proof_std::cancel_checkpoint();
-        aver_list_match!(gs, [] => { return g0; }, [g, rest] => { {
-            let __tco0 = crate::proof_std::aver_generated::kernel::wire::withGiven(&g0, &g);
-            let __tco1 = rest;
-            g0 = __tco0;
-            gs = __tco1;
-            continue;
-        } })
+        {
+            let __list_subject = gs;
+            if __list_subject.is_empty() {
+                return g0;
+            } else {
+                if let (Some(g), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    {
+                        let __tco0 =
+                            crate::proof_std::aver_generated::kernel::wire::withGiven(&g0, g);
+                        let __tco1 = rest;
+                        g0 = __tco0;
+                        __hold1 = __tco1;
+                        gs = &__hold1;
+                        continue;
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
@@ -149,7 +165,7 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                 AverStr::from("unit")
             }
             crate::proof_std::aver_generated::kernel::term::Ty__view::TyList(__a_fields) => {
-                let a = __a_fields.0.clone();
+                let a = &__a_fields.0;
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
@@ -160,7 +176,7 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::tyText(&a)),
+                            &(crate::proof_std::aver_generated::kernel::wire::tyText(a)),
                         )));
                         __b
                     };
@@ -169,7 +185,7 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                 })
             }
             crate::proof_std::aver_generated::kernel::term::Ty__view::TyOption(__a_fields) => {
-                let a = __a_fields.0.clone();
+                let a = &__a_fields.0;
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
@@ -180,7 +196,7 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::tyText(&a)),
+                            &(crate::proof_std::aver_generated::kernel::wire::tyText(a)),
                         )));
                         __b
                     };
@@ -189,7 +205,7 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                 })
             }
             crate::proof_std::aver_generated::kernel::term::Ty__view::TyVector(__a_fields) => {
-                let a = __a_fields.0.clone();
+                let a = &__a_fields.0;
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
@@ -200,7 +216,7 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::tyText(&a)),
+                            &(crate::proof_std::aver_generated::kernel::wire::tyText(a)),
                         )));
                         __b
                     };
@@ -209,8 +225,8 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                 })
             }
             crate::proof_std::aver_generated::kernel::term::Ty__view::TyResult(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
@@ -223,7 +239,7 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                                     __b
                                 };
                                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(crate::proof_std::aver_generated::kernel::wire::tyText(&a)),
+                                    &(crate::proof_std::aver_generated::kernel::wire::tyText(a)),
                                 )));
                                 __b
                             };
@@ -231,7 +247,7 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::tyText(&b)),
+                            &(crate::proof_std::aver_generated::kernel::wire::tyText(b)),
                         )));
                         __b
                     };
@@ -240,8 +256,8 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                 })
             }
             crate::proof_std::aver_generated::kernel::term::Ty__view::TyMap(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
@@ -254,7 +270,7 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                                     __b
                                 };
                                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(crate::proof_std::aver_generated::kernel::wire::tyText(&a)),
+                                    &(crate::proof_std::aver_generated::kernel::wire::tyText(a)),
                                 )));
                                 __b
                             };
@@ -262,7 +278,7 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::tyText(&b)),
+                            &(crate::proof_std::aver_generated::kernel::wire::tyText(b)),
                         )));
                         __b
                     };
@@ -271,10 +287,10 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                 })
             }
             crate::proof_std::aver_generated::kernel::term::Ty__view::TyTuple(__xs_fields) => {
-                let xs = __xs_fields.0.clone();
+                let xs = &__xs_fields.0;
                 crate::proof_std::aver_generated::kernel::wire::headed(
                     AverStr::from("tuple"),
-                    &crate::proof_std::aver_generated::kernel::wire::tyTexts(&xs),
+                    &crate::proof_std::aver_generated::kernel::wire::tyTexts(xs),
                 )
             }
             crate::proof_std::aver_generated::kernel::term::Ty__view::TyNamed(__n_fields) => {
@@ -348,7 +364,21 @@ pub fn tyTexts(
     ts @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Ty>,
 ) -> aver_rt::AverList<AverStr> {
     crate::proof_std::cancel_checkpoint();
-    aver_list_match!(ts.clone(), [] => aver_rt::AverList::empty(), [t, rest] => aver_rt::AverList::prepend(crate::proof_std::aver_generated::kernel::wire::tyText(&t), &crate::proof_std::aver_generated::kernel::wire::tyTexts(&rest)))
+    {
+        let __list_subject = ts;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                aver_rt::AverList::prepend(
+                    crate::proof_std::aver_generated::kernel::wire::tyText(t),
+                    &crate::proof_std::aver_generated::kernel::wire::tyTexts(&rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// What the compiler reads back from a plan: `proof` and the proof, or `refused` and the plan's reason, each on the line after the word.
@@ -414,16 +444,31 @@ pub fn quote(s @ _: AverStr) -> AverStr {
 
 /// The characters with quotes, backslashes and line breaks escaped.
 #[inline(always)]
-pub fn escaped(mut cs @ _: aver_rt::AverList<AverStr>, mut acc @ _: AverStr) -> AverStr {
+pub fn escaped(cs @ _: &aver_rt::AverList<AverStr>, mut acc @ _: AverStr) -> AverStr {
+    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut cs @ _: &aver_rt::AverList<AverStr> = cs;
     loop {
         crate::proof_std::cancel_checkpoint();
-        aver_list_match!(cs, [] => { return acc; }, [c, rest] => { {
-            let __tco0 = rest;
-            let __tco1 = (acc + &crate::proof_std::aver_generated::kernel::wire::escapeOne(c));
-            cs = __tco0;
-            acc = __tco1;
-            continue;
-        } })
+        {
+            let __list_subject = cs;
+            if __list_subject.is_empty() {
+                return acc;
+            } else {
+                if let Some((c, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    {
+                        let __tco0 = rest;
+                        let __tco1 =
+                            (acc + &crate::proof_std::aver_generated::kernel::wire::escapeOne(c));
+                        __hold0 = __tco0;
+                        cs = &__hold0;
+                        acc = __tco1;
+                        continue;
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
@@ -594,7 +639,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                 AverStr::from("(hole)")
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TGet(__o_fields) => {
-                let o = __o_fields.0.clone();
+                let o = &__o_fields.0;
                 let f = __o_fields.1.clone();
                 aver_rt::AverStr::from({
                     let mut __b = {
@@ -608,7 +653,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                                     __b
                                 };
                                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(crate::proof_std::aver_generated::kernel::wire::termText(&o)),
+                                    &(crate::proof_std::aver_generated::kernel::wire::termText(o)),
                                 )));
                                 __b
                             };
@@ -624,7 +669,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TCall(__f_fields) => {
                 let f = __f_fields.0.clone();
-                let xs = __f_fields.1.clone();
+                let xs = &__f_fields.1;
                 crate::proof_std::aver_generated::kernel::wire::headed(
                     aver_rt::AverStr::from({
                         let mut __b = {
@@ -637,12 +682,12 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f))));
                         __b
                     }),
-                    &crate::proof_std::aver_generated::kernel::wire::termTexts(&xs),
+                    &crate::proof_std::aver_generated::kernel::wire::termTexts(xs),
                 )
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TBi(__f_fields) => {
                 let f = __f_fields.0.clone();
-                let xs = __f_fields.1.clone();
+                let xs = &__f_fields.1;
                 crate::proof_std::aver_generated::kernel::wire::headed(
                     aver_rt::AverStr::from({
                         let mut __b = {
@@ -655,12 +700,12 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f))));
                         __b
                     }),
-                    &crate::proof_std::aver_generated::kernel::wire::termTexts(&xs),
+                    &crate::proof_std::aver_generated::kernel::wire::termTexts(xs),
                 )
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TCtor(__c_fields) => {
                 let c = __c_fields.0.clone();
-                let xs = __c_fields.1.clone();
+                let xs = &__c_fields.1;
                 crate::proof_std::aver_generated::kernel::wire::headed(
                     aver_rt::AverStr::from({
                         let mut __b = {
@@ -673,13 +718,13 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c))));
                         __b
                     }),
-                    &crate::proof_std::aver_generated::kernel::wire::termTexts(&xs),
+                    &crate::proof_std::aver_generated::kernel::wire::termTexts(xs),
                 )
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TOp(__o_fields) => {
                 let o = __o_fields.0.clone();
-                let a = __o_fields.1.clone();
-                let b = __o_fields.2.clone();
+                let a = &__o_fields.1;
+                let b = &__o_fields.2;
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
@@ -704,7 +749,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                                     __b
                                 };
                                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(crate::proof_std::aver_generated::kernel::wire::termText(&a)),
+                                    &(crate::proof_std::aver_generated::kernel::wire::termText(a)),
                                 )));
                                 __b
                             };
@@ -712,7 +757,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::termText(&b)),
+                            &(crate::proof_std::aver_generated::kernel::wire::termText(b)),
                         )));
                         __b
                     };
@@ -721,7 +766,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                 })
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TNeg(__a_fields) => {
-                let a = __a_fields.0.clone();
+                let a = &__a_fields.0;
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
@@ -732,7 +777,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::termText(&a)),
+                            &(crate::proof_std::aver_generated::kernel::wire::termText(a)),
                         )));
                         __b
                     };
@@ -741,8 +786,8 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                 })
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TMatch(__s_fields) => {
-                let s = __s_fields.0.clone();
-                let arms = __s_fields.1.clone();
+                let s = &__s_fields.0;
+                let arms = &__s_fields.1;
                 crate::proof_std::aver_generated::kernel::wire::headed(
                     aver_rt::AverStr::from({
                         let mut __b = {
@@ -753,37 +798,37 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::termText(&s)),
+                            &(crate::proof_std::aver_generated::kernel::wire::termText(s)),
                         )));
                         __b
                     }),
-                    &crate::proof_std::aver_generated::kernel::wire::armTexts(&arms),
+                    &crate::proof_std::aver_generated::kernel::wire::armTexts(arms),
                 )
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TParts(__xs_fields) => {
-                let xs = __xs_fields.0.clone();
+                let xs = &__xs_fields.0;
                 crate::proof_std::aver_generated::kernel::wire::headed(
                     AverStr::from("str"),
-                    &crate::proof_std::aver_generated::kernel::wire::termTexts(&xs),
+                    &crate::proof_std::aver_generated::kernel::wire::termTexts(xs),
                 )
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TList(__xs_fields) => {
-                let xs = __xs_fields.0.clone();
+                let xs = &__xs_fields.0;
                 crate::proof_std::aver_generated::kernel::wire::headed(
                     AverStr::from("list"),
-                    &crate::proof_std::aver_generated::kernel::wire::termTexts(&xs),
+                    &crate::proof_std::aver_generated::kernel::wire::termTexts(xs),
                 )
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TTuple(__xs_fields) => {
-                let xs = __xs_fields.0.clone();
+                let xs = &__xs_fields.0;
                 crate::proof_std::aver_generated::kernel::wire::headed(
                     AverStr::from("tuple"),
-                    &crate::proof_std::aver_generated::kernel::wire::termTexts(&xs),
+                    &crate::proof_std::aver_generated::kernel::wire::termTexts(xs),
                 )
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TRec(__ty_fields) => {
                 let ty = __ty_fields.0.clone();
-                let fs = __ty_fields.1.clone();
+                let fs = &__ty_fields.1;
                 crate::proof_std::aver_generated::kernel::wire::headed(
                     aver_rt::AverStr::from({
                         let mut __b = {
@@ -796,13 +841,13 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(ty))));
                         __b
                     }),
-                    &crate::proof_std::aver_generated::kernel::wire::fieldTexts(&fs),
+                    &crate::proof_std::aver_generated::kernel::wire::fieldTexts(fs),
                 )
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TUpd(__ty_fields) => {
                 let ty = __ty_fields.0.clone();
-                let b = __ty_fields.1.clone();
-                let fs = __ty_fields.2.clone();
+                let b = &__ty_fields.1;
+                let fs = &__ty_fields.2;
                 crate::proof_std::aver_generated::kernel::wire::headed(
                     aver_rt::AverStr::from({
                         let mut __b = {
@@ -821,11 +866,11 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::termText(&b)),
+                            &(crate::proof_std::aver_generated::kernel::wire::termText(b)),
                         )));
                         __b
                     }),
-                    &crate::proof_std::aver_generated::kernel::wire::fieldTexts(&fs),
+                    &crate::proof_std::aver_generated::kernel::wire::fieldTexts(fs),
                 )
             }
         }
@@ -838,7 +883,21 @@ pub fn termTexts(
     xs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
 ) -> aver_rt::AverList<AverStr> {
     crate::proof_std::cancel_checkpoint();
-    aver_list_match!(xs.clone(), [] => aver_rt::AverList::empty(), [x, rest] => aver_rt::AverList::prepend(crate::proof_std::aver_generated::kernel::wire::termText(&x), &crate::proof_std::aver_generated::kernel::wire::termTexts(&rest)))
+    {
+        let __list_subject = xs;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                aver_rt::AverList::prepend(
+                    crate::proof_std::aver_generated::kernel::wire::termText(x),
+                    &crate::proof_std::aver_generated::kernel::wire::termTexts(&rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// (FIELD TERM) for each field.
@@ -847,7 +906,51 @@ pub fn fieldTexts(
     fs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Field>,
 ) -> aver_rt::AverList<AverStr> {
     crate::proof_std::cancel_checkpoint();
-    aver_list_match!(fs.clone(), [] => aver_rt::AverList::empty(), [f, rest] => { aver_rt::AverList::prepend(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(35)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("(")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f.name)))); __b }; __b.push_str(&AverStr::from(" ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(&f.value))))); __b }; __b.push_str(&AverStr::from(")")); __b }), &crate::proof_std::aver_generated::kernel::wire::fieldTexts(&rest)) })
+    {
+        let __list_subject = fs;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let Some((f, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                aver_rt::AverList::prepend(
+                    aver_rt::AverStr::from({
+                        let mut __b = {
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = {
+                                        let mut __b = aver_rt::Buffer::with_capacity(
+                                            (aver_rt::AverInt::from_i64(35))
+                                                .to_usize()
+                                                .unwrap_or(0),
+                                        );
+                                        __b.push_str(&AverStr::from("("));
+                                        __b
+                                    };
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                        &(f.name),
+                                    )));
+                                    __b
+                                };
+                                __b.push_str(&AverStr::from(" "));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                &(crate::proof_std::aver_generated::kernel::wire::termText(
+                                    &f.value,
+                                )),
+                            )));
+                            __b
+                        };
+                        __b.push_str(&AverStr::from(")"));
+                        __b
+                    }),
+                    &crate::proof_std::aver_generated::kernel::wire::fieldTexts(&rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// (arm PAT TERM) for each arm.
@@ -856,7 +959,53 @@ pub fn armTexts(
     arms @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Arm>,
 ) -> aver_rt::AverList<AverStr> {
     crate::proof_std::cancel_checkpoint();
-    aver_list_match!(arms.clone(), [] => aver_rt::AverList::empty(), [a, rest] => { aver_rt::AverList::prepend(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("(arm ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::patText(&a.pattern))))); __b }; __b.push_str(&AverStr::from(" ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(&a.body))))); __b }; __b.push_str(&AverStr::from(")")); __b }), &crate::proof_std::aver_generated::kernel::wire::armTexts(&rest)) })
+    {
+        let __list_subject = arms;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let Some((a, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                aver_rt::AverList::prepend(
+                    aver_rt::AverStr::from({
+                        let mut __b = {
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = {
+                                        let mut __b = aver_rt::Buffer::with_capacity(
+                                            (aver_rt::AverInt::from_i64(39))
+                                                .to_usize()
+                                                .unwrap_or(0),
+                                        );
+                                        __b.push_str(&AverStr::from("(arm "));
+                                        __b
+                                    };
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                        &(crate::proof_std::aver_generated::kernel::wire::patText(
+                                            &a.pattern,
+                                        )),
+                                    )));
+                                    __b
+                                };
+                                __b.push_str(&AverStr::from(" "));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                &(crate::proof_std::aver_generated::kernel::wire::termText(
+                                    &a.body,
+                                )),
+                            )));
+                            __b
+                        };
+                        __b.push_str(&AverStr::from(")"));
+                        __b
+                    }),
+                    &crate::proof_std::aver_generated::kernel::wire::armTexts(&rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// One pattern in the step grammar.
@@ -882,26 +1031,23 @@ pub fn patText(p @ _: &crate::proof_std::aver_generated::kernel::term::Pat) -> A
                 __b
             })
         }
-        crate::proof_std::aver_generated::kernel::term::Pat::PLit(t) => {
-            let t = t.clone();
-            aver_rt::AverStr::from({
+        crate::proof_std::aver_generated::kernel::term::Pat::PLit(t) => aver_rt::AverStr::from({
+            let mut __b = {
                 let mut __b = {
-                    let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(
-                            (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
-                        );
-                        __b.push_str(&AverStr::from("(pl "));
-                        __b
-                    };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                        &(crate::proof_std::aver_generated::kernel::wire::termText(&t)),
-                    )));
+                    let mut __b = aver_rt::Buffer::with_capacity(
+                        (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
+                    );
+                    __b.push_str(&AverStr::from("(pl "));
                     __b
                 };
-                __b.push_str(&AverStr::from(")"));
+                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                    &(crate::proof_std::aver_generated::kernel::wire::termText(t)),
+                )));
                 __b
-            })
-        }
+            };
+            __b.push_str(&AverStr::from(")"));
+            __b
+        }),
         crate::proof_std::aver_generated::kernel::term::Pat::PNil => AverStr::from("(pnil)"),
         crate::proof_std::aver_generated::kernel::term::Pat::PCons(h, t) => {
             let h = h.clone();
@@ -931,7 +1077,6 @@ pub fn patText(p @ _: &crate::proof_std::aver_generated::kernel::term::Pat) -> A
             })
         }
         crate::proof_std::aver_generated::kernel::term::Pat::PTuple(ps) => {
-            let ps = ps.clone();
             aver_rt::AverStr::from({
                 let mut __b = {
                     let mut __b = {
@@ -943,7 +1088,7 @@ pub fn patText(p @ _: &crate::proof_std::aver_generated::kernel::term::Pat) -> A
                     };
                     __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
                         &(crate::proof_std::aver_generated::kernel::wire::spaced(
-                            &crate::proof_std::aver_generated::kernel::wire::patTexts(&ps),
+                            &crate::proof_std::aver_generated::kernel::wire::patTexts(ps),
                         )),
                     )));
                     __b
@@ -954,7 +1099,6 @@ pub fn patText(p @ _: &crate::proof_std::aver_generated::kernel::term::Pat) -> A
         }
         crate::proof_std::aver_generated::kernel::term::Pat::PCtor(c, ns) => {
             let c = c.clone();
-            let ns = ns.clone();
             crate::proof_std::aver_generated::kernel::wire::headed(
                 aver_rt::AverStr::from({
                     let mut __b = {
@@ -967,7 +1111,7 @@ pub fn patText(p @ _: &crate::proof_std::aver_generated::kernel::term::Pat) -> A
                     __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c))));
                     __b
                 }),
-                &ns,
+                ns,
             )
         }
     }
@@ -979,7 +1123,21 @@ pub fn patTexts(
     ps @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Pat>,
 ) -> aver_rt::AverList<AverStr> {
     crate::proof_std::cancel_checkpoint();
-    aver_list_match!(ps.clone(), [] => aver_rt::AverList::empty(), [p, rest] => aver_rt::AverList::prepend(crate::proof_std::aver_generated::kernel::wire::patText(&p), &crate::proof_std::aver_generated::kernel::wire::patTexts(&rest)))
+    {
+        let __list_subject = ps;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                aver_rt::AverList::prepend(
+                    crate::proof_std::aver_generated::kernel::wire::patText(p),
+                    &crate::proof_std::aver_generated::kernel::wire::patTexts(&rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// ((NAME TERM)…)
@@ -1015,7 +1173,51 @@ pub fn bindingTexts(
     bs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding>,
 ) -> aver_rt::AverList<AverStr> {
     crate::proof_std::cancel_checkpoint();
-    aver_list_match!(bs.clone(), [] => aver_rt::AverList::empty(), [b, rest] => { aver_rt::AverList::prepend(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(35)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("(")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(b.name)))); __b }; __b.push_str(&AverStr::from(" ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(&b.value))))); __b }; __b.push_str(&AverStr::from(")")); __b }), &crate::proof_std::aver_generated::kernel::wire::bindingTexts(&rest)) })
+    {
+        let __list_subject = bs;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let Some((b, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                aver_rt::AverList::prepend(
+                    aver_rt::AverStr::from({
+                        let mut __b = {
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = {
+                                        let mut __b = aver_rt::Buffer::with_capacity(
+                                            (aver_rt::AverInt::from_i64(35))
+                                                .to_usize()
+                                                .unwrap_or(0),
+                                        );
+                                        __b.push_str(&AverStr::from("("));
+                                        __b
+                                    };
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                        &(b.name),
+                                    )));
+                                    __b
+                                };
+                                __b.push_str(&AverStr::from(" "));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                &(crate::proof_std::aver_generated::kernel::wire::termText(
+                                    &b.value,
+                                )),
+                            )));
+                            __b
+                        };
+                        __b.push_str(&AverStr::from(")"));
+                        __b
+                    }),
+                    &crate::proof_std::aver_generated::kernel::wire::bindingTexts(&rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// One proof in the step grammar.
@@ -1025,7 +1227,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
         let __t = p;
         match __t.view() {
             crate::proof_std::aver_generated::kernel::proof::Proof__view::PRefl(__t_fields) => {
-                let t = __t_fields.0.clone();
+                let t = &__t_fields.0;
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
@@ -1036,7 +1238,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::termText(&t)),
+                            &(crate::proof_std::aver_generated::kernel::wire::termText(t)),
                         )));
                         __b
                     };
@@ -1045,7 +1247,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                 })
             }
             crate::proof_std::aver_generated::kernel::proof::Proof__view::PSymm(__q_fields) => {
-                let q = __q_fields.0.clone();
+                let q = &__q_fields.0;
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
@@ -1056,7 +1258,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::proofText(&q)),
+                            &(crate::proof_std::aver_generated::kernel::wire::proofText(q)),
                         )));
                         __b
                     };
@@ -1065,8 +1267,8 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                 })
             }
             crate::proof_std::aver_generated::kernel::proof::Proof__view::PTrans(__ts_fields) => {
-                let ts = __ts_fields.0.clone();
-                let ps = __ts_fields.1.clone();
+                let ts = &__ts_fields.0;
+                let ps = &__ts_fields.1;
                 crate::proof_std::aver_generated::kernel::wire::headed(
                     aver_rt::AverStr::from({
                         let mut __b = {
@@ -1079,7 +1281,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             };
                             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
                                 &(crate::proof_std::aver_generated::kernel::wire::spaced(
-                                    &crate::proof_std::aver_generated::kernel::wire::termTexts(&ts),
+                                    &crate::proof_std::aver_generated::kernel::wire::termTexts(ts),
                                 )),
                             )));
                             __b
@@ -1087,12 +1289,12 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                         __b.push_str(&AverStr::from(")"));
                         __b
                     }),
-                    &crate::proof_std::aver_generated::kernel::wire::proofTexts(&ps),
+                    &crate::proof_std::aver_generated::kernel::wire::proofTexts(ps),
                 )
             }
             crate::proof_std::aver_generated::kernel::proof::Proof__view::PCongr(__c_fields) => {
-                let c = __c_fields.0.clone();
-                let q = __c_fields.1.clone();
+                let c = &__c_fields.0;
+                let q = &__c_fields.1;
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
@@ -1105,7 +1307,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                     __b
                                 };
                                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(crate::proof_std::aver_generated::kernel::wire::termText(&c)),
+                                    &(crate::proof_std::aver_generated::kernel::wire::termText(c)),
                                 )));
                                 __b
                             };
@@ -1113,7 +1315,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::proofText(&q)),
+                            &(crate::proof_std::aver_generated::kernel::wire::proofText(q)),
                         )));
                         __b
                     };
@@ -1124,9 +1326,9 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
             crate::proof_std::aver_generated::kernel::proof::Proof__view::PUnfold(__f_fields) => {
                 let f = __f_fields.0.clone();
                 let k = __f_fields.1.clone();
-                let xs = __f_fields.2.clone();
-                let ys = __f_fields.3.clone();
-                let pre = __f_fields.4.clone();
+                let xs = &__f_fields.2;
+                let ys = &__f_fields.3;
+                let pre = &__f_fields.4;
                 crate::proof_std::aver_generated::kernel::wire::headed(
                     aver_rt::AverStr::from({
                         let mut __b = {
@@ -1162,7 +1364,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                         __b.push_str(&AverStr::from(" ("));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(&crate::proof_std::aver_generated::kernel::wire::termTexts(&xs))))));
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(&crate::proof_std::aver_generated::kernel::wire::termTexts(xs))))));
                                     __b
                                 };
                                 __b.push_str(&AverStr::from(") ("));
@@ -1170,7 +1372,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             };
                             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
                                 &(crate::proof_std::aver_generated::kernel::wire::spaced(
-                                    &crate::proof_std::aver_generated::kernel::wire::termTexts(&ys),
+                                    &crate::proof_std::aver_generated::kernel::wire::termTexts(ys),
                                 )),
                             )));
                             __b
@@ -1178,7 +1380,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                         __b.push_str(&AverStr::from(")"));
                         __b
                     }),
-                    &crate::proof_std::aver_generated::kernel::wire::proofTexts(&pre),
+                    &crate::proof_std::aver_generated::kernel::wire::proofTexts(pre),
                 )
             }
             crate::proof_std::aver_generated::kernel::proof::Proof__view::PConst(__n_fields) => {
@@ -1201,9 +1403,9 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
             }
             crate::proof_std::aver_generated::kernel::proof::Proof__view::PArm(__k_fields) => {
                 let k = __k_fields.0.clone();
-                let ys = __k_fields.1.clone();
-                let t = __k_fields.2.clone();
-                let q = __k_fields.3.clone();
+                let ys = &__k_fields.1;
+                let t = &__k_fields.2;
+                let q = &__k_fields.3;
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
@@ -1229,14 +1431,14 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                             __b.push_str(&AverStr::from(" ("));
                                             __b
                                         };
-                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(&crate::proof_std::aver_generated::kernel::wire::termTexts(&ys))))));
+                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(&crate::proof_std::aver_generated::kernel::wire::termTexts(ys))))));
                                         __b
                                     };
                                     __b.push_str(&AverStr::from(") "));
                                     __b
                                 };
                                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(crate::proof_std::aver_generated::kernel::wire::termText(&t)),
+                                    &(crate::proof_std::aver_generated::kernel::wire::termText(t)),
                                 )));
                                 __b
                             };
@@ -1244,7 +1446,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::proofText(&q)),
+                            &(crate::proof_std::aver_generated::kernel::wire::proofText(q)),
                         )));
                         __b
                     };
@@ -1253,7 +1455,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                 })
             }
             crate::proof_std::aver_generated::kernel::proof::Proof__view::PProj(__t_fields) => {
-                let t = __t_fields.0.clone();
+                let t = &__t_fields.0;
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
@@ -1264,7 +1466,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::termText(&t)),
+                            &(crate::proof_std::aver_generated::kernel::wire::termText(t)),
                         )));
                         __b
                     };
@@ -1273,7 +1475,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                 })
             }
             crate::proof_std::aver_generated::kernel::proof::Proof__view::PCell(__t_fields) => {
-                let t = __t_fields.0.clone();
+                let t = &__t_fields.0;
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
@@ -1284,7 +1486,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::termText(&t)),
+                            &(crate::proof_std::aver_generated::kernel::wire::termText(t)),
                         )));
                         __b
                     };
@@ -1312,8 +1514,8 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
             }
             crate::proof_std::aver_generated::kernel::proof::Proof__view::PRule(__id_fields) => {
                 let id = __id_fields.0.clone();
-                let bs = __id_fields.1.clone();
-                let ps = __id_fields.2.clone();
+                let bs = &__id_fields.1;
+                let ps = &__id_fields.2;
                 crate::proof_std::aver_generated::kernel::wire::headed(
                     aver_rt::AverStr::from({
                         let mut __b = {
@@ -1332,17 +1534,17 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::bindingsText(&bs)),
+                            &(crate::proof_std::aver_generated::kernel::wire::bindingsText(bs)),
                         )));
                         __b
                     }),
-                    &crate::proof_std::aver_generated::kernel::wire::proofTexts(&ps),
+                    &crate::proof_std::aver_generated::kernel::wire::proofTexts(ps),
                 )
             }
             crate::proof_std::aver_generated::kernel::proof::Proof__view::PLaw(__k_fields) => {
                 let k = __k_fields.0.clone();
-                let bs = __k_fields.1.clone();
-                let ps = __k_fields.2.clone();
+                let bs = &__k_fields.1;
+                let ps = &__k_fields.2;
                 crate::proof_std::aver_generated::kernel::wire::headed(
                     aver_rt::AverStr::from({
                         let mut __b = {
@@ -1361,16 +1563,16 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::bindingsText(&bs)),
+                            &(crate::proof_std::aver_generated::kernel::wire::bindingsText(bs)),
                         )));
                         __b
                     }),
-                    &crate::proof_std::aver_generated::kernel::wire::proofTexts(&ps),
+                    &crate::proof_std::aver_generated::kernel::wire::proofTexts(ps),
                 )
             }
             crate::proof_std::aver_generated::kernel::proof::Proof__view::PCompute(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
@@ -1383,7 +1585,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                     __b
                                 };
                                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(crate::proof_std::aver_generated::kernel::wire::termText(&a)),
+                                    &(crate::proof_std::aver_generated::kernel::wire::termText(a)),
                                 )));
                                 __b
                             };
@@ -1391,7 +1593,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::termText(&b)),
+                            &(crate::proof_std::aver_generated::kernel::wire::termText(b)),
                         )));
                         __b
                     };
@@ -1400,10 +1602,10 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                 })
             }
             crate::proof_std::aver_generated::kernel::proof::Proof__view::PCases(__on_fields) => {
-                let on = __on_fields.0.clone();
+                let on = &__on_fields.0;
                 let h = __on_fields.1.clone();
-                let t = __on_fields.2.clone();
-                let f = __on_fields.3.clone();
+                let t = &__on_fields.2;
+                let f = &__on_fields.3;
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
@@ -1421,7 +1623,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                     __b.push_str(&AverStr::from("(cases "));
                                                     __b
                                                 };
-                                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(&on)))));
+                                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(on)))));
                                                 __b
                                             };
                                             __b.push_str(&AverStr::from(" "));
@@ -1436,9 +1638,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                     __b
                                 };
                                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(crate::proof_std::aver_generated::kernel::wire::proofText(
-                                        &t,
-                                    )),
+                                    &(crate::proof_std::aver_generated::kernel::wire::proofText(t)),
                                 )));
                                 __b
                             };
@@ -1446,7 +1646,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::proofText(&f)),
+                            &(crate::proof_std::aver_generated::kernel::wire::proofText(f)),
                         )));
                         __b
                     };
@@ -1455,10 +1655,10 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                 })
             }
             crate::proof_std::aver_generated::kernel::proof::Proof__view::PSplit(__on_fields) => {
-                let on = __on_fields.0.clone();
+                let on = &__on_fields.0;
                 let h = __on_fields.1.clone();
-                let ks = __on_fields.2.clone();
-                let cs = __on_fields.3.clone();
+                let ks = &__on_fields.2;
+                let cs = &__on_fields.3;
                 crate::proof_std::aver_generated::kernel::wire::headed(
                     aver_rt::AverStr::from({
                         let mut __b = {
@@ -1475,7 +1675,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                 __b.push_str(&AverStr::from("split "));
                                                 __b
                                             };
-                                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(&on)))));
+                                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(on)))));
                                             __b
                                         };
                                         __b.push_str(&AverStr::from(" "));
@@ -1491,7 +1691,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             };
                             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
                                 &(crate::proof_std::aver_generated::kernel::wire::spaced(
-                                    &crate::proof_std::aver_generated::kernel::wire::termTexts(&ks),
+                                    &crate::proof_std::aver_generated::kernel::wire::termTexts(ks),
                                 )),
                             )));
                             __b
@@ -1499,14 +1699,14 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                         __b.push_str(&AverStr::from(")"));
                         __b
                     }),
-                    &crate::proof_std::aver_generated::kernel::wire::splitCaseTexts(&cs),
+                    &crate::proof_std::aver_generated::kernel::wire::splitCaseTexts(cs),
                 )
             }
             crate::proof_std::aver_generated::kernel::proof::Proof__view::PHave(__n_fields) => {
                 let n = __n_fields.0.clone();
-                let fact = __n_fields.1.clone();
-                let q = __n_fields.2.clone();
-                let body = __n_fields.3.clone();
+                let fact = &__n_fields.1;
+                let q = &__n_fields.2;
+                let body = &__n_fields.3;
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
@@ -1532,16 +1732,14 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                             __b.push_str(&AverStr::from(" "));
                                             __b
                                         };
-                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(&fact)))));
+                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(fact)))));
                                         __b
                                     };
                                     __b.push_str(&AverStr::from(" "));
                                     __b
                                 };
                                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(crate::proof_std::aver_generated::kernel::wire::proofText(
-                                        &q,
-                                    )),
+                                    &(crate::proof_std::aver_generated::kernel::wire::proofText(q)),
                                 )));
                                 __b
                             };
@@ -1549,7 +1747,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::proofText(&body)),
+                            &(crate::proof_std::aver_generated::kernel::wire::proofText(body)),
                         )));
                         __b
                     };
@@ -1559,9 +1757,9 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
             }
             crate::proof_std::aver_generated::kernel::proof::Proof__view::PEnum(__v_fields) => {
                 let v = __v_fields.0.clone();
-                let l = __v_fields.1.clone();
-                let r = __v_fields.2.clone();
-                let cs = __v_fields.3.clone();
+                let l = &__v_fields.1;
+                let r = &__v_fields.2;
+                let cs = &__v_fields.3;
                 crate::proof_std::aver_generated::kernel::wire::headed(
                     aver_rt::AverStr::from({
                         let mut __b = {
@@ -1586,7 +1784,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                     __b
                                 };
                                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(crate::proof_std::aver_generated::kernel::wire::termText(&l)),
+                                    &(crate::proof_std::aver_generated::kernel::wire::termText(l)),
                                 )));
                                 __b
                             };
@@ -1594,17 +1792,17 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::termText(&r)),
+                            &(crate::proof_std::aver_generated::kernel::wire::termText(r)),
                         )));
                         __b
                     }),
-                    &crate::proof_std::aver_generated::kernel::wire::proofTexts(&cs),
+                    &crate::proof_std::aver_generated::kernel::wire::proofTexts(cs),
                 )
             }
             crate::proof_std::aver_generated::kernel::proof::Proof__view::PAbsurd(__q_fields) => {
-                let q = __q_fields.0.clone();
-                let l = __q_fields.1.clone();
-                let r = __q_fields.2.clone();
+                let q = &__q_fields.0;
+                let l = &__q_fields.1;
+                let r = &__q_fields.2;
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
@@ -1620,14 +1818,14 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                             __b.push_str(&AverStr::from("(absurd "));
                                             __b
                                         };
-                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::proofText(&q)))));
+                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::proofText(q)))));
                                         __b
                                     };
                                     __b.push_str(&AverStr::from(" "));
                                     __b
                                 };
                                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(crate::proof_std::aver_generated::kernel::wire::termText(&l)),
+                                    &(crate::proof_std::aver_generated::kernel::wire::termText(l)),
                                 )));
                                 __b
                             };
@@ -1635,7 +1833,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::termText(&r)),
+                            &(crate::proof_std::aver_generated::kernel::wire::termText(r)),
                         )));
                         __b
                     };
@@ -1645,11 +1843,11 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
             }
             crate::proof_std::aver_generated::kernel::proof::Proof__view::PInduct(__f_fields) => {
                 let f = __f_fields.0.clone();
-                let xs = __f_fields.1.clone();
-                let l = __f_fields.2.clone();
-                let r = __f_fields.3.clone();
-                let carried = __f_fields.4.clone();
-                let cs = __f_fields.5.clone();
+                let xs = &__f_fields.1;
+                let l = &__f_fields.2;
+                let r = &__f_fields.3;
+                let carried = &__f_fields.4;
+                let cs = &__f_fields.5;
                 crate::proof_std::aver_generated::kernel::wire::headed(
                     aver_rt::AverStr::from({
                         let mut __b = {
@@ -1677,7 +1875,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                 __b.push_str(&AverStr::from(" ("));
                                                 __b
                                             };
-                                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(&crate::proof_std::aver_generated::kernel::wire::termTexts(&xs))))));
+                                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(&crate::proof_std::aver_generated::kernel::wire::termTexts(xs))))));
                                             __b
                                         };
                                         __b.push_str(&AverStr::from(") "));
@@ -1685,7 +1883,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                     };
                                     __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
                                         &(crate::proof_std::aver_generated::kernel::wire::termText(
-                                            &l,
+                                            l,
                                         )),
                                     )));
                                     __b
@@ -1694,31 +1892,31 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                 __b
                             };
                             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                &(crate::proof_std::aver_generated::kernel::wire::termText(&r)),
+                                &(crate::proof_std::aver_generated::kernel::wire::termText(r)),
                             )));
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::carryText(&carried)),
+                            &(crate::proof_std::aver_generated::kernel::wire::carryText(carried)),
                         )));
                         __b
                     }),
-                    &crate::proof_std::aver_generated::kernel::wire::inductCaseTexts(&cs),
+                    &crate::proof_std::aver_generated::kernel::wire::inductCaseTexts(cs),
                 )
             }
             crate::proof_std::aver_generated::kernel::proof::Proof__view::PListInduct(
                 __v_fields,
             ) => {
                 let v = __v_fields.0.clone();
-                let l = __v_fields.1.clone();
-                let r = __v_fields.2.clone();
-                let carried = __v_fields.3.clone();
-                let n = __v_fields.4.clone();
+                let l = &__v_fields.1;
+                let r = &__v_fields.2;
+                let carried = &__v_fields.3;
+                let n = &__v_fields.4;
                 let h = __v_fields.5.clone();
                 let t = __v_fields.6.clone();
-                let general = __v_fields.7.clone();
-                let ihs = __v_fields.8.clone();
-                let c = __v_fields.9.clone();
+                let general = &__v_fields.7;
+                let ihs = &__v_fields.8;
+                let c = &__v_fields.9;
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
@@ -1750,7 +1948,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                                                         __b.push_str(&AverStr::from(" "));
                                                                                         __b
                                                                                     };
-                                                                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(&l)))));
+                                                                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(l)))));
                                                                                     __b
                                                                                 };
                                                                                 __b.push_str(
@@ -1760,10 +1958,10 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                                                 );
                                                                                 __b
                                                                             };
-                                                                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(&r)))));
+                                                                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(r)))));
                                                                             __b
                                                                         };
-                                                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::carryText(&carried)))));
+                                                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::carryText(carried)))));
                                                                         __b
                                                                     };
                                                                     __b.push_str(&AverStr::from(
@@ -1771,7 +1969,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                                     ));
                                                                     __b
                                                                 };
-                                                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::proofText(&n)))));
+                                                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::proofText(n)))));
                                                                 __b
                                                             };
                                                             __b.push_str(&AverStr::from(" ("));
@@ -1793,7 +1991,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                             __b.push_str(&AverStr::from(") ("));
                                             __b
                                         };
-                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(&general)))));
+                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(general)))));
                                         __b
                                     };
                                     __b.push_str(&AverStr::from(") ("));
@@ -1802,7 +2000,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
                                     &(crate::proof_std::aver_generated::kernel::wire::spaced(
                                         &crate::proof_std::aver_generated::kernel::wire::ihAtTexts(
-                                            &ihs,
+                                            ihs,
                                         ),
                                     )),
                                 )));
@@ -1812,7 +2010,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::proofText(&c)),
+                            &(crate::proof_std::aver_generated::kernel::wire::proofText(c)),
                         )));
                         __b
                     };
@@ -1824,12 +2022,12 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                 __v_fields,
             ) => {
                 let v = __v_fields.0.clone();
-                let l = __v_fields.1.clone();
-                let r = __v_fields.2.clone();
-                let n = __v_fields.3.clone();
+                let l = &__v_fields.1;
+                let r = &__v_fields.2;
+                let n = &__v_fields.3;
                 let h = __v_fields.4.clone();
                 let t = __v_fields.5.clone();
-                let c = __v_fields.6.clone();
+                let c = &__v_fields.6;
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
@@ -1861,19 +2059,19 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                                     ));
                                                                     __b
                                                                 };
-                                                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(&l)))));
+                                                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(l)))));
                                                                 __b
                                                             };
                                                             __b.push_str(&AverStr::from(" "));
                                                             __b
                                                         };
-                                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(&r)))));
+                                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(r)))));
                                                         __b
                                                     };
                                                     __b.push_str(&AverStr::from(" "));
                                                     __b
                                                 };
-                                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::proofText(&n)))));
+                                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::proofText(n)))));
                                                 __b
                                             };
                                             __b.push_str(&AverStr::from(" ("));
@@ -1894,7 +2092,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::proofText(&c)),
+                            &(crate::proof_std::aver_generated::kernel::wire::proofText(c)),
                         )));
                         __b
                     };
@@ -1906,14 +2104,14 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                 __v_fields,
             ) => {
                 let v = __v_fields.0.clone();
-                let l = __v_fields.1.clone();
-                let r = __v_fields.2.clone();
-                let carried = __v_fields.3.clone();
-                let general = __v_fields.4.clone();
+                let l = &__v_fields.1;
+                let r = &__v_fields.2;
+                let carried = &__v_fields.3;
+                let general = &__v_fields.4;
                 let n = __v_fields.5.clone();
                 let hn = __v_fields.6.clone();
                 let ih = __v_fields.7.clone();
-                let c = __v_fields.8.clone();
+                let c = &__v_fields.8;
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
@@ -1946,7 +2144,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                                                 );
                                                                                 __b
                                                                             };
-                                                                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(&l)))));
+                                                                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(l)))));
                                                                             __b
                                                                         };
                                                                         __b.push_str(
@@ -1954,16 +2152,16 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                                         );
                                                                         __b
                                                                     };
-                                                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(&r)))));
+                                                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(r)))));
                                                                     __b
                                                                 };
-                                                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::carryText(&carried)))));
+                                                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::carryText(carried)))));
                                                                 __b
                                                             };
                                                             __b.push_str(&AverStr::from(" ("));
                                                             __b
                                                         };
-                                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(&general)))));
+                                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(general)))));
                                                         __b
                                                     };
                                                     __b.push_str(&AverStr::from(") ("));
@@ -1992,7 +2190,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::proofText(&c)),
+                            &(crate::proof_std::aver_generated::kernel::wire::proofText(c)),
                         )));
                         __b
                     };
@@ -2001,8 +2199,8 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                 })
             }
             crate::proof_std::aver_generated::kernel::proof::Proof__view::PRing(__l_fields) => {
-                let l = __l_fields.0.clone();
-                let r = __l_fields.1.clone();
+                let l = &__l_fields.0;
+                let r = &__l_fields.1;
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
@@ -2015,7 +2213,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                     __b
                                 };
                                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(crate::proof_std::aver_generated::kernel::wire::termText(&l)),
+                                    &(crate::proof_std::aver_generated::kernel::wire::termText(l)),
                                 )));
                                 __b
                             };
@@ -2023,7 +2221,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::termText(&r)),
+                            &(crate::proof_std::aver_generated::kernel::wire::termText(r)),
                         )));
                         __b
                     };
@@ -2032,11 +2230,11 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                 })
             }
             crate::proof_std::aver_generated::kernel::proof::Proof__view::PLinear(__g_fields) => {
-                let g = __g_fields.0.clone();
+                let g = &__g_fields.0;
                 let v = __g_fields.1.clone();
-                let hs = __g_fields.2.clone();
-                let ws = __g_fields.3.clone();
-                let cs = __g_fields.4.clone();
+                let hs = &__g_fields.2;
+                let ws = &__g_fields.3;
+                let cs = &__g_fields.4;
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
@@ -2061,7 +2259,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                             ));
                                                             __b
                                                         };
-                                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(&g)))));
+                                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(g)))));
                                                         __b
                                                     };
                                                     __b.push_str(&AverStr::from(" "));
@@ -2075,7 +2273,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                             __b.push_str(&AverStr::from(" ("));
                                             __b
                                         };
-                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(&hs)))));
+                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(hs)))));
                                         __b
                                     };
                                     __b.push_str(&AverStr::from(") ("));
@@ -2084,7 +2282,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
                                     &(crate::proof_std::aver_generated::kernel::wire::spaced(
                                         &crate::proof_std::aver_generated::kernel::wire::intTexts(
-                                            &ws,
+                                            ws,
                                         ),
                                     )),
                                 )));
@@ -2094,7 +2292,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::proof_std::aver_generated::kernel::wire::cutTexts(&cs)),
+                            &(crate::proof_std::aver_generated::kernel::wire::cutTexts(cs)),
                         )));
                         __b
                     };
@@ -2112,7 +2310,56 @@ pub fn cutTexts(
     cs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Cut>,
 ) -> AverStr {
     crate::proof_std::cancel_checkpoint();
-    aver_list_match!(cs.clone(), [] => AverStr::from(""), [c, rest] => { aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(58)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from(" (cut ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c.divisor)))); __b }; __b.push_str(&AverStr::from(" (")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(&crate::proof_std::aver_generated::kernel::wire::intTexts(&c.weights)))))); __b }; __b.push_str(&AverStr::from("))")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::cutTexts(&rest))))); __b }) })
+    {
+        let __list_subject = cs;
+        if __list_subject.is_empty() {
+            AverStr::from("")
+        } else {
+            if let Some((c, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = {
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = {
+                                        let mut __b = aver_rt::Buffer::with_capacity(
+                                            (aver_rt::AverInt::from_i64(58))
+                                                .to_usize()
+                                                .unwrap_or(0),
+                                        );
+                                        __b.push_str(&AverStr::from(" (cut "));
+                                        __b
+                                    };
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                        &(c.divisor),
+                                    )));
+                                    __b
+                                };
+                                __b.push_str(&AverStr::from(" ("));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                &(crate::proof_std::aver_generated::kernel::wire::spaced(
+                                    &crate::proof_std::aver_generated::kernel::wire::intTexts(
+                                        &c.weights,
+                                    ),
+                                )),
+                            )));
+                            __b
+                        };
+                        __b.push_str(&AverStr::from("))"));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        &(crate::proof_std::aver_generated::kernel::wire::cutTexts(&rest)),
+                    )));
+                    __b
+                })
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// Each proof.
@@ -2121,14 +2368,48 @@ pub fn proofTexts(
     ps @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Proof>,
 ) -> aver_rt::AverList<AverStr> {
     crate::proof_std::cancel_checkpoint();
-    aver_list_match!(ps.clone(), [] => aver_rt::AverList::empty(), [p, rest] => aver_rt::AverList::prepend(crate::proof_std::aver_generated::kernel::wire::proofText(&p), &crate::proof_std::aver_generated::kernel::wire::proofTexts(&rest)))
+    {
+        let __list_subject = ps;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                aver_rt::AverList::prepend(
+                    crate::proof_std::aver_generated::kernel::wire::proofText(p),
+                    &crate::proof_std::aver_generated::kernel::wire::proofTexts(&rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// Each integer as an atom.
 #[inline(always)]
 pub fn intTexts(ws @ _: &aver_rt::AverIntList) -> aver_rt::AverList<AverStr> {
     crate::proof_std::cancel_checkpoint();
-    aver_list_match!(ws.clone(), [] => aver_rt::AverList::empty(), [w, rest] => { aver_rt::AverList::prepend(aver_rt::AverStr::from({ let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(16)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(w)))); __b }), &crate::proof_std::aver_generated::kernel::wire::intTexts(&rest)) })
+    {
+        let __list_subject = ws;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let Some((w, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                aver_rt::AverList::prepend(
+                    aver_rt::AverStr::from({
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(16)).to_usize().unwrap_or(0),
+                        );
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(w))));
+                        __b
+                    }),
+                    &crate::proof_std::aver_generated::kernel::wire::intTexts(&rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// (case CTOR (NAME…) PROOF) for each case.
@@ -2137,7 +2418,63 @@ pub fn splitCaseTexts(
     cs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::SplitCase>,
 ) -> aver_rt::AverList<AverStr> {
     crate::proof_std::cancel_checkpoint();
-    aver_list_match!(cs.clone(), [] => aver_rt::AverList::empty(), [c, rest] => { aver_rt::AverList::prepend(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(59)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("(case ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c.ctor)))); __b }; __b.push_str(&AverStr::from(" (")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(&c.binders))))); __b }; __b.push_str(&AverStr::from(") ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::proofText(&c.proof))))); __b }; __b.push_str(&AverStr::from(")")); __b }), &crate::proof_std::aver_generated::kernel::wire::splitCaseTexts(&rest)) })
+    {
+        let __list_subject = cs;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let Some((c, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                aver_rt::AverList::prepend(
+                    aver_rt::AverStr::from({
+                        let mut __b = {
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = {
+                                        let mut __b = {
+                                            let mut __b = {
+                                                let mut __b = aver_rt::Buffer::with_capacity(
+                                                    (aver_rt::AverInt::from_i64(59))
+                                                        .to_usize()
+                                                        .unwrap_or(0),
+                                                );
+                                                __b.push_str(&AverStr::from("(case "));
+                                                __b
+                                            };
+                                            __b.push_str(&aver_rt::AverStr::from(
+                                                aver_rt::aver_display(&(c.ctor)),
+                                            ));
+                                            __b
+                                        };
+                                        __b.push_str(&AverStr::from(" ("));
+                                        __b
+                                    };
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                        &(crate::proof_std::aver_generated::kernel::wire::spaced(
+                                            &c.binders,
+                                        )),
+                                    )));
+                                    __b
+                                };
+                                __b.push_str(&AverStr::from(") "));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                &(crate::proof_std::aver_generated::kernel::wire::proofText(
+                                    &c.proof,
+                                )),
+                            )));
+                            __b
+                        };
+                        __b.push_str(&AverStr::from(")"));
+                        __b
+                    }),
+                    &crate::proof_std::aver_generated::kernel::wire::splitCaseTexts(&rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// ` (carry NAME…)` when an induction carries hypotheses, nothing otherwise.
@@ -2175,7 +2512,66 @@ pub fn inductCaseTexts(
     cs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Case>,
 ) -> aver_rt::AverList<AverStr> {
     crate::proof_std::cancel_checkpoint();
-    aver_list_match!(cs.clone(), [] => aver_rt::AverList::empty(), [c, rest] => { aver_rt::AverList::prepend(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = { let mut __b = { let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(80)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("(case (")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(&c.binders))))); __b }; __b.push_str(&AverStr::from(") (")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(&crate::proof_std::aver_generated::kernel::wire::ihTexts(&c.ihs, &c.carry)))))); __b }; __b.push_str(&AverStr::from(") (")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(&crate::proof_std::aver_generated::kernel::wire::moreTexts(&c.more)))))); __b }; __b.push_str(&AverStr::from(") ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::proofText(&c.proof))))); __b }; __b.push_str(&AverStr::from(")")); __b }), &crate::proof_std::aver_generated::kernel::wire::inductCaseTexts(&rest)) })
+    {
+        let __list_subject = cs;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let Some((c, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                aver_rt::AverList::prepend(
+                    aver_rt::AverStr::from({
+                        let mut __b = {
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = {
+                                        let mut __b = {
+                                            let mut __b = {
+                                                let mut __b = {
+                                                    let mut __b = {
+                                                        let mut __b =
+                                                            aver_rt::Buffer::with_capacity(
+                                                                (aver_rt::AverInt::from_i64(80))
+                                                                    .to_usize()
+                                                                    .unwrap_or(0),
+                                                            );
+                                                        __b.push_str(&AverStr::from("(case ("));
+                                                        __b
+                                                    };
+                                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(&c.binders)))));
+                                                    __b
+                                                };
+                                                __b.push_str(&AverStr::from(") ("));
+                                                __b
+                                            };
+                                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(&crate::proof_std::aver_generated::kernel::wire::ihTexts(&c.ihs, &c.carry))))));
+                                            __b
+                                        };
+                                        __b.push_str(&AverStr::from(") ("));
+                                        __b
+                                    };
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(&crate::proof_std::aver_generated::kernel::wire::moreTexts(&c.more))))));
+                                    __b
+                                };
+                                __b.push_str(&AverStr::from(") "));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                &(crate::proof_std::aver_generated::kernel::wire::proofText(
+                                    &c.proof,
+                                )),
+                            )));
+                            __b
+                        };
+                        __b.push_str(&AverStr::from(")"));
+                        __b
+                    }),
+                    &crate::proof_std::aver_generated::kernel::wire::inductCaseTexts(&rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// Each hypothesis name, with the proofs of its carried hypotheses when it has any.
@@ -2187,7 +2583,42 @@ pub fn ihTexts(
     >,
 ) -> aver_rt::AverList<AverStr> {
     crate::proof_std::cancel_checkpoint();
-    aver_list_match!(ihs.clone(), [] => aver_rt::AverList::empty(), [h, rest] => aver_list_match!(carry.clone(), [] => aver_rt::AverList::prepend(h, &crate::proof_std::aver_generated::kernel::wire::ihTexts(&rest, &aver_rt::AverList::empty())), [ps, more] => aver_rt::AverList::prepend(crate::proof_std::aver_generated::kernel::wire::ihText(h, &ps), &crate::proof_std::aver_generated::kernel::wire::ihTexts(&rest, &more))))
+    {
+        let __list_subject = ihs;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let Some((h, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                {
+                    let __list_subject = carry;
+                    if __list_subject.is_empty() {
+                        aver_rt::AverList::prepend(
+                            h,
+                            &crate::proof_std::aver_generated::kernel::wire::ihTexts(
+                                &rest,
+                                &aver_rt::AverList::empty(),
+                            ),
+                        )
+                    } else {
+                        if let (Some(ps), Some(more)) =
+                            (__list_subject.first(), __list_subject.tail())
+                        {
+                            aver_rt::AverList::prepend(
+                                crate::proof_std::aver_generated::kernel::wire::ihText(h, ps),
+                                &crate::proof_std::aver_generated::kernel::wire::ihTexts(
+                                    &rest, &more,
+                                ),
+                            )
+                        } else {
+                            panic!("Aver Rust codegen: non-exhaustive list match")
+                        }
+                    }
+                }
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// NAME, or (NAME PROOF…).
@@ -2238,7 +2669,49 @@ pub fn moreTexts(
     ms @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::More>,
 ) -> aver_rt::AverList<AverStr> {
     crate::proof_std::cancel_checkpoint();
-    aver_list_match!(ms.clone(), [] => aver_rt::AverList::empty(), [m, rest] => { aver_rt::AverList::prepend(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(35)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("(")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(m.call)))); __b }; __b.push_str(&AverStr::from(" ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::ihAtBody(&m.ih))))); __b }; __b.push_str(&AverStr::from(")")); __b }), &crate::proof_std::aver_generated::kernel::wire::moreTexts(&rest)) })
+    {
+        let __list_subject = ms;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let Some((m, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                aver_rt::AverList::prepend(
+                    aver_rt::AverStr::from({
+                        let mut __b = {
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = {
+                                        let mut __b = aver_rt::Buffer::with_capacity(
+                                            (aver_rt::AverInt::from_i64(35))
+                                                .to_usize()
+                                                .unwrap_or(0),
+                                        );
+                                        __b.push_str(&AverStr::from("("));
+                                        __b
+                                    };
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                        &(m.call),
+                                    )));
+                                    __b
+                                };
+                                __b.push_str(&AverStr::from(" "));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                &(crate::proof_std::aver_generated::kernel::wire::ihAtBody(&m.ih)),
+                            )));
+                            __b
+                        };
+                        __b.push_str(&AverStr::from(")"));
+                        __b
+                    }),
+                    &crate::proof_std::aver_generated::kernel::wire::moreTexts(&rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// (IH (TERM…) (PROOF…)) for each hypothesis.
@@ -2247,7 +2720,37 @@ pub fn ihAtTexts(
     ihs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::IhAt>,
 ) -> aver_rt::AverList<AverStr> {
     crate::proof_std::cancel_checkpoint();
-    aver_list_match!(ihs.clone(), [] => aver_rt::AverList::empty(), [ih, rest] => { aver_rt::AverList::prepend(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(18)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("(")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::ihAtBody(&ih))))); __b }; __b.push_str(&AverStr::from(")")); __b }), &crate::proof_std::aver_generated::kernel::wire::ihAtTexts(&rest)) })
+    {
+        let __list_subject = ihs;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let (Some(ih), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                aver_rt::AverList::prepend(
+                    aver_rt::AverStr::from({
+                        let mut __b = {
+                            let mut __b = {
+                                let mut __b = aver_rt::Buffer::with_capacity(
+                                    (aver_rt::AverInt::from_i64(18)).to_usize().unwrap_or(0),
+                                );
+                                __b.push_str(&AverStr::from("("));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                &(crate::proof_std::aver_generated::kernel::wire::ihAtBody(ih)),
+                            )));
+                            __b
+                        };
+                        __b.push_str(&AverStr::from(")"));
+                        __b
+                    }),
+                    &crate::proof_std::aver_generated::kernel::wire::ihAtTexts(&rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// IH (TERM…) (PROOF…), without the outer parentheses.

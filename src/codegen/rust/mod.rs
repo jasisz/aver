@@ -1506,8 +1506,10 @@ fn headPlusTailLen(xs: List<Int>) -> Int
         let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
-        // The common []/[h,..t] pattern uses aver_list_match! macro
-        assert!(entry.contains("aver_list_match!"));
+        // A borrowed list is matched through its borrow, without the
+        // by-value macro and without cloning the list first.
+        assert!(entry.contains("aver_rt::list_uncons_cloned(__list_subject)"));
+        assert!(!entry.contains("xs.clone()"));
     }
 
     #[test]
@@ -1527,8 +1529,8 @@ fn headPlusTailLen(xs: List<Int>) -> Int
         let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
-        // Both modes now use the aver_list_match! macro for []/[h,..t] patterns
-        assert!(entry.contains("aver_list_match!"));
+        // Both modes match a borrowed list through its borrow.
+        assert!(entry.contains("aver_rt::list_uncons_cloned(__list_subject)"));
     }
 
     #[test]
@@ -2651,7 +2653,7 @@ fn read(grid: Vector<Int>, idx: Int) -> Int
         let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
-        assert!(entry.contains("cellAt(grid, idx)"));
+        assert!(entry.contains("cellAt(&grid, idx)"));
         assert!(!entry.contains("__aver_thin_arg0"));
     }
 
@@ -2673,7 +2675,7 @@ fn read(grid: Vector<Int>, idx: Int) -> Int
         let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
-        assert!(entry.contains("cellAt(grid, idx)"));
+        assert!(entry.contains("cellAt(&grid, idx)"));
         assert!(!entry.contains("__aver_thin_arg0"));
     }
 

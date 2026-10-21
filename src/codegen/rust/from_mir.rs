@@ -569,8 +569,7 @@ impl MirFnEmitPolicy {
             // condition (unique arena backing or owned Rust carrier). Missing →
             // treat as flagged (conservative). Still-flagged → keep the
             // existing borrow-by-default decision (do not graduate).
-            let collection_graduated = is_owned_collection_candidate(ty)
-                && !mir_fn.aliased_slots.get(i).copied().unwrap_or(true);
+            let collection_graduated = collection_graduates(ty, mir_fn, i, ctx);
             if !collection_graduated && !hands_on {
                 continue;
             }
@@ -581,6 +580,50 @@ impl MirFnEmitPolicy {
             // clone-skip fires.
             self.borrowed_params.remove(&rust_name);
             self.owned_params.insert(rust_name);
+        }
+    }
+}
+
+/// Whether `Vector`/`Map` param `index` of `mir_fn` takes the owned Rust ABI
+/// on `own_param`'s proof (a cleared alias bit). A param the body only reads
+/// through `Vector.get`, `Map.get` and the like stays borrowed: owning it
+/// would only make a caller that keeps the collection clone it.
+fn collection_graduates(
+    ty: &Type,
+    mir_fn: &crate::ir::mir::MirFn,
+    index: usize,
+    ctx: &CodegenContext,
+) -> bool {
+    let builtins = ctx
+        .mir_program
+        .as_ref()
+        .map(|p| p.builtins.as_slice())
+        .unwrap_or(&[]);
+    is_owned_collection_candidate(ty)
+        && !mir_fn.aliased_slots.get(index).copied().unwrap_or(true)
+        && mir_fn
+            .params
+            .get(index)
+            .is_none_or(|param| !read_by_builtins_only(&mir_fn.body.node, param.local, builtins))
+}
+
+/// Whether every read of the local in `slot` is the collection a built-in
+/// only reads (see [`builtin_only_reads`]).
+fn read_by_builtins_only(expr: &MirExpr, slot: LocalId, builtins: &[String]) -> bool {
+    match expr {
+        MirExpr::Local(local) => local.node.slot != slot,
+        MirExpr::Call(call) if builtin_only_reads(&call.node.callee, builtins) => {
+            call.node.args.iter().enumerate().all(|(i, arg)| {
+                (i == 0 && local_of(&arg.node).is_some_and(|local| local.slot == slot))
+                    || read_by_builtins_only(&arg.node, slot, builtins)
+            })
+        }
+        _ => {
+            let mut only = true;
+            crate::ir::mir::expr::walk_children(expr, &mut |child| {
+                only = only && read_by_builtins_only(child, slot, builtins);
+            });
+            only
         }
     }
 }
@@ -631,18 +674,25 @@ fn result_hands_on(expr: &MirExpr, slot: LocalId) -> bool {
             local_of(&update.node.base.node).is_some_and(|base| base.slot == slot)
         }
         MirExpr::RecordCreate(record) => record.node.fields.iter().any(|field| {
-            let MirExpr::Call(call) = &field.value.node else {
-                return false;
-            };
-            let Some(target) = call.node.args.first() else {
-                return false;
-            };
-            let MirExpr::Project(project) = &target.node else {
-                return false;
-            };
-            local_of(&project.node.base.node).is_some_and(|base| {
-                base.slot == slot && base.last_use && project.node.field == field.name
-            })
+            match &field.value.node {
+                // `R(memo = Map.set(r.memo, ..))`: the field goes on updated.
+                MirExpr::Call(call) => call.node.args.first().is_some_and(|target| {
+                    let MirExpr::Project(project) = &target.node else {
+                        return false;
+                    };
+                    local_of(&project.node.base.node).is_some_and(|base| {
+                        base.slot == slot && base.last_use && project.node.field == field.name
+                    })
+                }),
+                // `R(st = St.update(r.st, ..))`: the rest of the field goes on
+                // into the new record.
+                MirExpr::RecordUpdate(update) => {
+                    matches!(update.node.base.node, MirExpr::Project(_))
+                        && super::ownership::projection_root_local(&update.node.base.node)
+                            .is_some_and(|base| base.slot == slot)
+                }
+                _ => false,
+            }
         }),
         MirExpr::Let(let_expr) => result_hands_on(&let_expr.node.body.node, slot),
         MirExpr::Match(match_expr) => match_expr
@@ -689,8 +739,7 @@ pub(super) fn owned_collection_param_names(
     let mut out = HashSet::new();
     for (i, (name, ty)) in param_types.iter().enumerate() {
         let hands_on = param_handed_on(ty, mir_fn, i, consumed);
-        let collection_graduated = is_owned_collection_candidate(ty)
-            && !mir_fn.aliased_slots.get(i).copied().unwrap_or(true);
+        let collection_graduated = collection_graduates(ty, mir_fn, i, ctx);
         if !collection_graduated && !hands_on {
             continue;
         }
@@ -718,9 +767,9 @@ pub(super) fn owned_collection_param_names(
 ///
 /// The facts are a least fixpoint over the program: a callee taking a param
 /// by value is what makes passing it at the last use a consumption. A
-/// self-tail-recursive function already takes every param by value; a mutual
-/// tail-call group keeps its borrowing wrappers and is never a by-value
-/// callee here.
+/// self-tail-recursive function borrows the params it only reads, as any
+/// other function does (see [`self_loop_lends`]); a mutual tail-call group
+/// keeps its borrowing wrappers and is never a by-value callee here.
 pub(super) fn compute_owned_record_params(
     ctx: &CodegenContext,
 ) -> HashMap<crate::ir::FnId, Vec<bool>> {
@@ -740,18 +789,38 @@ pub(super) fn compute_owned_record_params(
         };
         let mutual = ctx.mutual_tco_members.contains(id);
         if mutual || super::toplevel::resolved_fn_has_self_tailcall(resolved) {
+            // A self-tail-recursive loop borrows every param it only reads
+            // (see [`self_loop_lends`]); the fixpoint below takes by value
+            // the ones its body consumes or its result hands on.
+            // A guest entry keeps the owned signature its host calls.
+            let guest = ctx.guest_entry.as_deref() == Some(resolved.name.as_str());
+            let lends = |i: usize| {
+                !mutual
+                    && !guest
+                    && should_borrow_param(&resolved.params[i].1)
+                    && mir_fn.params.get(i).is_some()
+            };
             if !mutual {
-                owned.insert(*id, vec![true; resolved.params.len()]);
+                let abi: Vec<bool> = (0..resolved.params.len())
+                    .map(|i| {
+                        let slot = mir_fn.params[i].local;
+                        !lends(i)
+                            || result_hands_on(&mir_fn.body.node, slot)
+                            || builtin_takes_local(&mir_fn.body.node, slot, &program.builtins)
+                            || unwrapped_at_last_use(&mir_fn.body.node, slot)
+                    })
+                    .collect();
+                owned.insert(*id, abi);
             }
             loops.push((*id, resolved.params.len()));
-            let records: Vec<usize> = (0..resolved.params.len())
+            let open: Vec<usize> = (0..resolved.params.len())
                 .filter(|&i| {
-                    matches!(resolved.params[i].1, Type::Named { .. })
+                    (lends(i) || matches!(resolved.params[i].1, Type::Named { .. }))
                         && mir_fn.params.get(i).is_some()
                 })
                 .collect();
-            if !records.is_empty() {
-                candidates.push((*id, records));
+            if !open.is_empty() {
+                candidates.push((*id, open));
             }
             continue;
         }
@@ -812,6 +881,7 @@ pub(super) fn compute_owned_record_params(
                 }
                 let consumption = Consumption {
                     slot: mir_fn.params[i].local,
+                    codegen: ctx,
                     owned: &owned,
                     consuming: &consuming,
                     movable: &movable[id],
@@ -839,6 +909,87 @@ pub(super) fn compute_owned_record_params(
         }
     }
     owned
+}
+
+/// Whether `expr` hands the local in `slot` itself to a built-in, an
+/// intrinsic or a function value. Their Rust forms take their arguments as
+/// they are written (a list builder by value, for one), so a loop param read
+/// there stays owned.
+fn builtin_takes_local(expr: &MirExpr, slot: LocalId, builtins: &[String]) -> bool {
+    let direct = match expr {
+        MirExpr::Call(call) => {
+            !matches!(call.node.callee, MirCallee::Fn(_))
+                && call.node.args.iter().enumerate().any(|(i, arg)| {
+                    local_of(&arg.node).is_some_and(|local| local.slot == slot)
+                        && !(i == 0 && builtin_only_reads(&call.node.callee, builtins))
+                })
+        }
+        _ => false,
+    };
+    let mut found = direct;
+    crate::ir::mir::expr::walk_children(expr, &mut |child| {
+        found = found || builtin_takes_local(child, slot, builtins);
+    });
+    found
+}
+
+/// Whether `expr` matches the local in `slot` at its last use against an
+/// `Option` or `Result` arm that binds the payload. Matched by value, the
+/// payload moves out; matched through a borrow, the whole value is cloned
+/// first, so a loop keeps such a param by value.
+fn unwrapped_at_last_use(expr: &MirExpr, slot: LocalId) -> bool {
+    if let MirExpr::Match(m) = expr
+        && local_of(&m.node.subject.node).is_some_and(|l| l.slot == slot && l.last_use)
+        && m.node.arms.iter().any(|arm| {
+            matches!(&arm.pattern, MirPattern::Ctor { ctor: MirCtor::Builtin(_), bindings, .. }
+                if !bindings.is_empty())
+        })
+    {
+        return true;
+    }
+    let mut found = false;
+    crate::ir::mir::expr::walk_children(expr, &mut |child| {
+        found = found || unwrapped_at_last_use(child, slot);
+    });
+    found
+}
+
+/// Whether `callee` is a built-in that only reads the collection it is given
+/// first and takes it borrowed as it is (`Vector.get(v, i)` on
+/// `v: &AverVector`).
+fn builtin_only_reads(callee: &MirCallee, builtins: &[String]) -> bool {
+    let MirCallee::Builtin(id) = callee else {
+        return false;
+    };
+    matches!(
+        builtins.get(id.0 as usize).map(String::as_str),
+        Some("Vector.get" | "Vector.len" | "List.len" | "Map.get" | "Map.has" | "Map.len")
+    )
+}
+
+/// Whether lone self-tail-recursive function `fn_id` borrows param `index`.
+///
+/// The loop rebinds its params on every step, so it used to take each one by
+/// value, and a caller that kept the value cloned it at the call. A param the
+/// loop only reads (it is never consumed, see [`consumes_local`], and the
+/// result does not hand it on) is borrowed instead: `p: &T`, rebound to a
+/// borrow of the next value, which the loop keeps in a slot of its own when
+/// the step computes it (`p = &__p_hold`). The caller lends its value, and a
+/// chain of callers that only passed it on no longer takes it by value.
+pub(super) fn self_loop_lends(ctx: &CodegenContext, fn_id: crate::ir::FnId, index: usize) -> bool {
+    !ctx.mutual_tco_members.contains(&fn_id)
+        && ctx.resolved_program.fn_by_id(fn_id).is_some_and(|fd| {
+            super::toplevel::resolved_fn_has_self_tailcall(fd)
+                && fd
+                    .params
+                    .get(index)
+                    .is_some_and(|(_, ty)| should_borrow_param(ty))
+        })
+        && ctx
+            .rust_owned_record_params
+            .get(&fn_id)
+            .and_then(|abi| abi.get(index))
+            .is_some_and(|by_value| !by_value)
 }
 
 /// Which params of each mutual tail-call member its wrapper takes by value.
@@ -899,6 +1050,7 @@ pub(super) fn mutual_param_by_value(
 /// params updated in place and the builtin names.
 struct Consumption<'a> {
     slot: LocalId,
+    codegen: &'a CodegenContext,
     owned: &'a HashMap<crate::ir::FnId, Vec<bool>>,
     /// The by-value positions whose callee consumes the value: `owned`
     /// without the positions a tail-call loop takes by value only for its
@@ -1023,6 +1175,25 @@ fn consumes_local(expr: &MirExpr, cx: &Consumption<'_>) -> bool {
                     .iter()
                     .any(|arg| consumes_local(&arg.node, cx))
         }
+        // A match on the local at its last use moves the parts its arms
+        // bind out of it: a Map or Vector part updated in place there
+        // consumes the local, as a field moved out of it would.
+        MirExpr::Match(m) if last_use_of(&m.node.subject.node) => m.node.arms.iter().any(|arm| {
+            let mut binders = Vec::new();
+            moved_parts(&arm.pattern, cx.codegen, &mut binders);
+            binders.into_iter().any(|binder| {
+                matches!(
+                    read_type(&arm.body.node, binder),
+                    Some(Type::Map(..) | Type::Vector(_))
+                ) && consumes_local(
+                    &arm.body.node,
+                    &Consumption {
+                        slot: binder,
+                        ..*cx
+                    },
+                )
+            }) || consumes_local(&arm.body.node, cx)
+        }),
         MirExpr::RecordUpdate(update) => {
             (local_of(&update.node.base.node).is_some_and(|base| base.slot == slot)
                 && crate::ir::mir::field_moves::update_base_is_final(&update.node))
@@ -1047,6 +1218,39 @@ fn consumes_local(expr: &MirExpr, cx: &Consumption<'_>) -> bool {
             });
             found
         }
+    }
+}
+
+/// The locals `pattern` binds by moving them out of an owned subject: the
+/// whole value, the parts of a tuple, of an `Option` or `Result` and of a
+/// user constructor that keeps its fields inline. A list pattern and a
+/// constructor whose fields sit in a shared or thin node clone what they bind.
+fn moved_parts(pattern: &MirPattern, ctx: &CodegenContext, out: &mut Vec<LocalId>) {
+    match pattern {
+        MirPattern::Bind(slot, _) => out.push(*slot),
+        MirPattern::Tuple(items) => items.iter().for_each(|item| moved_parts(item, ctx, out)),
+        MirPattern::Ctor {
+            ctor: MirCtor::Builtin(_),
+            bindings,
+            ..
+        } => out.extend(bindings.iter().copied()),
+        MirPattern::Ctor {
+            ctor: MirCtor::User(ctor_id),
+            bindings,
+            ..
+        } => {
+            let entry = ctx.symbol_table.ctor_entry(*ctor_id);
+            let id = entry.owning_type;
+            let held = super::representation::type_is_thin(id, ctx)
+                || super::representation::ctor_is_shared(id, &entry.name, ctx);
+            if !held {
+                out.extend(bindings.iter().copied());
+            }
+        }
+        MirPattern::Cons { .. }
+        | MirPattern::Wildcard
+        | MirPattern::Literal(_)
+        | MirPattern::EmptyList => {}
     }
 }
 
@@ -2570,23 +2774,10 @@ fn adapt_first_class_fn_ref(name: &str, static_ref: String, ctx: &MirEmitCtx<'_>
         return static_ref;
     };
 
-    // A lone self-TCO function is emitted with owned mutable params, so its
-    // item already has the canonical value-taking ABI. Mutual-TCO members have
-    // borrow-by-default public wrappers and therefore still need this adapter.
-    let is_mutual_tco = cg.mutual_tco_members.contains(&fn_id);
-    let is_lone_self_tco =
-        !is_mutual_tco && super::toplevel::resolved_fn_has_self_tailcall(resolved);
-    if is_lone_self_tco {
-        return static_ref;
-    }
-
-    let mut borrow_mask: Vec<bool> = resolved
-        .params
-        .iter()
-        .enumerate()
-        .map(|(i, (_, ty))| should_borrow_param(ty) && !mutual_param_by_value(cg, fn_id, i))
-        .collect();
-    super::expr::clear_owned_param_borrows_of(fn_id, resolved, &mut borrow_mask, cg);
+    // A lone self-TCO function borrows only the params its loop lends (see
+    // [`self_loop_lends`]); mutual-TCO members have borrow-by-default public
+    // wrappers.
+    let borrow_mask = super::expr::param_borrow_mask(fn_id, resolved, cg);
     if !borrow_mask.iter().any(|borrowed| *borrowed) {
         return static_ref;
     }
@@ -3360,10 +3551,47 @@ fn emit_mir_match_with(
 
     // Pre-render every arm body, in arm order. `body_for_arm` (below)
     // maps a `&ResolvedMatchArm` back to its index by pointer offset
-    // into `arms`, then reads the matching pre-rendered string.
+    // into `arms`, then reads the matching pre-rendered string. The parts
+    // an arm only reads are borrowed in its body (see [`lent_parts`]).
+    let path = match_path(m, &arms, emit_ctx);
+    let mut lent: Vec<HashSet<String>> = Vec::with_capacity(m.arms.len());
     let mut arm_bodies: Vec<String> = Vec::with_capacity(m.arms.len());
-    for arm in &m.arms {
-        arm_bodies.push(render_arm(&arm.body, emit_ctx)?);
+    for (arm, resolved) in m.arms.iter().zip(&arms) {
+        // A part borrowed from the subject needs the subject to stay: an arm
+        // that hands the subject's local on borrows nothing from it.
+        let keeps_subject = super::ownership::projection_root_local(&m.subject.node)
+            .is_none_or(|root| reads_only_borrow(&arm.body.node, root.slot, emit_ctx));
+        let parts = match (path, emit_ctx.codegen) {
+            _ if !keeps_subject => HashSet::new(),
+            (MatchPath::Generic { by_ref }, Some(codegen)) => lent_parts(
+                &arm.pattern,
+                &resolved.pattern,
+                &arm.body,
+                by_ref,
+                codegen,
+                emit_ctx,
+            ),
+            (MatchPath::List, Some(_)) => lent_head(&arm.pattern, &arm.body, emit_ctx),
+            (MatchPath::LentTuple, Some(_)) => lent_tuple_parts(&arm.pattern, &arm.body, emit_ctx),
+            _ => HashSet::new(),
+        };
+        let mut binders = Vec::new();
+        pattern_binder_names(&arm.pattern, &mut binders);
+        let arm_body = if parts.is_empty() && !binders.iter().any(|b| emit_ctx.is_borrowed_param(b))
+        {
+            render_arm(&arm.body, emit_ctx)?
+        } else {
+            let mut borrowed = emit_ctx.borrowed_params.clone();
+            for binder in &binders {
+                borrowed.remove(binder);
+            }
+            borrowed.extend(parts.iter().cloned());
+            let mut arm_ctx = *emit_ctx;
+            arm_ctx.borrowed_params = &borrowed;
+            render_arm(&arm.body, &arm_ctx)?
+        };
+        arm_bodies.push(arm_body);
+        lent.push(parts);
     }
 
     let body_for_arm = |arm: &ResolvedMatchArm| -> String {
@@ -3436,6 +3664,18 @@ fn emit_mir_match_with(
         // variable, so the subject goes in uncloned.
         if matches!(&arms[0].pattern, ResolvedPattern::Wildcard) {
             return Some(format!("{{ let _ = {subj_code}; {body} }}"));
+        }
+        // A borrowed tuple is taken apart through the borrow: its parts are
+        // borrowed too (see `MatchPath::LentTuple`).
+        if path == MatchPath::LentTuple && !lent[0].is_empty() {
+            let mut names = Vec::new();
+            pattern_binder_names(&m.arms[0].pattern, &mut names);
+            let owned: String = names
+                .iter()
+                .filter(|name| !lent[0].contains(*name))
+                .map(|name| format!("let {0} = {0}.clone(); ", aver_name_to_rust(name)))
+                .collect();
+            return Some(format!("{{ let {pat} = {subj_code}; {owned}{body} }}"));
         }
         let subj = mir_clone_arg(subj_code, &m.subject.node, emit_ctx);
         return Some(match &arms[0].pattern {
@@ -3524,11 +3764,23 @@ fn emit_mir_match_with(
             Some(MatchDispatchPlan::List(shape)) => Some(*shape),
             _ => None,
         };
+        // A borrowed list is matched through its borrow: stepping needs no
+        // copy of the list itself.
+        let subject_lent = !any_int_literal_pattern
+            && !subject_is_bare
+            && mir_expr_is_borrowed_param_read(&m.subject.node, emit_ctx);
+        let subj = if subject_lent && !borrowed_subject {
+            emit_mir_expr(&m.subject, emit_ctx)?
+        } else {
+            subj
+        };
+        let heads: HashSet<String> = lent.iter().flatten().cloned().collect();
         return Some(emit_list_match(
             subj,
+            subject_lent,
+            &heads,
             &arms,
             list_shape,
-            true,
             codegen,
             body_for_arm,
         ));
@@ -3577,6 +3829,7 @@ fn emit_mir_match_with(
     // other parts are borrowed beside the views, and what an arm binds is
     // cloned out.
     let by_ref = match_on_ref || matches!(shape, ViewShape::Tuple(_));
+    debug_assert!(matches!(path, MatchPath::Generic { by_ref: b } if b == by_ref));
     let match_expr = if viewed {
         shape.scrutinee(&subject_temp, by_ref)
     } else if needs_as_str && has_string_literal_patterns(&arms) {
@@ -3600,7 +3853,7 @@ fn emit_mir_match_with(
             None => pat,
         };
         let body = arm_bodies[idx].clone();
-        let rebindings = emit_pattern_rebindings(&pattern, codegen, by_ref);
+        let rebindings = emit_pattern_rebindings(&pattern, codegen, by_ref, &lent[idx]);
         let whole: String = whole
             .iter()
             .map(|line| format!("{line}\n            "))
@@ -3616,6 +3869,257 @@ fn emit_mir_match_with(
         true => format!("{{ let {subject_temp} = {subj}; {matched} }}"),
         false => matched,
     })
+}
+
+/// Which way [`emit_mir_match_with`] renders a match, as far as the arms'
+/// bindings go. Mirrors that function's choice of path.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MatchPath {
+    /// A list match: `[]` and `[head, ..tail]` arms.
+    List,
+    /// A generic Rust `match`, on a reference to the subject when `by_ref`.
+    Generic { by_ref: bool },
+    /// One tuple pattern of plain names over a borrowed tuple whose parts
+    /// all take a borrow: `let (k, v) = pair;` binds borrows of the parts.
+    LentTuple,
+    /// Any other shape.
+    Other,
+}
+
+fn match_path(m: &MirMatch, arms: &[ResolvedMatchArm], emit_ctx: &MirEmitCtx<'_>) -> MatchPath {
+    let Some(codegen) = emit_ctx.codegen else {
+        return MatchPath::Other;
+    };
+    let vector_set = crate::ir::mir::field_moves::vector_set_match(m, emit_ctx.mir_builtins)
+        .is_some_and(|set| {
+            super::ownership::projection_root_local(&set.target.node).is_some_and(|root| {
+                super::ownership::projection_moves(&set.target.node, root, emit_ctx)
+            })
+        });
+    let single = arms.len() == 1 && resolved_pattern_is_irrefutable(&arms[0].pattern);
+    let any_int_literal_pattern = arms
+        .iter()
+        .any(|arm| pattern_needs_guard_chain(&arm.pattern));
+    let dispatch_plan = classify_match_dispatch_plan_resolved(arms);
+    if !vector_set && single && lends_tuple(m, emit_ctx) {
+        return MatchPath::LentTuple;
+    }
+    if vector_set || single || matches!(dispatch_plan.as_ref(), Some(MatchDispatchPlan::Bool(_))) {
+        return MatchPath::Other;
+    }
+    if has_list_patterns(arms) {
+        return MatchPath::List;
+    }
+    if any_int_literal_pattern
+        || matches!(dispatch_plan.as_ref(), Some(MatchDispatchPlan::Table(_)))
+    {
+        return MatchPath::Other;
+    }
+    let match_on_ref = mir_expr_is_borrowed_param_read(&m.subject.node, emit_ctx)
+        || (!has_string_literal_patterns(arms) && owned_read_clones(&m.subject.node, emit_ctx));
+    let shape = arms.iter().fold(ViewShape::Plain, |shape, arm| {
+        shape.merge(ViewShape::of(&arm.pattern, codegen))
+    });
+    MatchPath::Generic {
+        by_ref: match_on_ref || matches!(shape, ViewShape::Tuple(_)),
+    }
+}
+
+/// Whether a single tuple arm of plain names over a borrowed subject can bind
+/// borrows of the parts: every part it reads takes a borrow (a record, a
+/// sum, a collection, an `Option`, a `Result` or a tuple).
+fn lends_tuple(m: &MirMatch, ctx: &MirEmitCtx<'_>) -> bool {
+    let [arm] = m.arms.as_slice() else {
+        return false;
+    };
+    let MirPattern::Tuple(items) = &arm.pattern else {
+        return false;
+    };
+    mir_expr_is_borrowed_param_read(&m.subject.node, ctx)
+        && items.iter().all(|item| match item {
+            MirPattern::Wildcard => true,
+            MirPattern::Bind(slot, _) => match read_type(&arm.body.node, *slot) {
+                Some(ty) => should_borrow_param(ty),
+                None => true,
+            },
+            _ => false,
+        })
+}
+
+/// The parts of a borrowed tuple a single arm binds and only reads (see
+/// [`reads_only_borrow`]); the others are cloned out of the borrow.
+fn lent_tuple_parts(
+    pattern: &MirPattern,
+    body: &Spanned<MirExpr>,
+    ctx: &MirEmitCtx<'_>,
+) -> HashSet<String> {
+    let MirPattern::Tuple(items) = pattern else {
+        return HashSet::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| match item {
+            MirPattern::Bind(slot, name) if reads_only_borrow(&body.node, *slot, ctx) => {
+                Some(name.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The head a list arm binds and only reads (see [`reads_only_borrow`]),
+/// which it then borrows from the list instead of cloning it out.
+fn lent_head(
+    pattern: &MirPattern,
+    body: &Spanned<MirExpr>,
+    ctx: &MirEmitCtx<'_>,
+) -> HashSet<String> {
+    match pattern {
+        MirPattern::Cons {
+            head, head_name, ..
+        } if !head_name.is_empty()
+            && head_name != "_"
+            && read_type(&body.node, *head).is_some_and(should_borrow_param)
+            && reads_only_borrow(&body.node, *head, ctx) =>
+        {
+            HashSet::from([head_name.clone()])
+        }
+        _ => HashSet::new(),
+    }
+}
+
+/// The parts of a user constructor an arm binds and only reads, which the
+/// arm borrows instead of cloning out of the subject: every read of the part
+/// passes it where a borrow will do (see [`reads_only_borrow`]). Only a part
+/// that would otherwise be cloned qualifies: a field held in a shared or thin
+/// node (`let b = &fields.1;`), or any field when the match is on a
+/// reference (`b` is already `&T`).
+fn lent_parts(
+    pattern: &MirPattern,
+    resolved: &ResolvedPattern,
+    body: &Spanned<MirExpr>,
+    by_ref: bool,
+    codegen: &CodegenContext,
+    ctx: &MirEmitCtx<'_>,
+) -> HashSet<String> {
+    let mut out = HashSet::new();
+    match (pattern, resolved) {
+        (MirPattern::Tuple(items), ResolvedPattern::Tuple(resolved_items)) => {
+            for (item, resolved_item) in items.iter().zip(resolved_items) {
+                out.extend(lent_parts(item, resolved_item, body, by_ref, codegen, ctx));
+            }
+        }
+        (
+            MirPattern::Ctor {
+                bindings,
+                binding_names,
+                ..
+            },
+            ResolvedPattern::Ctor(ctor @ ResolvedCtor::User { .. }, names),
+        ) => {
+            let held = super::pattern::shared_fields_binder(ctor, names, codegen).is_some();
+            if !held && !by_ref {
+                return out;
+            }
+            for (slot, name) in bindings.iter().zip(binding_names) {
+                if name.is_empty() || name == "_" {
+                    continue;
+                }
+                let lendable = read_type(&body.node, *slot).is_some_and(should_borrow_param)
+                    && reads_only_borrow(&body.node, *slot, ctx);
+                if lendable {
+                    out.insert(name.clone());
+                }
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+/// The source names `pattern` binds.
+fn pattern_binder_names(pattern: &MirPattern, out: &mut Vec<String>) {
+    match pattern {
+        MirPattern::Bind(_, name) => out.push(name.clone()),
+        MirPattern::Cons {
+            head_name,
+            tail_name,
+            ..
+        } => out.extend([head_name.clone(), tail_name.clone()]),
+        MirPattern::Tuple(items) => items
+            .iter()
+            .for_each(|item| pattern_binder_names(item, out)),
+        MirPattern::Ctor { binding_names, .. } => out.extend(binding_names.iter().cloned()),
+        MirPattern::Wildcard | MirPattern::Literal(_) | MirPattern::EmptyList => {}
+    }
+}
+
+/// The type of the local in `slot`, read off its first read in `expr`.
+fn read_type(expr: &MirExpr, slot: LocalId) -> Option<&Type> {
+    if let MirExpr::Local(local) = expr
+        && local.node.slot == slot
+    {
+        return local.ty();
+    }
+    let mut found = None;
+    crate::ir::mir::expr::walk_children(expr, &mut |child| {
+        if found.is_none() {
+            found = read_type(child, slot);
+        }
+    });
+    found
+}
+
+/// Whether every read of the local in `slot` within `expr` only needs a
+/// borrow of it: an argument a user function borrows, an operand of `==` or
+/// `!=`, the base of a field read that does not move the field, or the
+/// subject of a match. Any other read owns the value.
+fn reads_only_borrow(expr: &MirExpr, slot: LocalId, ctx: &MirEmitCtx<'_>) -> bool {
+    let is_slot = |e: &MirExpr| matches!(e, MirExpr::Local(local) if local.node.slot == slot);
+    match expr {
+        MirExpr::Local(local) => local.node.slot != slot,
+        MirExpr::Call(call) => {
+            let mask = match (&call.node.callee, ctx.codegen) {
+                (MirCallee::Fn(id), Some(cg)) => cg
+                    .resolved_program
+                    .fn_by_id(*id)
+                    .map(|fd| super::expr::param_borrow_mask(*id, fd, cg))
+                    .unwrap_or_default(),
+                (callee, _) if builtin_only_reads(callee, ctx.mir_builtins) => vec![true],
+                _ => Vec::new(),
+            };
+            call.node
+                .args
+                .iter()
+                .enumerate()
+                .all(|(i, arg)| match is_slot(&arg.node) {
+                    true => mask.get(i).copied().unwrap_or(false),
+                    false => reads_only_borrow(&arg.node, slot, ctx),
+                })
+        }
+        MirExpr::BinOp(op) if matches!(op.node.op, BinOp::Eq | BinOp::Neq) => {
+            [&op.node.lhs, &op.node.rhs]
+                .iter()
+                .all(|side| is_slot(&side.node) || reads_only_borrow(&side.node, slot, ctx))
+        }
+        MirExpr::Project(project) if is_slot(&project.node.base.node) => !ctx
+            .movable_projections
+            .contains(&(expr as *const MirExpr as usize)),
+        MirExpr::Match(m) => {
+            (is_slot(&m.node.subject.node) || reads_only_borrow(&m.node.subject.node, slot, ctx))
+                && m.node
+                    .arms
+                    .iter()
+                    .all(|arm| reads_only_borrow(&arm.body.node, slot, ctx))
+        }
+        _ => {
+            let mut only = true;
+            crate::ir::mir::expr::walk_children(expr, &mut |child| {
+                only = only && reads_only_borrow(child, slot, ctx);
+            });
+            only
+        }
+    }
 }
 
 /// Where the arms of a match look into a value of a thin sum (see
@@ -4447,12 +4951,18 @@ pub(super) fn emit_mir_tco_fn(
     use super::toplevel::{compute_resolved_rc_params, compute_resolved_self_passthrough_params};
 
     let passthrough_indices = compute_resolved_self_passthrough_params(resolved_fd);
+    // The params the loop only reads are borrowed (see [`self_loop_lends`]).
+    let lent: Vec<usize> = (0..resolved_fd.params.len())
+        .filter(|&i| self_loop_lends(ctx, resolved_fd.fn_id, i))
+        .collect();
     // A value of a thin sum is already one shared node: wrapping it in a
-    // `Shared` of its own would only add an allocation.
+    // `Shared` of its own would only add an allocation. A lent param is a
+    // borrow already.
     let rc_indices: HashSet<usize> = compute_resolved_rc_params(std::slice::from_ref(&resolved_fd))
         .into_iter()
         .filter(|&i| {
-            !matches!(&resolved_fd.params[i].1, Type::Named { id: Some(id), .. }
+            !lent.contains(&i)
+                && !matches!(&resolved_fd.params[i].1, Type::Named { id: Some(id), .. }
                     if super::representation::type_is_thin(*id, ctx))
         })
         .collect();
@@ -4484,6 +4994,11 @@ pub(super) fn emit_mir_tco_fn(
     for n in &rc_names {
         policy.owned_params.remove(n);
     }
+    for &i in &lent {
+        let name = &resolved_fd.params[i].0;
+        policy.owned_params.remove(&aver_name_to_rust(name));
+        policy.borrowed_params.insert(name.clone());
+    }
     policy.apply_field_moves(
         mir_fn,
         ctx.mir_program
@@ -4508,7 +5023,7 @@ pub(super) fn emit_mir_tco_fn(
     // the body emit applied (`apply_bare_i64`). Every caller converts at the
     // boundary, so the ABI stays self-consistent.
     let bare_facts = ctx.bare_i64.for_fn(mir_fn.fn_id);
-    let params = emit_tco_params_mir(&fd.params, &rc_indices, bare_facts, ctx, scope);
+    let params = emit_tco_params_mir(&fd.params, &rc_indices, &lent, bare_facts, ctx, scope);
     let ret_type = bare_return_type(ret_type, bare_facts);
     let mut lines = Vec::new();
     lines.push(format!(
@@ -4520,6 +5035,21 @@ pub(super) fn emit_mir_tco_fn(
     // order: `rc_indices` is a HashSet, and iterating it directly made
     // checked-in self-host regeneration differ across processes.
     lines.extend(emit_self_tco_rc_wraps(&fd.params, &rc_indices));
+    // A lent param the loop rebinds gets a slot for a value a step computes,
+    // and its borrow becomes rebindable.
+    for &i in lent.iter().filter(|i| !passthrough_indices.contains(i)) {
+        let (name, type_ann) = &fd.params[i];
+        let rust_type = super::types::type_annotation_to_rust_scoped(type_ann, ctx, scope);
+        lines.push(format!(
+            "    let mut {}: {rust_type};",
+            generated_ident(&format!("hold{i}"))
+        ));
+        lines.push(format!(
+            "    let {}: &{rust_type} = {};",
+            explicit_parameter_pattern(name, true),
+            aver_name_to_rust(name)
+        ));
+    }
     lines.push("    loop {".to_string());
     lines.push(body_code);
     lines.push("    }".to_string());
@@ -4545,13 +5075,15 @@ fn emit_self_tco_rc_wraps(params: &[(String, String)], rc_indices: &HashSet<usiz
 }
 
 /// Self-TCO param signature: non-rc params are `mut T` (rebound in the
-/// loop), rc params are plain `T` (shadowed by the `Shared::new` binding).
+/// loop), rc params are plain `T` (shadowed by the `Shared::new` binding),
+/// lent params are `&T` (see [`self_loop_lends`]).
 /// Mirror of `emit_fn_params_tco`. A param the unboxing analysis proved
 /// bare (`bare_facts.param_is_bare(i)`) emits `mut p: i64` instead of
 /// `mut p: aver_rt::AverInt`.
 fn emit_tco_params_mir(
     params: &[(String, String)],
     rc_indices: &std::collections::HashSet<usize>,
+    lent: &[usize],
     bare_facts: Option<&crate::ir::mir::FnBareFacts>,
     ctx: &CodegenContext,
     scope: Option<&str>,
@@ -4566,7 +5098,13 @@ fn emit_tco_params_mir(
             } else {
                 super::types::type_annotation_to_rust_scoped(type_ann, ctx, scope)
             };
-            if rc_indices.contains(&i) {
+            if lent.contains(&i) {
+                format!(
+                    "{}: &{}",
+                    explicit_parameter_pattern(name, false),
+                    rust_type
+                )
+            } else if rc_indices.contains(&i) {
                 format!("{}: {}", explicit_parameter_pattern(name, false), rust_type)
             } else {
                 format!("{}: {}", explicit_parameter_pattern(name, true), rust_type)
@@ -4779,11 +5317,19 @@ fn emit_mir_self_tco_continue(
             lines.push(format!("            let {temp} = {arg_str};"));
         }
     }
-    // Phase 2: assign temps back to params, in order.
+    // Phase 2: assign temps back to params, in order. A lent param (see
+    // [`self_loop_lends`]) keeps the new value in its slot and borrows it.
     for (i, (name, _)) in params.iter().enumerate() {
         if arg_strs[i].is_some() {
             let temp = generated_ident(&format!("tco{i}"));
-            lines.push(format!("            {} = {temp};", aver_name_to_rust(name),));
+            let param = aver_name_to_rust(name);
+            if ctx.is_borrowed_param(name) {
+                let hold = generated_ident(&format!("hold{i}"));
+                lines.push(format!("            {hold} = {temp};"));
+                lines.push(format!("            {param} = &{hold};"));
+            } else {
+                lines.push(format!("            {param} = {temp};"));
+            }
         }
     }
     lines.push("            continue;".to_string());

@@ -135,14 +135,17 @@ pub fn expand(mut s @ _: Sexp) -> Result<Sexp, AverStr> {
             let __pat0 = __pat0.clone();
             {
                 let __list_subject = __pat0;
-                if let Some((__pat1, __pat2)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                if let (Some(__pat1), Some(__pat2)) =
+                    (__list_subject.first(), __list_subject.tail())
+                {
                     match __pat1 {
                         crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat3) => {
+                            let __pat3 = __pat3.clone();
                             match &*__pat3 {
                                 "shared" => {
                                     let __list_subject = __pat2;
-                                    if let Some((__pat4, __pat5)) =
-                                        aver_rt::list_uncons_cloned(&__list_subject)
+                                    if let (Some(__pat4), Some(__pat5)) =
+                                        (__list_subject.first(), __list_subject.tail())
                                     {
                                         match __pat4 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Node(parts) => {
@@ -173,32 +176,75 @@ pub fn expand(mut s @ _: Sexp) -> Result<Sexp, AverStr> {
 /// Each (#NAME S) in order, its S written out with the names before it.
 #[inline(always)]
 pub fn define(
-    mut parts @ _: aver_rt::AverList<Sexp>,
+    parts @ _: &aver_rt::AverList<Sexp>,
     mut table @ _: aver_rt::AverMap<AverStr, (Sexp, aver_rt::AverInt)>,
 ) -> Result<aver_rt::AverMap<AverStr, (Sexp, aver_rt::AverInt)>, AverStr> {
+    let mut __hold0: aver_rt::AverList<Sexp>;
+    let mut parts @ _: &aver_rt::AverList<Sexp> = parts;
     loop {
         crate::proof_std::cancel_checkpoint();
-        aver_list_match!(parts, [] => { return Ok(table); }, [__pat0, rest] => { match __pat0 {
-        crate::proof_std::aver_generated::kernel::sexp::Sexp::Node(__pat1) => {
-            { let __list_subject = __pat1; if let Some((__pat2, __pat3)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat2 {
-        crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(n) => {
-            { let __list_subject = __pat3; if let Some((s, __pat4)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat4; if __list_subject.is_empty() { {
-            let __tco0 = rest;
-            let __tco1 = table.clone().insert_owned(crate::proof_std::aver_generated::kernel::sexp::fresh(n, &table)?, crate::proof_std::aver_generated::kernel::sexp::bounded(&crate::proof_std::aver_generated::kernel::sexp::within(s, &table)?)?);
-            parts = __tco0;
-            table = __tco1;
-            continue;
-        } } else { return Err(AverStr::from("malformed shared part")); } } } else { return Err(AverStr::from("malformed shared part")); } }
-        },
-        _ => {
-            return Err(AverStr::from("malformed shared part"));
+        {
+            let __list_subject = parts;
+            if __list_subject.is_empty() {
+                return Ok(table);
+            } else {
+                if let (Some(__pat0), Some(rest)) = (__list_subject.first(), __list_subject.tail())
+                {
+                    match __pat0 {
+                        crate::proof_std::aver_generated::kernel::sexp::Sexp::Node(__pat1) => {
+                            let __list_subject = __pat1;
+                            if let (Some(__pat2), Some(__pat3)) =
+                                (__list_subject.first(), __list_subject.tail())
+                            {
+                                match __pat2 {
+                                    crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(
+                                        n,
+                                    ) => {
+                                        let n = n.clone();
+                                        {
+                                            let __list_subject = __pat3;
+                                            if let Some((s, __pat4)) =
+                                                aver_rt::list_uncons_cloned(&__list_subject)
+                                            {
+                                                {
+                                                    let __list_subject = __pat4;
+                                                    if __list_subject.is_empty() {
+                                                        {
+                                                            let __tco0 = rest;
+                                                            let __tco1 = table.clone().insert_owned(crate::proof_std::aver_generated::kernel::sexp::fresh(n, &table)?, crate::proof_std::aver_generated::kernel::sexp::bounded(&crate::proof_std::aver_generated::kernel::sexp::within(s, &table)?)?);
+                                                            __hold0 = __tco0;
+                                                            parts = &__hold0;
+                                                            table = __tco1;
+                                                            continue;
+                                                        }
+                                                    } else {
+                                                        return Err(AverStr::from(
+                                                            "malformed shared part",
+                                                        ));
+                                                    }
+                                                }
+                                            } else {
+                                                return Err(AverStr::from("malformed shared part"));
+                                            }
+                                        }
+                                    }
+                                    _ => {
+                                        return Err(AverStr::from("malformed shared part"));
+                                    }
+                                }
+                            } else {
+                                return Err(AverStr::from("malformed shared part"));
+                            }
+                        }
+                        _ => {
+                            return Err(AverStr::from("malformed shared part"));
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
         }
-    } } else { return Err(AverStr::from("malformed shared part")); } }
-        },
-        _ => {
-            return Err(AverStr::from("malformed shared part"));
-        }
-    } })
     }
 }
 
@@ -289,8 +335,8 @@ pub fn within(
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Node(xs) => {
             let xs = xs.clone();
             crate::proof_std::aver_generated::kernel::sexp::withinAll(
-                xs,
-                table.clone(),
+                &xs,
+                table,
                 aver_rt::AverList::empty(),
                 aver_rt::AverInt::from_i64(1),
             )
@@ -301,23 +347,43 @@ pub fn within(
 /// The items of a list written out, then the list and its size.
 #[inline(always)]
 pub fn withinAll(
-    mut xs @ _: aver_rt::AverList<Sexp>,
-    table @ _: aver_rt::AverMap<AverStr, (Sexp, aver_rt::AverInt)>,
+    xs @ _: &aver_rt::AverList<Sexp>,
+    table @ _: &aver_rt::AverMap<AverStr, (Sexp, aver_rt::AverInt)>,
     mut acc @ _: aver_rt::AverList<Sexp>,
     mut size @ _: aver_rt::AverInt,
 ) -> Result<(Sexp, aver_rt::AverInt), AverStr> {
-    let table @ _ = aver_rt::Shared::new(table);
+    let mut __hold0: aver_rt::AverList<Sexp>;
+    let mut xs @ _: &aver_rt::AverList<Sexp> = xs;
     loop {
         crate::proof_std::cancel_checkpoint();
-        aver_list_match!(xs, [] => { return Ok((crate::proof_std::aver_generated::kernel::sexp::Sexp::Node(acc.reverse()), size)); }, [x, rest] => { { let (y, n) = crate::proof_std::aver_generated::kernel::sexp::within(x, &*table)?; {
-            let __tco0 = rest;
-            let __tco2 = aver_rt::AverList::prepend(y, &acc);
-            let __tco3 = size.add(&n);
-            xs = __tco0;
-            acc = __tco2;
-            size = __tco3;
-            continue;
-        } } })
+        {
+            let __list_subject = xs;
+            if __list_subject.is_empty() {
+                return Ok((
+                    crate::proof_std::aver_generated::kernel::sexp::Sexp::Node(acc.reverse()),
+                    size,
+                ));
+            } else {
+                if let Some((x, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    {
+                        let (y, n) =
+                            crate::proof_std::aver_generated::kernel::sexp::within(x, table)?;
+                        {
+                            let __tco0 = rest;
+                            let __tco2 = aver_rt::AverList::prepend(y, &acc);
+                            let __tco3 = size.add(&n);
+                            __hold0 = __tco0;
+                            xs = &__hold0;
+                            acc = __tco2;
+                            size = __tco3;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
@@ -327,42 +393,130 @@ pub fn readOne(
     cs @ _: &aver_rt::AverList<AverStr>,
 ) -> Result<(Sexp, aver_rt::AverList<AverStr>), AverStr> {
     crate::proof_std::cancel_checkpoint();
-    aver_list_match!(cs.clone(), [] => Err(AverStr::from("unexpected end of data")), [__pat0, rest] => { { let __dispatch_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&__pat0)); if __dispatch_subject == aver_rt::AverInt::from_i64(40) { crate::proof_std::aver_generated::kernel::sexp::readList(crate::proof_std::aver_generated::kernel::sexp::skipBlank(rest), aver_rt::AverList::empty()) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(34) { crate::proof_std::aver_generated::kernel::sexp::readText(rest, AverStr::from("")) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(41) { Err(AverStr::from("unexpected )")) } else { crate::proof_std::aver_generated::kernel::sexp::readAtom(cs.clone(), AverStr::from("")) } } } } })
+    {
+        let __list_subject = cs;
+        if __list_subject.is_empty() {
+            Err(AverStr::from("unexpected end of data"))
+        } else {
+            if let Some((__pat0, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                {
+                    let __dispatch_subject =
+                        aver_rt::AverInt::from_i64(aver_rt::str_code1(&__pat0));
+                    if __dispatch_subject == aver_rt::AverInt::from_i64(40) {
+                        crate::proof_std::aver_generated::kernel::sexp::readList(
+                            crate::proof_std::aver_generated::kernel::sexp::skipBlank(rest),
+                            aver_rt::AverList::empty(),
+                        )
+                    } else {
+                        if __dispatch_subject == aver_rt::AverInt::from_i64(34) {
+                            crate::proof_std::aver_generated::kernel::sexp::readText(
+                                &rest,
+                                AverStr::from(""),
+                            )
+                        } else {
+                            if __dispatch_subject == aver_rt::AverInt::from_i64(41) {
+                                Err(AverStr::from("unexpected )"))
+                            } else {
+                                crate::proof_std::aver_generated::kernel::sexp::readAtom(
+                                    cs.clone(),
+                                    AverStr::from(""),
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// A quoted text; backslash escapes a quote, a backslash or a newline.
 #[inline(always)]
 pub fn readText(
-    mut cs @ _: aver_rt::AverList<AverStr>,
+    cs @ _: &aver_rt::AverList<AverStr>,
     mut acc @ _: AverStr,
 ) -> Result<(Sexp, aver_rt::AverList<AverStr>), AverStr> {
+    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut cs @ _: &aver_rt::AverList<AverStr> = cs;
     loop {
         crate::proof_std::cancel_checkpoint();
-        aver_list_match!(cs, [] => { return Err(AverStr::from("unterminated text")); }, [__pat0, __pat1] => { { let __dispatch_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&__pat0)); if __dispatch_subject == aver_rt::AverInt::from_i64(34) { return Ok((crate::proof_std::aver_generated::kernel::sexp::Sexp::Text(acc), __pat1)); } else { if __dispatch_subject == aver_rt::AverInt::from_i64(92) { { let __list_subject = __pat1.clone(); if let Some((__pat2, __pat3)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __int_match_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&__pat2)); if __int_match_subject == aver_rt::AverInt::from_i64(110) { {
-            let __tco0 = __pat3;
-            let __tco1 = (acc + &AverStr::from("\n"));
-            cs = __tco0;
-            acc = __tco1;
-            continue;
-        } } else { {
-            let __tco0 = __pat3;
-            let __tco1 = (acc + &__pat2);
-            cs = __tco0;
-            acc = __tco1;
-            continue;
-        } } } } else { {
-            let __tco0 = __pat1;
-            let __tco1 = (acc + &__pat0);
-            cs = __tco0;
-            acc = __tco1;
-            continue;
-        } } } } else { {
-            let __tco0 = __pat1;
-            let __tco1 = (acc + &__pat0);
-            cs = __tco0;
-            acc = __tco1;
-            continue;
-        } } } } })
+        {
+            let __list_subject = cs;
+            if __list_subject.is_empty() {
+                return Err(AverStr::from("unterminated text"));
+            } else {
+                if let Some((__pat0, __pat1)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    {
+                        let __dispatch_subject =
+                            aver_rt::AverInt::from_i64(aver_rt::str_code1(&__pat0));
+                        if __dispatch_subject == aver_rt::AverInt::from_i64(34) {
+                            return Ok((
+                                crate::proof_std::aver_generated::kernel::sexp::Sexp::Text(acc),
+                                __pat1,
+                            ));
+                        } else {
+                            if __dispatch_subject == aver_rt::AverInt::from_i64(92) {
+                                {
+                                    let __list_subject = __pat1.clone();
+                                    if let Some((__pat2, __pat3)) =
+                                        aver_rt::list_uncons_cloned(&__list_subject)
+                                    {
+                                        {
+                                            let __int_match_subject = aver_rt::AverInt::from_i64(
+                                                aver_rt::str_code1(&__pat2),
+                                            );
+                                            if __int_match_subject
+                                                == aver_rt::AverInt::from_i64(110)
+                                            {
+                                                {
+                                                    let __tco0 = __pat3;
+                                                    let __tco1 = (acc + &AverStr::from("\n"));
+                                                    __hold0 = __tco0;
+                                                    cs = &__hold0;
+                                                    acc = __tco1;
+                                                    continue;
+                                                }
+                                            } else {
+                                                {
+                                                    let __tco0 = __pat3;
+                                                    let __tco1 = (acc + &__pat2);
+                                                    __hold0 = __tco0;
+                                                    cs = &__hold0;
+                                                    acc = __tco1;
+                                                    continue;
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        {
+                                            let __tco0 = __pat1;
+                                            let __tco1 = (acc + &__pat0);
+                                            __hold0 = __tco0;
+                                            cs = &__hold0;
+                                            acc = __tco1;
+                                            continue;
+                                        }
+                                    }
+                                }
+                            } else {
+                                {
+                                    let __tco0 = __pat1;
+                                    let __tco1 = (acc + &__pat0);
+                                    __hold0 = __tco0;
+                                    cs = &__hold0;
+                                    acc = __tco1;
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
@@ -438,7 +592,7 @@ pub fn skipBlank(mut cs @ _: aver_rt::AverList<AverStr>) -> aver_rt::AverList<Av
     loop {
         crate::proof_std::cancel_checkpoint();
         aver_list_match!(cs.clone(), [] => { return aver_rt::AverList::empty(); }, [c, rest] => { { let __int_match_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&c)); if __int_match_subject == aver_rt::AverInt::from_i64(59) { {
-            let __tco0 = crate::proof_std::aver_generated::kernel::sexp::skipLine(rest);
+            let __tco0 = crate::proof_std::aver_generated::kernel::sexp::skipLine(&rest);
             cs = __tco0;
             continue;
         } } else { if crate::proof_std::aver_generated::kernel::sexp::isBlank(c) { {
@@ -451,13 +605,35 @@ pub fn skipBlank(mut cs @ _: aver_rt::AverList<AverStr>) -> aver_rt::AverList<Av
 
 /// Drop everything up to and including the next line break.
 #[inline(always)]
-pub fn skipLine(mut cs @ _: aver_rt::AverList<AverStr>) -> aver_rt::AverList<AverStr> {
+pub fn skipLine(cs @ _: &aver_rt::AverList<AverStr>) -> aver_rt::AverList<AverStr> {
+    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut cs @ _: &aver_rt::AverList<AverStr> = cs;
     loop {
         crate::proof_std::cancel_checkpoint();
-        aver_list_match!(cs, [] => { return aver_rt::AverList::empty(); }, [c, rest] => { { let __int_match_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&c)); if __int_match_subject == aver_rt::AverInt::from_i64(10) { return rest; } else { {
-            let __tco0 = rest;
-            cs = __tco0;
-            continue;
-        } } } })
+        {
+            let __list_subject = cs;
+            if __list_subject.is_empty() {
+                return aver_rt::AverList::empty();
+            } else {
+                if let Some((c, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    {
+                        let __int_match_subject =
+                            aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
+                        if __int_match_subject == aver_rt::AverInt::from_i64(10) {
+                            return rest;
+                        } else {
+                            {
+                                let __tco0 = rest;
+                                __hold0 = __tco0;
+                                cs = &__hold0;
+                                continue;
+                            }
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }

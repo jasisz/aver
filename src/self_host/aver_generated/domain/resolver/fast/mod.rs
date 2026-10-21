@@ -4,20 +4,36 @@ use crate::*;
 /// Tag simple single-expression functions so eval can skip the stmt walker.
 #[inline(always)]
 pub fn annotateFastFns(
-    mut fns @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
-    fnMap @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
-    let fnMap @ _ = aver_rt::Shared::new(fnMap);
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>;
+    let mut fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> = fns;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(fns, [] => { return acc.reverse(); }, [f, rest] => { {
-            let __tco0 = rest;
-            let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::fast::annotateFastFn(&f, &*fnMap), &acc);
-            fns = __tco0;
-            acc = __tco2;
-            continue;
-        } })
+        {
+            let __list_subject = fns;
+            if __list_subject.is_empty() {
+                return acc.reverse();
+            } else {
+                if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    {
+                        let __tco0 = rest;
+                        let __tco2 = aver_rt::AverList::prepend(
+                            crate::aver_generated::domain::resolver::fast::annotateFastFn(f, fnMap),
+                            &acc,
+                        );
+                        __hold0 = __tco0;
+                        fns = &__hold0;
+                        acc = __tco2;
+                        continue;
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
@@ -38,10 +54,7 @@ pub fn annotateFastFn(
         slotCount: fd.slotCount.clone(),
         slotMap: fd.slotMap.clone(),
         fastPath: crate::aver_generated::domain::resolver::fast::classifyFastPath(&fd.body),
-        tailLoop: crate::aver_generated::domain::resolver::fast::classifyTailLoop(
-            selfId,
-            fd.body.clone(),
-        ),
+        tailLoop: crate::aver_generated::domain::resolver::fast::classifyTailLoop(selfId, &fd.body),
     }
 }
 
@@ -49,15 +62,36 @@ pub fn annotateFastFn(
 #[inline(always)]
 pub fn classifyTailLoop(
     mut selfId @ _: aver_rt::AverInt,
-    mut body @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    body @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
 ) -> bool {
+    let mut __hold1: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>;
+    let mut body @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> = body;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(body, [] => { return false; }, [stmt, rest] => { { let __list_subject = rest.clone(); if __list_subject.is_empty() { return crate::aver_generated::domain::resolver::fast::stmtNeedsTailLoop(selfId, &stmt); } else { {
-            let __tco1 = rest;
-            body = __tco1;
-            continue;
-        } } } })
+        {
+            let __list_subject = body;
+            if __list_subject.is_empty() {
+                return false;
+            } else {
+                if let (Some(stmt), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    {
+                        let __list_subject = rest.clone();
+                        if __list_subject.is_empty() {
+                            return crate::aver_generated::domain::resolver::fast::stmtNeedsTailLoop(selfId, stmt);
+                        } else {
+                            {
+                                let __tco1 = rest;
+                                __hold1 = __tco1;
+                                body = &__hold1;
+                                continue;
+                            }
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
@@ -69,7 +103,6 @@ pub fn stmtNeedsTailLoop(
     crate::cancel_checkpoint();
     match stmt {
         crate::aver_generated::domain::ast::Stmt::StmtExpr(expr) => {
-            let expr = expr.clone();
             crate::aver_generated::domain::resolver::fast::exprNeedsTailLoop(selfId, expr)
         }
         _ => false,
@@ -79,8 +112,10 @@ pub fn stmtNeedsTailLoop(
 /// Recognize direct self-calls in tail position, including bool branches and matches.
 pub fn exprNeedsTailLoop(
     mut selfId @ _: aver_rt::AverInt,
-    mut expr @ _: crate::aver_generated::domain::ast::Expr,
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
 ) -> bool {
+    let mut __hold1: crate::aver_generated::domain::ast::Expr;
+    let mut expr @ _: &crate::aver_generated::domain::ast::Expr = expr;
     loop {
         crate::cancel_checkpoint();
         {
@@ -93,7 +128,7 @@ pub fn exprNeedsTailLoop(
                 crate::aver_generated::domain::ast::Expr__view::ExprBoolBranch(
                     __thenExpr_fields,
                 ) => {
-                    let thenExpr = __thenExpr_fields.1.clone();
+                    let thenExpr = &__thenExpr_fields.1;
                     let elseExpr = __thenExpr_fields.2.clone();
                     if crate::aver_generated::domain::resolver::fast::exprNeedsTailLoop(
                         selfId.clone(),
@@ -103,7 +138,8 @@ pub fn exprNeedsTailLoop(
                     } else {
                         {
                             let __tco1 = elseExpr;
-                            expr = __tco1;
+                            __hold1 = __tco1;
+                            expr = &__hold1;
                             continue;
                         }
                     }
@@ -111,7 +147,7 @@ pub fn exprNeedsTailLoop(
                 crate::aver_generated::domain::ast::Expr__view::ExprMatch(__arms_fields) => {
                     let arms = __arms_fields.1.clone();
                     return crate::aver_generated::domain::resolver::fast::armsNeedTailLoop(
-                        selfId, arms,
+                        selfId, &arms,
                     );
                 }
                 _ => {
@@ -126,15 +162,36 @@ pub fn exprNeedsTailLoop(
 #[inline(always)]
 pub fn armsNeedTailLoop(
     mut selfId @ _: aver_rt::AverInt,
-    mut arms @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> bool {
+    let mut __hold1: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>;
+    let mut arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> = arms;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(arms, [] => { return false; }, [arm, rest] => { if crate::aver_generated::domain::resolver::fast::exprNeedsTailLoop(selfId.clone(), arm.body) { return true; } else { {
-            let __tco1 = rest;
-            arms = __tco1;
-            continue;
-        } } })
+        {
+            let __list_subject = arms;
+            if __list_subject.is_empty() {
+                return false;
+            } else {
+                if let Some((arm, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    if crate::aver_generated::domain::resolver::fast::exprNeedsTailLoop(
+                        selfId.clone(),
+                        &arm.body,
+                    ) {
+                        return true;
+                    } else {
+                        {
+                            let __tco1 = rest;
+                            __hold1 = __tco1;
+                            arms = &__hold1;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
@@ -144,10 +201,10 @@ pub fn classifyFastPath(
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
     {
-        let __list_subject = body.clone();
-        if let Some((stmt, rest)) = aver_rt::list_uncons_cloned(&__list_subject) {
+        let __list_subject = body;
+        if let (Some(stmt), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
             if (rest == aver_rt::AverList::empty()) {
-                crate::aver_generated::domain::resolver::fast::classifyFastStmt(&stmt)
+                crate::aver_generated::domain::resolver::fast::classifyFastStmt(stmt)
             } else {
                 crate::aver_generated::domain::ast::FnFastPath::FastNone
             }
@@ -164,8 +221,7 @@ pub fn classifyFastStmt(
     crate::cancel_checkpoint();
     match stmt {
         crate::aver_generated::domain::ast::Stmt::StmtExpr(expr) => {
-            let expr = expr.clone();
-            crate::aver_generated::domain::resolver::fast::classifyFastExpr(&expr)
+            crate::aver_generated::domain::resolver::fast::classifyFastExpr(expr)
         }
         _ => crate::aver_generated::domain::ast::FnFastPath::FastNone,
     }
@@ -184,16 +240,16 @@ pub fn classifyFastExpr(
             match __t.view() {
                 crate::aver_generated::domain::ast::Expr__view::ExprCallDirect(__fnId_fields) => {
                     let fnId = __fnId_fields.0.clone();
-                    let args = __fnId_fields.1.clone();
+                    let args = &__fnId_fields.1;
                     crate::aver_generated::domain::resolver::fast::classifyFastForwardCall(
-                        fnId, &args,
+                        fnId, args,
                     )
                 }
                 crate::aver_generated::domain::ast::Expr__view::ExprMatch(__scrutinee_fields) => {
-                    let scrutinee = __scrutinee_fields.0.clone();
-                    let arms = __scrutinee_fields.1.clone();
+                    let scrutinee = &__scrutinee_fields.0;
+                    let arms = &__scrutinee_fields.1;
                     crate::aver_generated::domain::resolver::fast::classifyFastMatch(
-                        &scrutinee, &arms,
+                        scrutinee, arms,
                     )
                 }
                 _ => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
@@ -237,31 +293,31 @@ pub fn classifyFastLeafExpr(
                 Some(crate::aver_generated::domain::ast::FastLeaf::LeafSlot(slot))
             }
             crate::aver_generated::domain::ast::Expr__view::ExprFieldAccess(__obj_fields) => {
-                let obj = __obj_fields.0.clone();
+                let obj = &__obj_fields.0;
                 let field = __obj_fields.1.clone();
-                crate::aver_generated::domain::resolver::fast::classifyFastFieldAccess(&obj, field)
+                crate::aver_generated::domain::resolver::fast::classifyFastFieldAccess(obj, field)
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltin(__name_fields) => {
                 let name = __name_fields.0.clone();
-                let args = __name_fields.1.clone();
-                crate::aver_generated::domain::resolver::fast::classifyFastBuiltinLeaf(name, &args)
+                let args = &__name_fields.1;
+                crate::aver_generated::domain::resolver::fast::classifyFastBuiltinLeaf(name, args)
             }
             crate::aver_generated::domain::ast::Expr__view::ExprAdd(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 crate::aver_generated::domain::resolver::fast::classifyFastBinopSlots(
                     crate::aver_generated::domain::ast::BinOp::OpAdd,
-                    &a,
-                    &b,
+                    a,
+                    b,
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprSub(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 crate::aver_generated::domain::resolver::fast::classifyFastBinopSlots(
                     crate::aver_generated::domain::ast::BinOp::OpSub,
-                    &a,
-                    &b,
+                    a,
+                    b,
                 )
             }
             _ => crate::aver_generated::domain::resolver::fast::classifyFastLeafExprTail(expr),
@@ -278,75 +334,75 @@ pub fn classifyFastLeafExprTail(
         let __t = expr;
         match __t.view() {
             crate::aver_generated::domain::ast::Expr__view::ExprMul(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 crate::aver_generated::domain::resolver::fast::classifyFastBinopSlots(
                     crate::aver_generated::domain::ast::BinOp::OpMul,
-                    &a,
-                    &b,
+                    a,
+                    b,
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprDiv(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 crate::aver_generated::domain::resolver::fast::classifyFastBinopSlots(
                     crate::aver_generated::domain::ast::BinOp::OpDiv,
-                    &a,
-                    &b,
+                    a,
+                    b,
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprEq(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 crate::aver_generated::domain::resolver::fast::classifyFastCmpSlots(
                     crate::aver_generated::domain::ast::CmpOp::CmpEq,
-                    &a,
-                    &b,
+                    a,
+                    b,
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprNeq(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 crate::aver_generated::domain::resolver::fast::classifyFastCmpSlots(
                     crate::aver_generated::domain::ast::CmpOp::CmpNeq,
-                    &a,
-                    &b,
+                    a,
+                    b,
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprLt(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 crate::aver_generated::domain::resolver::fast::classifyFastCmpSlots(
                     crate::aver_generated::domain::ast::CmpOp::CmpLt,
-                    &a,
-                    &b,
+                    a,
+                    b,
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprGt(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 crate::aver_generated::domain::resolver::fast::classifyFastCmpSlots(
                     crate::aver_generated::domain::ast::CmpOp::CmpGt,
-                    &a,
-                    &b,
+                    a,
+                    b,
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprLte(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 crate::aver_generated::domain::resolver::fast::classifyFastCmpSlots(
                     crate::aver_generated::domain::ast::CmpOp::CmpLte,
-                    &a,
-                    &b,
+                    a,
+                    b,
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprGte(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 crate::aver_generated::domain::resolver::fast::classifyFastCmpSlots(
                     crate::aver_generated::domain::ast::CmpOp::CmpGte,
-                    &a,
-                    &b,
+                    a,
+                    b,
                 )
             }
             _ => None,
@@ -485,13 +541,15 @@ pub fn classifyFastMapGet(
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     {
-        let __list_subject = args.clone();
-        if let Some((mapExpr, rest)) = aver_rt::list_uncons_cloned(&__list_subject) {
+        let __list_subject = args;
+        if let (Some(mapExpr), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
             {
                 let __list_subject = rest;
-                if let Some((keyExpr, ignored)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                if let (Some(keyExpr), Some(ignored)) =
+                    (__list_subject.first(), __list_subject.tail())
+                {
                     crate::aver_generated::domain::resolver::fast::classifyFastMapGetArgs(
-                        &mapExpr, &keyExpr,
+                        mapExpr, keyExpr,
                     )
                 } else {
                     None
@@ -540,18 +598,20 @@ pub fn classifyFastMapSet(
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     {
-        let __list_subject = args.clone();
-        if let Some((mapExpr, rest)) = aver_rt::list_uncons_cloned(&__list_subject) {
+        let __list_subject = args;
+        if let (Some(mapExpr), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
             {
                 let __list_subject = rest;
-                if let Some((keyExpr, rest2)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                if let (Some(keyExpr), Some(rest2)) =
+                    (__list_subject.first(), __list_subject.tail())
+                {
                     {
                         let __list_subject = rest2;
-                        if let Some((valueExpr, ignored)) =
-                            aver_rt::list_uncons_cloned(&__list_subject)
+                        if let (Some(valueExpr), Some(ignored)) =
+                            (__list_subject.first(), __list_subject.tail())
                         {
                             crate::aver_generated::domain::resolver::fast::classifyFastMapSetArgs(
-                                &mapExpr, &keyExpr, &valueExpr,
+                                mapExpr, keyExpr, valueExpr,
                             )
                         } else {
                             None
@@ -614,13 +674,15 @@ pub fn classifyFastMapHas(
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     {
-        let __list_subject = args.clone();
-        if let Some((mapExpr, rest)) = aver_rt::list_uncons_cloned(&__list_subject) {
+        let __list_subject = args;
+        if let (Some(mapExpr), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
             {
                 let __list_subject = rest;
-                if let Some((keyExpr, ignored)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                if let (Some(keyExpr), Some(ignored)) =
+                    (__list_subject.first(), __list_subject.tail())
+                {
                     crate::aver_generated::domain::resolver::fast::classifyFastMapHasArgs(
-                        &mapExpr, &keyExpr,
+                        mapExpr, keyExpr,
                     )
                 } else {
                     None
@@ -669,13 +731,15 @@ pub fn classifyFastMapRemove(
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     {
-        let __list_subject = args.clone();
-        if let Some((mapExpr, rest)) = aver_rt::list_uncons_cloned(&__list_subject) {
+        let __list_subject = args;
+        if let (Some(mapExpr), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
             {
                 let __list_subject = rest;
-                if let Some((keyExpr, ignored)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                if let (Some(keyExpr), Some(ignored)) =
+                    (__list_subject.first(), __list_subject.tail())
+                {
                     crate::aver_generated::domain::resolver::fast::classifyFastMapRemoveArgs(
-                        &mapExpr, &keyExpr,
+                        mapExpr, keyExpr,
                     )
                 } else {
                     None
@@ -724,8 +788,8 @@ pub fn classifyFastVectorLen(
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     {
-        let __list_subject = args.clone();
-        if let Some((vecExpr, ignored)) = aver_rt::list_uncons_cloned(&__list_subject) {
+        let __list_subject = args;
+        if let (Some(vecExpr), Some(ignored)) = (__list_subject.first(), __list_subject.tail()) {
             {
                 let __t = vecExpr;
                 match __t.view() {
@@ -750,13 +814,15 @@ pub fn classifyFastVectorNew(
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     {
-        let __list_subject = args.clone();
-        if let Some((sizeExpr, rest)) = aver_rt::list_uncons_cloned(&__list_subject) {
+        let __list_subject = args;
+        if let (Some(sizeExpr), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
             {
                 let __list_subject = rest;
-                if let Some((fillExpr, ignored)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                if let (Some(fillExpr), Some(ignored)) =
+                    (__list_subject.first(), __list_subject.tail())
+                {
                     crate::aver_generated::domain::resolver::fast::classifyFastVectorNewArgs(
-                        &sizeExpr, &fillExpr,
+                        sizeExpr, fillExpr,
                     )
                 } else {
                     None
@@ -803,14 +869,16 @@ pub fn classifyFastOptionWithDefault(
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     {
-        let __list_subject = args.clone();
-        if let Some((optionExpr, rest)) = aver_rt::list_uncons_cloned(&__list_subject) {
+        let __list_subject = args;
+        if let (Some(optionExpr), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
             {
                 let __list_subject = rest;
-                if let Some((defaultExpr, ignored)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                if let (Some(defaultExpr), Some(ignored)) =
+                    (__list_subject.first(), __list_subject.tail())
+                {
                     crate::aver_generated::domain::resolver::fast::classifyFastOptionWithDefaultArgs(
-                        &optionExpr,
-                        &defaultExpr,
+                        optionExpr,
+                        defaultExpr,
                     )
                 } else {
                     None
@@ -833,10 +901,10 @@ pub fn classifyFastOptionWithDefaultArgs(
         match __t.view() {
             crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltin(__name_fields) => {
                 let name = __name_fields.0.clone();
-                let innerArgs = __name_fields.1.clone();
+                let innerArgs = &__name_fields.1;
                 if (&*name == "Vector.get") {
                     crate::aver_generated::domain::resolver::fast::classifyFastVectorGet(
-                        &innerArgs,
+                        innerArgs,
                         defaultExpr,
                     )
                 } else {
@@ -855,14 +923,16 @@ pub fn classifyFastVectorGet(
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     {
-        let __list_subject = args.clone();
-        if let Some((vecExpr, rest)) = aver_rt::list_uncons_cloned(&__list_subject) {
+        let __list_subject = args;
+        if let (Some(vecExpr), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
             {
                 let __list_subject = rest;
-                if let Some((idxExpr, ignored)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                if let (Some(idxExpr), Some(ignored)) =
+                    (__list_subject.first(), __list_subject.tail())
+                {
                     crate::aver_generated::domain::resolver::fast::classifyFastVectorGetArgs(
-                        &vecExpr,
-                        &idxExpr,
+                        vecExpr,
+                        idxExpr,
                         defaultExpr,
                     )
                 } else {
@@ -961,14 +1031,14 @@ pub fn classifyFastListArms(
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
     {
-        let __list_subject = arms.clone();
-        if let Some((arm1, rest)) = aver_rt::list_uncons_cloned(&__list_subject) {
+        let __list_subject = arms;
+        if let (Some(arm1), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
             {
                 let __list_subject = rest;
-                if let Some((arm2, tail)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                if let (Some(arm2), Some(tail)) = (__list_subject.first(), __list_subject.tail()) {
                     if (tail == aver_rt::AverList::empty()) {
                         crate::aver_generated::domain::resolver::fast::classifyFastListArmPair(
-                            slot, &arm1, &arm2,
+                            slot, arm1, arm2,
                         )
                     } else {
                         crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr
@@ -1134,7 +1204,7 @@ pub fn classifyFastForwardCall(
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::resolver::fast::classifyFastForwardSlots__collected(
-        args.clone(),
+        args,
         aver_rt::int_list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
     ) {
         Some(slotArgs @ _) => {
@@ -1147,26 +1217,45 @@ pub fn classifyFastForwardCall(
 /// Extract slot numbers from a direct call argument list.
 #[inline(always)]
 pub fn classifyFastForwardSlots(
-    mut args @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
     mut acc @ _: aver_rt::AverIntList,
 ) -> Option<aver_rt::AverIntList> {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>;
+    let mut args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr> = args;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(args, [] => { return Some(acc.reverse()); }, [arg, rest] => { { let __t = arg; match __t.view() {
-        crate::aver_generated::domain::ast::Expr__view::ExprSlot(__slot_fields) => {
-            let slot = __slot_fields.0.clone();
-            {
-            let __tco0 = rest;
-            let __tco1 = aver_rt::AverIntList::prepend(slot, &acc);
-            args = __tco0;
-            acc = __tco1;
-            continue;
+        {
+            let __list_subject = args;
+            if __list_subject.is_empty() {
+                return Some(acc.reverse());
+            } else {
+                if let (Some(arg), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    {
+                        let __t = arg;
+                        match __t.view() {
+                            crate::aver_generated::domain::ast::Expr__view::ExprSlot(
+                                __slot_fields,
+                            ) => {
+                                let slot = __slot_fields.0.clone();
+                                {
+                                    let __tco0 = rest;
+                                    let __tco1 = aver_rt::AverIntList::prepend(slot, &acc);
+                                    __hold0 = __tco0;
+                                    args = &__hold0;
+                                    acc = __tco1;
+                                    continue;
+                                }
+                            }
+                            _ => {
+                                return None;
+                            }
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
         }
-        },
-        _ => {
-            return None;
-        }
-    } } })
     }
 }
 
@@ -1179,14 +1268,14 @@ pub fn classifyBoolArms(
 )> {
     crate::cancel_checkpoint();
     {
-        let __list_subject = arms.clone();
-        if let Some((arm1, rest)) = aver_rt::list_uncons_cloned(&__list_subject) {
+        let __list_subject = arms;
+        if let (Some(arm1), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
             {
                 let __list_subject = rest;
-                if let Some((arm2, tail)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                if let (Some(arm2), Some(tail)) = (__list_subject.first(), __list_subject.tail()) {
                     if (tail == aver_rt::AverList::empty()) {
                         crate::aver_generated::domain::resolver::fast::classifyBoolArmPair(
-                            &arm1, &arm2,
+                            arm1, arm2,
                         )
                     } else {
                         None
@@ -1306,24 +1395,24 @@ pub fn classifyFastMatchScrutinee(
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprEq(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 crate::aver_generated::domain::resolver::fast::classifyFastEqScrutinee(
-                    &a, &b, thenLeaf, elseLeaf,
+                    a, b, thenLeaf, elseLeaf,
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprLt(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 crate::aver_generated::domain::resolver::fast::classifyFastLtScrutinee(
-                    &a, &b, thenLeaf, elseLeaf,
+                    a, b, thenLeaf, elseLeaf,
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprGt(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 crate::aver_generated::domain::resolver::fast::classifyFastLtScrutinee(
-                    &b, &a, thenLeaf, elseLeaf,
+                    b, a, thenLeaf, elseLeaf,
                 )
             }
             _ => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
@@ -1426,25 +1515,44 @@ pub fn classifyFastLtScrutinee(
 /// Synthesized collecting variant of `classifyFastForwardSlots`. Appends to a builder where `classifyFastForwardSlots` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn classifyFastForwardSlots__collected(
-    mut args @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
     mut acc @ _: aver_rt::AverIntList,
 ) -> Option<aver_rt::AverIntList> {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>;
+    let mut args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr> = args;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(args, [] => { return Some(aver_rt::int_list_builder_finalize(acc)); }, [arg, rest] => { { let __t = arg; match __t.view() {
-        crate::aver_generated::domain::ast::Expr__view::ExprSlot(__slot_fields) => {
-            let slot = __slot_fields.0.clone();
-            {
-            let __tco0 = rest;
-            let __tco1 = aver_rt::int_list_builder_push(acc, slot);
-            args = __tco0;
-            acc = __tco1;
-            continue;
+        {
+            let __list_subject = args;
+            if __list_subject.is_empty() {
+                return Some(aver_rt::int_list_builder_finalize(acc));
+            } else {
+                if let (Some(arg), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    {
+                        let __t = arg;
+                        match __t.view() {
+                            crate::aver_generated::domain::ast::Expr__view::ExprSlot(
+                                __slot_fields,
+                            ) => {
+                                let slot = __slot_fields.0.clone();
+                                {
+                                    let __tco0 = rest;
+                                    let __tco1 = aver_rt::int_list_builder_push(acc, slot);
+                                    __hold0 = __tco0;
+                                    args = &__hold0;
+                                    acc = __tco1;
+                                    continue;
+                                }
+                            }
+                            _ => {
+                                return None;
+                            }
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
         }
-        },
-        _ => {
-            return None;
-        }
-    } } })
     }
 }

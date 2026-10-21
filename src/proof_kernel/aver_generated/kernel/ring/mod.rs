@@ -171,7 +171,8 @@ pub fn combine(
         if __dispatch_subject == aver_rt::AverInt::from_i64(0) {
             crate::proof_kernel::aver_generated::kernel::ring::Read {
                 poly: crate::proof_kernel::aver_generated::kernel::ring::addPoly(
-                    left.poly, right.poly,
+                    left.poly,
+                    &right.poly,
                 ),
                 atoms: right.atoms,
             }
@@ -180,7 +181,7 @@ pub fn combine(
                 crate::proof_kernel::aver_generated::kernel::ring::Read {
                     poly: crate::proof_kernel::aver_generated::kernel::ring::addPoly(
                         left.poly,
-                        crate::proof_kernel::aver_generated::kernel::ring::scalePoly(
+                        &crate::proof_kernel::aver_generated::kernel::ring::scalePoly(
                             &right.poly,
                             aver_rt::AverInt::from_i64(-1),
                         ),
@@ -236,8 +237,8 @@ pub fn atom(
 ) -> Read {
     crate::proof_kernel::cancel_checkpoint();
     match crate::proof_kernel::aver_generated::kernel::ring::indexOf(
-        t.clone(),
-        atoms.clone(),
+        &t,
+        atoms,
         aver_rt::AverInt::from_i64(0),
     ) {
         Some(i @ _) => crate::proof_kernel::aver_generated::kernel::ring::Read {
@@ -266,19 +267,38 @@ pub fn atom(
 /// Where an atom is, if it is there.
 #[inline(always)]
 pub fn indexOf(
-    mut t @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
-    mut atoms @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    t @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    atoms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     mut i @ _: aver_rt::AverInt,
 ) -> Option<aver_rt::AverInt> {
+    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>;
+    let mut atoms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> =
+        atoms;
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        aver_list_match!(atoms, [] => { return None; }, [a, rest] => { if (a == t) { return Some(i); } else { {
-            let __tco1 = rest;
-            let __tco2 = i.add(&aver_rt::AverInt::from_i64(1));
-            atoms = __tco1;
-            i = __tco2;
-            continue;
-        } } })
+        {
+            let __list_subject = atoms;
+            if __list_subject.is_empty() {
+                return None;
+            } else {
+                if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    if (a == t) {
+                        return Some(i);
+                    } else {
+                        {
+                            let __tco1 = rest;
+                            let __tco2 = i.add(&aver_rt::AverInt::from_i64(1));
+                            __hold1 = __tco1;
+                            atoms = &__hold1;
+                            i = __tco2;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
@@ -286,17 +306,32 @@ pub fn indexOf(
 #[inline(always)]
 pub fn addPoly(
     mut a @ _: aver_rt::AverList<Mono>,
-    mut b @ _: aver_rt::AverList<Mono>,
+    b @ _: &aver_rt::AverList<Mono>,
 ) -> aver_rt::AverList<Mono> {
+    let mut __hold1: aver_rt::AverList<Mono>;
+    let mut b @ _: &aver_rt::AverList<Mono> = b;
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        aver_list_match!(b, [] => { return a; }, [m, rest] => { {
-            let __tco0 = crate::proof_kernel::aver_generated::kernel::ring::insertMono(m, &a);
-            let __tco1 = rest;
-            a = __tco0;
-            b = __tco1;
-            continue;
-        } })
+        {
+            let __list_subject = b;
+            if __list_subject.is_empty() {
+                return a;
+            } else {
+                if let Some((m, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    {
+                        let __tco0 =
+                            crate::proof_kernel::aver_generated::kernel::ring::insertMono(m, &a);
+                        let __tco1 = rest;
+                        a = __tco0;
+                        __hold1 = __tco1;
+                        b = &__hold1;
+                        continue;
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
@@ -304,7 +339,50 @@ pub fn addPoly(
 #[inline(always)]
 pub fn insertMono(mut m @ _: Mono, p @ _: &aver_rt::AverList<Mono>) -> aver_rt::AverList<Mono> {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(p.clone(), [] => crate::proof_kernel::aver_generated::kernel::ring::nonzero(m), [x, rest] => { { let __dispatch_subject = aver_rt::AverInt::from_i64(crate::proof_kernel::aver_generated::kernel::ring::compareAtoms(m.atoms.clone(), x.atoms.clone())); if __dispatch_subject == aver_rt::AverInt::from_i64(0) { aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::ring::nonzero(crate::proof_kernel::aver_generated::kernel::ring::Mono { atoms: x.atoms, coef: x.coef.add(&m.coef) }), &rest) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(1) { aver_rt::AverList::prepend(x, &crate::proof_kernel::aver_generated::kernel::ring::insertMono(m, &rest)) } else { aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::ring::nonzero(m), &p.clone()) } } } })
+    {
+        let __list_subject = p;
+        if __list_subject.is_empty() {
+            crate::proof_kernel::aver_generated::kernel::ring::nonzero(m)
+        } else {
+            if let Some((x, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                {
+                    let __dispatch_subject = aver_rt::AverInt::from_i64(
+                        crate::proof_kernel::aver_generated::kernel::ring::compareAtoms(
+                            m.atoms.clone(),
+                            x.atoms.clone(),
+                        ),
+                    );
+                    if __dispatch_subject == aver_rt::AverInt::from_i64(0) {
+                        aver_rt::AverList::concat(
+                            &crate::proof_kernel::aver_generated::kernel::ring::nonzero(
+                                crate::proof_kernel::aver_generated::kernel::ring::Mono {
+                                    atoms: x.atoms,
+                                    coef: x.coef.add(&m.coef),
+                                },
+                            ),
+                            &rest,
+                        )
+                    } else {
+                        if __dispatch_subject == aver_rt::AverInt::from_i64(1) {
+                            aver_rt::AverList::prepend(
+                                x,
+                                &crate::proof_kernel::aver_generated::kernel::ring::insertMono(
+                                    m, &rest,
+                                ),
+                            )
+                        } else {
+                            aver_rt::AverList::concat(
+                                &crate::proof_kernel::aver_generated::kernel::ring::nonzero(m),
+                                &p.clone(),
+                            )
+                        }
+                    }
+                }
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// A monomial, unless its coefficient is zero.
@@ -367,7 +445,26 @@ pub fn scalePoly(
     k @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<Mono> {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(p.clone(), [] => aver_rt::AverList::empty(), [m, rest] => aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::ring::nonzero(crate::proof_kernel::aver_generated::kernel::ring::Mono { atoms: m.atoms, coef: m.coef.mul(&k) }), &crate::proof_kernel::aver_generated::kernel::ring::scalePoly(&rest, k)))
+    {
+        let __list_subject = p;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let Some((m, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                aver_rt::AverList::concat(
+                    &crate::proof_kernel::aver_generated::kernel::ring::nonzero(
+                        crate::proof_kernel::aver_generated::kernel::ring::Mono {
+                            atoms: m.atoms,
+                            coef: m.coef.mul(&k),
+                        },
+                    ),
+                    &crate::proof_kernel::aver_generated::kernel::ring::scalePoly(&rest, k),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// The product of two polynomials.
@@ -377,14 +474,47 @@ pub fn mulPoly(
     b @ _: &aver_rt::AverList<Mono>,
 ) -> aver_rt::AverList<Mono> {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(a.clone(), [] => aver_rt::AverList::empty(), [m, rest] => crate::proof_kernel::aver_generated::kernel::ring::addPoly(crate::proof_kernel::aver_generated::kernel::ring::mulMono(&m, b), crate::proof_kernel::aver_generated::kernel::ring::mulPoly(&rest, b)))
+    {
+        let __list_subject = a;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let (Some(m), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                crate::proof_kernel::aver_generated::kernel::ring::addPoly(
+                    crate::proof_kernel::aver_generated::kernel::ring::mulMono(m, b),
+                    &crate::proof_kernel::aver_generated::kernel::ring::mulPoly(&rest, b),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// One monomial times a polynomial.
 #[inline(always)]
 pub fn mulMono(m @ _: &Mono, p @ _: &aver_rt::AverList<Mono>) -> aver_rt::AverList<Mono> {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(p.clone(), [] => aver_rt::AverList::empty(), [x, rest] => crate::proof_kernel::aver_generated::kernel::ring::insertMono(crate::proof_kernel::aver_generated::kernel::ring::Mono { atoms: crate::proof_kernel::aver_generated::kernel::ring::mergeSorted(&m.atoms, &x.atoms), coef: m.coef.mul(&x.coef) }, &crate::proof_kernel::aver_generated::kernel::ring::mulMono(m, &rest)))
+    {
+        let __list_subject = p;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let Some((x, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                crate::proof_kernel::aver_generated::kernel::ring::insertMono(
+                    crate::proof_kernel::aver_generated::kernel::ring::Mono {
+                        atoms: crate::proof_kernel::aver_generated::kernel::ring::mergeSorted(
+                            &m.atoms, &x.atoms,
+                        ),
+                        coef: m.coef.mul(&x.coef),
+                    },
+                    &crate::proof_kernel::aver_generated::kernel::ring::mulMono(m, &rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// Two sorted lists merged into one.
@@ -433,13 +563,13 @@ pub fn linearContradiction(
 ) -> bool {
     crate::proof_kernel::cancel_checkpoint();
     match crate::proof_kernel::aver_generated::kernel::ring::readRows(
-        facts.clone(),
+        facts,
         aver_rt::AverList::empty(),
-        aver_rt::AverList::empty(),
+        &aver_rt::AverList::empty(),
     ) {
         None => false,
         Some(rows @ _) => {
-            match crate::proof_kernel::aver_generated::kernel::ring::withCuts(rows, cuts.clone()) {
+            match crate::proof_kernel::aver_generated::kernel::ring::withCuts(rows, cuts) {
                 None => false,
                 Some(all @ _) => {
                     crate::proof_kernel::aver_generated::kernel::ring::negativeConstant(
@@ -458,21 +588,61 @@ pub fn linearContradiction(
 /// Each fact read as p >= 0, over one list of atoms; None when one is not an Int comparison with a Bool value.
 #[inline(always)]
 pub fn readRows(
-    mut facts @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
+    facts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
     mut rows @ _: aver_rt::AverList<aver_rt::AverList<Mono>>,
-    mut atoms @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    atoms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
 ) -> Option<aver_rt::AverList<aver_rt::AverList<Mono>>> {
+    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>;
+    let mut facts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn> =
+        facts;
+    let mut __hold2: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>;
+    let mut atoms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> =
+        atoms;
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        aver_list_match!(facts, [] => { return Some(rows); }, [f, fs] => { if crate::proof_kernel::aver_generated::kernel::ring::isTruth(&f.rhs) { match crate::proof_kernel::aver_generated::kernel::ring::asNonneg(&f.lhs, (f.rhs == crate::proof_kernel::aver_generated::kernel::term::Term::TBool(crate::proof_kernel::aver_generated::kernel::term::Term__TBool(true))), &atoms) { None => { return None; }, Some(read @ _) => { {
-            let __tco0 = fs;
-            let __tco1 = aver_rt::AverList::concat(&rows, &aver_rt::AverList::from_vec(vec![read.poly]));
-            let __tco2 = read.atoms;
-            facts = __tco0;
-            rows = __tco1;
-            atoms = __tco2;
-            continue;
-        } } } } else { return None; } })
+        {
+            let __list_subject = facts;
+            if __list_subject.is_empty() {
+                return Some(rows);
+            } else {
+                if let Some((f, fs)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    if crate::proof_kernel::aver_generated::kernel::ring::isTruth(&f.rhs) {
+                        match crate::proof_kernel::aver_generated::kernel::ring::asNonneg(
+                            &f.lhs,
+                            (f.rhs
+                                == crate::proof_kernel::aver_generated::kernel::term::Term::TBool(
+                                    crate::proof_kernel::aver_generated::kernel::term::Term__TBool(
+                                        true,
+                                    ),
+                                )),
+                            atoms,
+                        ) {
+                            None => {
+                                return None;
+                            }
+                            Some(read @ _) => {
+                                let __tco0 = fs;
+                                let __tco1 = aver_rt::AverList::concat(
+                                    &rows,
+                                    &aver_rt::AverList::from_vec(vec![read.poly]),
+                                );
+                                let __tco2 = read.atoms;
+                                __hold0 = __tco0;
+                                facts = &__hold0;
+                                rows = __tco1;
+                                __hold2 = __tco2;
+                                atoms = &__hold2;
+                                continue;
+                            }
+                        }
+                    } else {
+                        return None;
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
@@ -504,7 +674,7 @@ pub fn sumRows(
                         let __tco1 = ws;
                         let __tco2 = crate::proof_kernel::aver_generated::kernel::ring::addPoly(
                             acc,
-                            crate::proof_kernel::aver_generated::kernel::ring::scalePoly(&p, w),
+                            &crate::proof_kernel::aver_generated::kernel::ring::scalePoly(&p, w),
                         );
                         rows = __tco0;
                         weights = __tco1;
@@ -523,17 +693,53 @@ pub fn sumRows(
 #[inline(always)]
 pub fn withCuts(
     mut rows @ _: aver_rt::AverList<aver_rt::AverList<Mono>>,
-    mut cuts @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Cut>,
+    cuts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Cut>,
 ) -> Option<aver_rt::AverList<aver_rt::AverList<Mono>>> {
+    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Cut>;
+    let mut cuts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Cut> =
+        cuts;
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        aver_list_match!(cuts, [] => { return Some(rows); }, [c, rest] => { match crate::proof_kernel::aver_generated::kernel::ring::sumRows(rows.clone(), c.weights, aver_rt::AverList::empty()) { None => { return None; }, Some(sum @ _) => { match crate::proof_kernel::aver_generated::kernel::ring::rounded(&sum, c.divisor) { None => { return None; }, Some(row @ _) => { {
-            let __tco0 = aver_rt::AverList::concat(&rows, &aver_rt::AverList::from_vec(vec![row]));
-            let __tco1 = rest;
-            rows = __tco0;
-            cuts = __tco1;
-            continue;
-        } } } } } })
+        {
+            let __list_subject = cuts;
+            if __list_subject.is_empty() {
+                return Some(rows);
+            } else {
+                if let Some((c, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    match crate::proof_kernel::aver_generated::kernel::ring::sumRows(
+                        rows.clone(),
+                        c.weights,
+                        aver_rt::AverList::empty(),
+                    ) {
+                        None => {
+                            return None;
+                        }
+                        Some(sum @ _) => {
+                            match crate::proof_kernel::aver_generated::kernel::ring::rounded(
+                                &sum, c.divisor,
+                            ) {
+                                None => {
+                                    return None;
+                                }
+                                Some(row @ _) => {
+                                    let __tco0 = aver_rt::AverList::concat(
+                                        &rows,
+                                        &aver_rt::AverList::from_vec(vec![row]),
+                                    );
+                                    let __tco1 = rest;
+                                    rows = __tco0;
+                                    __hold1 = __tco1;
+                                    cuts = &__hold1;
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
@@ -546,7 +752,7 @@ pub fn rounded(
     crate::proof_kernel::cancel_checkpoint();
     if (d > aver_rt::AverInt::from_i64(0)) {
         crate::proof_kernel::aver_generated::kernel::ring::roundedBy(
-            p.clone(),
+            p,
             d,
             aver_rt::AverList::empty(),
         )
@@ -558,26 +764,57 @@ pub fn rounded(
 /// Each monomial of p divided by d, in order.
 #[inline(always)]
 pub fn roundedBy(
-    mut p @ _: aver_rt::AverList<Mono>,
+    p @ _: &aver_rt::AverList<Mono>,
     mut d @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverList<Mono>,
 ) -> Option<aver_rt::AverList<Mono>> {
+    let mut __hold0: aver_rt::AverList<Mono>;
+    let mut p @ _: &aver_rt::AverList<Mono> = p;
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        aver_list_match!(p, [] => { return Some(acc); }, [m, rest] => { match ((match (m.coef).div_euclid(&(d)) { Some(__q) => Ok(__q), None => Err("division by zero".to_string()) }).into_aver(), (match (m.coef).rem_euclid(&(d)) { Some(__r) => Ok(__r), None => Err("division by zero".to_string()) }).into_aver()) {
-        (Ok(q), Ok(r)) => {
-            if ((m.atoms == aver_rt::AverIntList::empty()) || (r == aver_rt::AverInt::from_i64(0))) { {
-            let __tco0 = rest;
-            let __tco2 = aver_rt::AverList::concat(&acc, &crate::proof_kernel::aver_generated::kernel::ring::nonzero(crate::proof_kernel::aver_generated::kernel::ring::Mono { atoms: m.atoms, coef: q }));
-            p = __tco0;
-            acc = __tco2;
-            continue;
-        } } else { return None; }
-        },
-        _ => {
-            return None;
+        {
+            let __list_subject = p;
+            if __list_subject.is_empty() {
+                return Some(acc);
+            } else {
+                if let Some((m, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    match (
+                        (match (m.coef).div_euclid(&(d)) {
+                            Some(__q) => Ok(__q),
+                            None => Err("division by zero".to_string()),
+                        })
+                        .into_aver(),
+                        (match (m.coef).rem_euclid(&(d)) {
+                            Some(__r) => Ok(__r),
+                            None => Err("division by zero".to_string()),
+                        })
+                        .into_aver(),
+                    ) {
+                        (Ok(q), Ok(r)) => {
+                            if ((m.atoms == aver_rt::AverIntList::empty())
+                                || (r == aver_rt::AverInt::from_i64(0)))
+                            {
+                                {
+                                    let __tco0 = rest;
+                                    let __tco2 = aver_rt::AverList::concat(&acc, &crate::proof_kernel::aver_generated::kernel::ring::nonzero(crate::proof_kernel::aver_generated::kernel::ring::Mono { atoms: m.atoms, coef: q }));
+                                    __hold0 = __tco0;
+                                    p = &__hold0;
+                                    acc = __tco2;
+                                    continue;
+                                }
+                            } else {
+                                return None;
+                            }
+                        }
+                        _ => {
+                            return None;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
         }
-    } })
     }
 }
 
@@ -720,7 +957,7 @@ pub fn lessConstant(r @ _: &Read, k @ _: aver_rt::AverInt) -> Read {
     crate::proof_kernel::aver_generated::kernel::ring::Read {
         poly: crate::proof_kernel::aver_generated::kernel::ring::addPoly(
             r.poly.clone(),
-            crate::proof_kernel::aver_generated::kernel::ring::constant(
+            &crate::proof_kernel::aver_generated::kernel::ring::constant(
                 aver_rt::AverInt::from_i64(0).sub(&k),
             ),
         ),

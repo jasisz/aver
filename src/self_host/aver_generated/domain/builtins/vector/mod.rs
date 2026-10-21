@@ -100,7 +100,7 @@ pub fn builtinVectorGet(
                 crate::aver_generated::domain::value::Val__view::ValVector(__vec_fields),
                 crate::aver_generated::domain::value::Val__view::ValInt(__idx_fields),
             ) => {
-                let vec = __vec_fields.0.clone();
+                let vec = &__vec_fields.0;
                 let idx = __idx_fields.0.clone();
                 match (idx).to_usize().and_then(|__i| vec.get(__i).cloned()) {
                     Some(v @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
@@ -120,17 +120,18 @@ pub fn builtinVectorSet(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
-        let __list_subject = args.clone();
-        if let Some((vecV, rest)) = aver_rt::list_uncons_cloned(&__list_subject) {
+        let __list_subject = args;
+        if let (Some(vecV), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
             {
                 let __list_subject = rest;
-                if let Some((idxV, rest2)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                if let (Some(idxV), Some(rest2)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __list_subject = rest2;
-                        if let Some((valV, ignored)) = aver_rt::list_uncons_cloned(&__list_subject)
+                        if let (Some(valV), Some(ignored)) =
+                            (__list_subject.first(), __list_subject.tail())
                         {
                             crate::aver_generated::domain::builtins::vector::builtinVectorSetInner(
-                                &vecV, &idxV, &valV,
+                                vecV, idxV, valV,
                             )
                         } else {
                             Err(AverStr::from("Vector.set: expected 3 args"))
@@ -215,7 +216,7 @@ pub fn builtinVectorLen(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValVector(__vec_fields) => {
-                let vec = __vec_fields.0.clone();
+                let vec = &__vec_fields.0;
                 Ok(crate::aver_generated::domain::value::Val::ValInt(
                     crate::aver_generated::domain::value::Val__ValInt(aver_rt::AverInt::from_i64(
                         vec.len() as i64,
