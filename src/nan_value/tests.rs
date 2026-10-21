@@ -867,12 +867,12 @@ fn evacuation_descends_into_a_twice_reached_out_of_region_slot_once() {
 
 /// The written vector reached through an out-of-region CONS CHAIN.
 ///
-/// A `Prepend` node's head goes through `evacuate_local_root`, which descends;
-/// its tail goes through `take_local_tail_value`, which used to stop at the
-/// first out-of-region cell. Everything past that cell was therefore never
+/// A `Prepend` node's head used to go through `evacuate_local_root`, which
+/// descended, and its tail through a tail walk that stopped at the first
+/// out-of-region cell. Everything past that cell was therefore never
 /// looked at, so a vector held two cells down kept its stale index. The
-/// promotion sibling `take_promote_tail_value` walks straight into an
-/// out-of-region cell, so this was never the parity the two sides claimed.
+/// promotion walk went straight into an out-of-region cell, so this was
+/// never the parity the two sides claimed.
 #[test]
 fn evacuation_rewrites_a_slot_written_in_place_behind_an_out_of_region_list_tail() {
     let mut arena = Arena::new();
@@ -913,10 +913,11 @@ fn evacuation_rewrites_a_slot_written_in_place_behind_an_out_of_region_list_tail
 /// The promotion sibling, on the same twice-reached shape, for contrast.
 ///
 /// `promote_young_roots_to_yard` appends every survivor to the END of yard
-/// (`take_promote_tail_value` / `promote_value_to_target` both push), so a
-/// promoted index can never collide with a live slot and a repeated descent
-/// rewrites nothing. That is why the memo the evacuation needs has no sibling
-/// on this path — not because the promotion walk remembers where it has been.
+/// (`take_promote_value` pushes), so a promoted index can never collide with
+/// a live slot and a repeated descent rewrites nothing. The walk does keep the
+/// evacuation's memo, but for a different reason: it puts a slot back before
+/// it has walked what the slot holds, so a slot that reaches itself would
+/// otherwise be descended into for ever.
 ///
 /// The descent itself is reported, not assumed: the vector written into lives
 /// below the mark, so the caller passes `true` the way the runtime does after
