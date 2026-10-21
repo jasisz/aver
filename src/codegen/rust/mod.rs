@@ -2936,14 +2936,11 @@ fn runGuestProgram(path: String, guestArgs: List<String>) -> Result<String, Stri
 
         assert!(!generated_file(&system, "Cargo.toml").contains("mimalloc"));
         assert!(!generated_file(&system, "src/main.rs").contains("global_allocator"));
-        assert!(
-            generated_file(&mimalloc, "Cargo.toml")
-                .contains("mimalloc = { version = \"0.1.52\", default-features = false }")
-        );
+        assert!(generated_file(&mimalloc, "Cargo.toml").contains("features = [\"mimalloc\"]"));
         assert_eq!(
             generated_file(&mimalloc, "src/main.rs"),
             format!(
-                "{}\n#[global_allocator]\nstatic GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;\n",
+                "{}\n#[global_allocator]\nstatic GLOBAL: aver_rt::MiMalloc = aver_rt::MiMalloc;\n",
                 generated_file(&system, "src/main.rs")
             )
         );

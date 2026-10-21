@@ -19,6 +19,7 @@ path = "src/lib.rs"
 [features]
 default = []
 http = ["dep:ureq"]
+mimalloc = ["dep:libmimalloc-sys"]
 random = ["dep:rand"]
 terminal = ["dep:crossterm"]
 
@@ -28,6 +29,7 @@ all-features = true
 [dependencies]
 ahash = { version = "0.8", default-features = false, features = ["std", "runtime-rng"] }
 crossterm = { version = "0.28", optional = true }
+libmimalloc-sys = { version = "0.1.49", default-features = false, optional = true }
 num-bigint = "0.4"
 num-integer = "0.1"
 num-traits = "0.2"
@@ -47,6 +49,7 @@ socket2 = "0.6"
 
 [dev-dependencies]
 criterion = "0.5"
+libmimalloc-sys = { version = "0.1.49", default-features = false }
 
 [[bench]]
 name = "list_concat"

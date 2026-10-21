@@ -10,6 +10,8 @@ pub mod http;
 pub mod int;
 pub mod int_list;
 pub mod listbuilder;
+#[cfg(any(feature = "mimalloc", test))]
+mod mimalloc;
 pub mod packed_u8;
 #[cfg(feature = "random")]
 pub mod random;
@@ -36,6 +38,8 @@ pub use int_list::{
     int_list_builder_push, into_packed_u8,
 };
 pub use listbuilder::{list_builder_finalize, list_builder_new, list_builder_push};
+#[cfg(feature = "mimalloc")]
+pub use mimalloc::MiMalloc;
 pub use packed_u8::AverPackedU8;
 pub use runtime::{
     append_bytes, append_text, capture_console_output, cli_args, console_error, console_print,
