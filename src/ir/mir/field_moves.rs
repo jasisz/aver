@@ -338,6 +338,31 @@ fn base_is_final(group: &[Read], bi: usize) -> bool {
     ends_here
 }
 
+/// Addresses of the reads [`movable_projections`] does not place where they
+/// stand: the target of a [`vector_set_match`] (read in the `Some` arm), the
+/// target of a [`self_keep_vector_set`] (read where the default stands), and
+/// the base of a record update (it stands for what the update keeps). A
+/// backend that compiles one of these as a plain field read must not move
+/// the field there.
+pub fn reads_out_of_place(body: &MirExpr, builtins: &[String]) -> HashSet<usize> {
+    let mut out = HashSet::new();
+    gather_out_of_place(body, builtins, &mut out);
+    out
+}
+
+fn gather_out_of_place(expr: &MirExpr, builtins: &[String], out: &mut HashSet<usize>) {
+    let target = match expr {
+        MirExpr::Match(m) => vector_set_match(&m.node, builtins).map(|set| &set.target.node),
+        MirExpr::Call(call) => self_keep_vector_set(&call.node, builtins).map(|k| &k.target.node),
+        MirExpr::RecordUpdate(update) => Some(&update.node.base.node),
+        _ => None,
+    };
+    if let Some(target) = target {
+        out.insert(target as *const MirExpr as usize);
+    }
+    walk_children(expr, &mut |child| gather_out_of_place(child, builtins, out));
+}
+
 /// The locals under `body` that give up a field through one of the
 /// `movable` projections. Such a local may be partially moved by the time
 /// it is read again, so it can only be read by fields it still holds.

@@ -2147,3 +2147,76 @@ fn main() -> Unit
         "chain true false\nlinked true false\nproduct true true"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A Map threaded through record results
+// ---------------------------------------------------------------------------
+
+/// A memo Map threaded through mutually recursive functions that return it
+/// inside a record (`rb = go(b, ra.memo)` with `ra.t` read after) is taken
+/// out of the record where it is read, so no record still holds it when
+/// `Map.set` writes it and the write does not copy the whole map. At 2^17
+/// inserts that copy would not end within a minute. The output is the one
+/// the Rust backend prints.
+#[test]
+fn vm_moves_a_map_threaded_through_record_results() {
+    let file = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/map_threaded_through_results_app.av");
+    assert_eq!(
+        aver_run_within_a_minute(&file, &["17"]),
+        "remembered 131071 root 1"
+    );
+}
+
+/// A field taken where it is read, one or two records below a local that
+/// is read again afterwards: the later reads see the other fields, and a
+/// second read of the same field keeps it in place.
+#[test]
+fn vm_field_taken_before_the_last_read_leaves_the_rest_readable() {
+    let dir = temp_module_root("field_take_early");
+    let file = dir.join("main.av");
+    std::fs::write(
+        &file,
+        r#"module FieldTakeEarly
+    intent = "Fields taken out of a record that is read again."
+    effects [Console.print]
+
+record Inner
+    memo: Map<Int, Int>
+    tag: Int
+
+record Outer
+    inner: Inner
+    count: Int
+
+fn grow(m: Map<Int, Int>, k: Int) -> Map<Int, Int>
+    ? "Adds one key."
+    Map.set(m, k, k * 2)
+
+fn flat(i: Inner) -> Inner
+    ? "Grows the map of i, then reads its tag."
+    m = grow(i.memo, 7)
+    Inner(memo = m, tag = i.tag + 1)
+
+fn nested(o: Outer) -> Outer
+    ? "Grows the map two records down, then reads the rest."
+    m = grow(o.inner.memo, 9)
+    Outer(inner = Inner(memo = m, tag = o.inner.tag + 1), count = o.count + Map.len(m))
+
+fn keeps(i: Inner) -> Int
+    ? "Grows a copy, then reads the same field again."
+    m = grow(i.memo, 5)
+    Map.len(m) + Map.len(i.memo)
+
+fn main() -> Unit
+    ! [Console.print]
+    i = flat(Inner(memo = {1 => 1}, tag = 10))
+    o = nested(Outer(inner = Inner(memo = {2 => 2}, tag = 20), count = 1))
+    Console.print("{Map.len(i.memo)} {i.tag} {Map.len(o.inner.memo)} {o.inner.tag} {o.count} {keeps(i)}")
+"#,
+    )
+    .expect("write Aver source");
+    let out = aver_run_within_a_minute(&file, &[]);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out, "2 11 2 21 3 5");
+}
