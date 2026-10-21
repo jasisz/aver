@@ -102,11 +102,11 @@ pub fn builtinIntMaxInner(
     let b @ _ = crate::aver_generated::domain::builtins::helpers::expectInt(bV)?;
     if (a > b) {
         Ok(crate::aver_generated::domain::value::Val::ValInt(
-            std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValInt(a)),
+            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt(a)),
         ))
     } else {
         Ok(crate::aver_generated::domain::value::Val::ValInt(
-            std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValInt(b)),
+            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt(b)),
         ))
     }
 }
@@ -133,11 +133,11 @@ pub fn builtinIntMinInner(
     let b @ _ = crate::aver_generated::domain::builtins::helpers::expectInt(bV)?;
     if (a < b) {
         Ok(crate::aver_generated::domain::value::Val::ValInt(
-            std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValInt(a)),
+            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt(a)),
         ))
     } else {
         Ok(crate::aver_generated::domain::value::Val::ValInt(
-            std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValInt(b)),
+            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt(b)),
         ))
     }
 }
@@ -247,7 +247,7 @@ pub fn builtinIntToFloat(
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let n @ _ = crate::aver_generated::domain::builtins::helpers::expectInt(&v)?;
     Ok(crate::aver_generated::domain::value::Val::ValFloat(
-        std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValFloat(
+        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValFloat(
             n.to_f64(),
         )),
     ))
@@ -261,7 +261,7 @@ pub fn builtinIntToString(
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let n @ _ = crate::aver_generated::domain::builtins::helpers::expectInt(&v)?;
     Ok(crate::aver_generated::domain::value::Val::ValStr(
-        std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValStr(
+        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValStr(
             (n.to_string()).into_aver(),
         )),
     ))
@@ -275,7 +275,7 @@ pub fn builtinIntAbs(
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let n @ _ = crate::aver_generated::domain::builtins::helpers::expectInt(&v)?;
     Ok(crate::aver_generated::domain::value::Val::ValInt(
-        std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValInt(n.abs())),
+        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt(n.abs())),
     ))
 }
 
@@ -301,8 +301,8 @@ pub fn builtinIntModInner(
     let b @ _ = crate::aver_generated::domain::builtins::helpers::expectInt(bV)?;
     if (b == aver_rt::AverInt::from_i64(0)) {
         Ok(crate::aver_generated::domain::value::Val::ValErr(
-            std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(std::sync::Arc::new(
+            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
                     crate::aver_generated::domain::value::Val__ValStr(AverStr::from(
                         "modulo by zero",
                     )),
@@ -311,8 +311,8 @@ pub fn builtinIntModInner(
         ))
     } else {
         Ok(crate::aver_generated::domain::value::Val::ValOk(
-            std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValOk(
-                crate::aver_generated::domain::value::Val::ValInt(std::sync::Arc::new(
+            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+                crate::aver_generated::domain::value::Val::ValInt(aver_rt::Shared::new(
                     crate::aver_generated::domain::value::Val__ValInt({
                         let __b = b;
                         if __b.is_zero() {
@@ -354,15 +354,15 @@ pub fn builtinIntDivInner(
     .into_aver()
     {
         Ok(q @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValOk(
-                crate::aver_generated::domain::value::Val::ValInt(std::sync::Arc::new(
+            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+                crate::aver_generated::domain::value::Val::ValInt(aver_rt::Shared::new(
                     crate::aver_generated::domain::value::Val__ValInt(q),
                 )),
             )),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(std::sync::Arc::new(
+            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
                     crate::aver_generated::domain::value::Val__ValStr(e),
                 )),
             )),
@@ -378,7 +378,7 @@ pub fn builtinStringLen(
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let s @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
     Ok(crate::aver_generated::domain::value::Val::ValInt(
-        std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValInt(
+        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt(
             aver_rt::AverInt::from_i64(s.chars().count() as i64),
         )),
     ))
@@ -410,8 +410,8 @@ pub fn builtinStringCharAtInner(
     .into_aver()
     {
         Some(c @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
-            std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValSome(
-                crate::aver_generated::domain::value::Val::ValStr(std::sync::Arc::new(
+            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValSome(
+                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
                     crate::aver_generated::domain::value::Val__ValStr(c),
                 )),
             )),
@@ -445,7 +445,7 @@ pub fn builtinStringJoinInner(
         aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
     )?;
     Ok(crate::aver_generated::domain::value::Val::ValStr(
-        std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValStr(
+        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValStr(
             (aver_rt::string_join(&strs, &sep)).into_aver(),
         )),
     ))
@@ -524,7 +524,7 @@ pub fn builtinStringSliceInner(
     let start @ _ = crate::aver_generated::domain::builtins::helpers::expectInt(startV)?;
     let end @ _ = crate::aver_generated::domain::builtins::helpers::expectInt(endV)?;
     Ok(crate::aver_generated::domain::value::Val::ValStr(
-        std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValStr(
+        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValStr(
             (aver_rt::string_slice(
                 &s,
                 crate::aver_int_clamp_i64(&start),
@@ -545,7 +545,7 @@ pub fn builtinStringFromBool(
         crate::aver_generated::domain::value::Val::ValBool(__b_fields) => {
             let b = __b_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValStr(
-                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValStr(
+                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValStr(
                     (b.to_string()).into_aver(),
                 )),
             ))
@@ -562,7 +562,7 @@ pub fn builtinStringFromInt(
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let n @ _ = crate::aver_generated::domain::builtins::helpers::expectInt(&v)?;
     Ok(crate::aver_generated::domain::value::Val::ValStr(
-        std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValStr(
+        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValStr(
             (n.to_string()).into_aver(),
         )),
     ))
@@ -578,7 +578,7 @@ pub fn builtinStringFromFloat(
         crate::aver_generated::domain::value::Val::ValFloat(__f_fields) => {
             let f = __f_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValStr(
-                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValStr(
+                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValStr(
                     (f.to_string()).into_aver(),
                 )),
             ))
@@ -608,7 +608,7 @@ pub fn builtinStringContainsInner(
     let h @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(hV)?;
     let n @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(nV)?;
     Ok(crate::aver_generated::domain::value::Val::ValBool(
-        std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValBool(
+        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValBool(
             h.contains(&*n),
         )),
     ))
@@ -635,7 +635,7 @@ pub fn builtinStringStartsWithInner(
     let s @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(sV)?;
     let p @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(pV)?;
     Ok(crate::aver_generated::domain::value::Val::ValBool(
-        std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValBool(
+        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValBool(
             s.starts_with(&*p),
         )),
     ))
@@ -649,7 +649,7 @@ pub fn builtinStringToLower(
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let s @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
     Ok(crate::aver_generated::domain::value::Val::ValStr(
-        std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValStr(
+        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValStr(
             (s.to_lowercase()).into_aver(),
         )),
     ))
@@ -664,8 +664,8 @@ pub fn builtinStringFromCodePoint(
     let n @ _ = crate::aver_generated::domain::builtins::helpers::expectInt(&v)?;
     match ((n).to_u32().and_then(char::from_u32).map(|c| c.to_string())).into_aver() {
         Some(c @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
-            std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValSome(
-                crate::aver_generated::domain::value::Val::ValStr(std::sync::Arc::new(
+            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValSome(
+                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
                     crate::aver_generated::domain::value::Val__ValStr(c),
                 )),
             )),
@@ -687,8 +687,8 @@ pub fn builtinStringFirstCodePoint(
         .map(|c| aver_rt::AverInt::from_i64(c as i64))
     {
         Some(code @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
-            std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValSome(
-                crate::aver_generated::domain::value::Val::ValInt(std::sync::Arc::new(
+            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValSome(
+                crate::aver_generated::domain::value::Val::ValInt(aver_rt::Shared::new(
                     crate::aver_generated::domain::value::Val__ValInt(code),
                 )),
             )),
@@ -712,15 +712,15 @@ pub fn builtinIntFromString(
     .into_aver()
     {
         Ok(n @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValOk(
-                crate::aver_generated::domain::value::Val::ValInt(std::sync::Arc::new(
+            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+                crate::aver_generated::domain::value::Val::ValInt(aver_rt::Shared::new(
                     crate::aver_generated::domain::value::Val__ValInt(n),
                 )),
             )),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(std::sync::Arc::new(
+            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
                     crate::aver_generated::domain::value::Val__ValStr(e),
                 )),
             )),
@@ -736,7 +736,7 @@ pub fn builtinStringChars(
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let s @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
     Ok(crate::aver_generated::domain::value::Val::ValList(
-        std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValList(
+        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValList(
             crate::aver_generated::domain::builtins::primitives::stringToCharList(
                 s.clone(),
                 aver_rt::AverInt::from_i64(0),
@@ -868,15 +868,15 @@ pub fn builtinFloatFromString(
     .into_aver()
     {
         Ok(f @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValOk(
-                crate::aver_generated::domain::value::Val::ValFloat(std::sync::Arc::new(
+            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValOk(
+                crate::aver_generated::domain::value::Val::ValFloat(aver_rt::Shared::new(
                     crate::aver_generated::domain::value::Val__ValFloat(f),
                 )),
             )),
         )),
         Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(std::sync::Arc::new(
+            aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValErr(
+                crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
                     crate::aver_generated::domain::value::Val__ValStr(e),
                 )),
             )),
@@ -892,7 +892,7 @@ pub fn builtinFloatFromInt(
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let n @ _ = crate::aver_generated::domain::builtins::helpers::expectInt(&v)?;
     Ok(crate::aver_generated::domain::value::Val::ValFloat(
-        std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValFloat(
+        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValFloat(
             n.to_f64(),
         )),
     ))
@@ -908,7 +908,7 @@ pub fn builtinFloatRound(
         crate::aver_generated::domain::value::Val::ValFloat(__f_fields) => {
             let f = __f_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValInt(
-                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValInt(
+                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt(
                     aver_rt::AverInt::from_f64_trunc(f.round()),
                 )),
             ))
@@ -927,7 +927,7 @@ pub fn builtinFloatToString(
         crate::aver_generated::domain::value::Val::ValFloat(__f_fields) => {
             let f = __f_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValStr(
-                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValStr(
+                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValStr(
                     (f.to_string()).into_aver(),
                 )),
             ))
@@ -946,7 +946,7 @@ pub fn builtinFloatAbs(
         crate::aver_generated::domain::value::Val::ValFloat(__f_fields) => {
             let f = __f_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValFloat(
-                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValFloat(f.abs())),
+                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValFloat(f.abs())),
             ))
         }
         _ => Err(AverStr::from("Float.abs requires Float")),
@@ -963,7 +963,7 @@ pub fn builtinFloatFloor(
         crate::aver_generated::domain::value::Val::ValFloat(__f_fields) => {
             let f = __f_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValInt(
-                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValInt(
+                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt(
                     aver_rt::AverInt::from_f64_trunc(f.floor()),
                 )),
             ))
@@ -982,7 +982,7 @@ pub fn builtinFloatCeil(
         crate::aver_generated::domain::value::Val::ValFloat(__f_fields) => {
             let f = __f_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValInt(
-                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValInt(
+                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValInt(
                     aver_rt::AverInt::from_f64_trunc(f.ceil()),
                 )),
             ))
@@ -1005,7 +1005,7 @@ pub fn builtinFloatMin(
             let a = __a_fields.0.clone();
             let b = __b_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValFloat(
-                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValFloat(
+                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValFloat(
                     a.min(b),
                 )),
             ))
@@ -1028,7 +1028,7 @@ pub fn builtinFloatMax(
             let a = __a_fields.0.clone();
             let b = __b_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValFloat(
-                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValFloat(
+                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValFloat(
                     a.max(b),
                 )),
             ))
@@ -1047,7 +1047,7 @@ pub fn builtinFloatSin(
         crate::aver_generated::domain::value::Val::ValFloat(__f_fields) => {
             let f = __f_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValFloat(
-                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValFloat(f.sin())),
+                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValFloat(f.sin())),
             ))
         }
         _ => Err(AverStr::from("Float.sin requires Float")),
@@ -1064,7 +1064,7 @@ pub fn builtinFloatCos(
         crate::aver_generated::domain::value::Val::ValFloat(__f_fields) => {
             let f = __f_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValFloat(
-                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValFloat(f.cos())),
+                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValFloat(f.cos())),
             ))
         }
         _ => Err(AverStr::from("Float.cos requires Float")),
@@ -1081,7 +1081,7 @@ pub fn builtinFloatSqrt(
         crate::aver_generated::domain::value::Val::ValFloat(__f_fields) => {
             let f = __f_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValFloat(
-                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValFloat(
+                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValFloat(
                     f.sqrt(),
                 )),
             ))
@@ -1104,7 +1104,7 @@ pub fn builtinFloatPow(
             let a = __a_fields.0.clone();
             let b = __b_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValFloat(
-                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValFloat(
+                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValFloat(
                     a.powf(b),
                 )),
             ))
@@ -1127,7 +1127,7 @@ pub fn builtinFloatAtan2(
             let a = __a_fields.0.clone();
             let b = __b_fields.0.clone();
             Ok(crate::aver_generated::domain::value::Val::ValFloat(
-                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValFloat(
+                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValFloat(
                     a.atan2(b),
                 )),
             ))
@@ -1145,7 +1145,7 @@ pub fn builtinFloatPi(
         let __list_subject = args;
         if __list_subject.is_empty() {
             Ok(crate::aver_generated::domain::value::Val::ValFloat(
-                std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValFloat(
+                aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValFloat(
                     std::f64::consts::PI,
                 )),
             ))
@@ -1163,7 +1163,7 @@ pub fn builtinStringToUpper(
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let s @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
     Ok(crate::aver_generated::domain::value::Val::ValStr(
-        std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValStr(
+        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValStr(
             (s.to_uppercase()).into_aver(),
         )),
     ))
@@ -1177,7 +1177,7 @@ pub fn builtinStringTrim(
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let s @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
     Ok(crate::aver_generated::domain::value::Val::ValStr(
-        std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValStr(
+        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValStr(
             (s.trim().to_string()).into_aver(),
         )),
     ))
@@ -1204,7 +1204,7 @@ pub fn builtinStringEndsWithInner(
     let s @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(sV)?;
     let p @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(pV)?;
     Ok(crate::aver_generated::domain::value::Val::ValBool(
-        std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValBool(
+        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValBool(
             s.ends_with(&*p),
         )),
     ))
@@ -1234,7 +1234,7 @@ pub fn builtinStringSplitInner(
         (aver_rt::AverList::from_vec(s.split(&*sep).map(|s| s.to_string()).collect::<Vec<_>>()))
             .into_aver();
     Ok(crate::aver_generated::domain::value::Val::ValList(
-        std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValList(
+        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValList(
             crate::aver_generated::domain::builtins::primitives::strPartsToVals__collected(
                 parts,
                 aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
@@ -1253,7 +1253,7 @@ pub fn strPartsToVals(
         crate::cancel_checkpoint();
         aver_list_match!(parts, [] => { return acc.reverse(); }, [s, rest] => { {
             let __tco0 = rest;
-            let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::value::Val::ValStr(std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValStr(s))), &acc);
+            let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValStr(s))), &acc);
             parts = __tco0;
             acc = __tco1;
             continue;
@@ -1282,7 +1282,7 @@ pub fn builtinStringRepeatInner(
     let s @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(sV)?;
     let n @ _ = crate::aver_generated::domain::builtins::helpers::expectInt(nV)?;
     Ok(crate::aver_generated::domain::value::Val::ValStr(
-        std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValStr(
+        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValStr(
             crate::aver_generated::domain::builtins::primitives::repeatStr(s, n, AverStr::from("")),
         )),
     ))
@@ -1340,7 +1340,7 @@ pub fn builtinStringReplaceAllDo(
     let from @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(fromV)?;
     let to @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(toV)?;
     Ok(crate::aver_generated::domain::value::Val::ValStr(
-        std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValStr(
+        aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValStr(
             (s.replace(&*from, &*to)).into_aver(),
         )),
     ))
@@ -1355,7 +1355,7 @@ pub fn stringToCharList__indexed(
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     __str_index @ _: aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
-    let __str_index @ _ = std::sync::Arc::new(__str_index);
+    let __str_index @ _ = aver_rt::Shared::new(__str_index);
     loop {
         crate::cancel_checkpoint();
         let reversed @ _ = acc.reverse();
@@ -1364,7 +1364,7 @@ pub fn stringToCharList__indexed(
                 Some(c @ _) => {
                     let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
                     let __tco3 = aver_rt::AverList::prepend(
-                        crate::aver_generated::domain::value::Val::ValStr(std::sync::Arc::new(
+                        crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(
                             crate::aver_generated::domain::value::Val__ValStr(c),
                         )),
                         &acc,
@@ -1419,7 +1419,7 @@ pub fn strPartsToVals__collected(
         crate::cancel_checkpoint();
         aver_list_match!(parts, [] => { return aver_rt::list_builder_finalize(acc); }, [s, rest] => { {
             let __tco0 = rest;
-            let __tco1 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::value::Val::ValStr(std::sync::Arc::new(crate::aver_generated::domain::value::Val__ValStr(s))));
+            let __tco1 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::value::Val::ValStr(aver_rt::Shared::new(crate::aver_generated::domain::value::Val__ValStr(s))));
             parts = __tco0;
             acc = __tco1;
             continue;

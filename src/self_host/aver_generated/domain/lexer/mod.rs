@@ -1807,7 +1807,7 @@ pub fn emitDedentsAcc(
     mut stack @ _: aver_rt::AverIntList,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::token::Token>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    let rest @ _ = std::sync::Arc::new(rest);
+    let rest @ _ = aver_rt::Shared::new(rest);
     loop {
         crate::cancel_checkpoint();
         let reversed @ _ = acc.reverse();
@@ -2095,7 +2095,7 @@ pub fn tokenizeInterpString__indexed(
     mut acc @ _: AverStr,
     __str_index @ _: aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    let __str_index @ _ = std::sync::Arc::new(__str_index);
+    let __str_index @ _ = aver_rt::Shared::new(__str_index);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
@@ -2333,7 +2333,7 @@ pub fn skipLineComment__indexed(
     mut pos @ _: aver_rt::AverInt,
     __str_index @ _: aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    let __str_index @ _ = std::sync::Arc::new(__str_index);
+    let __str_index @ _ = aver_rt::Shared::new(__str_index);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));

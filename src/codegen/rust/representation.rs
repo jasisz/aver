@@ -86,7 +86,7 @@ pub(super) fn type_def_contract(td: &TypeDef, ctx: &CodegenContext) -> Represent
 }
 
 /// How much larger than every other constructor of a sum that is not
-/// recursive one must be to go behind an `Arc` (see [`shared_variants`]).
+/// recursive one must be to go behind a `Shared` (see [`shared_variants`]).
 /// The pointer costs a value of the large constructor an allocation when it
 /// is built and about 48 bytes (pointer, counts, allocator rounding); at a
 /// 64-byte difference a value of a small one saves as much, so the shared
@@ -96,8 +96,8 @@ pub(super) fn type_def_contract(td: &TypeDef, ctx: &CodegenContext) -> Represent
 /// slower and the memory broke even at a quarter of them.
 const LARGE_VARIANT_BYTES: usize = 64;
 
-/// Which constructors of a sum keep their fields in one shared `Arc`
-/// (`T::Pair(Arc<T__Pair>)`), one entry per variant in declaration order.
+/// Which constructors of a sum keep their fields in one `aver_rt::Shared`
+/// (`T::Pair(Shared<T__Pair>)`), one entry per variant in declaration order.
 ///
 /// Every constructor does in a sum a value of which can hold a value of the
 /// same type with no collection in between: directly, or through records,
@@ -356,7 +356,7 @@ fn capabilities_for_def(
 ) -> RepresentationCapabilities {
     let key = crate::codegen::common::backend_type_def_key(ctx, td);
     if !visiting.insert(key.clone()) {
-        // Recursive fields are emitted through Arc<Self>. Assume the cycle's
+        // Recursive fields are emitted through `Shared`. Assume the cycle's
         // own promise and let every non-recursive field narrow it.
         return RepresentationCapabilities::ALL;
     }

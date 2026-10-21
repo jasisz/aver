@@ -139,13 +139,13 @@ pub mod aver_replay {
         }
     }
 
-    impl<T: ReplayValue> ReplayValue for std::sync::Arc<T> {
+    impl<T: ReplayValue> ReplayValue for aver_rt::Shared<T> {
         fn to_replay_json(&self) -> ReplayJson {
             (**self).to_replay_json()
         }
 
         fn from_replay_json(value: &ReplayJson) -> Result<Self, String> {
-            Ok(std::sync::Arc::new(T::from_replay_json(value)?))
+            Ok(aver_rt::Shared::new(T::from_replay_json(value)?))
         }
     }
 

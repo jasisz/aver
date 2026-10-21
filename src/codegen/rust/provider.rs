@@ -633,7 +633,7 @@ fn emit_sum_codec(
             } else {
                 format!("Self::{}({bindings})", variant.name)
             };
-            // A shared constructor's fields sit behind the constructor's `Arc`.
+            // A shared constructor's fields sit behind the constructor's `Shared`.
             let fields = match shared {
                 true => fields.iter().map(|f| format!("{f}.clone()")).collect(),
                 false => fields,
@@ -671,7 +671,7 @@ fn emit_sum_codec(
             } else if shared {
                 let payload = format!("{name}__{}", variant.name);
                 format!(
-                    "Self::{}(std::sync::Arc::new({payload}({})))",
+                    "Self::{}(aver_rt::Shared::new({payload}({})))",
                     variant.name,
                     decoded.join(", ")
                 )

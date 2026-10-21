@@ -5,16 +5,22 @@ use ::aver_rt::aver_list_match;
 #[derive(Clone, Debug, Eq, Hash)]
 pub enum Tactic {
     Auto,
-    Cases(std::sync::Arc<Tactic__Cases>),
-    Induction(std::sync::Arc<Tactic__Induction>),
-    Split(std::sync::Arc<Tactic__Split>),
-    SplitBool(std::sync::Arc<Tactic__SplitBool>),
-    First(std::sync::Arc<Tactic__First>),
-    Plan(std::sync::Arc<Tactic__Plan>),
+    Cases(aver_rt::Shared<Tactic__Cases>),
+    Induction(aver_rt::Shared<Tactic__Induction>),
+    Split(aver_rt::Shared<Tactic__Split>),
+    SplitBool(aver_rt::Shared<Tactic__SplitBool>),
+    First(aver_rt::Shared<Tactic__First>),
+    Plan(aver_rt::Shared<Tactic__Plan>),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Tactic__Cases(pub Tactic);
+
+impl PartialEq for Tactic__Cases {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0
+    }
+}
 
 impl aver_rt::WalkEq for Tactic__Cases {
     fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
@@ -22,7 +28,7 @@ impl aver_rt::WalkEq for Tactic__Cases {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Tactic__Induction(
     pub AverStr,
     pub AverStr,
@@ -30,6 +36,17 @@ pub struct Tactic__Induction(
     pub Tactic,
     pub Tactic,
 );
+
+impl PartialEq for Tactic__Induction {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
+            || self.0 == other.0
+                && self.1 == other.1
+                && self.2 == other.2
+                && self.3 == other.3
+                && self.4 == other.4
+    }
+}
 
 impl aver_rt::WalkEq for Tactic__Induction {
     fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
@@ -41,7 +58,7 @@ impl aver_rt::WalkEq for Tactic__Induction {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Tactic__Split(
     pub AverStr,
     pub AverStr,
@@ -49,6 +66,17 @@ pub struct Tactic__Split(
     pub Tactic,
     pub Tactic,
 );
+
+impl PartialEq for Tactic__Split {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
+            || self.0 == other.0
+                && self.1 == other.1
+                && self.2 == other.2
+                && self.3 == other.3
+                && self.4 == other.4
+    }
+}
 
 impl aver_rt::WalkEq for Tactic__Split {
     fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
@@ -60,12 +88,18 @@ impl aver_rt::WalkEq for Tactic__Split {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Tactic__SplitBool(
     pub crate::proof_std::aver_generated::kernel::term::Term,
     pub Tactic,
     pub Tactic,
 );
+
+impl PartialEq for Tactic__SplitBool {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0 && self.1 == other.1 && self.2 == other.2
+    }
+}
 
 impl aver_rt::WalkEq for Tactic__SplitBool {
     fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
@@ -75,11 +109,23 @@ impl aver_rt::WalkEq for Tactic__SplitBool {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Tactic__First(pub aver_rt::AverList<Tactic>);
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+impl PartialEq for Tactic__First {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Tactic__Plan(pub AverStr);
+
+impl PartialEq for Tactic__Plan {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0
+    }
+}
 
 impl aver_rt::WalkEq for Tactic {
     fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
@@ -657,7 +703,7 @@ fn __mutual_tco_trampoline_1(
                     crate::proof_std::aver_generated::kernel::std::down(n.clone(), label);
                 match crate::proof_std::aver_generated::kernel::std::lookup((*answers).clone(), key.clone()) { None => { return Err(crate::proof_std::aver_generated::kernel::std::Stop::Ask(key)) }, Some(__pat0 @ _) => { match __pat0 {
         crate::proof_std::aver_generated::kernel::std::Reply::Closed(k) => {
-            return Ok(crate::proof_std::aver_generated::kernel::proof::Proof::PHyp(std::sync::Arc::new(crate::proof_std::aver_generated::kernel::proof::Proof__PHyp(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("#")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(k)))); __b })))))
+            return Ok(crate::proof_std::aver_generated::kernel::proof::Proof::PHyp(aver_rt::Shared::new(crate::proof_std::aver_generated::kernel::proof::Proof__PHyp(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("#")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(k)))); __b })))))
         },
         crate::proof_std::aver_generated::kernel::std::Reply::Declined(why) => {
             return crate::proof_std::aver_generated::kernel::std::refuse(here.path, why)
@@ -712,7 +758,7 @@ fn __mutual_tco_trampoline_1(
             __MutualTco1::EachGiven(mut n @ _, mut gs @ _, mut next @ _) => {
                 crate::proof_std::cancel_checkpoint();
                 let ob @ _ = n.goal.obligation.clone();
-                aver_list_match!(gs, [] => __MutualTco1::Within(n, next), [g, rest] => { return Ok(crate::proof_std::aver_generated::kernel::proof::Proof::PEnum(std::sync::Arc::new(crate::proof_std::aver_generated::kernel::proof::Proof__PEnum(g.name.clone(), ob.lhs, ob.rhs, crate::proof_std::aver_generated::kernel::std::eachCase(&n, g.name.clone(), &crate::proof_std::aver_generated::kernel::finite::values(&g.fin), &rest, &next, &*answers)?)))) })
+                aver_list_match!(gs, [] => __MutualTco1::Within(n, next), [g, rest] => { return Ok(crate::proof_std::aver_generated::kernel::proof::Proof::PEnum(aver_rt::Shared::new(crate::proof_std::aver_generated::kernel::proof::Proof__PEnum(g.name.clone(), ob.lhs, ob.rhs, crate::proof_std::aver_generated::kernel::std::eachCase(&n, g.name.clone(), &crate::proof_std::aver_generated::kernel::finite::values(&g.fin), &rest, &next, &*answers)?)))) })
             }
         };
     }
@@ -808,7 +854,7 @@ pub fn splitAll(
     gs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Given>,
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Proof, AverStr> {
     crate::proof_std::cancel_checkpoint();
-    aver_list_match!(gs.clone(), [] => crate::proof_std::aver_generated::kernel::std::leaf(goal), [g, rest] => Ok(crate::proof_std::aver_generated::kernel::proof::Proof::PEnum(std::sync::Arc::new(crate::proof_std::aver_generated::kernel::proof::Proof__PEnum(g.name.clone(), goal.obligation.lhs.clone(), goal.obligation.rhs.clone(), crate::proof_std::aver_generated::kernel::std::eachValue(goal, g.name.clone(), &crate::proof_std::aver_generated::kernel::finite::values(&g.fin), &rest)?)))))
+    aver_list_match!(gs.clone(), [] => crate::proof_std::aver_generated::kernel::std::leaf(goal), [g, rest] => Ok(crate::proof_std::aver_generated::kernel::proof::Proof::PEnum(aver_rt::Shared::new(crate::proof_std::aver_generated::kernel::proof::Proof__PEnum(g.name.clone(), goal.obligation.lhs.clone(), goal.obligation.rhs.clone(), crate::proof_std::aver_generated::kernel::std::eachValue(goal, g.name.clone(), &crate::proof_std::aver_generated::kernel::finite::values(&g.fin), &rest)?)))))
 }
 
 /// One case per value, in the kernel's order: the goal with v replaced by the value.
@@ -962,9 +1008,11 @@ pub fn close(
             &aver_rt::AverList::from_vec(vec![lhs, l.to.clone(), rhs]),
             &aver_rt::AverList::from_vec(vec![
                 l.proof,
-                crate::proof_std::aver_generated::kernel::proof::Proof::PSymm(std::sync::Arc::new(
-                    crate::proof_std::aver_generated::kernel::proof::Proof__PSymm(r.proof),
-                )),
+                crate::proof_std::aver_generated::kernel::proof::Proof::PSymm(
+                    aver_rt::Shared::new(
+                        crate::proof_std::aver_generated::kernel::proof::Proof__PSymm(r.proof),
+                    ),
+                ),
             ]),
         )
     } else {
@@ -1035,7 +1083,7 @@ pub fn rewriteOnce(
     mut hyps @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Hyp>,
     t @ _: crate::proof_std::aver_generated::kernel::term::Term,
 ) -> Result<Option<crate::proof_std::aver_generated::kernel::lib::Rw>, AverStr> {
-    let t @ _ = std::sync::Arc::new(t);
+    let t @ _ = aver_rt::Shared::new(t);
     loop {
         crate::proof_std::cancel_checkpoint();
         aver_list_match!(hyps, [] => { return Ok(None); }, [h, rest] => { if (h.eqn.lhs == h.eqn.rhs) { {
@@ -1058,14 +1106,14 @@ pub fn congrHyp(
     crate::proof_std::cancel_checkpoint();
     match &c {
         crate::proof_std::aver_generated::kernel::term::Term::THole => {
-            crate::proof_std::aver_generated::kernel::proof::Proof::PHyp(std::sync::Arc::new(
+            crate::proof_std::aver_generated::kernel::proof::Proof::PHyp(aver_rt::Shared::new(
                 crate::proof_std::aver_generated::kernel::proof::Proof__PHyp(name),
             ))
         }
-        _ => crate::proof_std::aver_generated::kernel::proof::Proof::PCongr(std::sync::Arc::new(
+        _ => crate::proof_std::aver_generated::kernel::proof::Proof::PCongr(aver_rt::Shared::new(
             crate::proof_std::aver_generated::kernel::proof::Proof__PCongr(
                 c,
-                crate::proof_std::aver_generated::kernel::proof::Proof::PHyp(std::sync::Arc::new(
+                crate::proof_std::aver_generated::kernel::proof::Proof::PHyp(aver_rt::Shared::new(
                     crate::proof_std::aver_generated::kernel::proof::Proof__PHyp(name),
                 )),
             ),
@@ -1099,7 +1147,7 @@ pub fn holeBelow(
             let xs = __f_fields.1.clone();
             crate::proof_std::aver_generated::kernel::std::mapSome(
                 &crate::proof_std::aver_generated::kernel::std::holeInList(&xs, target),
-                &crate::proof_std::aver_generated::kernel::term::Term::TCall(std::sync::Arc::new(
+                &crate::proof_std::aver_generated::kernel::term::Term::TCall(aver_rt::Shared::new(
                     crate::proof_std::aver_generated::kernel::term::Term__TCall(
                         f,
                         aver_rt::AverList::empty(),
@@ -1112,7 +1160,7 @@ pub fn holeBelow(
             let xs = __f_fields.1.clone();
             crate::proof_std::aver_generated::kernel::std::mapSome(
                 &crate::proof_std::aver_generated::kernel::std::holeInList(&xs, target),
-                &crate::proof_std::aver_generated::kernel::term::Term::TBi(std::sync::Arc::new(
+                &crate::proof_std::aver_generated::kernel::term::Term::TBi(aver_rt::Shared::new(
                     crate::proof_std::aver_generated::kernel::term::Term__TBi(
                         f,
                         aver_rt::AverList::empty(),
@@ -1125,7 +1173,7 @@ pub fn holeBelow(
             let xs = __c_fields.1.clone();
             crate::proof_std::aver_generated::kernel::std::mapSome(
                 &crate::proof_std::aver_generated::kernel::std::holeInList(&xs, target),
-                &crate::proof_std::aver_generated::kernel::term::Term::TCtor(std::sync::Arc::new(
+                &crate::proof_std::aver_generated::kernel::term::Term::TCtor(aver_rt::Shared::new(
                     crate::proof_std::aver_generated::kernel::term::Term__TCtor(
                         c,
                         aver_rt::AverList::empty(),
@@ -1137,7 +1185,7 @@ pub fn holeBelow(
             let xs = __xs_fields.0.clone();
             crate::proof_std::aver_generated::kernel::std::mapSome(
                 &crate::proof_std::aver_generated::kernel::std::holeInList(&xs, target),
-                &crate::proof_std::aver_generated::kernel::term::Term::TList(std::sync::Arc::new(
+                &crate::proof_std::aver_generated::kernel::term::Term::TList(aver_rt::Shared::new(
                     crate::proof_std::aver_generated::kernel::term::Term__TList(
                         aver_rt::AverList::empty(),
                     ),
@@ -1148,11 +1196,13 @@ pub fn holeBelow(
             let xs = __xs_fields.0.clone();
             crate::proof_std::aver_generated::kernel::std::mapSome(
                 &crate::proof_std::aver_generated::kernel::std::holeInList(&xs, target),
-                &crate::proof_std::aver_generated::kernel::term::Term::TTuple(std::sync::Arc::new(
-                    crate::proof_std::aver_generated::kernel::term::Term__TTuple(
-                        aver_rt::AverList::empty(),
+                &crate::proof_std::aver_generated::kernel::term::Term::TTuple(
+                    aver_rt::Shared::new(
+                        crate::proof_std::aver_generated::kernel::term::Term__TTuple(
+                            aver_rt::AverList::empty(),
+                        ),
                     ),
-                )),
+                ),
             )
         }
         crate::proof_std::aver_generated::kernel::term::Term::TOp(__o_fields) => {
@@ -1195,7 +1245,7 @@ pub fn mapSome(
             crate::proof_std::aver_generated::kernel::term::Term::TCall(__f_fields) => {
                 let f = __f_fields.0.clone();
                 Some(crate::proof_std::aver_generated::kernel::term::Term::TCall(
-                    std::sync::Arc::new(
+                    aver_rt::Shared::new(
                         crate::proof_std::aver_generated::kernel::term::Term__TCall(f, ys),
                     ),
                 ))
@@ -1203,26 +1253,26 @@ pub fn mapSome(
             crate::proof_std::aver_generated::kernel::term::Term::TBi(__f_fields) => {
                 let f = __f_fields.0.clone();
                 Some(crate::proof_std::aver_generated::kernel::term::Term::TBi(
-                    std::sync::Arc::new(crate::proof_std::aver_generated::kernel::term::Term__TBi(
-                        f, ys,
-                    )),
+                    aver_rt::Shared::new(
+                        crate::proof_std::aver_generated::kernel::term::Term__TBi(f, ys),
+                    ),
                 ))
             }
             crate::proof_std::aver_generated::kernel::term::Term::TCtor(__c_fields) => {
                 let c = __c_fields.0.clone();
                 Some(crate::proof_std::aver_generated::kernel::term::Term::TCtor(
-                    std::sync::Arc::new(
+                    aver_rt::Shared::new(
                         crate::proof_std::aver_generated::kernel::term::Term__TCtor(c, ys),
                     ),
                 ))
             }
             crate::proof_std::aver_generated::kernel::term::Term::TTuple(_) => Some(
-                crate::proof_std::aver_generated::kernel::term::Term::TTuple(std::sync::Arc::new(
+                crate::proof_std::aver_generated::kernel::term::Term::TTuple(aver_rt::Shared::new(
                     crate::proof_std::aver_generated::kernel::term::Term__TTuple(ys),
                 )),
             ),
             _ => Some(crate::proof_std::aver_generated::kernel::term::Term::TList(
-                std::sync::Arc::new(crate::proof_std::aver_generated::kernel::term::Term__TList(
+                aver_rt::Shared::new(crate::proof_std::aver_generated::kernel::term::Term__TList(
                     ys,
                 )),
             )),
@@ -1238,7 +1288,7 @@ pub fn negWith(
     crate::proof_std::cancel_checkpoint();
     match a.clone() {
         Some(c @ _) => Some(crate::proof_std::aver_generated::kernel::term::Term::TNeg(
-            std::sync::Arc::new(crate::proof_std::aver_generated::kernel::term::Term__TNeg(
+            aver_rt::Shared::new(crate::proof_std::aver_generated::kernel::term::Term__TNeg(
                 c,
             )),
         )),
@@ -1255,7 +1305,7 @@ pub fn getWith(
     crate::proof_std::cancel_checkpoint();
     match a.clone() {
         Some(c @ _) => Some(crate::proof_std::aver_generated::kernel::term::Term::TGet(
-            std::sync::Arc::new(crate::proof_std::aver_generated::kernel::term::Term__TGet(
+            aver_rt::Shared::new(crate::proof_std::aver_generated::kernel::term::Term__TGet(
                 c, f,
             )),
         )),
@@ -1275,13 +1325,13 @@ pub fn opWith(
     crate::proof_std::cancel_checkpoint();
     match left.clone() {
         Some(c @ _) => Some(crate::proof_std::aver_generated::kernel::term::Term::TOp(
-            std::sync::Arc::new(crate::proof_std::aver_generated::kernel::term::Term__TOp(
+            aver_rt::Shared::new(crate::proof_std::aver_generated::kernel::term::Term__TOp(
                 o, c, b,
             )),
         )),
         None => match crate::proof_std::aver_generated::kernel::std::holeAt(&b, target) {
             Some(c @ _) => Some(crate::proof_std::aver_generated::kernel::term::Term::TOp(
-                std::sync::Arc::new(crate::proof_std::aver_generated::kernel::term::Term__TOp(
+                aver_rt::Shared::new(crate::proof_std::aver_generated::kernel::term::Term__TOp(
                     o, a, c,
                 )),
             )),
@@ -1330,7 +1380,7 @@ pub fn splitBool(
         goal.clone(),
         h.clone(),
         on.clone(),
-        crate::proof_std::aver_generated::kernel::term::Term::TBool(std::sync::Arc::new(
+        crate::proof_std::aver_generated::kernel::term::Term::TBool(aver_rt::Shared::new(
             crate::proof_std::aver_generated::kernel::term::Term__TBool(true),
         )),
     ))?;
@@ -1338,12 +1388,12 @@ pub fn splitBool(
         goal,
         h.clone(),
         on.clone(),
-        crate::proof_std::aver_generated::kernel::term::Term::TBool(std::sync::Arc::new(
+        crate::proof_std::aver_generated::kernel::term::Term::TBool(aver_rt::Shared::new(
             crate::proof_std::aver_generated::kernel::term::Term__TBool(false),
         )),
     ))?;
     Ok(
-        crate::proof_std::aver_generated::kernel::proof::Proof::PCases(std::sync::Arc::new(
+        crate::proof_std::aver_generated::kernel::proof::Proof::PCases(aver_rt::Shared::new(
             crate::proof_std::aver_generated::kernel::proof::Proof__PCases(on, h, yes, no),
         )),
     )
@@ -1473,8 +1523,8 @@ pub fn first(
     mut whys @ _: aver_rt::AverList<AverStr>,
     answers @ _: aver_rt::AverList<Answer>,
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Proof, Stop> {
-    let n @ _ = std::sync::Arc::new(n);
-    let answers @ _ = std::sync::Arc::new(answers);
+    let n @ _ = aver_rt::Shared::new(n);
+    let answers @ _ = aver_rt::Shared::new(answers);
     loop {
         crate::proof_std::cancel_checkpoint();
         aver_list_match!(ts, [] => { return Err(crate::proof_std::aver_generated::kernel::std::Stop::Refused(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(47)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::std::joinPath(n.path.clone(), AverStr::from("First")))))); __b }; __b.push_str(&AverStr::from(": none closes: ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&((aver_rt::string_join(&whys.reverse(), &AverStr::from(" | "))).into_aver())))); __b }))); }, [t, rest] => { match crate::proof_std::aver_generated::kernel::std::within(crate::proof_std::aver_generated::kernel::std::Node { path: AverStr::from(""), ..(*n).clone() }, t, &*answers) { Ok(p @ _) => { return Ok(p); }, Err(__pat0 @ _) => { match __pat0 {
@@ -1762,7 +1812,7 @@ pub fn listCases(
             &crate::proof_std::aver_generated::kernel::std::at(
                 n.goal.clone(),
                 v.clone(),
-                &crate::proof_std::aver_generated::kernel::term::Term::TList(std::sync::Arc::new(
+                &crate::proof_std::aver_generated::kernel::term::Term::TList(aver_rt::Shared::new(
                     crate::proof_std::aver_generated::kernel::term::Term__TList(
                         aver_rt::AverList::empty(),
                     ),
@@ -1779,12 +1829,12 @@ pub fn listCases(
                 v.clone(),
                 &crate::proof_std::aver_generated::kernel::lib::cons(
                     crate::proof_std::aver_generated::kernel::term::Term::TVar(
-                        std::sync::Arc::new(
+                        aver_rt::Shared::new(
                             crate::proof_std::aver_generated::kernel::term::Term__TVar(h.clone()),
                         ),
                     ),
                     crate::proof_std::aver_generated::kernel::term::Term::TVar(
-                        std::sync::Arc::new(
+                        aver_rt::Shared::new(
                             crate::proof_std::aver_generated::kernel::term::Term__TVar(tl.clone()),
                         ),
                     ),
@@ -1808,7 +1858,7 @@ pub fn listCases(
         ih.clone(),
         ob.clone(),
         v.clone(),
-        crate::proof_std::aver_generated::kernel::term::Term::TVar(std::sync::Arc::new(
+        crate::proof_std::aver_generated::kernel::term::Term::TVar(aver_rt::Shared::new(
             crate::proof_std::aver_generated::kernel::term::Term__TVar(tl.clone()),
         )),
     )?;
@@ -1857,7 +1907,7 @@ pub fn listCases(
     if induct {
         Ok(
             crate::proof_std::aver_generated::kernel::proof::Proof::PListInduct(
-                std::sync::Arc::new(
+                aver_rt::Shared::new(
                     crate::proof_std::aver_generated::kernel::proof::Proof__PListInduct(
                         v,
                         ob.lhs,
@@ -1882,7 +1932,7 @@ pub fn listCases(
     } else {
         Ok(
             crate::proof_std::aver_generated::kernel::proof::Proof::PListCases(
-                std::sync::Arc::new(
+                aver_rt::Shared::new(
                     crate::proof_std::aver_generated::kernel::proof::Proof__PListCases(
                         v, ob.lhs, ob.rhs, nilProof, h, tl, consProof,
                     ),
@@ -2019,7 +2069,7 @@ pub fn opened(
             crate::proof_std::aver_generated::kernel::term::typed(h, elem.clone()),
             crate::proof_std::aver_generated::kernel::term::typed(
                 tl,
-                crate::proof_std::aver_generated::kernel::term::Ty::TyList(std::sync::Arc::new(
+                crate::proof_std::aver_generated::kernel::term::Ty::TyList(aver_rt::Shared::new(
                     crate::proof_std::aver_generated::kernel::term::Ty__TyList(elem),
                 )),
             ),
@@ -2084,7 +2134,7 @@ pub fn boolStep(
                     h.clone(),
                     c.clone(),
                     crate::proof_std::aver_generated::kernel::term::Term::TBool(
-                        std::sync::Arc::new(
+                        aver_rt::Shared::new(
                             crate::proof_std::aver_generated::kernel::term::Term__TBool(true),
                         ),
                     ),
@@ -2107,7 +2157,7 @@ pub fn boolStep(
                     h.clone(),
                     c.clone(),
                     crate::proof_std::aver_generated::kernel::term::Term::TBool(
-                        std::sync::Arc::new(
+                        aver_rt::Shared::new(
                             crate::proof_std::aver_generated::kernel::term::Term__TBool(false),
                         ),
                     ),
@@ -2119,7 +2169,7 @@ pub fn boolStep(
         answers,
     )?;
     Ok(
-        crate::proof_std::aver_generated::kernel::proof::Proof::PCases(std::sync::Arc::new(
+        crate::proof_std::aver_generated::kernel::proof::Proof::PCases(aver_rt::Shared::new(
             crate::proof_std::aver_generated::kernel::proof::Proof__PCases(c, h, t, f),
         )),
     )
@@ -2774,7 +2824,7 @@ pub fn readTactic(
                                             {
                                                 let __list_subject = __pat3;
                                                 if __list_subject.is_empty() {
-                                                    Ok(crate::proof_std::aver_generated::kernel::std::Tactic::Cases(std::sync::Arc::new(crate::proof_std::aver_generated::kernel::std::Tactic__Cases(crate::proof_std::aver_generated::kernel::std::readTactic(&next)?))))
+                                                    Ok(crate::proof_std::aver_generated::kernel::std::Tactic::Cases(aver_rt::Shared::new(crate::proof_std::aver_generated::kernel::std::Tactic__Cases(crate::proof_std::aver_generated::kernel::std::readTactic(&next)?))))
                                                 } else {
                                                     Err(AverStr::from("malformed script"))
                                                 }
@@ -2796,7 +2846,7 @@ pub fn readTactic(
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(h) => {
             { let __list_subject = __pat7; if let Some((__pat8, __pat9)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat8 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(tl) => {
-            { let __list_subject = __pat9; if let Some((nil, __pat10)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat10; if let Some((cons, __pat11)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat11; if __list_subject.is_empty() { Ok(crate::proof_std::aver_generated::kernel::std::Tactic::Induction(std::sync::Arc::new(crate::proof_std::aver_generated::kernel::std::Tactic__Induction(v, h, tl, crate::proof_std::aver_generated::kernel::std::readTactic(&nil)?, crate::proof_std::aver_generated::kernel::std::readTactic(&cons)?)))) } else { Err(AverStr::from("malformed script")) } } } else { Err(AverStr::from("malformed script")) } } } else { Err(AverStr::from("malformed script")) } }
+            { let __list_subject = __pat9; if let Some((nil, __pat10)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat10; if let Some((cons, __pat11)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat11; if __list_subject.is_empty() { Ok(crate::proof_std::aver_generated::kernel::std::Tactic::Induction(aver_rt::Shared::new(crate::proof_std::aver_generated::kernel::std::Tactic__Induction(v, h, tl, crate::proof_std::aver_generated::kernel::std::readTactic(&nil)?, crate::proof_std::aver_generated::kernel::std::readTactic(&cons)?)))) } else { Err(AverStr::from("malformed script")) } } } else { Err(AverStr::from("malformed script")) } } } else { Err(AverStr::from("malformed script")) } }
         },
         _ => {
             Err(AverStr::from("malformed script"))
@@ -2829,7 +2879,7 @@ pub fn readTactic(
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(h) => {
             { let __list_subject = __pat15; if let Some((__pat16, __pat17)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat16 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(tl) => {
-            { let __list_subject = __pat17; if let Some((nil, __pat18)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat18; if let Some((cons, __pat19)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat19; if __list_subject.is_empty() { Ok(crate::proof_std::aver_generated::kernel::std::Tactic::Split(std::sync::Arc::new(crate::proof_std::aver_generated::kernel::std::Tactic__Split(v, h, tl, crate::proof_std::aver_generated::kernel::std::readTactic(&nil)?, crate::proof_std::aver_generated::kernel::std::readTactic(&cons)?)))) } else { Err(AverStr::from("malformed script")) } } } else { Err(AverStr::from("malformed script")) } } } else { Err(AverStr::from("malformed script")) } }
+            { let __list_subject = __pat17; if let Some((nil, __pat18)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat18; if let Some((cons, __pat19)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat19; if __list_subject.is_empty() { Ok(crate::proof_std::aver_generated::kernel::std::Tactic::Split(aver_rt::Shared::new(crate::proof_std::aver_generated::kernel::std::Tactic__Split(v, h, tl, crate::proof_std::aver_generated::kernel::std::readTactic(&nil)?, crate::proof_std::aver_generated::kernel::std::readTactic(&cons)?)))) } else { Err(AverStr::from("malformed script")) } } } else { Err(AverStr::from("malformed script")) } } } else { Err(AverStr::from("malformed script")) } }
         },
         _ => {
             Err(AverStr::from("malformed script"))
@@ -2876,7 +2926,7 @@ pub fn readTactic(
                                                                             if __list_subject
                                                                                 .is_empty()
                                                                             {
-                                                                                Ok(crate::proof_std::aver_generated::kernel::std::Tactic::SplitBool(std::sync::Arc::new(crate::proof_std::aver_generated::kernel::std::Tactic__SplitBool(crate::proof_std::aver_generated::kernel::decode::term(&c)?, crate::proof_std::aver_generated::kernel::std::readTactic(&yes)?, crate::proof_std::aver_generated::kernel::std::readTactic(&no)?))))
+                                                                                Ok(crate::proof_std::aver_generated::kernel::std::Tactic::SplitBool(aver_rt::Shared::new(crate::proof_std::aver_generated::kernel::std::Tactic__SplitBool(crate::proof_std::aver_generated::kernel::decode::term(&c)?, crate::proof_std::aver_generated::kernel::std::readTactic(&yes)?, crate::proof_std::aver_generated::kernel::std::readTactic(&no)?))))
                                                                             } else {
                                                                                 Err(AverStr::from(
                                                                                     "malformed script",
@@ -2901,7 +2951,7 @@ pub fn readTactic(
                                                 }
                                             } else {
                                                 if &*__dispatch_subject == "first" {
-                                                    Ok(crate::proof_std::aver_generated::kernel::std::Tactic::First(std::sync::Arc::new(crate::proof_std::aver_generated::kernel::std::Tactic__First(crate::proof_std::aver_generated::kernel::std::readTactics(&ts)?))))
+                                                    Ok(crate::proof_std::aver_generated::kernel::std::Tactic::First(aver_rt::Shared::new(crate::proof_std::aver_generated::kernel::std::Tactic__First(crate::proof_std::aver_generated::kernel::std::readTactics(&ts)?))))
                                                 } else {
                                                     if &*__dispatch_subject == "plan" {
                                                         {
@@ -2913,7 +2963,7 @@ pub fn readTactic(
                                                             {
                                                                 match __pat23 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(name) => {
-            { let __list_subject = __pat24; if __list_subject.is_empty() { Ok(crate::proof_std::aver_generated::kernel::std::Tactic::Plan(std::sync::Arc::new(crate::proof_std::aver_generated::kernel::std::Tactic__Plan(name)))) } else { Err(AverStr::from("malformed script")) } }
+            { let __list_subject = __pat24; if __list_subject.is_empty() { Ok(crate::proof_std::aver_generated::kernel::std::Tactic::Plan(aver_rt::Shared::new(crate::proof_std::aver_generated::kernel::std::Tactic__Plan(name)))) } else { Err(AverStr::from("malformed script")) } }
         },
         _ => {
             Err(AverStr::from("malformed script"))

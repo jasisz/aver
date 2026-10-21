@@ -3,24 +3,24 @@ use crate::*;
 
 #[derive(Clone, Debug)]
 pub enum Val {
-    ValInt(std::sync::Arc<Val__ValInt>),
-    ValFloat(std::sync::Arc<Val__ValFloat>),
-    ValStr(std::sync::Arc<Val__ValStr>),
-    ValBool(std::sync::Arc<Val__ValBool>),
-    ValFnRef(std::sync::Arc<Val__ValFnRef>),
-    ValList(std::sync::Arc<Val__ValList>),
-    ValVector(std::sync::Arc<Val__ValVector>),
-    ValOk(std::sync::Arc<Val__ValOk>),
-    ValErr(std::sync::Arc<Val__ValErr>),
-    ValSome(std::sync::Arc<Val__ValSome>),
+    ValInt(aver_rt::Shared<Val__ValInt>),
+    ValFloat(aver_rt::Shared<Val__ValFloat>),
+    ValStr(aver_rt::Shared<Val__ValStr>),
+    ValBool(aver_rt::Shared<Val__ValBool>),
+    ValFnRef(aver_rt::Shared<Val__ValFnRef>),
+    ValList(aver_rt::Shared<Val__ValList>),
+    ValVector(aver_rt::Shared<Val__ValVector>),
+    ValOk(aver_rt::Shared<Val__ValOk>),
+    ValErr(aver_rt::Shared<Val__ValErr>),
+    ValSome(aver_rt::Shared<Val__ValSome>),
     ValNone,
-    ValTuple(std::sync::Arc<Val__ValTuple>),
-    ValRecord(std::sync::Arc<Val__ValRecord>),
-    ValTcpConnection(std::sync::Arc<Val__ValTcpConnection>),
-    ValTcpDial(std::sync::Arc<Val__ValTcpDial>),
-    ValTcpListener(std::sync::Arc<Val__ValTcpListener>),
-    ValVariant(std::sync::Arc<Val__ValVariant>),
-    ValMap(std::sync::Arc<Val__ValMap>),
+    ValTuple(aver_rt::Shared<Val__ValTuple>),
+    ValRecord(aver_rt::Shared<Val__ValRecord>),
+    ValTcpConnection(aver_rt::Shared<Val__ValTcpConnection>),
+    ValTcpDial(aver_rt::Shared<Val__ValTcpDial>),
+    ValTcpListener(aver_rt::Shared<Val__ValTcpListener>),
+    ValVariant(aver_rt::Shared<Val__ValVariant>),
+    ValMap(aver_rt::Shared<Val__ValMap>),
     ValUnit,
 }
 
@@ -420,70 +420,70 @@ impl aver_replay::ReplayValue for Val {
             "$variant.fields",
         )?;
         match variant_name {
-            "ValInt" => Ok(Val::ValInt(std::sync::Arc::new(Val__ValInt(
+            "ValInt" => Ok(Val::ValInt(aver_rt::Shared::new(Val__ValInt(
                 <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ValInt missing field #{}", 0))?,
                 )?,
             )))),
-            "ValFloat" => Ok(Val::ValFloat(std::sync::Arc::new(Val__ValFloat(
+            "ValFloat" => Ok(Val::ValFloat(aver_rt::Shared::new(Val__ValFloat(
                 <f64 as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ValFloat missing field #{}", 0))?,
                 )?,
             )))),
-            "ValStr" => Ok(Val::ValStr(std::sync::Arc::new(Val__ValStr(
+            "ValStr" => Ok(Val::ValStr(aver_rt::Shared::new(Val__ValStr(
                 <AverStr as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ValStr missing field #{}", 0))?,
                 )?,
             )))),
-            "ValBool" => Ok(Val::ValBool(std::sync::Arc::new(Val__ValBool(
+            "ValBool" => Ok(Val::ValBool(aver_rt::Shared::new(Val__ValBool(
                 <bool as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ValBool missing field #{}", 0))?,
                 )?,
             )))),
-            "ValFnRef" => Ok(Val::ValFnRef(std::sync::Arc::new(Val__ValFnRef(
+            "ValFnRef" => Ok(Val::ValFnRef(aver_rt::Shared::new(Val__ValFnRef(
                 <AverStr as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ValFnRef missing field #{}", 0))?,
                 )?,
             )))),
-            "ValList" => Ok(Val::ValList(std::sync::Arc::new(Val__ValList(
+            "ValList" => Ok(Val::ValList(aver_rt::Shared::new(Val__ValList(
                 <aver_rt::AverList<Val> as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ValList missing field #{}", 0))?,
                 )?,
             )))),
-            "ValVector" => Ok(Val::ValVector(std::sync::Arc::new(Val__ValVector(
+            "ValVector" => Ok(Val::ValVector(aver_rt::Shared::new(Val__ValVector(
                 <aver_rt::AverVector<Val> as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ValVector missing field #{}", 0))?,
                 )?,
             )))),
-            "ValOk" => Ok(Val::ValOk(std::sync::Arc::new(Val__ValOk(
+            "ValOk" => Ok(Val::ValOk(aver_rt::Shared::new(Val__ValOk(
                 <Val as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ValOk missing field #{}", 0))?,
                 )?,
             )))),
-            "ValErr" => Ok(Val::ValErr(std::sync::Arc::new(Val__ValErr(
+            "ValErr" => Ok(Val::ValErr(aver_rt::Shared::new(Val__ValErr(
                 <Val as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ValErr missing field #{}", 0))?,
                 )?,
             )))),
-            "ValSome" => Ok(Val::ValSome(std::sync::Arc::new(Val__ValSome(
+            "ValSome" => Ok(Val::ValSome(aver_rt::Shared::new(Val__ValSome(
                 <Val as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
@@ -491,14 +491,14 @@ impl aver_replay::ReplayValue for Val {
                 )?,
             )))),
             "ValNone" => Ok(Val::ValNone),
-            "ValTuple" => Ok(Val::ValTuple(std::sync::Arc::new(Val__ValTuple(
+            "ValTuple" => Ok(Val::ValTuple(aver_rt::Shared::new(Val__ValTuple(
                 <aver_rt::AverList<Val> as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ValTuple missing field #{}", 0))?,
                 )?,
             )))),
-            "ValRecord" => Ok(Val::ValRecord(std::sync::Arc::new(Val__ValRecord(
+            "ValRecord" => Ok(Val::ValRecord(aver_rt::Shared::new(Val__ValRecord(
                 <AverStr as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
@@ -510,7 +510,7 @@ impl aver_replay::ReplayValue for Val {
                         .ok_or_else(|| format!("$variant ValRecord missing field #{}", 1))?,
                 )?,
             )))),
-            "ValTcpConnection" => Ok(Val::ValTcpConnection(std::sync::Arc::new(
+            "ValTcpConnection" => Ok(Val::ValTcpConnection(aver_rt::Shared::new(
                 Val__ValTcpConnection(
                     <crate::aver_generated::tcp::Connection as ReplayValue>::from_replay_json(
                         fields.get(0).ok_or_else(|| {
@@ -519,14 +519,14 @@ impl aver_replay::ReplayValue for Val {
                     )?,
                 ),
             ))),
-            "ValTcpDial" => Ok(Val::ValTcpDial(std::sync::Arc::new(Val__ValTcpDial(
+            "ValTcpDial" => Ok(Val::ValTcpDial(aver_rt::Shared::new(Val__ValTcpDial(
                 <crate::aver_generated::tcp::Dial as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ValTcpDial missing field #{}", 0))?,
                 )?,
             )))),
-            "ValTcpListener" => Ok(Val::ValTcpListener(std::sync::Arc::new(
+            "ValTcpListener" => Ok(Val::ValTcpListener(aver_rt::Shared::new(
                 Val__ValTcpListener(
                     <crate::aver_generated::tcp::Listener as ReplayValue>::from_replay_json(
                         fields.get(0).ok_or_else(|| {
@@ -535,7 +535,7 @@ impl aver_replay::ReplayValue for Val {
                     )?,
                 ),
             ))),
-            "ValVariant" => Ok(Val::ValVariant(std::sync::Arc::new(Val__ValVariant(
+            "ValVariant" => Ok(Val::ValVariant(aver_rt::Shared::new(Val__ValVariant(
                 <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
@@ -552,7 +552,7 @@ impl aver_replay::ReplayValue for Val {
                         .ok_or_else(|| format!("$variant ValVariant missing field #{}", 2))?,
                 )?,
             )))),
-            "ValMap" => Ok(Val::ValMap(std::sync::Arc::new(Val__ValMap(
+            "ValMap" => Ok(Val::ValMap(aver_rt::Shared::new(Val__ValMap(
                 <aver_rt::AverMap<AverStr, Val> as ReplayValue>::from_replay_json(
                     fields
                         .get(0)

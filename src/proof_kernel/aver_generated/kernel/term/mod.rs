@@ -9,20 +9,26 @@ pub enum Ty {
     TyStr,
     TyFloat,
     TyUnit,
-    TyList(std::sync::Arc<Ty__TyList>),
-    TyOption(std::sync::Arc<Ty__TyOption>),
-    TyResult(std::sync::Arc<Ty__TyResult>),
-    TyMap(std::sync::Arc<Ty__TyMap>),
-    TyVector(std::sync::Arc<Ty__TyVector>),
-    TyTuple(std::sync::Arc<Ty__TyTuple>),
-    TyNamed(std::sync::Arc<Ty__TyNamed>),
+    TyList(aver_rt::Shared<Ty__TyList>),
+    TyOption(aver_rt::Shared<Ty__TyOption>),
+    TyResult(aver_rt::Shared<Ty__TyResult>),
+    TyMap(aver_rt::Shared<Ty__TyMap>),
+    TyVector(aver_rt::Shared<Ty__TyVector>),
+    TyTuple(aver_rt::Shared<Ty__TyTuple>),
+    TyNamed(aver_rt::Shared<Ty__TyNamed>),
     TyAny,
-    TyVar(std::sync::Arc<Ty__TyVar>),
-    TyRigid(std::sync::Arc<Ty__TyRigid>),
+    TyVar(aver_rt::Shared<Ty__TyVar>),
+    TyRigid(aver_rt::Shared<Ty__TyRigid>),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Ty__TyList(pub Ty);
+
+impl PartialEq for Ty__TyList {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0
+    }
+}
 
 impl aver_rt::WalkEq for Ty__TyList {
     fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
@@ -30,8 +36,14 @@ impl aver_rt::WalkEq for Ty__TyList {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Ty__TyOption(pub Ty);
+
+impl PartialEq for Ty__TyOption {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0
+    }
+}
 
 impl aver_rt::WalkEq for Ty__TyOption {
     fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
@@ -39,8 +51,14 @@ impl aver_rt::WalkEq for Ty__TyOption {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Ty__TyResult(pub Ty, pub Ty);
+
+impl PartialEq for Ty__TyResult {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0 && self.1 == other.1
+    }
+}
 
 impl aver_rt::WalkEq for Ty__TyResult {
     fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
@@ -48,8 +66,14 @@ impl aver_rt::WalkEq for Ty__TyResult {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Ty__TyMap(pub Ty, pub Ty);
+
+impl PartialEq for Ty__TyMap {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0 && self.1 == other.1
+    }
+}
 
 impl aver_rt::WalkEq for Ty__TyMap {
     fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
@@ -57,8 +81,14 @@ impl aver_rt::WalkEq for Ty__TyMap {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Ty__TyVector(pub Ty);
+
+impl PartialEq for Ty__TyVector {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0
+    }
+}
 
 impl aver_rt::WalkEq for Ty__TyVector {
     fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
@@ -66,17 +96,41 @@ impl aver_rt::WalkEq for Ty__TyVector {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Ty__TyTuple(pub aver_rt::AverList<Ty>);
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+impl PartialEq for Ty__TyTuple {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Ty__TyNamed(pub AverStr);
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+impl PartialEq for Ty__TyNamed {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Ty__TyVar(pub AverStr, pub bool);
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+impl PartialEq for Ty__TyVar {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0 && self.1 == other.1
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Ty__TyRigid(pub AverStr, pub bool);
+
+impl PartialEq for Ty__TyRigid {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0 && self.1 == other.1
+    }
+}
 
 impl aver_rt::WalkEq for Ty {
     fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
@@ -251,44 +305,68 @@ impl aver_rt::AverDisplay for TypedVar {
 
 #[derive(Clone, Debug, Eq, Hash)]
 pub enum Term {
-    TInt(std::sync::Arc<Term__TInt>),
-    TBool(std::sync::Arc<Term__TBool>),
-    TStr(std::sync::Arc<Term__TStr>),
+    TInt(aver_rt::Shared<Term__TInt>),
+    TBool(aver_rt::Shared<Term__TBool>),
+    TStr(aver_rt::Shared<Term__TStr>),
     TUnit,
-    TVar(std::sync::Arc<Term__TVar>),
+    TVar(aver_rt::Shared<Term__TVar>),
     THole,
-    TGet(std::sync::Arc<Term__TGet>),
-    TCall(std::sync::Arc<Term__TCall>),
-    TBi(std::sync::Arc<Term__TBi>),
-    TOp(std::sync::Arc<Term__TOp>),
-    TNeg(std::sync::Arc<Term__TNeg>),
-    TCtor(std::sync::Arc<Term__TCtor>),
-    TMatch(std::sync::Arc<Term__TMatch>),
-    TParts(std::sync::Arc<Term__TParts>),
-    TList(std::sync::Arc<Term__TList>),
-    TTuple(std::sync::Arc<Term__TTuple>),
-    TRec(std::sync::Arc<Term__TRec>),
-    TUpd(std::sync::Arc<Term__TUpd>),
+    TGet(aver_rt::Shared<Term__TGet>),
+    TCall(aver_rt::Shared<Term__TCall>),
+    TBi(aver_rt::Shared<Term__TBi>),
+    TOp(aver_rt::Shared<Term__TOp>),
+    TNeg(aver_rt::Shared<Term__TNeg>),
+    TCtor(aver_rt::Shared<Term__TCtor>),
+    TMatch(aver_rt::Shared<Term__TMatch>),
+    TParts(aver_rt::Shared<Term__TParts>),
+    TList(aver_rt::Shared<Term__TList>),
+    TTuple(aver_rt::Shared<Term__TTuple>),
+    TRec(aver_rt::Shared<Term__TRec>),
+    TUpd(aver_rt::Shared<Term__TUpd>),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Term__TInt(pub aver_rt::AverInt);
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+impl PartialEq for Term__TInt {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Term__TBool(pub bool);
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+impl PartialEq for Term__TBool {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Term__TStr(pub AverStr);
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+impl PartialEq for Term__TStr {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Term__TVar(pub AverStr);
+
+impl PartialEq for Term__TVar {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0
+    }
+}
 
 #[derive(Clone, Debug, Eq, Hash)]
 pub struct Term__TGet(pub Term, pub AverStr);
 
 impl PartialEq for Term__TGet {
     fn eq(&self, other: &Self) -> bool {
-        self.1 == other.1 && self.0 == other.0
+        std::ptr::eq(self, other) || self.1 == other.1 && self.0 == other.0
     }
 }
 
@@ -298,14 +376,32 @@ impl aver_rt::WalkEq for Term__TGet {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Term__TCall(pub AverStr, pub aver_rt::AverList<Term>);
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+impl PartialEq for Term__TCall {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0 && self.1 == other.1
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Term__TBi(pub AverStr, pub aver_rt::AverList<Term>);
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+impl PartialEq for Term__TBi {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0 && self.1 == other.1
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Term__TOp(pub AverStr, pub Term, pub Term);
+
+impl PartialEq for Term__TOp {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0 && self.1 == other.1 && self.2 == other.2
+    }
+}
 
 impl aver_rt::WalkEq for Term__TOp {
     fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
@@ -313,8 +409,14 @@ impl aver_rt::WalkEq for Term__TOp {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Term__TNeg(pub Term);
+
+impl PartialEq for Term__TNeg {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0
+    }
+}
 
 impl aver_rt::WalkEq for Term__TNeg {
     fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
@@ -322,11 +424,23 @@ impl aver_rt::WalkEq for Term__TNeg {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Term__TCtor(pub AverStr, pub aver_rt::AverList<Term>);
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+impl PartialEq for Term__TCtor {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0 && self.1 == other.1
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Term__TMatch(pub Term, pub aver_rt::AverList<Arm>);
+
+impl PartialEq for Term__TMatch {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0 && self.1 == other.1
+    }
+}
 
 impl aver_rt::WalkEq for Term__TMatch {
     fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
@@ -334,20 +448,50 @@ impl aver_rt::WalkEq for Term__TMatch {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Term__TParts(pub aver_rt::AverList<Term>);
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+impl PartialEq for Term__TParts {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Term__TList(pub aver_rt::AverList<Term>);
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+impl PartialEq for Term__TList {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Term__TTuple(pub aver_rt::AverList<Term>);
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+impl PartialEq for Term__TTuple {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Term__TRec(pub AverStr, pub aver_rt::AverList<Field>);
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+impl PartialEq for Term__TRec {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0 && self.1 == other.1
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Term__TUpd(pub AverStr, pub Term, pub aver_rt::AverList<Field>);
+
+impl PartialEq for Term__TUpd {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other) || self.0 == other.0 && self.1 == other.1 && self.2 == other.2
+    }
+}
 
 impl aver_rt::WalkEq for Term__TUpd {
     fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {

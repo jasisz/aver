@@ -186,8 +186,8 @@ pub fn loadModules(
     ),
     AverStr,
 > {
-    let acc @ _ = std::sync::Arc::new(acc);
-    let loaded @ _ = std::sync::Arc::new(loaded);
+    let acc @ _ = aver_rt::Shared::new(acc);
+    let loaded @ _ = aver_rt::Shared::new(loaded);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(deps, [] => { return Ok(((*acc).clone(), (*loaded).clone())); }, [dep, rest] => { if loaded.contains_key(&dep) { {
@@ -435,7 +435,7 @@ pub fn shiftFnIdsInExpr(
             let cond = __cond_fields.0.clone();
             let thenExpr = __cond_fields.1.clone();
             let elseExpr = __cond_fields.2.clone();
-            crate::aver_generated::domain::ast::Expr::ExprBoolBranch(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr::ExprBoolBranch(aver_rt::Shared::new(
                 crate::aver_generated::domain::ast::Expr__ExprBoolBranch(
                     shiftFnIdsInExpr(cond, offset.clone()),
                     shiftFnIdsInExpr(thenExpr, offset.clone()),
@@ -447,7 +447,7 @@ pub fn shiftFnIdsInExpr(
             let vecExpr = __vecExpr_fields.0.clone();
             let idxExpr = __vecExpr_fields.1.clone();
             let defaultValue = __vecExpr_fields.2.clone();
-            crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(aver_rt::Shared::new(
                 crate::aver_generated::domain::ast::Expr__ExprVectorGetOrInt(
                     shiftFnIdsInExpr(vecExpr, offset.clone()),
                     shiftFnIdsInExpr(idxExpr, offset),
@@ -459,7 +459,7 @@ pub fn shiftFnIdsInExpr(
             let a = __a_fields.0.clone();
             let b = __a_fields.1.clone();
             let defaultValue = __a_fields.2.clone();
-            crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(aver_rt::Shared::new(
                 crate::aver_generated::domain::ast::Expr__ExprIntModOrInt(
                     shiftFnIdsInExpr(a, offset.clone()),
                     shiftFnIdsInExpr(b, offset),
@@ -470,7 +470,7 @@ pub fn shiftFnIdsInExpr(
         crate::aver_generated::domain::ast::Expr::ExprAdd(__a_fields) => {
             let a = __a_fields.0.clone();
             let b = __a_fields.1.clone();
-            crate::aver_generated::domain::ast::Expr::ExprAdd(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr::ExprAdd(aver_rt::Shared::new(
                 crate::aver_generated::domain::ast::Expr__ExprAdd(
                     shiftFnIdsInExpr(a, offset.clone()),
                     shiftFnIdsInExpr(b, offset),
@@ -480,7 +480,7 @@ pub fn shiftFnIdsInExpr(
         crate::aver_generated::domain::ast::Expr::ExprSub(__a_fields) => {
             let a = __a_fields.0.clone();
             let b = __a_fields.1.clone();
-            crate::aver_generated::domain::ast::Expr::ExprSub(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr::ExprSub(aver_rt::Shared::new(
                 crate::aver_generated::domain::ast::Expr__ExprSub(
                     shiftFnIdsInExpr(a, offset.clone()),
                     shiftFnIdsInExpr(b, offset),
@@ -490,7 +490,7 @@ pub fn shiftFnIdsInExpr(
         crate::aver_generated::domain::ast::Expr::ExprMul(__a_fields) => {
             let a = __a_fields.0.clone();
             let b = __a_fields.1.clone();
-            crate::aver_generated::domain::ast::Expr::ExprMul(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr::ExprMul(aver_rt::Shared::new(
                 crate::aver_generated::domain::ast::Expr__ExprMul(
                     shiftFnIdsInExpr(a, offset.clone()),
                     shiftFnIdsInExpr(b, offset),
@@ -500,7 +500,7 @@ pub fn shiftFnIdsInExpr(
         crate::aver_generated::domain::ast::Expr::ExprDiv(__a_fields) => {
             let a = __a_fields.0.clone();
             let b = __a_fields.1.clone();
-            crate::aver_generated::domain::ast::Expr::ExprDiv(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr::ExprDiv(aver_rt::Shared::new(
                 crate::aver_generated::domain::ast::Expr__ExprDiv(
                     shiftFnIdsInExpr(a, offset.clone()),
                     shiftFnIdsInExpr(b, offset),
@@ -510,7 +510,7 @@ pub fn shiftFnIdsInExpr(
         crate::aver_generated::domain::ast::Expr::ExprEq(__a_fields) => {
             let a = __a_fields.0.clone();
             let b = __a_fields.1.clone();
-            crate::aver_generated::domain::ast::Expr::ExprEq(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr::ExprEq(aver_rt::Shared::new(
                 crate::aver_generated::domain::ast::Expr__ExprEq(
                     shiftFnIdsInExpr(a, offset.clone()),
                     shiftFnIdsInExpr(b, offset),
@@ -520,7 +520,7 @@ pub fn shiftFnIdsInExpr(
         crate::aver_generated::domain::ast::Expr::ExprNeq(__a_fields) => {
             let a = __a_fields.0.clone();
             let b = __a_fields.1.clone();
-            crate::aver_generated::domain::ast::Expr::ExprNeq(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr::ExprNeq(aver_rt::Shared::new(
                 crate::aver_generated::domain::ast::Expr__ExprNeq(
                     shiftFnIdsInExpr(a, offset.clone()),
                     shiftFnIdsInExpr(b, offset),
@@ -541,7 +541,7 @@ pub fn shiftFnIdsInExprTail(
         crate::aver_generated::domain::ast::Expr::ExprLt(__a_fields) => {
             let a = __a_fields.0.clone();
             let b = __a_fields.1.clone();
-            crate::aver_generated::domain::ast::Expr::ExprLt(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr::ExprLt(aver_rt::Shared::new(
                 crate::aver_generated::domain::ast::Expr__ExprLt(
                     shiftFnIdsInExpr(a, offset.clone()),
                     shiftFnIdsInExpr(b, offset),
@@ -551,7 +551,7 @@ pub fn shiftFnIdsInExprTail(
         crate::aver_generated::domain::ast::Expr::ExprGt(__a_fields) => {
             let a = __a_fields.0.clone();
             let b = __a_fields.1.clone();
-            crate::aver_generated::domain::ast::Expr::ExprGt(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr::ExprGt(aver_rt::Shared::new(
                 crate::aver_generated::domain::ast::Expr__ExprGt(
                     shiftFnIdsInExpr(a, offset.clone()),
                     shiftFnIdsInExpr(b, offset),
@@ -561,7 +561,7 @@ pub fn shiftFnIdsInExprTail(
         crate::aver_generated::domain::ast::Expr::ExprLte(__a_fields) => {
             let a = __a_fields.0.clone();
             let b = __a_fields.1.clone();
-            crate::aver_generated::domain::ast::Expr::ExprLte(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr::ExprLte(aver_rt::Shared::new(
                 crate::aver_generated::domain::ast::Expr__ExprLte(
                     shiftFnIdsInExpr(a, offset.clone()),
                     shiftFnIdsInExpr(b, offset),
@@ -571,7 +571,7 @@ pub fn shiftFnIdsInExprTail(
         crate::aver_generated::domain::ast::Expr::ExprGte(__a_fields) => {
             let a = __a_fields.0.clone();
             let b = __a_fields.1.clone();
-            crate::aver_generated::domain::ast::Expr::ExprGte(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr::ExprGte(aver_rt::Shared::new(
                 crate::aver_generated::domain::ast::Expr__ExprGte(
                     shiftFnIdsInExpr(a, offset.clone()),
                     shiftFnIdsInExpr(b, offset),
@@ -580,7 +580,7 @@ pub fn shiftFnIdsInExprTail(
         }
         crate::aver_generated::domain::ast::Expr::ExprConcat(__parts_fields) => {
             let parts = __parts_fields.0.clone();
-            crate::aver_generated::domain::ast::Expr::ExprConcat(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr::ExprConcat(aver_rt::Shared::new(
                 crate::aver_generated::domain::ast::Expr__ExprConcat(shiftFnIdsInExprs__collected(
                     parts,
                     offset,
@@ -592,7 +592,7 @@ pub fn shiftFnIdsInExprTail(
         }
         crate::aver_generated::domain::ast::Expr::ExprTuple(__exprs_fields) => {
             let exprs = __exprs_fields.0.clone();
-            crate::aver_generated::domain::ast::Expr::ExprTuple(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr::ExprTuple(aver_rt::Shared::new(
                 crate::aver_generated::domain::ast::Expr__ExprTuple(shiftFnIdsInExprs__collected(
                     exprs,
                     offset,
@@ -604,7 +604,7 @@ pub fn shiftFnIdsInExprTail(
         }
         crate::aver_generated::domain::ast::Expr::ExprList(__exprs_fields) => {
             let exprs = __exprs_fields.0.clone();
-            crate::aver_generated::domain::ast::Expr::ExprList(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr::ExprList(aver_rt::Shared::new(
                 crate::aver_generated::domain::ast::Expr__ExprList(shiftFnIdsInExprs__collected(
                     exprs,
                     offset,
@@ -617,7 +617,7 @@ pub fn shiftFnIdsInExprTail(
         crate::aver_generated::domain::ast::Expr::ExprRecord(__name_fields) => {
             let name = __name_fields.0.clone();
             let fields = __name_fields.1.clone();
-            crate::aver_generated::domain::ast::Expr::ExprRecord(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr::ExprRecord(aver_rt::Shared::new(
                 crate::aver_generated::domain::ast::Expr__ExprRecord(
                     name,
                     shiftFnIdsInFields__collected(
@@ -644,7 +644,7 @@ pub fn shiftFnIdsInExprCalls(
         crate::aver_generated::domain::ast::Expr::ExprFieldAccess(__obj_fields) => {
             let obj = __obj_fields.0.clone();
             let field = __obj_fields.1.clone();
-            crate::aver_generated::domain::ast::Expr::ExprFieldAccess(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr::ExprFieldAccess(aver_rt::Shared::new(
                 crate::aver_generated::domain::ast::Expr__ExprFieldAccess(
                     shiftFnIdsInExpr(obj, offset),
                     field,
@@ -654,7 +654,7 @@ pub fn shiftFnIdsInExprCalls(
         crate::aver_generated::domain::ast::Expr::ExprCall(__name_fields) => {
             let name = __name_fields.0.clone();
             let args = __name_fields.1.clone();
-            crate::aver_generated::domain::ast::Expr::ExprCall(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr::ExprCall(aver_rt::Shared::new(
                 crate::aver_generated::domain::ast::Expr__ExprCall(
                     name,
                     shiftFnIdsInExprs__collected(
@@ -670,7 +670,7 @@ pub fn shiftFnIdsInExprCalls(
         crate::aver_generated::domain::ast::Expr::ExprCallDirect(__fnId_fields) => {
             let fnId = __fnId_fields.0.clone();
             let args = __fnId_fields.1.clone();
-            crate::aver_generated::domain::ast::Expr::ExprCallDirect(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr::ExprCallDirect(aver_rt::Shared::new(
                 crate::aver_generated::domain::ast::Expr__ExprCallDirect(
                     fnId.add(&offset),
                     shiftFnIdsInExprs__collected(
@@ -686,7 +686,7 @@ pub fn shiftFnIdsInExprCalls(
         crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(__name_fields) => {
             let name = __name_fields.0.clone();
             let args = __name_fields.1.clone();
-            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(aver_rt::Shared::new(
                 crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
                     name,
                     shiftFnIdsInExprs__collected(
@@ -702,7 +702,7 @@ pub fn shiftFnIdsInExprCalls(
         crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(__id_fields) => {
             let id = __id_fields.0.clone();
             let args = __id_fields.1.clone();
-            crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(aver_rt::Shared::new(
                 crate::aver_generated::domain::ast::Expr__ExprCallBuiltinId(
                     id,
                     shiftFnIdsInExprs__collected(
@@ -718,7 +718,7 @@ pub fn shiftFnIdsInExprCalls(
         crate::aver_generated::domain::ast::Expr::ExprMatch(__scrutinee_fields) => {
             let scrutinee = __scrutinee_fields.0.clone();
             let arms = __scrutinee_fields.1.clone();
-            crate::aver_generated::domain::ast::Expr::ExprMatch(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr::ExprMatch(aver_rt::Shared::new(
                 crate::aver_generated::domain::ast::Expr__ExprMatch(
                     shiftFnIdsInExpr(scrutinee, offset.clone()),
                     shiftFnIdsInArms__collected(
@@ -733,7 +733,7 @@ pub fn shiftFnIdsInExprCalls(
         }
         crate::aver_generated::domain::ast::Expr::ExprPropagate(__inner_fields) => {
             let inner = __inner_fields.0.clone();
-            crate::aver_generated::domain::ast::Expr::ExprPropagate(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr::ExprPropagate(aver_rt::Shared::new(
                 crate::aver_generated::domain::ast::Expr__ExprPropagate(shiftFnIdsInExpr(
                     inner, offset,
                 )),
@@ -742,7 +742,7 @@ pub fn shiftFnIdsInExprCalls(
         crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(__exprs_fields) => {
             let exprs = __exprs_fields.0.clone();
             let unwrap = __exprs_fields.1.clone();
-            crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(std::sync::Arc::new(
+            crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(aver_rt::Shared::new(
                 crate::aver_generated::domain::ast::Expr__ExprIndependentProduct(
                     shiftFnIdsInExprs__collected(
                         exprs,
@@ -1317,7 +1317,7 @@ pub fn findModulePath__indexed(
     mut depth @ _: aver_rt::AverInt,
     __str_index @ _: aver_rt::StringIndex,
 ) -> AverStr {
-    let __str_index @ _ = std::sync::Arc::new(__str_index);
+    let __str_index @ _ = aver_rt::Shared::new(__str_index);
     loop {
         crate::cancel_checkpoint();
         let path @ _ =
@@ -1388,7 +1388,7 @@ pub fn dotToSlash__indexed(
     mut acc @ _: AverStr,
     __str_index @ _: aver_rt::StringIndex,
 ) -> AverStr {
-    let __str_index @ _ = std::sync::Arc::new(__str_index);
+    let __str_index @ _ = aver_rt::Shared::new(__str_index);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));

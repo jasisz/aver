@@ -545,7 +545,7 @@ pub fn countIndentsInRange(
     mut endPos @ _: aver_rt::AverInt,
     mut count @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let tokens @ _ = std::sync::Arc::new(tokens);
+    let tokens @ _ = aver_rt::Shared::new(tokens);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
@@ -584,7 +584,7 @@ pub fn skipNDedents(
     mut pos @ _: aver_rt::AverInt,
     mut n @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let tokens @ _ = std::sync::Arc::new(tokens);
+    let tokens @ _ = aver_rt::Shared::new(tokens);
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));

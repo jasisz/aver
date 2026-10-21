@@ -181,7 +181,7 @@ fn emit_sum_type(
     let visibility = visibility_prefix(public);
     let capabilities = representation.capabilities;
     // A shared constructor keeps its fields in one `{name}__{variant}`
-    // struct behind an `Arc` (see `shared_variants`).
+    // struct behind an `aver_rt::Shared` (see `shared_variants`).
     let mut payloads = String::new();
     // The order `==` compares each constructor's fields in, where it is not
     // the declared one (see `cheap_fields_first`).
@@ -206,7 +206,7 @@ fn emit_sum_type(
             .zip(&eq_orders)
             .any(|(shared, order)| !shared && order.is_some());
     // The fields of each constructor whose `==` carries the walk; one with
-    // none of them compares its `Arc` as any other sum does.
+    // none of them compares its `Shared` as any other sum does.
     let walking: Vec<Vec<bool>> = variants
         .iter()
         .map(|v| {
@@ -231,12 +231,19 @@ fn emit_sum_type(
             .collect();
         if shared {
             let payload = format!("{name}__{}", v.name);
-            writeln!(body, "    {}(std::sync::Arc<{payload}>),", v.name).unwrap();
+            writeln!(body, "    {}(aver_rt::Shared<{payload}>),", v.name).unwrap();
             let fields: Vec<String> = field_types
                 .iter()
                 .map(|ty| format!("{visibility}{ty}"))
                 .collect();
-            let derived = derive_line(without_derived_eq(capabilities, order.is_some()));
+            // `std::sync::Arc` compares one allocation as equal to itself
+            // without reading it when `==` is reflexive; `Shared` cannot
+            // tell, so the payload says it (see `aver_rt::Shared`).
+            let reflexive = capabilities.partial_eq && capabilities.eq;
+            let derived = derive_line(without_derived_eq(
+                capabilities,
+                order.is_some() || reflexive,
+            ));
             writeln!(payloads, "\n{derived}").unwrap();
             writeln!(
                 payloads,
@@ -245,8 +252,13 @@ fn emit_sum_type(
             )
             .unwrap();
             let (this, that) = (|i| format!("self.{i}"), |i| format!("other.{i}"));
-            if let Some(order) = order {
-                let test = fields_equal(order, &[], this, that);
+            if order.is_some() || reflexive {
+                let declared: Vec<usize> = (0..v.fields.len()).collect();
+                let test = fields_equal(order.as_ref().unwrap_or(&declared), &[], this, that);
+                let test = match reflexive {
+                    true => format!("std::ptr::eq(self, other) || {test}"),
+                    false => test,
+                };
                 payloads.push_str(&partial_eq_impl(&payload, &test));
             }
             if walks_on(i) {
@@ -266,8 +278,8 @@ fn emit_sum_type(
     if inline_eq {
         let mut arms = String::new();
         for (i, ((v, &shared), order)) in variants.iter().zip(shared).zip(&eq_orders).enumerate() {
-            // A shared constructor compares its one `Arc`, equal at once
-            // when both sides are the same allocation.
+            // A shared constructor compares its one `Shared`, equal at once
+            // when both sides are the same allocation and `==` is reflexive.
             let order = match (shared, order) {
                 _ if v.fields.is_empty() => Vec::new(),
                 (true, _) => vec![0],

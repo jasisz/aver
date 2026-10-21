@@ -165,7 +165,7 @@ pub(super) fn materialize_borrowed(code: String, expr: &MirExpr, ctx: &MirEmitCt
 /// Materialise a source local before moving it into one scoped-thread branch.
 /// Every branch needs an independent carrier, but that carrier is not always
 /// an owned `T`: ordinary borrowed params and mutual-TCO invariants are `&T`
-/// and can be copied, while self-TCO invariants are `Arc<T>` and must clone the
+/// and can be copied, while self-TCO invariants are `Shared<T>` and must clone the
 /// wrapper. An owned value moves when `local` carries the branch's final read
 /// (the caller marks it so only for the last branch reading the local, with no
 /// read after the product) and is cloned otherwise.

@@ -1,6 +1,6 @@
 //! `==` on values of a recursive sum at the cost of the graph they share.
 //!
-//! A recursive sum keeps each constructor's fields behind one `Arc`, so a
+//! A recursive sum keeps each constructor's fields behind one [`Shared`], so a
 //! subterm can sit under many nodes. Two equal values built apart are
 //! different objects all the way down, and a comparison node by node meets a
 //! shared subterm once for every path to it: the work is the size of the
@@ -9,8 +9,8 @@
 //! needs more starts again remembering the pairs of shared nodes it found
 //! equal, and does not compare them again.
 
+use crate::Shared;
 use std::cell::Cell;
-use std::sync::Arc;
 
 /// How many constructor pairs a comparison meets before it starts again
 /// with memory. A comparison within it pays a counter; one past it repeats
@@ -92,8 +92,8 @@ impl Walk<'_> {
     /// their `==` is (they hold no `Float`), so one object is equal to itself
     /// without being read.
     #[inline]
-    pub fn shared<T: WalkEq>(self, a: &Arc<T>, b: &Arc<T>, reflexive: bool) -> bool {
-        if reflexive && Arc::ptr_eq(a, b) {
+    pub fn shared<T: WalkEq>(self, a: &Shared<T>, b: &Shared<T>, reflexive: bool) -> bool {
+        if reflexive && Shared::ptr_eq(a, b) {
             return true;
         }
         if let Some(memory) = self.memory {
@@ -113,11 +113,11 @@ impl Walk<'_> {
     /// one place is reached by one path only.
     #[cold]
     #[inline(never)]
-    fn remembering<T: WalkEq>(self, memory: &Memory, a: &Arc<T>, b: &Arc<T>) -> bool {
-        if Arc::strong_count(a) == 1 || Arc::strong_count(b) == 1 {
+    fn remembering<T: WalkEq>(self, memory: &Memory, a: &Shared<T>, b: &Shared<T>) -> bool {
+        if Shared::strong_count(a) == 1 || Shared::strong_count(b) == 1 {
             return a.walk_eq(b, self);
         }
-        let pair = (Arc::as_ptr(a) as usize, Arc::as_ptr(b) as usize);
+        let pair = (Shared::as_ptr(a) as usize, Shared::as_ptr(b) as usize);
         let seen = memory.equal.take();
         let known = seen.as_ref().is_some_and(|seen| seen.contains(&pair));
         memory.equal.set(seen);
@@ -137,8 +137,8 @@ impl Walk<'_> {
 #[cfg(test)]
 mod tests {
     use super::{BUDGET, Walk, WalkEq, walk_eq};
+    use crate::Shared;
     use std::cell::Cell;
-    use std::sync::Arc;
 
     thread_local! {
         static VISITS: Cell<usize> = const { Cell::new(0) };
@@ -148,8 +148,8 @@ mod tests {
     /// payloads it compares.
     #[derive(Clone, Debug)]
     enum Node {
-        Leaf(Arc<Leaf>),
-        Pair(Arc<Pair>),
+        Leaf(Shared<Leaf>),
+        Pair(Shared<Pair>),
     }
 
     #[derive(Debug, PartialEq)]
@@ -188,11 +188,11 @@ mod tests {
     }
 
     fn leaf(n: f64) -> Node {
-        Node::Leaf(Arc::new(Leaf(n)))
+        Node::Leaf(Shared::new(Leaf(n)))
     }
 
     fn pair(a: Node, b: Node) -> Node {
-        Node::Pair(Arc::new(Pair(a, b)))
+        Node::Pair(Shared::new(Pair(a, b)))
     }
 
     /// `n` levels above `leaf(seed)`, each holding the one below twice:
@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn one_object_is_equal_to_itself_only_when_its_payload_is() {
         VISITS.with(|v| v.set(0));
-        let pair = Arc::new(Pair(leaf(1.0), leaf(1.0)));
+        let pair = Shared::new(Pair(leaf(1.0), leaf(1.0)));
         let left = Cell::new(BUDGET);
         let walk = Walk {
             left: &left,

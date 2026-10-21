@@ -15,6 +15,7 @@ pub mod packed_u8;
 pub mod random;
 mod runtime;
 mod service_types;
+mod shared;
 mod shared_eq;
 pub mod strcursor;
 mod string_index;
@@ -46,6 +47,7 @@ pub use service_types::{
     BranchPath, HttpHeaders, HttpRequest, HttpResponse, TcpConnection, TcpDial, TcpListener,
     TerminalSize,
 };
+pub use shared::Shared;
 pub use shared_eq::{Walk, WalkEq, walk_eq};
 pub use strcursor::{
     str_code1, str_code1_lower, str_code1_upper, str_cursor_code, str_cursor_end, str_cursor_head,
@@ -104,9 +106,23 @@ impl Buffer {
     }
 }
 
-/// Aver string type: newtype over Rc<str> for O(1) clone and native `+` operator.
-#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+/// Aver string type: newtype over `Shared<str>` for O(1) clone and native `+` operator.
+#[derive(Clone, Eq, Ord, PartialOrd)]
 pub struct AverStr(Rc<str>);
+
+/// One string is equal to itself without reading it, as `Arc<str>`'s `==`.
+impl PartialEq for AverStr {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0) || *self.0 == *other.0
+    }
+}
+
+impl Hash for AverStr {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        (*self.0).hash(state)
+    }
+}
 
 impl AverStr {
     pub fn len(&self) -> usize {
@@ -160,6 +176,13 @@ impl From<Rc<str>> for AverStr {
     }
 }
 
+/// From hand-written code that holds an `Arc<str>`: the text is copied.
+impl From<std::sync::Arc<str>> for AverStr {
+    fn from(s: std::sync::Arc<str>) -> Self {
+        Self(Rc::from(&*s))
+    }
+}
+
 impl fmt::Display for AverStr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
@@ -190,7 +213,8 @@ pub fn aver_str_concat(a: &AverStr, b: &AverStr) -> AverStr {
     s.push_str(b);
     AverStr::from(s)
 }
-use std::sync::Arc as Rc;
+/// Every node the runtime's values share (lists, vectors, maps, strings).
+use crate::shared::Shared as Rc;
 
 // ── par_execute: parallel execution for independent products (?!) ─────────────────
 

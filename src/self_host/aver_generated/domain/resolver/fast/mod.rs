@@ -8,7 +8,7 @@ pub fn annotateFastFns(
     fnMap @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
-    let fnMap @ _ = std::sync::Arc::new(fnMap);
+    let fnMap @ _ = aver_rt::Shared::new(fnMap);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(fns, [] => { return acc.reverse(); }, [f, rest] => { {

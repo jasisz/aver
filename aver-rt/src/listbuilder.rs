@@ -22,7 +22,7 @@
 //! reused for later — the push copies instead, which costs the walk it
 //! was avoiding but answers the same.
 
-use std::sync::Arc as Rc;
+use crate::shared::Shared as Rc;
 
 use crate::{AverList, AverListInner};
 
