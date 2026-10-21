@@ -382,6 +382,8 @@ fn last_use_record_field_access_emits_record_take_named() {
     );
 }
 
+/// A scalar field read before the record's last read stays a plain read:
+/// nothing in it is worth the runtime's holder check.
 #[test]
 fn nonfinal_record_field_access_keeps_record_get_named() {
     assert_emits(

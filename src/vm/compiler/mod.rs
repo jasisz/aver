@@ -1473,9 +1473,12 @@ pub(super) struct FnCompiler<'a> {
     /// a local record, innermost last. See `field_take`.
     field_takes: Vec<field_take::FieldTakePlan>,
     /// Field reads of the body being compiled that nothing after them reads
-    /// again (`field_moves::movable_projections`). Consulted only for the
-    /// target of a matched `Vector.set`; see `field_take`.
+    /// again (`field_moves::movable_projections`).
     movable_projections: std::collections::HashSet<usize>,
+    /// Those of them a plain field read may take where it stands (without
+    /// `field_moves::reads_out_of_place`), though the local still holds the
+    /// record.
+    movable_in_place: std::collections::HashSet<usize>,
 }
 
 impl<'a> FnCompiler<'a> {
@@ -1519,6 +1522,7 @@ impl<'a> FnCompiler<'a> {
             aliased_slots: std::sync::Arc::new(Vec::new()),
             field_takes: Vec::new(),
             movable_projections: std::collections::HashSet::new(),
+            movable_in_place: std::collections::HashSet::new(),
         }
     }
 

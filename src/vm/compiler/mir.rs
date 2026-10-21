@@ -495,6 +495,10 @@ pub(super) fn compile_mir_expr(
                     match planned {
                         Some(path) => path.root_bases.checked_add(u8::from(!local.node.last_use)),
                         None if local.node.last_use => Some(0),
+                        // Nothing after this read overlaps the field
+                        // (`field_moves`): only the local's own cell may
+                        // hold the record.
+                        None if takes_where_read(fc, expr) => Some(1),
                         None => None,
                     }
                 }
@@ -1097,12 +1101,22 @@ pub(super) fn compile_mir_fn_body(
     fc: &mut FnCompiler<'_>,
     mir_fn: &MirFn,
 ) -> Result<(), MirVmUnsupported> {
+    let body = &mir_fn.body.node;
     fc.movable_projections = fc
         .mir_program
-        .map(|program| {
-            crate::ir::mir::field_moves::movable_projections(&mir_fn.body.node, &program.builtins)
-        })
+        .map(|program| crate::ir::mir::field_moves::movable_projections(body, &program.builtins))
         .unwrap_or_default();
+    fc.movable_in_place = match fc.mir_program {
+        Some(program) if !fc.movable_projections.is_empty() => {
+            let elsewhere =
+                crate::ir::mir::field_moves::reads_out_of_place(body, &program.builtins);
+            fc.movable_projections
+                .difference(&elsewhere)
+                .copied()
+                .collect()
+        }
+        _ => Default::default(),
+    };
     compile_mir_expr(fc, &mir_fn.body)?;
     fc.emit_op(RETURN);
     Ok(())
@@ -1791,10 +1805,24 @@ fn compile_vector_set_field(
     Ok(true)
 }
 
+/// Whether `expr`, a field read nothing after it overlaps (`field_moves`),
+/// takes the field where it is read. Only a value that can hold a Map, a
+/// Vector or a record is worth asking the runtime about; a scalar is read in
+/// place.
+fn takes_where_read(fc: &FnCompiler<'_>, expr: &Spanned<MirExpr>) -> bool {
+    use crate::types::Type;
+    !matches!(
+        expr.ty(),
+        Some(Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit)
+    ) && fc
+        .movable_in_place
+        .contains(&(&expr.node as *const MirExpr as usize))
+}
+
 /// Compile `local.f1.….fn`, `n >= 2`, as one `RECORD_TAKE_PATH` when a record
-/// literal or update being compiled plans to take it, or when the read is the
-/// local's last use. Returns `false`, having emitted nothing, for any other
-/// projection.
+/// literal or update being compiled plans to take it, when the read is the
+/// local's last use, or when nothing after it reads the path again. Returns
+/// `false`, having emitted nothing, for any other projection.
 fn compile_path_take(
     fc: &mut FnCompiler<'_>,
     expr: &Spanned<MirExpr>,
@@ -1824,6 +1852,19 @@ fn compile_path_take(
             vec![
                 super::field_take::PathLevel {
                     detach: true,
+                    holders: 0,
+                };
+                fields.len() - 1
+            ],
+        ),
+        // Nothing after this read overlaps the path (`field_moves`): the
+        // local's own cell holds the root, each record below stays in its
+        // parent, and only the last field is taken.
+        None if takes_where_read(fc, expr) => (
+            1,
+            vec![
+                super::field_take::PathLevel {
+                    detach: false,
                     holders: 0,
                 };
                 fields.len() - 1
