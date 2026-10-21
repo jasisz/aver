@@ -1967,3 +1967,97 @@ fn vm_map_literal() {
     let arena = Arena::new();
     assert_eq!(result.as_int(&arena), 2);
 }
+
+// ---------------------------------------------------------------------------
+// `==` on values that share their subterms
+// ---------------------------------------------------------------------------
+
+/// `aver run` on `file` with `args`: its trimmed stdout, or a panic when it
+/// does not end within a minute.
+fn aver_run_within_a_minute(file: &Path, args: &[&str]) -> String {
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .arg("run")
+        .arg(file)
+        .arg("--")
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("aver run starts");
+    let started = std::time::Instant::now();
+    while child.try_wait().expect("aver run is waitable").is_none() {
+        if started.elapsed() > std::time::Duration::from_secs(60) {
+            let _ = child.kill();
+            panic!("{} {args:?} did not end within a minute", file.display());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let out = child.wait_with_output().expect("aver run output");
+    assert!(
+        out.status.success(),
+        "{} {args:?} failed:\n{}",
+        file.display(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// Two equal values built apart, each holding one subterm in many places,
+/// compare each pair of shared nodes once and not once per path to it: at 64
+/// levels a walk of the unfolded tree would not end, so the VM must answer
+/// as it does at 12 within a minute. The fixture also differs at the last
+/// leaf of the graph, compares records on the cycle and two sums on one
+/// cycle.
+#[test]
+fn vm_equality_of_shared_values_costs_the_graph() {
+    let file =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/shared_recursive_sum_app.av");
+    let shallow = aver_run_within_a_minute(&file, &["12"]);
+    assert!(
+        shallow.contains("dag true false") && shallow.contains("mutual true false"),
+        "{shallow}"
+    );
+    assert_eq!(aver_run_within_a_minute(&file, &["64"]), shallow);
+}
+
+/// The same with a `Float` at the last leaf: a NaN there makes the values
+/// unequal however much they share, and the two zeroes stay equal.
+#[test]
+fn vm_equality_of_shared_float_values_keeps_ieee() {
+    let dir = temp_module_root("shared_float_eq");
+    let file = dir.join("main.av");
+    std::fs::write(
+        &file,
+        r#"module SharedFloatEq
+    intent = "Equality of shared Float trees built apart."
+    effects [Console.print]
+
+type F
+    Tip(Float)
+    Pair(F, F)
+
+fn twice(t: F, n: Int) -> F
+    ? "Puts t under n pairs that hold it on both sides."
+    match n <= 0
+        true -> t
+        false -> twice(F.Pair(t, t), n - 1)
+
+fn spine(n: Int, last: Float) -> F
+    ? "twice(F.Tip(1.0), n) with its rightmost tip last, built level by level."
+    match n <= 0
+        true -> F.Tip(last)
+        false -> F.Pair(twice(F.Tip(1.0), n - 1), spine(n - 1, last))
+
+fn main() -> Unit
+    ! [Console.print]
+    nan = 0.0 / 0.0
+    Console.print("same {spine(64, 2.0) == spine(64, 2.0)} zero {spine(64, 0.0) == spine(64, -0.0)}")
+    Console.print("nan {spine(64, nan) == spine(64, nan)} tree {twice(F.Tip(1.0), 64) == spine(64, 1.0)}")
+"#,
+    )
+    .expect("write Aver source");
+    let out = aver_run_within_a_minute(&file, &[]);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out, "same true zero true\nnan false tree true");
+}

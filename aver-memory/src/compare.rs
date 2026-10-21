@@ -1,10 +1,59 @@
 use super::*;
+use alloc::collections::BTreeSet;
 use alloc::string::ToString;
+
+/// How many pairs of arena values one `==` compares before it starts again
+/// remembering what it found equal. A comparison within it pays a counter;
+/// one past it repeats at most this much work.
+const EQ_BUDGET: u32 = 1024;
+
+/// How a comparison goes on: within its budget, or with memory.
+///
+/// One value can sit in many fields of an arena (`Pair(t, t)` stores `t`
+/// twice), so two equal values built apart can share their subterms
+/// internally while sharing nothing with each other. A walk meets such a
+/// subterm once for every path to it: the work is the size of the unfolded
+/// tree, exponential in the depth of the sharing. The comparison with memory
+/// looks a pair up before it compares it, and remembers it once it is found
+/// equal. The arena is not changed while `==` runs, so the bits of a value
+/// name it for the whole comparison, and the answer for a pair of bits is
+/// always the same.
+struct EqWalk<'a> {
+    left: u32,
+    equal: Option<&'a mut BTreeSet<(u64, u64)>>,
+}
 
 impl NanValue {
     #[inline]
     pub fn eq_in<T: ArenaTypes>(self, other: Self, arena: &Arena<T>) -> bool {
-        self.eq_as::<T, false>(other, arena)
+        self.eq_top::<T, false>(other, arena)
+    }
+
+    /// A top-level `==`: within [`EQ_BUDGET`] as it always was, from the
+    /// start with memory if that runs out. Kept out of line so the VM's
+    /// dispatch loop holds one call for `==`, not the comparison.
+    #[inline(never)]
+    fn eq_top<T: ArenaTypes, const KEY: bool>(self, other: Self, arena: &Arena<T>) -> bool {
+        let mut walk = EqWalk {
+            left: EQ_BUDGET,
+            equal: None,
+        };
+        let same = self.eq_as::<T, KEY>(other, arena, &mut walk);
+        if walk.left > 0 {
+            return same;
+        }
+        self.eq_remembering::<T, KEY>(other, arena)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn eq_remembering<T: ArenaTypes, const KEY: bool>(self, other: Self, arena: &Arena<T>) -> bool {
+        let mut equal = BTreeSet::new();
+        let mut walk = EqWalk {
+            left: 0,
+            equal: Some(&mut equal),
+        };
+        self.eq_as::<T, KEY>(other, arena, &mut walk)
     }
 
     /// Whether `self` and `other` are the same map key.
@@ -17,10 +66,16 @@ impl NanValue {
     /// the runtime is handed from outside the language.
     #[inline]
     pub fn key_eq_in<T: ArenaTypes>(self, other: Self, arena: &Arena<T>) -> bool {
-        self.eq_as::<T, true>(other, arena)
+        self.eq_top::<T, true>(other, arena)
     }
 
-    fn eq_as<T: ArenaTypes, const KEY: bool>(self, other: Self, arena: &Arena<T>) -> bool {
+    #[inline(always)]
+    fn eq_as<T: ArenaTypes, const KEY: bool>(
+        self,
+        other: Self,
+        arena: &Arena<T>,
+        walk: &mut EqWalk<'_>,
+    ) -> bool {
         // Float comparison goes first and never short-circuits on
         // bit-pattern equality. IEEE 754 says `NaN == NaN` is false
         // and `+0.0 == -0.0` is true; both rules disagree with raw
@@ -37,9 +92,51 @@ impl NanValue {
         if self.0 == other.0 {
             return true;
         }
+        if self.may_hold_heap_index() && other.may_hold_heap_index() {
+            if walk.equal.is_some() {
+                return self.eq_remembered::<T, KEY>(other, arena, walk);
+            }
+            // Out of budget: the answer is thrown away and found again.
+            if walk.left == 0 {
+                return false;
+            }
+            walk.left -= 1;
+        }
+        self.eq_parts::<T, KEY>(other, arena, walk)
+    }
+
+    /// [`NanValue::eq_as`] with memory: a pair is looked up, and remembered
+    /// once found equal.
+    #[cold]
+    #[inline(never)]
+    fn eq_remembered<T: ArenaTypes, const KEY: bool>(
+        self,
+        other: Self,
+        arena: &Arena<T>,
+        walk: &mut EqWalk<'_>,
+    ) -> bool {
+        let pair = (self.0, other.0);
+        if walk.equal.as_ref().is_some_and(|seen| seen.contains(&pair)) {
+            return true;
+        }
+        let same = self.eq_parts::<T, KEY>(other, arena, walk);
+        if same && let Some(seen) = walk.equal.as_deref_mut() {
+            seen.insert(pair);
+        }
+        same
+    }
+
+    /// [`NanValue::eq_as`] of two values that are not one: their parts.
+    fn eq_parts<T: ArenaTypes, const KEY: bool>(
+        self,
+        other: Self,
+        arena: &Arena<T>,
+        walk: &mut EqWalk<'_>,
+    ) -> bool {
         match (self.wrapper_parts(arena), other.wrapper_parts(arena)) {
             (Some((self_kind, self_inner)), Some((other_kind, other_inner))) => {
-                return self_kind == other_kind && self_inner.eq_as::<T, KEY>(other_inner, arena);
+                return self_kind == other_kind
+                    && self_inner.eq_as::<T, KEY>(other_inner, arena, walk);
             }
             (Some(_), None) | (None, Some(_)) => return false,
             (None, None) => {}
@@ -52,13 +149,16 @@ impl NanValue {
                 (Some(sc), Some(oc)) if sc == oc => {
                     // Same constructor — compare field(s)
                     if self.tag() == TAG_INLINE_VARIANT && other.tag() == TAG_INLINE_VARIANT {
-                        self.inline_variant_inner()
-                            .eq_as::<T, KEY>(other.inline_variant_inner(), arena)
+                        self.inline_variant_inner().eq_as::<T, KEY>(
+                            other.inline_variant_inner(),
+                            arena,
+                            walk,
+                        )
                     } else {
                         // Cross-representation: extract the single field from each side
                         let sf = self.variant_single_field(arena);
                         let of = other.variant_single_field(arena);
-                        sf.eq_as::<T, KEY>(of, arena)
+                        sf.eq_as::<T, KEY>(of, arena, walk)
                     }
                 }
                 (Some(_), Some(_)) => false,
@@ -70,7 +170,10 @@ impl NanValue {
                 return st == ot
                     && sv == ov
                     && sf.len() == of.len()
-                    && sf.iter().zip(of).all(|(a, b)| a.eq_as::<T, KEY>(*b, arena));
+                    && sf
+                        .iter()
+                        .zip(of)
+                        .all(|(a, b)| a.eq_as::<T, KEY>(*b, arena, walk));
             }
             (Some(_), None) | (None, Some(_)) => return false,
             (None, None) => {}
@@ -95,18 +198,24 @@ impl NanValue {
                         arena
                             .list_get_value(self, i)
                             .zip(arena.list_get_value(other, i))
-                            .is_some_and(|(x, y)| x.eq_as::<T, KEY>(y, arena))
+                            .is_some_and(|(x, y)| x.eq_as::<T, KEY>(y, arena, walk))
                     })
             }
             TAG_TUPLE => {
                 let a = arena.get_tuple(self.arena_index());
                 let b = arena.get_tuple(other.arena_index());
-                a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.eq_as::<T, KEY>(*y, arena))
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(b)
+                        .all(|(x, y)| x.eq_as::<T, KEY>(*y, arena, walk))
             }
             TAG_VECTOR => {
                 let a = arena.vector_ref_value(self);
                 let b = arena.vector_ref_value(other);
-                a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.eq_as::<T, KEY>(*y, arena))
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(b)
+                        .all(|(x, y)| x.eq_as::<T, KEY>(*y, arena, walk))
             }
             TAG_MAP => {
                 let a = arena.map_ref_value(self);
@@ -121,7 +230,7 @@ impl NanValue {
                             Some((k2, v2)) if k.key_eq_in(*k2, arena) => Some(*v2),
                             _ => map_get_value::<T>(b, *k, arena),
                         };
-                        found.is_some_and(|v2| v1.eq_as::<T, KEY>(v2, arena))
+                        found.is_some_and(|v2| v1.eq_as::<T, KEY>(v2, arena, walk))
                     })
             }
             TAG_RECORD => {
@@ -129,7 +238,10 @@ impl NanValue {
                 let (tb, fb) = arena.get_record(other.arena_index());
                 ta == tb
                     && fa.len() == fb.len()
-                    && fa.iter().zip(fb).all(|(a, b)| a.eq_as::<T, KEY>(*b, arena))
+                    && fa
+                        .iter()
+                        .zip(fb)
+                        .all(|(a, b)| a.eq_as::<T, KEY>(*b, arena, walk))
             }
             TAG_VARIANT | TAG_INLINE_VARIANT => {
                 unreachable!("variant comparison handled above")
