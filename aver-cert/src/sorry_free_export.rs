@@ -25,9 +25,54 @@ const SORRY_AXIOM: &str = "sorryAx";
 /// The export with the `sorryAx`-dependent declarations left out, and the
 /// names of the declarations left out (`sorryAx` itself included).
 #[derive(Debug)]
-pub(crate) struct Filtered {
-    pub export: Vec<u8>,
-    pub dropped: Vec<String>,
+struct Filtered {
+    export: Vec<u8>,
+    dropped: Vec<String>,
+}
+
+/// Writes the export the kernels that refuse `sorryAx` read to `path`, when
+/// some declaration depends on `sorryAx`, and returns the line that says which
+/// kernels read it and what it leaves out. `None`: every kernel reads the
+/// whole export. Fails if it would leave out a name in `credited`.
+pub fn write_for(
+    kernels: &[crate::kernels::Kernel],
+    export: &[u8],
+    path: &std::path::Path,
+    credited: &[String],
+) -> Result<Option<String>, String> {
+    let Some(filtered) = without_sorry(export)? else {
+        return Ok(None);
+    };
+    if let Some(name) = filtered.dropped.iter().find(|name| credited.contains(name)) {
+        return Err(format!(
+            "credited declaration `{}` depends on sorryAx",
+            name.escape_debug()
+        ));
+    }
+    std::fs::write(path, &filtered.export)
+        .map_err(|error| format!("cannot write the sorry-free export: {error}"))?;
+    let readers: Vec<&str> = (kernels.iter())
+        .filter(|kernel| !kernel.admits_sorry)
+        .map(|kernel| kernel.name)
+        .collect();
+    let shown: Vec<&str> = filtered
+        .dropped
+        .iter()
+        .take(5)
+        .map(String::as_str)
+        .collect();
+    Ok(Some(format!(
+        "{} read the export without the {} declarations that depend on sorryAx \
+         (none is credited; every other kernel checks them): {}{}",
+        readers.join(", "),
+        filtered.dropped.len(),
+        shown.join(", "),
+        if filtered.dropped.len() > shown.len() {
+            ", ..."
+        } else {
+            ""
+        }
+    )))
 }
 
 /// One expression: its sub-expressions and the constant it names.
@@ -44,7 +89,7 @@ struct Declaration {
 /// the export as it is (an unused `sorryAx` is accepted by all of them). An
 /// export line this reader does not know is an error, never a skip: a
 /// misread could drop a declaration a kernel must check.
-pub(crate) fn without_sorry(export: &[u8]) -> Result<Option<Filtered>, String> {
+fn without_sorry(export: &[u8]) -> Result<Option<Filtered>, String> {
     let export = std::str::from_utf8(export).map_err(|error| format!("export: {error}"))?;
     if !export.contains(&format!("\"{SORRY_AXIOM}\"")) {
         return Ok(None);

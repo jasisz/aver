@@ -26,11 +26,14 @@ default = ["verify"]
 plans = []
 engine = ["plans", "dep:sha2", "dep:wasmparser"]
 producer = ["engine"]
+# The paranoid kernel list and the sorry-free export, shared with
+# `aver proof --paranoid`.
+kernels = ["dep:serde_json"]
 verify = [
+    "kernels",
     "dep:sha2",
     "dep:clap",
     "dep:colored",
-    "dep:serde_json",
     "dep:wasmparser",
 ]
 

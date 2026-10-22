@@ -11699,9 +11699,10 @@ fn lean_lakefile_roots(dir: &str) -> Vec<String> {
 /// kernel's exit status is its verdict. A failed export, a kernel that is
 /// missing or cannot start, and a kernel that rejects are all failures; no
 /// kernel is skipped. Axioms are not judged here: the law audit already
-/// records them per law.
+/// records them per law. A kernel that refuses `sorryAx` reads the export
+/// without the declarations that depend on it (laws left as `sorry`).
 fn run_paranoid_kernels(dir: &str, quiet: bool) -> Result<(), String> {
-    use super::paranoid_kernels::{EXPORTER, PARANOID_KERNELS, nanoda_config};
+    use aver_cert::kernels::{EXPORTER, KernelInput, PARANOID_KERNELS, nanoda_config};
     use std::process::Command;
     let roots = lean_lakefile_roots(dir);
     if roots.is_empty() {
@@ -11729,9 +11730,18 @@ fn run_paranoid_kernels(dir: &str, quiet: bool) -> Result<(), String> {
     let config_text = config_path.to_string_lossy().into_owned();
     std::fs::write(&export_path, &exported.stdout)
         .map_err(|error| format!("cannot write the export: {error}"))?;
+    let sorry_free_path = base.join("paranoid-export-sorry-free.ndjson");
+    let notice = aver_cert::sorry_free_export::write_for(
+        &PARANOID_KERNELS,
+        &exported.stdout,
+        &sorry_free_path,
+        &[],
+    )?;
     drop(exported);
-    std::fs::write(&config_path, nanoda_config(&export_text))
-        .map_err(|error| format!("cannot write the nanoda configuration: {error}"))?;
+    let sorry_free_text = match notice {
+        Some(_) => sorry_free_path.to_string_lossy().into_owned(),
+        None => export_text.clone(),
+    };
     if !quiet {
         println!(
             "{}",
@@ -11741,14 +11751,22 @@ fn run_paranoid_kernels(dir: &str, quiet: bool) -> Result<(), String> {
             )
             .blue()
         );
+        if let Some(notice) = &notice {
+            println!("{}", format!("--paranoid: {notice}").blue());
+        }
     }
     let mut verdict = Ok(());
     for kernel in PARANOID_KERNELS {
         let started = std::time::Instant::now();
+        let export = kernel.export(&export_text, &sorry_free_text);
+        if kernel.input == KernelInput::NanodaConfig {
+            std::fs::write(&config_path, nanoda_config(export))
+                .map_err(|error| format!("cannot write the nanoda configuration: {error}"))?;
+        }
         let ran = Command::new("lake")
             .arg("env")
             .arg(kernel.binary)
-            .args(kernel.arguments(&export_text, &config_text))
+            .args(kernel.arguments(export, &config_text))
             .current_dir(dir)
             .output();
         let failure = match ran {
@@ -11782,6 +11800,7 @@ fn run_paranoid_kernels(dir: &str, quiet: bool) -> Result<(), String> {
         }
     }
     let _ = std::fs::remove_file(&export_path);
+    let _ = std::fs::remove_file(&sorry_free_path);
     let _ = std::fs::remove_file(&config_path);
     verdict
 }

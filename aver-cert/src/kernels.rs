@@ -93,6 +93,12 @@ pub const PARANOID_KERNELS: [Kernel; 6] = [
 ];
 
 impl Kernel {
+    /// The export this kernel reads: the whole one, or the one without the
+    /// declarations that depend on `sorryAx`.
+    pub fn export<'a>(&self, whole: &'a str, sorry_free: &'a str) -> &'a str {
+        if self.admits_sorry { whole } else { sorry_free }
+    }
+
     /// The full command line after the binary: leading arguments, then the
     /// export path or the nanoda configuration path.
     pub fn arguments(&self, export_path: &str, nanoda_config_path: &str) -> Vec<String> {
