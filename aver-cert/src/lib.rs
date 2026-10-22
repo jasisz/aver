@@ -26,8 +26,8 @@ mod lean_process;
 pub mod output;
 #[cfg(feature = "verify")]
 mod prelude_cache;
-#[cfg(feature = "verify")]
-mod sorry_free_export;
+#[cfg(feature = "kernels")]
+pub mod sorry_free_export;
 #[cfg(feature = "verify")]
 mod verifier;
 #[cfg(feature = "verify")]

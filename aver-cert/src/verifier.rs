@@ -603,57 +603,25 @@ fn paranoid_replay(
     std::fs::write(&export_path, &exported.stdout)
         .map_err(|error| format!("cannot write the paranoid export: {error}"))?;
     let mut sorry_free_text = export_text.clone();
+    let sorry_free_path = build_dir.join(SORRY_FREE_EXPORT_FILE);
     let started = std::time::Instant::now();
-    let filtered = crate::sorry_free_export::without_sorry(&exported.stdout)
-        .map_err(|error| format!("cannot read the paranoid export: {error}"))?;
+    let notice =
+        crate::sorry_free_export::write_for(kernels, &exported.stdout, &sorry_free_path, credited)
+            .map_err(|error| format!("certificate failed paranoid kernel replay: {error}"))?;
     report_step_timing("sorry-free export", started.elapsed(), &[]);
-    if let Some(filtered) = filtered {
-        if let Some(name) = filtered.dropped.iter().find(|name| credited.contains(name)) {
-            return Err(format!(
-                "certificate failed paranoid kernel replay: credited declaration `{}` depends \
-                 on sorryAx",
-                display_safe(name)
-            ));
-        }
-        let sorry_free_path = build_dir.join(SORRY_FREE_EXPORT_FILE);
-        std::fs::write(&sorry_free_path, &filtered.export)
-            .map_err(|error| format!("cannot write the sorry-free export: {error}"))?;
+    if let Some(notice) = notice {
         sorry_free_text = sorry_free_path.to_string_lossy().into_owned();
-        let readers: Vec<&str> = (kernels.iter())
-            .filter(|kernel| !kernel.admits_sorry)
-            .map(|kernel| kernel.name)
-            .collect();
-        let shown: Vec<&str> = filtered
-            .dropped
-            .iter()
-            .take(5)
-            .map(String::as_str)
-            .collect();
         output::line(
             Stream::Out,
             "paranoid:",
             Style::Yellow,
-            &format!(
-                "{} read the export without the {} declarations that depend on sorryAx \
-                 (none is credited; every other kernel checks them): {}{}",
-                readers.join(", "),
-                filtered.dropped.len(),
-                shown.join(", "),
-                if filtered.dropped.len() > shown.len() {
-                    ", ..."
-                } else {
-                    ""
-                }
-            ),
+            &notice,
             Style::Plain,
         );
     }
     drop(exported);
     for kernel in kernels {
-        let export = match kernel.admits_sorry {
-            true => &export_text,
-            false => &sorry_free_text,
-        };
+        let export = kernel.export(&export_text, &sorry_free_text);
         if kernel.input == crate::kernels::KernelInput::NanodaConfig {
             std::fs::write(&config_path, crate::kernels::nanoda_config(export))
                 .map_err(|error| format!("cannot write the nanoda configuration: {error}"))?;
@@ -674,7 +642,7 @@ fn paranoid_replay(
         }
     }
     let _ = std::fs::remove_file(&export_path);
-    let _ = std::fs::remove_file(build_dir.join(SORRY_FREE_EXPORT_FILE));
+    let _ = std::fs::remove_file(&sorry_free_path);
     Ok(())
 }
 
