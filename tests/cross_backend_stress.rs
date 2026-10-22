@@ -1444,6 +1444,33 @@ fn bits_pop_count_wasm_gc() {
     );
 }
 
+// ─── An empty literal bound to a name, typed by a later read ───────────
+
+/// `e = {}` then `Map.set(e, 1, "a")`: the checker stamps the binding with
+/// the type the read settles, so wasm-gc has a type to build. The Rust
+/// backend runs the same file in `tests/rust_codegen_differential.rs`, and
+/// wasip2 in `tests/wasip2_stress.rs`.
+const BOUND_EMPTY_SRC: &str = include_str!("fixtures/bound_empty_settled_later_app.av");
+const BOUND_EMPTY_OUT: &str = include_str!("fixtures/bound_empty_settled_later_app.expected");
+
+#[test]
+fn bound_empty_literal_settled_later_vm() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-bound-empty-vm", BOUND_EMPTY_SRC),
+        BOUND_EMPTY_OUT.trim(),
+    );
+}
+
+#[test]
+fn bound_empty_literal_settled_later_wasm_gc() {
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-bound-empty-wasmgc", BOUND_EMPTY_SRC),
+        BOUND_EMPTY_OUT.trim(),
+    );
+}
+
 // ─── How deep non-tail recursion may go ────────────────────────────────
 
 /// Non-tail recursion as deep as its first argument says; without one it

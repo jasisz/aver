@@ -1,7 +1,7 @@
 module BoundEmptySettledLaterApp
     intent =
         "An empty literal bound to a name without a type, whose type a later read settles."
-        "The checker accepts each one, and the compiled Rust prints what the VM prints."
+        "The checker stamps each one with the settled type, and every backend prints what the VM prints."
     effects [Console.print]
 
 fn mapSet() -> Int

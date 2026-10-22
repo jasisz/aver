@@ -258,6 +258,52 @@ fn binding_value_hint(expr: &Expr) -> &'static str {
 }
 
 impl TypeChecker {
+    /// The types later reads settle for the unannotated bindings of `f`
+    /// whose value is open (`e = {}` then `Map.set(e, 1, "a")` settles `e`
+    /// as `Map<Int, String>`). A node's type is stamped once, so the body
+    /// is first checked on a copy, the settled types are read off it, and
+    /// the real check then takes each one as its binding's expected type:
+    /// every node the binding reaches is stamped with the settled type.
+    /// Empty when no such binding has an empty literal in its value, or
+    /// when the copy does not check cleanly; the real check then reports
+    /// as usual.
+    pub(in crate::types::checker) fn settled_binding_types(
+        &mut self,
+        f: &FnDef,
+        effects: &[String],
+    ) -> HashMap<String, Type> {
+        let mut settled = HashMap::new();
+        let stmts = f.body.stmts();
+        if !stmts.iter().any(
+            |stmt| matches!(stmt, Stmt::Binding(_, None, value) if mentions_open_literal(value)),
+        ) {
+            return settled;
+        }
+        let mut copy = stmts.to_vec();
+        copy.iter_mut().for_each(Stmt::unshare);
+        let (errors_before, locals, invalid) = (
+            self.errors.len(),
+            self.locals.clone(),
+            self.first_invalid_stamp,
+        );
+        self.check_stmts(&copy, &f.name, effects);
+        if self.errors.len() == errors_before {
+            for stmt in &copy {
+                if let Stmt::Binding(name, None, _) = stmt
+                    && let (_, Some(ty)) = self.binding_settlement(&copy, name)
+                {
+                    settled.insert(name.clone(), ty);
+                }
+            }
+        }
+        self.errors.truncate(errors_before);
+        self.locals = locals;
+        self.first_invalid_stamp = invalid;
+        self.used_names.clear();
+        self.fn_bindings.clear();
+        settled
+    }
+
     /// An unannotated binding whose type still has an open position once
     /// its function is checked. `e = {}` read only by `Map.has(e, 1)` never
     /// says what its values are: the VM does not care, but a backend with
@@ -272,22 +318,9 @@ impl TypeChecker {
             let Stmt::Binding(name, None, value) = stmt else {
                 continue;
             };
-            let Some(mut open) = self
-                .locals
-                .get(name)
-                .filter(|ty| !type_is_fully_concrete(ty) && !type_contains_invalid(ty))
-                .cloned()
-            else {
+            let (Some(open), None) = self.binding_settlement(stmts, name) else {
                 continue;
             };
-            let mut settled = false;
-            for stmt in stmts {
-                let (Stmt::Binding(_, _, expr) | Stmt::Expr(expr)) = stmt;
-                self.scan_reads(expr, name, &mut Vec::new(), &mut open, &mut settled);
-            }
-            if settled {
-                continue;
-            }
             let mut vars = HashSet::new();
             collect_vars(&open, &mut vars);
             let mut vars: Vec<String> = vars.into_iter().collect();
@@ -306,24 +339,50 @@ impl TypeChecker {
         }
     }
 
+    /// How the reads in `stmts` settle the binding `name`. `(Some(open),
+    /// None)`: its type has an open position nothing settles, and `open` is
+    /// that type narrowed by what the reads fix, for the hint. `(None,
+    /// Some(ty))`: a read settles it as `ty`. `(None, None)`: the type is
+    /// not open, or a read may settle it in a way not followed here.
+    fn binding_settlement(&self, stmts: &[Stmt], name: &str) -> (Option<Type>, Option<Type>) {
+        let Some(mut open) = self
+            .locals
+            .get(name)
+            .filter(|ty| !type_is_fully_concrete(ty) && !type_contains_invalid(ty))
+            .cloned()
+        else {
+            return (None, None);
+        };
+        let mut settled = None;
+        for stmt in stmts {
+            let (Stmt::Binding(_, _, expr) | Stmt::Expr(expr)) = stmt;
+            self.scan_reads(expr, name, &mut Vec::new(), &mut open, &mut settled);
+        }
+        match settled {
+            Some(ty) => (None, ty),
+            None => (Some(open), None),
+        }
+    }
+
     /// Visit every read of `name` under `expr`. A read that may fix the
-    /// binding's open positions sets `settled`; one that leaves them open
-    /// narrows `open` by what it does fix, for the hint.
+    /// binding's open positions sets `settled`, to the type it fixes when
+    /// that is known; one that leaves them open narrows `open` by what it
+    /// does fix, for the hint.
     fn scan_reads<'a>(
         &self,
         expr: &'a Spanned<Expr>,
         name: &str,
         path: &mut Vec<&'a Spanned<Expr>>,
         open: &mut Type,
-        settled: &mut bool,
+        settled: &mut Option<Option<Type>>,
     ) {
-        if *settled {
+        if settled.is_some() {
             return;
         }
         if matches!(&expr.node, Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == name) {
             match self.read_leaves_open(expr, path) {
-                Some(shape) => *open = refine(open, &to_shape(&shape)),
-                None => *settled = true,
+                Ok(shape) => *open = refine(open, &to_shape(&shape)),
+                Err(ty) => *settled = Some(ty),
             }
             return;
         }
@@ -334,23 +393,39 @@ impl TypeChecker {
         path.pop();
     }
 
-    /// `Some` with what this read fixes of the binding's type when it
-    /// cannot fix the rest: it is an argument of a generic builtin whose
-    /// result does not carry what stays open (`Map.has(e, 1)`), or one side
-    /// of `==` / `!=` whose other side is open too. A result that does
-    /// carry it (`Map.get(e, 1)`) is followed to its own reader. Anything
-    /// else may fix the type, so `None`.
-    fn read_leaves_open(&self, read: &Spanned<Expr>, path: &[&Spanned<Expr>]) -> Option<Type> {
+    /// `Ok` with what this read fixes of the binding's type when it cannot
+    /// fix the rest: it is an argument of a generic builtin whose result
+    /// does not carry what stays open (`Map.has(e, 1)`), or one side of
+    /// `==` / `!=` whose other side is open too. A result that does carry
+    /// it (`Map.get(e, 1)`) is followed to its own reader. `Err` when the
+    /// read may fix the type, with the binding's type it fixes when that is
+    /// known (`Map.set(e, 1, "a")` fixes `Map<Int, String>`).
+    fn read_leaves_open(
+        &self,
+        read: &Spanned<Expr>,
+        path: &[&Spanned<Expr>],
+    ) -> Result<Type, Option<Type>> {
         let mut node = read;
-        let mut ty = read.ty()?.clone();
+        let mut ty = read.ty().ok_or(None)?.clone();
         let mut fixed_by_read: Option<Type> = None;
+        // `ty` is the type of the read's enclosing node at this level and
+        // `here` what the level fixes of it: the binding's type, with the
+        // variables of `ty` taken from `here`, when that is fully fixed.
+        let settles = |fixed_by_read: &Option<Type>, ty: &Type, here: &Type| {
+            let mut subst = HashMap::new();
+            bind_shape(ty, here, &mut subst);
+            let own = Self::instantiate_type(fixed_by_read.as_ref().unwrap_or(ty), &subst);
+            type_is_fully_concrete(&own).then_some(own)
+        };
         for parent in path.iter().rev() {
             match &parent.node {
                 Expr::FnCall(callee, args) => {
-                    let sig = self.find_fn_sig(&Self::callee_key(&callee.node)?)?;
-                    let at = args.iter().position(|arg| std::ptr::eq(arg, node))?;
+                    let key = Self::callee_key(&callee.node).ok_or(None)?;
+                    let sig = self.find_fn_sig(&key).ok_or(None)?;
+                    let at = args.iter().position(|arg| std::ptr::eq(arg, node));
+                    let at = at.ok_or(None)?;
                     if sig.params.len() != args.len() {
-                        return None;
+                        return Err(None);
                     }
                     let mut subst = HashMap::new();
                     for (idx, (arg, param)) in args.iter().zip(&sig.params).enumerate() {
@@ -363,7 +438,7 @@ impl TypeChecker {
                     let param = Self::instantiate_type(&sig.params[at], &subst);
                     let here = refine(&ty, &to_shape(&param));
                     if type_is_fully_concrete(&here) {
-                        return None;
+                        return Err(settles(&fixed_by_read, &ty, &here));
                     }
                     let here = fixed_by_read.get_or_insert(here).clone();
                     let (mut still_open, mut carried) = (HashSet::new(), HashSet::new());
@@ -371,22 +446,32 @@ impl TypeChecker {
                     still_open.retain(|var| !subst.get(var).is_some_and(type_is_fully_concrete));
                     collect_vars(&sig.ret, &mut carried);
                     if still_open.is_disjoint(&carried) {
-                        return Some(here);
+                        return Ok(here);
                     }
-                    ty = parent.ty()?.clone();
+                    ty = parent.ty().ok_or(None)?.clone();
                 }
                 Expr::BinOp(BinOp::Eq | BinOp::Neq, lhs, rhs) => {
                     let other = if std::ptr::eq(&**lhs, node) { rhs } else { lhs };
-                    let here = refine(&ty, &to_shape(other.ty()?));
+                    let here = refine(&ty, &to_shape(other.ty().ok_or(None)?));
                     if type_is_fully_concrete(&here) {
-                        return None;
+                        return Err(settles(&fixed_by_read, &ty, &here));
                     }
-                    return Some(fixed_by_read.unwrap_or(here));
+                    return Ok(fixed_by_read.unwrap_or(here));
                 }
-                _ => return None,
+                _ => return Err(None),
             }
             node = parent;
         }
-        None
+        Err(None)
     }
+}
+
+/// Whether `expr` has an empty literal (`[]`, `{}`, `Option.None`) in it:
+/// a value whose type a later read may have to settle.
+fn mentions_open_literal(expr: &Spanned<Expr>) -> bool {
+    let mut found = open_literal_shape(&expr.node).is_some();
+    crate::ir::walk_children(expr, &mut |child| {
+        found = found || mentions_open_literal(child);
+    });
+    found
 }

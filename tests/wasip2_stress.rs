@@ -214,6 +214,26 @@ fn bits_pop_count_matches_expected() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// An empty literal bound to a name and typed by a later read builds on
+/// wasip2 and prints what the VM prints (`cross_backend_stress` runs the
+/// VM and wasm-gc).
+#[test]
+fn bound_empty_literal_settled_later_matches_expected() {
+    let dir = tempdir("bound-empty");
+    let fixture = write_fixture(
+        &dir,
+        "bound_empty.av",
+        include_str!("fixtures/bound_empty_settled_later_app.av"),
+    );
+    let out = run_wasip2(&dir, &fixture, &[]);
+    assert_ok(&out, "bound_empty.av");
+    assert_eq!(
+        stdout(&out).trim(),
+        include_str!("fixtures/bound_empty_settled_later_app.expected").trim()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `==` on recursive values sharing subterms, built apart, compares each
 /// shared pair once, and a map keyed by them hashes each shared node once:
 /// at 64 levels it answers as at 12, within a minute. `cross_backend_stress`
