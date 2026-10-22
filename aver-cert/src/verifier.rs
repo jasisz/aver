@@ -552,8 +552,9 @@ fn replay_args_for(mode: ReplayMode, override_binary: Option<&str>) -> Option<Ve
 const WITNESS_NAMESPACE: &str = "AverCertChecker";
 /// The export every paranoid kernel reads, and nanoda's configuration.
 const PARANOID_EXPORT_FILE: &str = "witness-closure.ndjson";
-/// nanoda's export, when declarations of the closure rest on `sorryAx`.
-const NANODA_EXPORT_FILE: &str = "witness-closure-nanoda.ndjson";
+/// The export the kernels that do not accept `sorryAx` read, when
+/// declarations of the closure rest on it.
+const SORRY_FREE_EXPORT_FILE: &str = "witness-closure-sorry-free.ndjson";
 const NANODA_CONFIG_FILE: &str = "nanoda.json";
 
 /// The paranoid final replay: one `leanexport` of the witness module and its
@@ -562,9 +563,10 @@ const NANODA_CONFIG_FILE: &str = "nanoda.json";
 /// exit status. Fails closed on a failed or empty export, and on any kernel
 /// that is missing, cannot start, or rejects.
 ///
-/// nanoda alone reads the export without the declarations that depend on
-/// `sorryAx` (see [`crate::nanoda_export`]). `credited` names the witness
-/// declarations a credit rests on; the replay fails if one of them is left out.
+/// A kernel that does not accept `sorryAx` reads the export without the
+/// declarations that depend on it (see [`crate::sorry_free_export`]).
+/// `credited` names the witness declarations a credit rests on; the replay
+/// fails if one of them is left out.
 fn paranoid_replay(
     lean: &LeanRunner,
     build_dir: &Path,
@@ -600,11 +602,11 @@ fn paranoid_replay(
     let config_text = config_path.to_string_lossy().into_owned();
     std::fs::write(&export_path, &exported.stdout)
         .map_err(|error| format!("cannot write the paranoid export: {error}"))?;
-    let mut nanoda_path = export_path.clone();
+    let mut sorry_free_text = export_text.clone();
     let started = std::time::Instant::now();
-    let filtered = crate::nanoda_export::without_sorry(&exported.stdout)
-        .map_err(|error| format!("cannot read the paranoid export for nanoda: {error}"))?;
-    report_step_timing("nanoda export", started.elapsed(), &[]);
+    let filtered = crate::sorry_free_export::without_sorry(&exported.stdout)
+        .map_err(|error| format!("cannot read the paranoid export: {error}"))?;
+    report_step_timing("sorry-free export", started.elapsed(), &[]);
     if let Some(filtered) = filtered {
         if let Some(name) = filtered.dropped.iter().find(|name| credited.contains(name)) {
             return Err(format!(
@@ -613,9 +615,14 @@ fn paranoid_replay(
                 display_safe(name)
             ));
         }
-        nanoda_path = build_dir.join(NANODA_EXPORT_FILE);
-        std::fs::write(&nanoda_path, &filtered.export)
-            .map_err(|error| format!("cannot write the nanoda export: {error}"))?;
+        let sorry_free_path = build_dir.join(SORRY_FREE_EXPORT_FILE);
+        std::fs::write(&sorry_free_path, &filtered.export)
+            .map_err(|error| format!("cannot write the sorry-free export: {error}"))?;
+        sorry_free_text = sorry_free_path.to_string_lossy().into_owned();
+        let readers: Vec<&str> = (kernels.iter())
+            .filter(|kernel| !kernel.admits_sorry)
+            .map(|kernel| kernel.name)
+            .collect();
         let shown: Vec<&str> = filtered
             .dropped
             .iter()
@@ -627,8 +634,9 @@ fn paranoid_replay(
             "paranoid:",
             Style::Yellow,
             &format!(
-                "nanoda reads the export without the {} declarations that depend on sorryAx \
+                "{} read the export without the {} declarations that depend on sorryAx \
                  (none is credited; every other kernel checks them): {}{}",
+                readers.join(", "),
                 filtered.dropped.len(),
                 shown.join(", "),
                 if filtered.dropped.len() > shown.len() {
@@ -641,15 +649,18 @@ fn paranoid_replay(
         );
     }
     drop(exported);
-    std::fs::write(
-        &config_path,
-        crate::kernels::nanoda_config(&nanoda_path.to_string_lossy()),
-    )
-    .map_err(|error| format!("cannot write the nanoda configuration: {error}"))?;
     for kernel in kernels {
+        let export = match kernel.admits_sorry {
+            true => &export_text,
+            false => &sorry_free_text,
+        };
+        if kernel.input == crate::kernels::KernelInput::NanodaConfig {
+            std::fs::write(&config_path, crate::kernels::nanoda_config(export))
+                .map_err(|error| format!("cannot write the nanoda configuration: {error}"))?;
+        }
         let phase = format!("{} kernel", kernel.name);
         let mut arguments = vec!["env".to_string(), kernel.binary.to_string()];
-        arguments.extend(kernel.arguments(&export_text, &config_text));
+        arguments.extend(kernel.arguments(export, &config_text));
         let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
         let replayed = run_lake(lean, build_dir, &phase, &arguments)?;
         if !replayed.status.success() {
@@ -663,7 +674,7 @@ fn paranoid_replay(
         }
     }
     let _ = std::fs::remove_file(&export_path);
-    let _ = std::fs::remove_file(build_dir.join(NANODA_EXPORT_FILE));
+    let _ = std::fs::remove_file(build_dir.join(SORRY_FREE_EXPORT_FILE));
     Ok(())
 }
 
@@ -5149,6 +5160,7 @@ mod tests {
             binary: "definitely-missing-kernel",
             args: &[],
             input: crate::kernels::KernelInput::ExportPath,
+            admits_sorry: true,
         };
 
         build("def Elsewhere.marker : Nat := 1\n");
@@ -5160,22 +5172,22 @@ mod tests {
         assert!(error.contains("`definitely-missing-kernel`"), "{error}");
         assert!(error.contains("not a skip"), "{error}");
 
-        // nanoda admits only the standard axioms and stops on `sorryAx`. It
-        // reads the export without what depends on `sorry`, and the replay
-        // fails when a credited declaration is among those.
-        let nanoda = crate::kernels::PARANOID_KERNELS
-            .into_iter()
-            .find(|kernel| kernel.input == crate::kernels::KernelInput::NanodaConfig)
-            .unwrap();
+        // nanoda, con-leche and con-ron refuse a declaration that uses
+        // `sorryAx`. They read the export without what depends on `sorry`,
+        // and the replay fails when a credited declaration is among those.
+        let refusing: Vec<_> = (crate::kernels::PARANOID_KERNELS.into_iter())
+            .filter(|kernel| !kernel.admits_sorry)
+            .collect();
+        assert_eq!(refusing.len(), 3);
         build(&format!(
             "theorem {WITNESS_NAMESPACE}.open_claim : 1 = 2 := sorry\n\
              theorem {WITNESS_NAMESPACE}.cites_open : 1 = 2 ∧ True := ⟨{WITNESS_NAMESPACE}.open_claim, trivial⟩\n\
              theorem {WITNESS_NAMESPACE}.credited : 1 = 1 := rfl\n"
         ));
         let credited = [format!("{WITNESS_NAMESPACE}.credited")];
-        paranoid_replay(&runner, &dir, &[nanoda], &credited).unwrap();
+        paranoid_replay(&runner, &dir, &refusing, &credited).unwrap();
         let credited = [format!("{WITNESS_NAMESPACE}.cites_open")];
-        let error = paranoid_replay(&runner, &dir, &[nanoda], &credited).unwrap_err();
+        let error = paranoid_replay(&runner, &dir, &refusing, &credited).unwrap_err();
         assert!(
             error.contains("`AverCertChecker.cites_open` depends on sorryAx"),
             "{error}"

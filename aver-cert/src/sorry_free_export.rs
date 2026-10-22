@@ -1,14 +1,16 @@
-//! The export the nanoda kernel reads under `--paranoid`: the witness closure
-//! without the declarations that depend on `sorryAx`.
+//! The export the kernels that do not accept `sorryAx` read under
+//! `--paranoid` (see [`crate::kernels::Kernel::admits_sorry`]): the witness
+//! closure without the declarations that depend on `sorryAx`.
 //!
-//! nanoda is told only Lean's standard axioms are permitted (the list stays
-//! as it is), leaves any other axiom out of its environment and stops on the
-//! first declaration that uses it. A certificate may carry theorems that end
-//! in `sorry` on purpose. Those are never credited: the checker's audit names
-//! `sorryAx` among their axioms and reports the claim as not credited. nanoda
-//! is given the export without them and without everything that depends on
-//! them, so it still checks every declaration a credited claim rests on;
-//! every other kernel reads the whole export.
+//! nanoda leaves any axiom outside the standard three out of its environment
+//! and stops on the first declaration that uses it; con-leche and con-ron
+//! refuse a declaration that uses `sorryAx`. A certificate may carry theorems
+//! that end in `sorry` on purpose. Those are never credited: the checker's
+//! audit names `sorryAx` among their axioms and reports the claim as not
+//! credited. Those kernels are given the export without them and without
+//! everything that depends on them, so they still check every declaration a
+//! credited claim rests on; the kernels that accept `sorryAx` read the whole
+//! export.
 //!
 //! "Depends" is the closure the audit uses: a constant named anywhere in a
 //! declaration's type or value (for an inductive: its types, constructors,
@@ -38,10 +40,10 @@ struct Declaration {
     roots: Vec<usize>,
 }
 
-/// `None` when no declaration depends on `sorryAx`: the export is then
-/// nanoda's as it is (nanoda leaves the unused axiom out by itself). An
+/// `None` when no declaration depends on `sorryAx`: every kernel then reads
+/// the export as it is (an unused `sorryAx` is accepted by all of them). An
 /// export line this reader does not know is an error, never a skip: a
-/// misread could drop a declaration nanoda must check.
+/// misread could drop a declaration a kernel must check.
 pub(crate) fn without_sorry(export: &[u8]) -> Result<Option<Filtered>, String> {
     let export = std::str::from_utf8(export).map_err(|error| format!("export: {error}"))?;
     if !export.contains(&format!("\"{SORRY_AXIOM}\"")) {
