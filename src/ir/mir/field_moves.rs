@@ -539,9 +539,11 @@ fn collect(
                 && let Some((slot, target_last_use, path)) = projection_root(&keep.target.node)
                 && let Some((_, default_last_use, _)) = projection_root(&keep.default.node)
             {
-                // The index and the value run first; the field is read once,
-                // where the default stands (see `self_keep_vector_set`).
-                trail.push((addr, 0, Branching::Call));
+                // The field is read once, where the default stands (see
+                // `self_keep_vector_set`). Generated Rust takes it before the
+                // index and the value run, so a read of the field in them is
+                // never over before it.
+                trail.push((addr, 0, Branching::Other));
                 for (index, arg) in [(1, keep.index), (2, keep.value)] {
                     trail.push((keep.call, index, Branching::Call));
                     collect(&arg.node, trail, in_product, builtins, reads);
@@ -549,7 +551,7 @@ fn collect(
                 }
                 trail.pop();
                 let last_use = target_last_use || default_last_use;
-                trail.push((addr, 1, Branching::Call));
+                trail.push((addr, 1, Branching::Other));
                 reads.entry(slot).or_default().push(Read {
                     part: Part::Path(path),
                     update: None,
@@ -568,7 +570,7 @@ fn collect(
     let branching = match expr {
         MirExpr::Match(_) | MirExpr::IfThenElse(_) => Branching::Alternatives,
         MirExpr::Let(_) => Branching::Sequence,
-        MirExpr::Call(_) => Branching::Call,
+        MirExpr::Call(_) | MirExpr::TailCall(_) => Branching::Call,
         MirExpr::RecordCreate(_) | MirExpr::Construct(_) | MirExpr::Tuple(_) | MirExpr::List(_) => {
             Branching::Ordered
         }
@@ -834,16 +836,17 @@ fn apart(o: &Read, q: &Read) -> bool {
                             .any(|(_, _, below)| *below == Branching::Call))
             }
             Branching::Sequence => o_child == 0 && q_child == 1,
-            // Parts that run in order: a read inside a call in an earlier
-            // part is over once that call returns, as for a subject above
-            // (`R(o = f(s.a), a = s.a)`).
-            Branching::Ordered => {
+            // Parts that run in order, and the arguments of a call: a read
+            // inside a call in an earlier part is over once that call
+            // returns, as for a subject above (`R(o = f(s.a), a = s.a)`,
+            // `g(f(s.a), s.a)`).
+            Branching::Ordered | Branching::Call => {
                 o_child < q_child
                     && o.trail[depth + 1..]
                         .iter()
                         .any(|(_, _, below)| *below == Branching::Call)
             }
-            Branching::Call | Branching::Other => false,
+            Branching::Other => false,
         };
     }
     false

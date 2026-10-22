@@ -776,19 +776,22 @@ pub fn resolveStmtExpr(
     {
         let (re, newSlots) =
             crate::aver_generated::domain::resolver::core::resolveExpr(expr, slots);
-        crate::aver_generated::domain::resolver::core::resolveStmts(
-            rest,
-            newSlots.clone(),
-            crate::aver_generated::domain::resolver::core::maxInt(
+        {
+            let __arg7 @ _ = crate::aver_generated::domain::resolver::core::maxInt(
                 next,
                 crate::aver_generated::domain::resolver::core::mapMaxVal(&newSlots)
                     .add(&aver_rt::AverInt::from_i64(1)),
-            ),
-            aver_rt::AverList::prepend(
-                crate::aver_generated::domain::ast::Stmt::StmtExpr(re),
-                &acc.clone(),
-            ),
-        )
+            );
+            crate::aver_generated::domain::resolver::core::resolveStmts(
+                rest,
+                newSlots,
+                __arg7,
+                aver_rt::AverList::prepend(
+                    crate::aver_generated::domain::ast::Stmt::StmtExpr(re),
+                    &acc.clone(),
+                ),
+            )
+        }
     }
 }
 

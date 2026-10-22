@@ -11,7 +11,9 @@
 //! they would overtake, the order of evaluation cannot be observed (Aver
 //! values are immutable and only an effect shows when it ran). This pass binds
 //! those arguments to fresh locals first, `let __argN = g(s); f(s, __argN)`,
-//! so the read in the first argument becomes the last one and moves.
+//! so the read in the first argument becomes the last one and moves. The
+//! same holds for a field handed over, `f(w.st, g(w.st.lctx))`. A tail call
+//! to another function counts, including a bounce of a mutual trampoline.
 //!
 //! It runs on the Rust backend's own copy of the MIR, after the
 //! representation rewrite and between rounds of the by-value parameter facts
@@ -27,16 +29,18 @@ use crate::ir::FnId;
 use crate::ir::mir::{LocalId, MirCallee, MirExpr, MirFn, MirLet, MirLocal};
 
 use super::syntax::generated_ident;
+use crate::ir::mir::field_moves::projection_root;
 
 /// What one rewrite round reads about the program: which positions each
 /// callee takes by value in the Rust ABI, which Map and Vector params it
 /// updates in place, which functions are free of effects, and which
 /// builtins are host operations.
-struct Facts<'a> {
+struct Facts {
     by_value: HashMap<FnId, Vec<bool>>,
     in_place: HashMap<FnId, Vec<bool>>,
     pure_fns: HashSet<FnId>,
-    mutual_tco: &'a HashSet<FnId>,
+    /// Functions whose Rust return type is a boxed `AverInt`, not `i64`.
+    boxed_return: HashSet<FnId>,
     builtins: Vec<bool>,
 }
 
@@ -59,18 +63,22 @@ pub(super) fn hoist_reads_before_moves(ctx: &mut CodegenContext) -> bool {
         .filter(|(_, mir_fn)| mir_fn.effects.is_empty())
         .map(|(id, _)| *id)
         .collect();
+    let boxed_return = program
+        .iter()
+        .filter(|(_, mir_fn)| !mir_fn.repr.bare_return)
+        .map(|(id, _)| *id)
+        .collect();
     let builtins = program
         .builtins
         .iter()
         .map(|name| ctx.capabilities.operation(name).is_none())
         .collect();
     let in_place = crate::ir::mir::field_moves::in_place_collection_params(program);
-    let mutual_tco = ctx.mutual_tco_members.clone();
     let facts = Facts {
         by_value,
         in_place,
         pure_fns,
-        mutual_tco: &mutual_tco,
+        boxed_return,
         builtins,
     };
     let Some(mut program) = ctx.mir_program.take() else {
@@ -90,7 +98,7 @@ pub(super) fn hoist_reads_before_moves(ctx: &mut CodegenContext) -> bool {
 }
 
 /// Rewrite every qualifying call in `expr`, innermost first.
-fn rewrite(expr: &mut Spanned<MirExpr>, mir_fn: &mut MirFn, facts: &Facts<'_>) -> bool {
+fn rewrite(expr: &mut Spanned<MirExpr>, mir_fn: &mut MirFn, facts: &Facts) -> bool {
     let mut changed = false;
     crate::ir::mir::expr::walk_children_mut(&mut expr.node, &mut |child| {
         changed |= rewrite(child, mir_fn, facts);
@@ -100,13 +108,10 @@ fn rewrite(expr: &mut Spanned<MirExpr>, mir_fn: &mut MirFn, facts: &Facts<'_>) -
             MirCallee::Fn(callee) => (callee, &call.node.args),
             _ => return changed,
         },
-        // A tail call stays a plain call unless it is the self loop or a
-        // bounce of a mutual trampoline, whose shapes are emitted apart.
-        MirExpr::TailCall(call)
-            if call.node.target != mir_fn.fn_id
-                && !facts.mutual_tco.contains(&call.node.target)
-                && !facts.mutual_tco.contains(&mir_fn.fn_id) =>
-        {
+        // A tail call to another function, a plain call or a bounce of a
+        // mutual trampoline, takes its arguments the same way; the self loop
+        // keeps its params in place and is emitted apart.
+        MirExpr::TailCall(call) if call.node.target != mir_fn.fn_id => {
             (call.node.target, &call.node.args)
         }
         _ => return changed,
@@ -123,12 +128,12 @@ fn rewrite(expr: &mut Spanned<MirExpr>, mir_fn: &mut MirFn, facts: &Facts<'_>) -
 struct Plan {
     /// Positions bound to fresh locals before the call, in order.
     hoisted: Vec<usize>,
-    /// Slots whose last read moves from a hoisted argument to the direct
-    /// local argument at the given position.
+    /// Slots whose last read moves from a hoisted argument to the argument
+    /// at the given position that is the local or a field of it.
     handed: Vec<(LocalId, usize)>,
 }
 
-fn plan(callee: FnId, args: &[Spanned<MirExpr>], facts: &Facts<'_>) -> Option<Plan> {
+fn plan(callee: FnId, args: &[Spanned<MirExpr>], facts: &Facts) -> Option<Plan> {
     let fact = |facts: &HashMap<FnId, Vec<bool>>, i: usize| {
         facts
             .get(&callee)
@@ -147,24 +152,27 @@ fn plan(callee: FnId, args: &[Spanned<MirExpr>], facts: &Facts<'_>) -> Option<Pl
     };
     let mut hoisted: HashSet<usize> = HashSet::new();
     for (i, arg) in args.iter().enumerate() {
-        let MirExpr::Local(local) = &arg.node else {
+        // The local itself, or a field of it (`w.st`): the readers are the
+        // later arguments that read the moved part.
+        let (Some(local), Some((_, _, path))) = (root_local(&arg.node), projection_root(&arg.node))
+        else {
             continue;
         };
-        let local = &local.node;
-        if local.last_use || local.name.is_empty() || !worth_moving(i, arg.ty()) {
+        if local.last_use || !worth_moving(i, arg.ty()) {
             continue;
         }
         let readers: Vec<usize> = (i + 1..args.len())
-            .filter(|&j| reads_slot(&args[j].node, local.slot))
+            .filter(|&j| reads_part(&args[j].node, local.slot, &path))
             .collect();
-        // Only worth it when the last read is in one of them, and none of
-        // them is the local itself (that would only move the clone).
-        if !readers
-            .iter()
-            .any(|&j| has_last_use_of(&args[j].node, local.slot))
-            || readers
-                .iter()
-                .any(|&j| matches!(args[j].node, MirExpr::Local(_)))
+        // Only worth it when the local is read last after this argument, and
+        // no reader is the moved part or more of it as it stands (that would
+        // only move the clone).
+        let covers = |j: usize| {
+            projection_root(&args[j].node).is_some_and(|(_, _, other)| path.starts_with(&other))
+        };
+        if readers.is_empty()
+            || !(i + 1..args.len()).any(|j| has_last_use_of(&args[j].node, local.slot))
+            || readers.iter().any(|&j| covers(j))
         {
             continue;
         }
@@ -177,13 +185,16 @@ fn plan(callee: FnId, args: &[Spanned<MirExpr>], facts: &Facts<'_>) -> Option<Pl
     for (j, arg) in args.iter().enumerate() {
         if hoisted.contains(&j) {
             // A hoisted value is bound to a boxed local: an `Int` argument
-            // may be a raw `i64` the callee takes bare.
+            // must be boxed already, not a raw `i64` the callee takes bare.
             // A hoisted argument may leave early with `?`: everything it
             // overtakes is effect-free and leaves nowhere, so whether it
             // ran first cannot be observed.
-            if !matches!(arg.ty(), Some(ty) if *ty != Type::Int)
-                || !effect_free(&arg.node, facts, true)
-            {
+            let boxed = match arg.ty() {
+                Some(Type::Int) => boxed_int(&arg.node, facts),
+                Some(_) => true,
+                None => false,
+            };
+            if !boxed || !effect_free(&arg.node, facts, true) {
                 return None;
             }
         } else if j < last_hoisted && !effect_free(&arg.node, facts, false) {
@@ -192,7 +203,7 @@ fn plan(callee: FnId, args: &[Spanned<MirExpr>], facts: &Facts<'_>) -> Option<Pl
     }
     // A slot whose last read is in a hoisted argument and that a kept
     // argument also reads: the kept read now runs last. It must be the
-    // argument itself, so it can carry the last-use mark.
+    // argument itself or a field of it, so it can carry the last-use mark.
     let mut slots = Vec::new();
     for &j in &hoisted {
         collect_last_use_slots(&args[j].node, &mut slots);
@@ -205,8 +216,8 @@ fn plan(callee: FnId, args: &[Spanned<MirExpr>], facts: &Facts<'_>) -> Option<Pl
         let Some(k) = kept else {
             continue;
         };
-        match &args[k].node {
-            MirExpr::Local(local) if local.node.slot == slot => {
+        match root_local(&args[k].node) {
+            Some(local) if local.slot == slot => {
                 if !handed.contains(&(slot, k)) {
                     handed.push((slot, k));
                 }
@@ -253,10 +264,10 @@ fn apply(expr: &mut Spanned<MirExpr>, mir_fn: &mut MirFn, plan: &Plan) {
         bindings.push((slot, name, value));
     }
     for (moved, k) in &plan.handed {
-        if let MirExpr::Local(local) = &mut args[*k].node
-            && local.node.slot == *moved
+        if let Some(local) = root_local_mut(&mut args[*k].node)
+            && local.slot == *moved
         {
-            local.node.last_use = true;
+            local.last_use = true;
         }
     }
     let ty = expr.ty.get().cloned();
@@ -294,7 +305,7 @@ fn apply(expr: &mut Spanned<MirExpr>, mir_fn: &mut MirFn, plan: &Plan) {
 /// calls a function that declares no effects or a builtin that is not a host
 /// operation. A tail call and `return` are not moved, nor is `?` unless
 /// `exits` allows it.
-fn effect_free(expr: &MirExpr, facts: &Facts<'_>, exits: bool) -> bool {
+fn effect_free(expr: &MirExpr, facts: &Facts, exits: bool) -> bool {
     match expr {
         MirExpr::Call(call) => {
             let callee = match &call.node.callee {
@@ -320,6 +331,64 @@ fn effect_free(expr: &MirExpr, facts: &Facts<'_>, exits: bool) -> bool {
                 free = free && effect_free(child, facts, exits);
             });
             free
+        }
+    }
+}
+
+/// Whether an `Int` argument is a boxed `AverInt` as written, by the reading
+/// of `bare_i64`: an explicit box, a value out of `?`, a record field, a
+/// builtin's result, a call to a function that returns one, or arithmetic
+/// with such an operand (raw arithmetic needs raw operands).
+fn boxed_int(expr: &MirExpr, facts: &Facts) -> bool {
+    match expr {
+        MirExpr::Box(_) | MirExpr::Try(_) | MirExpr::Project(_) => true,
+        MirExpr::Call(call) => match call.node.callee {
+            MirCallee::Fn(id) => facts.boxed_return.contains(&id),
+            MirCallee::Builtin(_) => true,
+            MirCallee::Intrinsic(_) | MirCallee::LocalSlot { .. } => false,
+        },
+        MirExpr::BinOp(op) => {
+            boxed_int(&op.node.lhs.node, facts) || boxed_int(&op.node.rhs.node, facts)
+        }
+        MirExpr::Neg(inner) => boxed_int(&inner.node, facts),
+        _ => false,
+    }
+}
+
+/// The named local `expr` reads, directly or through a chain of fields.
+fn root_local(expr: &MirExpr) -> Option<&MirLocal> {
+    match expr {
+        MirExpr::Local(local) if !local.node.name.is_empty() => Some(&local.node),
+        MirExpr::Project(project) => root_local(&project.node.base.node),
+        _ => None,
+    }
+}
+
+fn root_local_mut(expr: &mut MirExpr) -> Option<&mut MirLocal> {
+    match expr {
+        MirExpr::Local(local) if !local.node.name.is_empty() => Some(&mut local.node),
+        MirExpr::Project(project) => root_local_mut(&mut project.node.base.node),
+        _ => None,
+    }
+}
+
+/// Whether `expr` reads a part of `slot` that overlaps `path` (any part for
+/// an empty path), including the local as a called fn value.
+fn reads_part(expr: &MirExpr, slot: LocalId, path: &[String]) -> bool {
+    if let Some((root, _, other)) = projection_root(expr) {
+        let common = other.len().min(path.len());
+        return root == slot && other[..common] == path[..common];
+    }
+    match expr {
+        MirExpr::Call(call) if matches!(&call.node.callee, MirCallee::LocalSlot { slot: s, .. } if u32::from(*s) == slot.0) => {
+            true
+        }
+        _ => {
+            let mut found = false;
+            crate::ir::mir::expr::walk_children(expr, &mut |child| {
+                found = found || reads_part(child, slot, path);
+            });
+            found
         }
     }
 }

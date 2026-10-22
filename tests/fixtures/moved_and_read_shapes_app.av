@@ -1,0 +1,75 @@
+module MovedAndReadShapes
+    intent =
+        "Fixture: a record holding Maps handed to a function that writes into it while another argument of the same call reads it: a bounce between two mutually recursive functions, a field read by an earlier argument, a field read by a later one into an Int; as many steps as the first argument says."
+    effects [Console.print, Args.get]
+
+record St
+    m: Map<Int, Int>
+    lctx: Map<Int, Int>
+
+record W
+    st: St
+    e: Int
+
+fn localValue(lctx: Map<Int, Int>, id: Int) -> Option<Int>
+    ? "The value under id."
+    Map.get(lctx, id)
+
+fn walk(st: St, t: Int, n: Int) -> Int
+    ? "n steps; each one hands st on and reads its lctx in the same call."
+    match n == 0
+        true -> Map.len(st.m)
+        false -> step(st, t, localValue(st.lctx, n), n)
+
+fn step(st: St, t: Int, v: Option<Int>, n: Int) -> Int
+    ? "Writes one entry and goes on."
+    walk(St.update(st, m = Map.set(st.m, n, Option.withDefault(v, t))), t, n - 1)
+
+fn readOnly(st: St, e: Int) -> Int
+    ? "Only reads st."
+    Map.len(st.lctx) + e
+
+fn putFirst(c: Int, st: St, e: Int) -> St
+    ? "Writes into st, which comes after the value."
+    St.update(st, m = Map.set(st.m, e, c))
+
+fn earlier(w: W) -> St
+    ? "A field read by an earlier argument, then handed on."
+    putFirst(readOnly(w.st, w.e), w.st, w.e)
+
+fn putLast(st: St, c: Int, e: Int) -> St
+    ? "Writes into st, which comes before the value."
+    St.update(st, m = Map.set(st.m, e, c))
+
+fn later(w: W) -> St
+    ? "A field handed on, then read by a later argument."
+    putLast(w.st, readOnly(w.st, w.e), w.e)
+
+fn earlierLoop(st: St, n: Int) -> St
+    ? "n writes through earlier."
+    match n == 0
+        true -> st
+        false -> earlierLoop(earlier(W(st = st, e = n)), n - 1)
+
+fn laterLoop(st: St, n: Int) -> St
+    ? "n writes through later."
+    match n == 0
+        true -> st
+        false -> laterLoop(later(W(st = st, e = n)), n - 1)
+
+fn sizeArg() -> Int
+    ? "The first argument as a number, 1000 without one."
+    ! [Args.get]
+    match Vector.get(Vector.fromList(Args.get()), 0)
+        Option.Some(text) -> Result.withDefault(Int.fromString(text), 1000)
+        Option.None -> 1000
+
+fn main()
+    ! [Console.print, Args.get]
+    n = sizeArg()
+    st = St(m = {}, lctx = {1 => 5})
+    Console.print("walk {walk(st, 1, n)} earlier {Map.len(earlierLoop(st, n).m)} later {Map.len(laterLoop(st, n).m)} at1 {Option.withDefault(Map.get(walk2(st, n).m, 1), 0)}")
+
+fn walk2(st: St, n: Int) -> St
+    ? "The state laterLoop leaves."
+    laterLoop(st, n)
