@@ -1589,6 +1589,49 @@ fn touch(state: PaymentState) -> String
     }
 
     #[test]
+    fn a_record_past_128_bytes_is_boxed() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+record Eight
+    a: Int
+    b: Int
+    c: Int
+    d: Int
+    e: Int
+    f: Int
+    g: Int
+    h: Int
+
+record Nine
+    a: Int
+    b: Int
+    c: Int
+    d: Int
+    e: Int
+    f: Int
+    g: Int
+    h: Int
+    i: Int
+
+fn make(n: Int) -> Nine
+    Nine(a = n, b = n, c = n, d = n, e = n, f = n, g = n, h = n, i = n)
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains("pub struct Eight {"));
+        assert!(entry.contains("pub type Nine = Box<Nine__Fields>;"));
+        assert!(entry.contains("pub struct Nine__Fields {"));
+        assert!(entry.contains("Box::new(Nine__Fields { a: n.clone(),"));
+        assert!(entry.contains("format!(\"Nine({})\""));
+    }
+
+    #[test]
     fn mutual_tco_generates_trampoline_instead_of_regular_calls() {
         let mut ctx = ctx_from_source(
             r#"

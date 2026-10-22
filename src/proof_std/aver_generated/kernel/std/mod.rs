@@ -1214,14 +1214,15 @@ pub fn at(
         )?,
         ..ob
     };
-    Ok(crate::proof_std::aver_generated::kernel::proof::Goal {
-        obligation: claim,
-        finite: crate::proof_std::aver_generated::kernel::std::withoutGiven(
-            &goal.finite,
-            v.clone(),
-        ),
-        hyps: crate::proof_std::aver_generated::kernel::std::substHyps(&goal.hyps, v, x)?,
-        ..goal
+    Ok({
+        let __field0 = claim;
+        let __field1 =
+            crate::proof_std::aver_generated::kernel::std::withoutGiven(&goal.finite, v.clone());
+        let __field2 = crate::proof_std::aver_generated::kernel::std::substHyps(&goal.hyps, v, x)?;
+        goal.obligation = __field0;
+        goal.finite = __field1;
+        goal.hyps = __field2;
+        goal
     })
 }
 
@@ -1338,15 +1339,15 @@ pub fn assume(
     mut rhs @ _: crate::proof_std::aver_generated::kernel::term::Term,
 ) -> crate::proof_std::aver_generated::kernel::proof::Goal {
     crate::proof_std::cancel_checkpoint();
-    crate::proof_std::aver_generated::kernel::proof::Goal {
-        hyps: aver_rt::AverList::prepend(
+    {
+        goal.hyps = aver_rt::AverList::prepend(
             crate::proof_std::aver_generated::kernel::proof::Hyp {
                 name: name,
                 eqn: crate::proof_std::aver_generated::kernel::term::Eqn { lhs: lhs, rhs: rhs },
             },
             &goal.hyps,
-        ),
-        ..goal
+        );
+        goal
     }
 }
 
@@ -2544,16 +2545,18 @@ pub fn withoutList(
     v @ _: AverStr,
 ) -> crate::proof_std::aver_generated::kernel::proof::Goal {
     crate::proof_std::cancel_checkpoint();
-    crate::proof_std::aver_generated::kernel::proof::Goal {
-        obligation: crate::proof_std::aver_generated::kernel::proof::Law {
+    {
+        let __field0 = crate::proof_std::aver_generated::kernel::proof::Law {
             givens: crate::proof_std::aver_generated::kernel::std::withoutVar(
                 &goal.obligation.givens,
                 v.clone(),
             ),
             ..goal.obligation
-        },
-        lists: crate::proof_std::aver_generated::kernel::std::without(&goal.lists, v),
-        ..goal
+        };
+        let __field1 = crate::proof_std::aver_generated::kernel::std::without(&goal.lists, v);
+        goal.obligation = __field0;
+        goal.lists = __field1;
+        goal
     }
 }
 
@@ -3132,7 +3135,7 @@ pub fn subOf(
             let __pat15 = __pat15.clone();
             match &*__pat15 {
         "hyps" => {
-            { let __list_subject = __pat12; if let (Some(p), Some(__pat16)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat16; if let (Some(l), Some(__pat17)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat17; if let (Some(r), Some(__pat18)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat18; if __list_subject.is_empty() { crate::proof_std::aver_generated::kernel::std::subGoal(crate::proof_std::aver_generated::kernel::wire::withGivens(crate::proof_std::aver_generated::kernel::proof::Goal { obligation: crate::proof_std::aver_generated::kernel::proof::Law { givens: aver_rt::AverList::empty(), ..base.obligation }, finite: aver_rt::AverList::empty(), lists: aver_rt::AverList::empty(), ints: aver_rt::AverList::empty(), ..base }, &crate::proof_std::aver_generated::kernel::decode::typedVars(gs, false)?), &crate::proof_std::aver_generated::kernel::std::readPremise(p)?, &crate::proof_std::aver_generated::kernel::decode::term(l)?, &crate::proof_std::aver_generated::kernel::decode::term(r)?, &crate::proof_std::aver_generated::kernel::std::readHyps(&hs)?) } else { Err(AverStr::from("malformed question")) } } } else { Err(AverStr::from("malformed question")) } } } else { Err(AverStr::from("malformed question")) } } } else { Err(AverStr::from("malformed question")) } }
+            { let __list_subject = __pat12; if let (Some(p), Some(__pat16)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat16; if let (Some(l), Some(__pat17)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat17; if let (Some(r), Some(__pat18)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat18; if __list_subject.is_empty() { crate::proof_std::aver_generated::kernel::std::subGoal(crate::proof_std::aver_generated::kernel::wire::withGivens({ let __field0 = crate::proof_std::aver_generated::kernel::proof::Law { givens: aver_rt::AverList::empty(), ..base.obligation }; let __field1 = aver_rt::AverList::empty(); let __field2 = aver_rt::AverList::empty(); let __field3 = aver_rt::AverList::empty(); base.obligation = __field0; base.finite = __field1; base.lists = __field2; base.ints = __field3; base }, &crate::proof_std::aver_generated::kernel::decode::typedVars(gs, false)?), &crate::proof_std::aver_generated::kernel::std::readPremise(p)?, &crate::proof_std::aver_generated::kernel::decode::term(l)?, &crate::proof_std::aver_generated::kernel::decode::term(r)?, &crate::proof_std::aver_generated::kernel::std::readHyps(&hs)?) } else { Err(AverStr::from("malformed question")) } } } else { Err(AverStr::from("malformed question")) } } } else { Err(AverStr::from("malformed question")) } } } else { Err(AverStr::from("malformed question")) } }
         },
         _ => {
             Err(AverStr::from("malformed question"))
@@ -3238,15 +3241,17 @@ pub fn subGoal(
     hyps @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Hyp>,
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Goal, AverStr> {
     crate::proof_std::cancel_checkpoint();
-    Ok(crate::proof_std::aver_generated::kernel::proof::Goal {
-        obligation: crate::proof_std::aver_generated::kernel::proof::Law {
+    Ok({
+        let __field0 = crate::proof_std::aver_generated::kernel::proof::Law {
             premise: premise.clone(),
             lhs: l.clone(),
             rhs: r.clone(),
             ..g.obligation
-        },
-        hyps: hyps.clone(),
-        ..g
+        };
+        let __field1 = hyps.clone();
+        g.obligation = __field0;
+        g.hyps = __field1;
+        g
     })
 }
 

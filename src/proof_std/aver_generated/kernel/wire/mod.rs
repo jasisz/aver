@@ -21,22 +21,24 @@ pub fn goalOf(
 ) -> crate::proof_std::aver_generated::kernel::proof::Goal {
     crate::proof_std::cancel_checkpoint();
     crate::proof_std::aver_generated::kernel::wire::withGivens(
-        crate::proof_std::aver_generated::kernel::proof::Goal {
-            obligation: crate::proof_std::aver_generated::kernel::proof::Law {
-                givens: aver_rt::AverList::empty(),
-                ..s.obligation.clone()
+        Box::new(
+            crate::proof_std::aver_generated::kernel::proof::Goal__Fields {
+                obligation: crate::proof_std::aver_generated::kernel::proof::Law {
+                    givens: aver_rt::AverList::empty(),
+                    ..s.obligation.clone()
+                },
+                finite: aver_rt::AverList::empty(),
+                lists: aver_rt::AverList::empty(),
+                ints: aver_rt::AverList::empty(),
+                defs: s.defs.clone(),
+                consts: s.consts.clone(),
+                sums: s.sums.clone(),
+                recs: s.recs.clone(),
+                laws: s.laws.clone(),
+                facts: s.facts.clone(),
+                hyps: aver_rt::AverList::empty(),
             },
-            finite: aver_rt::AverList::empty(),
-            lists: aver_rt::AverList::empty(),
-            ints: aver_rt::AverList::empty(),
-            defs: s.defs.clone(),
-            consts: s.consts.clone(),
-            sums: s.sums.clone(),
-            recs: s.recs.clone(),
-            laws: s.laws.clone(),
-            facts: s.facts.clone(),
-            hyps: aver_rt::AverList::empty(),
-        },
+        ),
         &s.obligation.givens,
     )
 }
@@ -81,66 +83,73 @@ pub fn withGiven(
     g @ _: &crate::proof_std::aver_generated::kernel::term::TypedVar,
 ) -> crate::proof_std::aver_generated::kernel::proof::Goal {
     crate::proof_std::cancel_checkpoint();
-    let base @ _ = crate::proof_std::aver_generated::kernel::proof::Goal {
-        obligation: crate::proof_std::aver_generated::kernel::proof::Law {
+    let base @ _ = {
+        let mut __record0 = g0.clone();
+        __record0.obligation = crate::proof_std::aver_generated::kernel::proof::Law {
             givens: aver_rt::AverList::concat(
                 &g0.obligation.givens.clone(),
                 &aver_rt::AverList::from_vec(vec![g.clone()]),
             ),
             ..g0.obligation.clone()
-        },
-        ..g0.clone()
+        };
+        __record0
     };
     {
         let __t = (
             g.ty.clone(),
             crate::proof_std::aver_generated::kernel::types::finOf(
                 &g.ty,
-                &crate::proof_std::aver_generated::kernel::types::TyEnv {
-                    vars: aver_rt::AverList::empty(),
-                    defs: aver_rt::AverList::empty(),
-                    consts: aver_rt::AverList::empty(),
-                    sums: g0.sums.clone(),
-                    recs: g0.recs.clone(),
-                    sigs: aver_rt::AverList::empty(),
-                },
+                &Box::new(
+                    crate::proof_std::aver_generated::kernel::types::TyEnv__Fields {
+                        vars: aver_rt::AverList::empty(),
+                        defs: aver_rt::AverList::empty(),
+                        consts: aver_rt::AverList::empty(),
+                        sums: g0.sums.clone(),
+                        recs: g0.recs.clone(),
+                        sigs: aver_rt::AverList::empty(),
+                    },
+                ),
                 &aver_rt::AverList::empty(),
             ),
         );
         match (__t.0.view(), &__t.1) {
             (crate::proof_std::aver_generated::kernel::term::Ty__view::TyList(__e_fields), _) => {
                 let e = __e_fields.0.clone();
-                crate::proof_std::aver_generated::kernel::proof::Goal {
-                    lists: aver_rt::AverList::concat(
-                        &base.lists,
-                        &aver_rt::AverList::from_vec(vec![g.name.clone()]),
-                    ),
-                    ..base
-                }
+                Box::new(
+                    crate::proof_std::aver_generated::kernel::proof::Goal__Fields {
+                        lists: aver_rt::AverList::concat(
+                            &base.lists,
+                            &aver_rt::AverList::from_vec(vec![g.name.clone()]),
+                        ),
+                        ..*base
+                    },
+                )
             }
-            (crate::proof_std::aver_generated::kernel::term::Ty__view::TyInt, _) => {
-                crate::proof_std::aver_generated::kernel::proof::Goal {
+            (crate::proof_std::aver_generated::kernel::term::Ty__view::TyInt, _) => Box::new(
+                crate::proof_std::aver_generated::kernel::proof::Goal__Fields {
                     ints: aver_rt::AverList::concat(
                         &base.ints,
                         &aver_rt::AverList::from_vec(vec![g.name.clone()]),
                     ),
-                    ..base
-                }
-            }
+                    ..*base
+                },
+            ),
             (_, Some(f)) => {
                 let f = f.clone();
-                crate::proof_std::aver_generated::kernel::proof::Goal {
-                    finite: aver_rt::AverList::concat(
-                        &base.finite,
-                        &aver_rt::AverList::from_vec(vec![
-                            crate::proof_std::aver_generated::kernel::proof::Given {
-                                name: g.name.clone(),
-                                fin: f,
-                            },
-                        ]),
-                    ),
-                    ..base
-                }
+                Box::new(
+                    crate::proof_std::aver_generated::kernel::proof::Goal__Fields {
+                        finite: aver_rt::AverList::concat(
+                            &base.finite,
+                            &aver_rt::AverList::from_vec(vec![
+                                crate::proof_std::aver_generated::kernel::proof::Given {
+                                    name: g.name.clone(),
+                                    fin: f,
+                                },
+                            ]),
+                        ),
+                        ..*base
+                    },
+                )
             }
             _ => base,
         }

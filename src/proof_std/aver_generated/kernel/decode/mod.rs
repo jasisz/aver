@@ -4142,15 +4142,17 @@ pub fn scriptOf(
     mut p @ _: crate::proof_std::aver_generated::kernel::proof::Proof,
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Script, AverStr> {
     crate::proof_std::cancel_checkpoint();
-    Ok(crate::proof_std::aver_generated::kernel::proof::Script {
-        obligation: ob,
-        defs: ds.clone(),
-        consts: cs.clone(),
-        sums: ss.clone(),
-        recs: rs.clone(),
-        sigs: gs.clone(),
-        laws: ls.laws.clone(),
-        facts: ls.facts.clone(),
-        proof: p,
-    })
+    Ok(Box::new(
+        crate::proof_std::aver_generated::kernel::proof::Script__Fields {
+            obligation: ob,
+            defs: ds.clone(),
+            consts: cs.clone(),
+            sums: ss.clone(),
+            recs: rs.clone(),
+            sigs: gs.clone(),
+            laws: ls.laws.clone(),
+            facts: ls.facts.clone(),
+            proof: p,
+        },
+    ))
 }

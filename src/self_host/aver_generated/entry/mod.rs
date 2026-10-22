@@ -33,7 +33,7 @@ fn __mutual_tco_trampoline_1(
                 mut acc @ _,
             ) => {
                 crate::cancel_checkpoint();
-                let qualified @ _ = crate::aver_generated::domain::ast::FnDef {
+                let qualified @ _ = Box::new(crate::aver_generated::domain::ast::FnDef__Fields {
                     name: ((prefix.clone() + &AverStr::from(".")) + &f.name),
                     params: f.params.clone(),
                     body: f.body.clone(),
@@ -41,7 +41,7 @@ fn __mutual_tco_trampoline_1(
                     slotMap: f.slotMap.clone(),
                     fastPath: f.fastPath.clone(),
                     tailLoop: f.tailLoop,
-                };
+                });
                 __MutualTco1::QualifyFns__indexed(
                     rest,
                     prefix,
@@ -375,7 +375,7 @@ pub fn shiftFnIdsInFn(
     offset @ _: aver_rt::AverInt,
 ) -> crate::aver_generated::domain::ast::FnDef {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::ast::FnDef {
+    Box::new(crate::aver_generated::domain::ast::FnDef__Fields {
         name: fd.name,
         params: fd.params,
         body: shiftFnIdsInStmts__collected(
@@ -387,7 +387,7 @@ pub fn shiftFnIdsInFn(
         slotMap: fd.slotMap,
         fastPath: shiftFnIdsInFastPath(fd.fastPath, offset),
         tailLoop: fd.tailLoop,
-    }
+    })
 }
 
 /// Shift fast-path target ids that were resolved against a module-local function list.

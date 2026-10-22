@@ -182,9 +182,71 @@ pub(super) fn shared_variants(td: &TypeDef, ctx: &CodegenContext) -> Vec<bool> {
         .collect()
 }
 
+/// How many bytes a record's fields may take inline before the record is
+/// kept behind a `Box` (see [`is_boxed_record`]). A record handed on and
+/// updated in a loop is faster boxed at any size (60% at 80 bytes, 69% at
+/// 272), but one built many times into a list costs an allocation each:
+/// 17-20% slower and a third more memory at 80 to 272 bytes. Records up to
+/// 128 bytes are mostly such data (eight `Int` fields), state is larger:
+/// Pestka's checker state is 176 bytes, and checking Init took 6% less CPU
+/// with the box at 128 and at 64 bytes, and nothing less at 256, where the
+/// state stayed inline.
+const BOXED_RECORD_BYTES: usize = 128;
+
+/// Whether a record is laid out as `pub type T = Box<T__Fields>`: a value
+/// is one pointer to its fields. State is handed from function to function
+/// in a record, so without the pointer every call and every return copies
+/// all of it, and the copy grows with the state. With it an update of the
+/// last use writes the field in place. A record on a cycle of a thin sum
+/// already sits behind that sum's pointer.
+pub(super) fn is_boxed_record(td: &TypeDef, ctx: &CodegenContext) -> bool {
+    let TypeDef::Product { name, fields, .. } = td else {
+        return false;
+    };
+    let key = crate::codegen::common::backend_type_def_key(ctx, td);
+    let scope = crate::codegen::common::type_key_for_decl(ctx, td);
+    let size: usize = fields
+        .iter()
+        .map(|(_, field)| {
+            inline_size(
+                &parse_type_str(field),
+                ctx,
+                scope.scope_str(),
+                &mut HashSet::from([key.clone()]),
+            )
+        })
+        .sum();
+    boxes(size, td, name, ctx)
+}
+
+/// [`is_boxed_record`] for a record whose fields take `size` bytes.
+fn boxes(size: usize, td: &TypeDef, name: &str, ctx: &CodegenContext) -> bool {
+    size > BOXED_RECORD_BYTES && !super::uses_packed_u8(ctx, name) && !on_cycle(td, ctx)
+}
+
+/// What a record literal of the Rust type `name` opens and closes with:
+/// `Self { … }`, or `Box::new(T__Fields { … })` for a boxed record.
+pub(super) fn record_literal_ends(name: &str, boxed: bool) -> (String, &'static str) {
+    match boxed {
+        true => (format!("Box::new({name}__Fields {{"), "})"),
+        false => ("Self {".to_string(), "}"),
+    }
+}
+
+/// [`is_boxed_record`] for the type `id` (or `name` without one).
+pub(super) fn type_is_boxed_record(
+    id: Option<crate::ir::TypeId>,
+    name: &str,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> bool {
+    named_type_def(id, name, ctx, scope).is_some_and(|td| is_boxed_record(td, ctx))
+}
+
 /// The bytes a value of `ty` takes inline in the Rust it is lowered to, as
 /// near as the size of the runtime's carriers allows: the measure
-/// [`shared_variants`] compares constructors by.
+/// [`shared_variants`] compares constructors by and [`is_boxed_record`]
+/// weighs a record by.
 fn inline_size(
     ty: &Type,
     ctx: &CodegenContext,
@@ -218,7 +280,13 @@ fn inline_size(
             let mut field_size =
                 |field: &String| inline_size(&parse_type_str(field), ctx, decl.scope_str(), seen);
             let size = match td {
-                TypeDef::Product { fields, .. } => fields.iter().map(|(_, f)| field_size(f)).sum(),
+                TypeDef::Product { name, fields, .. } => {
+                    let size = fields.iter().map(|(_, f)| field_size(f)).sum();
+                    match boxes(size, td, name, ctx) {
+                        true => WORD,
+                        false => size,
+                    }
+                }
                 TypeDef::Sum { .. } if is_thin_sum(td, ctx) => WORD,
                 TypeDef::Sum { variants, .. } => {
                     let shared = shared_variants(td, ctx);

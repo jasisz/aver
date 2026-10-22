@@ -1,0 +1,104 @@
+module BoxedStateApp
+    intent =
+        "Fixture: a large record of state handed through a loop and updated: where a field of it was read out first, with two fields swapped, inside another record, beside a read of the record that holds it, and kept while a changed copy is made; as many steps as the first argument says."
+    effects [Console.print, Args.get]
+
+record St
+    a: Int
+    b: Int
+    c: Int
+    d: Int
+    e: Int
+    f: Int
+    g: Int
+    h: Int
+    name: String
+    seen: Map<Int, Int>
+
+record Res
+    v: Int
+    st: St
+
+record Big
+    st: St
+    x: Int
+    y: Int
+    z: Int
+    w: Int
+    u: Int
+    t: Int
+    s: Int
+    r: Int
+
+fn fresh(n: Int) -> St
+    ? "A state with every number n."
+    St(a = n, b = n, c = n, d = n, e = n, f = n, g = n, h = n, name = "s", seen = {})
+
+fn step(s: St, i: Int) -> St
+    ? "a read out first, then written with the step it was seen at."
+    was = s.a
+    St.update(s, a = was + i, seen = Map.set(s.seen, Int.mod(i, 5), was))
+
+fn swap(s: St) -> St
+    ? "a and b change places."
+    St.update(s, a = s.b, b = s.a)
+
+fn withRes(s: St, i: Int) -> Res
+    ? "The state after a step, with the step."
+    Res(v = i, st = step(s, i))
+
+fn held(s: St, i: Int) -> St
+    ? "A field of the state inside a result, updated from a sibling."
+    r = withRes(s, i)
+    St.update(r.st, c = r.st.c + r.v)
+
+fn renamed(s: St, i: Int) -> St
+    ? "The name read out of the state inside a result before it is written."
+    r = withRes(s, i)
+    old = r.st.name
+    St.update(r.st, name = String.slice("{old}{Int.mod(i, 3)}", 0, 4))
+
+fn total(r: Res) -> Int
+    ? "The step and the first number of its state."
+    r.v + r.st.a
+
+fn beside(s: St, i: Int) -> St
+    ? "An update of the state inside a result that reads the whole result."
+    r = withRes(s, i)
+    St.update(r.st, d = Int.mod(total(r), 1000))
+
+fn kept(s: St) -> Int
+    ? "A changed copy beside the state it came from."
+    t = St.update(s, e = s.e + 7)
+    t.e - s.e
+
+fn inBig(b: Big, i: Int) -> Big
+    ? "The state inside a large record, stepped."
+    Big.update(b, st = step(b.st, i), x = b.x + 1)
+
+fn run(s: St, i: Int, n: Int) -> St
+    ? "n steps of every kind."
+    match i >= n
+        true -> s
+        false -> run(beside(renamed(held(swap(step(s, i)), i), i), i), i + 1, n)
+
+fn bigRun(b: Big, i: Int, n: Int) -> Big
+    ? "n steps of the state inside a large record."
+    match i >= n
+        true -> b
+        false -> bigRun(inBig(b, i), i + 1, n)
+
+fn sizeArg() -> Int
+    ? "The first argument as a number, 100 without one."
+    ! [Args.get]
+    match Vector.get(Vector.fromList(Args.get()), 0)
+        Option.Some(text) -> Result.withDefault(Int.fromString(text), 100)
+        Option.None -> 100
+
+fn main()
+    ! [Console.print, Args.get]
+    n = sizeArg()
+    s = run(fresh(1), 0, n)
+    b = bigRun(Big(st = fresh(2), x = 0, y = 0, z = 0, w = 0, u = 0, t = 0, s = 0, r = 0), 0, n)
+    same = swap(swap(s)) == s
+    Console.print("{s.a} {s.b} {s.c} {s.d} {s.name} {Map.len(s.seen)} {kept(s)} {b.st.a} {b.x} {same}")

@@ -2,8 +2,10 @@
 use crate::proof_kernel::*;
 use ::aver_rt::aver_list_match;
 
+pub type TyEnv = Box<TyEnv__Fields>;
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct TyEnv {
+pub struct TyEnv__Fields {
     pub vars: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar>,
     pub defs: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
     pub consts: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
@@ -12,13 +14,13 @@ pub struct TyEnv {
     pub sigs: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::FnSig>,
 }
 
-impl PartialOrd for TyEnv {
+impl PartialOrd for TyEnv__Fields {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for TyEnv {
+impl Ord for TyEnv__Fields {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         std::cmp::Ordering::Equal
             .then_with(|| self.consts.cmp(&other.consts))
@@ -30,7 +32,7 @@ impl Ord for TyEnv {
     }
 }
 
-impl aver_rt::AverDisplay for TyEnv {
+impl aver_rt::AverDisplay for TyEnv__Fields {
     fn aver_display(&self) -> String {
         format!(
             "TyEnv({})",
@@ -56,27 +58,31 @@ pub fn withVars(
     vs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar>,
 ) -> TyEnv {
     crate::proof_kernel::cancel_checkpoint();
-    crate::proof_kernel::aver_generated::kernel::types::TyEnv {
-        vars: aver_rt::AverList::concat(&vs.clone(), &e.vars.clone()),
-        defs: e.defs.clone(),
-        consts: e.consts.clone(),
-        sums: e.sums.clone(),
-        recs: e.recs.clone(),
-        sigs: e.sigs.clone(),
-    }
+    Box::new(
+        crate::proof_kernel::aver_generated::kernel::types::TyEnv__Fields {
+            vars: aver_rt::AverList::concat(&vs.clone(), &e.vars.clone()),
+            defs: e.defs.clone(),
+            consts: e.consts.clone(),
+            sums: e.sums.clone(),
+            recs: e.recs.clone(),
+            sigs: e.sigs.clone(),
+        },
+    )
 }
 
 /// No variables and no declarations.
 pub fn empty() -> TyEnv {
     crate::proof_kernel::cancel_checkpoint();
-    crate::proof_kernel::aver_generated::kernel::types::TyEnv {
-        vars: aver_rt::AverList::empty(),
-        defs: aver_rt::AverList::empty(),
-        consts: aver_rt::AverList::empty(),
-        sums: aver_rt::AverList::empty(),
-        recs: aver_rt::AverList::empty(),
-        sigs: aver_rt::AverList::empty(),
-    }
+    Box::new(
+        crate::proof_kernel::aver_generated::kernel::types::TyEnv__Fields {
+            vars: aver_rt::AverList::empty(),
+            defs: aver_rt::AverList::empty(),
+            consts: aver_rt::AverList::empty(),
+            sums: aver_rt::AverList::empty(),
+            recs: aver_rt::AverList::empty(),
+            sigs: aver_rt::AverList::empty(),
+        },
+    )
 }
 
 /// A type as Aver spells it; a hole is _.

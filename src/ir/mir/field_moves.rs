@@ -400,8 +400,32 @@ fn gather_moved_roots(expr: &MirExpr, movable: &HashSet<usize>, roots: &mut Hash
     walk_children(expr, &mut |child| gather_moved_roots(child, movable, roots));
 }
 
+/// Each of the `movable` projections under `body`: its address, the local it
+/// takes a field out of and the field path.
+pub fn moved_paths(body: &MirExpr, movable: &HashSet<usize>) -> Vec<(usize, LocalId, Vec<String>)> {
+    fn gather(
+        expr: &MirExpr,
+        movable: &HashSet<usize>,
+        out: &mut Vec<(usize, LocalId, Vec<String>)>,
+    ) {
+        let addr = expr as *const MirExpr as usize;
+        if movable.contains(&addr)
+            && let Some((slot, _, path)) = projection_root(expr)
+        {
+            out.push((addr, slot, path));
+            return;
+        }
+        walk_children(expr, &mut |child| gather(child, movable, out));
+    }
+    let mut out = Vec::new();
+    if !movable.is_empty() {
+        gather(body, movable, &mut out);
+    }
+    out
+}
+
 /// The field path of a projection chain rooted at a local, outermost last.
-fn projection_root(expr: &MirExpr) -> Option<(LocalId, bool, Vec<String>)> {
+pub fn projection_root(expr: &MirExpr) -> Option<(LocalId, bool, Vec<String>)> {
     let mut fields = Vec::new();
     let mut cursor = expr;
     loop {

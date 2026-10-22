@@ -442,7 +442,7 @@ pub fn computeSlotCount(
         body,
         baseSlot.sub(&aver_rt::AverInt::from_i64(1)),
     );
-    crate::aver_generated::domain::ast::FnDef {
+    Box::new(crate::aver_generated::domain::ast::FnDef__Fields {
         name: fd.name.clone(),
         params: fd.params.clone(),
         body: body.clone(),
@@ -450,7 +450,7 @@ pub fn computeSlotCount(
         slotMap: slotMap,
         fastPath: crate::aver_generated::domain::ast::FnFastPath::FastNone,
         tailLoop: false,
-    }
+    })
 }
 
 /// Find highest slot index in a list of statements.

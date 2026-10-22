@@ -2040,8 +2040,10 @@ impl aver_rt::AverDisplay for Fact {
     }
 }
 
+pub type Script = Box<Script__Fields>;
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Script {
+pub struct Script__Fields {
     pub obligation: Law,
     pub defs: aver_rt::AverList<Def>,
     pub consts: aver_rt::AverList<Const>,
@@ -2053,13 +2055,13 @@ pub struct Script {
     pub proof: Proof,
 }
 
-impl PartialOrd for Script {
+impl PartialOrd for Script__Fields {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for Script {
+impl Ord for Script__Fields {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         std::cmp::Ordering::Equal
             .then_with(|| self.consts.cmp(&other.consts))
@@ -2074,7 +2076,7 @@ impl Ord for Script {
     }
 }
 
-impl aver_rt::AverDisplay for Script {
+impl aver_rt::AverDisplay for Script__Fields {
     fn aver_display(&self) -> String {
         format!(
             "Script({})",
@@ -2133,8 +2135,10 @@ impl aver_rt::AverDisplay for Given {
     }
 }
 
+pub type Goal = Box<Goal__Fields>;
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Goal {
+pub struct Goal__Fields {
     pub obligation: Law,
     pub finite: aver_rt::AverList<Given>,
     pub lists: aver_rt::AverList<AverStr>,
@@ -2148,13 +2152,13 @@ pub struct Goal {
     pub hyps: aver_rt::AverList<Hyp>,
 }
 
-impl PartialOrd for Goal {
+impl PartialOrd for Goal__Fields {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for Goal {
+impl Ord for Goal__Fields {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         std::cmp::Ordering::Equal
             .then_with(|| self.consts.cmp(&other.consts))
@@ -2171,7 +2175,7 @@ impl Ord for Goal {
     }
 }
 
-impl aver_rt::AverDisplay for Goal {
+impl aver_rt::AverDisplay for Goal__Fields {
     fn aver_display(&self) -> String {
         format!(
             "Goal({})",
