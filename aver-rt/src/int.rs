@@ -506,8 +506,13 @@ impl AverInt {
     }
 
     /// The smaller of `self` and `other` (borrowing form, to avoid the
-    /// by-value `Ord::min`/`max` and keep the small-int clone cheap).
+    /// by-value `Ord::min`/`max`). Two inline values compare as their words,
+    /// and the result is the chosen word, with no clone.
+    #[inline]
     pub fn min_ref(&self, other: &AverInt) -> AverInt {
+        if let Some((a, b)) = Self::words(self, other) {
+            return AverInt(Repr::from_word(a.min(b)));
+        }
         if self <= other {
             self.clone()
         } else {
@@ -515,8 +520,12 @@ impl AverInt {
         }
     }
 
-    /// The larger of `self` and `other`.
+    /// The larger of `self` and `other`, as `min_ref`.
+    #[inline]
     pub fn max_ref(&self, other: &AverInt) -> AverInt {
+        if let Some((a, b)) = Self::words(self, other) {
+            return AverInt(Repr::from_word(a.max(b)));
+        }
         if self >= other {
             self.clone()
         } else {
