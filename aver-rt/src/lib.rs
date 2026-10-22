@@ -318,10 +318,18 @@ pub fn par_execute_with_cancel<T: Send, E: Send>(
 
 /// Native backing table for an Aver `Map`.
 ///
-/// Generated programs can put network-derived values into a map, so retain a
-/// per-table random key while avoiding SipHash13's cost on structural and byte
-/// keys. The hash is internal only: every observable map walk is sorted.
+/// Generated programs can put network-derived values into a map, so keep a
+/// random key while avoiding SipHash13's cost on structural and byte keys.
+/// The hash is internal only: every observable map walk is sorted.
 type AverHashMap<K, V> = HashMap<K, V, AHashRandomState>;
+
+/// The key every map hashes with: drawn once per process, so a new map only
+/// copies it. Nothing builds one map by walking another in hash order (every
+/// walk is sorted), so tables do not need keys of their own.
+fn map_hash_state() -> AHashRandomState {
+    static STATE: std::sync::OnceLock<AHashRandomState> = std::sync::OnceLock::new();
+    STATE.get_or_init(AHashRandomState::new).clone()
+}
 
 pub struct AverMap<K, V> {
     inner: Rc<AverHashMap<K, V>>,
@@ -342,7 +350,7 @@ where
 {
     pub fn new() -> Self {
         Self {
-            inner: Rc::new(AverHashMap::with_hasher(AHashRandomState::new())),
+            inner: Rc::new(AverHashMap::with_hasher(map_hash_state())),
         }
     }
 
@@ -485,8 +493,10 @@ where
     V: Clone,
 {
     fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
+        let mut inner = AverHashMap::with_hasher(map_hash_state());
+        inner.extend(iter);
         Self {
-            inner: Rc::new(iter.into_iter().collect()),
+            inner: Rc::new(inner),
         }
     }
 }
@@ -1633,13 +1643,20 @@ mod tests {
     }
 
     /// `AverMap` is exposed to generated programs, including programs that put
-    /// network-derived values into a map. Keep the fast hasher keyed per map
-    /// instead of silently falling back to deterministic `FxHash` or Rust's
-    /// slower default SipHash13.
+    /// network-derived values into a map. Keep the fast hasher keyed with a
+    /// random per-process key instead of silently falling back to
+    /// deterministic `FxHash` or Rust's slower default SipHash13. A new map,
+    /// however it is built, copies that one key rather than drawing its own.
     #[test]
     fn aver_map_uses_keyed_ahash_state() {
         let map = AverMap::<u64, u64>::new();
         let _: &ahash::RandomState = map.inner.hasher();
+        let collected: AverMap<u64, u64> = [(1, 2)].into_iter().collect();
+        let same_key = |other: &AverMap<u64, u64>| {
+            map.inner.hasher().hash_one(42u64) == other.inner.hasher().hash_one(42u64)
+        };
+        assert!(same_key(&AverMap::new()));
+        assert!(same_key(&collected));
     }
 
     /// One step off a flat list allocates nothing: the tail is the node it was
