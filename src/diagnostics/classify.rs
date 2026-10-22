@@ -249,6 +249,20 @@ pub(crate) fn classify_type_error(msg: &str) -> TypeErrorClassification {
         );
     }
 
+    // Keyed on the wording built by `TypeChecker::report_unsettled_bindings`
+    // and by the request-state lowering in `crate::yield_lowering`.
+    if msg.starts_with("The type of '") && msg.contains("' is not settled (") {
+        return (
+            "binding-type-unsettled",
+            None,
+            Vec::new(),
+            Some(
+                "Give the binding its whole type, `m: Map<Int, String> = {}`; no default is guessed"
+                    .to_string(),
+            ),
+        );
+    }
+
     if msg.starts_with("Unknown identifier") || msg.starts_with("Unknown function") {
         return (
             "unknown-ident",

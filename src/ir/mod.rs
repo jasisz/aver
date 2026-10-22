@@ -32,7 +32,7 @@ pub use analyze::{AnalysisResult, FnAnalysis, NeutralAllocPolicy, analyze};
 pub(crate) use buffer_build::{
     INTERNAL_BUFFER_TYPE, INTERNAL_BYTE_BUILDER_TYPE, INTERNAL_BYTE_PAYLOAD_TYPE,
 };
-pub(crate) use chars_fusion::collect_bound_names;
+pub(crate) use chars_fusion::{collect_bound_names, walk_children};
 pub use identity::{BuiltinId, CtorId, FnId, FnKey, LawKey, ModuleId, TypeId, TypeKey};
 pub use interval::{
     Bound, Interval, IntervalAnalysisResult, OpClass, RefinedTypeInterval,

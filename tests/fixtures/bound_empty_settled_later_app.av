@@ -1,0 +1,26 @@
+module BoundEmptySettledLaterApp
+    intent =
+        "An empty literal bound to a name without a type, whose type a later read settles."
+        "The checker accepts each one, and the compiled Rust prints what the VM prints."
+    effects [Console.print]
+
+fn mapSet() -> Int
+    ? "The size of an empty map bound to a name, then set; the set types it."
+    e = {}
+    Map.len(Map.set(e, 1, "a"))
+
+fn mapGet() -> Int
+    ? "A lookup in an empty map bound to a name; the default types its values."
+    e = {}
+    Option.withDefault(Map.get(e, 1), 0)
+
+fn noneSome() -> Bool
+    ? "Whether an Option.None bound to a name equals Option.Some(1); the other side types it."
+    o = Option.None
+    o == Option.Some(1)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("mapSet {mapSet()}")
+    Console.print("mapGet {mapGet()}")
+    Console.print("noneSome {noneSome()}")

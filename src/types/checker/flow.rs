@@ -413,7 +413,11 @@ impl TypeChecker {
             self.used_names.clear();
             self.fn_bindings.clear();
 
+            let errors_before = self.errors.len();
             let last_type = self.check_stmts(f.body.stmts(), &f.name, &declared_effects);
+            if self.errors.len() == errors_before && !self.current_fn_generated {
+                self.report_unsettled_bindings(f.body.stmts(), &f.name);
+            }
             if !self.compatible(&last_type, &declared_ret) {
                 // Find line of the last expression in body for secondary span.
                 let body_last_line = f.body.stmts().last().map(|stmt| match stmt {
