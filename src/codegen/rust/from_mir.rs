@@ -783,8 +783,8 @@ pub(super) fn owned_collection_param_names(
 /// consumes a param when it updates it at its last use (a record update, or
 /// the target of `Map.set`, `Map.remove` or `Vector.set`), hands it at its
 /// last use to a callee that takes it by value, or moves a field out of it
-/// into such a callee or into an in-place collection update (see
-/// [`consumes_local`]); taking such a param by value lets a chain of calls
+/// into such a callee, an in-place collection update or a new record or
+/// constructor (see [`consumes_local`]); taking such a param by value lets a chain of calls
 /// move one value from caller to callee, which is what keeps the state a
 /// generated loop hands an answer module uniquely owned. A caller that still
 /// reads the value afterwards clones it at the call instead of the callee
@@ -1093,9 +1093,10 @@ struct Consumption<'a> {
 /// position `owned` says is by value (for a Map/Vector, one the callee also
 /// updates in place), or moves a field out of it into a by-value record
 /// param, a Map/Vector param updated in place, or the target of `Map.set`,
-/// `Map.remove` or `Vector.set`, or stores it at its last use into a record,
-/// constructor, tuple or list. A param returned bare is taken by value
-/// before this runs (see [`result_hands_on`]).
+/// `Map.remove` or `Vector.set`, or stores it at its last use, or moves a
+/// record, Map or Vector field out of it, into a record, constructor, tuple
+/// or list. A param returned bare is taken by value before this runs (see
+/// [`result_hands_on`]).
 fn consumes_local(expr: &MirExpr, cx: &Consumption<'_>) -> bool {
     let slot = cx.slot;
     let last_use_of =
@@ -1237,16 +1238,30 @@ fn consumes_local(expr: &MirExpr, cx: &Consumption<'_>) -> bool {
                     .any(|field| consumes_local(&field.value.node, cx))
         }
         _ => {
-            let stores = matches!(
-                expr,
-                MirExpr::RecordCreate(_)
-                    | MirExpr::Construct(_)
-                    | MirExpr::Tuple(_)
-                    | MirExpr::List(_)
-            );
-            let mut found = false;
+            // A record, constructor, tuple or list keeps what it is given:
+            // the local at its last use, or a record, Map or Vector field
+            // moved out of it, which a borrowed param would have to clone.
+            let parts: Vec<&Spanned<MirExpr>> = match expr {
+                MirExpr::RecordCreate(record) => record
+                    .node
+                    .fields
+                    .iter()
+                    .map(|field| &field.value)
+                    .collect(),
+                MirExpr::Construct(ctor) => ctor.node.args.iter().collect(),
+                MirExpr::Tuple(items) | MirExpr::List(items) => items.iter().collect(),
+                _ => Vec::new(),
+            };
+            let mut found = parts.iter().any(|part| {
+                last_use_of(&part.node)
+                    || (moves_field(part)
+                        && matches!(
+                            part.ty(),
+                            Some(Type::Named { .. } | Type::Map(..) | Type::Vector(_))
+                        ))
+            });
             crate::ir::mir::expr::walk_children(expr, &mut |child| {
-                found = found || (stores && last_use_of(child)) || consumes_local(child, cx);
+                found = found || consumes_local(child, cx);
             });
             found
         }

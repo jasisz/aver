@@ -17,7 +17,7 @@ pub fn annotateFastFns(
             if __list_subject.is_empty() {
                 return acc.reverse();
             } else {
-                if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                if let Some((f, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
                     {
                         let __tco0 = rest;
                         let __tco2 = aver_rt::AverList::prepend(
@@ -39,7 +39,7 @@ pub fn annotateFastFns(
 
 /// Attach a narrow fast-path tag to a function definition.
 pub fn annotateFastFn(
-    fd @ _: &crate::aver_generated::domain::ast::FnDef,
+    mut fd @ _: crate::aver_generated::domain::ast::FnDef,
     fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::FnDef {
     crate::cancel_checkpoint();
@@ -48,11 +48,11 @@ pub fn annotateFastFn(
         .cloned()
         .unwrap_or(aver_rt::AverInt::from_i64(-1));
     Box::new(crate::aver_generated::domain::ast::FnDef__Fields {
-        name: fd.name.clone(),
-        params: fd.params.clone(),
+        name: fd.name,
+        params: fd.params,
         body: fd.body.clone(),
-        slotCount: fd.slotCount.clone(),
-        slotMap: fd.slotMap.clone(),
+        slotCount: fd.slotCount,
+        slotMap: fd.slotMap,
         fastPath: crate::aver_generated::domain::resolver::fast::classifyFastPath(&fd.body),
         tailLoop: crate::aver_generated::domain::resolver::fast::classifyTailLoop(selfId, &fd.body),
     })

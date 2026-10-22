@@ -333,7 +333,7 @@ pub fn isRefl(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof) ->
 /// t = a.to = b.to, where a starts at t and b at a.to. A reflexive link is dropped, so the chain never carries one.
 pub fn chain(
     mut t @ _: crate::proof_std::aver_generated::kernel::term::Term,
-    a @ _: &Rw,
+    mut a @ _: Rw,
     mut b @ _: Rw,
 ) -> Rw {
     crate::proof_std::cancel_checkpoint();
@@ -343,15 +343,15 @@ pub fn chain(
     ) {
         (true, _) => b,
         (false, true) => crate::proof_std::aver_generated::kernel::lib::Rw {
-            to: a.to.clone(),
-            proof: a.proof.clone(),
+            to: a.to,
+            proof: a.proof,
         },
         (false, false) => crate::proof_std::aver_generated::kernel::lib::Rw {
             to: b.to.clone(),
             proof: crate::proof_std::aver_generated::kernel::proof::Proof::PTrans(
                 crate::proof_std::aver_generated::kernel::proof::Proof__PTrans(
-                    aver_rt::AverList::from_vec(vec![t, a.to.clone(), b.to.clone()]),
-                    aver_rt::AverList::from_vec(vec![a.proof.clone(), b.proof]),
+                    aver_rt::AverList::from_vec(vec![t, a.to, b.to.clone()]),
+                    aver_rt::AverList::from_vec(vec![a.proof, b.proof]),
                 ),
             ),
         },
@@ -603,7 +603,7 @@ pub fn evalNode(
                     if let Some((x, rest)) = aver_rt::list_uncons_cloned(&__list_subject) {
                         Ok({
                             let __arg18 @ _ = crate::proof_std::aver_generated::kernel::lib::Rw { to: crate::proof_std::aver_generated::kernel::lib::cons(x.clone(), crate::proof_std::aver_generated::kernel::term::Term::TList(crate::proof_std::aver_generated::kernel::term::Term__TList(rest.clone()))), proof: crate::proof_std::aver_generated::kernel::proof::Proof::PCell(crate::proof_std::aver_generated::kernel::proof::Proof__PCell(t.clone())) };
-                            crate::proof_std::aver_generated::kernel::lib::chain(t, &__arg18, crate::proof_std::aver_generated::kernel::lib::evalWithin(s, crate::proof_std::aver_generated::kernel::lib::cons(x, crate::proof_std::aver_generated::kernel::term::Term::TList(crate::proof_std::aver_generated::kernel::term::Term__TList(rest))), depth)?)
+                            crate::proof_std::aver_generated::kernel::lib::chain(t, __arg18, crate::proof_std::aver_generated::kernel::lib::evalWithin(s, crate::proof_std::aver_generated::kernel::lib::cons(x, crate::proof_std::aver_generated::kernel::term::Term::TList(crate::proof_std::aver_generated::kernel::term::Term__TList(rest))), depth)?)
                         })
                     } else {
                         Ok(crate::proof_std::aver_generated::kernel::lib::refl(t))
@@ -733,12 +733,10 @@ pub fn projected(
     crate::proof_std::cancel_checkpoint();
     match v.clone() {
         None => Ok(inner),
-        Some(x @ _) => Ok(crate::proof_std::aver_generated::kernel::lib::chain(
-            t,
-            &inner.clone(),
-            crate::proof_std::aver_generated::kernel::lib::chain(
+        Some(x @ _) => Ok({
+            let __arg6 @ _ = crate::proof_std::aver_generated::kernel::lib::chain(
                 inner.to.clone(),
-                &crate::proof_std::aver_generated::kernel::lib::Rw {
+                crate::proof_std::aver_generated::kernel::lib::Rw {
                     to: x.clone(),
                     proof: crate::proof_std::aver_generated::kernel::proof::Proof::PProj(
                         crate::proof_std::aver_generated::kernel::proof::Proof__PProj(
@@ -747,8 +745,9 @@ pub fn projected(
                     ),
                 },
                 crate::proof_std::aver_generated::kernel::lib::evalWithin(s, x, depth)?,
-            ),
-        )),
+            );
+            crate::proof_std::aver_generated::kernel::lib::chain(t, inner, __arg6)
+        }),
     }
 }
 
@@ -833,7 +832,7 @@ pub fn evalArm(
     crate::proof_std::cancel_checkpoint();
     Ok(crate::proof_std::aver_generated::kernel::lib::chain(
         t,
-        &crate::proof_std::aver_generated::kernel::lib::Rw {
+        crate::proof_std::aver_generated::kernel::lib::Rw {
             to: body.clone(),
             proof: step,
         },
@@ -854,7 +853,7 @@ pub fn evalVar(
         None => Ok(crate::proof_std::aver_generated::kernel::lib::refl(t)),
         Some(k @ _) => Ok(crate::proof_std::aver_generated::kernel::lib::chain(
             t,
-            &crate::proof_std::aver_generated::kernel::lib::Rw {
+            crate::proof_std::aver_generated::kernel::lib::Rw {
                 to: k.value.clone(),
                 proof: crate::proof_std::aver_generated::kernel::proof::Proof::PHyp(
                     crate::proof_std::aver_generated::kernel::proof::Proof__PHyp(k.hyp),
@@ -955,11 +954,7 @@ pub fn evalArgs(
                     done,
                     &x.clone(),
                     &rest,
-                    &crate::proof_std::aver_generated::kernel::lib::evalWithin(
-                        s,
-                        x,
-                        depth.clone(),
-                    )?,
+                    crate::proof_std::aver_generated::kernel::lib::evalWithin(s, x, depth.clone())?,
                     depth,
                 )
             } else {
@@ -977,7 +972,7 @@ pub fn evalArg(
     done @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
     x @ _: &crate::proof_std::aver_generated::kernel::term::Term,
     rest @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
-    r @ _: &Rw,
+    mut r @ _: Rw,
     depth @ _: aver_rt::AverInt,
 ) -> Result<Rw, AverStr> {
     crate::proof_std::cancel_checkpoint();
@@ -1014,22 +1009,19 @@ pub fn evalArg(
                             ),
                         ),
                     ),
-                    r.proof.clone(),
+                    r.proof,
                 ),
             ),
         }
     };
     Ok(crate::proof_std::aver_generated::kernel::lib::chain(
         here,
-        &step,
+        step,
         crate::proof_std::aver_generated::kernel::lib::evalArgs(
             s,
             kind,
             name,
-            &aver_rt::AverList::concat(
-                &done.clone(),
-                &aver_rt::AverList::from_vec(vec![r.to.clone()]),
-            ),
+            &aver_rt::AverList::concat(&done.clone(), &aver_rt::AverList::from_vec(vec![r.to])),
             rest,
             depth,
         )?,
@@ -1051,19 +1043,17 @@ pub fn afterArgs(
         depth.clone(),
     )? {
         None => Ok(args),
-        Some(step @ _) => Ok(crate::proof_std::aver_generated::kernel::lib::chain(
-            t,
-            &args,
-            crate::proof_std::aver_generated::kernel::lib::chain(
-                args.to.clone(),
-                &step.clone(),
-                crate::proof_std::aver_generated::kernel::lib::evalWithin(
+        Some(step @ _) => Ok({
+            let __arg6 @ _ = {
+                let __arg5 @ _ = crate::proof_std::aver_generated::kernel::lib::evalWithin(
                     s,
                     step.to.clone(),
                     depth,
-                )?,
-            ),
-        )),
+                )?;
+                crate::proof_std::aver_generated::kernel::lib::chain(args.to.clone(), step, __arg5)
+            };
+            crate::proof_std::aver_generated::kernel::lib::chain(t, args, __arg6)
+        }),
     }
 }
 
@@ -1132,10 +1122,10 @@ pub fn evalOp(
     };
     Ok({
         let __arg12 @ _ =
-            crate::proof_std::aver_generated::kernel::lib::chain(t.clone(), &first, second);
+            crate::proof_std::aver_generated::kernel::lib::chain(t.clone(), first, second);
         crate::proof_std::aver_generated::kernel::lib::chain(
             t,
-            &__arg12,
+            __arg12,
             crate::proof_std::aver_generated::kernel::lib::compute(end),
         )
     })

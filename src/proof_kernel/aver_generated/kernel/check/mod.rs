@@ -91,7 +91,7 @@ fn __mutual_tco_trampoline_1(
         },
         crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PSymm(__q_fields) => {
             let q = __q_fields.0.clone();
-            return crate::proof_kernel::aver_generated::kernel::check::flip(&crate::proof_kernel::aver_generated::kernel::check::conclude(q, env, (path + &::aver_rt::str_lit!("/symm")))?)
+            return crate::proof_kernel::aver_generated::kernel::check::flip(crate::proof_kernel::aver_generated::kernel::check::conclude(q, env, (path + &::aver_rt::str_lit!("/symm")))?)
         },
         crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PTrans(__ts_fields) => {
             let ts = __ts_fields.0.clone();
@@ -183,7 +183,7 @@ fn __mutual_tco_trampoline_1(
             let q = __q_fields.0.clone();
             let l = __q_fields.1.clone();
             let r = __q_fields.2.clone();
-            return crate::proof_kernel::aver_generated::kernel::check::absurd(&crate::proof_kernel::aver_generated::kernel::check::conclude(q, env, aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(23)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path)))); __b }; __b.push_str(&::aver_rt::str_lit!("/absurd")); __b }))?, l, r, path)
+            return crate::proof_kernel::aver_generated::kernel::check::absurd(crate::proof_kernel::aver_generated::kernel::check::conclude(q, env, aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(23)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path)))); __b }; __b.push_str(&::aver_rt::str_lit!("/absurd")); __b }))?, l, r, path)
         },
         crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PInduct(__f_fields) => {
             let f = __f_fields.0.clone();
@@ -1112,7 +1112,7 @@ fn __mutual_tco_trampoline_7(mut __state: __MutualTco7) -> Result<(), AverStr> {
         __state = match __state {
             __MutualTco7::CheckFacts(mut fs @ _, mut earlier @ _) => {
                 crate::proof_kernel::cancel_checkpoint();
-                aver_list_match!(fs, [] => { return Ok(()) }, [f, rest] => __MutualTco7::CheckFactThen(crate::proof_kernel::aver_generated::kernel::check::checkScript(&Box::new(crate::proof_kernel::aver_generated::kernel::proof::Script__Fields { obligation: f.law.clone(), defs: aver_rt::AverList::empty(), consts: aver_rt::AverList::empty(), sums: aver_rt::AverList::empty(), recs: aver_rt::AverList::empty(), sigs: aver_rt::AverList::empty(), laws: earlier.clone(), facts: aver_rt::AverList::empty(), proof: f.proof })), f.law.clone(), rest, earlier))
+                aver_list_match!(fs, [] => { return Ok(()) }, [f, rest] => __MutualTco7::CheckFactThen(crate::proof_kernel::aver_generated::kernel::check::checkScript(Box::new(crate::proof_kernel::aver_generated::kernel::proof::Script__Fields { obligation: f.law.clone(), defs: aver_rt::AverList::empty(), consts: aver_rt::AverList::empty(), sums: aver_rt::AverList::empty(), recs: aver_rt::AverList::empty(), sigs: aver_rt::AverList::empty(), laws: earlier.clone(), facts: aver_rt::AverList::empty(), proof: f.proof })), f.law.clone(), rest, earlier))
             }
             __MutualTco7::CheckFactThen(
                 mut done @ _,
@@ -1496,12 +1496,12 @@ pub fn namesStep(
 
 /// Symmetry.
 pub fn flip(
-    e @ _: &crate::proof_kernel::aver_generated::kernel::term::Eqn,
+    mut e @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
     Ok(crate::proof_kernel::aver_generated::kernel::term::Eqn {
-        lhs: e.rhs.clone(),
-        rhs: e.lhs.clone(),
+        lhs: e.rhs,
+        rhs: e.lhs,
     })
 }
 
@@ -1594,7 +1594,7 @@ pub fn transLink(
     {
         crate::proof_kernel::aver_generated::kernel::check::joinRest(
             a,
-            &crate::proof_kernel::aver_generated::kernel::check::transFrom(
+            crate::proof_kernel::aver_generated::kernel::check::transFrom(
                 rest,
                 steps,
                 env,
@@ -1613,12 +1613,12 @@ pub fn transLink(
 /// The chain from a to the end of the rest.
 pub fn joinRest(
     mut a @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
-    rest @ _: &crate::proof_kernel::aver_generated::kernel::term::Eqn,
+    mut rest @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
     Ok(crate::proof_kernel::aver_generated::kernel::term::Eqn {
         lhs: a,
-        rhs: rest.rhs.clone(),
+        rhs: rest.rhs,
     })
 }
 
@@ -3031,14 +3031,14 @@ pub fn ring(
 
 /// Any equation, once true has been shown equal to false: the case cannot happen.
 pub fn absurd(
-    e @ _: &crate::proof_kernel::aver_generated::kernel::term::Eqn,
+    mut e @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
     mut l @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     mut r @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
     {
-        let __t = (e.lhs.clone(), e.rhs.clone());
+        let __t = (e.lhs, e.rhs);
         match (__t.0.view(), __t.1.view()) {
             (
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TBool(__a_fields),
@@ -4627,7 +4627,7 @@ pub fn lawPremises(
 
 /// The proof must prove exactly the obligation, under its when; every cited builtin fact is checked first.
 pub fn checkScript(
-    s @ _: &crate::proof_kernel::aver_generated::kernel::proof::Script,
+    mut s @ _: crate::proof_kernel::aver_generated::kernel::proof::Script,
 ) -> Result<AverStr, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
     crate::proof_kernel::aver_generated::kernel::induct::refuseMutualRecursion(&s.defs)?;
@@ -4637,34 +4637,34 @@ pub fn checkScript(
     )?;
     let env @ _ = Box::new(
         crate::proof_kernel::aver_generated::kernel::check::Env__Fields {
-            defs: s.defs.clone(),
-            consts: s.consts.clone(),
+            defs: s.defs,
+            consts: s.consts,
             laws: aver_rt::AverList::concat(
-                &s.laws.clone(),
+                &s.laws,
                 &crate::proof_kernel::aver_generated::kernel::check::factLaws(&s.facts),
             ),
             hyps: crate::proof_kernel::aver_generated::kernel::check::lawHyps(&s.obligation),
             vars: crate::proof_kernel::aver_generated::kernel::types::rigidVars(
                 &s.obligation.givens,
             ),
-            sums: s.sums.clone(),
-            recs: s.recs.clone(),
-            sigs: s.sigs.clone(),
+            sums: s.sums,
+            recs: s.recs,
+            sigs: s.sigs,
         },
     );
     crate::proof_kernel::aver_generated::kernel::check::statementTyped(&s.obligation, &env)?;
     let e @ _ = crate::proof_kernel::aver_generated::kernel::check::conclude(
-        s.proof.clone(),
+        s.proof,
         env,
         ::aver_rt::str_lit!("proof"),
     )?;
     if (e
         == crate::proof_kernel::aver_generated::kernel::term::Eqn {
-            lhs: s.obligation.lhs.clone(),
-            rhs: s.obligation.rhs.clone(),
+            lhs: s.obligation.lhs,
+            rhs: s.obligation.rhs,
         })
     {
-        Ok(s.obligation.key.clone())
+        Ok(s.obligation.key)
     } else {
         Err(::aver_rt::str_lit!(
             "step proof: the proof ends at a different equation than the claim"

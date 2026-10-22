@@ -52,7 +52,7 @@ pub fn resolveCallsInFns(
             if __list_subject.is_empty() {
                 return acc.reverse();
             } else {
-                if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                if let Some((f, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
                     {
                         let __tco0 = rest;
                         let __tco2 = aver_rt::AverList::prepend(
@@ -76,21 +76,21 @@ pub fn resolveCallsInFns(
 
 /// Transform calls in one function body.
 pub fn resolveCallsInFn(
-    fd @ _: &crate::aver_generated::domain::ast::FnDef,
+    mut fd @ _: crate::aver_generated::domain::ast::FnDef,
     fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::FnDef {
     crate::cancel_checkpoint();
     Box::new(crate::aver_generated::domain::ast::FnDef__Fields {
-        name: fd.name.clone(),
-        params: fd.params.clone(),
+        name: fd.name,
+        params: fd.params,
         body: crate::aver_generated::domain::resolver::calls::resolveCallsInStmts__collected(
             &fd.body,
             fnMap,
             aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
         ),
-        slotCount: fd.slotCount.clone(),
-        slotMap: fd.slotMap.clone(),
-        fastPath: fd.fastPath.clone(),
+        slotCount: fd.slotCount,
+        slotMap: fd.slotMap,
+        fastPath: fd.fastPath,
         tailLoop: fd.tailLoop,
     })
 }

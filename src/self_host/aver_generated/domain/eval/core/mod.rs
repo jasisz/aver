@@ -4686,7 +4686,7 @@ pub fn evalTopLevelStmts(
                 if let (Some(s), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     match {
                         let __arg10 @ _ = crate::aver_generated::domain::eval::store::withGlobals(
-                            fns,
+                            fns.clone(),
                             env.clone(),
                         );
                         crate::aver_generated::domain::eval::core::evalStmt(s, env, &__arg10)
@@ -4731,7 +4731,7 @@ pub fn evalProgram(
     {
         let (v, globals) = top;
         crate::aver_generated::domain::eval::core::maybeCallMain(
-            &crate::aver_generated::domain::eval::store::withGlobals(&fnsStore, globals),
+            &crate::aver_generated::domain::eval::store::withGlobals(fnsStore, globals),
             v,
         )
     }
@@ -4755,7 +4755,7 @@ pub fn evalProgramWithFns(
     {
         let (v, globals) = top;
         crate::aver_generated::domain::eval::core::maybeCallMain(
-            &crate::aver_generated::domain::eval::store::withGlobals(&allFns, globals),
+            &crate::aver_generated::domain::eval::store::withGlobals(allFns, globals),
             v,
         )
     }
