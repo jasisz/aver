@@ -50,8 +50,8 @@ pub fn call(
                                                                     .to_usize()
                                                                     .unwrap_or(0),
                                                             );
-                                                        __b.push_str(&AverStr::from(
-                                                            "unknown list builtin: ",
+                                                        __b.push_str(&::aver_rt::str_lit!(
+                                                            "unknown list builtin: "
                                                         ));
                                                         __b
                                                     };

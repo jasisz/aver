@@ -66,7 +66,7 @@ fn __mutual_tco_trampoline_1(
         __state = match __state {
             __MutualTco1::ReadList(mut cs @ _, mut acc @ _) => {
                 crate::proof_kernel::cancel_checkpoint();
-                aver_list_match!(cs.clone(), [] => { return Err(AverStr::from("unexpected end of data")) }, [__pat0, rest] => { { let __int_match_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&__pat0)); if __int_match_subject == aver_rt::AverInt::from_i64(41) { return Ok((crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(acc.reverse()), rest)) } else { __MutualTco1::ReadListItem(cs, acc) } } })
+                aver_list_match!(cs.clone(), [] => { return Err(::aver_rt::str_lit!("unexpected end of data")) }, [__pat0, rest] => { { let __int_match_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&__pat0)); if __int_match_subject == aver_rt::AverInt::from_i64(41) { return Ok((crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(acc.reverse()), rest)) } else { __MutualTco1::ReadListItem(cs, acc) } } })
             }
             __MutualTco1::ReadListItem(mut cs @ _, mut acc @ _) => {
                 crate::proof_kernel::cancel_checkpoint();
@@ -120,7 +120,7 @@ pub fn readAll(text @ _: AverStr) -> Result<Sexp, AverStr> {
                 if __list_subject.is_empty() {
                     crate::proof_kernel::aver_generated::kernel::sexp::expand(s)
                 } else {
-                    Err(AverStr::from("text after the S-expression"))
+                    Err(::aver_rt::str_lit!("text after the S-expression"))
                 }
             }
         }
@@ -206,18 +206,18 @@ pub fn define(
             parts = &__hold0;
             table = __tco1;
             continue;
-        } } else { return Err(AverStr::from("malformed shared part")); } } } else { return Err(AverStr::from("malformed shared part")); } }
+        } } else { return Err(::aver_rt::str_lit!("malformed shared part")); } } } else { return Err(::aver_rt::str_lit!("malformed shared part")); } }
         },
         _ => {
-            return Err(AverStr::from("malformed shared part"));
+            return Err(::aver_rt::str_lit!("malformed shared part"));
         }
     }
                             } else {
-                                return Err(AverStr::from("malformed shared part"));
+                                return Err(::aver_rt::str_lit!("malformed shared part"));
                             }
                         }
                         _ => {
-                            return Err(AverStr::from("malformed shared part"));
+                            return Err(::aver_rt::str_lit!("malformed shared part"));
                         }
                     }
                 } else {
@@ -245,7 +245,7 @@ pub fn fresh(
                     __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
                     __b
                 };
-                __b.push_str(&AverStr::from(" is defined twice"));
+                __b.push_str(&::aver_rt::str_lit!(" is defined twice"));
                 __b
             }))
         } else {
@@ -257,7 +257,7 @@ pub fn fresh(
                 let mut __b = aver_rt::Buffer::with_capacity(
                     (aver_rt::AverInt::from_i64(45)).to_usize().unwrap_or(0),
                 );
-                __b.push_str(&AverStr::from("a shared name starts with #: "));
+                __b.push_str(&::aver_rt::str_lit!("a shared name starts with #: "));
                 __b
             };
             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
@@ -272,8 +272,8 @@ pub fn bounded(r @ _: &(Sexp, aver_rt::AverInt)) -> Result<(Sexp, aver_rt::AverI
     {
         let (s, n) = r.clone();
         if (n > aver_rt::AverInt::from_i64(4194304)) {
-            Err(AverStr::from(
-                "a shared part stands for more than 4194304 items",
+            Err(::aver_rt::str_lit!(
+                "a shared part stands for more than 4194304 items"
             ))
         } else {
             Ok(r.clone())
@@ -300,7 +300,7 @@ pub fn within(
                             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(a))));
                             __b
                         };
-                        __b.push_str(&AverStr::from(" is not defined before its use"));
+                        __b.push_str(&::aver_rt::str_lit!(" is not defined before its use"));
                         __b
                     })
                 })
@@ -376,7 +376,7 @@ pub fn readOne(
     {
         let __list_subject = cs;
         if __list_subject.is_empty() {
-            Err(AverStr::from("unexpected end of data"))
+            Err(::aver_rt::str_lit!("unexpected end of data"))
         } else {
             if let Some((__pat0, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
                 {
@@ -391,15 +391,15 @@ pub fn readOne(
                         if __dispatch_subject == aver_rt::AverInt::from_i64(34) {
                             crate::proof_kernel::aver_generated::kernel::sexp::readText(
                                 &rest,
-                                AverStr::from(""),
+                                ::aver_rt::str_lit!(""),
                             )
                         } else {
                             if __dispatch_subject == aver_rt::AverInt::from_i64(41) {
-                                Err(AverStr::from("unexpected )"))
+                                Err(::aver_rt::str_lit!("unexpected )"))
                             } else {
                                 crate::proof_kernel::aver_generated::kernel::sexp::readAtom(
                                     cs.clone(),
-                                    AverStr::from(""),
+                                    ::aver_rt::str_lit!(""),
                                 )
                             }
                         }
@@ -425,7 +425,7 @@ pub fn readText(
         {
             let __list_subject = cs;
             if __list_subject.is_empty() {
-                return Err(AverStr::from("unterminated text"));
+                return Err(::aver_rt::str_lit!("unterminated text"));
             } else {
                 if let Some((__pat0, __pat1)) = aver_rt::list_uncons_cloned(__list_subject) {
                     {
@@ -452,7 +452,7 @@ pub fn readText(
                                             {
                                                 {
                                                     let __tco0 = __pat3;
-                                                    let __tco1 = (acc + &AverStr::from("\n"));
+                                                    let __tco1 = (acc + &::aver_rt::str_lit!("\n"));
                                                     __hold0 = __tco0;
                                                     cs = &__hold0;
                                                     acc = __tco1;

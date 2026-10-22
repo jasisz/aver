@@ -140,35 +140,35 @@ pub fn callBuiltinByIdValues(
                             } else {
                                 if __dispatch_subject == aver_rt::AverInt::from_i64(7) {
                                     crate::aver_generated::domain::builtins::vector::call(
-                                        AverStr::from("Vector.new"),
+                                        ::aver_rt::str_lit!("Vector.new"),
                                         args,
                                     )
                                 } else {
                                     if __dispatch_subject == aver_rt::AverInt::from_i64(8) {
                                         crate::aver_generated::domain::builtins::vector::call(
-                                            AverStr::from("Vector.get"),
+                                            ::aver_rt::str_lit!("Vector.get"),
                                             args,
                                         )
                                     } else {
                                         if __dispatch_subject == aver_rt::AverInt::from_i64(9) {
                                             crate::aver_generated::domain::builtins::vector::call(
-                                                AverStr::from("Vector.set"),
+                                                ::aver_rt::str_lit!("Vector.set"),
                                                 args,
                                             )
                                         } else {
                                             if __dispatch_subject == aver_rt::AverInt::from_i64(10)
                                             {
-                                                crate::aver_generated::domain::builtins::vector::call(AverStr::from("Vector.len"), args)
+                                                crate::aver_generated::domain::builtins::vector::call(::aver_rt::str_lit!("Vector.len"), args)
                                             } else {
                                                 if __dispatch_subject
                                                     == aver_rt::AverInt::from_i64(11)
                                                 {
-                                                    crate::aver_generated::domain::builtins::vector::call(AverStr::from("Vector.fromList"), args)
+                                                    crate::aver_generated::domain::builtins::vector::call(::aver_rt::str_lit!("Vector.fromList"), args)
                                                 } else {
                                                     if __dispatch_subject
                                                         == aver_rt::AverInt::from_i64(12)
                                                     {
-                                                        crate::aver_generated::domain::builtins::vector::call(AverStr::from("List.fromVector"), args)
+                                                        crate::aver_generated::domain::builtins::vector::call(::aver_rt::str_lit!("List.fromVector"), args)
                                                     } else {
                                                         if __dispatch_subject
                                                             == aver_rt::AverInt::from_i64(13)
@@ -178,16 +178,16 @@ pub fn callBuiltinByIdValues(
                                                             if __dispatch_subject
                                                                 == aver_rt::AverInt::from_i64(14)
                                                             {
-                                                                crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Option.Some"), args)
+                                                                crate::aver_generated::domain::builtins::wrappers::call(::aver_rt::str_lit!("Option.Some"), args)
                                                             } else {
                                                                 if __dispatch_subject
                                                                     == aver_rt::AverInt::from_i64(
                                                                         15,
                                                                     )
                                                                 {
-                                                                    crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Option.withDefault"), args)
+                                                                    crate::aver_generated::domain::builtins::wrappers::call(::aver_rt::str_lit!("Option.withDefault"), args)
                                                                 } else {
-                                                                    if __dispatch_subject == aver_rt::AverInt::from_i64(16) { crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Result.Ok"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(17) { crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Result.Err"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(18) { crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Result.withDefault"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(19) { crate::aver_generated::domain::builtins::primitives::callInt(AverStr::from("String.fromInt"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(20) { crate::aver_generated::domain::builtins::list::call(AverStr::from("List.take"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(21) { crate::aver_generated::domain::builtins::list::call(AverStr::from("List.drop"), args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("Unknown builtin ID: ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&((id.to_string()).into_aver())))); __b })) } } } } } }
+                                                                    if __dispatch_subject == aver_rt::AverInt::from_i64(16) { crate::aver_generated::domain::builtins::wrappers::call(::aver_rt::str_lit!("Result.Ok"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(17) { crate::aver_generated::domain::builtins::wrappers::call(::aver_rt::str_lit!("Result.Err"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(18) { crate::aver_generated::domain::builtins::wrappers::call(::aver_rt::str_lit!("Result.withDefault"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(19) { crate::aver_generated::domain::builtins::primitives::callInt(::aver_rt::str_lit!("String.fromInt"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(20) { crate::aver_generated::domain::builtins::list::call(::aver_rt::str_lit!("List.take"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(21) { crate::aver_generated::domain::builtins::list::call(::aver_rt::str_lit!("List.drop"), args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("Unknown builtin ID: ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&((id.to_string()).into_aver())))); __b })) } } } } } }
                                                                 }
                                                             }
                                                         }
@@ -608,7 +608,7 @@ pub fn builtinMapEntries(
                     ),
                 ))
             }
-            _ => Err(AverStr::from("Map.entries requires a Map")),
+            _ => Err(::aver_rt::str_lit!("Map.entries requires a Map")),
         }
     }
 }
@@ -689,7 +689,7 @@ pub fn builtinMapKeys(
                     ),
                 ))
             }
-            _ => Err(AverStr::from("Map.keys requires a Map")),
+            _ => Err(::aver_rt::str_lit!("Map.keys requires a Map")),
         }
     }
 }
@@ -716,7 +716,7 @@ pub fn builtinMapValues(
                     }),
                 ))
             }
-            _ => Err(AverStr::from("Map.values requires a Map")),
+            _ => Err(::aver_rt::str_lit!("Map.values requires a Map")),
         }
     }
 }
@@ -752,7 +752,7 @@ pub fn builtinMapSize(
                     )),
                 ))
             }
-            _ => Err(AverStr::from("Map.size requires a Map")),
+            _ => Err(::aver_rt::str_lit!("Map.size requires a Map")),
         }
     }
 }
@@ -786,7 +786,7 @@ pub fn builtinMapRemoveInner(
                     ),
                 ))
             }
-            _ => Err(AverStr::from("Map.remove requires a Map")),
+            _ => Err(::aver_rt::str_lit!("Map.remove requires a Map")),
         }
     }
 }
@@ -1274,16 +1274,16 @@ pub fn builtinTerminalSize(
             crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValRecord(
                     crate::aver_generated::domain::value::Val__ValRecord(
-                        AverStr::from("TerminalSize"),
+                        ::aver_rt::str_lit!("TerminalSize"),
                         aver_rt::AverList::from_vec(vec![
                             (
-                                AverStr::from("width"),
+                                ::aver_rt::str_lit!("width"),
                                 crate::aver_generated::domain::value::Val::ValInt(
                                     crate::aver_generated::domain::value::Val__ValInt(sz.width),
                                 ),
                             ),
                             (
-                                AverStr::from("height"),
+                                ::aver_rt::str_lit!("height"),
                                 crate::aver_generated::domain::value::Val::ValInt(
                                     crate::aver_generated::domain::value::Val__ValInt(sz.height),
                                 ),
@@ -1889,11 +1889,11 @@ pub fn builtinBoolOrInner(
                                 ))
                             }
                         }
-                        _ => Err(AverStr::from("Bool.or requires Bool arguments")),
+                        _ => Err(::aver_rt::str_lit!("Bool.or requires Bool arguments")),
                     }
                 }
             }
-            _ => Err(AverStr::from("Bool.or requires Bool arguments")),
+            _ => Err(::aver_rt::str_lit!("Bool.or requires Bool arguments")),
         }
     }
 }
@@ -1936,11 +1936,11 @@ pub fn builtinBoolAndInner(
                                 ))
                             }
                         }
-                        _ => Err(AverStr::from("Bool.and requires Bool arguments")),
+                        _ => Err(::aver_rt::str_lit!("Bool.and requires Bool arguments")),
                     }
                 }
             }
-            _ => Err(AverStr::from("Bool.and requires Bool arguments")),
+            _ => Err(::aver_rt::str_lit!("Bool.and requires Bool arguments")),
         }
     }
 }
@@ -1966,7 +1966,7 @@ pub fn builtinBoolNot(
                     ))
                 }
             }
-            _ => Err(AverStr::from("Bool.not requires Bool argument")),
+            _ => Err(::aver_rt::str_lit!("Bool.not requires Bool argument")),
         }
     }
 }
@@ -1991,15 +1991,15 @@ pub fn builtinMapSet(
                                 mapV, keyV, valV,
                             )
                         } else {
-                            Err(AverStr::from("Map.set takes 3 arguments"))
+                            Err(::aver_rt::str_lit!("Map.set takes 3 arguments"))
                         }
                     }
                 } else {
-                    Err(AverStr::from("Map.set takes 3 arguments"))
+                    Err(::aver_rt::str_lit!("Map.set takes 3 arguments"))
                 }
             }
         } else {
-            Err(AverStr::from("Map.set takes 3 arguments"))
+            Err(::aver_rt::str_lit!("Map.set takes 3 arguments"))
         }
     }
 }
@@ -2023,7 +2023,7 @@ pub fn builtinMapSetInner(
                     )),
                 ))
             }
-            _ => Err(AverStr::from("Map.set requires a Map")),
+            _ => Err(::aver_rt::str_lit!("Map.set requires a Map")),
         }
     }
 }
@@ -2061,7 +2061,7 @@ pub fn builtinMapGetInner(
                     None => Ok(crate::aver_generated::domain::value::Val::ValNone),
                 }
             }
-            _ => Err(AverStr::from("Map.get requires a Map")),
+            _ => Err(::aver_rt::str_lit!("Map.get requires a Map")),
         }
     }
 }
@@ -2095,7 +2095,7 @@ pub fn builtinMapHasInner(
                     ),
                 ))
             }
-            _ => Err(AverStr::from("Map.has requires a Map")),
+            _ => Err(::aver_rt::str_lit!("Map.has requires a Map")),
         }
     }
 }
@@ -2249,19 +2249,19 @@ pub fn builtinHttpBody(
                                         urlV, bodyV, ctV, hdrsV, method,
                                     )
                                 } else {
-                                    Err(AverStr::from("Http method takes 4 arguments"))
+                                    Err(::aver_rt::str_lit!("Http method takes 4 arguments"))
                                 }
                             }
                         } else {
-                            Err(AverStr::from("Http method takes 4 arguments"))
+                            Err(::aver_rt::str_lit!("Http method takes 4 arguments"))
                         }
                     }
                 } else {
-                    Err(AverStr::from("Http method takes 4 arguments"))
+                    Err(::aver_rt::str_lit!("Http method takes 4 arguments"))
                 }
             }
         } else {
-            Err(AverStr::from("Http method takes 4 arguments"))
+            Err(::aver_rt::str_lit!("Http method takes 4 arguments"))
         }
     }
 }
@@ -2430,22 +2430,22 @@ pub fn httpResponseToVal(
             crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValRecord(
                     crate::aver_generated::domain::value::Val__ValRecord(
-                        AverStr::from("Http.Response"),
+                        ::aver_rt::str_lit!("Http.Response"),
                         aver_rt::AverList::from_vec(vec![
                             (
-                                AverStr::from("status"),
+                                ::aver_rt::str_lit!("status"),
                                 crate::aver_generated::domain::value::Val::ValInt(
                                     crate::aver_generated::domain::value::Val__ValInt(resp.status),
                                 ),
                             ),
                             (
-                                AverStr::from("body"),
+                                ::aver_rt::str_lit!("body"),
                                 crate::aver_generated::domain::value::Val::ValStr(
                                     crate::aver_generated::domain::value::Val__ValStr(resp.body),
                                 ),
                             ),
                             (
-                                AverStr::from("headers"),
+                                ::aver_rt::str_lit!("headers"),
                                 crate::aver_generated::domain::builtins::headersToVal(
                                     &resp.headers,
                                 ),
@@ -2592,15 +2592,15 @@ pub fn builtinTcpSend(
                                 hostV, portV, msgV,
                             )
                         } else {
-                            Err(AverStr::from("Tcp.send takes 3 arguments"))
+                            Err(::aver_rt::str_lit!("Tcp.send takes 3 arguments"))
                         }
                     }
                 } else {
-                    Err(AverStr::from("Tcp.send takes 3 arguments"))
+                    Err(::aver_rt::str_lit!("Tcp.send takes 3 arguments"))
                 }
             }
         } else {
-            Err(AverStr::from("Tcp.send takes 3 arguments"))
+            Err(::aver_rt::str_lit!("Tcp.send takes 3 arguments"))
         }
     }
 }
@@ -2810,7 +2810,7 @@ pub fn valToTcpConn(
                 let conn = __conn_fields.0.clone();
                 Ok(conn)
             }
-            _ => Err(AverStr::from("expected Tcp.Connection resource")),
+            _ => Err(::aver_rt::str_lit!("expected Tcp.Connection resource")),
         }
     }
 }
@@ -2891,7 +2891,7 @@ pub fn valToTcpDial(
                 let dial = __dial_fields.0.clone();
                 Ok(dial)
             }
-            _ => Err(AverStr::from("expected Tcp.Dial resource")),
+            _ => Err(::aver_rt::str_lit!("expected Tcp.Dial resource")),
         }
     }
 }
@@ -3031,7 +3031,7 @@ pub fn valToTcpListener(
                 let listener = __listener_fields.0.clone();
                 Ok(listener)
             }
-            _ => Err(AverStr::from("expected Tcp.Listener resource")),
+            _ => Err(::aver_rt::str_lit!("expected Tcp.Listener resource")),
         }
     }
 }
@@ -3152,7 +3152,7 @@ pub fn valToTcpSocket(
                 let fields = &__name_fields.2;
                 crate::aver_generated::domain::builtins::valVariantToTcpSocket(name, fields)
             }
-            _ => Err(AverStr::from("expected Tcp.Socket value")),
+            _ => Err(::aver_rt::str_lit!("expected Tcp.Socket value")),
         }
     }
 }
@@ -3171,7 +3171,9 @@ pub fn valVariantToTcpSocket(
                 Ok(listenerV @ _) => Ok(crate::aver_generated::tcp::Socket::Listening(
                     crate::aver_generated::domain::builtins::valToTcpListener(&listenerV)?,
                 )),
-                Err(_) => Err(AverStr::from("Tcp.Socket.Listening takes one resource")),
+                Err(_) => Err(::aver_rt::str_lit!(
+                    "Tcp.Socket.Listening takes one resource"
+                )),
             }
         } else {
             if &*__dispatch_subject == "Tcp.Socket.Dialing" {
@@ -3179,7 +3181,7 @@ pub fn valVariantToTcpSocket(
                     Ok(dialV @ _) => Ok(crate::aver_generated::tcp::Socket::Dialing(
                         crate::aver_generated::domain::builtins::valToTcpDial(&dialV)?,
                     )),
-                    Err(_) => Err(AverStr::from("Tcp.Socket.Dialing takes one resource")),
+                    Err(_) => Err(::aver_rt::str_lit!("Tcp.Socket.Dialing takes one resource")),
                 }
             } else {
                 if &*__dispatch_subject == "Tcp.Socket.Connected" {
@@ -3187,7 +3189,9 @@ pub fn valVariantToTcpSocket(
                         Ok(connV @ _) => Ok(crate::aver_generated::tcp::Socket::Connected(
                             crate::aver_generated::domain::builtins::valToTcpConn(&connV)?,
                         )),
-                        Err(_) => Err(AverStr::from("Tcp.Socket.Connected takes one resource")),
+                        Err(_) => Err(::aver_rt::str_lit!(
+                            "Tcp.Socket.Connected takes one resource"
+                        )),
                     }
                 } else {
                     if &*__dispatch_subject == "Tcp.Socket.Sending" {
@@ -3195,10 +3199,12 @@ pub fn valVariantToTcpSocket(
                             Ok(connV @ _) => Ok(crate::aver_generated::tcp::Socket::Sending(
                                 crate::aver_generated::domain::builtins::valToTcpConn(&connV)?,
                             )),
-                            Err(_) => Err(AverStr::from("Tcp.Socket.Sending takes one resource")),
+                            Err(_) => {
+                                Err(::aver_rt::str_lit!("Tcp.Socket.Sending takes one resource"))
+                            }
                         }
                     } else {
-                        Err(AverStr::from("expected Tcp.Socket value"))
+                        Err(::aver_rt::str_lit!("expected Tcp.Socket value"))
                     }
                 }
             }
@@ -3302,8 +3308,8 @@ pub fn builtinTcpPoll(
                     let sockets = __sockets_fields.0.clone();
                     crate::aver_generated::domain::builtins::builtinTcpPollInner(sockets, &timeoutV)
                 }
-                _ => Err(AverStr::from(
-                    "Tcp.poll requires a Map as its first argument",
+                _ => Err(::aver_rt::str_lit!(
+                    "Tcp.poll requires a Map as its first argument"
                 )),
             }
         }
@@ -3903,35 +3909,35 @@ pub fn callBuiltinServices__indexed(
                         if &*__dispatch_subject == "Http.get" {
                             crate::aver_generated::domain::builtins::builtinHttpSimple(
                                 args,
-                                AverStr::from("get"),
+                                ::aver_rt::str_lit!("get"),
                             )
                         } else {
                             if &*__dispatch_subject == "Http.head" {
                                 crate::aver_generated::domain::builtins::builtinHttpSimple(
                                     args,
-                                    AverStr::from("head"),
+                                    ::aver_rt::str_lit!("head"),
                                 )
                             } else {
                                 if &*__dispatch_subject == "Http.delete" {
                                     crate::aver_generated::domain::builtins::builtinHttpSimple(
                                         args,
-                                        AverStr::from("delete"),
+                                        ::aver_rt::str_lit!("delete"),
                                     )
                                 } else {
                                     if &*__dispatch_subject == "Http.post" {
                                         crate::aver_generated::domain::builtins::builtinHttpBody(
                                             args,
-                                            AverStr::from("post"),
+                                            ::aver_rt::str_lit!("post"),
                                         )
                                     } else {
                                         if &*__dispatch_subject == "Http.put" {
                                             crate::aver_generated::domain::builtins::builtinHttpBody(
                                                 args,
-                                                AverStr::from("put"),
+                                                ::aver_rt::str_lit!("put"),
                                             )
                                         } else {
                                             if &*__dispatch_subject == "Http.patch" {
-                                                crate::aver_generated::domain::builtins::builtinHttpBody(args, AverStr::from("patch"))
+                                                crate::aver_generated::domain::builtins::builtinHttpBody(args, ::aver_rt::str_lit!("patch"))
                                             } else {
                                                 if &*__dispatch_subject == "Tcp.send" {
                                                     crate::aver_generated::domain::builtins::builtinTcpSend(args)
@@ -4026,8 +4032,8 @@ pub fn builtinTerminalNoArg__indexed(
                                                     .to_usize()
                                                     .unwrap_or(0),
                                             );
-                                            __b.push_str(&AverStr::from(
-                                                "unknown terminal command: ",
+                                            __b.push_str(&::aver_rt::str_lit!(
+                                                "unknown terminal command: "
                                             ));
                                             __b
                                         };
@@ -4067,7 +4073,7 @@ pub fn tryVariantConstructor__indexed(
                 let mut __b = aver_rt::Buffer::with_capacity(
                     (aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0),
                 );
-                __b.push_str(&AverStr::from("undefined function: "));
+                __b.push_str(&::aver_rt::str_lit!("undefined function: "));
                 __b
             };
             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));

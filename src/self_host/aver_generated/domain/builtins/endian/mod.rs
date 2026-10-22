@@ -27,7 +27,7 @@ pub fn call(
                                 let mut __b = aver_rt::Buffer::with_capacity(
                                     (aver_rt::AverInt::from_i64(40)).to_usize().unwrap_or(0),
                                 );
-                                __b.push_str(&AverStr::from("unknown endian builtin: "));
+                                __b.push_str(&::aver_rt::str_lit!("unknown endian builtin: "));
                                 __b
                             };
                             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));
@@ -84,9 +84,9 @@ pub fn bytesVal(
     crate::cancel_checkpoint();
     crate::aver_generated::domain::value::Val::ValRecord(
         crate::aver_generated::domain::value::Val__ValRecord(
-            AverStr::from("Bytes"),
+            ::aver_rt::str_lit!("Bytes"),
             aver_rt::AverList::from_vec(vec![(
-                AverStr::from("values"),
+                ::aver_rt::str_lit!("values"),
                 crate::aver_generated::domain::value::Val::ValList(
                     crate::aver_generated::domain::value::Val__ValList(
                         crate::aver_generated::domain::builtins::endian::byteVals__collected(

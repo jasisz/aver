@@ -542,13 +542,13 @@ pub fn helperCalls(
                                     )));
                                     __b
                                 };
-                                __b.push_str(&AverStr::from(" recurses through "));
+                                __b.push_str(&::aver_rt::str_lit!(" recurses through "));
                                 __b
                             };
                             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(g))));
                             __b
                         };
-                        __b.push_str(&AverStr::from(", which reaches itself without "));
+                        __b.push_str(&::aver_rt::str_lit!(", which reaches itself without "));
                         __b
                     };
                     __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f))));
@@ -591,7 +591,7 @@ pub fn helperBody(
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(h.name))));
                         __b
                     };
-                    __b.push_str(&AverStr::from(" takes "));
+                    __b.push_str(&::aver_rt::str_lit!(" takes "));
                     __b
                 };
                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
@@ -599,7 +599,7 @@ pub fn helperBody(
                 )));
                 __b
             };
-            __b.push_str(&AverStr::from(" arguments"));
+            __b.push_str(&::aver_rt::str_lit!(" arguments"));
             __b
         })),
         (_, false) => Err(aver_rt::AverStr::from({
@@ -611,7 +611,7 @@ pub fn helperBody(
                     __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f))));
                     __b
                 };
-                __b.push_str(&AverStr::from(" recurses from a local binding of "));
+                __b.push_str(&::aver_rt::str_lit!(" recurses from a local binding of "));
                 __b
             };
             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(h.name))));
@@ -762,14 +762,14 @@ pub fn unread(ns @ _: &aver_rt::AverList<AverStr>, h @ _: AverStr) -> Result<(),
                                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(h))));
                                 __b
                             };
-                            __b.push_str(&AverStr::from(" passes "));
+                            __b.push_str(&::aver_rt::str_lit!(" passes "));
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
                         __b
                     };
-                    __b.push_str(&AverStr::from(
-                        ", which it does not bind, to a recursive call",
+                    __b.push_str(&::aver_rt::str_lit!(
+                        ", which it does not bind, to a recursive call"
                     ));
                     __b
                 }))
@@ -976,20 +976,20 @@ pub fn recursive(
             { let __t = __pat4; match __t.view() {
         crate::proof_kernel::aver_generated::kernel::term::Term__view::TInt(____pat5_fields) => {
             let __pat5 = ____pat5_fields.0.clone();
-            { let __int_match_subject = __pat5; if __int_match_subject == aver_rt::AverInt::from_i64(0) { crate::proof_kernel::aver_generated::kernel::induct::towardZero(d, ds, crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(op, crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(p.clone())), crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0))))), p.clone(), crate::proof_kernel::aver_generated::kernel::induct::indexOf(&crate::proof_kernel::aver_generated::kernel::proof::givenNames(&d.params), p, aver_rt::AverInt::from_i64(0)), arms) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(56)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name)))); __b }; __b.push_str(&AverStr::from(" recurses outside a match on a parameter")); __b })) } }
+            { let __int_match_subject = __pat5; if __int_match_subject == aver_rt::AverInt::from_i64(0) { crate::proof_kernel::aver_generated::kernel::induct::towardZero(d, ds, crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(op, crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(p.clone())), crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0))))), p.clone(), crate::proof_kernel::aver_generated::kernel::induct::indexOf(&crate::proof_kernel::aver_generated::kernel::proof::givenNames(&d.params), p, aver_rt::AverInt::from_i64(0)), arms) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(56)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name)))); __b }; __b.push_str(&::aver_rt::str_lit!(" recurses outside a match on a parameter")); __b })) } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(56)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name)))); __b }; __b.push_str(&AverStr::from(" recurses outside a match on a parameter")); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(56)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name)))); __b }; __b.push_str(&::aver_rt::str_lit!(" recurses outside a match on a parameter")); __b }))
         }
     } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(56)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name)))); __b }; __b.push_str(&AverStr::from(" recurses outside a match on a parameter")); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(56)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name)))); __b }; __b.push_str(&::aver_rt::str_lit!(" recurses outside a match on a parameter")); __b }))
         }
     } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(56)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name)))); __b }; __b.push_str(&AverStr::from(" recurses outside a match on a parameter")); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(56)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name)))); __b }; __b.push_str(&::aver_rt::str_lit!(" recurses outside a match on a parameter")); __b }))
         }
     }
                             }
@@ -1004,8 +1004,8 @@ pub fn recursive(
                                 )));
                                 __b
                             };
-                            __b.push_str(&AverStr::from(
-                                " recurses outside a match on a parameter",
+                            __b.push_str(&::aver_rt::str_lit!(
+                                " recurses outside a match on a parameter"
                             ));
                             __b
                         })),
@@ -1020,7 +1020,7 @@ pub fn recursive(
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name))));
                         __b
                     };
-                    __b.push_str(&AverStr::from(" recurses from a local binding"));
+                    __b.push_str(&::aver_rt::str_lit!(" recurses from a local binding"));
                     __b
                 }))
             }
@@ -1046,8 +1046,8 @@ pub fn onParts(
                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name))));
                 __b
             };
-            __b.push_str(&AverStr::from(
-                " recurses on a match whose subject is not a parameter",
+            __b.push_str(&::aver_rt::str_lit!(
+                " recurses on a match whose subject is not a parameter"
             ));
             __b
         }))
@@ -1072,8 +1072,8 @@ pub fn onParts(
                     __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name))));
                     __b
                 };
-                __b.push_str(&AverStr::from(
-                    " recurses on something that is not a part of the value it matches",
+                __b.push_str(&::aver_rt::str_lit!(
+                    " recurses on something that is not a part of the value it matches"
                 ));
                 __b
             }))
@@ -1136,8 +1136,8 @@ pub fn towardZero(
                     __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name))));
                     __b
                 };
-                __b.push_str(&AverStr::from(
-                    " recurses on a match whose subject is not a parameter",
+                __b.push_str(&::aver_rt::str_lit!(
+                    " recurses on a match whose subject is not a parameter"
                 ));
                 __b
             }))
@@ -1155,7 +1155,7 @@ pub fn towardZero(
                                 {
                                     let __list_subject = __pat4;
                                     if __list_subject.is_empty() {
-                                        if (crate::proof_kernel::aver_generated::kernel::induct::oneEach(a.pattern.clone(), b.pattern.clone()) && (crate::proof_kernel::aver_generated::kernel::induct::armDescends(a, stop.clone(), d, ds, p.clone(), j.clone())? && crate::proof_kernel::aver_generated::kernel::induct::armDescends(b, stop, d, ds, p.clone(), j.clone())?)) { Ok(crate::proof_kernel::aver_generated::kernel::induct::Recursion { at: j, guard: Some(guard), arms: crate::proof_kernel::aver_generated::kernel::induct::armCalls(arms, d, ds)? }) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(61)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name)))); __b }; __b.push_str(&AverStr::from(" does not count ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(p)))); __b }; __b.push_str(&AverStr::from(" down to zero")); __b })) }
+                                        if (crate::proof_kernel::aver_generated::kernel::induct::oneEach(a.pattern.clone(), b.pattern.clone()) && (crate::proof_kernel::aver_generated::kernel::induct::armDescends(a, stop.clone(), d, ds, p.clone(), j.clone())? && crate::proof_kernel::aver_generated::kernel::induct::armDescends(b, stop, d, ds, p.clone(), j.clone())?)) { Ok(crate::proof_kernel::aver_generated::kernel::induct::Recursion { at: j, guard: Some(guard), arms: crate::proof_kernel::aver_generated::kernel::induct::armCalls(arms, d, ds)? }) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(61)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name)))); __b }; __b.push_str(&::aver_rt::str_lit!(" does not count ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(p)))); __b }; __b.push_str(&::aver_rt::str_lit!(" down to zero")); __b })) }
                                     } else {
                                         Err(aver_rt::AverStr::from({
                                             let mut __b = {
@@ -1172,8 +1172,8 @@ pub fn towardZero(
                                                         ));
                                                         __b
                                                     };
-                                                    __b.push_str(&AverStr::from(
-                                                        " does not count ",
+                                                    __b.push_str(&::aver_rt::str_lit!(
+                                                        " does not count "
                                                     ));
                                                     __b
                                                 };
@@ -1182,7 +1182,7 @@ pub fn towardZero(
                                                 ));
                                                 __b
                                             };
-                                            __b.push_str(&AverStr::from(" down to zero"));
+                                            __b.push_str(&::aver_rt::str_lit!(" down to zero"));
                                             __b
                                         }))
                                     }
@@ -1202,7 +1202,7 @@ pub fn towardZero(
                                                 ));
                                                 __b
                                             };
-                                            __b.push_str(&AverStr::from(" does not count "));
+                                            __b.push_str(&::aver_rt::str_lit!(" does not count "));
                                             __b
                                         };
                                         __b.push_str(&aver_rt::AverStr::from(
@@ -1210,7 +1210,7 @@ pub fn towardZero(
                                         ));
                                         __b
                                     };
-                                    __b.push_str(&AverStr::from(" down to zero"));
+                                    __b.push_str(&::aver_rt::str_lit!(" down to zero"));
                                     __b
                                 }))
                             }
@@ -1230,13 +1230,13 @@ pub fn towardZero(
                                         ));
                                         __b
                                     };
-                                    __b.push_str(&AverStr::from(" does not count "));
+                                    __b.push_str(&::aver_rt::str_lit!(" does not count "));
                                     __b
                                 };
                                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(p))));
                                 __b
                             };
-                            __b.push_str(&AverStr::from(" down to zero"));
+                            __b.push_str(&::aver_rt::str_lit!(" down to zero"));
                             __b
                         }))
                     }
@@ -1253,13 +1253,13 @@ pub fn towardZero(
                                 )));
                                 __b
                             };
-                            __b.push_str(&AverStr::from(" does not count "));
+                            __b.push_str(&::aver_rt::str_lit!(" does not count "));
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(p))));
                         __b
                     };
-                    __b.push_str(&AverStr::from(" down to zero"));
+                    __b.push_str(&::aver_rt::str_lit!(" down to zero"));
                     __b
                 })),
             }
@@ -1981,13 +1981,13 @@ pub fn descendsThrough(
 /// A fixture for the tests: any(xs) matches a list and calls orOn on its head and tail.
 pub fn listAny() -> crate::proof_kernel::aver_generated::kernel::proof::Def {
     crate::proof_kernel::cancel_checkpoint();
-    crate::proof_kernel::aver_generated::kernel::proof::Def { name: AverStr::from("any"), params: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::typed(AverStr::from("xs"), crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny)]), ret: crate::proof_kernel::aver_generated::kernel::term::Ty::TyBool, lets: aver_rt::AverList::empty(), body: crate::proof_kernel::aver_generated::kernel::term::Term::TMatch(crate::proof_kernel::aver_generated::kernel::term::Term__TMatch(crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(AverStr::from("xs"))), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::Arm { pattern: crate::proof_kernel::aver_generated::kernel::term::Pat::PNil, body: crate::proof_kernel::aver_generated::kernel::term::Term::TBool(crate::proof_kernel::aver_generated::kernel::term::Term__TBool(false)) }, crate::proof_kernel::aver_generated::kernel::term::Arm { pattern: crate::proof_kernel::aver_generated::kernel::term::Pat::PCons(AverStr::from("h"), AverStr::from("t")), body: crate::proof_kernel::aver_generated::kernel::term::Term::TCall(crate::proof_kernel::aver_generated::kernel::term::Term__TCall(AverStr::from("orOn"), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(AverStr::from("h"))), crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(AverStr::from("t")))]))) }]))) }
+    crate::proof_kernel::aver_generated::kernel::proof::Def { name: ::aver_rt::str_lit!("any"), params: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::typed(::aver_rt::str_lit!("xs"), crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny)]), ret: crate::proof_kernel::aver_generated::kernel::term::Ty::TyBool, lets: aver_rt::AverList::empty(), body: crate::proof_kernel::aver_generated::kernel::term::Term::TMatch(crate::proof_kernel::aver_generated::kernel::term::Term__TMatch(crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(::aver_rt::str_lit!("xs"))), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::Arm { pattern: crate::proof_kernel::aver_generated::kernel::term::Pat::PNil, body: crate::proof_kernel::aver_generated::kernel::term::Term::TBool(crate::proof_kernel::aver_generated::kernel::term::Term__TBool(false)) }, crate::proof_kernel::aver_generated::kernel::term::Arm { pattern: crate::proof_kernel::aver_generated::kernel::term::Pat::PCons(::aver_rt::str_lit!("h"), ::aver_rt::str_lit!("t")), body: crate::proof_kernel::aver_generated::kernel::term::Term::TCall(crate::proof_kernel::aver_generated::kernel::term::Term__TCall(::aver_rt::str_lit!("orOn"), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(::aver_rt::str_lit!("h"))), crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(::aver_rt::str_lit!("t")))]))) }]))) }
 }
 
 /// A fixture for the tests: walk(xs) matches a list and hands its head and tail to skip.
 pub fn walks() -> crate::proof_kernel::aver_generated::kernel::proof::Def {
     crate::proof_kernel::cancel_checkpoint();
-    crate::proof_kernel::aver_generated::kernel::proof::Def { name: AverStr::from("walk"), params: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::typed(AverStr::from("xs"), crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny)]), ret: crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny, lets: aver_rt::AverList::empty(), body: crate::proof_kernel::aver_generated::kernel::term::Term::TMatch(crate::proof_kernel::aver_generated::kernel::term::Term__TMatch(crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(AverStr::from("xs"))), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::Arm { pattern: crate::proof_kernel::aver_generated::kernel::term::Pat::PNil, body: crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0))) }, crate::proof_kernel::aver_generated::kernel::term::Arm { pattern: crate::proof_kernel::aver_generated::kernel::term::Pat::PCons(AverStr::from("h"), AverStr::from("t")), body: crate::proof_kernel::aver_generated::kernel::term::Term::TCall(crate::proof_kernel::aver_generated::kernel::term::Term__TCall(AverStr::from("skip"), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(AverStr::from("h"))), crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(AverStr::from("t")))]))) }]))) }
+    crate::proof_kernel::aver_generated::kernel::proof::Def { name: ::aver_rt::str_lit!("walk"), params: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::typed(::aver_rt::str_lit!("xs"), crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny)]), ret: crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny, lets: aver_rt::AverList::empty(), body: crate::proof_kernel::aver_generated::kernel::term::Term::TMatch(crate::proof_kernel::aver_generated::kernel::term::Term__TMatch(crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(::aver_rt::str_lit!("xs"))), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::Arm { pattern: crate::proof_kernel::aver_generated::kernel::term::Pat::PNil, body: crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0))) }, crate::proof_kernel::aver_generated::kernel::term::Arm { pattern: crate::proof_kernel::aver_generated::kernel::term::Pat::PCons(::aver_rt::str_lit!("h"), ::aver_rt::str_lit!("t")), body: crate::proof_kernel::aver_generated::kernel::term::Term::TCall(crate::proof_kernel::aver_generated::kernel::term::Term__TCall(::aver_rt::str_lit!("skip"), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(::aver_rt::str_lit!("h"))), crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(::aver_rt::str_lit!("t")))]))) }]))) }
 }
 
 /// A fixture for the tests: skip(n, rest) with these local bindings and this body.
@@ -1997,14 +1997,14 @@ pub fn skipping(
 ) -> crate::proof_kernel::aver_generated::kernel::proof::Def {
     crate::proof_kernel::cancel_checkpoint();
     crate::proof_kernel::aver_generated::kernel::proof::Def {
-        name: AverStr::from("skip"),
+        name: ::aver_rt::str_lit!("skip"),
         params: aver_rt::AverList::from_vec(vec![
             crate::proof_kernel::aver_generated::kernel::term::typed(
-                AverStr::from("n"),
+                ::aver_rt::str_lit!("n"),
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny,
             ),
             crate::proof_kernel::aver_generated::kernel::term::typed(
-                AverStr::from("rest"),
+                ::aver_rt::str_lit!("rest"),
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny,
             ),
         ]),
@@ -2019,7 +2019,7 @@ pub fn dropsBy(
     mut next @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
 ) -> crate::proof_kernel::aver_generated::kernel::proof::Def {
     crate::proof_kernel::cancel_checkpoint();
-    crate::proof_kernel::aver_generated::kernel::proof::Def { name: AverStr::from("f"), params: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::typed(AverStr::from("xs"), crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny), crate::proof_kernel::aver_generated::kernel::term::typed(AverStr::from("k"), crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny)]), ret: crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny, lets: aver_rt::AverList::empty(), body: crate::proof_kernel::aver_generated::kernel::term::Term::TMatch(crate::proof_kernel::aver_generated::kernel::term::Term__TMatch(crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(AverStr::from("xs"))), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::Arm { pattern: crate::proof_kernel::aver_generated::kernel::term::Pat::PNil, body: crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0))) }, crate::proof_kernel::aver_generated::kernel::term::Arm { pattern: crate::proof_kernel::aver_generated::kernel::term::Pat::PCons(AverStr::from("h"), AverStr::from("t")), body: crate::proof_kernel::aver_generated::kernel::term::Term::TCall(crate::proof_kernel::aver_generated::kernel::term::Term__TCall(AverStr::from("f"), aver_rt::AverList::from_vec(vec![next, crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(AverStr::from("k")))]))) }]))) }
+    crate::proof_kernel::aver_generated::kernel::proof::Def { name: ::aver_rt::str_lit!("f"), params: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::typed(::aver_rt::str_lit!("xs"), crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny), crate::proof_kernel::aver_generated::kernel::term::typed(::aver_rt::str_lit!("k"), crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny)]), ret: crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny, lets: aver_rt::AverList::empty(), body: crate::proof_kernel::aver_generated::kernel::term::Term::TMatch(crate::proof_kernel::aver_generated::kernel::term::Term__TMatch(crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(::aver_rt::str_lit!("xs"))), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::Arm { pattern: crate::proof_kernel::aver_generated::kernel::term::Pat::PNil, body: crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0))) }, crate::proof_kernel::aver_generated::kernel::term::Arm { pattern: crate::proof_kernel::aver_generated::kernel::term::Pat::PCons(::aver_rt::str_lit!("h"), ::aver_rt::str_lit!("t")), body: crate::proof_kernel::aver_generated::kernel::term::Term::TCall(crate::proof_kernel::aver_generated::kernel::term::Term__TCall(::aver_rt::str_lit!("f"), aver_rt::AverList::from_vec(vec![next, crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(::aver_rt::str_lit!("k")))]))) }]))) }
 }
 
 /// A fixture for the tests: orOn(first, rest) is true when first is not 0, and back otherwise.
@@ -2028,14 +2028,14 @@ pub fn orOn(
 ) -> crate::proof_kernel::aver_generated::kernel::proof::Def {
     crate::proof_kernel::cancel_checkpoint();
     crate::proof_kernel::aver_generated::kernel::proof::Def {
-        name: AverStr::from("orOn"),
+        name: ::aver_rt::str_lit!("orOn"),
         params: aver_rt::AverList::from_vec(vec![
             crate::proof_kernel::aver_generated::kernel::term::typed(
-                AverStr::from("first"),
+                ::aver_rt::str_lit!("first"),
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny,
             ),
             crate::proof_kernel::aver_generated::kernel::term::typed(
-                AverStr::from("rest"),
+                ::aver_rt::str_lit!("rest"),
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny,
             ),
         ]),
@@ -2045,10 +2045,10 @@ pub fn orOn(
             crate::proof_kernel::aver_generated::kernel::term::Term__TMatch(
                 crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
                     crate::proof_kernel::aver_generated::kernel::term::Term__TOp(
-                        AverStr::from("!="),
+                        ::aver_rt::str_lit!("!="),
                         crate::proof_kernel::aver_generated::kernel::term::Term::TVar(
                             crate::proof_kernel::aver_generated::kernel::term::Term__TVar(
-                                AverStr::from("first"),
+                                ::aver_rt::str_lit!("first"),
                             ),
                         ),
                         crate::proof_kernel::aver_generated::kernel::term::Term::TInt(
@@ -2351,7 +2351,7 @@ pub fn eachNotMutual(
                                 )));
                                 __b
                             };
-                            __b.push_str(&AverStr::from(" is part of a mutual recursion"));
+                            __b.push_str(&::aver_rt::str_lit!(" is part of a mutual recursion"));
                             __b
                         }));
                     } else {
@@ -2778,18 +2778,18 @@ pub fn varied(
                             },
                         )
                     } else {
-                        Err(AverStr::from(
-                            "the argument at the matched place must be a given",
+                        Err(::aver_rt::str_lit!(
+                            "the argument at the matched place must be a given"
                         ))
                     }
                 }
-                _ => Err(AverStr::from(
-                    "the argument at the matched place must be a given",
+                _ => Err(::aver_rt::str_lit!(
+                    "the argument at the matched place must be a given"
                 )),
             }
         }
-        _ => Err(AverStr::from(
-            "the argument at the matched place must be a given",
+        _ => Err(::aver_rt::str_lit!(
+            "the argument at the matched place must be a given"
         )),
     }
 }

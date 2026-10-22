@@ -3304,7 +3304,7 @@ fn rust_map_helper_result_preserves_the_owned_move() {
         "setOne must take its Map by value after return-alias analysis:\n{emitted}"
     );
     assert!(
-        emitted.contains("into.insert_owned(key, AverStr::from(\"v\"))"),
+        emitted.contains("into.insert_owned(key, ::aver_rt::str_lit!(\"v\"))"),
         "setOne must move the owned Map into insert_owned:\n{emitted}"
     );
     assert!(
@@ -3316,7 +3316,7 @@ fn rust_map_helper_result_preserves_the_owned_move() {
         "the Rust-only pass must graduate a Map carried by Result:\n{emitted}"
     );
     assert!(
-        emitted.contains("Ok(into.insert_owned(key, AverStr::from(\"v\")))"),
+        emitted.contains("Ok(into.insert_owned(key, ::aver_rt::str_lit!(\"v\")))"),
         "Result.Ok must wrap the owned Map successor without cloning:\n{emitted}"
     );
     assert!(
@@ -3328,7 +3328,7 @@ fn rust_map_helper_result_preserves_the_owned_move() {
         "a returned Store successor must take the record by value:\n{emitted}"
     );
     assert!(
-        emitted.contains("values: store.values.insert_owned(key, AverStr::from(\"v\"))"),
+        emitted.contains("values: store.values.insert_owned(key, ::aver_rt::str_lit!(\"v\"))"),
         "the replaced Map field must move out of Store without a forced clone:\n{emitted}"
     );
     assert!(
@@ -3344,7 +3344,9 @@ fn rust_map_helper_result_preserves_the_owned_move() {
         "a constructor-returned Store successor must take the record by value:\n{emitted}"
     );
     assert!(
-        emitted.contains("Store { values: store.values.insert_owned(key, AverStr::from(\"v\")) }"),
+        emitted.contains(
+            "Store { values: store.values.insert_owned(key, ::aver_rt::str_lit!(\"v\")) }"
+        ),
         "the constructor must move the Map field out of Store without a forced clone:\n{emitted}"
     );
     assert!(
@@ -3432,7 +3434,7 @@ fn main() -> Unit
         "the fill loop must move its map into grow:\n{emitted}"
     );
     assert!(
-        emitted.contains("grow(table.clone(), AverStr::from(\"extra\"))"),
+        emitted.contains("grow(table.clone(), ::aver_rt::str_lit!(\"extra\"))"),
         "keep reads its map later, so it clones once at the call:\n{emitted}"
     );
     assert!(

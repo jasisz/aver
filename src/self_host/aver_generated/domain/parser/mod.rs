@@ -708,7 +708,7 @@ pub fn parseFnDef(
                 name,
             )
         }
-        _ => Err(AverStr::from("Expected function name after 'fn'")),
+        _ => Err(::aver_rt::str_lit!("Expected function name after 'fn'")),
     }
 }
 

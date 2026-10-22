@@ -39,7 +39,9 @@ pub fn call(
                                                 .to_usize()
                                                 .unwrap_or(0),
                                         );
-                                        __b.push_str(&AverStr::from("unknown vector builtin: "));
+                                        __b.push_str(&::aver_rt::str_lit!(
+                                            "unknown vector builtin: "
+                                        ));
                                         __b
                                     };
                                     __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
@@ -82,7 +84,7 @@ pub fn builtinVectorNew(
                     ),
                 ))
             }
-            _ => Err(AverStr::from("Vector.new: first arg must be Int")),
+            _ => Err(::aver_rt::str_lit!("Vector.new: first arg must be Int")),
         }
     }
 }
@@ -109,7 +111,7 @@ pub fn builtinVectorGet(
                     None => Ok(crate::aver_generated::domain::value::Val::ValNone),
                 }
             }
-            _ => Err(AverStr::from("Vector.get: expected (Vector, Int)")),
+            _ => Err(::aver_rt::str_lit!("Vector.get: expected (Vector, Int)")),
         }
     }
 }
@@ -134,15 +136,15 @@ pub fn builtinVectorSet(
                                 vecV, idxV, valV,
                             )
                         } else {
-                            Err(AverStr::from("Vector.set: expected 3 args"))
+                            Err(::aver_rt::str_lit!("Vector.set: expected 3 args"))
                         }
                     }
                 } else {
-                    Err(AverStr::from("Vector.set: expected 3 args"))
+                    Err(::aver_rt::str_lit!("Vector.set: expected 3 args"))
                 }
             }
         } else {
-            Err(AverStr::from("Vector.set: expected 3 args"))
+            Err(::aver_rt::str_lit!("Vector.set: expected 3 args"))
         }
     }
 }
@@ -174,11 +176,11 @@ pub fn builtinVectorSetInner(
                                 }
                             }
                         }
-                        _ => Err(AverStr::from("Vector.set: second arg must be Int")),
+                        _ => Err(::aver_rt::str_lit!("Vector.set: second arg must be Int")),
                     }
                 }
             }
-            _ => Err(AverStr::from("Vector.set: first arg must be Vector")),
+            _ => Err(::aver_rt::str_lit!("Vector.set: first arg must be Vector")),
         }
     }
 }
@@ -205,7 +207,7 @@ pub fn builtinVectorSetInBounds(
                     ),
                 ))
             }
-            None => Err(AverStr::from("Vector.set: index out of bounds")),
+            None => Err(::aver_rt::str_lit!("Vector.set: index out of bounds")),
         }
     }
 }
@@ -227,7 +229,7 @@ pub fn builtinVectorLen(
                     )),
                 ))
             }
-            _ => Err(AverStr::from("Vector.len: expected Vector")),
+            _ => Err(::aver_rt::str_lit!("Vector.len: expected Vector")),
         }
     }
 }
@@ -249,7 +251,7 @@ pub fn builtinVectorFromList(
                     ),
                 ))
             }
-            _ => Err(AverStr::from("Vector.fromList: expected List")),
+            _ => Err(::aver_rt::str_lit!("Vector.fromList: expected List")),
         }
     }
 }
@@ -269,7 +271,7 @@ pub fn builtinVectorToList(
                     crate::aver_generated::domain::value::Val__ValList(vec.to_list()),
                 ))
             }
-            _ => Err(AverStr::from("List.fromVector: expected Vector")),
+            _ => Err(::aver_rt::str_lit!("List.fromVector: expected Vector")),
         }
     }
 }

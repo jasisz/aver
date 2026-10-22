@@ -34,7 +34,7 @@ fn __mutual_tco_trampoline_1(
             ) => {
                 crate::cancel_checkpoint();
                 let qualified @ _ = Box::new(crate::aver_generated::domain::ast::FnDef__Fields {
-                    name: ((prefix.clone() + &AverStr::from(".")) + &f.name),
+                    name: ((prefix.clone() + &::aver_rt::str_lit!(".")) + &f.name),
                     params: f.params.clone(),
                     body: f.body.clone(),
                     slotCount: f.slotCount.clone(),
@@ -165,7 +165,7 @@ pub fn runGuestCliProgram(
                     crate::cancel_checkpoint();
                     match runGuestProgram(prog, moduleFns, guestArgs) {
                         Ok(result @ _) => finishCliRun(localFns, result),
-                        Err(e @ _) => Err((AverStr::from("Runtime error: ") + &e)),
+                        Err(e @ _) => Err((::aver_rt::str_lit!("Runtime error: ") + &e)),
                     }
                 },
             )
@@ -952,7 +952,7 @@ pub fn runRepr(source @ _: AverStr) -> AverStr {
                 let mut __b = aver_rt::Buffer::with_capacity(
                     (aver_rt::AverInt::from_i64(23)).to_usize().unwrap_or(0),
                 );
-                __b.push_str(&AverStr::from("ERROR: "));
+                __b.push_str(&::aver_rt::str_lit!("ERROR: "));
                 __b
             };
             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(e))));
@@ -1034,7 +1034,7 @@ pub fn runFromFileWithRest(
             runCliFile(path, moduleRoot, &guestArgs)
         } else {
             if __list_subject.is_empty() {
-                runCliFile(path, AverStr::from("."), &aver_rt::AverList::empty())
+                runCliFile(path, ::aver_rt::str_lit!("."), &aver_rt::AverList::empty())
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
             }
@@ -1083,7 +1083,7 @@ pub fn finishCliMainResult(
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValErr(__err_fields) => {
                 let err = &__err_fields.0;
-                Err((AverStr::from("Main returned error: ")
+                Err((::aver_rt::str_lit!("Main returned error: ")
                     + &crate::aver_generated::domain::value::valRepr(err)))
             }
             _ => Ok(result),
@@ -1129,7 +1129,7 @@ pub fn printIfNotUnit(s @ _: AverStr) -> () {
     crate::cancel_checkpoint();
     if (&*s == "()") {
         {
-            let __provider_arg0: AverStr = AverStr::from("");
+            let __provider_arg0: AverStr = ::aver_rt::str_lit!("");
             crate::cancel_checkpoint();
             crate::aver_replay::invoke_capability_effect(
                 "Console.print",
@@ -1179,13 +1179,13 @@ pub fn printIfNotUnit(s @ _: AverStr) -> () {
 /// Show built-in demo programs.
 pub fn runDemo() -> Result<(), AverStr> {
     crate::cancel_checkpoint();
-    let demoArithmetic @ _ = runRepr(AverStr::from("x = 3 + 4\nx * 2"));
-    let demoDouble @ _ = runRepr(AverStr::from("fn double(n)\n    n + n\n\ndouble(21)"));
-    let demoFib @ _ = runRepr(AverStr::from(
-        "fn fib(n)\n    match n\n        0 -> 0\n        1 -> 1\n        _ -> fib(n - 1) + fib(n - 2)\n\nfib(10)",
+    let demoArithmetic @ _ = runRepr(::aver_rt::str_lit!("x = 3 + 4\nx * 2"));
+    let demoDouble @ _ = runRepr(::aver_rt::str_lit!("fn double(n)\n    n + n\n\ndouble(21)"));
+    let demoFib @ _ = runRepr(::aver_rt::str_lit!(
+        "fn fib(n)\n    match n\n        0 -> 0\n        1 -> 1\n        _ -> fib(n - 1) + fib(n - 2)\n\nfib(10)"
     ));
     {
-        let __provider_arg0: AverStr = AverStr::from("=== Self-Hosted Mini Aver ===");
+        let __provider_arg0: AverStr = ::aver_rt::str_lit!("=== Self-Hosted Mini Aver ===");
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Console.print",
@@ -1207,7 +1207,7 @@ pub fn runDemo() -> Result<(), AverStr> {
         )
     };
     {
-        let __provider_arg0: AverStr = AverStr::from("");
+        let __provider_arg0: AverStr = ::aver_rt::str_lit!("");
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Console.print",
@@ -1229,8 +1229,8 @@ pub fn runDemo() -> Result<(), AverStr> {
         )
     };
     {
-        let __provider_arg0: AverStr = AverStr::from(
-            "Usage: aver run self_hosted/main.av --module-root self_hosted -- <file.av> <module-root> [guest args...]",
+        let __provider_arg0: AverStr = ::aver_rt::str_lit!(
+            "Usage: aver run self_hosted/main.av --module-root self_hosted -- <file.av> <module-root> [guest args...]"
         );
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
@@ -1253,7 +1253,7 @@ pub fn runDemo() -> Result<(), AverStr> {
         )
     };
     {
-        let __provider_arg0: AverStr = AverStr::from("");
+        let __provider_arg0: AverStr = ::aver_rt::str_lit!("");
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Console.print",
@@ -1275,7 +1275,7 @@ pub fn runDemo() -> Result<(), AverStr> {
         )
     };
     {
-        let __provider_arg0: AverStr = AverStr::from("Built-in demos:");
+        let __provider_arg0: AverStr = ::aver_rt::str_lit!("Built-in demos:");
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Console.print",
@@ -1302,7 +1302,7 @@ pub fn runDemo() -> Result<(), AverStr> {
                 let mut __b = aver_rt::Buffer::with_capacity(
                     (aver_rt::AverInt::from_i64(31)).to_usize().unwrap_or(0),
                 );
-                __b.push_str(&AverStr::from("  x=3+4; x*2 = "));
+                __b.push_str(&::aver_rt::str_lit!("  x=3+4; x*2 = "));
                 __b
             };
             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
@@ -1336,7 +1336,7 @@ pub fn runDemo() -> Result<(), AverStr> {
                 let mut __b = aver_rt::Buffer::with_capacity(
                     (aver_rt::AverInt::from_i64(31)).to_usize().unwrap_or(0),
                 );
-                __b.push_str(&AverStr::from("  double(21) = "));
+                __b.push_str(&::aver_rt::str_lit!("  double(21) = "));
                 __b
             };
             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
@@ -1370,7 +1370,7 @@ pub fn runDemo() -> Result<(), AverStr> {
                 let mut __b = aver_rt::Buffer::with_capacity(
                     (aver_rt::AverInt::from_i64(28)).to_usize().unwrap_or(0),
                 );
-                __b.push_str(&AverStr::from("  fib(10) = "));
+                __b.push_str(&::aver_rt::str_lit!("  fib(10) = "));
                 __b
             };
             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(demoFib))));
@@ -1504,7 +1504,7 @@ pub fn findModulePath__indexed(
         } else {
             if (depth < aver_rt::AverInt::from_i64(3)) {
                 {
-                    let __tco1 = (root + &AverStr::from("/.."));
+                    let __tco1 = (root + &::aver_rt::str_lit!("/.."));
                     let __tco2 = depth.add(&aver_rt::AverInt::from_i64(1));
                     root = __tco1;
                     depth = __tco2;
@@ -1524,15 +1524,15 @@ pub fn modulePathFromName__indexed(
     mut __str_index @ _: aver_rt::StringIndex,
 ) -> AverStr {
     crate::cancel_checkpoint();
-    (((moduleRoot + &AverStr::from("/"))
+    (((moduleRoot + &::aver_rt::str_lit!("/"))
         + &dotToSlash__indexed(
             name.clone(),
             aver_rt::AverInt::from_i64(0),
             aver_rt::AverInt::from_i64(name.chars().count() as i64),
-            AverStr::from(""),
+            ::aver_rt::str_lit!(""),
             __str_index,
         ))
-        + &AverStr::from(".av"))
+        + &::aver_rt::str_lit!(".av"))
 }
 
 /// Synthesized indexed worker of `dotToSlash`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
@@ -1553,7 +1553,7 @@ pub fn dotToSlash__indexed(
                     if (&*c == ".") {
                         {
                             let __tco1 = nextPos;
-                            let __tco3 = (acc + &AverStr::from("/"));
+                            let __tco3 = (acc + &::aver_rt::str_lit!("/"));
                             pos = __tco1;
                             acc = __tco3;
                             continue;

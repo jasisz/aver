@@ -169,7 +169,8 @@ pub(super) fn emit_literal(lit: &Literal) -> String {
                 format!("{}.0f64", s)
             }
         }
-        Literal::Str(s) => format!("AverStr::from({:?})", s),
+        // A static node: no allocation each time the literal runs.
+        Literal::Str(s) => format!("::aver_rt::str_lit!({:?})", s),
         Literal::Bool(b) => if *b { "true" } else { "false" }.to_string(),
         Literal::Unit => "()".to_string(),
     }

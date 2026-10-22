@@ -82,7 +82,7 @@ pub fn lookupVar(
     crate::cancel_checkpoint();
     match env.get(&name).cloned() {
         Some(v @ _) => Ok(v),
-        None => Err((AverStr::from("undefined variable: ") + &name)),
+        None => Err((::aver_rt::str_lit!("undefined variable: ") + &name)),
     }
 }
 
@@ -127,7 +127,7 @@ pub fn lookupFnId(fns @ _: &FnStore, name @ _: AverStr) -> Result<aver_rt::AverI
     crate::cancel_checkpoint();
     match fns.nameToId.get(&name).cloned() {
         Some(id @ _) => Ok(id),
-        None => Err((AverStr::from("undefined function: ") + &name)),
+        None => Err((::aver_rt::str_lit!("undefined function: ") + &name)),
     }
 }
 
@@ -145,7 +145,7 @@ pub fn lookupFnById(
                 let mut __b = aver_rt::Buffer::with_capacity(
                     (aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0),
                 );
-                __b.push_str(&AverStr::from("undefined function id: "));
+                __b.push_str(&::aver_rt::str_lit!("undefined function id: "));
                 __b
             };
             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
@@ -178,7 +178,7 @@ pub fn lookupFn(
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::eval::store::lookupFnOption(fns, name.clone()) {
         Some(fd @ _) => Ok(fd),
-        None => Err((AverStr::from("undefined function: ") + &name)),
+        None => Err((::aver_rt::str_lit!("undefined function: ") + &name)),
     }
 }
 

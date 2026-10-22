@@ -24,7 +24,7 @@ fn __mutual_tco_trampoline_1(
         __state = match __state {
             __MutualTco1::MatchPatTupleItemsAcc(mut pats @ _, mut items @ _, mut acc @ _) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(pats, [] => { return Ok(acc) }, [pat, restPats] => { aver_list_match!(items, [] => { return Err(AverStr::from("no match")) }, [item, restItems] => __MutualTco1::MatchPatTupleOne(pat, item, restPats, restItems, acc)) })
+                aver_list_match!(pats, [] => { return Ok(acc) }, [pat, restPats] => { aver_list_match!(items, [] => { return Err(::aver_rt::str_lit!("no match")) }, [item, restItems] => __MutualTco1::MatchPatTupleOne(pat, item, restPats, restItems, acc)) })
             }
             __MutualTco1::MatchPatTupleOne(
                 mut pat @ _,
@@ -136,10 +136,10 @@ pub fn matchPatInt(
                 if (n == m) {
                     Ok(aver_rt::AverList::empty())
                 } else {
-                    Err(AverStr::from("no match"))
+                    Err(::aver_rt::str_lit!("no match"))
                 }
             }
-            _ => Err(AverStr::from("no match")),
+            _ => Err(::aver_rt::str_lit!("no match")),
         }
     }
 }
@@ -158,10 +158,10 @@ pub fn matchPatFloat(
                 if (f == vf) {
                     Ok(aver_rt::AverList::empty())
                 } else {
-                    Err(AverStr::from("no match"))
+                    Err(::aver_rt::str_lit!("no match"))
                 }
             }
-            _ => Err(AverStr::from("no match")),
+            _ => Err(::aver_rt::str_lit!("no match")),
         }
     }
 }
@@ -180,10 +180,10 @@ pub fn matchPatBool(
                 if (b == vb) {
                     Ok(aver_rt::AverList::empty())
                 } else {
-                    Err(AverStr::from("no match"))
+                    Err(::aver_rt::str_lit!("no match"))
                 }
             }
-            _ => Err(AverStr::from("no match")),
+            _ => Err(::aver_rt::str_lit!("no match")),
         }
     }
 }
@@ -202,10 +202,10 @@ pub fn matchPatStr(
                 if (s == vs) {
                     Ok(aver_rt::AverList::empty())
                 } else {
-                    Err(AverStr::from("no match"))
+                    Err(::aver_rt::str_lit!("no match"))
                 }
             }
-            _ => Err(AverStr::from("no match")),
+            _ => Err(::aver_rt::str_lit!("no match")),
         }
     }
 }
@@ -225,11 +225,11 @@ pub fn matchPatEmpty(
                     if __list_subject.is_empty() {
                         Ok(aver_rt::AverList::empty())
                     } else {
-                        Err(AverStr::from("no match"))
+                        Err(::aver_rt::str_lit!("no match"))
                     }
                 }
             }
-            _ => Err(AverStr::from("no match")),
+            _ => Err(::aver_rt::str_lit!("no match")),
         }
     }
 }
@@ -249,7 +249,7 @@ pub fn matchPatCons(
                 {
                     let __list_subject = items;
                     if __list_subject.is_empty() {
-                        Err(AverStr::from("no match"))
+                        Err(::aver_rt::str_lit!("no match"))
                     } else {
                         if let Some((head, tail)) = aver_rt::list_uncons_cloned(__list_subject) {
                             Ok(aver_rt::AverList::from_vec(vec![
@@ -267,7 +267,7 @@ pub fn matchPatCons(
                     }
                 }
             }
-            _ => Err(AverStr::from("no match")),
+            _ => Err(::aver_rt::str_lit!("no match")),
         }
     }
 }
@@ -285,21 +285,21 @@ pub fn matchPatConstructor(
         if &*__dispatch_subject == "Result.Ok" {
             crate::aver_generated::domain::match_mod::matchWrapperPat(
                 v,
-                AverStr::from("Ok"),
+                ::aver_rt::str_lit!("Ok"),
                 bindings,
             )
         } else {
             if &*__dispatch_subject == "Result.Err" {
                 crate::aver_generated::domain::match_mod::matchWrapperPat(
                     v,
-                    AverStr::from("Err"),
+                    ::aver_rt::str_lit!("Err"),
                     bindings,
                 )
             } else {
                 if &*__dispatch_subject == "Option.Some" {
                     crate::aver_generated::domain::match_mod::matchWrapperPat(
                         v,
-                        AverStr::from("Some"),
+                        ::aver_rt::str_lit!("Some"),
                         bindings,
                     )
                 } else {
@@ -329,7 +329,7 @@ pub fn matchPatTuple(
                 let items = __items_fields.0.clone();
                 crate::aver_generated::domain::match_mod::matchPatTupleItems(pats, &items)
             }
-            _ => Err(AverStr::from("no match")),
+            _ => Err(::aver_rt::str_lit!("no match")),
         }
     }
 }
@@ -364,7 +364,7 @@ pub fn matchGenericConstructor(
                     ctorName, fullName, bindings, fields,
                 )
             }
-            _ => Err(AverStr::from("no match")),
+            _ => Err(::aver_rt::str_lit!("no match")),
         }
     }
 }
@@ -383,7 +383,7 @@ pub fn matchGenericCtorCheck(
             bindings, fields,
         ))
     } else {
-        Err(AverStr::from("no match"))
+        Err(::aver_rt::str_lit!("no match"))
     }
 }
 
@@ -453,7 +453,7 @@ pub fn matchWrapperPatDirect(
                             &aver_rt::AverList::from_vec(vec![inner]),
                         ))
                     }
-                    _ => Err(AverStr::from("no match")),
+                    _ => Err(::aver_rt::str_lit!("no match")),
                 }
             }
         } else {
@@ -468,7 +468,7 @@ pub fn matchWrapperPatDirect(
                                 &aver_rt::AverList::from_vec(vec![inner]),
                             ))
                         }
-                        _ => Err(AverStr::from("no match")),
+                        _ => Err(::aver_rt::str_lit!("no match")),
                     }
                 }
             } else {
@@ -485,11 +485,11 @@ pub fn matchWrapperPatDirect(
                                     &aver_rt::AverList::from_vec(vec![inner]),
                                 ))
                             }
-                            _ => Err(AverStr::from("no match")),
+                            _ => Err(::aver_rt::str_lit!("no match")),
                         }
                     }
                 } else {
-                    Err(AverStr::from("no match"))
+                    Err(::aver_rt::str_lit!("no match"))
                 }
             }
         }
@@ -517,13 +517,13 @@ pub fn matchGenericCtorById(
                             bindings, fields,
                         ))
                     } else {
-                        Err(AverStr::from("no match"))
+                        Err(::aver_rt::str_lit!("no match"))
                     }
                 } else {
-                    Err(AverStr::from("no match"))
+                    Err(::aver_rt::str_lit!("no match"))
                 }
             }
-            _ => Err(AverStr::from("no match")),
+            _ => Err(::aver_rt::str_lit!("no match")),
         }
     }
 }
@@ -539,7 +539,7 @@ pub fn matchNonePat(
             crate::aver_generated::domain::value::Val__view::ValNone => {
                 Ok(aver_rt::AverList::empty())
             }
-            _ => Err(AverStr::from("no match")),
+            _ => Err(::aver_rt::str_lit!("no match")),
         }
     }
 }
@@ -565,7 +565,7 @@ pub fn matchWrapperPat(
                             &aver_rt::AverList::from_vec(vec![inner]),
                         ))
                     }
-                    _ => Err(AverStr::from("no match")),
+                    _ => Err(::aver_rt::str_lit!("no match")),
                 }
             }
         } else {
@@ -580,7 +580,7 @@ pub fn matchWrapperPat(
                                 &aver_rt::AverList::from_vec(vec![inner]),
                             ))
                         }
-                        _ => Err(AverStr::from("no match")),
+                        _ => Err(::aver_rt::str_lit!("no match")),
                     }
                 }
             } else {
@@ -597,11 +597,11 @@ pub fn matchWrapperPat(
                                     &aver_rt::AverList::from_vec(vec![inner]),
                                 ))
                             }
-                            _ => Err(AverStr::from("no match")),
+                            _ => Err(::aver_rt::str_lit!("no match")),
                         }
                     }
                 } else {
-                    Err(AverStr::from("no match"))
+                    Err(::aver_rt::str_lit!("no match"))
                 }
             }
         }

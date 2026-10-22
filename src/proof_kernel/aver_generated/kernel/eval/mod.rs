@@ -157,7 +157,7 @@ pub fn typeOf(c @ _: AverStr) -> AverStr {
         &{
             let __n = aver_rt::clamp_list_count(&(aver_rt::AverInt::from_i64(1)));
             ((aver_rt::AverList::from_vec(
-                c.split(&*AverStr::from("."))
+                c.split(&*::aver_rt::str_lit!("."))
                     .map(|s| s.to_string())
                     .collect::<Vec<_>>(),
             ))
@@ -166,7 +166,7 @@ pub fn typeOf(c @ _: AverStr) -> AverStr {
             .drop_first(__n)
         }
         .reverse(),
-        &AverStr::from("."),
+        &::aver_rt::str_lit!("."),
     ))
     .into_aver()
 }

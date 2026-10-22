@@ -38,7 +38,7 @@ pub fn evalVarFallbackNamed(
                     let mut __b = aver_rt::Buffer::with_capacity(
                         (aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0),
                     );
-                    __b.push_str(&AverStr::from("undefined variable: "));
+                    __b.push_str(&::aver_rt::str_lit!("undefined variable: "));
                     __b
                 };
                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));
@@ -51,20 +51,20 @@ pub fn evalVarFallbackNamed(
 /// Internal prefix used to distinguish ? propagation from evaluator runtime errors.
 pub fn propagationPrefix() -> AverStr {
     crate::cancel_checkpoint();
-    AverStr::from("__aver_prop__:")
+    ::aver_rt::str_lit!("__aver_prop__:")
 }
 
 /// Mark a language-level Result.Err so function boundaries can convert it back into a value.
 pub fn wrapPropagatedError(msg @ _: AverStr) -> AverStr {
     crate::cancel_checkpoint();
-    (AverStr::from("__aver_prop__:") + &msg)
+    (::aver_rt::str_lit!("__aver_prop__:") + &msg)
 }
 
 /// Return the propagated payload when the evaluator error is an internal ? marker.
 #[inline(always)]
 pub fn unwrapPropagatedError(err @ _: AverStr) -> Option<AverStr> {
     crate::cancel_checkpoint();
-    let prefix @ _ = AverStr::from("__aver_prop__:");
+    let prefix @ _ = ::aver_rt::str_lit!("__aver_prop__:");
     if err.starts_with(&*prefix) {
         Some(
             (aver_rt::string_slice(
@@ -118,7 +118,7 @@ pub fn lookupField(
         {
             let __list_subject = fields;
             if __list_subject.is_empty() {
-                return Err((AverStr::from("unknown field: ") + &name));
+                return Err((::aver_rt::str_lit!("unknown field: ") + &name));
             } else {
                 if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {

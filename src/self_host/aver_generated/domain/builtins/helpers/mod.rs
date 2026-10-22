@@ -14,11 +14,11 @@ pub fn oneArg(
                 if __list_subject.is_empty() {
                     Ok(a)
                 } else {
-                    Err(AverStr::from("expected 1 argument"))
+                    Err(::aver_rt::str_lit!("expected 1 argument"))
                 }
             }
         } else {
-            Err(AverStr::from("expected 1 argument"))
+            Err(::aver_rt::str_lit!("expected 1 argument"))
         }
     }
 }
@@ -45,15 +45,15 @@ pub fn twoArgs(
                         if __list_subject.is_empty() {
                             Ok((a, b))
                         } else {
-                            Err(AverStr::from("expected 2 arguments"))
+                            Err(::aver_rt::str_lit!("expected 2 arguments"))
                         }
                     }
                 } else {
-                    Err(AverStr::from("expected 2 arguments"))
+                    Err(::aver_rt::str_lit!("expected 2 arguments"))
                 }
             }
         } else {
-            Err(AverStr::from("expected 2 arguments"))
+            Err(::aver_rt::str_lit!("expected 2 arguments"))
         }
     }
 }
@@ -70,7 +70,7 @@ pub fn expectList(
                 let items = __items_fields.0.clone();
                 Ok(items)
             }
-            _ => Err(AverStr::from("expected list argument")),
+            _ => Err(::aver_rt::str_lit!("expected list argument")),
         }
     }
 }
@@ -87,7 +87,7 @@ pub fn expectInt(
                 let n = __n_fields.0.clone();
                 Ok(n)
             }
-            _ => Err(AverStr::from("expected int argument")),
+            _ => Err(::aver_rt::str_lit!("expected int argument")),
         }
     }
 }
@@ -102,7 +102,7 @@ pub fn expectStr(v @ _: &crate::aver_generated::domain::value::Val) -> Result<Av
                 let s = __s_fields.0.clone();
                 Ok(s)
             }
-            _ => Err(AverStr::from("expected string argument")),
+            _ => Err(::aver_rt::str_lit!("expected string argument")),
         }
     }
 }
@@ -121,10 +121,10 @@ pub fn expectBytes(
                 if (&*name == "Bytes") {
                     crate::aver_generated::domain::builtins::helpers::expectBytesFields(fields)
                 } else {
-                    Err(AverStr::from("expected Bytes argument"))
+                    Err(::aver_rt::str_lit!("expected Bytes argument"))
                 }
             }
-            _ => Err(AverStr::from("expected Bytes argument")),
+            _ => Err(::aver_rt::str_lit!("expected Bytes argument")),
         }
     }
 }
@@ -142,7 +142,7 @@ pub fn expectBytesFields(
         {
             let __list_subject = fields;
             if __list_subject.is_empty() {
-                return Err(AverStr::from("expected Bytes argument"));
+                return Err(::aver_rt::str_lit!("expected Bytes argument"));
             } else {
                 if let (Some(field), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
@@ -158,7 +158,7 @@ pub fn expectBytesFields(
                                         return crate::aver_generated::domain::builtins::helpers::expectByteItems__collected(items, aver_rt::int_list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)));
                                     }
                                     _ => {
-                                        return Err(AverStr::from("expected Bytes argument"));
+                                        return Err(::aver_rt::str_lit!("expected Bytes argument"));
                                     }
                                 }
                             }
@@ -212,7 +212,7 @@ pub fn expectByteItems(
                                 }
                             }
                             _ => {
-                                return Err(AverStr::from("expected Bytes argument"));
+                                return Err(::aver_rt::str_lit!("expected Bytes argument"));
                             }
                         }
                     }
@@ -257,7 +257,7 @@ pub fn expectByteItems__collected(
                                 }
                             }
                             _ => {
-                                return Err(AverStr::from("expected Bytes argument"));
+                                return Err(::aver_rt::str_lit!("expected Bytes argument"));
                             }
                         }
                     }

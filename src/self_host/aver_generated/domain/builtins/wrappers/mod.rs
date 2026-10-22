@@ -32,7 +32,7 @@ pub fn call(
                                     let mut __b = aver_rt::Buffer::with_capacity(
                                         (aver_rt::AverInt::from_i64(41)).to_usize().unwrap_or(0),
                                     );
-                                    __b.push_str(&AverStr::from("unknown wrapper builtin: "));
+                                    __b.push_str(&::aver_rt::str_lit!("unknown wrapper builtin: "));
                                     __b
                                 };
                                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
@@ -86,7 +86,9 @@ pub fn builtinResultWithDefault(
                     Ok(inner)
                 }
                 crate::aver_generated::domain::value::Val__view::ValErr(_) => Ok(defV),
-                _ => Err(AverStr::from("Result.withDefault requires Result value")),
+                _ => Err(::aver_rt::str_lit!(
+                    "Result.withDefault requires Result value"
+                )),
             }
         }
     }
@@ -119,7 +121,9 @@ pub fn builtinOptionWithDefault(
                     Ok(inner)
                 }
                 crate::aver_generated::domain::value::Val__view::ValNone => Ok(defV),
-                _ => Err(AverStr::from("Option.withDefault requires Option value")),
+                _ => Err(::aver_rt::str_lit!(
+                    "Option.withDefault requires Option value"
+                )),
             }
         }
     }
@@ -147,7 +151,9 @@ pub fn callResultFromOption(
                         crate::aver_generated::domain::value::Val__ValErr(errV),
                     ))
                 }
-                _ => Err(AverStr::from("Result.fromOption requires Option value")),
+                _ => Err(::aver_rt::str_lit!(
+                    "Result.fromOption requires Option value"
+                )),
             }
         }
     }

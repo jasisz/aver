@@ -925,7 +925,7 @@ pub fn difference(
             &crate::proof_kernel::aver_generated::kernel::ring::readPoly(
                 crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
                     crate::proof_kernel::aver_generated::kernel::term::Term__TOp(
-                        AverStr::from("-"),
+                        ::aver_rt::str_lit!("-"),
                         upper,
                         lower,
                     ),
@@ -939,7 +939,7 @@ pub fn difference(
             &crate::proof_kernel::aver_generated::kernel::ring::readPoly(
                 crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
                     crate::proof_kernel::aver_generated::kernel::term::Term__TOp(
-                        AverStr::from("-"),
+                        ::aver_rt::str_lit!("-"),
                         otherUpper,
                         otherLower,
                     ),
