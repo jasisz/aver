@@ -199,13 +199,18 @@ theorem bodyBytesAtFuncIndex_of_layout {n len : Nat} {L : Layout}
 
 /-! ### Helper function types over the declared layout -/
 
-/-- `roleTypePinned`, with the helper's type index read from the layout. -/
+/-- `roleTypePinned`, with the helper's type index read from the layout.
+    The read is clamped to the table (`min`, a no-op where it is taken): a
+    certificate proof rewrites inside this branch for every role, also an
+    absent one (`idx ≥ 2 ^ 32`), and a kernel that evaluates that dead read
+    would shift by `width * idx` bits, which nanoda does not do cheaply. -/
 def roleTypePinnedL (L : Layout) (n len idx : Nat) (params results : List CertDecode.ValType) :
     Bool :=
   if idx < 4294967296 then
     if L.imports ≤ idx ∧ idx - L.imports < L.count then
       AverCert.WasmSlice.typeSectionMatches
-        (AverCert.WasmSlice.checkFuncTypeExact params results) n len (L.ty (idx - L.imports))
+        (AverCert.WasmSlice.checkFuncTypeExact params results) n len
+        (L.ty (min (idx - L.imports) L.count))
     else false
   else true
 
@@ -215,7 +220,7 @@ theorem roleTypePinned_of_layout {n len : Nat} {L : Layout} (h : layoutConfirmed
   unfold roleTypePinned roleTypePinnedL
   by_cases hin : L.imports ≤ idx ∧ idx - L.imports < L.count
   · rw [funcBindingByFuncIndex_of_layout h hin.1 hin.2]
-    simp [hin]
+    simp [hin, Nat.min_eq_left (Nat.le_of_lt hin.2)]
   · rw [funcBindingByFuncIndex_of_layout_out h hin]
     simp [hin]
 
