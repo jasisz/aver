@@ -6061,67 +6061,12 @@ fn mir_expr_contains_last_use_of_slot(expr: &MirExpr, slot: LocalId) -> bool {
     found
 }
 
-/// Whether evaluating `expr` in an owning (`true`) or borrowing (`false`)
-/// argument position may move the final read of `slot`. Named calls can be
-/// inspected recursively through their callee borrow masks; unfamiliar
-/// compound shapes stay conservative.
-fn mir_expr_may_move_slot(
-    expr: &MirExpr,
-    slot: LocalId,
-    owning_position: bool,
-    ctx: &MirEmitCtx<'_>,
-) -> bool {
-    match expr {
-        MirExpr::Local(local) => owning_position && local.node.slot == slot && local.node.last_use,
-        MirExpr::Project(project) => {
-            // A projection used as a named-call argument is either borrowed
-            // in place or cloned by `mir_clone_arg`; neither moves its base.
-            // Still inspect a compound base because evaluating it may contain
-            // an owning nested call before the projection happens.
-            mir_expr_may_move_slot(&project.node.base.node, slot, false, ctx)
-        }
-        MirExpr::Call(call) => {
-            let MirCallee::Fn(fn_id) = &call.node.callee else {
-                return mir_expr_contains_last_use_of_slot(expr, slot);
-            };
-            let Some(cg) = ctx.codegen else {
-                return mir_expr_contains_last_use_of_slot(expr, slot);
-            };
-            let name = ctx.symbol_table.fn_entry(*fn_id).key.canonical();
-            let nested_mask = callee_borrow_mask(&name, call.node.args.len(), cg);
-            call.node.args.iter().enumerate().any(|(index, arg)| {
-                mir_expr_may_move_slot(
-                    &arg.node,
-                    slot,
-                    !nested_mask.get(index).copied().unwrap_or(false),
-                    ctx,
-                )
-            })
-        }
-        MirExpr::TailCall(call) => {
-            let Some(cg) = ctx.codegen else {
-                return mir_expr_contains_last_use_of_slot(expr, slot);
-            };
-            let name = ctx.symbol_table.fn_entry(call.node.target).key.canonical();
-            let nested_mask = callee_borrow_mask(&name, call.node.args.len(), cg);
-            call.node.args.iter().enumerate().any(|(index, arg)| {
-                mir_expr_may_move_slot(
-                    &arg.node,
-                    slot,
-                    !nested_mask.get(index).copied().unwrap_or(false),
-                    ctx,
-                )
-            })
-        }
-        _ => mir_expr_contains_last_use_of_slot(expr, slot),
-    }
-}
-
 /// Whether borrowing call argument `arg_index` directly would overlap a move
-/// from the same local while Rust evaluates a later argument. A direct later
-/// argument whose callee position is also borrowed cannot move the local; for
-/// a compound later expression, a final read may occur in an owning nested
-/// position, so conservatively detach the earlier borrow.
+/// from the same local while Rust evaluates a later argument. A computed
+/// argument is bound to a local before the call (see `arg_order`), so the
+/// later arguments are mostly variables and fields: only the variable itself
+/// in a position the callee owns (`f(&x, x)`) moves it. A computed argument
+/// left in place may move it at any last read in it.
 fn mir_call_borrow_overlaps_later_move(
     arg_index: usize,
     args: &[Spanned<MirExpr>],
@@ -6151,13 +6096,15 @@ fn mir_call_borrow_overlaps_later_move(
     args.iter()
         .enumerate()
         .skip(arg_index + 1)
-        .any(|(later_index, later)| {
-            mir_expr_may_move_slot(
-                &later.node,
-                local.slot,
-                !borrow_mask.get(later_index).copied().unwrap_or(false),
-                ctx,
-            )
+        .any(|(later_index, later)| match &later.node {
+            MirExpr::Local(read) => {
+                read.node.slot == local.slot
+                    && read.node.last_use
+                    && !borrow_mask.get(later_index).copied().unwrap_or(false)
+            }
+            // A field is borrowed in place or cloned; neither moves its base.
+            MirExpr::Project(_) if projection_root_local(&later.node).is_some() => false,
+            _ => mir_expr_contains_last_use_of_slot(&later.node, local.slot),
         })
 }
 
@@ -6304,9 +6251,9 @@ fn emit_named_call_to(
         let code = emit_mir_expr(a, ctx)?;
         let s = if borrow_mask.get(i).copied().unwrap_or(false) {
             // Rust keeps this borrow live through evaluation of every later
-            // argument. Detach it when a later nested call consumes the same
-            // local (for example `f(x, g(x))` where `f` borrows and `g` owns),
-            // otherwise rustc rejects the valid Aver program with E0505.
+            // argument. Detach it when a later argument moves the same local
+            // (`f(&x, x)`), otherwise rustc rejects the valid Aver program
+            // with E0505.
             let code = if mir_call_borrow_overlaps_later_move(i, args, &borrow_mask, ctx) {
                 materialize_owned(code, &a.node, ctx)
             } else {
