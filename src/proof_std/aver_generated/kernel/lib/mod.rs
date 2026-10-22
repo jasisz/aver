@@ -2428,22 +2428,24 @@ pub fn goalFor(
 ) -> crate::proof_std::aver_generated::kernel::proof::Goal {
     crate::proof_std::cancel_checkpoint();
     crate::proof_std::aver_generated::kernel::wire::withGivens(
-        crate::proof_std::aver_generated::kernel::proof::Goal {
-            obligation: crate::proof_std::aver_generated::kernel::proof::Law {
-                givens: aver_rt::AverList::empty(),
-                ..law.clone()
+        Box::new(
+            crate::proof_std::aver_generated::kernel::proof::Goal__Fields {
+                obligation: crate::proof_std::aver_generated::kernel::proof::Law {
+                    givens: aver_rt::AverList::empty(),
+                    ..law.clone()
+                },
+                finite: aver_rt::AverList::empty(),
+                lists: aver_rt::AverList::empty(),
+                ints: aver_rt::AverList::empty(),
+                defs: aver_rt::AverList::empty(),
+                consts: aver_rt::AverList::empty(),
+                sums: aver_rt::AverList::empty(),
+                recs: aver_rt::AverList::empty(),
+                laws: aver_rt::AverList::empty(),
+                facts: aver_rt::AverList::empty(),
+                hyps: aver_rt::AverList::empty(),
             },
-            finite: aver_rt::AverList::empty(),
-            lists: aver_rt::AverList::empty(),
-            ints: aver_rt::AverList::empty(),
-            defs: aver_rt::AverList::empty(),
-            consts: aver_rt::AverList::empty(),
-            sums: aver_rt::AverList::empty(),
-            recs: aver_rt::AverList::empty(),
-            laws: aver_rt::AverList::empty(),
-            facts: aver_rt::AverList::empty(),
-            hyps: aver_rt::AverList::empty(),
-        },
+        ),
         &law.givens,
     )
 }

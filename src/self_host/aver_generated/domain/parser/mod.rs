@@ -775,7 +775,7 @@ pub fn parseFnDefBodyIndented(
     {
         let (stmts, pos3) = sr;
         Ok((
-            crate::aver_generated::domain::ast::FnDef {
+            Box::new(crate::aver_generated::domain::ast::FnDef__Fields {
                 name: name,
                 params: params.clone(),
                 body: stmts.reverse(),
@@ -783,7 +783,7 @@ pub fn parseFnDefBodyIndented(
                 slotMap: HashMap::new(),
                 fastPath: crate::aver_generated::domain::ast::FnFastPath::FastNone,
                 tailLoop: false,
-            },
+            }),
             pos3,
         ))
     }
@@ -806,7 +806,7 @@ pub fn parseFnDefBodyFlat(
     {
         let (stmts, pos3) = sr;
         Ok((
-            crate::aver_generated::domain::ast::FnDef {
+            Box::new(crate::aver_generated::domain::ast::FnDef__Fields {
                 name: name,
                 params: params.clone(),
                 body: stmts.reverse(),
@@ -814,7 +814,7 @@ pub fn parseFnDefBodyFlat(
                 slotMap: HashMap::new(),
                 fastPath: crate::aver_generated::domain::ast::FnFastPath::FastNone,
                 tailLoop: false,
-            },
+            }),
             pos3,
         ))
     }

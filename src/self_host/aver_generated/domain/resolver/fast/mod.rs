@@ -47,7 +47,7 @@ pub fn annotateFastFn(
         .get(&fd.name)
         .cloned()
         .unwrap_or(aver_rt::AverInt::from_i64(-1));
-    crate::aver_generated::domain::ast::FnDef {
+    Box::new(crate::aver_generated::domain::ast::FnDef__Fields {
         name: fd.name.clone(),
         params: fd.params.clone(),
         body: fd.body.clone(),
@@ -55,7 +55,7 @@ pub fn annotateFastFn(
         slotMap: fd.slotMap.clone(),
         fastPath: crate::aver_generated::domain::resolver::fast::classifyFastPath(&fd.body),
         tailLoop: crate::aver_generated::domain::resolver::fast::classifyTailLoop(selfId, &fd.body),
-    }
+    })
 }
 
 /// Precompute whether the final expression position can self-tail-call directly.

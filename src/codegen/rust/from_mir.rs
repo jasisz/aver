@@ -170,6 +170,21 @@ pub struct MirEmitCtx<'a> {
     /// Locals some movable projection takes a field out of; see
     /// [`crate::ir::mir::field_moves::moved_roots`].
     pub moved_roots: &'a HashSet<crate::ir::mir::LocalId>,
+    /// See [`crate::ir::mir::field_moves::moved_paths`].
+    pub moved_paths: &'a [(usize, crate::ir::mir::LocalId, Vec<String>)],
+    /// The boxed records whose new field values are being emitted, each
+    /// already bound under its own name (see [`emit_boxed_record_update`]).
+    pub record_alias: Option<&'a RecordAlias<'a>>,
+}
+
+/// A record place (`s`, `r.st`) an update of a boxed record has moved into
+/// a binding of its own, so its new field values read the record there.
+#[derive(Clone, Copy)]
+pub struct RecordAlias<'a> {
+    place: &'a MirExpr,
+    name: &'a str,
+    depth: usize,
+    outer: Option<&'a RecordAlias<'a>>,
 }
 
 impl<'a> MirEmitCtx<'a> {
@@ -203,6 +218,8 @@ impl<'a> MirEmitCtx<'a> {
             try_err_to_string: false,
             movable_projections: empty_addr_set(),
             moved_roots: empty_slot_set(),
+            moved_paths: &[],
+            record_alias: None,
         }
     }
 
@@ -250,6 +267,8 @@ impl<'a> MirEmitCtx<'a> {
             try_err_to_string: false,
             movable_projections: &policy.movable_projections,
             moved_roots: &policy.moved_roots,
+            moved_paths: &policy.moved_paths,
+            record_alias: None,
         }
     }
 
@@ -284,6 +303,8 @@ impl<'a> MirEmitCtx<'a> {
             try_err_to_string: false,
             movable_projections: &policy.movable_projections,
             moved_roots: &policy.moved_roots,
+            moved_paths: &policy.moved_paths,
+            record_alias: None,
         }
     }
 
@@ -426,6 +447,8 @@ pub(super) struct MirFnEmitPolicy {
     pub movable_projections: HashSet<usize>,
     /// See [`MirEmitCtx::moved_roots`].
     pub moved_roots: HashSet<crate::ir::mir::LocalId>,
+    /// See [`MirEmitCtx::moved_paths`].
+    pub moved_paths: Vec<(usize, crate::ir::mir::LocalId, Vec<String>)>,
 }
 
 impl MirFnEmitPolicy {
@@ -443,6 +466,7 @@ impl MirFnEmitPolicy {
             current_module_scope: None,
             movable_projections: HashSet::new(),
             moved_roots: HashSet::new(),
+            moved_paths: Vec::new(),
         }
     }
 
@@ -480,6 +504,7 @@ impl MirFnEmitPolicy {
             current_module_scope: scope.map(String::from),
             movable_projections: HashSet::new(),
             moved_roots: HashSet::new(),
+            moved_paths: Vec::new(),
         }
     }
 
@@ -495,6 +520,8 @@ impl MirFnEmitPolicy {
             crate::ir::mir::field_moves::movable_projections(&mir_fn.body.node, builtins);
         self.moved_roots =
             crate::ir::mir::field_moves::moved_roots(&mir_fn.body.node, &self.movable_projections);
+        self.moved_paths =
+            crate::ir::mir::field_moves::moved_paths(&mir_fn.body.node, &self.movable_projections);
     }
 
     /// Apply the Int "unboxing" facts to this policy: clone the per-fn
@@ -1709,6 +1736,11 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 _ => Some(emit_literal(&lit.node)),
             }
         }
+        MirExpr::Local(_) | MirExpr::Project(_)
+            if let Some(name) = record_alias_for(&expr.node, emit_ctx) =>
+        {
+            Some(name.to_string())
+        }
         MirExpr::Local(spanned_local) => {
             let name = &spanned_local.node.name;
             if name.is_empty() {
@@ -2197,6 +2229,12 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 }
                 parts.push(format!("{}: {}", aver_name_to_rust(&f.name), val));
             }
+            if record_is_boxed(rec.type_id, &rec.type_name, emit_ctx) {
+                return Some(format!(
+                    "Box::new({rust_type}__Fields {{ {} }})",
+                    parts.join(", ")
+                ));
+            }
             Some(format!("{} {{ {} }}", rust_type, parts.join(", ")))
         }
         MirExpr::RecordUpdate(spanned_upd) => {
@@ -2210,22 +2248,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             let Some(packed_u8) = packed_u8_carrier(upd.type_id, &upd.type_name, emit_ctx) else {
                 return Some(unresolved_packed_carrier(&upd.type_name, emit_ctx));
             };
-            let mut parts = Vec::with_capacity(upd.updates.len());
-            let mut moved_replaced_field = false;
-            for f in &upd.updates {
-                let update_base = local_of(&upd.base.node).map(|base| base.slot);
-                let val = match emit_owned_record_field_successor(update_base, f, emit_ctx) {
-                    Some(val) => {
-                        moved_replaced_field = true;
-                        val
-                    }
-                    None => {
-                        mir_clone_arg(emit_mir_expr(&f.value, emit_ctx)?, &f.value.node, emit_ctx)
-                    }
-                };
-                let val = if packed_u8 { pack_u8_list(val) } else { val };
-                parts.push((aver_name_to_rust(&f.name), val));
-            }
+            let (parts, moved_replaced_field) = emit_update_parts(upd, packed_u8, emit_ctx)?;
             // A specialized field successor partially moves the replaced
             // field from an owned record. The `..base` update then moves only
             // the remaining fields, which Rust permits. Cloning `base` here
@@ -2234,6 +2257,16 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             let owned_final_base = local_of(&upd.base.node)
                 .is_some_and(|base| super::ownership::root_is_owned(base, emit_ctx))
                 && crate::ir::mir::field_moves::update_base_is_final(upd);
+            if record_is_boxed(upd.type_id, &upd.type_name, emit_ctx) {
+                let base = if moved_replaced_field || owned_final_base {
+                    emitted_base.clone()
+                } else {
+                    mir_clone_arg(emitted_base.clone(), &upd.base.node, emit_ctx)
+                };
+                let moved = base == emitted_base;
+                let record = format!("{rust_type}__Fields");
+                return emit_boxed_record_update(upd, &record, parts, moved, &base, emit_ctx);
+            }
             if owned_final_base
                 && !moved_replaced_field
                 && local_of(&upd.base.node)
@@ -2420,6 +2453,162 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
 /// moves only the remaining fields. The exact same-field guard is load-bearing;
 /// moving `store.values` to initialize a *different* field would leave
 /// `..store` needing an already-moved field.
+/// The new field values of `T.update(base, …)` as `(field, value)`, and
+/// whether a value took its field out of the base (an owned successor).
+fn emit_update_parts(
+    upd: &crate::ir::mir::MirRecordUpdate,
+    packed_u8: bool,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<(Vec<(String, String)>, bool)> {
+    let mut parts = Vec::with_capacity(upd.updates.len());
+    let mut moved_replaced_field = false;
+    for f in &upd.updates {
+        let update_base = local_of(&upd.base.node).map(|base| base.slot);
+        let val = match emit_owned_record_field_successor(update_base, f, ctx) {
+            Some(val) => {
+                moved_replaced_field = true;
+                val
+            }
+            None => mir_clone_arg(emit_mir_expr(&f.value, ctx)?, &f.value.node, ctx),
+        };
+        let val = if packed_u8 { pack_u8_list(val) } else { val };
+        parts.push((aver_name_to_rust(&f.name), val));
+    }
+    Some((parts, moved_replaced_field))
+}
+
+/// Whether the record type of a literal or update is kept behind a `Box`
+/// (see [`super::representation::is_boxed_record`]).
+fn record_is_boxed(id: Option<crate::ir::TypeId>, name: &str, ctx: &MirEmitCtx<'_>) -> bool {
+    ctx.codegen.is_some_and(|cg| {
+        super::representation::type_is_boxed_record(id, name, cg, ctx.current_module_scope)
+    })
+}
+
+/// `T.update(base, f = v, …)` of a boxed record. A base that is cloned or
+/// computed is a box of its own: its fields are written in turn. A base
+/// that moves (`moved`, the record's last use) keeps its box, which takes
+/// the new values in place:
+/// - a record held by an owned parameter (a `mut` binding) is written
+///   where it is, after the values run, as Rust's `..base` would;
+/// - any other moves into a binding first, and the values read it there,
+///   unless a field of it moved out earlier or a value reads the local
+///   that holds it as a whole;
+/// - otherwise the fields go into a new box.
+fn emit_boxed_record_update(
+    upd: &crate::ir::mir::MirRecordUpdate,
+    record: &str,
+    parts: Vec<(String, String)>,
+    moved: bool,
+    base: &str,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    let depth = ctx.record_alias.map_or(0, |alias| alias.depth + 1);
+    let name = format!("__record{depth}");
+    // Every value runs before any field is written, since a value may
+    // read the old value of another replaced field.
+    let write = |target: &str, parts: &[(String, String)]| match parts {
+        [(field, value)] => format!("{target}.{field} = {value}; "),
+        _ => {
+            let values: String = parts
+                .iter()
+                .enumerate()
+                .map(|(i, (_, value))| format!("let __field{i} = {value}; "))
+                .collect();
+            let writes: String = parts
+                .iter()
+                .enumerate()
+                .map(|(i, (field, _))| format!("{target}.{field} = __field{i}; "))
+                .collect();
+            values + &writes
+        }
+    };
+    let in_binding = |parts: &[(String, String)]| {
+        format!(
+            "{{ let mut {name} = {base}; {}{name} }}",
+            write(&name, parts)
+        )
+    };
+    let place = crate::ir::mir::field_moves::projection_root(&upd.base.node);
+    let holder = projection_root_local(&upd.base.node);
+    let (Some((root, _, path)), Some(holder)) = (place.filter(|_| moved), holder) else {
+        return Some(in_binding(&parts));
+    };
+    if ctx.is_owned_param(&aver_name_to_rust(&holder.name)) {
+        return Some(format!("{{ {}{base} }}", write(base, &parts)));
+    }
+    fn addresses(expr: &MirExpr, out: &mut HashSet<usize>) {
+        out.insert(expr as *const MirExpr as usize);
+        crate::ir::mir::expr::walk_children(expr, &mut |child| addresses(child, out));
+    }
+    let mut inside = HashSet::from([&upd.base.node as *const MirExpr as usize]);
+    for field in &upd.updates {
+        addresses(&field.value.node, &mut inside);
+    }
+    let moved_before = ctx.moved_paths.iter().any(|(addr, slot, moved)| {
+        *slot == root && moved.starts_with(&path) && !inside.contains(addr)
+    });
+    let beside = upd
+        .updates
+        .iter()
+        .any(|field| reads_record_holder(&field.value.node, root, &path));
+    if !moved_before && !beside {
+        let alias = RecordAlias {
+            place: &upd.base.node,
+            name: &name,
+            depth,
+            outer: ctx.record_alias,
+        };
+        let inner = MirEmitCtx {
+            record_alias: Some(&alias),
+            ..*ctx
+        };
+        let (parts, _) = emit_update_parts(upd, false, &inner)?;
+        return Some(in_binding(&parts));
+    }
+    let fields: Vec<String> = parts.iter().map(|(f, v)| format!("{f}: {v}")).collect();
+    Some(format!(
+        "Box::new({record} {{ {}, ..*{base} }})",
+        fields.join(", ")
+    ))
+}
+
+/// Whether `expr` reads the local `root` other than through `path` or a
+/// path beside it: as a whole, or through a field `path` lies under.
+fn reads_record_holder(expr: &MirExpr, root: crate::ir::mir::LocalId, path: &[String]) -> bool {
+    if let Some((slot, _, read)) = crate::ir::mir::field_moves::projection_root(expr) {
+        return slot == root && read.len() < path.len() && path.starts_with(&read);
+    }
+    let mut found = false;
+    crate::ir::mir::expr::walk_children(expr, &mut |child| {
+        found = found || reads_record_holder(child, root, path);
+    });
+    found
+}
+
+/// The name an enclosing boxed-record update bound `expr` to, when `expr`
+/// is the place it moved (see [`RecordAlias`]).
+fn record_alias_for<'a>(expr: &MirExpr, ctx: &MirEmitCtx<'a>) -> Option<&'a str> {
+    let mut alias = ctx.record_alias;
+    while let Some(a) = alias {
+        if same_place(expr, a.place) {
+            return Some(a.name);
+        }
+        alias = a.outer;
+    }
+    None
+}
+
+fn same_place(a: &MirExpr, b: &MirExpr) -> bool {
+    match (a, b) {
+        (MirExpr::Local(x), MirExpr::Local(y)) => x.node.slot == y.node.slot,
+        (MirExpr::Project(x), MirExpr::Project(y)) => {
+            x.node.field == y.node.field && same_place(&x.node.base.node, &y.node.base.node)
+        }
+        _ => false,
+    }
+}
+
 fn emit_owned_record_field_successor(
     required_base: Option<LocalId>,
     field: &crate::ir::mir::MirRecordField,
@@ -7347,6 +7536,8 @@ mod tests {
             try_err_to_string: false,
             movable_projections: &policy.movable_projections,
             moved_roots: &policy.moved_roots,
+            moved_paths: &policy.moved_paths,
+            record_alias: None,
         };
         let lit = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
         assert_eq!(
@@ -8468,6 +8659,8 @@ mod tests {
             try_err_to_string: false,
             movable_projections: &policy.movable_projections,
             moved_roots: &policy.moved_roots,
+            moved_paths: &policy.moved_paths,
+            record_alias: None,
         }
     }
 

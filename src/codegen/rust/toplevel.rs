@@ -2,8 +2,8 @@ use super::emit_ctx::{EmitCtx, should_borrow_param};
 use super::expr::{aver_name_to_rust, classify_thin_fn_def_for_rust, explicit_parameter_pattern};
 use super::representation::{
     RepresentationCapabilities, RepresentationContract, cheap_fields_first, hands_over,
-    is_thin_sum, on_cycle, shared_variants, type_def_contract, variant_field_refs, walking_def,
-    walks,
+    is_boxed_record, is_thin_sum, on_cycle, shared_variants, type_def_contract, variant_field_refs,
+    walking_def, walks,
 };
 use super::types::type_annotation_to_rust_scoped;
 use crate::ast::*;
@@ -96,6 +96,7 @@ fn emit_type_def_with_visibility(td: &TypeDef, public: bool, ctx: &CodegenContex
             scope,
             walking_def(td, ctx),
             on_cycle(td, ctx),
+            is_boxed_record(td, ctx),
             representation,
         ),
     }
@@ -676,11 +677,22 @@ fn emit_product_type(
     scope: Option<&str>,
     walking: bool,
     cyclic: bool,
+    boxed: bool,
     representation: RepresentationContract,
 ) -> String {
     let packed_u8 = super::uses_packed_u8(ctx, name);
     let mut out = String::new();
     let visibility = visibility_prefix(public);
+    // A boxed record (see `is_boxed_record`) keeps its fields in
+    // `{name}__Fields`, and `{name}` names the box.
+    let display_name = name;
+    let fields_name = format!("{name}__Fields");
+    let name = if boxed {
+        writeln!(out, "{visibility}type {name} = Box<{fields_name}>;\n").unwrap();
+        fields_name.as_str()
+    } else {
+        name
+    };
     let capabilities = representation.capabilities;
     let types: Vec<&str> = fields.iter().map(|(_, ty)| ty.as_str()).collect();
     let eq_order = capabilities
@@ -800,12 +812,17 @@ fn emit_product_type(
             .collect();
         if fields.len() == 1 {
             // Single field: direct format without vec![].join() allocation
-            writeln!(out, "        format!(\"{}({{}})\", {})", name, parts[0]).unwrap();
+            writeln!(
+                out,
+                "        format!(\"{}({{}})\", {})",
+                display_name, parts[0]
+            )
+            .unwrap();
         } else {
             writeln!(
                 out,
                 "        format!(\"{}({{}})\", vec![{}].join(\", \"))",
-                name,
+                display_name,
                 parts.join(", ")
             )
             .unwrap();

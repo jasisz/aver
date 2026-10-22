@@ -80,7 +80,7 @@ pub fn resolveCallsInFn(
     fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::FnDef {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::ast::FnDef {
+    Box::new(crate::aver_generated::domain::ast::FnDef__Fields {
         name: fd.name.clone(),
         params: fd.params.clone(),
         body: crate::aver_generated::domain::resolver::calls::resolveCallsInStmts__collected(
@@ -92,7 +92,7 @@ pub fn resolveCallsInFn(
         slotMap: fd.slotMap.clone(),
         fastPath: fd.fastPath.clone(),
         tailLoop: fd.tailLoop,
-    }
+    })
 }
 
 /// Resolve calls in a list of statements.

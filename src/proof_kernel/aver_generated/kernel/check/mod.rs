@@ -2,8 +2,10 @@
 use crate::proof_kernel::*;
 use ::aver_rt::aver_list_match;
 
+pub type Env = Box<Env__Fields>;
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Env {
+pub struct Env__Fields {
     pub defs: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
     pub consts: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
     pub laws: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Law>,
@@ -14,13 +16,13 @@ pub struct Env {
     pub sigs: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::FnSig>,
 }
 
-impl PartialOrd for Env {
+impl PartialOrd for Env__Fields {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for Env {
+impl Ord for Env__Fields {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         std::cmp::Ordering::Equal
             .then_with(|| self.consts.cmp(&other.consts))
@@ -34,7 +36,7 @@ impl Ord for Env {
     }
 }
 
-impl aver_rt::AverDisplay for Env {
+impl aver_rt::AverDisplay for Env__Fields {
     fn aver_display(&self) -> String {
         format!(
             "Env({})",
@@ -1110,7 +1112,7 @@ fn __mutual_tco_trampoline_7(mut __state: __MutualTco7) -> Result<(), AverStr> {
         __state = match __state {
             __MutualTco7::CheckFacts(mut fs @ _, mut earlier @ _) => {
                 crate::proof_kernel::cancel_checkpoint();
-                aver_list_match!(fs, [] => { return Ok(()) }, [f, rest] => __MutualTco7::CheckFactThen(crate::proof_kernel::aver_generated::kernel::check::checkScript(&crate::proof_kernel::aver_generated::kernel::proof::Script { obligation: f.law.clone(), defs: aver_rt::AverList::empty(), consts: aver_rt::AverList::empty(), sums: aver_rt::AverList::empty(), recs: aver_rt::AverList::empty(), sigs: aver_rt::AverList::empty(), laws: earlier.clone(), facts: aver_rt::AverList::empty(), proof: f.proof }), f.law.clone(), rest, earlier))
+                aver_list_match!(fs, [] => { return Ok(()) }, [f, rest] => __MutualTco7::CheckFactThen(crate::proof_kernel::aver_generated::kernel::check::checkScript(&Box::new(crate::proof_kernel::aver_generated::kernel::proof::Script__Fields { obligation: f.law.clone(), defs: aver_rt::AverList::empty(), consts: aver_rt::AverList::empty(), sums: aver_rt::AverList::empty(), recs: aver_rt::AverList::empty(), sigs: aver_rt::AverList::empty(), laws: earlier.clone(), facts: aver_rt::AverList::empty(), proof: f.proof })), f.law.clone(), rest, earlier))
             }
             __MutualTco7::CheckFactThen(
                 mut done @ _,
@@ -1179,29 +1181,33 @@ pub fn checkFactThen(
 /// No definitions, laws or hypotheses.
 pub fn emptyEnv() -> Env {
     crate::proof_kernel::cancel_checkpoint();
-    crate::proof_kernel::aver_generated::kernel::check::Env {
-        defs: aver_rt::AverList::empty(),
-        consts: aver_rt::AverList::empty(),
-        laws: aver_rt::AverList::empty(),
-        hyps: aver_rt::AverList::empty(),
-        vars: aver_rt::AverList::empty(),
-        sums: aver_rt::AverList::empty(),
-        recs: aver_rt::AverList::empty(),
-        sigs: aver_rt::AverList::empty(),
-    }
+    Box::new(
+        crate::proof_kernel::aver_generated::kernel::check::Env__Fields {
+            defs: aver_rt::AverList::empty(),
+            consts: aver_rt::AverList::empty(),
+            laws: aver_rt::AverList::empty(),
+            hyps: aver_rt::AverList::empty(),
+            vars: aver_rt::AverList::empty(),
+            sums: aver_rt::AverList::empty(),
+            recs: aver_rt::AverList::empty(),
+            sigs: aver_rt::AverList::empty(),
+        },
+    )
 }
 
 /// What typing a term needs from the environment.
 pub fn tyEnv(env @ _: &Env) -> crate::proof_kernel::aver_generated::kernel::types::TyEnv {
     crate::proof_kernel::cancel_checkpoint();
-    crate::proof_kernel::aver_generated::kernel::types::TyEnv {
-        vars: env.vars.clone(),
-        defs: env.defs.clone(),
-        consts: env.consts.clone(),
-        sums: env.sums.clone(),
-        recs: env.recs.clone(),
-        sigs: env.sigs.clone(),
-    }
+    Box::new(
+        crate::proof_kernel::aver_generated::kernel::types::TyEnv__Fields {
+            vars: env.vars.clone(),
+            defs: env.defs.clone(),
+            consts: env.consts.clone(),
+            sums: env.sums.clone(),
+            recs: env.recs.clone(),
+            sigs: env.sigs.clone(),
+        },
+    )
 }
 
 /// The environment with these variables in front.
@@ -1210,16 +1216,18 @@ pub fn withVars(
     vs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar>,
 ) -> Env {
     crate::proof_kernel::cancel_checkpoint();
-    crate::proof_kernel::aver_generated::kernel::check::Env {
-        defs: env.defs.clone(),
-        consts: env.consts.clone(),
-        laws: env.laws.clone(),
-        hyps: env.hyps.clone(),
-        vars: aver_rt::AverList::concat(&vs.clone(), &env.vars.clone()),
-        sums: env.sums.clone(),
-        recs: env.recs.clone(),
-        sigs: env.sigs.clone(),
-    }
+    Box::new(
+        crate::proof_kernel::aver_generated::kernel::check::Env__Fields {
+            defs: env.defs.clone(),
+            consts: env.consts.clone(),
+            laws: env.laws.clone(),
+            hyps: env.hyps.clone(),
+            vars: aver_rt::AverList::concat(&vs.clone(), &env.vars.clone()),
+            sums: env.sums.clone(),
+            recs: env.recs.clone(),
+            sigs: env.sigs.clone(),
+        },
+    )
 }
 
 /// The type of a term, a refusal naming the step when it has none.
@@ -2225,40 +2233,42 @@ pub fn splitConstructors(
 /// A given x of a declared sum C with bare constructors C.A and C.B.
 pub fn sumEnv() -> Env {
     crate::proof_kernel::cancel_checkpoint();
-    crate::proof_kernel::aver_generated::kernel::check::Env {
-        defs: aver_rt::AverList::empty(),
-        consts: aver_rt::AverList::empty(),
-        laws: aver_rt::AverList::empty(),
-        hyps: aver_rt::AverList::empty(),
-        vars: aver_rt::AverList::from_vec(vec![
-            crate::proof_kernel::aver_generated::kernel::term::typed(
-                AverStr::from("x"),
-                crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(
-                    crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(AverStr::from(
-                        "C",
-                    )),
+    Box::new(
+        crate::proof_kernel::aver_generated::kernel::check::Env__Fields {
+            defs: aver_rt::AverList::empty(),
+            consts: aver_rt::AverList::empty(),
+            laws: aver_rt::AverList::empty(),
+            hyps: aver_rt::AverList::empty(),
+            vars: aver_rt::AverList::from_vec(vec![
+                crate::proof_kernel::aver_generated::kernel::term::typed(
+                    AverStr::from("x"),
+                    crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(
+                        crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(
+                            AverStr::from("C"),
+                        ),
+                    ),
                 ),
-            ),
-        ]),
-        sums: aver_rt::AverList::from_vec(vec![
-            crate::proof_kernel::aver_generated::kernel::proof::Sum {
-                name: AverStr::from("C"),
-                eq: false,
-                variants: aver_rt::AverList::from_vec(vec![
-                    crate::proof_kernel::aver_generated::kernel::proof::Variant {
-                        name: AverStr::from("C.A"),
-                        fields: aver_rt::AverList::empty(),
-                    },
-                    crate::proof_kernel::aver_generated::kernel::proof::Variant {
-                        name: AverStr::from("C.B"),
-                        fields: aver_rt::AverList::empty(),
-                    },
-                ]),
-            },
-        ]),
-        recs: aver_rt::AverList::empty(),
-        sigs: aver_rt::AverList::empty(),
-    }
+            ]),
+            sums: aver_rt::AverList::from_vec(vec![
+                crate::proof_kernel::aver_generated::kernel::proof::Sum {
+                    name: AverStr::from("C"),
+                    eq: false,
+                    variants: aver_rt::AverList::from_vec(vec![
+                        crate::proof_kernel::aver_generated::kernel::proof::Variant {
+                            name: AverStr::from("C.A"),
+                            fields: aver_rt::AverList::empty(),
+                        },
+                        crate::proof_kernel::aver_generated::kernel::proof::Variant {
+                            name: AverStr::from("C.B"),
+                            fields: aver_rt::AverList::empty(),
+                        },
+                    ]),
+                },
+            ]),
+            recs: aver_rt::AverList::empty(),
+            sigs: aver_rt::AverList::empty(),
+        },
+    )
 }
 
 /// For each case, its names with the types of its constructor's fields over the type split on.
@@ -2743,27 +2753,29 @@ pub fn withHyp(
     value @ _: bool,
 ) -> Env {
     crate::proof_kernel::cancel_checkpoint();
-    crate::proof_kernel::aver_generated::kernel::check::Env {
-        defs: env.defs.clone(),
-        consts: env.consts.clone(),
-        laws: env.laws.clone(),
-        hyps: aver_rt::AverList::prepend(
-            crate::proof_kernel::aver_generated::kernel::proof::Hyp {
-                name: h,
-                eqn: crate::proof_kernel::aver_generated::kernel::term::Eqn {
-                    lhs: on,
-                    rhs: crate::proof_kernel::aver_generated::kernel::term::Term::TBool(
-                        crate::proof_kernel::aver_generated::kernel::term::Term__TBool(value),
-                    ),
+    Box::new(
+        crate::proof_kernel::aver_generated::kernel::check::Env__Fields {
+            defs: env.defs.clone(),
+            consts: env.consts.clone(),
+            laws: env.laws.clone(),
+            hyps: aver_rt::AverList::prepend(
+                crate::proof_kernel::aver_generated::kernel::proof::Hyp {
+                    name: h,
+                    eqn: crate::proof_kernel::aver_generated::kernel::term::Eqn {
+                        lhs: on,
+                        rhs: crate::proof_kernel::aver_generated::kernel::term::Term::TBool(
+                            crate::proof_kernel::aver_generated::kernel::term::Term__TBool(value),
+                        ),
+                    },
                 },
-            },
-            &env.hyps.clone(),
-        ),
-        vars: env.vars.clone(),
-        sums: env.sums.clone(),
-        recs: env.recs.clone(),
-        sigs: env.sigs.clone(),
-    }
+                &env.hyps.clone(),
+            ),
+            vars: env.vars.clone(),
+            sums: env.sums.clone(),
+            recs: env.recs.clone(),
+            sigs: env.sigs.clone(),
+        },
+    )
 }
 
 /// A comparison decided by linear arithmetic over the integers: its opposite and the named hypotheses, then the rows the cuts round from them, weighted, add up to a negative constant. Every row compares two Int terms.
@@ -3141,16 +3153,18 @@ pub fn withHyps(
     hs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
 ) -> Env {
     crate::proof_kernel::cancel_checkpoint();
-    crate::proof_kernel::aver_generated::kernel::check::Env {
-        defs: env.defs.clone(),
-        consts: env.consts.clone(),
-        laws: env.laws.clone(),
-        hyps: hs.clone(),
-        vars: env.vars.clone(),
-        sums: env.sums.clone(),
-        recs: env.recs.clone(),
-        sigs: env.sigs.clone(),
-    }
+    Box::new(
+        crate::proof_kernel::aver_generated::kernel::check::Env__Fields {
+            defs: env.defs.clone(),
+            consts: env.consts.clone(),
+            laws: env.laws.clone(),
+            hyps: hs.clone(),
+            vars: env.vars.clone(),
+            sums: env.sums.clone(),
+            recs: env.recs.clone(),
+            sigs: env.sigs.clone(),
+        },
+    )
 }
 
 /// A module-level binding's value: the variable that reads it equals the value the script carries.
@@ -4607,19 +4621,23 @@ pub fn checkScript(
         s.facts.clone(),
         aver_rt::AverList::empty(),
     )?;
-    let env @ _ = crate::proof_kernel::aver_generated::kernel::check::Env {
-        defs: s.defs.clone(),
-        consts: s.consts.clone(),
-        laws: aver_rt::AverList::concat(
-            &s.laws.clone(),
-            &crate::proof_kernel::aver_generated::kernel::check::factLaws(&s.facts),
-        ),
-        hyps: crate::proof_kernel::aver_generated::kernel::check::lawHyps(&s.obligation),
-        vars: crate::proof_kernel::aver_generated::kernel::types::rigidVars(&s.obligation.givens),
-        sums: s.sums.clone(),
-        recs: s.recs.clone(),
-        sigs: s.sigs.clone(),
-    };
+    let env @ _ = Box::new(
+        crate::proof_kernel::aver_generated::kernel::check::Env__Fields {
+            defs: s.defs.clone(),
+            consts: s.consts.clone(),
+            laws: aver_rt::AverList::concat(
+                &s.laws.clone(),
+                &crate::proof_kernel::aver_generated::kernel::check::factLaws(&s.facts),
+            ),
+            hyps: crate::proof_kernel::aver_generated::kernel::check::lawHyps(&s.obligation),
+            vars: crate::proof_kernel::aver_generated::kernel::types::rigidVars(
+                &s.obligation.givens,
+            ),
+            sums: s.sums.clone(),
+            recs: s.recs.clone(),
+            sigs: s.sigs.clone(),
+        },
+    );
     crate::proof_kernel::aver_generated::kernel::check::statementTyped(&s.obligation, &env)?;
     let e @ _ = crate::proof_kernel::aver_generated::kernel::check::conclude(
         s.proof.clone(),
@@ -6669,22 +6687,24 @@ pub fn lenCase(
     crate::proof_kernel::aver_generated::kernel::check::caseProves(
         c,
         &claim,
-        crate::proof_kernel::aver_generated::kernel::check::Env {
-            defs: env.defs.clone(),
-            consts: env.consts.clone(),
-            laws: aver_rt::AverList::prepend(ih.clone(), &env.laws.clone()),
-            hyps: hyps,
-            vars: aver_rt::AverList::prepend(
-                crate::proof_kernel::aver_generated::kernel::term::typed(
-                    n,
-                    crate::proof_kernel::aver_generated::kernel::term::Ty::TyInt,
+        Box::new(
+            crate::proof_kernel::aver_generated::kernel::check::Env__Fields {
+                defs: env.defs.clone(),
+                consts: env.consts.clone(),
+                laws: aver_rt::AverList::prepend(ih.clone(), &env.laws.clone()),
+                hyps: hyps,
+                vars: aver_rt::AverList::prepend(
+                    crate::proof_kernel::aver_generated::kernel::term::typed(
+                        n,
+                        crate::proof_kernel::aver_generated::kernel::term::Ty::TyInt,
+                    ),
+                    &env.vars.clone(),
                 ),
-                &env.vars.clone(),
-            ),
-            sums: env.sums.clone(),
-            recs: env.recs.clone(),
-            sigs: env.sigs.clone(),
-        },
+                sums: env.sums.clone(),
+                recs: env.recs.clone(),
+                sigs: env.sigs.clone(),
+            },
+        ),
         aver_rt::AverStr::from({
             let mut __b = {
                 let mut __b = aver_rt::Buffer::with_capacity(
@@ -6827,32 +6847,34 @@ pub fn conjoined(
 /// The environment with a record R of two Int fields a and b declared.
 pub fn withRec(env @ _: &Env) -> Env {
     crate::proof_kernel::cancel_checkpoint();
-    crate::proof_kernel::aver_generated::kernel::check::Env {
-        defs: env.defs.clone(),
-        consts: env.consts.clone(),
-        laws: env.laws.clone(),
-        hyps: env.hyps.clone(),
-        vars: env.vars.clone(),
-        sums: env.sums.clone(),
-        recs: aver_rt::AverList::prepend(
-            crate::proof_kernel::aver_generated::kernel::proof::Rec {
-                name: AverStr::from("R"),
-                eq: true,
-                fields: aver_rt::AverList::from_vec(vec![
-                    crate::proof_kernel::aver_generated::kernel::term::typed(
-                        AverStr::from("a"),
-                        crate::proof_kernel::aver_generated::kernel::term::Ty::TyInt,
-                    ),
-                    crate::proof_kernel::aver_generated::kernel::term::typed(
-                        AverStr::from("b"),
-                        crate::proof_kernel::aver_generated::kernel::term::Ty::TyInt,
-                    ),
-                ]),
-            },
-            &env.recs.clone(),
-        ),
-        sigs: env.sigs.clone(),
-    }
+    Box::new(
+        crate::proof_kernel::aver_generated::kernel::check::Env__Fields {
+            defs: env.defs.clone(),
+            consts: env.consts.clone(),
+            laws: env.laws.clone(),
+            hyps: env.hyps.clone(),
+            vars: env.vars.clone(),
+            sums: env.sums.clone(),
+            recs: aver_rt::AverList::prepend(
+                crate::proof_kernel::aver_generated::kernel::proof::Rec {
+                    name: AverStr::from("R"),
+                    eq: true,
+                    fields: aver_rt::AverList::from_vec(vec![
+                        crate::proof_kernel::aver_generated::kernel::term::typed(
+                            AverStr::from("a"),
+                            crate::proof_kernel::aver_generated::kernel::term::Ty::TyInt,
+                        ),
+                        crate::proof_kernel::aver_generated::kernel::term::typed(
+                            AverStr::from("b"),
+                            crate::proof_kernel::aver_generated::kernel::term::Ty::TyInt,
+                        ),
+                    ]),
+                },
+                &env.recs.clone(),
+            ),
+            sigs: env.sigs.clone(),
+        },
+    )
 }
 
 /// No definitions, laws or hypotheses, and these givens of list type.

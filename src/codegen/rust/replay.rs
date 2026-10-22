@@ -189,7 +189,8 @@ pub fn emit_replay_value_impl(
 ) -> String {
     match td {
         TypeDef::Product { name, fields, .. } => {
-            emit_record_impl(name, fields, packed_u8, ctx, scope)
+            let boxed = super::representation::is_boxed_record(td, ctx);
+            emit_record_impl(name, fields, packed_u8, boxed, ctx, scope)
         }
         TypeDef::Sum { name, variants, .. } => {
             let thin = super::representation::is_thin_sum(td, ctx);
@@ -202,6 +203,7 @@ fn emit_record_impl(
     name: &str,
     fields: &[(String, String)],
     packed_u8: bool,
+    boxed: bool,
     ctx: &CodegenContext,
     scope: Option<&str>,
 ) -> String {
@@ -254,6 +256,7 @@ fn emit_record_impl(
         .collect::<Vec<_>>()
         .join("\n");
 
+    let (open, close) = super::representation::record_literal_ends(name, boxed);
     format!(
         r#"impl aver_replay::ReplayValue for {name} {{
     fn to_replay_json(&self) -> serde_json::Value {{
@@ -279,9 +282,9 @@ fn emit_record_impl(
             obj.get("fields").ok_or_else(|| "$record missing field 'fields'".to_string())?,
             "$record.fields",
         )?;
-        Ok(Self {{
+        Ok({open}
 {from_fields}
-        }})
+        {close})
     }}
 }}"#
     )

@@ -2994,8 +2994,10 @@ impl aver_replay::ReplayValue for FnFastPath {
     }
 }
 
+pub type FnDef = Box<FnDef__Fields>;
+
 #[derive(Clone, Debug)]
-pub struct FnDef {
+pub struct FnDef__Fields {
     pub name: AverStr,
     pub params: aver_rt::AverList<AverStr>,
     pub body: aver_rt::AverList<Stmt>,
@@ -3005,7 +3007,7 @@ pub struct FnDef {
     pub tailLoop: bool,
 }
 
-impl PartialEq for FnDef {
+impl PartialEq for FnDef__Fields {
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name
             && self.slotCount == other.slotCount
@@ -3017,7 +3019,7 @@ impl PartialEq for FnDef {
     }
 }
 
-impl aver_rt::AverDisplay for FnDef {
+impl aver_rt::AverDisplay for FnDef__Fields {
     fn aver_display(&self) -> String {
         format!(
             "FnDef({})",
@@ -3091,7 +3093,7 @@ impl aver_replay::ReplayValue for FnDef {
                 .ok_or_else(|| "$record missing field 'fields'".to_string())?,
             "$record.fields",
         )?;
-        Ok(Self {
+        Ok(Box::new(FnDef__Fields {
             name: <AverStr as ReplayValue>::from_replay_json(
                 fields
                     .get("name")
@@ -3128,7 +3130,7 @@ impl aver_replay::ReplayValue for FnDef {
                     .get("tailLoop")
                     .ok_or_else(|| "$record FnDef missing field 'tailLoop'".to_string())?,
             )?,
-        })
+        }))
     }
 }
 

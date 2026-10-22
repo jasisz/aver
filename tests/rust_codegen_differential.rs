@@ -3856,6 +3856,54 @@ fn a_loop_moves_a_param_it_passes_on_out_on_exit() {
     .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A record whose fields take more than 128 bytes is one pointer to them
+/// (`pub type St = Box<St__Fields>`), so handing it on copies the pointer.
+/// An update of its last use writes into its own box: where it is when an
+/// owned parameter holds it (also after a field was read out of it, and
+/// with two fields swapped), through a binding of its own when a local
+/// holds it, and into a new box only when a field moved out of that local
+/// first or a value reads the local whole. A copy made beside it is a box of
+/// its own. The VM and the binary, also with replay, print the same.
+#[test]
+fn a_large_record_is_boxed_and_updated_in_its_box() {
+    let relative = "tests/fixtures/boxed_state_app.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("boxed_state_app", &src);
+    for shape in [
+        "pub type St = Box<St__Fields>;",
+        "pub type Big = Box<Big__Fields>;",
+        "s.a = __field0; s.seen = __field1; s }",
+        "{ let __field0 = s.b; let __field1 = s.a; s.a = __field0; s.b = __field1; s }",
+        "{ let mut __record0 = r.st; __record0.c = __record0.c.add(&r.v); __record0 }",
+        "b.st = __field0; b.x = __field1; b }",
+        "{ let mut __record0 = s.clone(); __record0.e = ",
+    ] {
+        assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
+    }
+    assert_eq!(emitted.matches("..*r.st })").count(), 2, "{emitted}");
+    assert!(
+        !emitted.contains("pub type Res"),
+        "a small record stays inline"
+    );
+    assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
+
+    let file = repo_root().join(relative);
+    let vm_stdout = run_vm(&file, None).unwrap_or_else(|e| panic!("{e}"));
+    let project = temp_dir("boxed_state_replay").join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    compile_rust(
+        &file,
+        &project,
+        "boxed_state_replay",
+        None,
+        &["--with-replay"],
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let bin = cargo_build(&project, "boxed_state_replay").unwrap_or_else(|e| panic!("{e}"));
+    let out = Command::new(&bin).output().expect("run replay binary");
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), vm_stdout);
+}
+
 /// A tail-recursive loop borrows the params it only reads: a tree it
 /// descends, a bucket or list it walks, a key it passes on. Its callers then
 /// lend their values too, so `known(st, ..)`, which only hands a field of
