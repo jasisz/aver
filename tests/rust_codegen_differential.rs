@@ -682,6 +682,8 @@ fn colliding_map_keys_match_the_expected_output_on_rust_and_vm() {
 /// else types (`List.len([])`, `Map.len({})`, `[] == []`). rustc cannot
 /// infer the element type of `AverList::empty().len()`, so the walker names
 /// the type the checker settled on; the run must print what the VM prints.
+/// An annotated empty literal bound to a name (`m: Map<Int, Int> = {}` read
+/// only by `Map.has`) names its type the same way.
 #[test]
 fn empty_literal_operands_match_between_rust_and_vm() {
     assert_plain_parity("tests/fixtures/empty_literal_operands_app.av", None)

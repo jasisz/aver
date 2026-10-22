@@ -1440,8 +1440,9 @@ fn pack_u8_list(value: String) -> String {
 /// `[]`, `{}` or `Option.None` spelled with its stamped element type, for
 /// the positions where nothing lets rustc infer it: the operand of a
 /// collection builtin (`List.len([])` is `AverList::empty().len()`) and
-/// both sides of `[] == []`. `None` for any other expression, or when the
-/// stamp is not concrete. Elsewhere the bare form stays.
+/// both sides of `[] == []`, and the value of a `let` binding. `None` for
+/// any other expression, or when the stamp is not concrete. Elsewhere the
+/// bare form stays.
 fn mir_typed_empty_literal(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String> {
     let ty = expr.ty().filter(|ty| type_is_fully_concrete(ty))?;
     let rust = |ty: &Type| match ctx.codegen {
@@ -4969,6 +4970,11 @@ fn emit_mir_statement_value(
 /// emits `let a = b.clone();`, preserving Aver value semantics and leaving
 /// the final `b` read valid.
 fn emit_mir_binding_value(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String> {
+    // A bound empty literal names its type: the reads after it may not
+    // (`e = {}` read only by `Map.has` leaves the value type open).
+    if let Some(typed) = mir_typed_empty_literal(expr, ctx) {
+        return Some(typed);
+    }
     let code = emit_mir_expr(expr, ctx)?;
     Some(materialize_owned(code, &expr.node, ctx))
 }

@@ -38,6 +38,9 @@ listsEqual true
 mapsEqual true
 nonesEqual true
 reversedEqual true
+boundMapHas false
+boundListLen 0
+boundNoneEqual true
 ";
 
 fn run(extra: &[&str]) -> String {
