@@ -53,7 +53,7 @@ pub use service_types::{
     BranchPath, HttpHeaders, HttpRequest, HttpResponse, TcpConnection, TcpDial, TcpListener,
     TerminalSize,
 };
-pub use shared::Shared;
+pub use shared::{Shared, StaticStr};
 pub use shared_eq::{NodeId, Walk, WalkEq, walk_eq};
 pub use shared_hash::{HashWalk, WalkHash};
 pub use strcursor::{
@@ -114,8 +114,43 @@ impl Buffer {
 }
 
 /// Aver string type: newtype over `Shared<str>` for O(1) clone and native `+` operator.
-#[derive(Clone, Eq, Ord, PartialOrd)]
-pub struct AverStr(Rc<str>);
+///
+/// A string literal points to a node in a static ([`str_lit!`]): cloning or
+/// dropping it touches no count, so threads that share it never write to
+/// one cache line.
+#[derive(Eq, Ord, PartialOrd)]
+pub struct AverStr(std::mem::ManuallyDrop<Rc<str>>);
+
+impl Clone for AverStr {
+    #[inline]
+    fn clone(&self) -> Self {
+        if Rc::is_static(&self.0) {
+            // A static node is not counted, so a copy of the pointer owns it.
+            Self(unsafe { std::ptr::read(&self.0) })
+        } else {
+            Self(self.0.clone())
+        }
+    }
+}
+
+impl Drop for AverStr {
+    #[inline]
+    fn drop(&mut self) {
+        if !Rc::is_static(&self.0) {
+            unsafe { std::mem::ManuallyDrop::drop(&mut self.0) }
+        }
+    }
+}
+
+/// The `AverStr` of a string literal, in a static: no allocation or copy
+/// when it runs, and none when it is cloned or dropped.
+#[macro_export]
+macro_rules! str_lit {
+    ($text:literal) => {{
+        static NODE: $crate::StaticStr<{ $text.len() }> = $crate::StaticStr::new($text);
+        $crate::AverStr::from_static(&NODE)
+    }};
+}
 
 /// One string is equal to itself without reading it, as `Arc<str>`'s `==`.
 impl PartialEq for AverStr {
@@ -132,6 +167,15 @@ impl Hash for AverStr {
 }
 
 impl AverStr {
+    #[inline]
+    fn new(text: Rc<str>) -> Self {
+        Self(std::mem::ManuallyDrop::new(text))
+    }
+    /// The string a static holds; see [`str_lit!`].
+    #[inline]
+    pub fn from_static<const N: usize>(node: &'static StaticStr<N>) -> Self {
+        Self::new(Rc::from_static(node))
+    }
     pub fn len(&self) -> usize {
         self.0.len()
     }
@@ -161,32 +205,32 @@ impl std::borrow::Borrow<str> for AverStr {
 
 impl From<String> for AverStr {
     fn from(s: String) -> Self {
-        Self(Rc::from(s.as_str()))
+        Self::new(Rc::from(s.as_str()))
     }
 }
 
 impl From<Buffer> for AverStr {
     fn from(buffer: Buffer) -> Self {
-        Self(Rc::from(buffer.bytes.as_str()))
+        Self::new(Rc::from(buffer.bytes.as_str()))
     }
 }
 
 impl From<&str> for AverStr {
     fn from(s: &str) -> Self {
-        Self(Rc::from(s))
+        Self::new(Rc::from(s))
     }
 }
 
 impl From<Rc<str>> for AverStr {
     fn from(s: Rc<str>) -> Self {
-        Self(s)
+        Self::new(s)
     }
 }
 
 /// From hand-written code that holds an `Arc<str>`: the text is copied.
 impl From<std::sync::Arc<str>> for AverStr {
     fn from(s: std::sync::Arc<str>) -> Self {
-        Self(Rc::from(&*s))
+        Self::new(Rc::from(&*s))
     }
 }
 
@@ -198,7 +242,7 @@ impl fmt::Display for AverStr {
 
 impl fmt::Debug for AverStr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", &*self.0)
+        write!(f, "{:?}", &**self.0)
     }
 }
 
@@ -1640,6 +1684,28 @@ mod tests {
 
         let rendered = AverStr::from(buffer);
         assert_eq!(rendered.as_ref(), ",b");
+    }
+
+    /// A literal that runs again and again is the one static node, never a
+    /// new allocation; its clones are that node too and count nothing.
+    #[test]
+    fn a_string_literal_is_one_static_node() {
+        let literal = || crate::str_lit!("Nat \"succ\"");
+        let first = literal();
+        for _ in 0..3 {
+            let again = literal();
+            assert!(super::Rc::ptr_eq(&first.0, &again.0));
+            assert!(super::Rc::ptr_eq(&first.0, &again.clone().0));
+        }
+        assert!(super::Rc::is_static(&first.0));
+        assert_eq!(first, AverStr::from("Nat \"succ\""));
+        let threads: Vec<AverStr> = (0..4).map(|_| first.clone()).collect();
+        std::thread::scope(|scope| {
+            for mine in threads {
+                scope.spawn(move || assert_eq!(&*mine, "Nat \"succ\""));
+            }
+        });
+        assert_eq!(&*crate::str_lit!(""), "");
     }
 
     /// `AverMap` is exposed to generated programs, including programs that put

@@ -121,7 +121,7 @@ pub fn fastBoolSlotBranch(
                     cond, thenLeaf, elseLeaf, calleeEnv,
                 )
             }
-            _ => Err(AverStr::from("fast bool branch expects Bool slot")),
+            _ => Err(::aver_rt::str_lit!("fast bool branch expects Bool slot")),
         }
     }
 }
@@ -148,7 +148,7 @@ pub fn fastEqIntBranch(
                     calleeEnv,
                 )
             }
-            _ => Err(AverStr::from("fast int branch expects Int slot")),
+            _ => Err(::aver_rt::str_lit!("fast int branch expects Int slot")),
         }
     }
 }
@@ -175,7 +175,9 @@ pub fn fastEqStringBranch(
                     calleeEnv,
                 )
             }
-            _ => Err(AverStr::from("fast string branch expects String slot")),
+            _ => Err(::aver_rt::str_lit!(
+                "fast string branch expects String slot"
+            )),
         }
     }
 }
@@ -208,11 +210,11 @@ pub fn fastLtIntSlotsBranch(
                                 calleeEnv,
                             )
                         }
-                        _ => Err(AverStr::from("fast lt branch expects Int rhs slot")),
+                        _ => Err(::aver_rt::str_lit!("fast lt branch expects Int rhs slot")),
                     }
                 }
             }
-            _ => Err(AverStr::from("fast lt branch expects Int lhs slot")),
+            _ => Err(::aver_rt::str_lit!("fast lt branch expects Int lhs slot")),
         }
     }
 }
@@ -253,7 +255,7 @@ pub fn fastListSlotBranch(
                     items, calleeEnv, emptyLeaf, headSlot, tailSlot, consLeaf,
                 )
             }
-            _ => Err(AverStr::from("no matching arm")),
+            _ => Err(::aver_rt::str_lit!("no matching arm")),
         }
     }
 }
@@ -309,7 +311,7 @@ pub fn fastFieldAccessSlot(
                 let fields = &__fields_fields.1;
                 crate::aver_generated::domain::eval::common::lookupField(fields, field)
             }
-            _ => Err(AverStr::from("field access on non-record")),
+            _ => Err(::aver_rt::str_lit!("field access on non-record")),
         }
     }
 }
@@ -347,7 +349,7 @@ pub fn fastMapGetSlotInner(
                     None => Ok(crate::aver_generated::domain::value::Val::ValNone),
                 }
             }
-            _ => Err(AverStr::from("Map.get requires a Map")),
+            _ => Err(::aver_rt::str_lit!("Map.get requires a Map")),
         }
     }
 }
@@ -385,7 +387,7 @@ pub fn fastMapSetSlotInner(
                     )),
                 ))
             }
-            _ => Err(AverStr::from("Map.set requires a Map")),
+            _ => Err(::aver_rt::str_lit!("Map.set requires a Map")),
         }
     }
 }
@@ -428,7 +430,7 @@ pub fn fastVectorNewSlotInner(
                     ),
                 ))
             }
-            _ => Err(AverStr::from("Vector.new size must be Int")),
+            _ => Err(::aver_rt::str_lit!("Vector.new size must be Int")),
         }
     }
 }
@@ -474,11 +476,11 @@ pub fn fastVectorGetOrIntSlotInner(
                                 )),
                             }
                         }
-                        _ => Err(AverStr::from("Vector.get index must be Int")),
+                        _ => Err(::aver_rt::str_lit!("Vector.get index must be Int")),
                     }
                 }
             }
-            _ => Err(AverStr::from("Vector.get expects a Vector")),
+            _ => Err(::aver_rt::str_lit!("Vector.get expects a Vector")),
         }
     }
 }
@@ -503,7 +505,7 @@ pub fn fastMapHasSlot(
                     ),
                 ))
             }
-            _ => Err(AverStr::from("Map.has requires a Map")),
+            _ => Err(::aver_rt::str_lit!("Map.has requires a Map")),
         }
     }
 }
@@ -528,7 +530,7 @@ pub fn fastMapRemoveSlot(
                     ),
                 ))
             }
-            _ => Err(AverStr::from("Map.remove requires a Map")),
+            _ => Err(::aver_rt::str_lit!("Map.remove requires a Map")),
         }
     }
 }
@@ -551,7 +553,7 @@ pub fn fastVectorLenSlot(
                     )),
                 ))
             }
-            _ => Err(AverStr::from("Vector.len expects a Vector")),
+            _ => Err(::aver_rt::str_lit!("Vector.len expects a Vector")),
         }
     }
 }

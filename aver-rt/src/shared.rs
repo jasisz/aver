@@ -33,10 +33,43 @@ use std::sync::atomic::{self, AtomicUsize, Ordering};
 /// than let the count wrap around (it would take `isize::MAX` leaked clones).
 const MAX_REFCOUNT: usize = isize::MAX as usize;
 
+/// The count a node kept in a static starts with. No owner frees it: the
+/// last drop would have to bring it down from here to 0. It sits below
+/// [`MAX_REFCOUNT`], so a clone or drop that does count it stays correct,
+/// and far above any count of a heap node, which is how
+/// [`Shared::is_static`] tells the two apart.
+const STATIC_COUNT: usize = MAX_REFCOUNT / 4 * 3;
+
 #[repr(C)]
 struct Node<T: ?Sized> {
     count: AtomicUsize,
     value: T,
+}
+
+/// A string of `N` bytes kept in a static, laid out as the `Node<str>` of a
+/// heap string, so a [`Shared<str>`] can point to it (see
+/// [`Shared::from_static`]).
+#[repr(C)]
+pub struct StaticStr<const N: usize> {
+    count: AtomicUsize,
+    bytes: [u8; N],
+}
+
+impl<const N: usize> StaticStr<N> {
+    pub const fn new(text: &str) -> Self {
+        let text = text.as_bytes();
+        assert!(text.len() == N);
+        let mut bytes = [0u8; N];
+        let mut i = 0;
+        while i < N {
+            bytes[i] = text[i];
+            i += 1;
+        }
+        Self {
+            count: AtomicUsize::new(STATIC_COUNT),
+            bytes,
+        }
+    }
 }
 
 /// A thread-safe reference-counted pointer to a `T` (see the module docs).
@@ -96,6 +129,14 @@ impl<T: ?Sized> Shared<T> {
     #[inline]
     pub fn strong_count(this: &Self) -> usize {
         this.node().count.load(Ordering::Relaxed)
+    }
+
+    /// Whether the node is kept in a static, so cloning or dropping this
+    /// `Shared` needs no count. Nothing changes a static node's count by
+    /// half of [`STATIC_COUNT`], and no heap node gets that many owners.
+    #[inline]
+    pub fn is_static(this: &Self) -> bool {
+        this.node().count.load(Ordering::Relaxed) > STATIC_COUNT / 2
     }
 
     /// Whether this is the only `Shared` to its node. The `Acquire` load
@@ -260,6 +301,17 @@ impl From<&str> for Shared<str> {
             std::ptr::copy_nonoverlapping(text.as_ptr(), bytes, text.len());
             Self::from_node(NonNull::new_unchecked(node))
         }
+    }
+}
+
+impl Shared<str> {
+    /// The string a static holds, with no allocation or copy. The node is
+    /// never freed (see [`STATIC_COUNT`]).
+    #[inline]
+    pub fn from_static<const N: usize>(node: &'static StaticStr<N>) -> Self {
+        let bytes = std::ptr::slice_from_raw_parts(node as *const StaticStr<N> as *const u8, N);
+        // `StaticStr<N>` is `Node<str>` with `N` bytes of a `str`.
+        Self::from_node(unsafe { NonNull::new_unchecked(bytes as *mut Node<str>) })
     }
 }
 
@@ -475,6 +527,21 @@ mod tests {
             }
         });
         assert!(texts.iter().all(|t| Shared::strong_count(t) == 1));
+    }
+
+    #[test]
+    fn a_static_str_is_never_freed() {
+        static NODE: super::StaticStr<5> = super::StaticStr::new("hello");
+        let a = Shared::<str>::from_static(&NODE);
+        assert!(Shared::is_static(&a));
+        assert!(!Shared::is_static(&Shared::<str>::from("hello")));
+        assert_eq!(&*a, "hello");
+        assert_eq!(a, Shared::from("hello"));
+        // Counting it as a heap node is still correct, and frees nothing.
+        let b = a.clone();
+        drop(a);
+        drop(b);
+        assert_eq!(&*Shared::<str>::from_static(&NODE), "hello");
     }
 
     #[test]

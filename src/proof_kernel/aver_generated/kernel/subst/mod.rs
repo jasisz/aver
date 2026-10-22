@@ -39,7 +39,7 @@ fn __mutual_tco_trampoline_1(
                                                     .to_usize()
                                                     .unwrap_or(0),
                                             );
-                                            __b.push_str(&AverStr::from("substituting "));
+                                            __b.push_str(&::aver_rt::str_lit!("substituting "));
                                             __b
                                         };
                                         __b.push_str(&aver_rt::AverStr::from(
@@ -47,7 +47,7 @@ fn __mutual_tco_trampoline_1(
                                         ));
                                         __b
                                     };
-                                    __b.push_str(&AverStr::from(" would capture "));
+                                    __b.push_str(&::aver_rt::str_lit!(" would capture "));
                                     __b
                                 };
                                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c))));
@@ -222,7 +222,7 @@ pub fn freeVars(
                     return aver_rt::AverList::from_vec(vec![n]);
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::THole => {
-                    return aver_rt::AverList::from_vec(vec![AverStr::from("□")]);
+                    return aver_rt::AverList::from_vec(vec![::aver_rt::str_lit!("□")]);
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TGet(__o_fields) => {
                     let o = __o_fields.0.clone();
@@ -618,10 +618,13 @@ pub fn subst(
                 let n = __n_fields.0.clone();
                 Ok(crate::proof_kernel::aver_generated::kernel::subst::lookup(n, bs).unwrap_or(t))
             }
-            crate::proof_kernel::aver_generated::kernel::term::Term__view::THole => Ok(
-                crate::proof_kernel::aver_generated::kernel::subst::lookup(AverStr::from("□"), bs)
-                    .unwrap_or(t),
-            ),
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::THole => {
+                Ok(crate::proof_kernel::aver_generated::kernel::subst::lookup(
+                    ::aver_rt::str_lit!("□"),
+                    bs,
+                )
+                .unwrap_or(t))
+            }
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TGet(__o_fields) => {
                 let o = __o_fields.0.clone();
                 let f = __o_fields.1.clone();

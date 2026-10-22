@@ -55,8 +55,8 @@ pub fn callInt(
                                                         Err(aver_rt::AverStr::from({
                                                             let mut __b = {
                                                                 let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(37)).to_usize().unwrap_or(0));
-                                                                __b.push_str(&AverStr::from(
-                                                                    "unknown int builtin: ",
+                                                                __b.push_str(&::aver_rt::str_lit!(
+                                                                    "unknown int builtin: "
                                                                 ));
                                                                 __b
                                                             };
@@ -217,7 +217,7 @@ pub fn callString(
                                                                             {
                                                                                 crate::aver_generated::domain::builtins::primitives::builtinStringFirstCodePoint(args)
                                                                             } else {
-                                                                                if &*__dispatch_subject == "String.fromCodePoint" { crate::aver_generated::domain::builtins::primitives::builtinStringFromCodePoint(args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(40)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown string builtin: ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name)))); __b })) }
+                                                                                if &*__dispatch_subject == "String.fromCodePoint" { crate::aver_generated::domain::builtins::primitives::builtinStringFromCodePoint(args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(40)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown string builtin: ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name)))); __b })) }
                                                                             }
                                                                         }
                                                                     }
@@ -299,8 +299,8 @@ pub fn builtinIntModInner(
         Ok(crate::aver_generated::domain::value::Val::ValErr(
             crate::aver_generated::domain::value::Val__ValErr(
                 crate::aver_generated::domain::value::Val::ValStr(
-                    crate::aver_generated::domain::value::Val__ValStr(AverStr::from(
-                        "modulo by zero",
+                    crate::aver_generated::domain::value::Val__ValStr(::aver_rt::str_lit!(
+                        "modulo by zero"
                     )),
                 ),
             ),
@@ -478,7 +478,9 @@ pub fn extractStrings(
                                 }
                             }
                             _ => {
-                                return Err(AverStr::from("String.join requires list of strings"));
+                                return Err(::aver_rt::str_lit!(
+                                    "String.join requires list of strings"
+                                ));
                             }
                         }
                     }
@@ -512,19 +514,19 @@ pub fn builtinStringSlice(
                                 if __list_subject.is_empty() {
                                     crate::aver_generated::domain::builtins::primitives::builtinStringSliceInner(sV, startV, endV)
                                 } else {
-                                    Err(AverStr::from("String.slice takes 3 arguments"))
+                                    Err(::aver_rt::str_lit!("String.slice takes 3 arguments"))
                                 }
                             }
                         } else {
-                            Err(AverStr::from("String.slice takes 3 arguments"))
+                            Err(::aver_rt::str_lit!("String.slice takes 3 arguments"))
                         }
                     }
                 } else {
-                    Err(AverStr::from("String.slice takes 3 arguments"))
+                    Err(::aver_rt::str_lit!("String.slice takes 3 arguments"))
                 }
             }
         } else {
-            Err(AverStr::from("String.slice takes 3 arguments"))
+            Err(::aver_rt::str_lit!("String.slice takes 3 arguments"))
         }
     }
 }
@@ -566,7 +568,7 @@ pub fn builtinStringFromBool(
                     crate::aver_generated::domain::value::Val__ValStr((b.to_string()).into_aver()),
                 ))
             }
-            _ => Err(AverStr::from("String.fromBool requires Bool")),
+            _ => Err(::aver_rt::str_lit!("String.fromBool requires Bool")),
         }
     }
 }
@@ -598,7 +600,7 @@ pub fn builtinStringFromFloat(
                     crate::aver_generated::domain::value::Val__ValStr((f.to_string()).into_aver()),
                 ))
             }
-            _ => Err(AverStr::from("String.fromFloat requires Float")),
+            _ => Err(::aver_rt::str_lit!("String.fromFloat requires Float")),
         }
     }
 }
@@ -839,7 +841,7 @@ pub fn callFloat(
                                                                     Err(aver_rt::AverStr::from({
                                                                         let mut __b = {
                                                                             let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0));
-                                                                            __b.push_str(&AverStr::from("unknown float builtin: "));
+                                                                            __b.push_str(&::aver_rt::str_lit!("unknown float builtin: "));
                                                                             __b
                                                                         };
                                                                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));
@@ -923,7 +925,7 @@ pub fn builtinFloatRound(
                     ),
                 ))
             }
-            _ => Err(AverStr::from("Float.round requires Float")),
+            _ => Err(::aver_rt::str_lit!("Float.round requires Float")),
         }
     }
 }
@@ -943,7 +945,7 @@ pub fn builtinFloatToString(
                     crate::aver_generated::domain::value::Val__ValStr((f.to_string()).into_aver()),
                 ))
             }
-            _ => Err(AverStr::from("String.fromFloat requires Float")),
+            _ => Err(::aver_rt::str_lit!("String.fromFloat requires Float")),
         }
     }
 }
@@ -963,7 +965,7 @@ pub fn builtinFloatAbs(
                     crate::aver_generated::domain::value::Val__ValFloat(f.abs()),
                 ))
             }
-            _ => Err(AverStr::from("Float.abs requires Float")),
+            _ => Err(::aver_rt::str_lit!("Float.abs requires Float")),
         }
     }
 }
@@ -985,7 +987,7 @@ pub fn builtinFloatFloor(
                     ),
                 ))
             }
-            _ => Err(AverStr::from("Float.floor requires Float")),
+            _ => Err(::aver_rt::str_lit!("Float.floor requires Float")),
         }
     }
 }
@@ -1007,7 +1009,7 @@ pub fn builtinFloatCeil(
                     ),
                 ))
             }
-            _ => Err(AverStr::from("Float.ceil requires Float")),
+            _ => Err(::aver_rt::str_lit!("Float.ceil requires Float")),
         }
     }
 }
@@ -1031,7 +1033,7 @@ pub fn builtinFloatMin(
                     crate::aver_generated::domain::value::Val__ValFloat(a.min(b)),
                 ))
             }
-            _ => Err(AverStr::from("Float.min requires two Floats")),
+            _ => Err(::aver_rt::str_lit!("Float.min requires two Floats")),
         }
     }
 }
@@ -1055,7 +1057,7 @@ pub fn builtinFloatMax(
                     crate::aver_generated::domain::value::Val__ValFloat(a.max(b)),
                 ))
             }
-            _ => Err(AverStr::from("Float.max requires two Floats")),
+            _ => Err(::aver_rt::str_lit!("Float.max requires two Floats")),
         }
     }
 }
@@ -1075,7 +1077,7 @@ pub fn builtinFloatSin(
                     crate::aver_generated::domain::value::Val__ValFloat(f.sin()),
                 ))
             }
-            _ => Err(AverStr::from("Float.sin requires Float")),
+            _ => Err(::aver_rt::str_lit!("Float.sin requires Float")),
         }
     }
 }
@@ -1095,7 +1097,7 @@ pub fn builtinFloatCos(
                     crate::aver_generated::domain::value::Val__ValFloat(f.cos()),
                 ))
             }
-            _ => Err(AverStr::from("Float.cos requires Float")),
+            _ => Err(::aver_rt::str_lit!("Float.cos requires Float")),
         }
     }
 }
@@ -1115,7 +1117,7 @@ pub fn builtinFloatSqrt(
                     crate::aver_generated::domain::value::Val__ValFloat(f.sqrt()),
                 ))
             }
-            _ => Err(AverStr::from("Float.sqrt requires Float")),
+            _ => Err(::aver_rt::str_lit!("Float.sqrt requires Float")),
         }
     }
 }
@@ -1139,7 +1141,7 @@ pub fn builtinFloatPow(
                     crate::aver_generated::domain::value::Val__ValFloat(a.powf(b)),
                 ))
             }
-            _ => Err(AverStr::from("Float.pow requires two Floats")),
+            _ => Err(::aver_rt::str_lit!("Float.pow requires two Floats")),
         }
     }
 }
@@ -1163,7 +1165,7 @@ pub fn builtinFloatAtan2(
                     crate::aver_generated::domain::value::Val__ValFloat(a.atan2(b)),
                 ))
             }
-            _ => Err(AverStr::from("Float.atan2 requires two Floats")),
+            _ => Err(::aver_rt::str_lit!("Float.atan2 requires two Floats")),
         }
     }
 }
@@ -1180,7 +1182,7 @@ pub fn builtinFloatPi(
                 crate::aver_generated::domain::value::Val__ValFloat(std::f64::consts::PI),
             ))
         } else {
-            Err(AverStr::from("Float.pi takes 0 arguments"))
+            Err(::aver_rt::str_lit!("Float.pi takes 0 arguments"))
         }
     }
 }
@@ -1326,7 +1328,11 @@ pub fn builtinStringRepeatInner(
     let n @ _ = crate::aver_generated::domain::builtins::helpers::expectInt(nV)?;
     Ok(crate::aver_generated::domain::value::Val::ValStr(
         crate::aver_generated::domain::value::Val__ValStr(
-            crate::aver_generated::domain::builtins::primitives::repeatStr(s, n, AverStr::from("")),
+            crate::aver_generated::domain::builtins::primitives::repeatStr(
+                s,
+                n,
+                ::aver_rt::str_lit!(""),
+            ),
         ),
     ))
 }
@@ -1359,7 +1365,7 @@ pub fn builtinStringReplaceAll(
     if (aver_rt::AverInt::from_i64(args.len() as i64) == aver_rt::AverInt::from_i64(3)) {
         crate::aver_generated::domain::builtins::primitives::builtinStringReplaceAllExtract(args)
     } else {
-        Err(AverStr::from("String.replace takes 3 arguments"))
+        Err(::aver_rt::str_lit!("String.replace takes 3 arguments"))
     }
 }
 
@@ -1383,7 +1389,7 @@ pub fn builtinStringReplaceAllExtract(
                             crate::aver_generated::domain::builtins::primitives::builtinStringReplaceAllDo(sV, fromV, toV)
                         } else {
                             if __list_subject.is_empty() {
-                                Err(AverStr::from("String.replace takes 3 arguments"))
+                                Err(::aver_rt::str_lit!("String.replace takes 3 arguments"))
                             } else {
                                 panic!("Aver Rust codegen: non-exhaustive list match")
                             }
@@ -1391,7 +1397,7 @@ pub fn builtinStringReplaceAllExtract(
                     }
                 } else {
                     if __list_subject.is_empty() {
-                        Err(AverStr::from("String.replace takes 3 arguments"))
+                        Err(::aver_rt::str_lit!("String.replace takes 3 arguments"))
                     } else {
                         panic!("Aver Rust codegen: non-exhaustive list match")
                     }
@@ -1399,7 +1405,7 @@ pub fn builtinStringReplaceAllExtract(
             }
         } else {
             if __list_subject.is_empty() {
-                Err(AverStr::from("String.replace takes 3 arguments"))
+                Err(::aver_rt::str_lit!("String.replace takes 3 arguments"))
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
             }
@@ -1489,7 +1495,9 @@ pub fn extractStrings__collected(
                                 }
                             }
                             _ => {
-                                return Err(AverStr::from("String.join requires list of strings"));
+                                return Err(::aver_rt::str_lit!(
+                                    "String.join requires list of strings"
+                                ));
                             }
                         }
                     }

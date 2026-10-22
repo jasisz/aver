@@ -757,7 +757,7 @@ pub fn rewriteInternalOptionWithDefault(
                 } else {
                     crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                         crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                            AverStr::from("Option.withDefault"),
+                            ::aver_rt::str_lit!("Option.withDefault"),
                             args.clone(),
                         ),
                     )
@@ -766,7 +766,7 @@ pub fn rewriteInternalOptionWithDefault(
         } else {
             crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                 crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                    AverStr::from("Option.withDefault"),
+                    ::aver_rt::str_lit!("Option.withDefault"),
                     args.clone(),
                 ),
             )
@@ -798,7 +798,7 @@ pub fn rewriteInternalOptionWithDefaultArgs(
                             } else {
                                 crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                                     crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                                        AverStr::from("Option.withDefault"),
+                                        ::aver_rt::str_lit!("Option.withDefault"),
                                         aver_rt::AverList::from_vec(vec![optionExpr, defaultExpr]),
                                     ),
                                 )
@@ -806,7 +806,7 @@ pub fn rewriteInternalOptionWithDefaultArgs(
                         }
                         _ => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                             crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                                AverStr::from("Option.withDefault"),
+                                ::aver_rt::str_lit!("Option.withDefault"),
                                 aver_rt::AverList::from_vec(vec![optionExpr, defaultExpr]),
                             ),
                         ),
@@ -815,7 +815,7 @@ pub fn rewriteInternalOptionWithDefaultArgs(
             }
             _ => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                 crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                    AverStr::from("Option.withDefault"),
+                    ::aver_rt::str_lit!("Option.withDefault"),
                     aver_rt::AverList::from_vec(vec![optionExpr, defaultExpr]),
                 ),
             ),
@@ -839,11 +839,11 @@ pub fn rewriteInternalVectorGetOrInt(
                 } else {
                     crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                         crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                            AverStr::from("Option.withDefault"),
+                            ::aver_rt::str_lit!("Option.withDefault"),
                             aver_rt::AverList::from_vec(vec![
                                 crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                                     crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                                        AverStr::from("Vector.get"),
+                                        ::aver_rt::str_lit!("Vector.get"),
                                         args.clone(),
                                     ),
                                 ),
@@ -858,11 +858,11 @@ pub fn rewriteInternalVectorGetOrInt(
         } else {
             crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                 crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                    AverStr::from("Option.withDefault"),
+                    ::aver_rt::str_lit!("Option.withDefault"),
                     aver_rt::AverList::from_vec(vec![
                         crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                             crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                                AverStr::from("Vector.get"),
+                                ::aver_rt::str_lit!("Vector.get"),
                                 args.clone(),
                             ),
                         ),
@@ -904,11 +904,11 @@ pub fn rewriteInternalVectorGetOrIntArgs(
         } else {
             crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                 crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                    AverStr::from("Option.withDefault"),
+                    ::aver_rt::str_lit!("Option.withDefault"),
                     aver_rt::AverList::from_vec(vec![
                         crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                             crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                                AverStr::from("Vector.get"),
+                                ::aver_rt::str_lit!("Vector.get"),
                                 aver_rt::AverList::from_vec(vec![vecExpr, idxExpr]),
                             ),
                         ),
@@ -937,7 +937,7 @@ pub fn rewriteInternalResultWithDefault(
                 } else {
                     crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                         crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                            AverStr::from("Result.withDefault"),
+                            ::aver_rt::str_lit!("Result.withDefault"),
                             args.clone(),
                         ),
                     )
@@ -946,7 +946,7 @@ pub fn rewriteInternalResultWithDefault(
         } else {
             crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                 crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                    AverStr::from("Result.withDefault"),
+                    ::aver_rt::str_lit!("Result.withDefault"),
                     args.clone(),
                 ),
             )
@@ -978,7 +978,7 @@ pub fn rewriteInternalResultWithDefaultArgs(
                             } else {
                                 crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                                     crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                                        AverStr::from("Result.withDefault"),
+                                        ::aver_rt::str_lit!("Result.withDefault"),
                                         aver_rt::AverList::from_vec(vec![resultExpr, defaultExpr]),
                                     ),
                                 )
@@ -986,7 +986,7 @@ pub fn rewriteInternalResultWithDefaultArgs(
                         }
                         _ => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                             crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                                AverStr::from("Result.withDefault"),
+                                ::aver_rt::str_lit!("Result.withDefault"),
                                 aver_rt::AverList::from_vec(vec![resultExpr, defaultExpr]),
                             ),
                         ),
@@ -995,7 +995,7 @@ pub fn rewriteInternalResultWithDefaultArgs(
             }
             _ => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                 crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                    AverStr::from("Result.withDefault"),
+                    ::aver_rt::str_lit!("Result.withDefault"),
                     aver_rt::AverList::from_vec(vec![resultExpr, defaultExpr]),
                 ),
             ),
@@ -1023,11 +1023,11 @@ pub fn rewriteInternalIntModOrInt(
                 } else {
                     crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                         crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                            AverStr::from("Result.withDefault"),
+                            ::aver_rt::str_lit!("Result.withDefault"),
                             aver_rt::AverList::from_vec(vec![
                                 crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                                     crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                                        AverStr::from("Int.mod"),
+                                        ::aver_rt::str_lit!("Int.mod"),
                                         args.clone(),
                                     ),
                                 ),
@@ -1042,11 +1042,11 @@ pub fn rewriteInternalIntModOrInt(
         } else {
             crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                 crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                    AverStr::from("Result.withDefault"),
+                    ::aver_rt::str_lit!("Result.withDefault"),
                     aver_rt::AverList::from_vec(vec![
                         crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                             crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                                AverStr::from("Int.mod"),
+                                ::aver_rt::str_lit!("Int.mod"),
                                 args.clone(),
                             ),
                         ),
@@ -1080,11 +1080,11 @@ pub fn rewriteInternalIntModOrIntArgs(
         } else {
             crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                 crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                    AverStr::from("Result.withDefault"),
+                    ::aver_rt::str_lit!("Result.withDefault"),
                     aver_rt::AverList::from_vec(vec![
                         crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                             crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                                AverStr::from("Int.mod"),
+                                ::aver_rt::str_lit!("Int.mod"),
                                 aver_rt::AverList::from_vec(vec![a, b]),
                             ),
                         ),

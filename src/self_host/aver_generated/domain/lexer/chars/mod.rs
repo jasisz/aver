@@ -56,10 +56,10 @@ pub fn isDigit(c @ _: AverStr) -> bool {
 #[inline(always)]
 pub fn isLower(c @ _: AverStr) -> bool {
     crate::cancel_checkpoint();
-    if (c < AverStr::from("a")) {
+    if (c < ::aver_rt::str_lit!("a")) {
         false
     } else {
-        (c <= AverStr::from("z"))
+        (c <= ::aver_rt::str_lit!("z"))
     }
 }
 
@@ -67,10 +67,10 @@ pub fn isLower(c @ _: AverStr) -> bool {
 #[inline(always)]
 pub fn isUpper(c @ _: AverStr) -> bool {
     crate::cancel_checkpoint();
-    if (c < AverStr::from("A")) {
+    if (c < ::aver_rt::str_lit!("A")) {
         false
     } else {
-        (c <= AverStr::from("Z"))
+        (c <= ::aver_rt::str_lit!("Z"))
     }
 }
 
@@ -281,40 +281,40 @@ pub fn keywordOrIdent(s @ _: AverStr) -> crate::aver_generated::domain::token::T
                         crate::aver_generated::domain::token::Token::TkFalse
                     } else {
                         if &*__dispatch_subject == "module" {
-                            crate::aver_generated::domain::token::Token::TkIdent(AverStr::from(
-                                "module",
-                            ))
+                            crate::aver_generated::domain::token::Token::TkIdent(
+                                ::aver_rt::str_lit!("module"),
+                            )
                         } else {
                             if &*__dispatch_subject == "type" {
-                                crate::aver_generated::domain::token::Token::TkIdent(AverStr::from(
-                                    "type",
-                                ))
+                                crate::aver_generated::domain::token::Token::TkIdent(
+                                    ::aver_rt::str_lit!("type"),
+                                )
                             } else {
                                 if &*__dispatch_subject == "record" {
                                     crate::aver_generated::domain::token::Token::TkIdent(
-                                        AverStr::from("record"),
+                                        ::aver_rt::str_lit!("record"),
                                     )
                                 } else {
                                     if &*__dispatch_subject == "verify" {
                                         crate::aver_generated::domain::token::Token::TkIdent(
-                                            AverStr::from("verify"),
+                                            ::aver_rt::str_lit!("verify"),
                                         )
                                     } else {
                                         if &*__dispatch_subject == "depends" {
                                             crate::aver_generated::domain::token::Token::TkIdent(
-                                                AverStr::from("depends"),
+                                                ::aver_rt::str_lit!("depends"),
                                             )
                                         } else {
                                             if &*__dispatch_subject == "exposes" {
                                                 crate::aver_generated::domain::token::Token::TkIdent(
-                                                    AverStr::from("exposes"),
+                                                    ::aver_rt::str_lit!("exposes"),
                                                 )
                                             } else {
                                                 if &*__dispatch_subject == "intent" {
-                                                    crate::aver_generated::domain::token::Token::TkIdent(AverStr::from("intent"))
+                                                    crate::aver_generated::domain::token::Token::TkIdent(::aver_rt::str_lit!("intent"))
                                                 } else {
                                                     if &*__dispatch_subject == "decision" {
-                                                        crate::aver_generated::domain::token::Token::TkIdent(AverStr::from("decision"))
+                                                        crate::aver_generated::domain::token::Token::TkIdent(::aver_rt::str_lit!("decision"))
                                                     } else {
                                                         crate::aver_generated::domain::token::Token::TkIdent(s)
                                                     }

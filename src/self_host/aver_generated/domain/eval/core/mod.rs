@@ -229,13 +229,17 @@ fn __mutual_tco_trampoline_1(
                             );
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprSlot(_) => {
-                            return Err(AverStr::from("ExprSlot in map-based eval path"));
+                            return Err(::aver_rt::str_lit!("ExprSlot in map-based eval path"));
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprBinopSlotInt(_) => {
-                            return Err(AverStr::from("ExprBinopSlotInt in map-based eval path"));
+                            return Err(::aver_rt::str_lit!(
+                                "ExprBinopSlotInt in map-based eval path"
+                            ));
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprBinopSlots(_) => {
-                            return Err(AverStr::from("ExprBinopSlots in map-based eval path"));
+                            return Err(::aver_rt::str_lit!(
+                                "ExprBinopSlots in map-based eval path"
+                            ));
                         }
                         _ => __MutualTco1::EvalExprInternal(expr, env),
                     }
@@ -247,10 +251,12 @@ fn __mutual_tco_trampoline_1(
                     let __t = &expr;
                     match __t.view() {
                         crate::aver_generated::domain::ast::Expr__view::ExprCmpSlotInt(_) => {
-                            return Err(AverStr::from("ExprCmpSlotInt in map-based eval path"));
+                            return Err(::aver_rt::str_lit!(
+                                "ExprCmpSlotInt in map-based eval path"
+                            ));
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprCmpSlots(_) => {
-                            return Err(AverStr::from("ExprCmpSlots in map-based eval path"));
+                            return Err(::aver_rt::str_lit!("ExprCmpSlots in map-based eval path"));
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprVectorGetOrInt(
                             __vecExpr_fields,
@@ -511,8 +517,8 @@ fn __mutual_tco_trampoline_1(
                                     let mut __b = aver_rt::Buffer::with_capacity(
                                         (aver_rt::AverInt::from_i64(50)).to_usize().unwrap_or(0),
                                     );
-                                    __b.push_str(&AverStr::from(
-                                        "unsupported named-env expression: ",
+                                    __b.push_str(&::aver_rt::str_lit!(
+                                        "unsupported named-env expression: "
                                     ));
                                     __b
                                 };
@@ -546,8 +552,8 @@ fn __mutual_tco_trampoline_1(
                             }
                         }
                         _ => {
-                            return Err((AverStr::from(
-                                "bool branch condition must evaluate to Bool, got: ",
+                            return Err((::aver_rt::str_lit!(
+                                "bool branch condition must evaluate to Bool, got: "
                             ) + &crate::aver_generated::domain::value::valRepr(
                                 &condV,
                             )));
@@ -609,7 +615,7 @@ fn __mutual_tco_trampoline_1(
                                 )
                             } else {
                                 return crate::aver_generated::domain::eval::core::evalCallBuiltin(
-                                    AverStr::from("Option.withDefault"),
+                                    ::aver_rt::str_lit!("Option.withDefault"),
                                     &argExprs,
                                     &env,
                                     &*fns,
@@ -618,7 +624,7 @@ fn __mutual_tco_trampoline_1(
                         }
                     } else {
                         return crate::aver_generated::domain::eval::core::evalCallBuiltin(
-                            AverStr::from("Option.withDefault"),
+                            ::aver_rt::str_lit!("Option.withDefault"),
                             &argExprs,
                             &env,
                             &*fns,
@@ -656,14 +662,14 @@ fn __mutual_tco_trampoline_1(
                                             env,
                                         )
                                     } else {
-                                        return crate::aver_generated::domain::eval::core::evalCallBuiltin(AverStr::from("Option.withDefault"), &aver_rt::AverList::from_vec(vec![optionExpr, defaultExpr]), &env, &*fns);
+                                        return crate::aver_generated::domain::eval::core::evalCallBuiltin(::aver_rt::str_lit!("Option.withDefault"), &aver_rt::AverList::from_vec(vec![optionExpr, defaultExpr]), &env, &*fns);
                                     }
                                 }
                             }
                         }
                         _ => {
                             return crate::aver_generated::domain::eval::core::evalCallBuiltin(
-                                AverStr::from("Option.withDefault"),
+                                ::aver_rt::str_lit!("Option.withDefault"),
                                 &aver_rt::AverList::from_vec(vec![optionExpr, defaultExpr]),
                                 &env,
                                 &*fns,
@@ -699,20 +705,20 @@ fn __mutual_tco_trampoline_1(
                                             env,
                                         )
                                     } else {
-                                        return crate::aver_generated::domain::eval::core::evalCallBuiltin(AverStr::from("Option.withDefault"), &aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(AverStr::from("Vector.set"), vecArgs)), defaultExpr]), &env, &*fns);
+                                        return crate::aver_generated::domain::eval::core::evalCallBuiltin(::aver_rt::str_lit!("Option.withDefault"), &aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(::aver_rt::str_lit!("Vector.set"), vecArgs)), defaultExpr]), &env, &*fns);
                                     }
                                 }
                             } else {
-                                return crate::aver_generated::domain::eval::core::evalCallBuiltin(AverStr::from("Option.withDefault"), &aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(AverStr::from("Vector.set"), vecArgs)), defaultExpr]), &env, &*fns);
+                                return crate::aver_generated::domain::eval::core::evalCallBuiltin(::aver_rt::str_lit!("Option.withDefault"), &aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(::aver_rt::str_lit!("Vector.set"), vecArgs)), defaultExpr]), &env, &*fns);
                             }
                         }
                     } else {
                         return crate::aver_generated::domain::eval::core::evalCallBuiltin(
-                            AverStr::from("Option.withDefault"),
+                            ::aver_rt::str_lit!("Option.withDefault"),
                             &aver_rt::AverList::from_vec(vec![
                                 crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                                     crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                                        AverStr::from("Vector.set"),
+                                        ::aver_rt::str_lit!("Vector.set"),
                                         vecArgs,
                                     ),
                                 ),
@@ -794,16 +800,16 @@ fn __mutual_tco_trampoline_1(
                                     env,
                                 )
                             } else {
-                                return crate::aver_generated::domain::eval::core::evalCallBuiltin(AverStr::from("Option.withDefault"), &aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(AverStr::from("Vector.get"), vecArgs)), defaultExpr]), &env, &*fns);
+                                return crate::aver_generated::domain::eval::core::evalCallBuiltin(::aver_rt::str_lit!("Option.withDefault"), &aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(::aver_rt::str_lit!("Vector.get"), vecArgs)), defaultExpr]), &env, &*fns);
                             }
                         }
                     } else {
                         return crate::aver_generated::domain::eval::core::evalCallBuiltin(
-                            AverStr::from("Option.withDefault"),
+                            ::aver_rt::str_lit!("Option.withDefault"),
                             &aver_rt::AverList::from_vec(vec![
                                 crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                                     crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                                        AverStr::from("Vector.get"),
+                                        ::aver_rt::str_lit!("Vector.get"),
                                         vecArgs,
                                     ),
                                 ),
@@ -853,7 +859,7 @@ fn __mutual_tco_trampoline_1(
             }
             __MutualTco1::EvalMatch(mut v @ _, mut arms @ _, mut env @ _) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(arms, [] => { return Err(AverStr::from("no matching arm")) }, [arm, rest] => match crate::aver_generated::domain::match_mod::matchPattern(&arm.pattern, v.clone()) { Ok(bindings @ _) => { __MutualTco1::EvalExpr(arm.body, crate::aver_generated::domain::eval::store::mergeBindings(&bindings, env)) }, Err(_) => { __MutualTco1::EvalMatch(v, rest, env) } })
+                aver_list_match!(arms, [] => { return Err(::aver_rt::str_lit!("no matching arm")) }, [arm, rest] => match crate::aver_generated::domain::match_mod::matchPattern(&arm.pattern, v.clone()) { Ok(bindings @ _) => { __MutualTco1::EvalExpr(arm.body, crate::aver_generated::domain::eval::store::mergeBindings(&bindings, env)) }, Err(_) => { __MutualTco1::EvalMatch(v, rest, env) } })
             }
         };
     }
@@ -1185,8 +1191,8 @@ fn __mutual_tco_trampoline_2(
                             }
                         }
                         _ => {
-                            return Err((AverStr::from(
-                                "bool branch condition must evaluate to Bool, got: ",
+                            return Err((::aver_rt::str_lit!(
+                                "bool branch condition must evaluate to Bool, got: "
                             ) + &crate::aver_generated::domain::value::valRepr(
                                 &condV,
                             )));
@@ -1218,7 +1224,7 @@ fn __mutual_tco_trampoline_2(
                 mut env @ _,
             ) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(arms, [] => { return Err(AverStr::from("no matching arm")) }, [arm, rest] => match crate::aver_generated::domain::match_mod::matchPattern(&arm.pattern, v.clone()) { Ok(bindings @ _) => { __MutualTco2::EvalTailExprSlot(selfId, arm.body, slotCount, crate::aver_generated::domain::eval::core::mergeBindingsSlot(bindings, &arm.bindingSlots, env)) }, Err(_) => { __MutualTco2::EvalTailMatchSlot(selfId, v, rest, slotCount, env) } })
+                aver_list_match!(arms, [] => { return Err(::aver_rt::str_lit!("no matching arm")) }, [arm, rest] => match crate::aver_generated::domain::match_mod::matchPattern(&arm.pattern, v.clone()) { Ok(bindings @ _) => { __MutualTco2::EvalTailExprSlot(selfId, arm.body, slotCount, crate::aver_generated::domain::eval::core::mergeBindingsSlot(bindings, &arm.bindingSlots, env)) }, Err(_) => { __MutualTco2::EvalTailMatchSlot(selfId, v, rest, slotCount, env) } })
             }
         };
     }
@@ -1734,7 +1740,9 @@ fn __mutual_tco_trampoline_3(
                                     let mut __b = aver_rt::Buffer::with_capacity(
                                         (aver_rt::AverInt::from_i64(45)).to_usize().unwrap_or(0),
                                     );
-                                    __b.push_str(&AverStr::from("unsupported slot expression: "));
+                                    __b.push_str(&::aver_rt::str_lit!(
+                                        "unsupported slot expression: "
+                                    ));
                                     __b
                                 };
                                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
@@ -1771,8 +1779,8 @@ fn __mutual_tco_trampoline_3(
                             }
                         }
                         _ => {
-                            return Err((AverStr::from(
-                                "bool branch condition must evaluate to Bool, got: ",
+                            return Err((::aver_rt::str_lit!(
+                                "bool branch condition must evaluate to Bool, got: "
                             ) + &crate::aver_generated::domain::value::valRepr(
                                 &condV,
                             )));
@@ -1824,12 +1832,12 @@ fn __mutual_tco_trampoline_3(
                                     env,
                                 )
                             } else {
-                                return crate::aver_generated::domain::eval::core::evalCallBuiltinSlot(AverStr::from("Option.withDefault"), &argExprs, env, &*slotMap, &*fns);
+                                return crate::aver_generated::domain::eval::core::evalCallBuiltinSlot(::aver_rt::str_lit!("Option.withDefault"), &argExprs, env, &*slotMap, &*fns);
                             }
                         }
                     } else {
                         return crate::aver_generated::domain::eval::core::evalCallBuiltinSlot(
-                            AverStr::from("Option.withDefault"),
+                            ::aver_rt::str_lit!("Option.withDefault"),
                             &argExprs,
                             env,
                             &*slotMap,
@@ -1868,14 +1876,14 @@ fn __mutual_tco_trampoline_3(
                                             env,
                                         )
                                     } else {
-                                        return crate::aver_generated::domain::eval::core::evalCallBuiltinSlot(AverStr::from("Option.withDefault"), &aver_rt::AverList::from_vec(vec![optionExpr, defaultExpr]), env, &*slotMap, &*fns);
+                                        return crate::aver_generated::domain::eval::core::evalCallBuiltinSlot(::aver_rt::str_lit!("Option.withDefault"), &aver_rt::AverList::from_vec(vec![optionExpr, defaultExpr]), env, &*slotMap, &*fns);
                                     }
                                 }
                             }
                         }
                         _ => {
                             return crate::aver_generated::domain::eval::core::evalCallBuiltinSlot(
-                                AverStr::from("Option.withDefault"),
+                                ::aver_rt::str_lit!("Option.withDefault"),
                                 &aver_rt::AverList::from_vec(vec![optionExpr, defaultExpr]),
                                 env,
                                 &*slotMap,
@@ -1912,20 +1920,20 @@ fn __mutual_tco_trampoline_3(
                                             env,
                                         )
                                     } else {
-                                        return crate::aver_generated::domain::eval::core::evalCallBuiltinSlot(AverStr::from("Option.withDefault"), &aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(AverStr::from("Vector.set"), vecArgs)), defaultExpr]), env, &*slotMap, &*fns);
+                                        return crate::aver_generated::domain::eval::core::evalCallBuiltinSlot(::aver_rt::str_lit!("Option.withDefault"), &aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(::aver_rt::str_lit!("Vector.set"), vecArgs)), defaultExpr]), env, &*slotMap, &*fns);
                                     }
                                 }
                             } else {
-                                return crate::aver_generated::domain::eval::core::evalCallBuiltinSlot(AverStr::from("Option.withDefault"), &aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(AverStr::from("Vector.set"), vecArgs)), defaultExpr]), env, &*slotMap, &*fns);
+                                return crate::aver_generated::domain::eval::core::evalCallBuiltinSlot(::aver_rt::str_lit!("Option.withDefault"), &aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(::aver_rt::str_lit!("Vector.set"), vecArgs)), defaultExpr]), env, &*slotMap, &*fns);
                             }
                         }
                     } else {
                         return crate::aver_generated::domain::eval::core::evalCallBuiltinSlot(
-                            AverStr::from("Option.withDefault"),
+                            ::aver_rt::str_lit!("Option.withDefault"),
                             &aver_rt::AverList::from_vec(vec![
                                 crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                                     crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                                        AverStr::from("Vector.set"),
+                                        ::aver_rt::str_lit!("Vector.set"),
                                         vecArgs,
                                     ),
                                 ),
@@ -2011,16 +2019,16 @@ fn __mutual_tco_trampoline_3(
                                     env,
                                 )
                             } else {
-                                return crate::aver_generated::domain::eval::core::evalCallBuiltinSlot(AverStr::from("Option.withDefault"), &aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(AverStr::from("Vector.get"), vecArgs)), defaultExpr]), env, &*slotMap, &*fns);
+                                return crate::aver_generated::domain::eval::core::evalCallBuiltinSlot(::aver_rt::str_lit!("Option.withDefault"), &aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(::aver_rt::str_lit!("Vector.get"), vecArgs)), defaultExpr]), env, &*slotMap, &*fns);
                             }
                         }
                     } else {
                         return crate::aver_generated::domain::eval::core::evalCallBuiltinSlot(
-                            AverStr::from("Option.withDefault"),
+                            ::aver_rt::str_lit!("Option.withDefault"),
                             &aver_rt::AverList::from_vec(vec![
                                 crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                                     crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                                        AverStr::from("Vector.get"),
+                                        ::aver_rt::str_lit!("Vector.get"),
                                         vecArgs,
                                     ),
                                 ),
@@ -2083,7 +2091,7 @@ fn __mutual_tco_trampoline_3(
             }
             __MutualTco3::EvalMatchSlot(mut v @ _, mut arms @ _, mut env @ _) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(arms, [] => { return Err(AverStr::from("no matching arm")) }, [arm, rest] => match crate::aver_generated::domain::match_mod::matchPattern(&arm.pattern, v.clone()) { Ok(bindings @ _) => { __MutualTco3::EvalExprSlot(arm.body, crate::aver_generated::domain::eval::core::mergeBindingsSlot(bindings, &arm.bindingSlots, env)) }, Err(_) => { __MutualTco3::EvalMatchSlot(v, rest, env) } })
+                aver_list_match!(arms, [] => { return Err(::aver_rt::str_lit!("no matching arm")) }, [arm, rest] => match crate::aver_generated::domain::match_mod::matchPattern(&arm.pattern, v.clone()) { Ok(bindings @ _) => { __MutualTco3::EvalExprSlot(arm.body, crate::aver_generated::domain::eval::core::mergeBindingsSlot(bindings, &arm.bindingSlots, env)) }, Err(_) => { __MutualTco3::EvalMatchSlot(v, rest, env) } })
             }
         };
     }
@@ -2989,46 +2997,66 @@ pub fn exprLabel(expr @ _: &crate::aver_generated::domain::ast::Expr) -> AverStr
     {
         let __t = expr;
         match __t.view() {
-            crate::aver_generated::domain::ast::Expr__view::ExprInt(_) => AverStr::from("ExprInt"),
-            crate::aver_generated::domain::ast::Expr__view::ExprFloat(_) => {
-                AverStr::from("ExprFloat")
+            crate::aver_generated::domain::ast::Expr__view::ExprInt(_) => {
+                ::aver_rt::str_lit!("ExprInt")
             }
-            crate::aver_generated::domain::ast::Expr__view::ExprStr(_) => AverStr::from("ExprStr"),
+            crate::aver_generated::domain::ast::Expr__view::ExprFloat(_) => {
+                ::aver_rt::str_lit!("ExprFloat")
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprStr(_) => {
+                ::aver_rt::str_lit!("ExprStr")
+            }
             crate::aver_generated::domain::ast::Expr__view::ExprBool(_) => {
-                AverStr::from("ExprBool")
+                ::aver_rt::str_lit!("ExprBool")
             }
             crate::aver_generated::domain::ast::Expr__view::ExprBoolBranch(_) => {
-                AverStr::from("ExprBoolBranch")
+                ::aver_rt::str_lit!("ExprBoolBranch")
             }
-            crate::aver_generated::domain::ast::Expr__view::ExprVar(_) => AverStr::from("ExprVar"),
+            crate::aver_generated::domain::ast::Expr__view::ExprVar(_) => {
+                ::aver_rt::str_lit!("ExprVar")
+            }
             crate::aver_generated::domain::ast::Expr__view::ExprSlot(_) => {
-                AverStr::from("ExprSlot")
+                ::aver_rt::str_lit!("ExprSlot")
             }
             crate::aver_generated::domain::ast::Expr__view::ExprBinopSlotInt(_) => {
-                AverStr::from("ExprBinopSlotInt")
+                ::aver_rt::str_lit!("ExprBinopSlotInt")
             }
             crate::aver_generated::domain::ast::Expr__view::ExprBinopSlots(_) => {
-                AverStr::from("ExprBinopSlots")
+                ::aver_rt::str_lit!("ExprBinopSlots")
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCmpSlotInt(_) => {
-                AverStr::from("ExprCmpSlotInt")
+                ::aver_rt::str_lit!("ExprCmpSlotInt")
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCmpSlots(_) => {
-                AverStr::from("ExprCmpSlots")
+                ::aver_rt::str_lit!("ExprCmpSlots")
             }
             crate::aver_generated::domain::ast::Expr__view::ExprVectorGetOrInt(_) => {
-                AverStr::from("ExprVectorGetOrInt")
+                ::aver_rt::str_lit!("ExprVectorGetOrInt")
             }
             crate::aver_generated::domain::ast::Expr__view::ExprIntModOrInt(_) => {
-                AverStr::from("ExprIntModOrInt")
+                ::aver_rt::str_lit!("ExprIntModOrInt")
             }
-            crate::aver_generated::domain::ast::Expr__view::ExprAdd(_) => AverStr::from("ExprAdd"),
-            crate::aver_generated::domain::ast::Expr__view::ExprSub(_) => AverStr::from("ExprSub"),
-            crate::aver_generated::domain::ast::Expr__view::ExprMul(_) => AverStr::from("ExprMul"),
-            crate::aver_generated::domain::ast::Expr__view::ExprDiv(_) => AverStr::from("ExprDiv"),
-            crate::aver_generated::domain::ast::Expr__view::ExprNeg(_) => AverStr::from("ExprNeg"),
-            crate::aver_generated::domain::ast::Expr__view::ExprEq(_) => AverStr::from("ExprEq"),
-            crate::aver_generated::domain::ast::Expr__view::ExprNeq(_) => AverStr::from("ExprNeq"),
+            crate::aver_generated::domain::ast::Expr__view::ExprAdd(_) => {
+                ::aver_rt::str_lit!("ExprAdd")
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprSub(_) => {
+                ::aver_rt::str_lit!("ExprSub")
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprMul(_) => {
+                ::aver_rt::str_lit!("ExprMul")
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprDiv(_) => {
+                ::aver_rt::str_lit!("ExprDiv")
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprNeg(_) => {
+                ::aver_rt::str_lit!("ExprNeg")
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprEq(_) => {
+                ::aver_rt::str_lit!("ExprEq")
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprNeq(_) => {
+                ::aver_rt::str_lit!("ExprNeq")
+            }
             _ => crate::aver_generated::domain::eval::core::exprLabelAggregate(expr),
         }
     }
@@ -3040,47 +3068,57 @@ pub fn exprLabelAggregate(expr @ _: &crate::aver_generated::domain::ast::Expr) -
     {
         let __t = expr;
         match __t.view() {
-            crate::aver_generated::domain::ast::Expr__view::ExprLt(_) => AverStr::from("ExprLt"),
-            crate::aver_generated::domain::ast::Expr__view::ExprGt(_) => AverStr::from("ExprGt"),
-            crate::aver_generated::domain::ast::Expr__view::ExprLte(_) => AverStr::from("ExprLte"),
-            crate::aver_generated::domain::ast::Expr__view::ExprGte(_) => AverStr::from("ExprGte"),
+            crate::aver_generated::domain::ast::Expr__view::ExprLt(_) => {
+                ::aver_rt::str_lit!("ExprLt")
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprGt(_) => {
+                ::aver_rt::str_lit!("ExprGt")
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprLte(_) => {
+                ::aver_rt::str_lit!("ExprLte")
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprGte(_) => {
+                ::aver_rt::str_lit!("ExprGte")
+            }
             crate::aver_generated::domain::ast::Expr__view::ExprConcat(_) => {
-                AverStr::from("ExprConcat")
+                ::aver_rt::str_lit!("ExprConcat")
             }
             crate::aver_generated::domain::ast::Expr__view::ExprTuple(_) => {
-                AverStr::from("ExprTuple")
+                ::aver_rt::str_lit!("ExprTuple")
             }
             crate::aver_generated::domain::ast::Expr__view::ExprList(_) => {
-                AverStr::from("ExprList")
+                ::aver_rt::str_lit!("ExprList")
             }
             crate::aver_generated::domain::ast::Expr__view::ExprRecord(_) => {
-                AverStr::from("ExprRecord")
+                ::aver_rt::str_lit!("ExprRecord")
             }
             crate::aver_generated::domain::ast::Expr__view::ExprFieldAccess(_) => {
-                AverStr::from("ExprFieldAccess")
+                ::aver_rt::str_lit!("ExprFieldAccess")
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCall(_) => {
-                AverStr::from("ExprCall")
+                ::aver_rt::str_lit!("ExprCall")
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallDirect(_) => {
-                AverStr::from("ExprCallDirect")
+                ::aver_rt::str_lit!("ExprCallDirect")
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltin(_) => {
-                AverStr::from("ExprCallBuiltin")
+                ::aver_rt::str_lit!("ExprCallBuiltin")
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltinId(_) => {
-                AverStr::from("ExprCallBuiltinId")
+                ::aver_rt::str_lit!("ExprCallBuiltinId")
             }
             crate::aver_generated::domain::ast::Expr__view::ExprMatch(_) => {
-                AverStr::from("ExprMatch")
+                ::aver_rt::str_lit!("ExprMatch")
             }
             crate::aver_generated::domain::ast::Expr__view::ExprPropagate(_) => {
-                AverStr::from("ExprPropagate")
+                ::aver_rt::str_lit!("ExprPropagate")
             }
             crate::aver_generated::domain::ast::Expr__view::ExprIndependentProduct(_) => {
-                AverStr::from("ExprIndependentProduct")
+                ::aver_rt::str_lit!("ExprIndependentProduct")
             }
-            _ => AverStr::from("Expr"),
+            _ => {
+                ::aver_rt::str_lit!("Expr")
+            }
         }
     }
 }
@@ -3170,13 +3208,13 @@ pub fn evalPropagate(
                         }
                         _ => Err(
                             crate::aver_generated::domain::eval::common::wrapPropagatedError(
-                                AverStr::from("propagated error"),
+                                ::aver_rt::str_lit!("propagated error"),
                             ),
                         ),
                     }
                 }
             }
-            _ => Err(AverStr::from("? operator requires Result value")),
+            _ => Err(::aver_rt::str_lit!("? operator requires Result value")),
         }
     }
 }
@@ -3418,14 +3456,14 @@ pub fn unwrapProductResults(
                                             return Err(crate::aver_generated::domain::eval::common::wrapPropagatedError(msg));
                                         }
                                         _ => {
-                                            return Err(crate::aver_generated::domain::eval::common::wrapPropagatedError(AverStr::from("propagated error")));
+                                            return Err(crate::aver_generated::domain::eval::common::wrapPropagatedError(::aver_rt::str_lit!("propagated error")));
                                         }
                                     }
                                 }
                             }
                             _ => {
-                                return Err(AverStr::from(
-                                    "?! operator requires all elements to be Result values",
+                                return Err(::aver_rt::str_lit!(
+                                    "?! operator requires all elements to be Result values"
                                 ));
                             }
                         }
@@ -3520,7 +3558,12 @@ pub fn evalConcatExpr(
     fns @ _: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::eval::core::evalConcatParts(parts, env, fns, AverStr::from(""))
+    crate::aver_generated::domain::eval::core::evalConcatParts(
+        parts,
+        env,
+        fns,
+        ::aver_rt::str_lit!(""),
+    )
 }
 
 /// Concatenate interpolation parts. Self-recursive for codegen TCO.
@@ -3648,7 +3691,7 @@ pub fn evalFieldAccess(
                 let fields = &__fields_fields.1;
                 crate::aver_generated::domain::eval::common::lookupField(fields, field)
             }
-            _ => Err(AverStr::from("field access on non-record")),
+            _ => Err(::aver_rt::str_lit!("field access on non-record")),
         }
     }
 }
@@ -4724,7 +4767,10 @@ pub fn maybeCallMain(
     mut fallback @ _: crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match crate::aver_generated::domain::eval::store::lookupFnOption(fns, AverStr::from("main")) {
+    match crate::aver_generated::domain::eval::store::lookupFnOption(
+        fns,
+        ::aver_rt::str_lit!("main"),
+    ) {
         Some(fd @ _) => crate::aver_generated::domain::eval::core::callResolved(
             &fd,
             &aver_rt::AverList::empty(),
@@ -4955,7 +5001,7 @@ pub fn evalConcatSlot(
         env,
         slotMap,
         fns,
-        AverStr::from(""),
+        ::aver_rt::str_lit!(""),
     )
 }
 
@@ -5174,7 +5220,7 @@ pub fn evalFieldAccessSlot(
                 let fields = &__fields_fields.1;
                 crate::aver_generated::domain::eval::common::lookupField(fields, field)
             }
-            _ => Err(AverStr::from("field access on non-record")),
+            _ => Err(::aver_rt::str_lit!("field access on non-record")),
         }
     }
 }
@@ -5513,13 +5559,13 @@ pub fn evalPropagateSlot(
                         }
                         _ => Err(
                             crate::aver_generated::domain::eval::common::wrapPropagatedError(
-                                AverStr::from("propagated error"),
+                                ::aver_rt::str_lit!("propagated error"),
                             ),
                         ),
                     }
                 }
             }
-            _ => Err(AverStr::from("? operator requires Result value")),
+            _ => Err(::aver_rt::str_lit!("? operator requires Result value")),
         }
     }
 }
@@ -5616,14 +5662,14 @@ pub fn unwrapProductResults__collected(
                                             return Err(crate::aver_generated::domain::eval::common::wrapPropagatedError(msg));
                                         }
                                         _ => {
-                                            return Err(crate::aver_generated::domain::eval::common::wrapPropagatedError(AverStr::from("propagated error")));
+                                            return Err(crate::aver_generated::domain::eval::common::wrapPropagatedError(::aver_rt::str_lit!("propagated error")));
                                         }
                                     }
                                 }
                             }
                             _ => {
-                                return Err(AverStr::from(
-                                    "?! operator requires all elements to be Result values",
+                                return Err(::aver_rt::str_lit!(
+                                    "?! operator requires all elements to be Result values"
                                 ));
                             }
                         }

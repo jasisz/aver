@@ -958,7 +958,7 @@ pub fn resolveExprAfterLeaf(
                     a,
                     b,
                     slots,
-                    AverStr::from("add"),
+                    ::aver_rt::str_lit!("add"),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprSub(__a_fields) => {
@@ -968,7 +968,7 @@ pub fn resolveExprAfterLeaf(
                     a,
                     b,
                     slots,
-                    AverStr::from("sub"),
+                    ::aver_rt::str_lit!("sub"),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprMul(__a_fields) => {
@@ -978,7 +978,7 @@ pub fn resolveExprAfterLeaf(
                     a,
                     b,
                     slots,
-                    AverStr::from("mul"),
+                    ::aver_rt::str_lit!("mul"),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprDiv(__a_fields) => {
@@ -988,7 +988,7 @@ pub fn resolveExprAfterLeaf(
                     a,
                     b,
                     slots,
-                    AverStr::from("div"),
+                    ::aver_rt::str_lit!("div"),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprNeg(__inner_fields) => {
@@ -1012,7 +1012,7 @@ pub fn resolveExprAfterLeaf(
                     a,
                     b,
                     slots,
-                    AverStr::from("eq"),
+                    ::aver_rt::str_lit!("eq"),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprNeq(__a_fields) => {
@@ -1022,7 +1022,7 @@ pub fn resolveExprAfterLeaf(
                     a,
                     b,
                     slots,
-                    AverStr::from("neq"),
+                    ::aver_rt::str_lit!("neq"),
                 )
             }
             _ => crate::aver_generated::domain::resolver::core::resolveExprAfterArith(expr, slots),
@@ -1049,7 +1049,7 @@ pub fn resolveExprAfterArith(
                     a,
                     b,
                     slots,
-                    AverStr::from("lt"),
+                    ::aver_rt::str_lit!("lt"),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprGt(__a_fields) => {
@@ -1059,7 +1059,7 @@ pub fn resolveExprAfterArith(
                     a,
                     b,
                     slots,
-                    AverStr::from("gt"),
+                    ::aver_rt::str_lit!("gt"),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprLte(__a_fields) => {
@@ -1069,7 +1069,7 @@ pub fn resolveExprAfterArith(
                     a,
                     b,
                     slots,
-                    AverStr::from("lte"),
+                    ::aver_rt::str_lit!("lte"),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprGte(__a_fields) => {
@@ -1079,7 +1079,7 @@ pub fn resolveExprAfterArith(
                     a,
                     b,
                     slots,
-                    AverStr::from("gte"),
+                    ::aver_rt::str_lit!("gte"),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCall(__name_fields) => {

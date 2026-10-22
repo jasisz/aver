@@ -245,7 +245,7 @@ fn __mutual_tco_trampoline_3(
                         return Ok((
                             crate::aver_generated::domain::ast::Expr::ExprCall(
                                 crate::aver_generated::domain::ast::Expr__ExprCall(
-                                    AverStr::from("Map.fromList"),
+                                    ::aver_rt::str_lit!("Map.fromList"),
                                     aver_rt::AverList::from_vec(vec![
                                         crate::aver_generated::domain::ast::Expr::ExprList(
                                             crate::aver_generated::domain::ast::Expr__ExprList(
@@ -258,7 +258,7 @@ fn __mutual_tco_trampoline_3(
                             pos2.add(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
-                    _ => return Err(AverStr::from("Expected ',' or '}' in map literal")),
+                    _ => return Err(::aver_rt::str_lit!("Expected ',' or '}' in map literal")),
                 }
             }
         };
@@ -336,7 +336,7 @@ fn __mutual_tco_trampoline_4(
                             acc,
                         )
                     }
-                    _ => return Err(AverStr::from("Expected } in string interpolation")),
+                    _ => return Err(::aver_rt::str_lit!("Expected } in string interpolation")),
                 }
             }
             __MutualTco4::ParseInterpContinue(mut pos @ _, mut acc @ _) => {
@@ -474,7 +474,7 @@ fn __mutual_tco_trampoline_5(
                             pos.add(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
-                    _ => return Err(AverStr::from("Expected ',' or ']' in list literal")),
+                    _ => return Err(::aver_rt::str_lit!("Expected ',' or ']' in list literal")),
                 }
             }
             __MutualTco5::ParseListAfterComma(mut pos @ _, mut items @ _) => {
@@ -572,7 +572,7 @@ fn __mutual_tco_trampoline_6(
                             &items.reverse(),
                         );
                     }
-                    _ => return Err(AverStr::from("Expected ')' or ',' in tuple")),
+                    _ => return Err(::aver_rt::str_lit!("Expected ')' or ',' in tuple")),
                 }
             }
             __MutualTco6::ParseTupleAfterComma(mut pos @ _, mut items @ _) => {
@@ -644,7 +644,7 @@ fn __mutual_tco_trampoline_7(
                             ),
                         )
                     }
-                    _ => return Err(AverStr::from("Expected field name after '.'")),
+                    _ => return Err(::aver_rt::str_lit!("Expected field name after '.'")),
                 }
             }
             __MutualTco7::ParseFieldAccessTail(mut pos @ _, mut expr @ _) => {
@@ -723,7 +723,11 @@ fn __mutual_tco_trampoline_8(
                             field,
                         )
                     }
-                    _ => return Err(AverStr::from("Expected field name in record constructor")),
+                    _ => {
+                        return Err(::aver_rt::str_lit!(
+                            "Expected field name in record constructor"
+                        ));
+                    }
                 }
             }
             __MutualTco8::ParseRecordField(
@@ -773,7 +777,11 @@ fn __mutual_tco_trampoline_8(
                             pos2.add(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
-                    _ => return Err(AverStr::from("Expected ',' or ')' in record constructor")),
+                    _ => {
+                        return Err(::aver_rt::str_lit!(
+                            "Expected ',' or ')' in record constructor"
+                        ));
+                    }
                 }
             }
             __MutualTco8::ParseRecordAfterComma(mut pos @ _, mut name @ _, mut fields @ _) => {
@@ -912,7 +920,7 @@ fn __mutual_tco_trampoline_9(
                             pos.add(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
-                    _ => return Err(AverStr::from("Expected ',' or ')' in argument list")),
+                    _ => return Err(::aver_rt::str_lit!("Expected ',' or ')' in argument list")),
                 }
             }
             __MutualTco9::ParseCallArgsAfterComma(mut pos @ _, mut name @ _, mut args @ _) => {
@@ -1060,7 +1068,7 @@ fn __mutual_tco_trampoline_10(
                                         &aver_rt::AverList::from_vec(vec![
                                         crate::aver_generated::domain::ast::Expr::ExprRecord(
                                             crate::aver_generated::domain::ast::Expr__ExprRecord(
-                                                AverStr::from("_named"),
+                                                ::aver_rt::str_lit!("_named"),
                                                 namedAcc.reverse(),
                                             ),
                                         ),
@@ -1072,8 +1080,8 @@ fn __mutual_tco_trampoline_10(
                         ));
                     }
                     _ => {
-                        return Err(AverStr::from(
-                            "Expected field name or ')' in named arguments",
+                        return Err(::aver_rt::str_lit!(
+                            "Expected field name or ')' in named arguments"
                         ));
                     }
                 }
@@ -1124,7 +1132,7 @@ fn __mutual_tco_trampoline_10(
                                         &aver_rt::AverList::from_vec(vec![
                                         crate::aver_generated::domain::ast::Expr::ExprRecord(
                                             crate::aver_generated::domain::ast::Expr__ExprRecord(
-                                                AverStr::from("_named"),
+                                                ::aver_rt::str_lit!("_named"),
                                                 namedAcc.reverse(),
                                             ),
                                         ),
@@ -1135,7 +1143,11 @@ fn __mutual_tco_trampoline_10(
                             pos.add(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
-                    _ => return Err(AverStr::from("Expected ',' or ')' in named arguments")),
+                    _ => {
+                        return Err(::aver_rt::str_lit!(
+                            "Expected ',' or ')' in named arguments"
+                        ));
+                    }
                 }
             }
         };
@@ -1220,7 +1232,7 @@ fn __mutual_tco_trampoline_11(
                     crate::aver_generated::domain::token::Token::TkDedent => {
                         let __list_subject = acc.clone();
                         if __list_subject.is_empty() {
-                            return Err(AverStr::from("Expected at least one match arm"));
+                            return Err(::aver_rt::str_lit!("Expected at least one match arm"));
                         } else {
                             return Ok((
                                 crate::aver_generated::domain::ast::Expr::ExprMatch(
@@ -1236,7 +1248,7 @@ fn __mutual_tco_trampoline_11(
                     crate::aver_generated::domain::token::Token::TkEof => {
                         let __list_subject = acc.clone();
                         if __list_subject.is_empty() {
-                            return Err(AverStr::from("Expected at least one match arm"));
+                            return Err(::aver_rt::str_lit!("Expected at least one match arm"));
                         } else {
                             return Ok((
                                 crate::aver_generated::domain::ast::Expr::ExprMatch(
@@ -1356,7 +1368,7 @@ fn __mutual_tco_trampoline_12(
                     {
                         let __list_subject = acc.clone();
                         if __list_subject.is_empty() {
-                            return Err(AverStr::from("Expected at least one match arm"));
+                            return Err(::aver_rt::str_lit!("Expected at least one match arm"));
                         } else {
                             return Ok((
                                 crate::aver_generated::domain::ast::Expr::ExprMatch(
@@ -1628,7 +1640,7 @@ pub fn buildCmpExpr(
                                     pos,
                                 ))
                             } else {
-                                Err(AverStr::from("unknown cmp operator"))
+                                Err(::aver_rt::str_lit!("unknown cmp operator"))
                             }
                         }
                     }
@@ -1731,7 +1743,7 @@ pub fn parseAtom(
                 let mut __b = aver_rt::Buffer::with_capacity(
                     (aver_rt::AverInt::from_i64(41)).to_usize().unwrap_or(0),
                 );
-                __b.push_str(&AverStr::from("Expected expression, got "));
+                __b.push_str(&::aver_rt::str_lit!("Expected expression, got "));
                 __b
             };
             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
@@ -1753,7 +1765,7 @@ pub fn parseMapLiteral(
         crate::aver_generated::domain::token::Token::TkRBrace => Ok((
             crate::aver_generated::domain::ast::Expr::ExprCall(
                 crate::aver_generated::domain::ast::Expr__ExprCall(
-                    AverStr::from("Map.fromList"),
+                    ::aver_rt::str_lit!("Map.fromList"),
                     aver_rt::AverList::from_vec(vec![
                         crate::aver_generated::domain::ast::Expr::ExprList(
                             crate::aver_generated::domain::ast::Expr__ExprList(
@@ -1861,7 +1873,7 @@ pub fn parseParenExpr(
             crate::aver_generated::domain::token::Token::TkRParen => {
                 Ok((expr, pos2.add(&aver_rt::AverInt::from_i64(1))))
             }
-            _ => Err(AverStr::from("Expected ')' or ',' after expression")),
+            _ => Err(::aver_rt::str_lit!("Expected ')' or ',' after expression")),
         }
     }
 }

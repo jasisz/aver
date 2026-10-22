@@ -530,19 +530,19 @@ pub fn tokenRepr(t @ _: &Token) -> AverStr {
                         let mut __b = aver_rt::Buffer::with_capacity(
                             (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&AverStr::from("Int("));
+                        __b.push_str(&::aver_rt::str_lit!("Int("));
                         __b
                     };
                     __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
                     __b
                 };
-                __b.push_str(&AverStr::from(")"));
+                __b.push_str(&::aver_rt::str_lit!(")"));
                 __b
             })
         }
         crate::aver_generated::domain::token::Token::TkFloat(f) => {
             let f = f.clone();
-            AverStr::from("Float")
+            ::aver_rt::str_lit!("Float")
         }
         crate::aver_generated::domain::token::Token::TkStr(s) => {
             let s = s.clone();
@@ -552,13 +552,13 @@ pub fn tokenRepr(t @ _: &Token) -> AverStr {
                         let mut __b = aver_rt::Buffer::with_capacity(
                             (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&AverStr::from("Str("));
+                        __b.push_str(&::aver_rt::str_lit!("Str("));
                         __b
                     };
                     __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(s))));
                     __b
                 };
-                __b.push_str(&AverStr::from(")"));
+                __b.push_str(&::aver_rt::str_lit!(")"));
                 __b
             })
         }
@@ -570,50 +570,120 @@ pub fn tokenRepr(t @ _: &Token) -> AverStr {
                         let mut __b = aver_rt::Buffer::with_capacity(
                             (aver_rt::AverInt::from_i64(23)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&AverStr::from("Ident("));
+                        __b.push_str(&::aver_rt::str_lit!("Ident("));
                         __b
                     };
                     __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(s))));
                     __b
                 };
-                __b.push_str(&AverStr::from(")"));
+                __b.push_str(&::aver_rt::str_lit!(")"));
                 __b
             })
         }
-        crate::aver_generated::domain::token::Token::TkTrue => AverStr::from("True"),
-        crate::aver_generated::domain::token::Token::TkFalse => AverStr::from("False"),
-        crate::aver_generated::domain::token::Token::TkPlus => AverStr::from("Plus"),
-        crate::aver_generated::domain::token::Token::TkMinus => AverStr::from("Minus"),
-        crate::aver_generated::domain::token::Token::TkStar => AverStr::from("Star"),
-        crate::aver_generated::domain::token::Token::TkSlash => AverStr::from("Slash"),
-        crate::aver_generated::domain::token::Token::TkEq => AverStr::from("Eq"),
-        crate::aver_generated::domain::token::Token::TkEqEq => AverStr::from("EqEq"),
-        crate::aver_generated::domain::token::Token::TkNeq => AverStr::from("Neq"),
-        crate::aver_generated::domain::token::Token::TkLt => AverStr::from("Lt"),
-        crate::aver_generated::domain::token::Token::TkGt => AverStr::from("Gt"),
-        crate::aver_generated::domain::token::Token::TkLte => AverStr::from("Lte"),
-        crate::aver_generated::domain::token::Token::TkGte => AverStr::from("Gte"),
-        crate::aver_generated::domain::token::Token::TkLParen => AverStr::from("LParen"),
-        crate::aver_generated::domain::token::Token::TkRParen => AverStr::from("RParen"),
-        crate::aver_generated::domain::token::Token::TkComma => AverStr::from("Comma"),
-        crate::aver_generated::domain::token::Token::TkArrow => AverStr::from("Arrow"),
-        crate::aver_generated::domain::token::Token::TkLBracket => AverStr::from("LBracket"),
-        crate::aver_generated::domain::token::Token::TkRBracket => AverStr::from("RBracket"),
-        crate::aver_generated::domain::token::Token::TkDot => AverStr::from("Dot"),
-        crate::aver_generated::domain::token::Token::TkDotDot => AverStr::from("DotDot"),
-        crate::aver_generated::domain::token::Token::TkQuestion => AverStr::from("Question"),
-        crate::aver_generated::domain::token::Token::TkNewline => AverStr::from("Newline"),
-        crate::aver_generated::domain::token::Token::TkInterpStart => AverStr::from("InterpStart"),
-        crate::aver_generated::domain::token::Token::TkInterpEnd => AverStr::from("InterpEnd"),
-        crate::aver_generated::domain::token::Token::TkColon => AverStr::from("Colon"),
-        crate::aver_generated::domain::token::Token::TkBang => AverStr::from("Bang"),
-        crate::aver_generated::domain::token::Token::TkFatArrow => AverStr::from("FatArrow"),
-        crate::aver_generated::domain::token::Token::TkIndent => AverStr::from("Indent"),
-        crate::aver_generated::domain::token::Token::TkDedent => AverStr::from("Dedent"),
-        crate::aver_generated::domain::token::Token::TkLBrace => AverStr::from("LBrace"),
-        crate::aver_generated::domain::token::Token::TkRBrace => AverStr::from("RBrace"),
-        crate::aver_generated::domain::token::Token::TkFn => AverStr::from("Fn"),
-        crate::aver_generated::domain::token::Token::TkMatch => AverStr::from("Match"),
-        crate::aver_generated::domain::token::Token::TkEof => AverStr::from("Eof"),
+        crate::aver_generated::domain::token::Token::TkTrue => {
+            ::aver_rt::str_lit!("True")
+        }
+        crate::aver_generated::domain::token::Token::TkFalse => {
+            ::aver_rt::str_lit!("False")
+        }
+        crate::aver_generated::domain::token::Token::TkPlus => {
+            ::aver_rt::str_lit!("Plus")
+        }
+        crate::aver_generated::domain::token::Token::TkMinus => {
+            ::aver_rt::str_lit!("Minus")
+        }
+        crate::aver_generated::domain::token::Token::TkStar => {
+            ::aver_rt::str_lit!("Star")
+        }
+        crate::aver_generated::domain::token::Token::TkSlash => {
+            ::aver_rt::str_lit!("Slash")
+        }
+        crate::aver_generated::domain::token::Token::TkEq => {
+            ::aver_rt::str_lit!("Eq")
+        }
+        crate::aver_generated::domain::token::Token::TkEqEq => {
+            ::aver_rt::str_lit!("EqEq")
+        }
+        crate::aver_generated::domain::token::Token::TkNeq => {
+            ::aver_rt::str_lit!("Neq")
+        }
+        crate::aver_generated::domain::token::Token::TkLt => {
+            ::aver_rt::str_lit!("Lt")
+        }
+        crate::aver_generated::domain::token::Token::TkGt => {
+            ::aver_rt::str_lit!("Gt")
+        }
+        crate::aver_generated::domain::token::Token::TkLte => {
+            ::aver_rt::str_lit!("Lte")
+        }
+        crate::aver_generated::domain::token::Token::TkGte => {
+            ::aver_rt::str_lit!("Gte")
+        }
+        crate::aver_generated::domain::token::Token::TkLParen => {
+            ::aver_rt::str_lit!("LParen")
+        }
+        crate::aver_generated::domain::token::Token::TkRParen => {
+            ::aver_rt::str_lit!("RParen")
+        }
+        crate::aver_generated::domain::token::Token::TkComma => {
+            ::aver_rt::str_lit!("Comma")
+        }
+        crate::aver_generated::domain::token::Token::TkArrow => {
+            ::aver_rt::str_lit!("Arrow")
+        }
+        crate::aver_generated::domain::token::Token::TkLBracket => {
+            ::aver_rt::str_lit!("LBracket")
+        }
+        crate::aver_generated::domain::token::Token::TkRBracket => {
+            ::aver_rt::str_lit!("RBracket")
+        }
+        crate::aver_generated::domain::token::Token::TkDot => {
+            ::aver_rt::str_lit!("Dot")
+        }
+        crate::aver_generated::domain::token::Token::TkDotDot => {
+            ::aver_rt::str_lit!("DotDot")
+        }
+        crate::aver_generated::domain::token::Token::TkQuestion => {
+            ::aver_rt::str_lit!("Question")
+        }
+        crate::aver_generated::domain::token::Token::TkNewline => {
+            ::aver_rt::str_lit!("Newline")
+        }
+        crate::aver_generated::domain::token::Token::TkInterpStart => {
+            ::aver_rt::str_lit!("InterpStart")
+        }
+        crate::aver_generated::domain::token::Token::TkInterpEnd => {
+            ::aver_rt::str_lit!("InterpEnd")
+        }
+        crate::aver_generated::domain::token::Token::TkColon => {
+            ::aver_rt::str_lit!("Colon")
+        }
+        crate::aver_generated::domain::token::Token::TkBang => {
+            ::aver_rt::str_lit!("Bang")
+        }
+        crate::aver_generated::domain::token::Token::TkFatArrow => {
+            ::aver_rt::str_lit!("FatArrow")
+        }
+        crate::aver_generated::domain::token::Token::TkIndent => {
+            ::aver_rt::str_lit!("Indent")
+        }
+        crate::aver_generated::domain::token::Token::TkDedent => {
+            ::aver_rt::str_lit!("Dedent")
+        }
+        crate::aver_generated::domain::token::Token::TkLBrace => {
+            ::aver_rt::str_lit!("LBrace")
+        }
+        crate::aver_generated::domain::token::Token::TkRBrace => {
+            ::aver_rt::str_lit!("RBrace")
+        }
+        crate::aver_generated::domain::token::Token::TkFn => {
+            ::aver_rt::str_lit!("Fn")
+        }
+        crate::aver_generated::domain::token::Token::TkMatch => {
+            ::aver_rt::str_lit!("Match")
+        }
+        crate::aver_generated::domain::token::Token::TkEof => {
+            ::aver_rt::str_lit!("Eof")
+        }
     }
 }

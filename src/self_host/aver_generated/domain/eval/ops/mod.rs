@@ -26,7 +26,7 @@ pub fn applyBinop(
         }
         crate::aver_generated::domain::ast::BinOp::OpDiv => {
             if (y == aver_rt::AverInt::from_i64(0)) {
-                Err(AverStr::from("division by zero"))
+                Err(::aver_rt::str_lit!("division by zero"))
             } else {
                 Ok(crate::aver_generated::domain::value::Val::ValInt(
                     crate::aver_generated::domain::value::Val__ValInt(
@@ -64,7 +64,7 @@ pub fn applyBinopFloat(
         }
         crate::aver_generated::domain::ast::BinOp::OpDiv => {
             if (y == 0.0f64) {
-                Err(AverStr::from("float division by zero"))
+                Err(::aver_rt::str_lit!("float division by zero"))
             } else {
                 Ok(crate::aver_generated::domain::value::Val::ValFloat(
                     crate::aver_generated::domain::value::Val__ValFloat((x / y)),
@@ -210,10 +210,10 @@ pub fn evalBinopVals(
                             crate::aver_generated::domain::value::Val__ValStr((x + &y)),
                         ))
                     }
-                    _ => Err(AverStr::from("strings only support +")),
+                    _ => Err(::aver_rt::str_lit!("strings only support +")),
                 }
             }
-            _ => Err(AverStr::from("binop type mismatch")),
+            _ => Err(::aver_rt::str_lit!("binop type mismatch")),
         }
     }
 }
@@ -240,7 +240,7 @@ pub fn evalNegVals(
                     crate::aver_generated::domain::value::Val__ValFloat((0.0f64 - f)),
                 ))
             }
-            _ => Err(AverStr::from("unary '-' requires Int or Float")),
+            _ => Err(::aver_rt::str_lit!("unary '-' requires Int or Float")),
         }
     }
 }
@@ -383,7 +383,7 @@ pub fn applyBoolCmp(
                 crate::aver_generated::domain::value::Val__ValBool((x != y)),
             ))
         }
-        _ => Err(AverStr::from("bools only support == and !=")),
+        _ => Err(::aver_rt::str_lit!("bools only support == and !=")),
     }
 }
 
@@ -420,7 +420,7 @@ pub fn evalCmpRepr(
                                 let mut __b = aver_rt::Buffer::with_capacity(
                                     (aver_rt::AverInt::from_i64(83)).to_usize().unwrap_or(0),
                                 );
-                                __b.push_str(&AverStr::from("comparison "));
+                                __b.push_str(&::aver_rt::str_lit!("comparison "));
                                 __b
                             };
                             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
@@ -428,7 +428,7 @@ pub fn evalCmpRepr(
                             )));
                             __b
                         };
-                        __b.push_str(&AverStr::from(" not supported for "));
+                        __b.push_str(&::aver_rt::str_lit!(" not supported for "));
                         __b
                     };
                     __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
@@ -436,7 +436,7 @@ pub fn evalCmpRepr(
                     )));
                     __b
                 };
-                __b.push_str(&AverStr::from(" and "));
+                __b.push_str(&::aver_rt::str_lit!(" and "));
                 __b
             };
             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
@@ -451,12 +451,24 @@ pub fn evalCmpRepr(
 pub fn cmpOpName(op @ _: &crate::aver_generated::domain::ast::CmpOp) -> AverStr {
     crate::cancel_checkpoint();
     match op {
-        crate::aver_generated::domain::ast::CmpOp::CmpEq => AverStr::from("=="),
-        crate::aver_generated::domain::ast::CmpOp::CmpNeq => AverStr::from("!="),
-        crate::aver_generated::domain::ast::CmpOp::CmpLt => AverStr::from("<"),
-        crate::aver_generated::domain::ast::CmpOp::CmpGt => AverStr::from(">"),
-        crate::aver_generated::domain::ast::CmpOp::CmpLte => AverStr::from("<="),
-        crate::aver_generated::domain::ast::CmpOp::CmpGte => AverStr::from(">="),
+        crate::aver_generated::domain::ast::CmpOp::CmpEq => {
+            ::aver_rt::str_lit!("==")
+        }
+        crate::aver_generated::domain::ast::CmpOp::CmpNeq => {
+            ::aver_rt::str_lit!("!=")
+        }
+        crate::aver_generated::domain::ast::CmpOp::CmpLt => {
+            ::aver_rt::str_lit!("<")
+        }
+        crate::aver_generated::domain::ast::CmpOp::CmpGt => {
+            ::aver_rt::str_lit!(">")
+        }
+        crate::aver_generated::domain::ast::CmpOp::CmpLte => {
+            ::aver_rt::str_lit!("<=")
+        }
+        crate::aver_generated::domain::ast::CmpOp::CmpGte => {
+            ::aver_rt::str_lit!(">=")
+        }
     }
 }
 
@@ -513,11 +525,11 @@ pub fn evalIntModOrIntVals(
                                 ))
                             }
                         }
-                        _ => Err(AverStr::from("expected int argument")),
+                        _ => Err(::aver_rt::str_lit!("expected int argument")),
                     }
                 }
             }
-            _ => Err(AverStr::from("expected int argument")),
+            _ => Err(::aver_rt::str_lit!("expected int argument")),
         }
     }
 }
@@ -559,11 +571,11 @@ pub fn evalVectorSetMaybeDefault(
                                 }
                             }
                         }
-                        _ => Err(AverStr::from("Vector.set: second arg must be Int")),
+                        _ => Err(::aver_rt::str_lit!("Vector.set: second arg must be Int")),
                     }
                 }
             }
-            _ => Err(AverStr::from("Vector.set: first arg must be Vector")),
+            _ => Err(::aver_rt::str_lit!("Vector.set: first arg must be Vector")),
         }
     }
 }
@@ -589,11 +601,11 @@ pub fn evalVectorGetMaybeDefault(
                                 None => Ok(None),
                             }
                         }
-                        _ => Err(AverStr::from("Vector.get: expected (Vector, Int)")),
+                        _ => Err(::aver_rt::str_lit!("Vector.get: expected (Vector, Int)")),
                     }
                 }
             }
-            _ => Err(AverStr::from("Vector.get: expected (Vector, Int)")),
+            _ => Err(::aver_rt::str_lit!("Vector.get: expected (Vector, Int)")),
         }
     }
 }

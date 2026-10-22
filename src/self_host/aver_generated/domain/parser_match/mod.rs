@@ -40,10 +40,14 @@ fn __mutual_tco_trampoline_1(
                     crate::aver_generated::domain::token::Token::TkIdent(s) => {
                         __MutualTco1::ParseIdentPatternMaybeConstructor(
                             pos.add(&aver_rt::AverInt::from_i64(1)),
-                            ((prefix + &AverStr::from(".")) + &s),
+                            ((prefix + &::aver_rt::str_lit!(".")) + &s),
                         )
                     }
-                    _ => return Err(AverStr::from("Expected identifier after '.' in pattern")),
+                    _ => {
+                        return Err(::aver_rt::str_lit!(
+                            "Expected identifier after '.' in pattern"
+                        ));
+                    }
                 }
             }
         };
@@ -125,8 +129,8 @@ fn __mutual_tco_trampoline_2(
                         )
                     }
                     _ => {
-                        return Err(AverStr::from(
-                            "Expected binding or ')' in constructor pattern",
+                        return Err(::aver_rt::str_lit!(
+                            "Expected binding or ')' in constructor pattern"
                         ));
                     }
                 }
@@ -150,7 +154,11 @@ fn __mutual_tco_trampoline_2(
                             pos.add(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
-                    _ => return Err(AverStr::from("Expected ',' or ')' in constructor pattern")),
+                    _ => {
+                        return Err(::aver_rt::str_lit!(
+                            "Expected ',' or ')' in constructor pattern"
+                        ));
+                    }
                 }
             }
         };
@@ -262,7 +270,7 @@ fn __mutual_tco_trampoline_3(
                             pos.add(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
-                    _ => return Err(AverStr::from("Expected ',' or ')' in tuple pattern")),
+                    _ => return Err(::aver_rt::str_lit!("Expected ',' or ')' in tuple pattern")),
                 }
             }
         };
@@ -420,7 +428,7 @@ fn __mutual_tco_trampoline_5(
                             aver_rt::AverList::prepend(name, &acc),
                         )
                     }
-                    _ => return Err(AverStr::from("Expected parameter name or ')'")),
+                    _ => return Err(::aver_rt::str_lit!("Expected parameter name or ')'")),
                 }
             }
             __MutualTco5::ParseParamListTail(mut pos @ _, mut acc @ _) => {
@@ -432,7 +440,7 @@ fn __mutual_tco_trampoline_5(
                     crate::aver_generated::domain::token::Token::TkComma => {
                         __MutualTco5::ParseParamList(pos.add(&aver_rt::AverInt::from_i64(1)), acc)
                     }
-                    _ => return Err(AverStr::from("Expected ',' or ')' in parameter list")),
+                    _ => return Err(::aver_rt::str_lit!("Expected ',' or ')' in parameter list")),
                 }
             }
         };
@@ -602,7 +610,7 @@ pub fn expect(
                         let mut __b = aver_rt::Buffer::with_capacity(
                             (aver_rt::AverInt::from_i64(47)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&AverStr::from("Expected "));
+                        __b.push_str(&::aver_rt::str_lit!("Expected "));
                         __b
                     };
                     __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
@@ -610,7 +618,7 @@ pub fn expect(
                     )));
                     __b
                 };
-                __b.push_str(&AverStr::from(", got "));
+                __b.push_str(&::aver_rt::str_lit!(", got "));
                 __b
             };
             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
@@ -726,7 +734,7 @@ pub fn parsePattern(
                 let mut __b = aver_rt::Buffer::with_capacity(
                     (aver_rt::AverInt::from_i64(38)).to_usize().unwrap_or(0),
                 );
-                __b.push_str(&AverStr::from("Expected pattern, got "));
+                __b.push_str(&::aver_rt::str_lit!("Expected pattern, got "));
                 __b
             };
             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
@@ -803,7 +811,9 @@ pub fn parseListPattern(
                 head,
             )
         }
-        _ => Err(AverStr::from("Expected identifier or ']' in list pattern")),
+        _ => Err(::aver_rt::str_lit!(
+            "Expected identifier or ']' in list pattern"
+        )),
     }
 }
 
@@ -840,7 +850,9 @@ pub fn parseConsPattern(
                 &crate::aver_generated::domain::token::Token::TkRBracket,
             )?,
         )),
-        _ => Err(AverStr::from("Expected tail identifier in cons pattern")),
+        _ => Err(::aver_rt::str_lit!(
+            "Expected tail identifier in cons pattern"
+        )),
     }
 }
 

@@ -115,7 +115,7 @@ fn __mutual_tco_trampoline_1(
                                                         if __dispatch_subject
                                                             == aver_rt::AverInt::from_i64(34)
                                                         {
-                                                            return crate::aver_generated::domain::lexer::tokenizeString__indexed(src, nextPos, AverStr::from(""), &*__str_index);
+                                                            return crate::aver_generated::domain::lexer::tokenizeString__indexed(src, nextPos, ::aver_rt::str_lit!(""), &*__str_index);
                                                         } else {
                                                             if __dispatch_subject
                                                                 == aver_rt::AverInt::from_i64(40)
@@ -303,35 +303,35 @@ fn __mutual_tco_trampoline_2(
                             __MutualTco2::TokenizeString__indexed(
                                 src,
                                 nextPos,
-                                (acc + &AverStr::from("\n")),
+                                (acc + &::aver_rt::str_lit!("\n")),
                             )
                         } else {
                             if __dispatch_subject == aver_rt::AverInt::from_i64(116) {
                                 __MutualTco2::TokenizeString__indexed(
                                     src,
                                     nextPos,
-                                    (acc + &AverStr::from("\t")),
+                                    (acc + &::aver_rt::str_lit!("\t")),
                                 )
                             } else {
                                 if __dispatch_subject == aver_rt::AverInt::from_i64(114) {
                                     __MutualTco2::TokenizeString__indexed(
                                         src,
                                         nextPos,
-                                        (acc + &AverStr::from("\r")),
+                                        (acc + &::aver_rt::str_lit!("\r")),
                                     )
                                 } else {
                                     if __dispatch_subject == aver_rt::AverInt::from_i64(98) {
                                         __MutualTco2::TokenizeString__indexed(
                                             src,
                                             nextPos,
-                                            (acc + &AverStr::from("\u{8}")),
+                                            (acc + &::aver_rt::str_lit!("\u{8}")),
                                         )
                                     } else {
                                         if __dispatch_subject == aver_rt::AverInt::from_i64(102) {
                                             __MutualTco2::TokenizeString__indexed(
                                                 src,
                                                 nextPos,
-                                                (acc + &AverStr::from("\u{c}")),
+                                                (acc + &::aver_rt::str_lit!("\u{c}")),
                                             )
                                         } else {
                                             if __dispatch_subject == aver_rt::AverInt::from_i64(34)
@@ -339,7 +339,7 @@ fn __mutual_tco_trampoline_2(
                                                 __MutualTco2::TokenizeString__indexed(
                                                     src,
                                                     nextPos,
-                                                    (acc + &AverStr::from("\"")),
+                                                    (acc + &::aver_rt::str_lit!("\"")),
                                                 )
                                             } else {
                                                 if __dispatch_subject
@@ -348,7 +348,7 @@ fn __mutual_tco_trampoline_2(
                                                     __MutualTco2::TokenizeString__indexed(
                                                         src,
                                                         nextPos,
-                                                        (acc + &AverStr::from("\\")),
+                                                        (acc + &::aver_rt::str_lit!("\\")),
                                                     )
                                                 } else {
                                                     __MutualTco2::TokenizeString__indexed(
@@ -615,7 +615,7 @@ fn __mutual_tco_trampoline_3(
                         &crate::aver_generated::domain::lexer::tokenizeString__indexed(
                             src,
                             pos.add(&aver_rt::AverInt::from_i64(1)),
-                            AverStr::from(""),
+                            ::aver_rt::str_lit!(""),
                             &*__str_index,
                         ),
                     );
@@ -695,7 +695,7 @@ fn __mutual_tco_trampoline_3(
                                                             if __dispatch_subject
                                                                 == aver_rt::AverInt::from_i64(34)
                                                             {
-                                                                return crate::aver_generated::domain::lexer::tokenizeInterpString__indexed(src, nextPos, AverStr::from(""), (*__str_index).clone());
+                                                                return crate::aver_generated::domain::lexer::tokenizeInterpString__indexed(src, nextPos, ::aver_rt::str_lit!(""), (*__str_index).clone());
                                                             } else {
                                                                 __MutualTco3::TokenizeInterpExpr__indexed(src, nextPos)
                                                             }
@@ -718,7 +718,7 @@ fn __mutual_tco_trampoline_3(
                         let (word, newPos) = crate::aver_generated::domain::lexer::chars::readIdent(
                             src.clone(),
                             pos,
-                            AverStr::from(""),
+                            ::aver_rt::str_lit!(""),
                             crate::aver_generated::domain::lexer::chars::isUpper(c),
                         );
                         return aver_rt::AverList::prepend(
@@ -1155,7 +1155,7 @@ pub fn openBrace() -> AverStr {
         .and_then(char::from_u32)
         .map(|c| c.to_string()))
     .into_aver()
-    .unwrap_or(AverStr::from("x"))
+    .unwrap_or(::aver_rt::str_lit!("x"))
 }
 
 /// Handle one character inside a string literal.
@@ -1279,7 +1279,7 @@ pub fn closeBrace() -> AverStr {
         .and_then(char::from_u32)
         .map(|c| c.to_string()))
     .into_aver()
-    .unwrap_or(AverStr::from("x"))
+    .unwrap_or(::aver_rt::str_lit!("x"))
 }
 
 /// Dispatch interpolation char.
@@ -2105,7 +2105,7 @@ pub fn tokenizeAlphaWith__indexed(
         let (word, newPos) = crate::aver_generated::domain::lexer::chars::readIdent(
             src.clone(),
             pos,
-            AverStr::from(""),
+            ::aver_rt::str_lit!(""),
             dotted,
         );
         aver_rt::AverList::prepend(

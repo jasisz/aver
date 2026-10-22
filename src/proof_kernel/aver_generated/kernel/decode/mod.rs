@@ -48,7 +48,7 @@ pub fn atom(
             let a = a.clone();
             Ok(a)
         }
-        _ => Err(AverStr::from("expected an atom")),
+        _ => Err(::aver_rt::str_lit!("expected an atom")),
     }
 }
 
@@ -85,7 +85,7 @@ pub fn items(
             let xs = xs.clone();
             Ok(xs)
         }
-        _ => Err(AverStr::from("expected a list")),
+        _ => Err(::aver_rt::str_lit!("expected a list")),
     }
 }
 
@@ -109,13 +109,13 @@ pub fn tagged(
                         let tag = tag.clone();
                         Ok((tag, args))
                     }
-                    _ => Err(AverStr::from("expected a tagged list")),
+                    _ => Err(::aver_rt::str_lit!("expected a tagged list")),
                 }
             } else {
-                Err(AverStr::from("expected a tagged list"))
+                Err(::aver_rt::str_lit!("expected a tagged list"))
             }
         }
-        _ => Err(AverStr::from("expected a tagged list")),
+        _ => Err(::aver_rt::str_lit!("expected a tagged list")),
     }
 }
 
@@ -165,14 +165,14 @@ pub fn termOf(
                                     if &*__dispatch_subject == "call" {
                                         crate::proof_kernel::aver_generated::kernel::decode::headed(
                                             args,
-                                            AverStr::from("call"),
+                                            ::aver_rt::str_lit!("call"),
                                         )
                                     } else {
                                         if &*__dispatch_subject == "bi" {
-                                            crate::proof_kernel::aver_generated::kernel::decode::headed(args, AverStr::from("bi"))
+                                            crate::proof_kernel::aver_generated::kernel::decode::headed(args, ::aver_rt::str_lit!("bi"))
                                         } else {
                                             if &*__dispatch_subject == "ctor" {
-                                                crate::proof_kernel::aver_generated::kernel::decode::headed(args, AverStr::from("ctor"))
+                                                crate::proof_kernel::aver_generated::kernel::decode::headed(args, ::aver_rt::str_lit!("ctor"))
                                             } else {
                                                 if &*__dispatch_subject == "op" {
                                                     crate::proof_kernel::aver_generated::kernel::decode::opTerm(args)
@@ -204,7 +204,7 @@ pub fn termOf(
                                                                             {
                                                                                 crate::proof_kernel::aver_generated::kernel::decode::updTerm(args)
                                                                             } else {
-                                                                                Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(29)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown term ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(tag)))); __b }))
+                                                                                Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(29)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown term ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(tag)))); __b }))
                                                                             }
                                                                         }
                                                                     }
@@ -254,14 +254,14 @@ pub fn intTerm(
                                 ),
                             )
                         } else {
-                            Err(AverStr::from("malformed integer"))
+                            Err(::aver_rt::str_lit!("malformed integer"))
                         }
                     }
                 }
-                _ => Err(AverStr::from("malformed integer")),
+                _ => Err(::aver_rt::str_lit!("malformed integer")),
             }
         } else {
-            Err(AverStr::from("malformed integer"))
+            Err(::aver_rt::str_lit!("malformed integer"))
         }
     }
 }
@@ -285,7 +285,7 @@ pub fn boolTerm(
                                 if __list_subject.is_empty() {
                                     Ok(crate::proof_kernel::aver_generated::kernel::term::Term::TBool(crate::proof_kernel::aver_generated::kernel::term::Term__TBool(true)))
                                 } else {
-                                    Err(AverStr::from("malformed Bool"))
+                                    Err(::aver_rt::str_lit!("malformed Bool"))
                                 }
                             }
                         } else {
@@ -295,19 +295,19 @@ pub fn boolTerm(
                                     if __list_subject.is_empty() {
                                         Ok(crate::proof_kernel::aver_generated::kernel::term::Term::TBool(crate::proof_kernel::aver_generated::kernel::term::Term__TBool(false)))
                                     } else {
-                                        Err(AverStr::from("malformed Bool"))
+                                        Err(::aver_rt::str_lit!("malformed Bool"))
                                     }
                                 }
                             } else {
-                                Err(AverStr::from("malformed Bool"))
+                                Err(::aver_rt::str_lit!("malformed Bool"))
                             }
                         }
                     }
                 }
-                _ => Err(AverStr::from("malformed Bool")),
+                _ => Err(::aver_rt::str_lit!("malformed Bool")),
             }
         } else {
-            Err(AverStr::from("malformed Bool"))
+            Err(::aver_rt::str_lit!("malformed Bool"))
         }
     }
 }
@@ -334,14 +334,14 @@ pub fn textTerm(
                                 ),
                             )
                         } else {
-                            Err(AverStr::from("malformed text"))
+                            Err(::aver_rt::str_lit!("malformed text"))
                         }
                     }
                 }
-                _ => Err(AverStr::from("malformed text")),
+                _ => Err(::aver_rt::str_lit!("malformed text")),
             }
         } else {
-            Err(AverStr::from("malformed text"))
+            Err(::aver_rt::str_lit!("malformed text"))
         }
     }
 }
@@ -368,14 +368,14 @@ pub fn nameTerm(
                                 ),
                             )
                         } else {
-                            Err(AverStr::from("malformed variable"))
+                            Err(::aver_rt::str_lit!("malformed variable"))
                         }
                     }
                 }
-                _ => Err(AverStr::from("malformed variable")),
+                _ => Err(::aver_rt::str_lit!("malformed variable")),
             }
         } else {
-            Err(AverStr::from("malformed variable"))
+            Err(::aver_rt::str_lit!("malformed variable"))
         }
     }
 }
@@ -401,18 +401,18 @@ pub fn getTerm(
                                 if __list_subject.is_empty() {
                                     Ok(crate::proof_kernel::aver_generated::kernel::term::Term::TGet(crate::proof_kernel::aver_generated::kernel::term::Term__TGet(crate::proof_kernel::aver_generated::kernel::decode::term(o)?, f)))
                                 } else {
-                                    Err(AverStr::from("malformed field access"))
+                                    Err(::aver_rt::str_lit!("malformed field access"))
                                 }
                             }
                         }
-                        _ => Err(AverStr::from("malformed field access")),
+                        _ => Err(::aver_rt::str_lit!("malformed field access")),
                     }
                 } else {
-                    Err(AverStr::from("malformed field access"))
+                    Err(::aver_rt::str_lit!("malformed field access"))
                 }
             }
         } else {
-            Err(AverStr::from("malformed field access"))
+            Err(::aver_rt::str_lit!("malformed field access"))
         }
     }
 }
@@ -440,7 +440,7 @@ pub fn headed(
                         let mut __b = aver_rt::Buffer::with_capacity(
                             (aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&AverStr::from("malformed "));
+                        __b.push_str(&::aver_rt::str_lit!("malformed "));
                         __b
                     };
                     __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(kind))));
@@ -453,7 +453,7 @@ pub fn headed(
                     let mut __b = aver_rt::Buffer::with_capacity(
                         (aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0),
                     );
-                    __b.push_str(&AverStr::from("malformed "));
+                    __b.push_str(&::aver_rt::str_lit!("malformed "));
                     __b
                 };
                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(kind))));
@@ -532,22 +532,22 @@ pub fn opTerm(
                                         if __list_subject.is_empty() {
                                             Ok(crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(o, crate::proof_kernel::aver_generated::kernel::decode::term(a)?, crate::proof_kernel::aver_generated::kernel::decode::term(b)?)))
                                         } else {
-                                            Err(AverStr::from("malformed operator"))
+                                            Err(::aver_rt::str_lit!("malformed operator"))
                                         }
                                     }
                                 } else {
-                                    Err(AverStr::from("malformed operator"))
+                                    Err(::aver_rt::str_lit!("malformed operator"))
                                 }
                             }
                         } else {
-                            Err(AverStr::from("malformed operator"))
+                            Err(::aver_rt::str_lit!("malformed operator"))
                         }
                     }
                 }
-                _ => Err(AverStr::from("malformed operator")),
+                _ => Err(::aver_rt::str_lit!("malformed operator")),
             }
         } else {
-            Err(AverStr::from("malformed operator"))
+            Err(::aver_rt::str_lit!("malformed operator"))
         }
     }
 }
@@ -571,11 +571,11 @@ pub fn negTerm(
                         ),
                     )
                 } else {
-                    Err(AverStr::from("malformed negation"))
+                    Err(::aver_rt::str_lit!("malformed negation"))
                 }
             }
         } else {
-            Err(AverStr::from("malformed negation"))
+            Err(::aver_rt::str_lit!("malformed negation"))
         }
     }
 }
@@ -597,7 +597,7 @@ pub fn matchTerm(
                 ),
             )
         } else {
-            Err(AverStr::from("malformed match"))
+            Err(::aver_rt::str_lit!("malformed match"))
         }
     }
 }
@@ -653,27 +653,27 @@ pub fn arm(
                                                 if __list_subject.is_empty() {
                                                     Ok(crate::proof_kernel::aver_generated::kernel::term::Arm { pattern: crate::proof_kernel::aver_generated::kernel::decode::pat(p)?, body: crate::proof_kernel::aver_generated::kernel::decode::term(b)? })
                                                 } else {
-                                                    Err(AverStr::from("malformed arm"))
+                                                    Err(::aver_rt::str_lit!("malformed arm"))
                                                 }
                                             }
                                         } else {
-                                            Err(AverStr::from("malformed arm"))
+                                            Err(::aver_rt::str_lit!("malformed arm"))
                                         }
                                     }
                                 } else {
-                                    Err(AverStr::from("malformed arm"))
+                                    Err(::aver_rt::str_lit!("malformed arm"))
                                 }
                             }
-                            _ => Err(AverStr::from("malformed arm")),
+                            _ => Err(::aver_rt::str_lit!("malformed arm")),
                         }
                     }
-                    _ => Err(AverStr::from("malformed arm")),
+                    _ => Err(::aver_rt::str_lit!("malformed arm")),
                 }
             } else {
-                Err(AverStr::from("malformed arm"))
+                Err(::aver_rt::str_lit!("malformed arm"))
             }
         }
-        _ => Err(AverStr::from("malformed arm")),
+        _ => Err(::aver_rt::str_lit!("malformed arm")),
     }
 }
 
@@ -737,7 +737,7 @@ pub fn patOf(
                                                     .to_usize()
                                                     .unwrap_or(0),
                                             );
-                                            __b.push_str(&AverStr::from("unknown pattern "));
+                                            __b.push_str(&::aver_rt::str_lit!("unknown pattern "));
                                             __b
                                         };
                                         __b.push_str(&aver_rt::AverStr::from(
@@ -771,14 +771,14 @@ pub fn onlyAtom(
                         if __list_subject.is_empty() {
                             Ok(a)
                         } else {
-                            Err(AverStr::from("expected one atom"))
+                            Err(::aver_rt::str_lit!("expected one atom"))
                         }
                     }
                 }
-                _ => Err(AverStr::from("expected one atom")),
+                _ => Err(::aver_rt::str_lit!("expected one atom")),
             }
         } else {
-            Err(AverStr::from("expected one atom"))
+            Err(::aver_rt::str_lit!("expected one atom"))
         }
     }
 }
@@ -800,11 +800,11 @@ pub fn patLit(
                         ),
                     )
                 } else {
-                    Err(AverStr::from("malformed literal pattern"))
+                    Err(::aver_rt::str_lit!("malformed literal pattern"))
                 }
             }
         } else {
-            Err(AverStr::from("malformed literal pattern"))
+            Err(::aver_rt::str_lit!("malformed literal pattern"))
         }
     }
 }
@@ -835,21 +835,21 @@ pub fn patCons(
                                         if __list_subject.is_empty() {
                                             Ok(crate::proof_kernel::aver_generated::kernel::term::Pat::PCons(h, t))
                                         } else {
-                                            Err(AverStr::from("malformed cons pattern"))
+                                            Err(::aver_rt::str_lit!("malformed cons pattern"))
                                         }
                                     }
                                 }
-                                _ => Err(AverStr::from("malformed cons pattern")),
+                                _ => Err(::aver_rt::str_lit!("malformed cons pattern")),
                             }
                         } else {
-                            Err(AverStr::from("malformed cons pattern"))
+                            Err(::aver_rt::str_lit!("malformed cons pattern"))
                         }
                     }
                 }
-                _ => Err(AverStr::from("malformed cons pattern")),
+                _ => Err(::aver_rt::str_lit!("malformed cons pattern")),
             }
         } else {
-            Err(AverStr::from("malformed cons pattern"))
+            Err(::aver_rt::str_lit!("malformed cons pattern"))
         }
     }
 }
@@ -872,10 +872,10 @@ pub fn patCtor(
                         ),
                     )
                 }
-                _ => Err(AverStr::from("malformed constructor pattern")),
+                _ => Err(::aver_rt::str_lit!("malformed constructor pattern")),
             }
         } else {
-            Err(AverStr::from("malformed constructor pattern"))
+            Err(::aver_rt::str_lit!("malformed constructor pattern"))
         }
     }
 }
@@ -923,10 +923,10 @@ pub fn recTerm(
                         ),
                     )
                 }
-                _ => Err(AverStr::from("malformed record")),
+                _ => Err(::aver_rt::str_lit!("malformed record")),
             }
         } else {
-            Err(AverStr::from("malformed record"))
+            Err(::aver_rt::str_lit!("malformed record"))
         }
     }
 }
@@ -948,14 +948,14 @@ pub fn updTerm(
                         {
                             Ok(crate::proof_kernel::aver_generated::kernel::term::Term::TUpd(crate::proof_kernel::aver_generated::kernel::term::Term__TUpd(ty, crate::proof_kernel::aver_generated::kernel::decode::term(b)?, crate::proof_kernel::aver_generated::kernel::decode::fields(&fs)?)))
                         } else {
-                            Err(AverStr::from("malformed record update"))
+                            Err(::aver_rt::str_lit!("malformed record update"))
                         }
                     }
                 }
-                _ => Err(AverStr::from("malformed record update")),
+                _ => Err(::aver_rt::str_lit!("malformed record update")),
             }
         } else {
-            Err(AverStr::from("malformed record update"))
+            Err(::aver_rt::str_lit!("malformed record update"))
         }
     }
 }
@@ -993,21 +993,21 @@ pub fn fields(
                                                 if __list_subject.is_empty() {
                                                     Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::term::Field { name: n, value: crate::proof_kernel::aver_generated::kernel::decode::term(v)? }, &crate::proof_kernel::aver_generated::kernel::decode::fields(&rest)?))
                                                 } else {
-                                                    Err(AverStr::from("malformed field"))
+                                                    Err(::aver_rt::str_lit!("malformed field"))
                                                 }
                                             }
                                         } else {
-                                            Err(AverStr::from("malformed field"))
+                                            Err(::aver_rt::str_lit!("malformed field"))
                                         }
                                     }
                                 }
-                                _ => Err(AverStr::from("malformed field")),
+                                _ => Err(::aver_rt::str_lit!("malformed field")),
                             }
                         } else {
-                            Err(AverStr::from("malformed field"))
+                            Err(::aver_rt::str_lit!("malformed field"))
                         }
                     }
-                    _ => Err(AverStr::from("malformed field")),
+                    _ => Err(::aver_rt::str_lit!("malformed field")),
                 }
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -1096,21 +1096,21 @@ pub fn bindingsOf(
                                                 if __list_subject.is_empty() {
                                                     Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::term::bind(n, crate::proof_kernel::aver_generated::kernel::decode::term(v)?), &crate::proof_kernel::aver_generated::kernel::decode::bindingsOf(&rest)?))
                                                 } else {
-                                                    Err(AverStr::from("malformed binding"))
+                                                    Err(::aver_rt::str_lit!("malformed binding"))
                                                 }
                                             }
                                         } else {
-                                            Err(AverStr::from("malformed binding"))
+                                            Err(::aver_rt::str_lit!("malformed binding"))
                                         }
                                     }
                                 }
-                                _ => Err(AverStr::from("malformed binding")),
+                                _ => Err(::aver_rt::str_lit!("malformed binding")),
                             }
                         } else {
-                            Err(AverStr::from("malformed binding"))
+                            Err(::aver_rt::str_lit!("malformed binding"))
                         }
                     }
-                    _ => Err(AverStr::from("malformed binding")),
+                    _ => Err(::aver_rt::str_lit!("malformed binding")),
                 }
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -1184,10 +1184,10 @@ pub fn proofOf(
                                                 Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PHyp(crate::proof_kernel::aver_generated::kernel::proof::Proof__PHyp(crate::proof_kernel::aver_generated::kernel::decode::onlyAtom(args)?)))
                                             } else {
                                                 if &*__dispatch_subject == "rule" {
-                                                    crate::proof_kernel::aver_generated::kernel::decode::instanceProof(args, AverStr::from("rule"))
+                                                    crate::proof_kernel::aver_generated::kernel::decode::instanceProof(args, ::aver_rt::str_lit!("rule"))
                                                 } else {
                                                     if &*__dispatch_subject == "law" {
-                                                        crate::proof_kernel::aver_generated::kernel::decode::instanceProof(args, AverStr::from("law"))
+                                                        crate::proof_kernel::aver_generated::kernel::decode::instanceProof(args, ::aver_rt::str_lit!("law"))
                                                     } else {
                                                         if &*__dispatch_subject == "compute" {
                                                             crate::proof_kernel::aver_generated::kernel::decode::computeProof(args)
@@ -1213,7 +1213,7 @@ pub fn proofOf(
                                                                             {
                                                                                 crate::proof_kernel::aver_generated::kernel::decode::absurdProof(args)
                                                                             } else {
-                                                                                if &*__dispatch_subject == "induct" { crate::proof_kernel::aver_generated::kernel::decode::inductProof(args) } else { if &*__dispatch_subject == "listinduct" { crate::proof_kernel::aver_generated::kernel::decode::listInductProof(args) } else { if &*__dispatch_subject == "listcases" { crate::proof_kernel::aver_generated::kernel::decode::listCasesProof(args) } else { if &*__dispatch_subject == "leninduct" { crate::proof_kernel::aver_generated::kernel::decode::lenInductProof(args) } else { if &*__dispatch_subject == "ring" { crate::proof_kernel::aver_generated::kernel::decode::ringProof(args) } else { if &*__dispatch_subject == "linear" { crate::proof_kernel::aver_generated::kernel::decode::linearProof(args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(29)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown rule ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(tag)))); __b })) } } } } } }
+                                                                                if &*__dispatch_subject == "induct" { crate::proof_kernel::aver_generated::kernel::decode::inductProof(args) } else { if &*__dispatch_subject == "listinduct" { crate::proof_kernel::aver_generated::kernel::decode::listInductProof(args) } else { if &*__dispatch_subject == "listcases" { crate::proof_kernel::aver_generated::kernel::decode::listCasesProof(args) } else { if &*__dispatch_subject == "leninduct" { crate::proof_kernel::aver_generated::kernel::decode::lenInductProof(args) } else { if &*__dispatch_subject == "ring" { crate::proof_kernel::aver_generated::kernel::decode::ringProof(args) } else { if &*__dispatch_subject == "linear" { crate::proof_kernel::aver_generated::kernel::decode::linearProof(args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(29)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown rule ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(tag)))); __b })) } } } } } }
                                                                             }
                                                                         }
                                                                     }
@@ -1248,11 +1248,11 @@ pub fn oneTerm(
                 if __list_subject.is_empty() {
                     crate::proof_kernel::aver_generated::kernel::decode::term(t)
                 } else {
-                    Err(AverStr::from("expected one term"))
+                    Err(::aver_rt::str_lit!("expected one term"))
                 }
             }
         } else {
-            Err(AverStr::from("expected one term"))
+            Err(::aver_rt::str_lit!("expected one term"))
         }
     }
 }
@@ -1270,11 +1270,11 @@ pub fn oneProof(
                 if __list_subject.is_empty() {
                     crate::proof_kernel::aver_generated::kernel::decode::proof(&p)
                 } else {
-                    Err(AverStr::from("expected one proof"))
+                    Err(::aver_rt::str_lit!("expected one proof"))
                 }
             }
         } else {
-            Err(AverStr::from("expected one proof"))
+            Err(::aver_rt::str_lit!("expected one proof"))
         }
     }
 }
@@ -1319,7 +1319,7 @@ pub fn transProof(
                 ),
             )
         } else {
-            Err(AverStr::from("malformed trans"))
+            Err(::aver_rt::str_lit!("malformed trans"))
         }
     }
 }
@@ -1340,15 +1340,15 @@ pub fn congrProof(
                         if __list_subject.is_empty() {
                             Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PCongr(crate::proof_kernel::aver_generated::kernel::proof::Proof__PCongr(crate::proof_kernel::aver_generated::kernel::decode::term(c)?, crate::proof_kernel::aver_generated::kernel::decode::proof(p)?)))
                         } else {
-                            Err(AverStr::from("malformed congr"))
+                            Err(::aver_rt::str_lit!("malformed congr"))
                         }
                     }
                 } else {
-                    Err(AverStr::from("malformed congr"))
+                    Err(::aver_rt::str_lit!("malformed congr"))
                 }
             }
         } else {
-            Err(AverStr::from("malformed congr"))
+            Err(::aver_rt::str_lit!("malformed congr"))
         }
     }
 }
@@ -1386,25 +1386,25 @@ pub fn unfoldProof(
                                                 {
                                                     Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PUnfold(crate::proof_kernel::aver_generated::kernel::proof::Proof__PUnfold(f, ({ let __s = &(k); __s.parse::<aver_rt::AverInt>().map_err(|_| format!("Cannot parse '{}' as Int", __s)) }).into_aver()?, crate::proof_kernel::aver_generated::kernel::decode::termList(xs)?, crate::proof_kernel::aver_generated::kernel::decode::termList(ys)?, crate::proof_kernel::aver_generated::kernel::decode::proofs(&given)?)))
                                                 } else {
-                                                    Err(AverStr::from("malformed unfold"))
+                                                    Err(::aver_rt::str_lit!("malformed unfold"))
                                                 }
                                             }
                                         } else {
-                                            Err(AverStr::from("malformed unfold"))
+                                            Err(::aver_rt::str_lit!("malformed unfold"))
                                         }
                                     }
                                 }
-                                _ => Err(AverStr::from("malformed unfold")),
+                                _ => Err(::aver_rt::str_lit!("malformed unfold")),
                             }
                         } else {
-                            Err(AverStr::from("malformed unfold"))
+                            Err(::aver_rt::str_lit!("malformed unfold"))
                         }
                     }
                 }
-                _ => Err(AverStr::from("malformed unfold")),
+                _ => Err(::aver_rt::str_lit!("malformed unfold")),
             }
         } else {
-            Err(AverStr::from("malformed unfold"))
+            Err(::aver_rt::str_lit!("malformed unfold"))
         }
     }
 }
@@ -1440,26 +1440,26 @@ pub fn armProof(
                                                 if __list_subject.is_empty() {
                                                     Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PArm(crate::proof_kernel::aver_generated::kernel::proof::Proof__PArm(({ let __s = &(k); __s.parse::<aver_rt::AverInt>().map_err(|_| format!("Cannot parse '{}' as Int", __s)) }).into_aver()?, crate::proof_kernel::aver_generated::kernel::decode::termList(ys)?, crate::proof_kernel::aver_generated::kernel::decode::term(t)?, crate::proof_kernel::aver_generated::kernel::decode::proof(p)?)))
                                                 } else {
-                                                    Err(AverStr::from("malformed arm step"))
+                                                    Err(::aver_rt::str_lit!("malformed arm step"))
                                                 }
                                             }
                                         } else {
-                                            Err(AverStr::from("malformed arm step"))
+                                            Err(::aver_rt::str_lit!("malformed arm step"))
                                         }
                                     }
                                 } else {
-                                    Err(AverStr::from("malformed arm step"))
+                                    Err(::aver_rt::str_lit!("malformed arm step"))
                                 }
                             }
                         } else {
-                            Err(AverStr::from("malformed arm step"))
+                            Err(::aver_rt::str_lit!("malformed arm step"))
                         }
                     }
                 }
-                _ => Err(AverStr::from("malformed arm step")),
+                _ => Err(::aver_rt::str_lit!("malformed arm step")),
             }
         } else {
-            Err(AverStr::from("malformed arm step"))
+            Err(::aver_rt::str_lit!("malformed arm step"))
         }
     }
 }
@@ -1493,7 +1493,7 @@ pub fn instanceProof(
                                     let mut __b = aver_rt::Buffer::with_capacity(
                                         (aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0),
                                     );
-                                    __b.push_str(&AverStr::from("malformed "));
+                                    __b.push_str(&::aver_rt::str_lit!("malformed "));
                                     __b
                                 };
                                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
@@ -1509,7 +1509,7 @@ pub fn instanceProof(
                         let mut __b = aver_rt::Buffer::with_capacity(
                             (aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&AverStr::from("malformed "));
+                        __b.push_str(&::aver_rt::str_lit!("malformed "));
                         __b
                     };
                     __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(kind))));
@@ -1522,7 +1522,7 @@ pub fn instanceProof(
                     let mut __b = aver_rt::Buffer::with_capacity(
                         (aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0),
                     );
-                    __b.push_str(&AverStr::from("malformed "));
+                    __b.push_str(&::aver_rt::str_lit!("malformed "));
                     __b
                 };
                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(kind))));
@@ -1578,15 +1578,15 @@ pub fn computeProof(
                         if __list_subject.is_empty() {
                             Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PCompute(crate::proof_kernel::aver_generated::kernel::proof::Proof__PCompute(crate::proof_kernel::aver_generated::kernel::decode::term(a)?, crate::proof_kernel::aver_generated::kernel::decode::term(b)?)))
                         } else {
-                            Err(AverStr::from("malformed compute"))
+                            Err(::aver_rt::str_lit!("malformed compute"))
                         }
                     }
                 } else {
-                    Err(AverStr::from("malformed compute"))
+                    Err(::aver_rt::str_lit!("malformed compute"))
                 }
             }
         } else {
-            Err(AverStr::from("malformed compute"))
+            Err(::aver_rt::str_lit!("malformed compute"))
         }
     }
 }
@@ -1622,26 +1622,26 @@ pub fn casesProof(
                                                 if __list_subject.is_empty() {
                                                     Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PCases(crate::proof_kernel::aver_generated::kernel::proof::Proof__PCases(crate::proof_kernel::aver_generated::kernel::decode::term(on)?, h, crate::proof_kernel::aver_generated::kernel::decode::proof(t)?, crate::proof_kernel::aver_generated::kernel::decode::proof(f)?)))
                                                 } else {
-                                                    Err(AverStr::from("malformed cases"))
+                                                    Err(::aver_rt::str_lit!("malformed cases"))
                                                 }
                                             }
                                         } else {
-                                            Err(AverStr::from("malformed cases"))
+                                            Err(::aver_rt::str_lit!("malformed cases"))
                                         }
                                     }
                                 } else {
-                                    Err(AverStr::from("malformed cases"))
+                                    Err(::aver_rt::str_lit!("malformed cases"))
                                 }
                             }
                         }
-                        _ => Err(AverStr::from("malformed cases")),
+                        _ => Err(::aver_rt::str_lit!("malformed cases")),
                     }
                 } else {
-                    Err(AverStr::from("malformed cases"))
+                    Err(::aver_rt::str_lit!("malformed cases"))
                 }
             }
         } else {
-            Err(AverStr::from("malformed cases"))
+            Err(::aver_rt::str_lit!("malformed cases"))
         }
     }
 }
@@ -1669,18 +1669,18 @@ pub fn splitProof(
                                 {
                                     Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PSplit(crate::proof_kernel::aver_generated::kernel::proof::Proof__PSplit(crate::proof_kernel::aver_generated::kernel::decode::term(on)?, h, crate::proof_kernel::aver_generated::kernel::decode::termList(ks)?, crate::proof_kernel::aver_generated::kernel::decode::splitCases(&cs)?)))
                                 } else {
-                                    Err(AverStr::from("malformed split"))
+                                    Err(::aver_rt::str_lit!("malformed split"))
                                 }
                             }
                         }
-                        _ => Err(AverStr::from("malformed split")),
+                        _ => Err(::aver_rt::str_lit!("malformed split")),
                     }
                 } else {
-                    Err(AverStr::from("malformed split"))
+                    Err(::aver_rt::str_lit!("malformed split"))
                 }
             }
         } else {
-            Err(AverStr::from("malformed split"))
+            Err(::aver_rt::str_lit!("malformed split"))
         }
     }
 }
@@ -1718,26 +1718,26 @@ pub fn splitCases(
                                                 match __pat5 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(c) => {
             let c = c.clone();
-            { let __list_subject = __pat6; if let (Some(bs), Some(__pat7)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat7; if let (Some(p), Some(__pat8)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat8; if __list_subject.is_empty() { Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::proof::SplitCase { ctor: c, binders: crate::proof_kernel::aver_generated::kernel::decode::atoms(&crate::proof_kernel::aver_generated::kernel::decode::items(bs)?)?, proof: crate::proof_kernel::aver_generated::kernel::decode::proof(p)? }, &crate::proof_kernel::aver_generated::kernel::decode::splitCases(&rest)?)) } else { Err(AverStr::from("malformed split case")) } } } else { Err(AverStr::from("malformed split case")) } } } else { Err(AverStr::from("malformed split case")) } }
+            { let __list_subject = __pat6; if let (Some(bs), Some(__pat7)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat7; if let (Some(p), Some(__pat8)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat8; if __list_subject.is_empty() { Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::proof::SplitCase { ctor: c, binders: crate::proof_kernel::aver_generated::kernel::decode::atoms(&crate::proof_kernel::aver_generated::kernel::decode::items(bs)?)?, proof: crate::proof_kernel::aver_generated::kernel::decode::proof(p)? }, &crate::proof_kernel::aver_generated::kernel::decode::splitCases(&rest)?)) } else { Err(::aver_rt::str_lit!("malformed split case")) } } } else { Err(::aver_rt::str_lit!("malformed split case")) } } } else { Err(::aver_rt::str_lit!("malformed split case")) } }
         },
         _ => {
-            Err(AverStr::from("malformed split case"))
+            Err(::aver_rt::str_lit!("malformed split case"))
         }
     }
                                             } else {
-                                                Err(AverStr::from("malformed split case"))
+                                                Err(::aver_rt::str_lit!("malformed split case"))
                                             }
                                         }
-                                        _ => Err(AverStr::from("malformed split case")),
+                                        _ => Err(::aver_rt::str_lit!("malformed split case")),
                                     }
                                 }
-                                _ => Err(AverStr::from("malformed split case")),
+                                _ => Err(::aver_rt::str_lit!("malformed split case")),
                             }
                         } else {
-                            Err(AverStr::from("malformed split case"))
+                            Err(::aver_rt::str_lit!("malformed split case"))
                         }
                     }
-                    _ => Err(AverStr::from("malformed split case")),
+                    _ => Err(::aver_rt::str_lit!("malformed split case")),
                 }
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -1777,26 +1777,26 @@ pub fn haveProof(
                                                 if __list_subject.is_empty() {
                                                     Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PHave(crate::proof_kernel::aver_generated::kernel::proof::Proof__PHave(h, crate::proof_kernel::aver_generated::kernel::decode::term(fact)?, crate::proof_kernel::aver_generated::kernel::decode::proof(p)?, crate::proof_kernel::aver_generated::kernel::decode::proof(body)?)))
                                                 } else {
-                                                    Err(AverStr::from("malformed have"))
+                                                    Err(::aver_rt::str_lit!("malformed have"))
                                                 }
                                             }
                                         } else {
-                                            Err(AverStr::from("malformed have"))
+                                            Err(::aver_rt::str_lit!("malformed have"))
                                         }
                                     }
                                 } else {
-                                    Err(AverStr::from("malformed have"))
+                                    Err(::aver_rt::str_lit!("malformed have"))
                                 }
                             }
                         } else {
-                            Err(AverStr::from("malformed have"))
+                            Err(::aver_rt::str_lit!("malformed have"))
                         }
                     }
                 }
-                _ => Err(AverStr::from("malformed have")),
+                _ => Err(::aver_rt::str_lit!("malformed have")),
             }
         } else {
-            Err(AverStr::from("malformed have"))
+            Err(::aver_rt::str_lit!("malformed have"))
         }
     }
 }
@@ -1824,18 +1824,18 @@ pub fn enumProof(
                                 {
                                     Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PEnum(crate::proof_kernel::aver_generated::kernel::proof::Proof__PEnum(v, crate::proof_kernel::aver_generated::kernel::decode::term(l)?, crate::proof_kernel::aver_generated::kernel::decode::term(r)?, crate::proof_kernel::aver_generated::kernel::decode::proofs(&cs)?)))
                                 } else {
-                                    Err(AverStr::from("malformed enum"))
+                                    Err(::aver_rt::str_lit!("malformed enum"))
                                 }
                             }
                         } else {
-                            Err(AverStr::from("malformed enum"))
+                            Err(::aver_rt::str_lit!("malformed enum"))
                         }
                     }
                 }
-                _ => Err(AverStr::from("malformed enum")),
+                _ => Err(::aver_rt::str_lit!("malformed enum")),
             }
         } else {
-            Err(AverStr::from("malformed enum"))
+            Err(::aver_rt::str_lit!("malformed enum"))
         }
     }
 }
@@ -1871,11 +1871,11 @@ pub fn linearProof(
                                                 {
                                                     Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PLinear(crate::proof_kernel::aver_generated::kernel::proof::Proof__PLinear(crate::proof_kernel::aver_generated::kernel::decode::term(g)?, true, crate::proof_kernel::aver_generated::kernel::decode::atoms(&crate::proof_kernel::aver_generated::kernel::decode::items(hs)?)?, crate::proof_kernel::aver_generated::kernel::decode::ints(&crate::proof_kernel::aver_generated::kernel::decode::items(ws)?)?, crate::proof_kernel::aver_generated::kernel::decode::cuts(&cs)?)))
                                                 } else {
-                                                    Err(AverStr::from("malformed linear"))
+                                                    Err(::aver_rt::str_lit!("malformed linear"))
                                                 }
                                             }
                                         } else {
-                                            Err(AverStr::from("malformed linear"))
+                                            Err(::aver_rt::str_lit!("malformed linear"))
                                         }
                                     }
                                 } else {
@@ -1893,27 +1893,27 @@ pub fn linearProof(
                                                     ) {
                                                         Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PLinear(crate::proof_kernel::aver_generated::kernel::proof::Proof__PLinear(crate::proof_kernel::aver_generated::kernel::decode::term(g)?, false, crate::proof_kernel::aver_generated::kernel::decode::atoms(&crate::proof_kernel::aver_generated::kernel::decode::items(hs)?)?, crate::proof_kernel::aver_generated::kernel::decode::ints(&crate::proof_kernel::aver_generated::kernel::decode::items(ws)?)?, crate::proof_kernel::aver_generated::kernel::decode::cuts(&cs)?)))
                                                     } else {
-                                                        Err(AverStr::from("malformed linear"))
+                                                        Err(::aver_rt::str_lit!("malformed linear"))
                                                     }
                                                 }
                                             } else {
-                                                Err(AverStr::from("malformed linear"))
+                                                Err(::aver_rt::str_lit!("malformed linear"))
                                             }
                                         }
                                     } else {
-                                        Err(AverStr::from("malformed linear"))
+                                        Err(::aver_rt::str_lit!("malformed linear"))
                                     }
                                 }
                             }
                         }
-                        _ => Err(AverStr::from("malformed linear")),
+                        _ => Err(::aver_rt::str_lit!("malformed linear")),
                     }
                 } else {
-                    Err(AverStr::from("malformed linear"))
+                    Err(::aver_rt::str_lit!("malformed linear"))
                 }
             }
         } else {
-            Err(AverStr::from("malformed linear"))
+            Err(::aver_rt::str_lit!("malformed linear"))
         }
     }
 }
@@ -1950,26 +1950,26 @@ pub fn cuts(
                                                 match __pat5 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(d) => {
             let d = d.clone();
-            { let __list_subject = __pat6; if let (Some(ws), Some(__pat7)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat7; if __list_subject.is_empty() { Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::proof::Cut { divisor: ({ let __s = &(d); __s.parse::<aver_rt::AverInt>().map_err(|_| format!("Cannot parse '{}' as Int", __s)) }).into_aver()?, weights: crate::proof_kernel::aver_generated::kernel::decode::ints(&crate::proof_kernel::aver_generated::kernel::decode::items(ws)?)? }, &crate::proof_kernel::aver_generated::kernel::decode::cuts(&rest)?)) } else { Err(AverStr::from("malformed cut")) } } } else { Err(AverStr::from("malformed cut")) } }
+            { let __list_subject = __pat6; if let (Some(ws), Some(__pat7)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat7; if __list_subject.is_empty() { Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::proof::Cut { divisor: ({ let __s = &(d); __s.parse::<aver_rt::AverInt>().map_err(|_| format!("Cannot parse '{}' as Int", __s)) }).into_aver()?, weights: crate::proof_kernel::aver_generated::kernel::decode::ints(&crate::proof_kernel::aver_generated::kernel::decode::items(ws)?)? }, &crate::proof_kernel::aver_generated::kernel::decode::cuts(&rest)?)) } else { Err(::aver_rt::str_lit!("malformed cut")) } } } else { Err(::aver_rt::str_lit!("malformed cut")) } }
         },
         _ => {
-            Err(AverStr::from("malformed cut"))
+            Err(::aver_rt::str_lit!("malformed cut"))
         }
     }
                                             } else {
-                                                Err(AverStr::from("malformed cut"))
+                                                Err(::aver_rt::str_lit!("malformed cut"))
                                             }
                                         }
-                                        _ => Err(AverStr::from("malformed cut")),
+                                        _ => Err(::aver_rt::str_lit!("malformed cut")),
                                     }
                                 }
-                                _ => Err(AverStr::from("malformed cut")),
+                                _ => Err(::aver_rt::str_lit!("malformed cut")),
                             }
                         } else {
-                            Err(AverStr::from("malformed cut"))
+                            Err(::aver_rt::str_lit!("malformed cut"))
                         }
                     }
-                    _ => Err(AverStr::from("malformed cut")),
+                    _ => Err(::aver_rt::str_lit!("malformed cut")),
                 }
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -2003,7 +2003,7 @@ pub fn ints(
                             &crate::proof_kernel::aver_generated::kernel::decode::ints(&rest)?,
                         ))
                     }
-                    _ => Err(AverStr::from("expected an integer")),
+                    _ => Err(::aver_rt::str_lit!("expected an integer")),
                 }
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -2028,15 +2028,15 @@ pub fn ringProof(
                         if __list_subject.is_empty() {
                             Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PRing(crate::proof_kernel::aver_generated::kernel::proof::Proof__PRing(crate::proof_kernel::aver_generated::kernel::decode::term(l)?, crate::proof_kernel::aver_generated::kernel::decode::term(r)?)))
                         } else {
-                            Err(AverStr::from("malformed ring"))
+                            Err(::aver_rt::str_lit!("malformed ring"))
                         }
                     }
                 } else {
-                    Err(AverStr::from("malformed ring"))
+                    Err(::aver_rt::str_lit!("malformed ring"))
                 }
             }
         } else {
-            Err(AverStr::from("malformed ring"))
+            Err(::aver_rt::str_lit!("malformed ring"))
         }
     }
 }
@@ -2064,18 +2064,18 @@ pub fn listInductProof(
                                 {
                                     crate::proof_kernel::aver_generated::kernel::decode::listInductWith(v, crate::proof_kernel::aver_generated::kernel::decode::term(l)?, crate::proof_kernel::aver_generated::kernel::decode::term(r)?, &crate::proof_kernel::aver_generated::kernel::decode::carried(&rest)?)
                                 } else {
-                                    Err(AverStr::from("malformed listinduct"))
+                                    Err(::aver_rt::str_lit!("malformed listinduct"))
                                 }
                             }
                         } else {
-                            Err(AverStr::from("malformed listinduct"))
+                            Err(::aver_rt::str_lit!("malformed listinduct"))
                         }
                     }
                 }
-                _ => Err(AverStr::from("malformed listinduct")),
+                _ => Err(::aver_rt::str_lit!("malformed listinduct")),
             }
         } else {
-            Err(AverStr::from("malformed listinduct"))
+            Err(::aver_rt::str_lit!("malformed listinduct"))
         }
     }
 }
@@ -2116,29 +2116,29 @@ pub fn listInductWith(
             { let __list_subject = __pat6; if let (Some(__pat7), Some(__pat8)) = (__list_subject.first(), __list_subject.tail()) { match __pat7 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(t) => {
             let t = t.clone();
-            { let __list_subject = __pat8; if __list_subject.is_empty() { { let __list_subject = __pat3; if let (Some(gs), Some(__pat9)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat9; if let (Some(hs), Some(__pat10)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat10; if let (Some(c), Some(__pat11)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat11; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PListInduct(crate::proof_kernel::aver_generated::kernel::proof::Proof__PListInduct(v, l, r, ns, crate::proof_kernel::aver_generated::kernel::decode::proof(n)?, h, t, crate::proof_kernel::aver_generated::kernel::decode::atoms(&crate::proof_kernel::aver_generated::kernel::decode::items(gs)?)?, crate::proof_kernel::aver_generated::kernel::decode::ihAts(&crate::proof_kernel::aver_generated::kernel::decode::items(hs)?)?, crate::proof_kernel::aver_generated::kernel::decode::proof(c)?))) } else { Err(AverStr::from("malformed listinduct")) } } } else { Err(AverStr::from("malformed listinduct")) } } } else { Err(AverStr::from("malformed listinduct")) } } } else { Err(AverStr::from("malformed listinduct")) } } } else { Err(AverStr::from("malformed listinduct")) } }
+            { let __list_subject = __pat8; if __list_subject.is_empty() { { let __list_subject = __pat3; if let (Some(gs), Some(__pat9)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat9; if let (Some(hs), Some(__pat10)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat10; if let (Some(c), Some(__pat11)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat11; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PListInduct(crate::proof_kernel::aver_generated::kernel::proof::Proof__PListInduct(v, l, r, ns, crate::proof_kernel::aver_generated::kernel::decode::proof(n)?, h, t, crate::proof_kernel::aver_generated::kernel::decode::atoms(&crate::proof_kernel::aver_generated::kernel::decode::items(gs)?)?, crate::proof_kernel::aver_generated::kernel::decode::ihAts(&crate::proof_kernel::aver_generated::kernel::decode::items(hs)?)?, crate::proof_kernel::aver_generated::kernel::decode::proof(c)?))) } else { Err(::aver_rt::str_lit!("malformed listinduct")) } } } else { Err(::aver_rt::str_lit!("malformed listinduct")) } } } else { Err(::aver_rt::str_lit!("malformed listinduct")) } } } else { Err(::aver_rt::str_lit!("malformed listinduct")) } } } else { Err(::aver_rt::str_lit!("malformed listinduct")) } }
         },
         _ => {
-            Err(AverStr::from("malformed listinduct"))
+            Err(::aver_rt::str_lit!("malformed listinduct"))
         }
-    } } else { Err(AverStr::from("malformed listinduct")) } }
+    } } else { Err(::aver_rt::str_lit!("malformed listinduct")) } }
         },
         _ => {
-            Err(AverStr::from("malformed listinduct"))
+            Err(::aver_rt::str_lit!("malformed listinduct"))
         }
     }
                                 } else {
-                                    Err(AverStr::from("malformed listinduct"))
+                                    Err(::aver_rt::str_lit!("malformed listinduct"))
                                 }
                             }
-                            _ => Err(AverStr::from("malformed listinduct")),
+                            _ => Err(::aver_rt::str_lit!("malformed listinduct")),
                         }
                     } else {
-                        Err(AverStr::from("malformed listinduct"))
+                        Err(::aver_rt::str_lit!("malformed listinduct"))
                     }
                 }
             } else {
-                Err(AverStr::from("malformed listinduct"))
+                Err(::aver_rt::str_lit!("malformed listinduct"))
             }
         }
     }
@@ -2189,49 +2189,51 @@ pub fn lenInductProof(
             { let __list_subject = __pat8; if let (Some(__pat9), Some(__pat10)) = (__list_subject.first(), __list_subject.tail()) { match __pat9 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(ih) => {
             let ih = ih.clone();
-            { let __list_subject = __pat10; if __list_subject.is_empty() { { let __list_subject = __pat3; if let (Some(c), Some(__pat11)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat11; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PLenInduct(crate::proof_kernel::aver_generated::kernel::proof::Proof__PLenInduct(v, crate::proof_kernel::aver_generated::kernel::decode::term(l)?, crate::proof_kernel::aver_generated::kernel::decode::term(r)?, ns, crate::proof_kernel::aver_generated::kernel::decode::atoms(&crate::proof_kernel::aver_generated::kernel::decode::items(gs)?)?, n, hn, ih, crate::proof_kernel::aver_generated::kernel::decode::proof(c)?))) } else { Err(AverStr::from("malformed leninduct")) } } } else { Err(AverStr::from("malformed leninduct")) } } } else { Err(AverStr::from("malformed leninduct")) } }
+            { let __list_subject = __pat10; if __list_subject.is_empty() { { let __list_subject = __pat3; if let (Some(c), Some(__pat11)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat11; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PLenInduct(crate::proof_kernel::aver_generated::kernel::proof::Proof__PLenInduct(v, crate::proof_kernel::aver_generated::kernel::decode::term(l)?, crate::proof_kernel::aver_generated::kernel::decode::term(r)?, ns, crate::proof_kernel::aver_generated::kernel::decode::atoms(&crate::proof_kernel::aver_generated::kernel::decode::items(gs)?)?, n, hn, ih, crate::proof_kernel::aver_generated::kernel::decode::proof(c)?))) } else { Err(::aver_rt::str_lit!("malformed leninduct")) } } } else { Err(::aver_rt::str_lit!("malformed leninduct")) } } } else { Err(::aver_rt::str_lit!("malformed leninduct")) } }
         },
         _ => {
-            Err(AverStr::from("malformed leninduct"))
+            Err(::aver_rt::str_lit!("malformed leninduct"))
         }
-    } } else { Err(AverStr::from("malformed leninduct")) } }
+    } } else { Err(::aver_rt::str_lit!("malformed leninduct")) } }
         },
         _ => {
-            Err(AverStr::from("malformed leninduct"))
+            Err(::aver_rt::str_lit!("malformed leninduct"))
         }
-    } } else { Err(AverStr::from("malformed leninduct")) } }
+    } } else { Err(::aver_rt::str_lit!("malformed leninduct")) } }
         },
         _ => {
-            Err(AverStr::from("malformed leninduct"))
+            Err(::aver_rt::str_lit!("malformed leninduct"))
         }
-    } } else { Err(AverStr::from("malformed leninduct")) } }
+    } } else { Err(::aver_rt::str_lit!("malformed leninduct")) } }
         },
         _ => {
-            Err(AverStr::from("malformed leninduct"))
+            Err(::aver_rt::str_lit!("malformed leninduct"))
         }
     }
                                                     } else {
-                                                        Err(AverStr::from("malformed leninduct"))
+                                                        Err(::aver_rt::str_lit!(
+                                                            "malformed leninduct"
+                                                        ))
                                                     }
                                                 }
                                             } else {
-                                                Err(AverStr::from("malformed leninduct"))
+                                                Err(::aver_rt::str_lit!("malformed leninduct"))
                                             }
                                         }
                                     }
                                 } else {
-                                    Err(AverStr::from("malformed leninduct"))
+                                    Err(::aver_rt::str_lit!("malformed leninduct"))
                                 }
                             }
                         } else {
-                            Err(AverStr::from("malformed leninduct"))
+                            Err(::aver_rt::str_lit!("malformed leninduct"))
                         }
                     }
                 }
-                _ => Err(AverStr::from("malformed leninduct")),
+                _ => Err(::aver_rt::str_lit!("malformed leninduct")),
             }
         } else {
-            Err(AverStr::from("malformed leninduct"))
+            Err(::aver_rt::str_lit!("malformed leninduct"))
         }
     }
 }
@@ -2275,43 +2277,43 @@ pub fn listCasesProof(
             { let __list_subject = __pat9; if let (Some(__pat10), Some(__pat11)) = (__list_subject.first(), __list_subject.tail()) { match __pat10 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(t) => {
             let t = t.clone();
-            { let __list_subject = __pat11; if __list_subject.is_empty() { { let __list_subject = __pat6; if let (Some(c), Some(__pat12)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat12; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PListCases(crate::proof_kernel::aver_generated::kernel::proof::Proof__PListCases(v, crate::proof_kernel::aver_generated::kernel::decode::term(l)?, crate::proof_kernel::aver_generated::kernel::decode::term(r)?, crate::proof_kernel::aver_generated::kernel::decode::proof(n)?, h, t, crate::proof_kernel::aver_generated::kernel::decode::proof(c)?))) } else { Err(AverStr::from("malformed listcases")) } } } else { Err(AverStr::from("malformed listcases")) } } } else { Err(AverStr::from("malformed listcases")) } }
+            { let __list_subject = __pat11; if __list_subject.is_empty() { { let __list_subject = __pat6; if let (Some(c), Some(__pat12)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat12; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PListCases(crate::proof_kernel::aver_generated::kernel::proof::Proof__PListCases(v, crate::proof_kernel::aver_generated::kernel::decode::term(l)?, crate::proof_kernel::aver_generated::kernel::decode::term(r)?, crate::proof_kernel::aver_generated::kernel::decode::proof(n)?, h, t, crate::proof_kernel::aver_generated::kernel::decode::proof(c)?))) } else { Err(::aver_rt::str_lit!("malformed listcases")) } } } else { Err(::aver_rt::str_lit!("malformed listcases")) } } } else { Err(::aver_rt::str_lit!("malformed listcases")) } }
         },
         _ => {
-            Err(AverStr::from("malformed listcases"))
+            Err(::aver_rt::str_lit!("malformed listcases"))
         }
-    } } else { Err(AverStr::from("malformed listcases")) } }
+    } } else { Err(::aver_rt::str_lit!("malformed listcases")) } }
         },
         _ => {
-            Err(AverStr::from("malformed listcases"))
+            Err(::aver_rt::str_lit!("malformed listcases"))
         }
-    } } else { Err(AverStr::from("malformed listcases")) } }
+    } } else { Err(::aver_rt::str_lit!("malformed listcases")) } }
         },
         _ => {
-            Err(AverStr::from("malformed listcases"))
+            Err(::aver_rt::str_lit!("malformed listcases"))
         }
     }
                                                 } else {
-                                                    Err(AverStr::from("malformed listcases"))
+                                                    Err(::aver_rt::str_lit!("malformed listcases"))
                                                 }
                                             }
                                         } else {
-                                            Err(AverStr::from("malformed listcases"))
+                                            Err(::aver_rt::str_lit!("malformed listcases"))
                                         }
                                     }
                                 } else {
-                                    Err(AverStr::from("malformed listcases"))
+                                    Err(::aver_rt::str_lit!("malformed listcases"))
                                 }
                             }
                         } else {
-                            Err(AverStr::from("malformed listcases"))
+                            Err(::aver_rt::str_lit!("malformed listcases"))
                         }
                     }
                 }
-                _ => Err(AverStr::from("malformed listcases")),
+                _ => Err(::aver_rt::str_lit!("malformed listcases")),
             }
         } else {
-            Err(AverStr::from("malformed listcases"))
+            Err(::aver_rt::str_lit!("malformed listcases"))
         }
     }
 }
@@ -2354,29 +2356,31 @@ pub fn ihAts(
                                                         if __list_subject.is_empty() {
                                                             Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::proof::IhAt { name: h, at: crate::proof_kernel::aver_generated::kernel::decode::termList(at)?, carry: crate::proof_kernel::aver_generated::kernel::decode::proofs(&crate::proof_kernel::aver_generated::kernel::decode::items(ps)?)? }, &crate::proof_kernel::aver_generated::kernel::decode::ihAts(&rest)?))
                                                         } else {
-                                                            Err(AverStr::from(
-                                                                "malformed induction hypothesis",
+                                                            Err(::aver_rt::str_lit!(
+                                                                "malformed induction hypothesis"
                                                             ))
                                                         }
                                                     }
                                                 } else {
-                                                    Err(AverStr::from(
-                                                        "malformed induction hypothesis",
+                                                    Err(::aver_rt::str_lit!(
+                                                        "malformed induction hypothesis"
                                                     ))
                                                 }
                                             }
                                         } else {
-                                            Err(AverStr::from("malformed induction hypothesis"))
+                                            Err(::aver_rt::str_lit!(
+                                                "malformed induction hypothesis"
+                                            ))
                                         }
                                     }
                                 }
-                                _ => Err(AverStr::from("malformed induction hypothesis")),
+                                _ => Err(::aver_rt::str_lit!("malformed induction hypothesis")),
                             }
                         } else {
-                            Err(AverStr::from("malformed induction hypothesis"))
+                            Err(::aver_rt::str_lit!("malformed induction hypothesis"))
                         }
                     }
-                    _ => Err(AverStr::from("malformed induction hypothesis")),
+                    _ => Err(::aver_rt::str_lit!("malformed induction hypothesis")),
                 }
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -2413,22 +2417,22 @@ pub fn inductProof(
                                         {
                                             crate::proof_kernel::aver_generated::kernel::decode::inductWith(f, &crate::proof_kernel::aver_generated::kernel::decode::termList(xs)?, crate::proof_kernel::aver_generated::kernel::decode::term(l)?, crate::proof_kernel::aver_generated::kernel::decode::term(r)?, &crate::proof_kernel::aver_generated::kernel::decode::carried(&rest)?)
                                         } else {
-                                            Err(AverStr::from("malformed induct"))
+                                            Err(::aver_rt::str_lit!("malformed induct"))
                                         }
                                     }
                                 } else {
-                                    Err(AverStr::from("malformed induct"))
+                                    Err(::aver_rt::str_lit!("malformed induct"))
                                 }
                             }
                         } else {
-                            Err(AverStr::from("malformed induct"))
+                            Err(::aver_rt::str_lit!("malformed induct"))
                         }
                     }
                 }
-                _ => Err(AverStr::from("malformed induct")),
+                _ => Err(::aver_rt::str_lit!("malformed induct")),
             }
         } else {
-            Err(AverStr::from("malformed induct"))
+            Err(::aver_rt::str_lit!("malformed induct"))
         }
     }
 }
@@ -2571,39 +2575,43 @@ pub fn cases(
                                                                             {
                                                                                 Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::proof::Case { binders: crate::proof_kernel::aver_generated::kernel::decode::atoms(&crate::proof_kernel::aver_generated::kernel::decode::items(bs)?)?, ihs: crate::proof_kernel::aver_generated::kernel::decode::ihNames(&crate::proof_kernel::aver_generated::kernel::decode::items(hs)?)?, carry: crate::proof_kernel::aver_generated::kernel::decode::ihCarry(&crate::proof_kernel::aver_generated::kernel::decode::items(hs)?)?, more: crate::proof_kernel::aver_generated::kernel::decode::mores(&crate::proof_kernel::aver_generated::kernel::decode::items(ms)?)?, proof: crate::proof_kernel::aver_generated::kernel::decode::proof(p)? }, &crate::proof_kernel::aver_generated::kernel::decode::cases(&rest)?))
                                                                             } else {
-                                                                                Err(AverStr::from(
-                                                                                    "malformed case",
-                                                                                ))
+                                                                                Err(
+                                                                                    ::aver_rt::str_lit!(
+                                                                                        "malformed case"
+                                                                                    ),
+                                                                                )
                                                                             }
                                                                         }
                                                                     } else {
-                                                                        Err(AverStr::from(
-                                                                            "malformed case",
+                                                                        Err(::aver_rt::str_lit!(
+                                                                            "malformed case"
                                                                         ))
                                                                     }
                                                                 }
                                                             } else {
-                                                                Err(AverStr::from("malformed case"))
+                                                                Err(::aver_rt::str_lit!(
+                                                                    "malformed case"
+                                                                ))
                                                             }
                                                         }
                                                     } else {
-                                                        Err(AverStr::from("malformed case"))
+                                                        Err(::aver_rt::str_lit!("malformed case"))
                                                     }
                                                 }
                                             } else {
-                                                Err(AverStr::from("malformed case"))
+                                                Err(::aver_rt::str_lit!("malformed case"))
                                             }
                                         }
-                                        _ => Err(AverStr::from("malformed case")),
+                                        _ => Err(::aver_rt::str_lit!("malformed case")),
                                     }
                                 }
-                                _ => Err(AverStr::from("malformed case")),
+                                _ => Err(::aver_rt::str_lit!("malformed case")),
                             }
                         } else {
-                            Err(AverStr::from("malformed case"))
+                            Err(::aver_rt::str_lit!("malformed case"))
                         }
                     }
-                    _ => Err(AverStr::from("malformed case")),
+                    _ => Err(::aver_rt::str_lit!("malformed case")),
                 }
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -2643,24 +2651,24 @@ pub fn mores(
                                             match __pat4 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(h) => {
             let h = h.clone();
-            { let __list_subject = __pat5; if let (Some(at), Some(__pat6)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat6; if let (Some(ps), Some(__pat7)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat7; if __list_subject.is_empty() { match ({ let __s = &(k); __s.parse::<aver_rt::AverInt>().map_err(|_| format!("Cannot parse '{}' as Int", __s)) }).into_aver() { Ok(n @ _) => { Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::proof::More { call: n, ih: crate::proof_kernel::aver_generated::kernel::proof::IhAt { name: h, at: crate::proof_kernel::aver_generated::kernel::decode::termList(at)?, carry: crate::proof_kernel::aver_generated::kernel::decode::proofs(&crate::proof_kernel::aver_generated::kernel::decode::items(ps)?)? } }, &crate::proof_kernel::aver_generated::kernel::decode::mores(&rest)?)) }, Err(_) => { Err(AverStr::from("malformed hypothesis")) } } } else { Err(AverStr::from("malformed hypothesis")) } } } else { Err(AverStr::from("malformed hypothesis")) } } } else { Err(AverStr::from("malformed hypothesis")) } }
+            { let __list_subject = __pat5; if let (Some(at), Some(__pat6)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat6; if let (Some(ps), Some(__pat7)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat7; if __list_subject.is_empty() { match ({ let __s = &(k); __s.parse::<aver_rt::AverInt>().map_err(|_| format!("Cannot parse '{}' as Int", __s)) }).into_aver() { Ok(n @ _) => { Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::proof::More { call: n, ih: crate::proof_kernel::aver_generated::kernel::proof::IhAt { name: h, at: crate::proof_kernel::aver_generated::kernel::decode::termList(at)?, carry: crate::proof_kernel::aver_generated::kernel::decode::proofs(&crate::proof_kernel::aver_generated::kernel::decode::items(ps)?)? } }, &crate::proof_kernel::aver_generated::kernel::decode::mores(&rest)?)) }, Err(_) => { Err(::aver_rt::str_lit!("malformed hypothesis")) } } } else { Err(::aver_rt::str_lit!("malformed hypothesis")) } } } else { Err(::aver_rt::str_lit!("malformed hypothesis")) } } } else { Err(::aver_rt::str_lit!("malformed hypothesis")) } }
         },
         _ => {
-            Err(AverStr::from("malformed hypothesis"))
+            Err(::aver_rt::str_lit!("malformed hypothesis"))
         }
     }
                                         } else {
-                                            Err(AverStr::from("malformed hypothesis"))
+                                            Err(::aver_rt::str_lit!("malformed hypothesis"))
                                         }
                                     }
                                 }
-                                _ => Err(AverStr::from("malformed hypothesis")),
+                                _ => Err(::aver_rt::str_lit!("malformed hypothesis")),
                             }
                         } else {
-                            Err(AverStr::from("malformed hypothesis"))
+                            Err(::aver_rt::str_lit!("malformed hypothesis"))
                         }
                     }
-                    _ => Err(AverStr::from("malformed hypothesis")),
+                    _ => Err(::aver_rt::str_lit!("malformed hypothesis")),
                 }
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -2710,13 +2718,13 @@ pub fn ihName(
                         let n = n.clone();
                         Ok(n)
                     }
-                    _ => Err(AverStr::from("malformed hypothesis")),
+                    _ => Err(::aver_rt::str_lit!("malformed hypothesis")),
                 }
             } else {
-                Err(AverStr::from("malformed hypothesis"))
+                Err(::aver_rt::str_lit!("malformed hypothesis"))
             }
         }
-        _ => Err(AverStr::from("malformed hypothesis")),
+        _ => Err(::aver_rt::str_lit!("malformed hypothesis")),
     }
 }
 
@@ -2764,13 +2772,13 @@ pub fn ihProofs(
                         let n = n.clone();
                         crate::proof_kernel::aver_generated::kernel::decode::proofs(&ps)
                     }
-                    _ => Err(AverStr::from("malformed hypothesis")),
+                    _ => Err(::aver_rt::str_lit!("malformed hypothesis")),
                 }
             } else {
-                Err(AverStr::from("malformed hypothesis"))
+                Err(::aver_rt::str_lit!("malformed hypothesis"))
             }
         }
-        _ => Err(AverStr::from("malformed hypothesis")),
+        _ => Err(::aver_rt::str_lit!("malformed hypothesis")),
     }
 }
 
@@ -2795,19 +2803,19 @@ pub fn absurdProof(
                                 if __list_subject.is_empty() {
                                     Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PAbsurd(crate::proof_kernel::aver_generated::kernel::proof::Proof__PAbsurd(crate::proof_kernel::aver_generated::kernel::decode::proof(p)?, crate::proof_kernel::aver_generated::kernel::decode::term(l)?, crate::proof_kernel::aver_generated::kernel::decode::term(r)?)))
                                 } else {
-                                    Err(AverStr::from("malformed absurd"))
+                                    Err(::aver_rt::str_lit!("malformed absurd"))
                                 }
                             }
                         } else {
-                            Err(AverStr::from("malformed absurd"))
+                            Err(::aver_rt::str_lit!("malformed absurd"))
                         }
                     }
                 } else {
-                    Err(AverStr::from("malformed absurd"))
+                    Err(::aver_rt::str_lit!("malformed absurd"))
                 }
             }
         } else {
-            Err(AverStr::from("malformed absurd"))
+            Err(::aver_rt::str_lit!("malformed absurd"))
         }
     }
 }
@@ -2839,9 +2847,9 @@ pub fn typ(
                                     Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyUnit)
                                 } else {
                                     if &*__dispatch_subject == "_" {
-                                        Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyRigid(crate::proof_kernel::aver_generated::kernel::term::Ty__TyRigid(AverStr::from(""), false)))
+                                        Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyRigid(crate::proof_kernel::aver_generated::kernel::term::Ty__TyRigid(::aver_rt::str_lit!(""), false)))
                                     } else {
-                                        Err(AverStr::from("malformed type"))
+                                        Err(::aver_rt::str_lit!("malformed type"))
                                     }
                                 }
                             }
@@ -2872,24 +2880,24 @@ pub fn typ(
             let __pat8 = __pat8.clone();
             match &*__pat8 {
         "eq" => {
-            { let __list_subject = __pat7; if __list_subject.is_empty() { crate::proof_kernel::aver_generated::kernel::decode::typeVar(n, true, vars) } else { Err(AverStr::from("malformed type")) } }
+            { let __list_subject = __pat7; if __list_subject.is_empty() { crate::proof_kernel::aver_generated::kernel::decode::typeVar(n, true, vars) } else { Err(::aver_rt::str_lit!("malformed type")) } }
         },
         _ => {
-            Err(AverStr::from("malformed type"))
+            Err(::aver_rt::str_lit!("malformed type"))
         }
     }
         },
         _ => {
-            Err(AverStr::from("malformed type"))
+            Err(::aver_rt::str_lit!("malformed type"))
         }
     } } else { panic!("Aver Rust codegen: non-exhaustive list match") } } }
         },
         _ => {
-            Err(AverStr::from("malformed type"))
+            Err(::aver_rt::str_lit!("malformed type"))
         }
     }
                                     } else {
-                                        Err(AverStr::from("malformed type"))
+                                        Err(::aver_rt::str_lit!("malformed type"))
                                     }
                                 }
                             } else {
@@ -2904,11 +2912,11 @@ pub fn typ(
                                                 if __list_subject.is_empty() {
                                                     Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyList(crate::proof_kernel::aver_generated::kernel::term::Ty__TyList(crate::proof_kernel::aver_generated::kernel::decode::typ(t, vars)?)))
                                                 } else {
-                                                    Err(AverStr::from("malformed type"))
+                                                    Err(::aver_rt::str_lit!("malformed type"))
                                                 }
                                             }
                                         } else {
-                                            Err(AverStr::from("malformed type"))
+                                            Err(::aver_rt::str_lit!("malformed type"))
                                         }
                                     }
                                 } else {
@@ -2923,11 +2931,11 @@ pub fn typ(
                                                     if __list_subject.is_empty() {
                                                         Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyOption(crate::proof_kernel::aver_generated::kernel::term::Ty__TyOption(crate::proof_kernel::aver_generated::kernel::decode::typ(t, vars)?)))
                                                     } else {
-                                                        Err(AverStr::from("malformed type"))
+                                                        Err(::aver_rt::str_lit!("malformed type"))
                                                     }
                                                 }
                                             } else {
-                                                Err(AverStr::from("malformed type"))
+                                                Err(::aver_rt::str_lit!("malformed type"))
                                             }
                                         }
                                     } else {
@@ -2942,11 +2950,13 @@ pub fn typ(
                                                         if __list_subject.is_empty() {
                                                             Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyVector(crate::proof_kernel::aver_generated::kernel::term::Ty__TyVector(crate::proof_kernel::aver_generated::kernel::decode::typ(t, vars)?)))
                                                         } else {
-                                                            Err(AverStr::from("malformed type"))
+                                                            Err(::aver_rt::str_lit!(
+                                                                "malformed type"
+                                                            ))
                                                         }
                                                     }
                                                 } else {
-                                                    Err(AverStr::from("malformed type"))
+                                                    Err(::aver_rt::str_lit!("malformed type"))
                                                 }
                                             }
                                         } else {
@@ -2968,17 +2978,19 @@ pub fn typ(
                                                                     if __list_subject.is_empty() {
                                                                         Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyResult(crate::proof_kernel::aver_generated::kernel::term::Ty__TyResult(crate::proof_kernel::aver_generated::kernel::decode::typ(t, vars)?, crate::proof_kernel::aver_generated::kernel::decode::typ(e, vars)?)))
                                                                     } else {
-                                                                        Err(AverStr::from(
-                                                                            "malformed type",
+                                                                        Err(::aver_rt::str_lit!(
+                                                                            "malformed type"
                                                                         ))
                                                                     }
                                                                 }
                                                             } else {
-                                                                Err(AverStr::from("malformed type"))
+                                                                Err(::aver_rt::str_lit!(
+                                                                    "malformed type"
+                                                                ))
                                                             }
                                                         }
                                                     } else {
-                                                        Err(AverStr::from("malformed type"))
+                                                        Err(::aver_rt::str_lit!("malformed type"))
                                                     }
                                                 }
                                             } else {
@@ -3002,19 +3014,23 @@ pub fn typ(
                                                                         {
                                                                             Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyMap(crate::proof_kernel::aver_generated::kernel::term::Ty__TyMap(crate::proof_kernel::aver_generated::kernel::decode::typ(k, vars)?, crate::proof_kernel::aver_generated::kernel::decode::typ(v, vars)?)))
                                                                         } else {
-                                                                            Err(AverStr::from(
-                                                                                "malformed type",
-                                                                            ))
+                                                                            Err(
+                                                                                ::aver_rt::str_lit!(
+                                                                                    "malformed type"
+                                                                                ),
+                                                                            )
                                                                         }
                                                                     }
                                                                 } else {
-                                                                    Err(AverStr::from(
-                                                                        "malformed type",
+                                                                    Err(::aver_rt::str_lit!(
+                                                                        "malformed type"
                                                                     ))
                                                                 }
                                                             }
                                                         } else {
-                                                            Err(AverStr::from("malformed type"))
+                                                            Err(::aver_rt::str_lit!(
+                                                                "malformed type"
+                                                            ))
                                                         }
                                                     }
                                                 } else {
@@ -3034,20 +3050,22 @@ pub fn typ(
                                                                     match __pat16 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(n) => {
             let n = n.clone();
-            { let __list_subject = __pat17; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(n))) } else { Err(AverStr::from("malformed type")) } }
+            { let __list_subject = __pat17; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(n))) } else { Err(::aver_rt::str_lit!("malformed type")) } }
         },
         _ => {
-            Err(AverStr::from("malformed type"))
+            Err(::aver_rt::str_lit!("malformed type"))
         }
     }
                                                                 } else {
-                                                                    Err(AverStr::from(
-                                                                        "malformed type",
+                                                                    Err(::aver_rt::str_lit!(
+                                                                        "malformed type"
                                                                     ))
                                                                 }
                                                             }
                                                         } else {
-                                                            Err(AverStr::from("malformed type"))
+                                                            Err(::aver_rt::str_lit!(
+                                                                "malformed type"
+                                                            ))
                                                         }
                                                     }
                                                 }
@@ -3058,13 +3076,13 @@ pub fn typ(
                             }
                         }
                     }
-                    _ => Err(AverStr::from("malformed type")),
+                    _ => Err(::aver_rt::str_lit!("malformed type")),
                 }
             } else {
-                Err(AverStr::from("malformed type"))
+                Err(::aver_rt::str_lit!("malformed type"))
             }
         }
-        _ => Err(AverStr::from("malformed type")),
+        _ => Err(::aver_rt::str_lit!("malformed type")),
     }
 }
 
@@ -3083,7 +3101,9 @@ pub fn typeVar(
             ),
         )
     } else {
-        Err(AverStr::from("a type variable outside a law's givens"))
+        Err(::aver_rt::str_lit!(
+            "a type variable outside a law's givens"
+        ))
     }
 }
 
@@ -3146,21 +3166,21 @@ pub fn typedVars(
                                                 if __list_subject.is_empty() {
                                                     Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::term::typed(n, crate::proof_kernel::aver_generated::kernel::decode::typ(t, vars)?), &crate::proof_kernel::aver_generated::kernel::decode::typedVars(&rest, vars)?))
                                                 } else {
-                                                    Err(AverStr::from("malformed typed name"))
+                                                    Err(::aver_rt::str_lit!("malformed typed name"))
                                                 }
                                             }
                                         } else {
-                                            Err(AverStr::from("malformed typed name"))
+                                            Err(::aver_rt::str_lit!("malformed typed name"))
                                         }
                                     }
                                 }
-                                _ => Err(AverStr::from("malformed typed name")),
+                                _ => Err(::aver_rt::str_lit!("malformed typed name")),
                             }
                         } else {
-                            Err(AverStr::from("malformed typed name"))
+                            Err(::aver_rt::str_lit!("malformed typed name"))
                         }
                     }
-                    _ => Err(AverStr::from("malformed typed name")),
+                    _ => Err(::aver_rt::str_lit!("malformed typed name")),
                 }
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -3236,10 +3256,10 @@ pub fn law(
                                 match __pat3 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(k) => {
             let k = k.clone();
-            { let __list_subject = __pat4; if let (Some(gs), Some(__pat5)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat5; if let (Some(p), Some(__pat6)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat6; if let (Some(l), Some(__pat7)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat7; if let (Some(r), Some(__pat8)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat8; if __list_subject.is_empty() { crate::proof_kernel::aver_generated::kernel::decode::lawOf((h == head), k, &crate::proof_kernel::aver_generated::kernel::decode::typedVars(&crate::proof_kernel::aver_generated::kernel::decode::items(gs)?, true)?, &crate::proof_kernel::aver_generated::kernel::decode::premise(p)?, crate::proof_kernel::aver_generated::kernel::decode::term(l)?, crate::proof_kernel::aver_generated::kernel::decode::term(r)?) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("malformed ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("malformed ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("malformed ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("malformed ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("malformed ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head)))); __b })) } }
+            { let __list_subject = __pat4; if let (Some(gs), Some(__pat5)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat5; if let (Some(p), Some(__pat6)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat6; if let (Some(l), Some(__pat7)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat7; if let (Some(r), Some(__pat8)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat8; if __list_subject.is_empty() { crate::proof_kernel::aver_generated::kernel::decode::lawOf((h == head), k, &crate::proof_kernel::aver_generated::kernel::decode::typedVars(&crate::proof_kernel::aver_generated::kernel::decode::items(gs)?, true)?, &crate::proof_kernel::aver_generated::kernel::decode::premise(p)?, crate::proof_kernel::aver_generated::kernel::decode::term(l)?, crate::proof_kernel::aver_generated::kernel::decode::term(r)?) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head)))); __b })) } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("malformed ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head)))); __b }))
         }
     }
                             } else {
@@ -3250,7 +3270,7 @@ pub fn law(
                                                 .to_usize()
                                                 .unwrap_or(0),
                                         );
-                                        __b.push_str(&AverStr::from("malformed "));
+                                        __b.push_str(&::aver_rt::str_lit!("malformed "));
                                         __b
                                     };
                                     __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
@@ -3266,7 +3286,7 @@ pub fn law(
                             let mut __b = aver_rt::Buffer::with_capacity(
                                 (aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0),
                             );
-                            __b.push_str(&AverStr::from("malformed "));
+                            __b.push_str(&::aver_rt::str_lit!("malformed "));
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head))));
@@ -3279,7 +3299,7 @@ pub fn law(
                         let mut __b = aver_rt::Buffer::with_capacity(
                             (aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&AverStr::from("malformed "));
+                        __b.push_str(&::aver_rt::str_lit!("malformed "));
                         __b
                     };
                     __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head))));
@@ -3292,7 +3312,7 @@ pub fn law(
                 let mut __b = aver_rt::Buffer::with_capacity(
                     (aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0),
                 );
-                __b.push_str(&AverStr::from("malformed "));
+                __b.push_str(&::aver_rt::str_lit!("malformed "));
                 __b
             };
             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head))));
@@ -3326,7 +3346,7 @@ pub fn lawOf(
                 let mut __b = aver_rt::Buffer::with_capacity(
                     (aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0),
                 );
-                __b.push_str(&AverStr::from("unexpected head for "));
+                __b.push_str(&::aver_rt::str_lit!("unexpected head for "));
                 __b
             };
             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(k))));
@@ -3383,21 +3403,21 @@ pub fn withCited(
                                     match __pat4 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(k) => {
             let k = k.clone();
-            { let __list_subject = __pat5; if let (Some(gs), Some(__pat6)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat6; if let (Some(w), Some(__pat7)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat7; if let (Some(l), Some(__pat8)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat8; if let (Some(r), Some(__pat9)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat9; if let (Some(p), Some(__pat10)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat10; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: rest.laws.clone(), facts: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::proof::Fact { law: crate::proof_kernel::aver_generated::kernel::proof::Law { key: k, givens: crate::proof_kernel::aver_generated::kernel::decode::typedVars(&crate::proof_kernel::aver_generated::kernel::decode::items(gs)?, true)?, premise: crate::proof_kernel::aver_generated::kernel::decode::premise(w)?, lhs: crate::proof_kernel::aver_generated::kernel::decode::term(l)?, rhs: crate::proof_kernel::aver_generated::kernel::decode::term(r)? }, proof: crate::proof_kernel::aver_generated::kernel::decode::proof(p)? }, &rest.facts.clone()) }) } else { Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::law(s, AverStr::from("law"))?, &rest.laws.clone()), facts: rest.facts.clone() }) } } } else { Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::law(s, AverStr::from("law"))?, &rest.laws.clone()), facts: rest.facts.clone() }) } } } else { Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::law(s, AverStr::from("law"))?, &rest.laws.clone()), facts: rest.facts.clone() }) } } } else { Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::law(s, AverStr::from("law"))?, &rest.laws.clone()), facts: rest.facts.clone() }) } } } else { Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::law(s, AverStr::from("law"))?, &rest.laws.clone()), facts: rest.facts.clone() }) } } } else { Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::law(s, AverStr::from("law"))?, &rest.laws.clone()), facts: rest.facts.clone() }) } }
+            { let __list_subject = __pat5; if let (Some(gs), Some(__pat6)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat6; if let (Some(w), Some(__pat7)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat7; if let (Some(l), Some(__pat8)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat8; if let (Some(r), Some(__pat9)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat9; if let (Some(p), Some(__pat10)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat10; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: rest.laws.clone(), facts: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::proof::Fact { law: crate::proof_kernel::aver_generated::kernel::proof::Law { key: k, givens: crate::proof_kernel::aver_generated::kernel::decode::typedVars(&crate::proof_kernel::aver_generated::kernel::decode::items(gs)?, true)?, premise: crate::proof_kernel::aver_generated::kernel::decode::premise(w)?, lhs: crate::proof_kernel::aver_generated::kernel::decode::term(l)?, rhs: crate::proof_kernel::aver_generated::kernel::decode::term(r)? }, proof: crate::proof_kernel::aver_generated::kernel::decode::proof(p)? }, &rest.facts.clone()) }) } else { Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::law(s, ::aver_rt::str_lit!("law"))?, &rest.laws.clone()), facts: rest.facts.clone() }) } } } else { Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::law(s, ::aver_rt::str_lit!("law"))?, &rest.laws.clone()), facts: rest.facts.clone() }) } } } else { Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::law(s, ::aver_rt::str_lit!("law"))?, &rest.laws.clone()), facts: rest.facts.clone() }) } } } else { Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::law(s, ::aver_rt::str_lit!("law"))?, &rest.laws.clone()), facts: rest.facts.clone() }) } } } else { Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::law(s, ::aver_rt::str_lit!("law"))?, &rest.laws.clone()), facts: rest.facts.clone() }) } } } else { Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::law(s, ::aver_rt::str_lit!("law"))?, &rest.laws.clone()), facts: rest.facts.clone() }) } }
         },
         _ => {
-            Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::law(s, AverStr::from("law"))?, &rest.laws.clone()), facts: rest.facts.clone() })
+            Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::law(s, ::aver_rt::str_lit!("law"))?, &rest.laws.clone()), facts: rest.facts.clone() })
         }
     }
                                 } else {
-                                    Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::law(s, AverStr::from("law"))?, &rest.laws.clone()), facts: rest.facts.clone() })
+                                    Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::law(s, ::aver_rt::str_lit!("law"))?, &rest.laws.clone()), facts: rest.facts.clone() })
                                 }
                             }
                             _ => Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited {
                                 laws: aver_rt::AverList::prepend(
                                     crate::proof_kernel::aver_generated::kernel::decode::law(
                                         s,
-                                        AverStr::from("law"),
+                                        ::aver_rt::str_lit!("law"),
                                     )?,
                                     &rest.laws.clone(),
                                 ),
@@ -3409,7 +3429,7 @@ pub fn withCited(
                         laws: aver_rt::AverList::prepend(
                             crate::proof_kernel::aver_generated::kernel::decode::law(
                                 s,
-                                AverStr::from("law"),
+                                ::aver_rt::str_lit!("law"),
                             )?,
                             &rest.laws.clone(),
                         ),
@@ -3421,7 +3441,7 @@ pub fn withCited(
                     laws: aver_rt::AverList::prepend(
                         crate::proof_kernel::aver_generated::kernel::decode::law(
                             s,
-                            AverStr::from("law"),
+                            ::aver_rt::str_lit!("law"),
                         )?,
                         &rest.laws.clone(),
                     ),
@@ -3431,7 +3451,10 @@ pub fn withCited(
         }
         _ => Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited {
             laws: aver_rt::AverList::prepend(
-                crate::proof_kernel::aver_generated::kernel::decode::law(s, AverStr::from("law"))?,
+                crate::proof_kernel::aver_generated::kernel::decode::law(
+                    s,
+                    ::aver_rt::str_lit!("law"),
+                )?,
                 &rest.laws.clone(),
             ),
             facts: rest.facts.clone(),
@@ -3460,26 +3483,26 @@ pub fn def(
                                     match __pat4 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(n) => {
             let n = n.clone();
-            { let __list_subject = __pat5; if let (Some(ps), Some(__pat6)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat6; if let (Some(rt), Some(__pat7)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat7; if let (Some(ls), Some(__pat8)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat8; if let (Some(b), Some(__pat9)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat9; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::proof::Def { name: n, params: crate::proof_kernel::aver_generated::kernel::decode::typedVars(&crate::proof_kernel::aver_generated::kernel::decode::items(ps)?, false)?, ret: crate::proof_kernel::aver_generated::kernel::decode::typ(rt, false)?, lets: crate::proof_kernel::aver_generated::kernel::decode::bindings(ls)?, body: crate::proof_kernel::aver_generated::kernel::decode::term(b)? }) } else { Err(AverStr::from("malformed def")) } } } else { Err(AverStr::from("malformed def")) } } } else { Err(AverStr::from("malformed def")) } } } else { Err(AverStr::from("malformed def")) } } } else { Err(AverStr::from("malformed def")) } }
+            { let __list_subject = __pat5; if let (Some(ps), Some(__pat6)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat6; if let (Some(rt), Some(__pat7)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat7; if let (Some(ls), Some(__pat8)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat8; if let (Some(b), Some(__pat9)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat9; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::proof::Def { name: n, params: crate::proof_kernel::aver_generated::kernel::decode::typedVars(&crate::proof_kernel::aver_generated::kernel::decode::items(ps)?, false)?, ret: crate::proof_kernel::aver_generated::kernel::decode::typ(rt, false)?, lets: crate::proof_kernel::aver_generated::kernel::decode::bindings(ls)?, body: crate::proof_kernel::aver_generated::kernel::decode::term(b)? }) } else { Err(::aver_rt::str_lit!("malformed def")) } } } else { Err(::aver_rt::str_lit!("malformed def")) } } } else { Err(::aver_rt::str_lit!("malformed def")) } } } else { Err(::aver_rt::str_lit!("malformed def")) } } } else { Err(::aver_rt::str_lit!("malformed def")) } }
         },
         _ => {
-            Err(AverStr::from("malformed def"))
+            Err(::aver_rt::str_lit!("malformed def"))
         }
     }
                                 } else {
-                                    Err(AverStr::from("malformed def"))
+                                    Err(::aver_rt::str_lit!("malformed def"))
                                 }
                             }
-                            _ => Err(AverStr::from("malformed def")),
+                            _ => Err(::aver_rt::str_lit!("malformed def")),
                         }
                     }
-                    _ => Err(AverStr::from("malformed def")),
+                    _ => Err(::aver_rt::str_lit!("malformed def")),
                 }
             } else {
-                Err(AverStr::from("malformed def"))
+                Err(::aver_rt::str_lit!("malformed def"))
             }
         }
-        _ => Err(AverStr::from("malformed def")),
+        _ => Err(::aver_rt::str_lit!("malformed def")),
     }
 }
 
@@ -3527,26 +3550,26 @@ pub fn constant(
                                     match __pat4 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(n) => {
             let n = n.clone();
-            { let __list_subject = __pat5; if let (Some(t), Some(__pat6)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat6; if let (Some(v), Some(__pat7)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat7; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::proof::Const { name: n, ty: crate::proof_kernel::aver_generated::kernel::decode::typ(t, false)?, value: crate::proof_kernel::aver_generated::kernel::decode::term(v)? }) } else { Err(AverStr::from("malformed const")) } } } else { Err(AverStr::from("malformed const")) } } } else { Err(AverStr::from("malformed const")) } }
+            { let __list_subject = __pat5; if let (Some(t), Some(__pat6)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat6; if let (Some(v), Some(__pat7)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat7; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::proof::Const { name: n, ty: crate::proof_kernel::aver_generated::kernel::decode::typ(t, false)?, value: crate::proof_kernel::aver_generated::kernel::decode::term(v)? }) } else { Err(::aver_rt::str_lit!("malformed const")) } } } else { Err(::aver_rt::str_lit!("malformed const")) } } } else { Err(::aver_rt::str_lit!("malformed const")) } }
         },
         _ => {
-            Err(AverStr::from("malformed const"))
+            Err(::aver_rt::str_lit!("malformed const"))
         }
     }
                                 } else {
-                                    Err(AverStr::from("malformed const"))
+                                    Err(::aver_rt::str_lit!("malformed const"))
                                 }
                             }
-                            _ => Err(AverStr::from("malformed const")),
+                            _ => Err(::aver_rt::str_lit!("malformed const")),
                         }
                     }
-                    _ => Err(AverStr::from("malformed const")),
+                    _ => Err(::aver_rt::str_lit!("malformed const")),
                 }
             } else {
-                Err(AverStr::from("malformed const"))
+                Err(::aver_rt::str_lit!("malformed const"))
             }
         }
-        _ => Err(AverStr::from("malformed const")),
+        _ => Err(::aver_rt::str_lit!("malformed const")),
     }
 }
 
@@ -3623,23 +3646,23 @@ pub fn sums(
     } } else { Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::proof::Sum { name: n, eq: false, variants: crate::proof_kernel::aver_generated::kernel::decode::variants(&__pat6)? }, &crate::proof_kernel::aver_generated::kernel::decode::sums(&rest)?)) } }
         },
         _ => {
-            Err(AverStr::from("malformed sum"))
+            Err(::aver_rt::str_lit!("malformed sum"))
         }
     }
                                             } else {
-                                                Err(AverStr::from("malformed sum"))
+                                                Err(::aver_rt::str_lit!("malformed sum"))
                                             }
                                         }
-                                        _ => Err(AverStr::from("malformed sum")),
+                                        _ => Err(::aver_rt::str_lit!("malformed sum")),
                                     }
                                 }
-                                _ => Err(AverStr::from("malformed sum")),
+                                _ => Err(::aver_rt::str_lit!("malformed sum")),
                             }
                         } else {
-                            Err(AverStr::from("malformed sum"))
+                            Err(::aver_rt::str_lit!("malformed sum"))
                         }
                     }
-                    _ => Err(AverStr::from("malformed sum")),
+                    _ => Err(::aver_rt::str_lit!("malformed sum")),
                 }
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -3674,13 +3697,13 @@ pub fn variants(
                                     let c = c.clone();
                                     Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::proof::Variant { name: c, fields: crate::proof_kernel::aver_generated::kernel::decode::tys(&ts, false)? }, &crate::proof_kernel::aver_generated::kernel::decode::variants(&rest)?))
                                 }
-                                _ => Err(AverStr::from("malformed constructor of a sum")),
+                                _ => Err(::aver_rt::str_lit!("malformed constructor of a sum")),
                             }
                         } else {
-                            Err(AverStr::from("malformed constructor of a sum"))
+                            Err(::aver_rt::str_lit!("malformed constructor of a sum"))
                         }
                     }
-                    _ => Err(AverStr::from("malformed constructor of a sum")),
+                    _ => Err(::aver_rt::str_lit!("malformed constructor of a sum")),
                 }
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -3739,23 +3762,23 @@ pub fn recs(
     } } else { Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::proof::Rec { name: n, eq: false, fields: crate::proof_kernel::aver_generated::kernel::decode::typedVars(&__pat6, false)? }, &crate::proof_kernel::aver_generated::kernel::decode::recs(&rest)?)) } }
         },
         _ => {
-            Err(AverStr::from("malformed rec"))
+            Err(::aver_rt::str_lit!("malformed rec"))
         }
     }
                                             } else {
-                                                Err(AverStr::from("malformed rec"))
+                                                Err(::aver_rt::str_lit!("malformed rec"))
                                             }
                                         }
-                                        _ => Err(AverStr::from("malformed rec")),
+                                        _ => Err(::aver_rt::str_lit!("malformed rec")),
                                     }
                                 }
-                                _ => Err(AverStr::from("malformed rec")),
+                                _ => Err(::aver_rt::str_lit!("malformed rec")),
                             }
                         } else {
-                            Err(AverStr::from("malformed rec"))
+                            Err(::aver_rt::str_lit!("malformed rec"))
                         }
                     }
-                    _ => Err(AverStr::from("malformed rec")),
+                    _ => Err(::aver_rt::str_lit!("malformed rec")),
                 }
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -3802,27 +3825,27 @@ pub fn sigs(
                                                         if __list_subject.is_empty() {
                                                             Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::proof::FnSig { name: n, params: crate::proof_kernel::aver_generated::kernel::decode::tys(&crate::proof_kernel::aver_generated::kernel::decode::items(ps)?, false)?, ret: crate::proof_kernel::aver_generated::kernel::decode::typ(r, false)? }, &crate::proof_kernel::aver_generated::kernel::decode::sigs(&rest)?))
                                                         } else {
-                                                            Err(AverStr::from(
-                                                                "malformed signature",
+                                                            Err(::aver_rt::str_lit!(
+                                                                "malformed signature"
                                                             ))
                                                         }
                                                     }
                                                 } else {
-                                                    Err(AverStr::from("malformed signature"))
+                                                    Err(::aver_rt::str_lit!("malformed signature"))
                                                 }
                                             }
                                         } else {
-                                            Err(AverStr::from("malformed signature"))
+                                            Err(::aver_rt::str_lit!("malformed signature"))
                                         }
                                     }
                                 }
-                                _ => Err(AverStr::from("malformed signature")),
+                                _ => Err(::aver_rt::str_lit!("malformed signature")),
                             }
                         } else {
-                            Err(AverStr::from("malformed signature"))
+                            Err(::aver_rt::str_lit!("malformed signature"))
                         }
                     }
-                    _ => Err(AverStr::from("malformed signature")),
+                    _ => Err(::aver_rt::str_lit!("malformed signature")),
                 }
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -3903,136 +3926,136 @@ pub fn script(
             let __pat41 = __pat41.clone();
             match &*__pat41 {
         "proof" => {
-            { let __list_subject = __pat40; if let (Some(p), Some(__pat42)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat42; if __list_subject.is_empty() { { let __list_subject = __pat37; if __list_subject.is_empty() { crate::proof_kernel::aver_generated::kernel::decode::scriptOf(crate::proof_kernel::aver_generated::kernel::decode::law(o, AverStr::from("obligation"))?, &crate::proof_kernel::aver_generated::kernel::decode::defs(&ds)?, &crate::proof_kernel::aver_generated::kernel::decode::consts(&cs)?, &crate::proof_kernel::aver_generated::kernel::decode::sums(&ss)?, &crate::proof_kernel::aver_generated::kernel::decode::recs(&rs)?, &crate::proof_kernel::aver_generated::kernel::decode::sigs(&gs)?, &crate::proof_kernel::aver_generated::kernel::decode::laws(&ls)?, crate::proof_kernel::aver_generated::kernel::decode::proof(p)?) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+            { let __list_subject = __pat40; if let (Some(p), Some(__pat42)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat42; if __list_subject.is_empty() { { let __list_subject = __pat37; if __list_subject.is_empty() { crate::proof_kernel::aver_generated::kernel::decode::scriptOf(crate::proof_kernel::aver_generated::kernel::decode::law(o, ::aver_rt::str_lit!("obligation"))?, &crate::proof_kernel::aver_generated::kernel::decode::defs(&ds)?, &crate::proof_kernel::aver_generated::kernel::decode::consts(&cs)?, &crate::proof_kernel::aver_generated::kernel::decode::sums(&ss)?, &crate::proof_kernel::aver_generated::kernel::decode::recs(&rs)?, &crate::proof_kernel::aver_generated::kernel::decode::sigs(&gs)?, &crate::proof_kernel::aver_generated::kernel::decode::laws(&ls)?, crate::proof_kernel::aver_generated::kernel::decode::proof(p)?) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
         }
     }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
         }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
         }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
-        }
-    }
-        },
-        _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
-        }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
-        },
-        _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
-        }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
-        },
-        _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
         }
     }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
         }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
         }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
-        }
-    }
-        },
-        _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
-        }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
-        },
-        _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
-        }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
-        },
-        _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
         }
     }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
         }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
         }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
-        }
-    }
-        },
-        _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
-        }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
-        },
-        _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
-        }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
-        },
-        _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
         }
     }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
         }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
         }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
         }
     }
         },
         _ => {
-            Err(AverStr::from("not a step script"))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+        }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+        }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+        }
+    }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+        }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+        }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+        }
+    }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+        }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+        }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+        }
+    }
+        },
+        _ => {
+            Err(::aver_rt::str_lit!("not a step script"))
         }
     }
                                 } else {
-                                    Err(AverStr::from("not a step script"))
+                                    Err(::aver_rt::str_lit!("not a step script"))
                                 }
                             }
-                            _ => Err(AverStr::from("not a step script")),
+                            _ => Err(::aver_rt::str_lit!("not a step script")),
                         }
                     }
-                    _ => Err(AverStr::from("not a step script")),
+                    _ => Err(::aver_rt::str_lit!("not a step script")),
                 }
             } else {
-                Err(AverStr::from("not a step script"))
+                Err(::aver_rt::str_lit!("not a step script"))
             }
         }
-        _ => Err(AverStr::from("not a step script")),
+        _ => Err(::aver_rt::str_lit!("not a step script")),
     }
 }
 

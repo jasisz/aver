@@ -91,8 +91,8 @@ pub fn doRecordUpdate(
             crate::aver_generated::domain::eval::records::doRecordUpdateInner(baseVal, &rest)
         } else {
             if __list_subject.is_empty() {
-                Err(AverStr::from(
-                    "record update requires (record, named fields)",
+                Err(::aver_rt::str_lit!(
+                    "record update requires (record, named fields)"
                 ))
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -123,12 +123,12 @@ pub fn doRecordUpdateInner(
                             namedFields,
                         )
                     }
-                    _ => Err(AverStr::from("record update requires named fields")),
+                    _ => Err(::aver_rt::str_lit!("record update requires named fields")),
                 }
             }
         } else {
             if __list_subject.is_empty() {
-                Err(AverStr::from("record update requires named fields"))
+                Err(::aver_rt::str_lit!("record update requires named fields"))
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
             }
@@ -158,7 +158,7 @@ pub fn applyRecordUpdate(
                     ),
                 ))
             }
-            _ => Err(AverStr::from("update requires a record value")),
+            _ => Err(::aver_rt::str_lit!("update requires a record value")),
         }
     }
 }

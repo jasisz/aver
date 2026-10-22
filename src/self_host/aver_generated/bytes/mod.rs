@@ -216,7 +216,7 @@ pub fn fromList(xs @ _: &aver_rt::AverIntList) -> Result<Bytes, AverStr> {
                             let mut __b = aver_rt::Buffer::with_capacity(
                                 (aver_rt::AverInt::from_i64(66)).to_usize().unwrap_or(0),
                             );
-                            __b.push_str(&AverStr::from("byte "));
+                            __b.push_str(&::aver_rt::str_lit!("byte "));
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
@@ -224,7 +224,7 @@ pub fn fromList(xs @ _: &aver_rt::AverIntList) -> Result<Bytes, AverStr> {
                         )));
                         __b
                     };
-                    __b.push_str(&AverStr::from(" at index "));
+                    __b.push_str(&::aver_rt::str_lit!(" at index "));
                     __b
                 };
                 __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
@@ -232,7 +232,7 @@ pub fn fromList(xs @ _: &aver_rt::AverIntList) -> Result<Bytes, AverStr> {
                 )));
                 __b
             };
-            __b.push_str(&AverStr::from(" is outside 0..=255"));
+            __b.push_str(&::aver_rt::str_lit!(" is outside 0..=255"));
             __b
         }))
     }
@@ -313,7 +313,7 @@ pub fn parseHexChars(
                 return Ok(acc.reverse());
             } else {
                 if let Some((highChar, afterHigh)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    aver_list_match!(afterHigh, [] => { return Err(AverStr::from("Bytes.fromHex: expected an even number of hex characters")); }, [lowChar, rest] => { match crate::aver_generated::bytes::hexDigitValue(highChar.clone()) { None => { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(63)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("Bytes.fromHex: invalid hexadecimal character '")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(highChar)))); __b }; __b.push_str(&AverStr::from("'")); __b })); }, Some(high @ _) => { match crate::aver_generated::bytes::hexDigitValue(lowChar.clone()) { None => { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(63)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("Bytes.fromHex: invalid hexadecimal character '")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(lowChar)))); __b }; __b.push_str(&AverStr::from("'")); __b })); }, Some(low @ _) => { {
+                    aver_list_match!(afterHigh, [] => { return Err(::aver_rt::str_lit!("Bytes.fromHex: expected an even number of hex characters")); }, [lowChar, rest] => { match crate::aver_generated::bytes::hexDigitValue(highChar.clone()) { None => { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(63)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(highChar)))); __b }; __b.push_str(&::aver_rt::str_lit!("'")); __b })); }, Some(high @ _) => { match crate::aver_generated::bytes::hexDigitValue(lowChar.clone()) { None => { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(63)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(lowChar)))); __b }; __b.push_str(&::aver_rt::str_lit!("'")); __b })); }, Some(low @ _) => { {
             let __tco0 = rest;
             let __tco1 = aver_rt::AverIntList::prepend(high.mul(&aver_rt::AverInt::from_i64(16)).add(&low), &acc);
             __hold0 = __tco0;
@@ -434,63 +434,63 @@ pub fn hexDigit(value @ _: aver_rt::AverInt) -> AverStr {
     {
         let __dispatch_subject = value;
         if __dispatch_subject == aver_rt::AverInt::from_i64(0) {
-            AverStr::from("0")
+            ::aver_rt::str_lit!("0")
         } else {
             if __dispatch_subject == aver_rt::AverInt::from_i64(1) {
-                AverStr::from("1")
+                ::aver_rt::str_lit!("1")
             } else {
                 if __dispatch_subject == aver_rt::AverInt::from_i64(2) {
-                    AverStr::from("2")
+                    ::aver_rt::str_lit!("2")
                 } else {
                     if __dispatch_subject == aver_rt::AverInt::from_i64(3) {
-                        AverStr::from("3")
+                        ::aver_rt::str_lit!("3")
                     } else {
                         if __dispatch_subject == aver_rt::AverInt::from_i64(4) {
-                            AverStr::from("4")
+                            ::aver_rt::str_lit!("4")
                         } else {
                             if __dispatch_subject == aver_rt::AverInt::from_i64(5) {
-                                AverStr::from("5")
+                                ::aver_rt::str_lit!("5")
                             } else {
                                 if __dispatch_subject == aver_rt::AverInt::from_i64(6) {
-                                    AverStr::from("6")
+                                    ::aver_rt::str_lit!("6")
                                 } else {
                                     if __dispatch_subject == aver_rt::AverInt::from_i64(7) {
-                                        AverStr::from("7")
+                                        ::aver_rt::str_lit!("7")
                                     } else {
                                         if __dispatch_subject == aver_rt::AverInt::from_i64(8) {
-                                            AverStr::from("8")
+                                            ::aver_rt::str_lit!("8")
                                         } else {
                                             if __dispatch_subject == aver_rt::AverInt::from_i64(9) {
-                                                AverStr::from("9")
+                                                ::aver_rt::str_lit!("9")
                                             } else {
                                                 if __dispatch_subject
                                                     == aver_rt::AverInt::from_i64(10)
                                                 {
-                                                    AverStr::from("a")
+                                                    ::aver_rt::str_lit!("a")
                                                 } else {
                                                     if __dispatch_subject
                                                         == aver_rt::AverInt::from_i64(11)
                                                     {
-                                                        AverStr::from("b")
+                                                        ::aver_rt::str_lit!("b")
                                                     } else {
                                                         if __dispatch_subject
                                                             == aver_rt::AverInt::from_i64(12)
                                                         {
-                                                            AverStr::from("c")
+                                                            ::aver_rt::str_lit!("c")
                                                         } else {
                                                             if __dispatch_subject
                                                                 == aver_rt::AverInt::from_i64(13)
                                                             {
-                                                                AverStr::from("d")
+                                                                ::aver_rt::str_lit!("d")
                                                             } else {
                                                                 if __dispatch_subject
                                                                     == aver_rt::AverInt::from_i64(
                                                                         14,
                                                                     )
                                                                 {
-                                                                    AverStr::from("e")
+                                                                    ::aver_rt::str_lit!("e")
                                                                 } else {
-                                                                    if __dispatch_subject == aver_rt::AverInt::from_i64(15) { AverStr::from("f") } else { AverStr::from("") }
+                                                                    if __dispatch_subject == aver_rt::AverInt::from_i64(15) { ::aver_rt::str_lit!("f") } else { ::aver_rt::str_lit!("") }
                                                                 }
                                                             }
                                                         }
@@ -577,7 +577,7 @@ pub fn toHex(bytes @ _: &Bytes) -> AverStr {
     aver_rt::AverStr::from(crate::aver_generated::bytes::hexParts__buffered(
         &crate::aver_generated::bytes::octets(bytes),
         aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(8192)).to_usize().unwrap_or(0)),
-        AverStr::from(""),
+        ::aver_rt::str_lit!(""),
     ))
 }
 
@@ -648,8 +648,8 @@ pub fn parseHexChars__cursor(
                         &__cur_s,
                         (__cur_i1).to_usize().unwrap_or(usize::MAX),
                     ) {
-                        return Err(AverStr::from(
-                            "Bytes.fromHex: expected an even number of hex characters",
+                        return Err(::aver_rt::str_lit!(
+                            "Bytes.fromHex: expected an even number of hex characters"
                         ));
                     } else {
                         {
@@ -674,7 +674,7 @@ pub fn parseHexChars__cursor(
                                                             .to_usize()
                                                             .unwrap_or(0),
                                                     );
-                                                    __b.push_str(&AverStr::from("Bytes.fromHex: invalid hexadecimal character '"));
+                                                    __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '"));
                                                     __b
                                                 };
                                                 __b.push_str(&aver_rt::AverStr::from(
@@ -691,7 +691,7 @@ pub fn parseHexChars__cursor(
                                                 ));
                                                 __b
                                             };
-                                            __b.push_str(&AverStr::from("'"));
+                                            __b.push_str(&::aver_rt::str_lit!("'"));
                                             __b
                                         }));
                                     }
@@ -711,7 +711,7 @@ pub fn parseHexChars__cursor(
                                                                     .to_usize()
                                                                     .unwrap_or(0),
                                                                 );
-                                                            __b.push_str(&AverStr::from("Bytes.fromHex: invalid hexadecimal character '"));
+                                                            __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '"));
                                                             __b
                                                         };
                                                         __b.push_str(&aver_rt::AverStr::from(
@@ -728,7 +728,7 @@ pub fn parseHexChars__cursor(
                                                         ));
                                                         __b
                                                     };
-                                                    __b.push_str(&AverStr::from("'"));
+                                                    __b.push_str(&::aver_rt::str_lit!("'"));
                                                     __b
                                                 }));
                                             }
@@ -868,8 +868,8 @@ pub fn parseHexChars__cursor__collected(
                         &__cur_s,
                         (__cur_i1).to_usize().unwrap_or(usize::MAX),
                     ) {
-                        return Err(AverStr::from(
-                            "Bytes.fromHex: expected an even number of hex characters",
+                        return Err(::aver_rt::str_lit!(
+                            "Bytes.fromHex: expected an even number of hex characters"
                         ));
                     } else {
                         {
@@ -894,7 +894,7 @@ pub fn parseHexChars__cursor__collected(
                                                             .to_usize()
                                                             .unwrap_or(0),
                                                     );
-                                                    __b.push_str(&AverStr::from("Bytes.fromHex: invalid hexadecimal character '"));
+                                                    __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '"));
                                                     __b
                                                 };
                                                 __b.push_str(&aver_rt::AverStr::from(
@@ -911,7 +911,7 @@ pub fn parseHexChars__cursor__collected(
                                                 ));
                                                 __b
                                             };
-                                            __b.push_str(&AverStr::from("'"));
+                                            __b.push_str(&::aver_rt::str_lit!("'"));
                                             __b
                                         }));
                                     }
@@ -931,7 +931,7 @@ pub fn parseHexChars__cursor__collected(
                                                                     .to_usize()
                                                                     .unwrap_or(0),
                                                                 );
-                                                            __b.push_str(&AverStr::from("Bytes.fromHex: invalid hexadecimal character '"));
+                                                            __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '"));
                                                             __b
                                                         };
                                                         __b.push_str(&aver_rt::AverStr::from(
@@ -948,7 +948,7 @@ pub fn parseHexChars__cursor__collected(
                                                         ));
                                                         __b
                                                     };
-                                                    __b.push_str(&AverStr::from("'"));
+                                                    __b.push_str(&::aver_rt::str_lit!("'"));
                                                     __b
                                                 }));
                                             }
