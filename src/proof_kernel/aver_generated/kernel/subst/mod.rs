@@ -38,36 +38,44 @@ fn __mutual_tco_trampoline_1(
             __MutualTco1::CaptureOne(mut b @ _, mut rest @ _) => {
                 crate::proof_kernel::cancel_checkpoint();
                 if used.contains(&b.name) {
-                    match crate::proof_kernel::aver_generated::kernel::subst::firstShared(
-                        &crate::proof_kernel::aver_generated::kernel::subst::freeVars(&b.value),
-                        (*bound).clone(),
-                    ) {
-                        Some(c @ _) => {
-                            return Err(aver_rt::AverStr::from({
-                                let mut __b = {
+                    {
+                        let __subject =
+                            crate::proof_kernel::aver_generated::kernel::subst::firstShared(
+                                &crate::proof_kernel::aver_generated::kernel::subst::freeVars(
+                                    &b.value,
+                                ),
+                                (*bound).clone(),
+                            );
+                        match __subject {
+                            Some(c @ _) => {
+                                return Err(aver_rt::AverStr::from({
                                     let mut __b = {
                                         let mut __b = {
-                                            let mut __b = aver_rt::Buffer::with_capacity(
-                                                (aver_rt::AverInt::from_i64(60))
-                                                    .to_usize()
-                                                    .unwrap_or(0),
-                                            );
-                                            __b.push_str(&::aver_rt::str_lit!("substituting "));
+                                            let mut __b = {
+                                                let mut __b = aver_rt::Buffer::with_capacity(
+                                                    (aver_rt::AverInt::from_i64(60))
+                                                        .to_usize()
+                                                        .unwrap_or(0),
+                                                );
+                                                __b.push_str(&::aver_rt::str_lit!("substituting "));
+                                                __b
+                                            };
+                                            __b.push_str(&aver_rt::AverStr::from(
+                                                aver_rt::aver_display(&(b.name)),
+                                            ));
                                             __b
                                         };
-                                        __b.push_str(&aver_rt::AverStr::from(
-                                            aver_rt::aver_display(&(b.name)),
-                                        ));
+                                        __b.push_str(&::aver_rt::str_lit!(" would capture "));
                                         __b
                                     };
-                                    __b.push_str(&::aver_rt::str_lit!(" would capture "));
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                        &(c),
+                                    )));
                                     __b
-                                };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c))));
-                                __b
-                            }));
+                                }));
+                            }
+                            None => __MutualTco1::Capture(rest),
                         }
-                        None => __MutualTco1::Capture(rest),
                     }
                 } else {
                     __MutualTco1::Capture(rest)

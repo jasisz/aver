@@ -994,9 +994,12 @@ pub fn runFileLoaded(
     moduleFns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> Result<AverStr, AverStr> {
     crate::cancel_checkpoint();
-    match runGuestProgram(prog, moduleFns, &aver_rt::AverList::empty()) {
-        Ok(val @ _) => Ok(crate::aver_generated::domain::value::valRepr(&val)),
-        Err(e @ _) => Err(e),
+    {
+        let __subject = runGuestProgram(prog, moduleFns, &aver_rt::AverList::empty());
+        match __subject {
+            Ok(val @ _) => Ok(crate::aver_generated::domain::value::valRepr(&val)),
+            Err(e @ _) => Err(e),
+        }
     }
 }
 

@@ -2070,14 +2070,16 @@ pub fn builtinMapGetInner(
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
                 let m = &__m_fields.0;
-                match m
-                    .get(&crate::aver_generated::domain::value::mapKeyRepr(keyV))
-                    .cloned()
                 {
-                    Some(v @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
-                        crate::aver_generated::domain::value::Val__ValSome(v),
-                    )),
-                    None => Ok(crate::aver_generated::domain::value::Val::ValNone),
+                    let __subject = m
+                        .get(&crate::aver_generated::domain::value::mapKeyRepr(keyV))
+                        .cloned();
+                    match __subject {
+                        Some(v @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
+                            crate::aver_generated::domain::value::Val__ValSome(v),
+                        )),
+                        None => Ok(crate::aver_generated::domain::value::Val::ValNone),
+                    }
                 }
             }
             _ => Err(::aver_rt::str_lit!("Map.get requires a Map")),

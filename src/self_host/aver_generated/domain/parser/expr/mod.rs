@@ -950,20 +950,23 @@ fn __mutual_tco_trampoline_9(
                 mut field @ _,
             ) => {
                 crate::cancel_checkpoint();
-                match crate::aver_generated::domain::parser_match::tokenAt(
-                    &*tokens,
-                    pos.add(&aver_rt::AverInt::from_i64(1)),
-                ) {
-                    crate::aver_generated::domain::token::Token::TkEq => {
-                        return crate::aver_generated::domain::parser::expr::parseNamedArgs(
-                            &*tokens,
-                            pos,
-                            name,
-                            &args,
-                            aver_rt::AverList::empty(),
-                        );
+                {
+                    let __subject = crate::aver_generated::domain::parser_match::tokenAt(
+                        &*tokens,
+                        pos.add(&aver_rt::AverInt::from_i64(1)),
+                    );
+                    match __subject {
+                        crate::aver_generated::domain::token::Token::TkEq => {
+                            return crate::aver_generated::domain::parser::expr::parseNamedArgs(
+                                &*tokens,
+                                pos,
+                                name,
+                                &args,
+                                aver_rt::AverList::empty(),
+                            );
+                        }
+                        _ => __MutualTco9::ParseCallArgsList(pos, name, args),
                     }
-                    _ => __MutualTco9::ParseCallArgsList(pos, name, args),
                 }
             }
         };
@@ -1887,10 +1890,11 @@ pub fn finishTupleOrProduct(
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
         crate::aver_generated::domain::token::Token::TkQuestion => {
-            match crate::aver_generated::domain::parser_match::tokenAt(
+            let __subject = crate::aver_generated::domain::parser_match::tokenAt(
                 tokens,
                 pos.add(&aver_rt::AverInt::from_i64(1)),
-            ) {
+            );
+            match __subject {
                 crate::aver_generated::domain::token::Token::TkBang => Ok((
                     crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(
                         crate::aver_generated::domain::ast::Expr__ExprIndependentProduct(
@@ -1909,10 +1913,11 @@ pub fn finishTupleOrProduct(
             }
         }
         crate::aver_generated::domain::token::Token::TkBang => {
-            match crate::aver_generated::domain::parser_match::tokenAt(
+            let __subject = crate::aver_generated::domain::parser_match::tokenAt(
                 tokens,
                 pos.add(&aver_rt::AverInt::from_i64(1)),
-            ) {
+            );
+            match __subject {
                 crate::aver_generated::domain::token::Token::TkLBracket => Ok((
                     crate::aver_generated::domain::ast::Expr::ExprTuple(
                         crate::aver_generated::domain::ast::Expr__ExprTuple(items.clone()),
@@ -2054,24 +2059,27 @@ pub fn parseCallOrRecordLookahead(
     first @ _: AverStr,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
-    match crate::aver_generated::domain::parser_match::tokenAt(
-        tokens,
-        pos.add(&aver_rt::AverInt::from_i64(1)),
-    ) {
-        crate::aver_generated::domain::token::Token::TkEq => {
-            crate::aver_generated::domain::parser::expr::parseRecordFields(
+    {
+        let __subject = crate::aver_generated::domain::parser_match::tokenAt(
+            tokens,
+            pos.add(&aver_rt::AverInt::from_i64(1)),
+        );
+        match __subject {
+            crate::aver_generated::domain::token::Token::TkEq => {
+                crate::aver_generated::domain::parser::expr::parseRecordFields(
+                    tokens,
+                    pos,
+                    name,
+                    aver_rt::AverList::empty(),
+                )
+            }
+            _ => crate::aver_generated::domain::parser::expr::parseCallArgsList(
                 tokens,
                 pos,
                 name,
                 aver_rt::AverList::empty(),
-            )
+            ),
         }
-        _ => crate::aver_generated::domain::parser::expr::parseCallArgsList(
-            tokens,
-            pos,
-            name,
-            aver_rt::AverList::empty(),
-        ),
     }
 }
 

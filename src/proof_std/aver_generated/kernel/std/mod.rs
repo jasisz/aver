@@ -1190,12 +1190,13 @@ pub fn leaf(
     match crate::proof_std::aver_generated::kernel::lib::whenOf(goal) {
         None => crate::proof_std::aver_generated::kernel::std::close(goal),
         Some(p @ _) => {
-            match crate::proof_std::aver_generated::kernel::lib::whenRefutes(
+            let __subject = crate::proof_std::aver_generated::kernel::lib::whenRefutes(
                 &crate::proof_std::aver_generated::kernel::lib::scope(goal),
                 p,
                 goal.obligation.lhs.clone(),
                 goal.obligation.rhs.clone(),
-            ) {
+            );
+            match __subject {
                 Ok(proof @ _) => Ok(proof),
                 Err(_) => crate::proof_std::aver_generated::kernel::std::close(goal),
             }
@@ -1989,57 +1990,64 @@ pub fn first(
                 );
             } else {
                 if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    match crate::proof_std::aver_generated::kernel::std::within(
-                        crate::proof_std::aver_generated::kernel::std::Node {
-                            path: ::aver_rt::str_lit!(""),
-                            ..n.clone()
-                        },
-                        t.clone(),
-                        answers,
-                    ) {
-                        Ok(p @ _) => {
-                            return Ok(p);
-                        }
-                        Err(__pat0 @ _) => match __pat0 {
-                            crate::proof_std::aver_generated::kernel::std::Stop::Ask(key) => {
-                                return Err(
-                                    crate::proof_std::aver_generated::kernel::std::Stop::Ask(key),
-                                );
+                    {
+                        let __subject = crate::proof_std::aver_generated::kernel::std::within(
+                            crate::proof_std::aver_generated::kernel::std::Node {
+                                path: ::aver_rt::str_lit!(""),
+                                ..n.clone()
+                            },
+                            t.clone(),
+                            answers,
+                        );
+                        match __subject {
+                            Ok(p @ _) => {
+                                return Ok(p);
                             }
-                            crate::proof_std::aver_generated::kernel::std::Stop::Refused(why) => {
-                                let __tco1 = rest;
-                                let __tco2 = i.add(&aver_rt::AverInt::from_i64(1));
-                                let __tco3 = aver_rt::AverList::prepend(
-                                    aver_rt::AverStr::from({
-                                        let mut __b = {
+                            Err(__pat0 @ _) => match __pat0 {
+                                crate::proof_std::aver_generated::kernel::std::Stop::Ask(key) => {
+                                    return Err(
+                                        crate::proof_std::aver_generated::kernel::std::Stop::Ask(
+                                            key,
+                                        ),
+                                    );
+                                }
+                                crate::proof_std::aver_generated::kernel::std::Stop::Refused(
+                                    why,
+                                ) => {
+                                    let __tco1 = rest;
+                                    let __tco2 = i.add(&aver_rt::AverInt::from_i64(1));
+                                    let __tco3 = aver_rt::AverList::prepend(
+                                        aver_rt::AverStr::from({
                                             let mut __b = {
-                                                let mut __b = aver_rt::Buffer::with_capacity(
-                                                    (aver_rt::AverInt::from_i64(34))
-                                                        .to_usize()
-                                                        .unwrap_or(0),
-                                                );
-                                                __b.push_str(&aver_rt::AverStr::from(
-                                                    aver_rt::aver_display(&(i)),
-                                                ));
+                                                let mut __b = {
+                                                    let mut __b = aver_rt::Buffer::with_capacity(
+                                                        (aver_rt::AverInt::from_i64(34))
+                                                            .to_usize()
+                                                            .unwrap_or(0),
+                                                    );
+                                                    __b.push_str(&aver_rt::AverStr::from(
+                                                        aver_rt::aver_display(&(i)),
+                                                    ));
+                                                    __b
+                                                };
+                                                __b.push_str(&::aver_rt::str_lit!(". "));
                                                 __b
                                             };
-                                            __b.push_str(&::aver_rt::str_lit!(". "));
+                                            __b.push_str(&aver_rt::AverStr::from(
+                                                aver_rt::aver_display(&(why)),
+                                            ));
                                             __b
-                                        };
-                                        __b.push_str(&aver_rt::AverStr::from(
-                                            aver_rt::aver_display(&(why)),
-                                        ));
-                                        __b
-                                    }),
-                                    &whys,
-                                );
-                                __hold1 = __tco1;
-                                ts = &__hold1;
-                                i = __tco2;
-                                whys = __tco3;
-                                continue;
-                            }
-                        },
+                                        }),
+                                        &whys,
+                                    );
+                                    __hold1 = __tco1;
+                                    ts = &__hold1;
+                                    i = __tco2;
+                                    whys = __tco3;
+                                    continue;
+                                }
+                            },
+                        }
                     }
                 } else {
                     panic!("Aver Rust codegen: non-exhaustive list match")
@@ -2214,93 +2222,99 @@ pub fn listStepRefusal(
     used @ _: &aver_rt::AverList<AverStr>,
 ) -> Option<AverStr> {
     crate::proof_std::cancel_checkpoint();
-    match (
-        goal.lists.contains(&v),
-        (h == tl),
-        used.contains(&h),
-        used.contains(&tl),
-    ) {
-        (false, _, _, _) => Some(aver_rt::AverStr::from({
-            let mut __b = {
-                let mut __b = aver_rt::Buffer::with_capacity(
-                    (aver_rt::AverInt::from_i64(44)).to_usize().unwrap_or(0),
-                );
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v))));
-                __b
-            };
-            __b.push_str(&::aver_rt::str_lit!(" is not a list variable here"));
-            __b
-        })),
-        (_, true, _, _) => Some(aver_rt::AverStr::from({
-            let mut __b = {
+    {
+        let __subject = (
+            goal.lists.contains(&v),
+            (h == tl),
+            used.contains(&h),
+            used.contains(&tl),
+        );
+        match __subject {
+            (false, _, _, _) => Some(aver_rt::AverStr::from({
                 let mut __b = {
                     let mut __b = aver_rt::Buffer::with_capacity(
-                        (aver_rt::AverInt::from_i64(64)).to_usize().unwrap_or(0),
+                        (aver_rt::AverInt::from_i64(44)).to_usize().unwrap_or(0),
                     );
-                    __b.push_str(&::aver_rt::str_lit!(
-                        "the head and the tail need two names, not "
-                    ));
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v))));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(h))));
+                __b.push_str(&::aver_rt::str_lit!(" is not a list variable here"));
                 __b
-            };
-            __b.push_str(&::aver_rt::str_lit!(" twice"));
-            __b
-        })),
-        (_, _, true, _) => Some(aver_rt::AverStr::from({
-            let mut __b = {
+            })),
+            (_, true, _, _) => Some(aver_rt::AverStr::from({
                 let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity(
-                        (aver_rt::AverInt::from_i64(42)).to_usize().unwrap_or(0),
-                    );
-                    __b.push_str(&::aver_rt::str_lit!("the name "));
-                    __b
-                };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(h))));
-                __b
-            };
-            __b.push_str(&::aver_rt::str_lit!(" is already taken"));
-            __b
-        })),
-        (_, _, _, true) => Some(aver_rt::AverStr::from({
-            let mut __b = {
-                let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity(
-                        (aver_rt::AverInt::from_i64(42)).to_usize().unwrap_or(0),
-                    );
-                    __b.push_str(&::aver_rt::str_lit!("the name "));
-                    __b
-                };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(tl))));
-                __b
-            };
-            __b.push_str(&::aver_rt::str_lit!(" is already taken"));
-            __b
-        })),
-        _ => {
-            if (induct
-                && crate::proof_std::aver_generated::kernel::std::mentionedBelow(goal, v.clone()))
-            {
-                Some(aver_rt::AverStr::from({
                     let mut __b = {
-                        let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(127)).to_usize().unwrap_or(0),
-                            );
-                            __b.push_str(&::aver_rt::str_lit!(
-                                "a hypothesis or the `when` mentions "
-                            ));
-                            __b
-                        };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v))));
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(64)).to_usize().unwrap_or(0),
+                        );
+                        __b.push_str(&::aver_rt::str_lit!(
+                            "the head and the tail need two names, not "
+                        ));
                         __b
                     };
-                    __b.push_str(&::aver_rt::str_lit!(", so the claim at the tail is not a hypothesis the kernel allows; use Split"));
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(h))));
                     __b
-                }))
-            } else {
-                None
+                };
+                __b.push_str(&::aver_rt::str_lit!(" twice"));
+                __b
+            })),
+            (_, _, true, _) => Some(aver_rt::AverStr::from({
+                let mut __b = {
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(42)).to_usize().unwrap_or(0),
+                        );
+                        __b.push_str(&::aver_rt::str_lit!("the name "));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(h))));
+                    __b
+                };
+                __b.push_str(&::aver_rt::str_lit!(" is already taken"));
+                __b
+            })),
+            (_, _, _, true) => Some(aver_rt::AverStr::from({
+                let mut __b = {
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(42)).to_usize().unwrap_or(0),
+                        );
+                        __b.push_str(&::aver_rt::str_lit!("the name "));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(tl))));
+                    __b
+                };
+                __b.push_str(&::aver_rt::str_lit!(" is already taken"));
+                __b
+            })),
+            _ => {
+                if (induct
+                    && crate::proof_std::aver_generated::kernel::std::mentionedBelow(
+                        goal,
+                        v.clone(),
+                    ))
+                {
+                    Some(aver_rt::AverStr::from({
+                        let mut __b = {
+                            let mut __b = {
+                                let mut __b = aver_rt::Buffer::with_capacity(
+                                    (aver_rt::AverInt::from_i64(127)).to_usize().unwrap_or(0),
+                                );
+                                __b.push_str(&::aver_rt::str_lit!(
+                                    "a hypothesis or the `when` mentions "
+                                ));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v))));
+                            __b
+                        };
+                        __b.push_str(&::aver_rt::str_lit!(", so the claim at the tail is not a hypothesis the kernel allows; use Split"));
+                        __b
+                    }))
+                } else {
+                    None
+                }
             }
         }
     }
