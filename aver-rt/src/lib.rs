@@ -996,7 +996,7 @@ impl<T> AverList<T> {
         }
 
         let mut parts = Vec::new();
-        let mut pending = vec![self.clone()];
+        let mut pending = vec![self];
         while let Some(list) = pending.pop() {
             if list.is_empty() {
                 continue;
@@ -1006,12 +1006,12 @@ impl<T> AverList<T> {
                     Self::push_flat_segment(&mut parts, Rc::clone(items), list.start, list.len());
                 }
                 AverListInner::Prepend { tail, .. } => {
-                    pending.push(tail.clone());
+                    pending.push(tail);
                     Self::push_prepend_head(&mut parts, Rc::clone(&list.inner));
                 }
                 AverListInner::Concat { left, right, .. } => {
-                    pending.push(right.clone());
-                    pending.push(left.clone());
+                    pending.push(right);
+                    pending.push(left);
                 }
                 AverListInner::Segments {
                     current,
@@ -1020,9 +1020,9 @@ impl<T> AverList<T> {
                     ..
                 } => {
                     for part in rest[*start..].iter().rev() {
-                        pending.push(part.clone());
+                        pending.push(part);
                     }
-                    pending.push(current.clone());
+                    pending.push(current);
                 }
                 AverListInner::Indexed {
                     parts: indexed_parts,
@@ -1164,19 +1164,19 @@ impl<T> AverList<T> {
     /// Sharing the body keeps the stepped-over elements alive for as long as
     /// the view is, which is the same trade `uncons` already makes.
     pub fn drop_first(&self, n: usize) -> Self {
-        let mut current = self.clone();
+        // The walk borrows; only the list the result starts at is cloned.
+        let mut current = self;
         let mut remaining = n;
 
         loop {
             if remaining == 0 {
-                return current;
+                return current.clone();
             }
             if remaining >= current.len() {
                 return Self::empty();
             }
 
-            let node = Rc::clone(&current.inner);
-            match node.as_ref() {
+            match current.inner.as_ref() {
                 AverListInner::Flat { .. } => {
                     return Self {
                         inner: Rc::clone(&current.inner),
@@ -1186,10 +1186,10 @@ impl<T> AverList<T> {
                 }
                 AverListInner::Prepend { tail, .. } => {
                     remaining -= 1;
-                    current = tail.clone();
+                    current = tail;
                 }
                 AverListInner::Concat { .. } => {
-                    current = current.indexed();
+                    return current.indexed().drop_first(remaining);
                 }
                 AverListInner::Segments {
                     current: head_segment,
@@ -1197,13 +1197,13 @@ impl<T> AverList<T> {
                     start,
                     ..
                 } => {
-                    let mut segment = head_segment.clone();
+                    let mut segment = head_segment;
                     let mut index = *start;
                     while remaining >= segment.len() {
                         remaining -= segment.len();
                         match rest.get(index) {
                             Some(next) => {
-                                segment = next.clone();
+                                segment = next;
                                 index += 1;
                             }
                             None => return Self::empty(),
@@ -1848,6 +1848,28 @@ mod tests {
             "stepping over a prepend chain rebuilt the body it arrived at",
         );
         assert_eq!(stepped.to_vec(), vec![2, 3, 4, 5]);
+    }
+
+    /// Stepping into the middle of a prepend chain hands back the node it
+    /// lands on, and holds nothing else: the nodes stepped over keep the
+    /// counts they had.
+    #[test]
+    fn drop_first_into_a_prepend_chain_holds_only_the_node_it_lands_on() {
+        let base = AverList::from_vec(vec![3, 4]);
+        let third = AverList::prepend(2, &base);
+        let second = AverList::prepend(1, &third);
+        let list = AverList::prepend(0, &second);
+        let counts = |l: &AverList<i32>| super::Rc::strong_count(&l.inner);
+        let before = [counts(&list), counts(&second), counts(&third)];
+
+        let stepped = list.drop_first(2);
+
+        assert!(super::Rc::ptr_eq(&stepped.inner, &third.inner));
+        assert_eq!(
+            [counts(&list), counts(&second), counts(&third)],
+            [before[0], before[1], before[2] + 1],
+        );
+        assert_eq!(stepped.to_vec(), vec![2, 3, 4]);
     }
 
     /// Stepping into the left half of a concat must keep the right half. The
