@@ -381,7 +381,61 @@ fn __mutual_tco_trampoline_2(
                 mut path @ _,
             ) => {
                 crate::proof_kernel::cancel_checkpoint();
-                aver_list_match!(cs, [] => { return crate::proof_kernel::aver_generated::kernel::check::splitDone(&before, path) }, [c, rest] => { if crate::proof_kernel::aver_generated::kernel::check::freshAll(&c.binders, &aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::subst::freeVars(&*on), &crate::proof_kernel::aver_generated::kernel::check::hypNames(&env.hyps)), &*env, &aver_rt::AverList::empty()) { __MutualTco2::SplitNext(crate::proof_kernel::aver_generated::kernel::check::conclude(c.proof.clone(), crate::proof_kernel::aver_generated::kernel::check::withVars(&crate::proof_kernel::aver_generated::kernel::check::withHyps(&*env, &aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::check::firstHyps(&hss), &env.hyps.clone())), &crate::proof_kernel::aver_generated::kernel::check::firstVars(&vss)), aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path)))); __b }; __b.push_str(&::aver_rt::str_lit!("/split.")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c.ctor)))); __b }))?, c, rest, { let __n = aver_rt::clamp_list_count(&(aver_rt::AverInt::from_i64(1))); (hss).drop_first(__n) }, { let __n = aver_rt::clamp_list_count(&(aver_rt::AverInt::from_i64(1))); (vss).drop_first(__n) }, before, path) } else { return crate::proof_kernel::aver_generated::kernel::check::refuse(path, aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("the names of case ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c.ctor)))); __b }; __b.push_str(&::aver_rt::str_lit!(" are not fresh")); __b })) } })
+                {
+                    let __list_subject = cs;
+                    if __list_subject.is_empty() {
+                        return crate::proof_kernel::aver_generated::kernel::check::splitDone(
+                            &before, path,
+                        );
+                    } else {
+                        if let (Some(c), Some(rest)) =
+                            (__list_subject.first(), __list_subject.tail())
+                        {
+                            if crate::proof_kernel::aver_generated::kernel::check::freshAll(
+                                &c.binders,
+                                &aver_rt::AverList::concat(
+                                    &crate::proof_kernel::aver_generated::kernel::subst::freeVars(
+                                        &*on,
+                                    ),
+                                    &crate::proof_kernel::aver_generated::kernel::check::hypNames(
+                                        &env.hyps,
+                                    ),
+                                ),
+                                &*env,
+                                &aver_rt::AverList::empty(),
+                            ) {
+                                __MutualTco2::SplitNext(crate::proof_kernel::aver_generated::kernel::check::conclude(c.proof.clone(), crate::proof_kernel::aver_generated::kernel::check::withVars(&crate::proof_kernel::aver_generated::kernel::check::withHyps(&*env, &aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::check::firstHyps(&hss), &env.hyps.clone())), &crate::proof_kernel::aver_generated::kernel::check::firstVars(&vss)), aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path)))); __b }; __b.push_str(&::aver_rt::str_lit!("/split.")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c.ctor)))); __b }))?, c.clone(), rest, { let __n = aver_rt::clamp_list_count(&(aver_rt::AverInt::from_i64(1))); (hss).drop_first(__n) }, { let __n = aver_rt::clamp_list_count(&(aver_rt::AverInt::from_i64(1))); (vss).drop_first(__n) }, before, path)
+                            } else {
+                                return crate::proof_kernel::aver_generated::kernel::check::refuse(
+                                    path,
+                                    aver_rt::AverStr::from({
+                                        let mut __b = {
+                                            let mut __b = {
+                                                let mut __b = aver_rt::Buffer::with_capacity(
+                                                    (aver_rt::AverInt::from_i64(48))
+                                                        .to_usize()
+                                                        .unwrap_or(0),
+                                                );
+                                                __b.push_str(&::aver_rt::str_lit!(
+                                                    "the names of case "
+                                                ));
+                                                __b
+                                            };
+                                            __b.push_str(&aver_rt::AverStr::from(
+                                                aver_rt::aver_display(&(c.ctor)),
+                                            ));
+                                            __b
+                                        };
+                                        __b.push_str(&::aver_rt::str_lit!(" are not fresh"));
+                                        __b
+                                    }),
+                                );
+                            }
+                        } else {
+                            panic!("Aver Rust codegen: non-exhaustive list match")
+                        }
+                    }
+                }
             }
             __MutualTco2::SplitNext(
                 mut e @ _,
@@ -1112,7 +1166,20 @@ fn __mutual_tco_trampoline_7(mut __state: __MutualTco7) -> Result<(), AverStr> {
         __state = match __state {
             __MutualTco7::CheckFacts(mut fs @ _, mut earlier @ _) => {
                 crate::proof_kernel::cancel_checkpoint();
-                aver_list_match!(fs, [] => { return Ok(()) }, [f, rest] => __MutualTco7::CheckFactThen(crate::proof_kernel::aver_generated::kernel::check::checkScript(Box::new(crate::proof_kernel::aver_generated::kernel::proof::Script__Fields { obligation: f.law.clone(), defs: aver_rt::AverList::empty(), consts: aver_rt::AverList::empty(), sums: aver_rt::AverList::empty(), recs: aver_rt::AverList::empty(), sigs: aver_rt::AverList::empty(), laws: earlier.clone(), facts: aver_rt::AverList::empty(), proof: f.proof })), f.law.clone(), rest, earlier))
+                {
+                    let __list_subject = fs;
+                    if __list_subject.is_empty() {
+                        return Ok(());
+                    } else {
+                        if let (Some(f), Some(rest)) =
+                            (__list_subject.first(), __list_subject.tail())
+                        {
+                            __MutualTco7::CheckFactThen(crate::proof_kernel::aver_generated::kernel::check::checkScript(Box::new(crate::proof_kernel::aver_generated::kernel::proof::Script__Fields { obligation: f.law.clone(), defs: aver_rt::AverList::empty(), consts: aver_rt::AverList::empty(), sums: aver_rt::AverList::empty(), recs: aver_rt::AverList::empty(), sigs: aver_rt::AverList::empty(), laws: earlier.clone(), facts: aver_rt::AverList::empty(), proof: f.proof.clone() })), f.law.clone(), rest, earlier)
+                        } else {
+                            panic!("Aver Rust codegen: non-exhaustive list match")
+                        }
+                    }
+                }
             }
             __MutualTco7::CheckFactThen(
                 mut done @ _,
@@ -1545,8 +1612,59 @@ pub fn transFrom(
         let (__pat0, __pat1) = (ts.clone(), ps.clone());
         {
             let __list_subject = __pat0;
-            if let Some((a, __pat2)) = aver_rt::list_uncons_cloned(&__list_subject) {
-                aver_list_match!(__pat2, [] => { { let __list_subject = __pat1; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: a.clone(), rhs: a }) } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("trans needs at least one step")) } } }, [b, moreTerms] => { { let __list_subject = __pat1; if let Some((p, moreSteps)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __arg13 @ _ = aver_rt::AverList::prepend(b.clone(), &moreTerms); crate::proof_kernel::aver_generated::kernel::check::transLink(a, b, p, &__arg13, &moreSteps, env, path, i) } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("trans needs at least one step")) } } })
+            if let (Some(a), Some(__pat2)) = (__list_subject.first(), __list_subject.tail()) {
+                {
+                    let __list_subject = __pat2;
+                    if let (Some(b), Some(moreTerms)) =
+                        (__list_subject.first(), __list_subject.tail())
+                    {
+                        {
+                            let __list_subject = __pat1;
+                            if let (Some(p), Some(moreSteps)) =
+                                (__list_subject.first(), __list_subject.tail())
+                            {
+                                {
+                                    let __arg13 @ _ =
+                                        aver_rt::AverList::prepend(b.clone(), &moreTerms);
+                                    crate::proof_kernel::aver_generated::kernel::check::transLink(
+                                        a.clone(),
+                                        b.clone(),
+                                        p.clone(),
+                                        &__arg13,
+                                        &moreSteps,
+                                        env,
+                                        path,
+                                        i,
+                                    )
+                                }
+                            } else {
+                                crate::proof_kernel::aver_generated::kernel::check::refuse(
+                                    path,
+                                    ::aver_rt::str_lit!("trans needs at least one step"),
+                                )
+                            }
+                        }
+                    } else {
+                        if __list_subject.is_empty() {
+                            {
+                                let __list_subject = __pat1;
+                                if __list_subject.is_empty() {
+                                    Ok(crate::proof_kernel::aver_generated::kernel::term::Eqn {
+                                        lhs: a.clone(),
+                                        rhs: a.clone(),
+                                    })
+                                } else {
+                                    crate::proof_kernel::aver_generated::kernel::check::refuse(
+                                        path,
+                                        ::aver_rt::str_lit!("trans needs at least one step"),
+                                    )
+                                }
+                            }
+                        } else {
+                            panic!("Aver Rust codegen: non-exhaustive list match")
+                        }
+                    }
+                }
             } else {
                 crate::proof_kernel::aver_generated::kernel::check::refuse(
                     path,
@@ -1797,9 +1915,9 @@ pub fn findField(
             if __list_subject.is_empty() {
                 return None;
             } else {
-                if let Some((x, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     if (x.name == f) {
-                        return Some(x.value);
+                        return Some(x.value.clone());
                     } else {
                         {
                             let __tco0 = rest;
@@ -1831,8 +1949,8 @@ pub fn cell(
                 let __pat0 = ____pat0_fields.0.clone();
                 {
                     let __list_subject = __pat0;
-                    if let Some((x, rest)) = aver_rt::list_uncons_cloned(&__list_subject) {
-                        Ok(crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: t, rhs: crate::proof_kernel::aver_generated::kernel::term::Term::TBi(crate::proof_kernel::aver_generated::kernel::term::Term__TBi(::aver_rt::str_lit!("List.prepend"), aver_rt::AverList::from_vec(vec![x, crate::proof_kernel::aver_generated::kernel::term::Term::TList(crate::proof_kernel::aver_generated::kernel::term::Term__TList(rest))]))) })
+                    if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                        Ok(crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: t, rhs: crate::proof_kernel::aver_generated::kernel::term::Term::TBi(crate::proof_kernel::aver_generated::kernel::term::Term__TBi(::aver_rt::str_lit!("List.prepend"), aver_rt::AverList::from_vec(vec![x.clone(), crate::proof_kernel::aver_generated::kernel::term::Term::TList(crate::proof_kernel::aver_generated::kernel::term::Term__TList(rest))]))) })
                     } else {
                         crate::proof_kernel::aver_generated::kernel::check::refuse(
                             path,
@@ -1880,11 +1998,11 @@ pub fn projField(
                     }),
                 );
             } else {
-                if let Some((x, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     if (x.name == f) {
                         return Ok(crate::proof_kernel::aver_generated::kernel::term::Eqn {
                             lhs: t,
-                            rhs: x.value,
+                            rhs: x.value.clone(),
                         });
                     } else {
                         {
@@ -1936,9 +2054,9 @@ pub fn hyp(
                     }),
                 );
             } else {
-                if let Some((x, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     if (x.name == h) {
-                        return Ok(x.eqn);
+                        return Ok(x.eqn.clone());
                     } else {
                         {
                             let __tco1 = rest;
@@ -2299,7 +2417,7 @@ pub fn caseVars(
         if __list_subject.is_empty() {
             Ok(aver_rt::AverList::empty())
         } else {
-            if let Some((c, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 match crate::proof_kernel::aver_generated::kernel::types::ctorFields(
                     c.ctor.clone(),
                     t,
@@ -2410,9 +2528,9 @@ pub fn splitCtors(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((c, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::prepend(
-                    c.ctor,
+                    c.ctor.clone(),
                     &crate::proof_kernel::aver_generated::kernel::check::splitCtors(&rest),
                 )
             } else {
@@ -2433,7 +2551,7 @@ pub fn binderCounts(
         if __list_subject.is_empty() {
             aver_rt::AverIntList::empty()
         } else {
-            if let Some((c, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverIntList::prepend(
                     aver_rt::AverInt::from_i64(c.binders.len() as i64),
                     &crate::proof_kernel::aver_generated::kernel::check::binderCounts(&rest),
@@ -2697,8 +2815,8 @@ pub fn firstVars(
     crate::proof_kernel::cancel_checkpoint();
     {
         let __list_subject = vss;
-        if let Some((vs, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-            vs
+        if let (Some(vs), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            vs.clone()
         } else {
             if __list_subject.is_empty() {
                 aver_rt::AverList::empty()
@@ -2719,8 +2837,8 @@ pub fn firstHyps(
     crate::proof_kernel::cancel_checkpoint();
     {
         let __list_subject = hss;
-        if let Some((hs, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-            hs
+        if let (Some(hs), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            hs.clone()
         } else {
             if __list_subject.is_empty() {
                 aver_rt::AverList::empty()
@@ -2740,8 +2858,8 @@ pub fn splitDone(
     crate::proof_kernel::cancel_checkpoint();
     {
         let __list_subject = before;
-        if let Some((e, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-            Ok(e)
+        if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            Ok(e.clone())
         } else {
             if __list_subject.is_empty() {
                 crate::proof_kernel::aver_generated::kernel::check::refuse(
@@ -2912,9 +3030,9 @@ pub fn lhsOf(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((e, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::prepend(
-                    e.lhs,
+                    e.lhs.clone(),
                     &crate::proof_kernel::aver_generated::kernel::check::lhsOf(&rest),
                 )
             } else {
@@ -3136,12 +3254,12 @@ pub fn substHyps(
         if __list_subject.is_empty() {
             Ok(aver_rt::AverList::empty())
         } else {
-            if let Some((h, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(h), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 Ok(aver_rt::AverList::prepend(
                     crate::proof_kernel::aver_generated::kernel::proof::Hyp {
-                        name: h.name,
+                        name: h.name.clone(),
                         eqn: crate::proof_kernel::aver_generated::kernel::check::instantiate(
-                            h.eqn,
+                            h.eqn.clone(),
                             at,
                             path.clone(),
                         )?,
@@ -3207,13 +3325,13 @@ pub fn constant(
                     }),
                 );
             } else {
-                if let Some((c, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     if (c.name == n) {
                         return Ok(crate::proof_kernel::aver_generated::kernel::term::Eqn {
                             lhs: crate::proof_kernel::aver_generated::kernel::term::Term::TVar(
                                 crate::proof_kernel::aver_generated::kernel::term::Term__TVar(n),
                             ),
-                            rhs: c.value,
+                            rhs: c.value.clone(),
                         });
                     } else {
                         {
@@ -3370,14 +3488,15 @@ pub fn bindLets(
             if __list_subject.is_empty() {
                 return Ok(outer);
             } else {
-                if let Some((b, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(b), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
                         let __tco1 = aver_rt::AverList::prepend(
                             crate::proof_kernel::aver_generated::kernel::term::bind(
-                                b.name,
+                                b.name.clone(),
                                 crate::proof_kernel::aver_generated::kernel::subst::subst(
-                                    b.value, &outer,
+                                    b.value.clone(),
+                                    &outer,
                                 )?,
                             ),
                             &outer,
@@ -3496,12 +3615,20 @@ pub fn selected(
             ),
             _ => {
                 let __list_subject = __pat1;
-                if let Some((q, __pat2)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                if let (Some(q), Some(__pat2)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __list_subject = __pat2;
                         if __list_subject.is_empty() {
                             crate::proof_kernel::aver_generated::kernel::check::selectedWith(
-                                s, arms, k, outer, ys, q, lhs, env, path,
+                                s,
+                                arms,
+                                k,
+                                outer,
+                                ys,
+                                q.clone(),
+                                lhs,
+                                env,
+                                path,
                             )
                         } else {
                             crate::proof_kernel::aver_generated::kernel::check::refuse(
@@ -3548,12 +3675,21 @@ pub fn selectedWith(
         if __pat0 {
             {
                 let __list_subject = __pat1;
-                if let Some((v, __pat2)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                if let (Some(v), Some(__pat2)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __list_subject = __pat2;
                         if __list_subject.is_empty() {
                             crate::proof_kernel::aver_generated::kernel::check::catchAllArm(
-                                s, arms, k, chosen, outer, v, q, lhs, env, path,
+                                s,
+                                arms,
+                                k,
+                                chosen,
+                                outer,
+                                v.clone(),
+                                q,
+                                lhs,
+                                env,
+                                path,
                             )
                         } else {
                             crate::proof_kernel::aver_generated::kernel::check::refuse(
@@ -3817,7 +3953,7 @@ pub fn stated(
         if __list_subject.is_empty() {
             false
         } else {
-            if let Some((h, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(h), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 ((&(h.eqn) == e)
                     || crate::proof_kernel::aver_generated::kernel::check::stated(e, &rest))
             } else {
@@ -4171,14 +4307,16 @@ pub fn patTerm(
             }
             crate::proof_kernel::aver_generated::kernel::term::Pat::PCons(h, t) => {
                 let __list_subject = __pat1;
-                if let Some((x, __pat2)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                if let (Some(x), Some(__pat2)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __list_subject = __pat2;
-                        if let Some((y, __pat3)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                        if let (Some(y), Some(__pat3)) =
+                            (__list_subject.first(), __list_subject.tail())
+                        {
                             {
                                 let __list_subject = __pat3;
                                 if __list_subject.is_empty() {
-                                    Ok(crate::proof_kernel::aver_generated::kernel::term::Term::TBi(crate::proof_kernel::aver_generated::kernel::term::Term__TBi(::aver_rt::str_lit!("List.prepend"), aver_rt::AverList::from_vec(vec![x, y]))))
+                                    Ok(crate::proof_kernel::aver_generated::kernel::term::Term::TBi(crate::proof_kernel::aver_generated::kernel::term::Term__TBi(::aver_rt::str_lit!("List.prepend"), aver_rt::AverList::from_vec(vec![x.clone(), y.clone()]))))
                                 } else {
                                     Err(aver_rt::AverStr::from({
                                         let mut __b = {
@@ -4340,9 +4478,9 @@ pub fn boundNames(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((b, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(b), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::prepend(
-                    b.name,
+                    b.name.clone(),
                     &crate::proof_kernel::aver_generated::kernel::check::boundNames(&rest),
                 )
             } else {
@@ -4500,9 +4638,9 @@ pub fn findLaw(
             if __list_subject.is_empty() {
                 return None;
             } else {
-                if let Some((l, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(l), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     if (l.key == key) {
-                        return Some(l);
+                        return Some(l.clone());
                     } else {
                         {
                             let __tco1 = rest;
@@ -4622,7 +4760,25 @@ pub fn lawPremises(
     l @ _: &crate::proof_kernel::aver_generated::kernel::proof::Law,
 ) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn> {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(l.premise.clone(), [] => aver_rt::AverList::empty(), [p, rest] => aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: p, rhs: crate::proof_kernel::aver_generated::kernel::term::Term::TBool(crate::proof_kernel::aver_generated::kernel::term::Term__TBool(true)) }]))
+    {
+        let __list_subject = l.premise.clone();
+        if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            aver_rt::AverList::from_vec(vec![
+                crate::proof_kernel::aver_generated::kernel::term::Eqn {
+                    lhs: p.clone(),
+                    rhs: crate::proof_kernel::aver_generated::kernel::term::Term::TBool(
+                        crate::proof_kernel::aver_generated::kernel::term::Term__TBool(true),
+                    ),
+                },
+            ])
+        } else {
+            if __list_subject.is_empty() {
+                aver_rt::AverList::empty()
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// The proof must prove exactly the obligation, under its when; every cited builtin fact is checked first.
@@ -4776,7 +4932,28 @@ pub fn lawHyps(
     ob @ _: &crate::proof_kernel::aver_generated::kernel::proof::Law,
 ) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp> {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(ob.premise.clone(), [] => aver_rt::AverList::empty(), [p, rest] => aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::proof::Hyp { name: ::aver_rt::str_lit!("when"), eqn: crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: p, rhs: crate::proof_kernel::aver_generated::kernel::term::Term::TBool(crate::proof_kernel::aver_generated::kernel::term::Term__TBool(true)) } }]))
+    {
+        let __list_subject = ob.premise.clone();
+        if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            aver_rt::AverList::from_vec(vec![
+                crate::proof_kernel::aver_generated::kernel::proof::Hyp {
+                    name: ::aver_rt::str_lit!("when"),
+                    eqn: crate::proof_kernel::aver_generated::kernel::term::Eqn {
+                        lhs: p.clone(),
+                        rhs: crate::proof_kernel::aver_generated::kernel::term::Term::TBool(
+                            crate::proof_kernel::aver_generated::kernel::term::Term__TBool(true),
+                        ),
+                    },
+                },
+            ])
+        } else {
+            if __list_subject.is_empty() {
+                aver_rt::AverList::empty()
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// Names separated by commas.
@@ -5027,9 +5204,9 @@ pub fn armsOf(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((a, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::prepend(
-                    a.arm,
+                    a.arm.clone(),
                     &crate::proof_kernel::aver_generated::kernel::check::armsOf(&rest),
                 )
             } else {
@@ -5055,7 +5232,7 @@ pub fn notMentioningAny(
             if __list_subject.is_empty() {
                 return aver_rt::AverList::empty();
             } else {
-                if let Some((h, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(h), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     if crate::proof_kernel::aver_generated::kernel::check::hypsMention(
                         &aver_rt::AverList::from_vec(vec![h.clone()]),
                         names,
@@ -5068,7 +5245,7 @@ pub fn notMentioningAny(
                         }
                     } else {
                         return aver_rt::AverList::prepend(
-                            h,
+                            h.clone(),
                             &crate::proof_kernel::aver_generated::kernel::check::notMentioningAny(
                                 &rest, names,
                             ),
@@ -5093,9 +5270,9 @@ pub fn placeNames(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((p, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::prepend(
-                    p.name,
+                    p.name.clone(),
                     &crate::proof_kernel::aver_generated::kernel::check::placeNames(&rest),
                 )
             } else {
@@ -5215,7 +5392,7 @@ pub fn allConstructorPatterns(
         if __list_subject.is_empty() {
             true
         } else {
-            if let Some((a, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 (crate::proof_kernel::aver_generated::kernel::check::isConstructorPattern(
                     &a.pattern,
                 ) && crate::proof_kernel::aver_generated::kernel::check::allConstructorPatterns(
@@ -5260,7 +5437,7 @@ pub fn hasNil(
         if __list_subject.is_empty() {
             false
         } else {
-            if let Some((a, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 ((a.pattern == crate::proof_kernel::aver_generated::kernel::term::Pat::PNil)
                     || crate::proof_kernel::aver_generated::kernel::check::hasNil(&rest))
             } else {
@@ -5281,7 +5458,7 @@ pub fn hasCons(
         if __list_subject.is_empty() {
             false
         } else {
-            if let Some((a, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 (crate::proof_kernel::aver_generated::kernel::check::isCons(&a.pattern)
                     || crate::proof_kernel::aver_generated::kernel::check::hasCons(&rest))
             } else {
@@ -5433,7 +5610,7 @@ pub fn isConst(
         if __list_subject.is_empty() {
             false
         } else {
-            if let Some((c, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 ((c.name == n)
                     || crate::proof_kernel::aver_generated::kernel::check::isConst(n, &rest))
             } else {
@@ -5772,12 +5949,12 @@ pub fn hypsAt(
         if __list_subject.is_empty() {
             Ok(aver_rt::AverList::empty())
         } else {
-            if let Some((h, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(h), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 Ok(aver_rt::AverList::prepend(
                     crate::proof_kernel::aver_generated::kernel::proof::Hyp {
-                        name: h.name,
+                        name: h.name.clone(),
                         eqn: crate::proof_kernel::aver_generated::kernel::check::instantiate(
-                            h.eqn,
+                            h.eqn.clone(),
                             bs,
                             path.clone(),
                         )?,
@@ -5807,7 +5984,7 @@ pub fn withoutNames(
             if __list_subject.is_empty() {
                 return aver_rt::AverList::empty();
             } else {
-                if let Some((b, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(b), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     if names.contains(&b.name) {
                         {
                             let __tco0 = rest;
@@ -5817,7 +5994,7 @@ pub fn withoutNames(
                         }
                     } else {
                         return aver_rt::AverList::prepend(
-                            b,
+                            b.clone(),
                             &crate::proof_kernel::aver_generated::kernel::check::withoutNames(
                                 &rest, names,
                             ),
@@ -5902,7 +6079,7 @@ pub fn moreHyps(
         if __list_subject.is_empty() {
             Ok(aver_rt::AverList::empty())
         } else {
-            if let Some((m, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(m), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 match (
                     crate::proof_kernel::aver_generated::kernel::check::callAt(
                         calls,
@@ -6030,7 +6207,7 @@ pub fn moreHyps(
                                     &m.ih.at,
                                 ),
                             ),
-                            m.ih.name,
+                            m.ih.name.clone(),
                             &m.ih.carry,
                             claim,
                             carried,
@@ -6063,9 +6240,9 @@ pub fn callAt(
             if __list_subject.is_empty() {
                 return None;
             } else {
-                if let Some((c, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     if (k == aver_rt::AverInt::from_i64(0)) {
-                        return Some(c);
+                        return Some(c.clone());
                     } else {
                         {
                             let __tco0 = rest;
@@ -6093,8 +6270,8 @@ pub fn partBinding(
     crate::proof_kernel::cancel_checkpoint();
     {
         let __list_subject = bs;
-        if let Some((b, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-            Ok(b)
+        if let (Some(b), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            Ok(b.clone())
         } else {
             if __list_subject.is_empty() {
                 Err(aver_rt::AverStr::from({
@@ -6296,7 +6473,7 @@ pub fn readArgs(
             if __list_subject.is_empty() {
                 return aver_rt::AverList::empty();
             } else {
-                if let Some((x, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     if ((k == j)
                         || crate::proof_kernel::aver_generated::kernel::check::atPlace(
                             ps,
@@ -6304,7 +6481,7 @@ pub fn readArgs(
                         ))
                     {
                         return aver_rt::AverList::prepend(
-                            x,
+                            x.clone(),
                             &crate::proof_kernel::aver_generated::kernel::check::readArgs(
                                 &rest,
                                 j,
@@ -6342,7 +6519,7 @@ pub fn atPlace(
         if __list_subject.is_empty() {
             false
         } else {
-            if let Some((p, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 ((p.at == k)
                     || crate::proof_kernel::aver_generated::kernel::check::atPlace(&rest, k))
             } else {
@@ -6399,18 +6576,21 @@ pub fn placeBindings(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((p, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::prepend(
                     crate::proof_kernel::aver_generated::kernel::term::bind(
                         p.name.clone(),
-                        crate::proof_kernel::aver_generated::kernel::induct::nthTerm(args, p.at)
-                            .unwrap_or(
-                                crate::proof_kernel::aver_generated::kernel::term::Term::TVar(
-                                    crate::proof_kernel::aver_generated::kernel::term::Term__TVar(
-                                        p.name.clone(),
-                                    ),
+                        crate::proof_kernel::aver_generated::kernel::induct::nthTerm(
+                            args,
+                            p.at.clone(),
+                        )
+                        .unwrap_or(
+                            crate::proof_kernel::aver_generated::kernel::term::Term::TVar(
+                                crate::proof_kernel::aver_generated::kernel::term::Term__TVar(
+                                    p.name.clone(),
                                 ),
                             ),
+                        ),
                     ),
                     &crate::proof_kernel::aver_generated::kernel::check::placeBindings(&rest, args),
                 )
@@ -6789,14 +6969,14 @@ pub fn factsOf(
         if __list_subject.is_empty() {
             Ok(aver_rt::AverList::empty())
         } else {
-            if let Some((h, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(h), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 if (h.eqn.rhs
                     == crate::proof_kernel::aver_generated::kernel::term::Term::TBool(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TBool(true),
                     ))
                 {
                     Ok(aver_rt::AverList::prepend(
-                        h.eqn.lhs,
+                        h.eqn.lhs.clone(),
                         &crate::proof_kernel::aver_generated::kernel::check::factsOf(&rest, path)?,
                     ))
                 } else {
@@ -6847,13 +7027,16 @@ pub fn conjoined(
         if __list_subject.is_empty() {
             t
         } else {
-            if let Some((x, more)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(x), Some(more)) = (__list_subject.first(), __list_subject.tail()) {
                 crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
                     crate::proof_kernel::aver_generated::kernel::term::Term__TBi(
                         ::aver_rt::str_lit!("Bool.and"),
                         aver_rt::AverList::from_vec(vec![
                             t,
-                            crate::proof_kernel::aver_generated::kernel::check::conjoined(x, &more),
+                            crate::proof_kernel::aver_generated::kernel::check::conjoined(
+                                x.clone(),
+                                &more,
+                            ),
                         ]),
                     ),
                 )
@@ -7139,9 +7322,9 @@ pub fn hypLabels(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((x, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::prepend(
-                    x.name,
+                    x.name.clone(),
                     &crate::proof_kernel::aver_generated::kernel::check::hypLabels(&rest),
                 )
             } else {
@@ -7182,7 +7365,7 @@ pub fn smallerHyps(
         if __list_subject.is_empty() {
             Ok(aver_rt::AverList::empty())
         } else {
-            if let Some((i, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(i), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 match (
                     (aver_rt::AverInt::from_i64(i.at.len() as i64)
                         == aver_rt::AverInt::from_i64(general.len() as i64)),
@@ -7272,7 +7455,7 @@ pub fn smallerHyps(
                                     general, &i.at,
                                 ),
                             ),
-                            i.name,
+                            i.name.clone(),
                             &i.carry,
                             claim,
                             cs,
@@ -7333,9 +7516,9 @@ pub fn factLaws(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((f, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::prepend(
-                    f.law,
+                    f.law.clone(),
                     &crate::proof_kernel::aver_generated::kernel::check::factLaws(&rest),
                 )
             } else {

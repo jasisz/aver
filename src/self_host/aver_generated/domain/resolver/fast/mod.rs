@@ -17,11 +17,14 @@ pub fn annotateFastFns(
             if __list_subject.is_empty() {
                 return acc.reverse();
             } else {
-                if let Some((f, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
                         let __tco2 = aver_rt::AverList::prepend(
-                            crate::aver_generated::domain::resolver::fast::annotateFastFn(f, fnMap),
+                            crate::aver_generated::domain::resolver::fast::annotateFastFn(
+                                f.clone(),
+                                fnMap,
+                            ),
                             &acc,
                         );
                         __hold0 = __tco0;
@@ -173,7 +176,7 @@ pub fn armsNeedTailLoop(
             if __list_subject.is_empty() {
                 return false;
             } else {
-                if let Some((arm, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(arm), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     if crate::aver_generated::domain::resolver::fast::exprNeedsTailLoop(
                         selfId.clone(),
                         &arm.body,

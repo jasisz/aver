@@ -2240,7 +2240,18 @@ impl aver_rt::AverDisplay for Hyp {
 #[inline(always)]
 pub fn premiseOf(law @ _: &Law) -> Option<crate::proof_kernel::aver_generated::kernel::term::Term> {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(law.premise.clone(), [] => None, [p, rest] => Some(p))
+    {
+        let __list_subject = law.premise.clone();
+        if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            Some(p.clone())
+        } else {
+            if __list_subject.is_empty() {
+                None
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// The names of typed variables, in order.
@@ -2254,9 +2265,9 @@ pub fn givenNames(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((g, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(g), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::prepend(
-                    g.name,
+                    g.name.clone(),
                     &crate::proof_kernel::aver_generated::kernel::proof::givenNames(&rest),
                 )
             } else {
@@ -2278,9 +2289,9 @@ pub fn findDef(mut name @ _: AverStr, ds @ _: &aver_rt::AverList<Def>) -> Option
             if __list_subject.is_empty() {
                 return None;
             } else {
-                if let Some((d, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(d), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     if (d.name == name) {
-                        return Some(d);
+                        return Some(d.clone());
                     } else {
                         {
                             let __tco1 = rest;
@@ -2306,9 +2317,9 @@ pub fn variantNames(vs @ _: &aver_rt::AverList<Variant>) -> aver_rt::AverList<Av
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((v, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::prepend(
-                    v.name,
+                    v.name.clone(),
                     &crate::proof_kernel::aver_generated::kernel::proof::variantNames(&rest),
                 )
             } else {

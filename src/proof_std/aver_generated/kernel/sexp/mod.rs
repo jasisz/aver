@@ -149,7 +149,7 @@ pub fn expand(mut s @ _: Sexp) -> Result<Sexp, AverStr> {
                                     {
                                         match __pat4 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Node(parts) => {
-            { let __list_subject = __pat5; if let Some((body, __pat6)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat6; if __list_subject.is_empty() { { let (b, n) = crate::proof_std::aver_generated::kernel::sexp::bounded(&crate::proof_std::aver_generated::kernel::sexp::within(body, &crate::proof_std::aver_generated::kernel::sexp::define(parts, HashMap::new())?)?)?; Ok(b) } } else { Ok(s) } } } else { Ok(s) } }
+            { let __list_subject = __pat5; if let (Some(body), Some(__pat6)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat6; if __list_subject.is_empty() { { let (b, n) = crate::proof_std::aver_generated::kernel::sexp::bounded(&crate::proof_std::aver_generated::kernel::sexp::within(body.clone(), &crate::proof_std::aver_generated::kernel::sexp::define(parts, HashMap::new())?)?)?; Ok(b) } } else { Ok(s) } } } else { Ok(s) } }
         },
         _ => {
             Ok(s)
@@ -203,15 +203,15 @@ pub fn define(
                                         let n = n.clone();
                                         {
                                             let __list_subject = __pat3;
-                                            if let Some((s, __pat4)) =
-                                                aver_rt::list_uncons_cloned(&__list_subject)
+                                            if let (Some(s), Some(__pat4)) =
+                                                (__list_subject.first(), __list_subject.tail())
                                             {
                                                 {
                                                     let __list_subject = __pat4;
                                                     if __list_subject.is_empty() {
                                                         {
                                                             let __tco0 = rest;
-                                                            let __tco1 = table.clone().insert_owned(crate::proof_std::aver_generated::kernel::sexp::fresh(n, &table)?, crate::proof_std::aver_generated::kernel::sexp::bounded(&crate::proof_std::aver_generated::kernel::sexp::within(s, &table)?)?);
+                                                            let __tco1 = table.clone().insert_owned(crate::proof_std::aver_generated::kernel::sexp::fresh(n, &table)?, crate::proof_std::aver_generated::kernel::sexp::bounded(&crate::proof_std::aver_generated::kernel::sexp::within(s.clone(), &table)?)?);
                                                             __hold0 = __tco0;
                                                             parts = &__hold0;
                                                             table = __tco1;
@@ -366,10 +366,12 @@ pub fn withinAll(
                     size,
                 ));
             } else {
-                if let Some((x, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
-                        let (y, n) =
-                            crate::proof_std::aver_generated::kernel::sexp::within(x, table)?;
+                        let (y, n) = crate::proof_std::aver_generated::kernel::sexp::within(
+                            x.clone(),
+                            table,
+                        )?;
                         {
                             let __tco0 = rest;
                             let __tco2 = aver_rt::AverList::prepend(y, &acc);

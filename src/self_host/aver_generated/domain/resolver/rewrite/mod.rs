@@ -16,11 +16,13 @@ pub fn rewriteInternalFns(
             if __list_subject.is_empty() {
                 return acc.reverse();
             } else {
-                if let Some((f, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
                         let __tco1 = aver_rt::AverList::prepend(
-                            crate::aver_generated::domain::resolver::rewrite::rewriteInternalFn(f),
+                            crate::aver_generated::domain::resolver::rewrite::rewriteInternalFn(
+                                f.clone(),
+                            ),
                             &acc,
                         );
                         __hold0 = __tco0;
@@ -408,12 +410,12 @@ pub fn rewriteInternalExprs(
             if __list_subject.is_empty() {
                 return acc.reverse();
             } else {
-                if let Some((expr, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(expr), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
                         let __tco1 = aver_rt::AverList::prepend(
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
-                                expr,
+                                expr.clone(),
                             ),
                             &acc,
                         );
@@ -481,10 +483,10 @@ pub fn rewriteInternalArms(
             if __list_subject.is_empty() {
                 return acc.reverse();
             } else {
-                if let Some((arm, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(arm), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::ast::MatchArm { pattern: crate::aver_generated::domain::resolver::rewrite::rewritePattern(arm.pattern), body: crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(arm.body), bindingSlots: arm.bindingSlots }, &acc);
+                        let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::ast::MatchArm { pattern: crate::aver_generated::domain::resolver::rewrite::rewritePattern(arm.pattern.clone()), body: crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(arm.body.clone()), bindingSlots: arm.bindingSlots.clone() }, &acc);
                         __hold0 = __tco0;
                         arms = &__hold0;
                         acc = __tco1;
@@ -548,11 +550,13 @@ pub fn rewritePatterns(
             if __list_subject.is_empty() {
                 return acc.reverse();
             } else {
-                if let Some((p, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
                         let __tco1 = aver_rt::AverList::prepend(
-                            crate::aver_generated::domain::resolver::rewrite::rewritePattern(p),
+                            crate::aver_generated::domain::resolver::rewrite::rewritePattern(
+                                p.clone(),
+                            ),
                             &acc,
                         );
                         __hold0 = __tco0;
@@ -752,8 +756,10 @@ pub fn rewriteInternalOptionWithDefault(
         if let Some((optionExpr, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
             {
                 let __list_subject = rest;
-                if let Some((defaultExpr, ignored)) = aver_rt::list_uncons_cloned(&__list_subject) {
-                    crate::aver_generated::domain::resolver::rewrite::rewriteInternalOptionWithDefaultArgs(optionExpr, defaultExpr)
+                if let (Some(defaultExpr), Some(ignored)) =
+                    (__list_subject.first(), __list_subject.tail())
+                {
+                    crate::aver_generated::domain::resolver::rewrite::rewriteInternalOptionWithDefaultArgs(optionExpr, defaultExpr.clone())
                 } else {
                     crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                         crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
@@ -834,8 +840,10 @@ pub fn rewriteInternalVectorGetOrInt(
         if let Some((vecExpr, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
             {
                 let __list_subject = rest;
-                if let Some((idxExpr, ignored)) = aver_rt::list_uncons_cloned(&__list_subject) {
-                    crate::aver_generated::domain::resolver::rewrite::rewriteInternalVectorGetOrIntArgs(vecExpr, idxExpr, defaultValue)
+                if let (Some(idxExpr), Some(ignored)) =
+                    (__list_subject.first(), __list_subject.tail())
+                {
+                    crate::aver_generated::domain::resolver::rewrite::rewriteInternalVectorGetOrIntArgs(vecExpr, idxExpr.clone(), defaultValue)
                 } else {
                     crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                         crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
@@ -932,8 +940,10 @@ pub fn rewriteInternalResultWithDefault(
         if let Some((resultExpr, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
             {
                 let __list_subject = rest;
-                if let Some((defaultExpr, ignored)) = aver_rt::list_uncons_cloned(&__list_subject) {
-                    crate::aver_generated::domain::resolver::rewrite::rewriteInternalResultWithDefaultArgs(resultExpr, defaultExpr)
+                if let (Some(defaultExpr), Some(ignored)) =
+                    (__list_subject.first(), __list_subject.tail())
+                {
+                    crate::aver_generated::domain::resolver::rewrite::rewriteInternalResultWithDefaultArgs(resultExpr, defaultExpr.clone())
                 } else {
                     crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                         crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
@@ -1014,10 +1024,10 @@ pub fn rewriteInternalIntModOrInt(
         if let Some((a, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
             {
                 let __list_subject = rest;
-                if let Some((b, ignored)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                if let (Some(b), Some(ignored)) = (__list_subject.first(), __list_subject.tail()) {
                     crate::aver_generated::domain::resolver::rewrite::rewriteInternalIntModOrIntArgs(
                         a,
-                        b,
+                        b.clone(),
                         defaultValue,
                     )
                 } else {
@@ -1318,13 +1328,14 @@ pub fn rewriteBoolMatchArms(
     crate::cancel_checkpoint();
     {
         let __list_subject = arms;
-        if let Some((arm1, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+        if let (Some(arm1), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
             {
                 let __list_subject = rest;
-                if let Some((arm2, tail)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                if let (Some(arm2), Some(tail)) = (__list_subject.first(), __list_subject.tail()) {
                     if (tail == aver_rt::AverList::empty()) {
                         crate::aver_generated::domain::resolver::rewrite::rewriteBoolMatchArmPair(
-                            arm1, arm2,
+                            arm1.clone(),
+                            arm2.clone(),
                         )
                     } else {
                         None
@@ -1453,13 +1464,13 @@ pub fn rewriteInternalExprs__collected(
             if __list_subject.is_empty() {
                 return aver_rt::list_builder_finalize(acc);
             } else {
-                if let Some((expr, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(expr), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
                         let __tco1 = aver_rt::list_builder_push(
                             acc,
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
-                                expr,
+                                expr.clone(),
                             ),
                         );
                         __hold0 = __tco0;
@@ -1526,10 +1537,10 @@ pub fn rewriteInternalArms__collected(
             if __list_subject.is_empty() {
                 return aver_rt::list_builder_finalize(acc);
             } else {
-                if let Some((arm, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(arm), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
-                        let __tco1 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::ast::MatchArm { pattern: crate::aver_generated::domain::resolver::rewrite::rewritePattern(arm.pattern), body: crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(arm.body), bindingSlots: arm.bindingSlots });
+                        let __tco1 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::ast::MatchArm { pattern: crate::aver_generated::domain::resolver::rewrite::rewritePattern(arm.pattern.clone()), body: crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(arm.body.clone()), bindingSlots: arm.bindingSlots.clone() });
                         __hold0 = __tco0;
                         arms = &__hold0;
                         acc = __tco1;
@@ -1558,12 +1569,14 @@ pub fn rewritePatterns__collected(
             if __list_subject.is_empty() {
                 return aver_rt::list_builder_finalize(acc);
             } else {
-                if let Some((p, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
                         let __tco1 = aver_rt::list_builder_push(
                             acc,
-                            crate::aver_generated::domain::resolver::rewrite::rewritePattern(p),
+                            crate::aver_generated::domain::resolver::rewrite::rewritePattern(
+                                p.clone(),
+                            ),
                         );
                         __hold0 = __tco0;
                         pats = &__hold0;

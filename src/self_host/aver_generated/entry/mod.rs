@@ -24,7 +24,20 @@ fn __mutual_tco_trampoline_1(
         __state = match __state {
             __MutualTco1::QualifyFns__indexed(mut fns @ _, mut prefix @ _, mut acc @ _) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(fns, [] => { return acc.reverse() }, [f, rest] => __MutualTco1::QualifyFnsOne__indexed(f, rest, prefix, acc))
+                {
+                    let __list_subject = fns;
+                    if __list_subject.is_empty() {
+                        return acc.reverse();
+                    } else {
+                        if let (Some(f), Some(rest)) =
+                            (__list_subject.first(), __list_subject.tail())
+                        {
+                            __MutualTco1::QualifyFnsOne__indexed(f.clone(), rest, prefix, acc)
+                        } else {
+                            panic!("Aver Rust codegen: non-exhaustive list match")
+                        }
+                    }
+                }
             }
             __MutualTco1::QualifyFnsOne__indexed(
                 mut f @ _,
@@ -330,11 +343,13 @@ pub fn shiftFnIdsInFns(
             if __list_subject.is_empty() {
                 return acc.reverse();
             } else {
-                if let Some((fd, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(fd), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
-                        let __tco2 =
-                            aver_rt::AverList::prepend(shiftFnIdsInFn(fd, offset.clone()), &acc);
+                        let __tco2 = aver_rt::AverList::prepend(
+                            shiftFnIdsInFn(fd.clone(), offset.clone()),
+                            &acc,
+                        );
                         __hold0 = __tco0;
                         fns = &__hold0;
                         acc = __tco2;
@@ -842,11 +857,11 @@ pub fn shiftFnIdsInExprs(
             if __list_subject.is_empty() {
                 return acc.reverse();
             } else {
-                if let Some((expr, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(expr), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
                         let __tco2 = aver_rt::AverList::prepend(
-                            shiftFnIdsInExpr(expr, offset.clone()),
+                            shiftFnIdsInExpr(expr.clone(), offset.clone()),
                             &acc,
                         );
                         __hold0 = __tco0;
@@ -918,14 +933,14 @@ pub fn shiftFnIdsInArms(
             if __list_subject.is_empty() {
                 return acc.reverse();
             } else {
-                if let Some((arm, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(arm), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
                         let __tco2 = aver_rt::AverList::prepend(
                             crate::aver_generated::domain::ast::MatchArm {
-                                pattern: arm.pattern,
-                                body: shiftFnIdsInExpr(arm.body, offset.clone()),
-                                bindingSlots: arm.bindingSlots,
+                                pattern: arm.pattern.clone(),
+                                body: shiftFnIdsInExpr(arm.body.clone(), offset.clone()),
+                                bindingSlots: arm.bindingSlots.clone(),
                             },
                             &acc,
                         );
@@ -1105,7 +1120,7 @@ pub fn hasLocalMain(
             if __list_subject.is_empty() {
                 return false;
             } else {
-                if let Some((f, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     if (&*f.name == "main") {
                         return true;
                     } else {
@@ -1614,11 +1629,13 @@ pub fn shiftFnIdsInFns__collected(
             if __list_subject.is_empty() {
                 return aver_rt::list_builder_finalize(acc);
             } else {
-                if let Some((fd, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(fd), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
-                        let __tco2 =
-                            aver_rt::list_builder_push(acc, shiftFnIdsInFn(fd, offset.clone()));
+                        let __tco2 = aver_rt::list_builder_push(
+                            acc,
+                            shiftFnIdsInFn(fd.clone(), offset.clone()),
+                        );
                         __hold0 = __tco0;
                         fns = &__hold0;
                         acc = __tco2;
@@ -1682,11 +1699,13 @@ pub fn shiftFnIdsInExprs__collected(
             if __list_subject.is_empty() {
                 return aver_rt::list_builder_finalize(acc);
             } else {
-                if let Some((expr, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(expr), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
-                        let __tco2 =
-                            aver_rt::list_builder_push(acc, shiftFnIdsInExpr(expr, offset.clone()));
+                        let __tco2 = aver_rt::list_builder_push(
+                            acc,
+                            shiftFnIdsInExpr(expr.clone(), offset.clone()),
+                        );
                         __hold0 = __tco0;
                         exprs = &__hold0;
                         acc = __tco2;
@@ -1756,15 +1775,15 @@ pub fn shiftFnIdsInArms__collected(
             if __list_subject.is_empty() {
                 return aver_rt::list_builder_finalize(acc);
             } else {
-                if let Some((arm, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(arm), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
                         let __tco2 = aver_rt::list_builder_push(
                             acc,
                             crate::aver_generated::domain::ast::MatchArm {
-                                pattern: arm.pattern,
-                                body: shiftFnIdsInExpr(arm.body, offset.clone()),
-                                bindingSlots: arm.bindingSlots,
+                                pattern: arm.pattern.clone(),
+                                body: shiftFnIdsInExpr(arm.body.clone(), offset.clone()),
+                                bindingSlots: arm.bindingSlots.clone(),
                             },
                         );
                         __hold0 = __tco0;

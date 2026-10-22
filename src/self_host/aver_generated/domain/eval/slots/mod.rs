@@ -38,13 +38,15 @@ pub fn buildSlotEnvLoop(
             if __list_subject.is_empty() {
                 return acc;
             } else {
-                if let Some((a, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
                         let __tco1 = {
                             let __vec = acc;
                             match (idx).to_usize() {
-                                Some(__idx) if __idx < __vec.len() => __vec.set_unchecked(__idx, a),
+                                Some(__idx) if __idx < __vec.len() => {
+                                    __vec.set_unchecked(__idx, a.clone())
+                                }
                                 _ => __vec,
                             }
                         };

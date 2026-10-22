@@ -17,10 +17,10 @@ pub fn buildFnMap(
             if __list_subject.is_empty() {
                 return acc;
             } else {
-                if let Some((f, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
-                        let __tco1 = acc.insert_owned(f.name, idx.clone());
+                        let __tco1 = acc.insert_owned(f.name.clone(), idx.clone());
                         let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
                         __hold0 = __tco0;
                         fns = &__hold0;
@@ -52,12 +52,13 @@ pub fn resolveCallsInFns(
             if __list_subject.is_empty() {
                 return acc.reverse();
             } else {
-                if let Some((f, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
                         let __tco2 = aver_rt::AverList::prepend(
                             crate::aver_generated::domain::resolver::calls::resolveCallsInFn(
-                                f, fnMap,
+                                f.clone(),
+                                fnMap,
                             ),
                             &acc,
                         );
@@ -830,12 +831,13 @@ pub fn resolveCallsInExprs(
             if __list_subject.is_empty() {
                 return acc.reverse();
             } else {
-                if let Some((e, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
                         let __tco2 = aver_rt::AverList::prepend(
                             crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                                e, fnMap,
+                                e.clone(),
+                                fnMap,
                             ),
                             &acc,
                         );
@@ -868,10 +870,10 @@ pub fn resolveCallsInArms(
             if __list_subject.is_empty() {
                 return acc.reverse();
             } else {
-                if let Some((arm, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(arm), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
-                        let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern, body: crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(arm.body, fnMap), bindingSlots: arm.bindingSlots }, &acc);
+                        let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern.clone(), body: crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(arm.body.clone(), fnMap), bindingSlots: arm.bindingSlots.clone() }, &acc);
                         __hold0 = __tco0;
                         arms = &__hold0;
                         acc = __tco2;
@@ -976,13 +978,14 @@ pub fn resolveCallsInExprs__collected(
             if __list_subject.is_empty() {
                 return aver_rt::list_builder_finalize(acc);
             } else {
-                if let Some((e, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
                         let __tco2 = aver_rt::list_builder_push(
                             acc,
                             crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                                e, fnMap,
+                                e.clone(),
+                                fnMap,
                             ),
                         );
                         __hold0 = __tco0;
@@ -1014,10 +1017,10 @@ pub fn resolveCallsInArms__collected(
             if __list_subject.is_empty() {
                 return aver_rt::list_builder_finalize(acc);
             } else {
-                if let Some((arm, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(arm), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
-                        let __tco2 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern, body: crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(arm.body, fnMap), bindingSlots: arm.bindingSlots });
+                        let __tco2 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern.clone(), body: crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(arm.body.clone(), fnMap), bindingSlots: arm.bindingSlots.clone() });
                         __hold0 = __tco0;
                         arms = &__hold0;
                         acc = __tco2;

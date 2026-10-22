@@ -4000,6 +4000,21 @@ fn a_loop_borrows_the_params_it_only_reads() {
         emitted.contains("(Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail())"),
         "the head `allLeaves` only reads must be borrowed:\n{emitted}"
     );
+    // A head one branch hands on is borrowed too, and cloned only there:
+    // `findBefore` compares a field of every head and copies the one it
+    // finds, once.
+    assert!(
+        emitted.contains("(Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) { if (p.name == n) { return placedBefore(p.clone(), upTo); }"),
+        "the head `findBefore` hands on in one branch must be borrowed:\n{emitted}"
+    );
+    // A borrowed head, or a field of one, pushed into a list being built is
+    // cloned into it.
+    for pushed in [
+        "aver_rt::list_builder_push(acc, p.clone())",
+        "aver_rt::list_builder_push(acc, p.c.clone())",
+    ] {
+        assert!(emitted.contains(pushed), "missing `{pushed}`:\n{emitted}");
+    }
     assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
 }
 
@@ -5986,8 +6001,8 @@ fn main() -> Unit
 
 /// Regression for #1130: Rust keeps a borrow from an earlier call argument
 /// alive while evaluating every later argument. If one of those later
-/// expressions consumes the same owned match binding, the earlier borrow
-/// must point at a detached clone rather than the value being moved.
+/// expressions consumes the same owned binding, the earlier borrow must
+/// point at a detached clone rather than the value being moved.
 #[test]
 fn borrowed_call_argument_detaches_before_later_move() {
     let ws = temp_dir("borrowed_call_arg_later_move");
@@ -6024,25 +6039,42 @@ fn sameOf(samples: List<Sample>) -> Int
         [] -> 0
         [newest, ..older] -> slopeOf(newest, newest)
 
+fn firstOr(samples: List<Sample>) -> Sample
+    ? "The first sample, or an empty one."
+    match samples
+        [] -> Sample(atMs = 0, done = 0)
+        [s, .._] -> s
+
+fn rateLet(samples: List<Sample>) -> Int
+    ? "Borrow a bound sample for slopeOf while lastOf consumes it as its fallback."
+    newest = firstOr(samples)
+    slopeOf(newest, lastOf(samples, newest))
+
 fn main() -> Unit
     ! [Console.print]
     samples = [Sample(atMs = 2, done = 4), Sample(atMs = 0, done = 1)]
-    Console.print("{rateOf(samples)}:{sameOf(samples)}")
+    Console.print("{rateOf(samples)}:{sameOf(samples)}:{rateLet(samples)}")
 "#,
     )
     .expect("write borrowed-call-argument probe source");
 
     let vm_stdout = run_vm(&source, None).expect("VM run");
-    assert_eq!(vm_stdout, "3:0");
+    assert_eq!(vm_stdout, "3:0:3");
 
     let project = ws.join("project");
     fs::create_dir_all(&project).expect("create project dir");
     let result = (|| -> Result<(), String> {
         compile_rust(&source, &project, "borrowed_call_arg_later_move", None, &[])?;
         let emitted = generated_entry(&project)?;
-        if !emitted.contains("slopeOf(&newest.clone(), &lastOf(&older, newest))") {
+        if !emitted.contains("slopeOf(&newest.clone(), &lastOf(samples, newest))") {
             return Err(format!(
                 "the earlier borrow was not detached before the later move:\n{emitted}"
+            ));
+        }
+        // A list head is borrowed from the list, so only the move clones it.
+        if !emitted.contains("slopeOf(newest, &lastOf(&older, newest.clone()))") {
+            return Err(format!(
+                "the head handed on was not borrowed and cloned at the move:\n{emitted}"
             ));
         }
         // `newest` is only read here, so the arm borrows it from the list.

@@ -926,7 +926,7 @@ pub fn fieldTexts(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((f, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::prepend(
                     aver_rt::AverStr::from({
                         let mut __b = {
@@ -979,7 +979,7 @@ pub fn armTexts(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((a, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::prepend(
                     aver_rt::AverStr::from({
                         let mut __b = {
@@ -1197,7 +1197,7 @@ pub fn bindingTexts(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((b, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(b), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::prepend(
                     aver_rt::AverStr::from({
                         let mut __b = {
@@ -2332,7 +2332,7 @@ pub fn cutTexts(
         if __list_subject.is_empty() {
             ::aver_rt::str_lit!("")
         } else {
-            if let Some((c, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
@@ -2440,7 +2440,7 @@ pub fn splitCaseTexts(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((c, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::prepend(
                     aver_rt::AverStr::from({
                         let mut __b = {
@@ -2534,7 +2534,7 @@ pub fn inductCaseTexts(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((c, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::prepend(
                     aver_rt::AverStr::from({
                         let mut __b = {
@@ -2693,7 +2693,7 @@ pub fn moreTexts(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((m, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(m), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::prepend(
                     aver_rt::AverStr::from({
                         let mut __b = {

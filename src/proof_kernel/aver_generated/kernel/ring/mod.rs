@@ -317,10 +317,12 @@ pub fn addPoly(
             if __list_subject.is_empty() {
                 return a;
             } else {
-                if let Some((m, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(m), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
-                        let __tco0 =
-                            crate::proof_kernel::aver_generated::kernel::ring::insertMono(m, &a);
+                        let __tco0 = crate::proof_kernel::aver_generated::kernel::ring::insertMono(
+                            m.clone(),
+                            &a,
+                        );
                         let __tco1 = rest;
                         a = __tco0;
                         __hold1 = __tco1;
@@ -450,11 +452,11 @@ pub fn scalePoly(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((m, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(m), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::concat(
                     &crate::proof_kernel::aver_generated::kernel::ring::nonzero(
                         crate::proof_kernel::aver_generated::kernel::ring::Mono {
-                            atoms: m.atoms,
+                            atoms: m.atoms.clone(),
                             coef: m.coef.mul(&k),
                         },
                     ),
@@ -500,7 +502,7 @@ pub fn mulMono(m @ _: &Mono, p @ _: &aver_rt::AverList<Mono>) -> aver_rt::AverLi
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((x, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 crate::proof_kernel::aver_generated::kernel::ring::insertMono(
                     crate::proof_kernel::aver_generated::kernel::ring::Mono {
                         atoms: crate::proof_kernel::aver_generated::kernel::ring::mergeSorted(
@@ -605,7 +607,7 @@ pub fn readRows(
             if __list_subject.is_empty() {
                 return Some(rows);
             } else {
-                if let Some((f, fs)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(f), Some(fs)) = (__list_subject.first(), __list_subject.tail()) {
                     if crate::proof_kernel::aver_generated::kernel::ring::isTruth(&f.rhs) {
                         match crate::proof_kernel::aver_generated::kernel::ring::asNonneg(
                             &f.lhs,
@@ -705,10 +707,10 @@ pub fn withCuts(
             if __list_subject.is_empty() {
                 return Some(rows);
             } else {
-                if let Some((c, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     match crate::proof_kernel::aver_generated::kernel::ring::sumRows(
                         rows.clone(),
-                        c.weights,
+                        c.weights.clone(),
                         aver_rt::AverList::empty(),
                     ) {
                         None => {
@@ -716,7 +718,8 @@ pub fn withCuts(
                         }
                         Some(sum @ _) => {
                             match crate::proof_kernel::aver_generated::kernel::ring::rounded(
-                                &sum, c.divisor,
+                                &sum,
+                                c.divisor.clone(),
                             ) {
                                 None => {
                                     return None;
@@ -777,7 +780,7 @@ pub fn roundedBy(
             if __list_subject.is_empty() {
                 return Some(acc);
             } else {
-                if let Some((m, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(m), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     match (
                         (match (m.coef).div_euclid(&(d)) {
                             Some(__q) => Ok(__q),
@@ -796,7 +799,7 @@ pub fn roundedBy(
                             {
                                 {
                                     let __tco0 = rest;
-                                    let __tco2 = aver_rt::AverList::concat(&acc, &crate::proof_kernel::aver_generated::kernel::ring::nonzero(crate::proof_kernel::aver_generated::kernel::ring::Mono { atoms: m.atoms, coef: q }));
+                                    let __tco2 = aver_rt::AverList::concat(&acc, &crate::proof_kernel::aver_generated::kernel::ring::nonzero(crate::proof_kernel::aver_generated::kernel::ring::Mono { atoms: m.atoms.clone(), coef: q }));
                                     __hold0 = __tco0;
                                     p = &__hold0;
                                     acc = __tco2;
@@ -973,7 +976,7 @@ pub fn negativeConstant(p @ _: &Option<aver_rt::AverList<Mono>>) -> bool {
             let __pat0 = __pat0.clone();
             {
                 let __list_subject = __pat0;
-                if let Some((m, __pat1)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                if let (Some(m), Some(__pat1)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __list_subject = __pat1;
                         if __list_subject.is_empty() {

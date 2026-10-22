@@ -80,9 +80,9 @@ pub fn fieldNames(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((f, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::prepend(
-                    f.name,
+                    f.name.clone(),
                     &crate::proof_std::aver_generated::kernel::finite::fieldNames(&rest),
                 )
             } else {
@@ -103,7 +103,7 @@ pub fn fieldValues(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((f, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::prepend(
                     crate::proof_std::aver_generated::kernel::finite::values(&f.fin),
                     &crate::proof_std::aver_generated::kernel::finite::fieldValues(&rest),
@@ -203,9 +203,9 @@ pub fn consAll(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((t, ts)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(t), Some(ts)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::prepend(
-                    aver_rt::AverList::prepend(h.clone(), &t),
+                    aver_rt::AverList::prepend(h.clone(), &t.clone()),
                     &crate::proof_std::aver_generated::kernel::finite::consAll(h, &ts),
                 )
             } else {
@@ -286,10 +286,10 @@ pub fn tupleValues(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((r, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(r), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::prepend(
                     crate::proof_std::aver_generated::kernel::term::Term::TTuple(
-                        crate::proof_std::aver_generated::kernel::term::Term__TTuple(r),
+                        crate::proof_std::aver_generated::kernel::term::Term__TTuple(r.clone()),
                     ),
                     &crate::proof_std::aver_generated::kernel::finite::tupleValues(&rest),
                 )
