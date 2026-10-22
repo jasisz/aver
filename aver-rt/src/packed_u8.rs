@@ -13,7 +13,8 @@ use std::hash::{Hash, Hasher};
 /// An immutable, cheaply cloned byte sequence with slice views.
 #[derive(Clone)]
 pub struct AverPackedU8 {
-    storage: Rc<Vec<u8>>,
+    /// None for the empty list, which allocates nothing.
+    storage: Option<Rc<Vec<u8>>>,
     start: usize,
     end: usize,
 }
@@ -23,7 +24,7 @@ impl AverPackedU8 {
     pub fn from_vec(bytes: Vec<u8>) -> Self {
         let end = bytes.len();
         Self {
-            storage: Rc::new(bytes),
+            storage: (end != 0).then(|| Rc::new(bytes)),
             start: 0,
             end,
         }
@@ -48,7 +49,9 @@ impl AverPackedU8 {
 
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
-        &self.storage[self.start..self.end]
+        self.storage
+            .as_ref()
+            .map_or(&[], |bytes| &bytes[self.start..self.end])
     }
 
     #[inline]
@@ -64,7 +67,7 @@ impl AverPackedU8 {
     pub fn drop_first(&self, count: usize) -> Self {
         let start = self.start.saturating_add(count).min(self.end);
         Self {
-            storage: Rc::clone(&self.storage),
+            storage: self.storage.clone(),
             start,
             end: self.end,
         }
@@ -73,7 +76,7 @@ impl AverPackedU8 {
     pub fn take_first(&self, count: usize) -> Self {
         let end = self.start.saturating_add(count).min(self.end);
         Self {
-            storage: Rc::clone(&self.storage),
+            storage: self.storage.clone(),
             start: self.start,
             end,
         }
@@ -95,13 +98,11 @@ impl AverPackedU8 {
     }
 
     pub fn into_vec(self) -> Vec<u8> {
-        if self.start == 0 && self.end == self.storage.len() {
-            match Rc::try_unwrap(self.storage) {
-                Ok(bytes) => bytes,
-                Err(shared) => shared.as_ref().clone(),
+        match self.storage {
+            Some(storage) if self.start == 0 && self.end == storage.len() => {
+                Rc::try_unwrap(storage).unwrap_or_else(|shared| shared.as_ref().clone())
             }
-        } else {
-            self.as_slice().to_vec()
+            _ => self.as_slice().to_vec(),
         }
     }
 }
@@ -172,6 +173,19 @@ mod tests {
         let packed = AverPackedU8::from_vec(vec![1, 2, 3, 4]);
         assert_eq!(packed.drop_first(1).take_first(2).as_slice(), &[2, 3]);
         assert_eq!(packed.drop_first(1).take_first(2).aver_display(), "[2, 3]");
+    }
+
+    #[test]
+    fn an_empty_carrier_allocates_nothing() {
+        let empty = AverPackedU8::from_vec(Vec::new());
+        assert!(empty.storage.is_none());
+        assert!(empty.as_slice().is_empty());
+        assert!(empty.drop_first(2).take_first(1).is_empty());
+        assert_eq!(empty.aver_display(), "[]");
+        assert!(empty.into_vec().is_empty());
+        let bytes = AverPackedU8::from_vec(vec![1, 2]);
+        assert_eq!(bytes.drop_first(1).into_vec(), vec![2]);
+        assert_eq!(bytes.into_vec(), vec![1, 2]);
     }
 
     #[test]

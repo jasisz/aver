@@ -686,7 +686,9 @@ impl<T: fmt::Debug> fmt::Debug for AverVector<T> {
 const LIST_APPEND_CHUNK_LIMIT: usize = 128;
 
 pub struct AverList<T> {
-    inner: Rc<AverListInner<T>>,
+    /// The node, or none for the empty list: `[]` allocates nothing, and its
+    /// clones and drops touch no count.
+    inner: Option<Rc<AverListInner<T>>>,
     /// How many elements at the front of a shared flat or segmented body this
     /// list starts past.
     ///
@@ -774,48 +776,27 @@ enum AverListInner<T> {
     },
 }
 
-fn empty_list_inner<T>() -> Rc<AverListInner<T>> {
-    Rc::new(AverListInner::Flat {
-        items: Rc::new(Vec::new()),
-    })
-}
-
-fn empty_list<T>(inner: &Rc<AverListInner<T>>) -> AverList<T> {
-    AverList {
-        inner: Rc::clone(inner),
-        start: 0,
-        segment_index: 0,
-    }
-}
-
-fn take_list_inner<T>(
-    list: &mut AverList<T>,
-    empty_inner: &Rc<AverListInner<T>>,
-) -> Rc<AverListInner<T>> {
-    let original = std::mem::replace(list, empty_list(empty_inner));
-    original.inner
+fn take_list_inner<T>(list: &mut AverList<T>, pending: &mut Vec<Rc<AverListInner<T>>>) {
+    pending.extend(list.inner.take());
 }
 
 fn detach_unique_children<T>(
     inner: &mut AverListInner<T>,
-    empty_inner: &Rc<AverListInner<T>>,
     pending: &mut Vec<Rc<AverListInner<T>>>,
 ) {
     match inner {
         AverListInner::Flat { .. } => {}
-        AverListInner::Prepend { tail, .. } => {
-            pending.push(take_list_inner(tail, empty_inner));
-        }
+        AverListInner::Prepend { tail, .. } => take_list_inner(tail, pending),
         AverListInner::Concat { left, right, .. } => {
-            pending.push(take_list_inner(left, empty_inner));
-            pending.push(take_list_inner(right, empty_inner));
+            take_list_inner(left, pending);
+            take_list_inner(right, pending);
         }
         AverListInner::Segments { current, rest, .. } => {
-            pending.push(take_list_inner(current, empty_inner));
+            take_list_inner(current, pending);
             let rest_rc = std::mem::replace(rest, Rc::new(Vec::new()));
             if let Ok(mut rest_vec) = Rc::try_unwrap(rest_rc) {
                 for part in &mut rest_vec {
-                    pending.push(take_list_inner(part, empty_inner));
+                    take_list_inner(part, pending);
                 }
             }
         }
@@ -838,16 +819,15 @@ impl<T> Drop for AverListInner<T> {
             return;
         }
 
-        let empty_inner = empty_list_inner();
         let mut pending = Vec::new();
 
         // Detach unique children eagerly so deep list teardown does not recurse
         // through nested `Rc<AverListInner<_>>` chains on the Rust call stack.
-        detach_unique_children(self, &empty_inner, &mut pending);
+        detach_unique_children(self, &mut pending);
 
         while let Some(child) = pending.pop() {
             if let Ok(mut child_inner) = Rc::try_unwrap(child) {
-                detach_unique_children(&mut child_inner, &empty_inner, &mut pending);
+                detach_unique_children(&mut child_inner, &mut pending);
             }
         }
     }
@@ -870,7 +850,7 @@ pub struct AverListIter<'a, T> {
 impl<T> Clone for AverList<T> {
     fn clone(&self) -> Self {
         Self {
-            inner: Rc::clone(&self.inner),
+            inner: self.inner.clone(),
             start: self.start,
             segment_index: self.segment_index,
         }
@@ -881,10 +861,20 @@ impl<T> AverList<T> {
     /// A list that is a whole node — every shape but a stepped-into flat body.
     fn node(inner: AverListInner<T>) -> Self {
         Self {
-            inner: Rc::new(inner),
+            inner: Some(Rc::new(inner)),
             start: 0,
             segment_index: 0,
         }
+    }
+
+    /// The node's shape, or none for the empty list.
+    fn shape(&self) -> Option<&AverListInner<T>> {
+        self.inner.as_deref()
+    }
+
+    #[cfg(test)]
+    fn rc(&self) -> &Rc<AverListInner<T>> {
+        self.inner.as_ref().expect("a non-empty list has a node")
     }
 
     fn concat_node(left: &Self, right: &Self) -> Self {
@@ -991,23 +981,24 @@ impl<T> AverList<T> {
     /// No entry may hide an arbitrary list, which would merely move the same
     /// shape-dependent traversal cost one level down.
     fn indexed(&self) -> Self {
-        if matches!(self.inner.as_ref(), AverListInner::Indexed { .. }) {
+        if matches!(self.shape(), Some(AverListInner::Indexed { .. })) {
             return self.clone();
         }
 
         let mut parts = Vec::new();
         let mut pending = vec![self];
         while let Some(list) = pending.pop() {
+            let Some(node) = &list.inner else { continue };
             if list.is_empty() {
                 continue;
             }
-            match list.inner.as_ref() {
+            match node.as_ref() {
                 AverListInner::Flat { items } => {
                     Self::push_flat_segment(&mut parts, Rc::clone(items), list.start, list.len());
                 }
                 AverListInner::Prepend { tail, .. } => {
                     pending.push(tail);
-                    Self::push_prepend_head(&mut parts, Rc::clone(&list.inner));
+                    Self::push_prepend_head(&mut parts, Rc::clone(node));
                 }
                 AverListInner::Concat { left, right, .. } => {
                     pending.push(right);
@@ -1065,7 +1056,7 @@ impl<T> AverList<T> {
             self.segment_index
         };
         Some(Self {
-            inner: Rc::clone(&self.inner),
+            inner: self.inner.clone(),
             start,
             segment_index,
         })
@@ -1093,7 +1084,7 @@ impl<T> AverList<T> {
             return Self::empty();
         }
         Self {
-            inner: Rc::clone(&self.inner),
+            inner: self.inner.clone(),
             start,
             segment_index: Self::segment_for_offset(parts, start),
         }
@@ -1114,14 +1105,14 @@ impl<T> AverList<T> {
             return Some(Self::empty());
         }
         Some(Self {
-            inner: Rc::clone(&self.inner),
+            inner: self.inner.clone(),
             start: self.start + 1,
             segment_index: 0,
         })
     }
 
     fn uncons(&self) -> Option<(&T, Self)> {
-        match self.inner.as_ref() {
+        match self.shape()? {
             AverListInner::Flat { items } => {
                 let head = items.get(self.start)?;
                 Some((head, self.flat_tail(items.len())?))
@@ -1130,7 +1121,7 @@ impl<T> AverList<T> {
             AverListInner::Concat { .. } => {
                 let head = self.first()?;
                 let indexed = self.indexed();
-                let AverListInner::Indexed { parts, len } = indexed.inner.as_ref() else {
+                let Some(AverListInner::Indexed { parts, len }) = indexed.shape() else {
                     unreachable!("a structural list produces a traversal index")
                 };
                 let tail = indexed.indexed_tail(*len, parts)?;
@@ -1176,10 +1167,13 @@ impl<T> AverList<T> {
                 return Self::empty();
             }
 
-            match current.inner.as_ref() {
+            let Some(shape) = current.shape() else {
+                return Self::empty();
+            };
+            match shape {
                 AverListInner::Flat { .. } => {
                     return Self {
-                        inner: Rc::clone(&current.inner),
+                        inner: current.inner.clone(),
                         start: current.start + remaining,
                         segment_index: 0,
                     };
@@ -1230,10 +1224,19 @@ impl<T> AverList<T> {
     }
 
     pub fn empty() -> Self {
-        Self::from_vec(vec![])
+        Self {
+            inner: None,
+            start: 0,
+            segment_index: 0,
+        }
     }
 
+    /// An empty vector with no room reserved is `[]`; one with room is kept,
+    /// so a list builder fills it in place.
     pub fn from_vec(items: Vec<T>) -> Self {
+        if items.capacity() == 0 {
+            return Self::empty();
+        }
         Self::node(AverListInner::Flat {
             items: Rc::new(items),
         })
@@ -1249,14 +1252,17 @@ impl<T> AverList<T> {
     where
         T: Clone,
     {
-        match self.inner.as_ref() {
-            AverListInner::Flat { items } if self.start == 0 => Rc::clone(items),
+        match self.shape() {
+            Some(AverListInner::Flat { items }) if self.start == 0 => Rc::clone(items),
             _ => Rc::new(self.to_vec()),
         }
     }
 
     pub fn len(&self) -> usize {
-        match self.inner.as_ref() {
+        let Some(shape) = self.shape() else {
+            return 0;
+        };
+        match shape {
             AverListInner::Flat { items } => items.len().saturating_sub(self.start),
             AverListInner::Prepend { len, .. }
             | AverListInner::Concat { len, .. }
@@ -1274,7 +1280,7 @@ impl<T> AverList<T> {
         let mut remaining = index;
 
         loop {
-            match current.inner.as_ref() {
+            match current.shape()? {
                 AverListInner::Flat { items } => {
                     return items.get(current.start.saturating_add(remaining));
                 }
@@ -1335,7 +1341,10 @@ impl<T> AverList<T> {
     }
 
     pub fn as_slice(&self) -> Option<&[T]> {
-        match self.inner.as_ref() {
+        let Some(shape) = self.shape() else {
+            return Some(&[]);
+        };
+        match shape {
             AverListInner::Flat { items } => Some(items.get(self.start..).unwrap_or(&[])),
             AverListInner::Prepend { .. }
             | AverListInner::Concat { .. }
@@ -1352,7 +1361,7 @@ impl<T> AverList<T> {
     }
 
     pub fn tail(&self) -> Option<Self> {
-        match self.inner.as_ref() {
+        match self.shape()? {
             AverListInner::Flat { items } => self.flat_tail(items.len()),
             AverListInner::Prepend { tail, .. } => Some(tail.clone()),
             AverListInner::Concat { .. }
@@ -1361,14 +1370,18 @@ impl<T> AverList<T> {
         }
     }
 
+    /// One node, also onto the empty list: a one-element list is a
+    /// `Prepend` onto `[]`, one allocation rather than a vector and its node.
     pub fn prepend(item: T, list: &Self) -> Self {
-        if list.is_empty() {
-            return Self::from_vec(vec![item]);
-        }
+        let tail = if list.is_empty() {
+            Self::empty()
+        } else {
+            list.clone()
+        };
         Self::node(AverListInner::Prepend {
             head: item,
-            tail: list.clone(),
-            len: list.len() + 1,
+            len: tail.len() + 1,
+            tail,
         })
     }
 
@@ -1383,18 +1396,18 @@ impl<T> AverList<T> {
     }
 
     pub fn append(list: &Self, item: T) -> Self {
-        let singleton = Self::from_vec(vec![item]);
+        let singleton = Self::prepend(item, &Self::empty());
         if list.is_empty() {
             return singleton;
         }
 
-        match list.inner.as_ref() {
-            AverListInner::Segments {
+        match list.shape() {
+            Some(AverListInner::Segments {
                 current,
                 rest,
                 start,
                 ..
-            } => {
+            }) => {
                 let mut parts = rest[*start..].to_vec();
                 if let Some(last) = parts.last_mut() {
                     if last.len() < LIST_APPEND_CHUNK_LIMIT {
@@ -1451,35 +1464,36 @@ impl<'a, T> Iterator for AverListIter<'a, T> {
                         return Some(item);
                     }
                 }
-                ListCursor::Node(list) => match list.inner.as_ref() {
-                    AverListInner::Flat { items } => {
+                ListCursor::Node(list) => match list.shape() {
+                    None => {}
+                    Some(AverListInner::Flat { items }) => {
                         let slice = items.get(list.start..).unwrap_or(&[]);
                         if !slice.is_empty() {
                             self.stack.push(ListCursor::Slice(slice, 0));
                         }
                     }
-                    AverListInner::Prepend { head, tail, .. } => {
+                    Some(AverListInner::Prepend { head, tail, .. }) => {
                         self.stack.push(ListCursor::Node(tail));
                         self.remaining = self.remaining.saturating_sub(1);
                         return Some(head);
                     }
-                    AverListInner::Concat { left, right, .. } => {
+                    Some(AverListInner::Concat { left, right, .. }) => {
                         self.stack.push(ListCursor::Node(right));
                         self.stack.push(ListCursor::Node(left));
                     }
-                    AverListInner::Segments {
+                    Some(AverListInner::Segments {
                         current,
                         rest,
                         start,
                         ..
-                    } => {
+                    }) => {
                         let slice = rest.get(*start..).unwrap_or(&[]);
                         if !slice.is_empty() {
                             self.stack.push(ListCursor::ListSlice(slice, 0));
                         }
                         self.stack.push(ListCursor::Node(current));
                     }
-                    AverListInner::Indexed { parts, .. } => {
+                    Some(AverListInner::Indexed { parts, .. }) => {
                         let previous_end = list
                             .segment_index
                             .checked_sub(1)
@@ -1725,6 +1739,36 @@ mod tests {
         assert!(same_key(&collected));
     }
 
+    /// `[]` is no node at all, and a one-element list is one `Prepend` node
+    /// onto it, where they used to be two and three allocations.
+    #[test]
+    fn an_empty_list_has_no_node_and_a_singleton_has_one() {
+        let empty = AverList::<i32>::empty();
+        assert!(empty.inner.is_none());
+        assert!(AverList::<i32>::from_vec(Vec::new()).inner.is_none());
+
+        let one = AverList::prepend(7, &empty);
+        let AverListInner::Prepend { head, tail, len } = one.rc().as_ref() else {
+            panic!("a singleton is a prepend node")
+        };
+        assert_eq!((*head, *len), (7, 1));
+        assert!(tail.inner.is_none());
+        assert_eq!(AverList::append(&empty, 7), one);
+        assert_eq!(AverList::concat(&empty, &one), one);
+        assert_eq!(
+            super::list_uncons(&one).map(|(h, t)| (*h, t.len())),
+            Some((7, 0))
+        );
+
+        assert!(super::list_uncons(&empty).is_none());
+        assert!(empty.tail().is_none());
+        assert!(empty.get(0).is_none());
+        assert!(empty.iter().next().is_none());
+        assert_eq!(empty.as_slice(), Some(&[][..]));
+        assert!(empty.drop_first(3).is_empty());
+        assert!(empty.into_rc_vec().is_empty());
+    }
+
     /// One step off a flat list allocates nothing: the tail is the node it was
     /// taken from, read from one element further in. A fresh node per step is
     /// what every compiled list walk used to pay for (issue #911).
@@ -1735,7 +1779,7 @@ mod tests {
 
         assert_eq!(*head, 0);
         assert!(
-            super::Rc::ptr_eq(&list.inner, &tail.inner),
+            super::Rc::ptr_eq(list.rc(), tail.rc()),
             "uncons built a node for the tail instead of stepping the offset",
         );
         assert_eq!(tail.len(), 63);
@@ -1749,7 +1793,7 @@ mod tests {
         let tail = list.tail().expect("non-empty list has a tail");
 
         assert!(
-            super::Rc::ptr_eq(&list.inner, &tail.inner),
+            super::Rc::ptr_eq(list.rc(), tail.rc()),
             "tail built a node instead of stepping the offset",
         );
         assert_eq!(tail.to_vec(), (1..8).collect::<Vec<i32>>());
@@ -1768,7 +1812,7 @@ mod tests {
             seen.push(*head);
             if !tail.is_empty() {
                 assert!(
-                    super::Rc::ptr_eq(&list.inner, &tail.inner),
+                    super::Rc::ptr_eq(list.rc(), tail.rc()),
                     "the walk left the node it started on at element {}",
                     seen.len(),
                 );
@@ -1859,12 +1903,12 @@ mod tests {
         let third = AverList::prepend(2, &base);
         let second = AverList::prepend(1, &third);
         let list = AverList::prepend(0, &second);
-        let counts = |l: &AverList<i32>| super::Rc::strong_count(&l.inner);
+        let counts = |l: &AverList<i32>| super::Rc::strong_count(l.rc());
         let before = [counts(&list), counts(&second), counts(&third)];
 
         let stepped = list.drop_first(2);
 
-        assert!(super::Rc::ptr_eq(&stepped.inner, &third.inner));
+        assert!(super::Rc::ptr_eq(stepped.rc(), third.rc()));
         assert_eq!(
             [counts(&list), counts(&second), counts(&third)],
             [before[0], before[1], before[2] + 1],
@@ -2013,7 +2057,7 @@ mod tests {
 
         for list in [right, left] {
             let (_, first_tail) = super::list_uncons(&list).expect("concat unconses");
-            let table = match first_tail.inner.as_ref() {
+            let table = match first_tail.rc().as_ref() {
                 AverListInner::Indexed { parts, .. } => super::Rc::clone(parts),
                 other => panic!("concat tail was not indexed: {}", aver_display_shape(other)),
             };
@@ -2021,7 +2065,7 @@ mod tests {
             let mut rest = first_tail;
             while let Some((_, tail)) = super::list_uncons(&rest) {
                 if !tail.is_empty() {
-                    let AverListInner::Indexed { parts, .. } = tail.inner.as_ref() else {
+                    let AverListInner::Indexed { parts, .. } = tail.rc().as_ref() else {
                         panic!("indexed traversal changed representation")
                     };
                     assert!(
@@ -2041,13 +2085,13 @@ mod tests {
             list = AverList::concat(&list, &AverList::from_vec(vec![value]));
         }
         let (_, tail) = super::list_uncons(&list).expect("concat unconses");
-        let table = match tail.inner.as_ref() {
+        let table = match tail.rc().as_ref() {
             AverListInner::Indexed { parts, .. } => super::Rc::clone(parts),
             other => panic!("expected Indexed, got {}", aver_display_shape(other)),
         };
 
         let dropped = tail.drop_first(30);
-        let AverListInner::Indexed { parts, .. } = dropped.inner.as_ref() else {
+        let AverListInner::Indexed { parts, .. } = dropped.rc().as_ref() else {
             panic!("drop_first changed the indexed representation")
         };
         assert!(super::Rc::ptr_eq(&table, parts));
@@ -2066,7 +2110,7 @@ mod tests {
             list = AverList::concat(&list, &part);
         }
         let (_, indexed_tail) = super::list_uncons(&list).expect("concat unconses");
-        let old_segment_count = match indexed_tail.inner.as_ref() {
+        let old_segment_count = match indexed_tail.rc().as_ref() {
             AverListInner::Indexed { parts, .. } => parts.len(),
             other => panic!("expected Indexed, got {}", aver_display_shape(other)),
         };
@@ -2074,7 +2118,7 @@ mod tests {
         let suffix = AverList::from_vec(vec![9, 10]);
         let joined = AverList::concat(&indexed_tail, &suffix);
         let (_, joined_tail) = super::list_uncons(&joined).expect("joined view unconses");
-        let new_segment_count = match joined_tail.inner.as_ref() {
+        let new_segment_count = match joined_tail.rc().as_ref() {
             AverListInner::Indexed { parts, .. } => parts.len(),
             other => panic!("expected Indexed, got {}", aver_display_shape(other)),
         };
@@ -2105,7 +2149,7 @@ mod tests {
             let (head, tail) = super::list_uncons(&list).expect("deep concat unconses");
             assert_eq!(*head, 7);
             assert_eq!(tail.len(), 19_999);
-            assert!(matches!(tail.inner.as_ref(), AverListInner::Indexed { .. }));
+            assert!(matches!(tail.rc().as_ref(), AverListInner::Indexed { .. }));
         }
     }
 
@@ -2247,7 +2291,7 @@ mod tests {
             list = AverList::append(&list, value);
         }
 
-        match list.inner.as_ref() {
+        match list.rc().as_ref() {
             AverListInner::Segments {
                 current,
                 rest,

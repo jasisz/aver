@@ -41,7 +41,7 @@ pub fn list_builder_new<T>(capacity: usize) -> AverList<T> {
 /// would have done anyway.
 pub fn list_builder_push<T: Clone>(mut builder: AverList<T>, item: T) -> AverList<T> {
     if builder.start == 0
-        && let Some(AverListInner::Flat { items }) = Rc::get_mut(&mut builder.inner)
+        && let Some(AverListInner::Flat { items }) = builder.inner.as_mut().and_then(Rc::get_mut)
         && let Some(vec) = Rc::get_mut(items)
     {
         vec.push(item);
