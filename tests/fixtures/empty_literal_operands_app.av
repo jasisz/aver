@@ -96,6 +96,21 @@ fn reversedEqual() -> Bool
     ? "Whether a reversed empty list equals an empty list."
     List.reverse([]) == []
 
+fn boundMapHas() -> Bool
+    ? "Whether an empty map bound to a name has key 1; only the annotation types its values."
+    m: Map<Int, Int> = {}
+    Map.has(m, 1)
+
+fn boundListLen() -> Int
+    ? "The length of an empty list of String bound to a name."
+    xs: List<String> = []
+    List.len(xs)
+
+fn boundNoneEqual() -> Bool
+    ? "Whether an Option.None bound to a name equals Option.None."
+    o: Option<Int> = Option.None
+    o == Option.None
+
 fn main() -> Unit
     ! [Console.print]
     Console.print("listLen {listLen()}")
@@ -120,3 +135,6 @@ fn main() -> Unit
     Console.print("mapsEqual {mapsEqual()}")
     Console.print("nonesEqual {nonesEqual()}")
     Console.print("reversedEqual {reversedEqual()}")
+    Console.print("boundMapHas {boundMapHas()}")
+    Console.print("boundListLen {boundListLen()}")
+    Console.print("boundNoneEqual {boundNoneEqual()}")
