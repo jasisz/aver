@@ -12,6 +12,8 @@
 //!   entry module or dependency alike.
 //! - Lean: `aver proof` emitted `def f (x : Int) : Int := (base + x)` with
 //!   no `base`, without a warning; Lean answered `Unknown identifier`.
+//! - Every backend: a binding listed in `exposes` could not be read from
+//!   another module; `Lib.base` was `Unknown member 'Lib.base'`.
 //!
 //! Pinned here: VM, wasm-gc and Rust print the same lines and judge the
 //! same `verify` blocks, with bindings in the entry and in dependencies
@@ -123,10 +125,15 @@ verify bump
 /// so `Core`'s bindings must be filled before `Lib`'s.
 const LIB: &str = r#"module Lib
     depends [Core]
-    exposes [shifted, greeting]
-    intent = "Exposes fns reading module-level bindings."
+    exposes [shifted, greeting, base, Bounds, bounds]
+    intent = "Exposes fns reading module-level bindings, and two bindings."
 
-base = 40
+record Bounds
+    low: Int
+    high: Int
+
+base: Int = 40
+bounds: Bounds = Bounds(low = 1, high = 9)
 offset = twice(base)
 bumped = Core.bump(0)
 label = "lib-{base}"
@@ -165,6 +172,10 @@ fn h(x: Int) -> Int
     ? "Shifts through Lib, then adds this module's base."
     Lib.shifted(x) + base
 
+fn fromLib(x: Int) -> Int
+    ? "Reads the bindings Lib exposes."
+    Lib.base + Lib.bounds.high - Lib.bounds.low + x
+
 verify h
     h(1) => 133
     h(0) => 125 + base
@@ -177,13 +188,22 @@ verify h law readsBothModules
     given x: Int = [0, 1, 2]
     h(x) => 125 + x + base
 
+verify fromLib
+    fromLib(1) => 49
+    fromLib(0) => Lib.base + 8
+
+verify fromLib law readsExposedBinding
+    given x: Int = [0, 1, 2]
+    fromLib(x) => x + Lib.base + 8
+
 fn main() -> Unit
     ! [Console.print]
     Console.print(String.fromInt(h(1)))
     Console.print(Lib.greeting("x"))
+    Console.print(String.fromInt(fromLib(1) + Lib.base))
 "#;
 
-const APP_OUT: &str = "133\nlib-40:x";
+const APP_OUT: &str = "133\nlib-40:x\n89";
 
 /// A fresh directory holding `files`; returns it.
 fn project(prefix: &str, files: &[(&str, &str)]) -> PathBuf {
@@ -256,8 +276,8 @@ fn vm_runs_and_verifies_bindings_in_the_entry_and_in_dependencies() {
         aver(&many, &["run"]).unwrap_or_else(|e| panic!("VM run failed:\n{e}")),
         APP_OUT
     );
-    // App 2 + 2 × 3, Lib 1 + 2 × 3, Core 1.
-    assert_verify_passes(&many, &["verify"], 16);
+    // App 4 + 3 × 3, Lib 1 + 2 × 3, Core 1.
+    assert_verify_passes(&many, &["verify"], 21);
 
     let _ = fs::remove_dir_all(one);
     let _ = fs::remove_dir_all(many);
@@ -295,10 +315,55 @@ fn vm_verify_fails_a_false_case_over_a_dependency_binding() {
     let _ = fs::remove_dir_all(dir);
 }
 
+/// `aver check` on the multi-module program with `lib` and `app` rewritten.
+fn check_multi(lib: &str, app: &str) -> String {
+    let dir = project(
+        "check",
+        &[("core.av", CORE), ("lib.av", lib), ("app.av", app)],
+    );
+    let out = Command::new(aver_bin())
+        .current_dir(repo_root())
+        .arg("check")
+        .arg(dir.join("app.av"))
+        .arg("--module-root")
+        .arg(&dir)
+        .output()
+        .expect("aver executes");
+    let _ = fs::remove_dir_all(dir);
+    assert!(
+        !out.status.success(),
+        "the check must fail:\n{}",
+        format_output(&out)
+    );
+    format_output(&out)
+}
+
+/// A binding its module leaves out of `exposes` cannot be read from another
+/// module, and one listed there must say its type.
+#[test]
+fn only_an_exposed_typed_binding_is_read_from_another_module() {
+    let hidden = check_multi(
+        LIB,
+        &APP.replace("    Lib.base + Lib.bounds", "    Lib.offset + Lib.bounds"),
+    );
+    assert!(
+        hidden.contains("Unknown member 'Lib.offset' (not exposed or missing)"),
+        "{hidden}"
+    );
+    let untyped = check_multi(
+        &LIB.replace("exposes [shifted,", "exposes [offset, shifted,"),
+        APP,
+    );
+    assert!(
+        untyped.contains("Binding 'offset' is in exposes, so it needs a type annotation"),
+        "{untyped}"
+    );
+}
+
 #[cfg(feature = "wasm")]
 #[test]
 fn wasm_gc_agrees_with_the_vm_on_run_and_verify() {
-    for (dir, expected, cases) in [(single(), SINGLE_OUT, 14), (multi(), APP_OUT, 16)] {
+    for (dir, expected, cases) in [(single(), SINGLE_OUT, 14), (multi(), APP_OUT, 21)] {
         assert_eq!(
             aver(&dir, &["run", "--wasm-gc"])
                 .unwrap_or_else(|e| panic!("wasm-gc run failed:\n{e}")),
@@ -473,7 +538,11 @@ const STEP_LAWS: &[(&str, &[&str])] = &[
     ("single", &["f.readsBase"]),
     (
         "multi",
-        &["Lib.shifted.readsEveryBinding", "h.readsBothModules"],
+        &[
+            "Lib.shifted.readsEveryBinding",
+            "h.readsBothModules",
+            "fromLib.readsExposedBinding",
+        ],
     ),
 ];
 

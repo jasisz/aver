@@ -253,6 +253,11 @@ pub enum SymbolKind {
         field_name: String,
         field_type: String,
     },
+    /// A module-level binding (`base: Int = 40`) its module exposes, read
+    /// from an importer as `Module.base`. `annotation` is its written type.
+    Binding {
+        annotation: String,
+    },
 }
 
 /// All symbols exported by a module tree — canonical source of truth.
@@ -300,6 +305,25 @@ impl SymbolRegistry {
                 types: Vec::new(),
             };
             Self::collect_from_exports(module_name, &functions_only, &mut entries);
+            let exposes = effective_exposes(items);
+            for item in *items {
+                // Only a typed binding has a type an importer can read
+                // without checking this module's body; `aver check` refuses
+                // an untyped one listed in `exposes`.
+                if let TopLevel::Stmt(crate::ast::Stmt::Binding(name, Some(annotation), _)) = item
+                    && is_exposed(name, exposes)
+                {
+                    entries.push(SymbolEntry {
+                        id: entries.len() as u32,
+                        canonical_name: qualified_name(module_name, name),
+                        alias: None,
+                        module: module_name.to_string(),
+                        kind: SymbolKind::Binding {
+                            annotation: annotation.clone(),
+                        },
+                    });
+                }
+            }
         }
 
         // The same declaration may be reachable through two facades. Emit its

@@ -94,6 +94,21 @@ fn reached_bindings(
                 {
                     reads.push(name.clone());
                 }
+                // A binding another module exposes, read as `Lib.base`: a
+                // read of `base` inside `Lib`.
+                if let Expr::Attr(..) = node
+                    && let Some(dotted) = crate::ir::expr_to_dotted_name(node)
+                    && let Some((prefix, name)) = dotted.rsplit_once('.')
+                    && super::module_bindings_of(inputs, Some(prefix))
+                        .iter()
+                        .any(|b| b.name == name)
+                {
+                    pending.push(Pending {
+                        owner: Some(prefix.to_string()),
+                        spelling: Some(prefix.to_string()),
+                        exprs: vec![Spanned::bare(Expr::Ident(name.to_string()))],
+                    });
+                }
             });
             for read in reads {
                 let spelled = spell(item.spelling.as_deref(), &read);

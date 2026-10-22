@@ -931,6 +931,29 @@ pub(crate) fn binding_read(scope: Option<&str>, name: &str) -> String {
     format!("{}.{name}", scope.unwrap_or(""))
 }
 
+/// `t` with each read of a binding another module exposes (`Lib.base`,
+/// written as a field of `Lib`) spelled as the one name every step term
+/// reads that binding under ([`binding_read`]).
+fn qualify_imported_bindings(t: &Term, inputs: &ProofLowerInputs) -> Term {
+    if let crate::ir::hir::ResolvedExpr::Attr(..) = &t.node
+        && let Some(dotted) = crate::ir::hir::classify::resolved_to_dotted(&t.node)
+        && let Some((prefix, name)) = dotted.rsplit_once('.')
+        && let Some(binding) = inputs
+            .dep_modules
+            .iter()
+            .find(|m| m.prefix == prefix)
+            .and_then(|m| m.bindings.iter().find(|b| b.name == name))
+    {
+        let read = crate::ir::proof_steps::term::var(&binding_read(Some(prefix), name));
+        if let Ok(ty) = binding.declared_type() {
+            read.set_ty(ty);
+        }
+        return read;
+    }
+    crate::ir::proof_steps::term::map_children(t, &mut |c| Ok(qualify_imported_bindings(c, inputs)))
+        .unwrap_or_else(|_| t.clone())
+}
+
 /// `t`, written in module `scope`, with each read of one of that module's
 /// bindings spelled the way every step term spells it ([`binding_read`]).
 /// `locals` are the names in scope where `t` is written (a law's givens, a
@@ -944,6 +967,21 @@ pub(crate) fn qualify_bindings(
 ) -> Term {
     let mut free = Vec::new();
     crate::ir::proof_steps::term::free_vars(t, &mut free);
+    // `Lib.base` reads the free name `Lib`.
+    let imported;
+    let t = if free.iter().any(|n| {
+        inputs
+            .dep_modules
+            .iter()
+            .any(|m| !m.bindings.is_empty() && m.prefix.split('.').next() == Some(n.as_str()))
+    }) {
+        imported = qualify_imported_bindings(t, inputs);
+        free.clear();
+        crate::ir::proof_steps::term::free_vars(&imported, &mut free);
+        &imported
+    } else {
+        t
+    };
     free.retain(|n| !locals.contains(n));
     if free.is_empty() {
         return t.clone();

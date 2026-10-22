@@ -693,7 +693,9 @@ impl TypeChecker {
                         }
                     }
                 }
-                SymbolKind::Constructor { .. } | SymbolKind::RecordField { .. } => {
+                SymbolKind::Constructor { .. }
+                | SymbolKind::RecordField { .. }
+                | SymbolKind::Binding { .. } => {
                     // Constructors / record fields aren't part of
                     // SymbolTable's fn/type id space — they're keyed
                     // by `CtorId` under their owning type. Their bare
@@ -798,6 +800,11 @@ impl TypeChecker {
                             },
                         );
                     }
+                }
+                SymbolKind::Binding { annotation } => {
+                    let ty = parse_type_str_strict(annotation).unwrap_or(Type::Invalid);
+                    let ty = self.canonicalize_named_in_module(ty, &entry.module);
+                    self.value_members.insert(entry.canonical_name.clone(), ty);
                 }
                 SymbolKind::RecordField { field_type, .. } => {
                     let field_ty = self.canonicalize_named_in_module(
