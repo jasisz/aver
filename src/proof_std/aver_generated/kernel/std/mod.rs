@@ -1422,20 +1422,18 @@ pub fn rounds(
     if (n > aver_rt::AverInt::from_i64(0)) {
         match crate::proof_std::aver_generated::kernel::std::rewriteOnce(hyps, &r.to)? {
             None => Ok(r),
-            Some(step @ _) => Ok(crate::proof_std::aver_generated::kernel::lib::chain(
-                t,
-                &r,
-                crate::proof_std::aver_generated::kernel::lib::chain(
-                    r.to.clone(),
-                    &step.clone(),
-                    crate::proof_std::aver_generated::kernel::std::rounds(
+            Some(step @ _) => Ok({
+                let __arg7 @ _ = {
+                    let __arg6 @ _ = crate::proof_std::aver_generated::kernel::std::rounds(
                         s,
                         hyps,
                         step.to.clone(),
                         n.sub(&aver_rt::AverInt::from_i64(1)),
-                    )?,
-                ),
-            )),
+                    )?;
+                    crate::proof_std::aver_generated::kernel::lib::chain(r.to.clone(), step, __arg6)
+                };
+                crate::proof_std::aver_generated::kernel::lib::chain(t, r, __arg7)
+            }),
         }
     } else {
         Ok(r)

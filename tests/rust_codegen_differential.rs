@@ -3817,6 +3817,50 @@ fn a_param_moved_and_read_in_one_call_is_read_first_and_moved() {
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A record param whose field holding a Map goes into a record literal at
+/// the param's last use (`remembered(RB(b = i == 1, st = r.st), k)?` after
+/// `i = r.i`) is taken by value and the field moves into the literal.
+/// Borrowed, the function cloned the field while the caller's value still
+/// held the Map, and every write to it copied the whole Map. The compiled
+/// binary must make 2^17 steps within a minute.
+#[test]
+fn a_param_field_stored_into_a_literal_moves_and_the_param_is_taken_by_value() {
+    let relative = "tests/fixtures/param_field_into_literal_app.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("param_field_into_literal", &src);
+    assert!(
+        emitted.contains("pub fn bindingKept(mut r @ _: RI,")
+            && emitted.contains("st: r.st }")
+            && !emitted.contains("r.st.clone()"),
+        "bindingKept must take `r` by value and move `r.st` into the literal:\n{emitted}"
+    );
+    let file = repo_root().join(relative);
+    let ws = temp_dir("param_field_into_literal");
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| {
+        compile_rust(&file, &project, "param_field_into_literal", None, &[])?;
+        let bin = cargo_build(&project, "param_field_into_literal")?;
+        let small = run_within(&bin, "1000", 60)?;
+        let vm = Command::new(aver_bin())
+            .current_dir(repo_root())
+            .args(["run", relative, "--", "1000"])
+            .output()
+            .map_err(|e| format!("vm run: {e}"))?;
+        let vm = String::from_utf8_lossy(&vm.stdout).trim().to_string();
+        if small != vm {
+            return Err(format!("--- VM ---\n{vm}\n--- Rust ---\n{small}"));
+        }
+        let got = run_within(&bin, "131072", 60)?;
+        match got == "i 131072 n 131072 len 131072 last 262142" {
+            true => Ok(()),
+            false => Err(format!("at 2^17 steps: {got}")),
+        }
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A local Vector named again only as the fallback of its own `Vector.set`
 /// (`Option.withDefault(Vector.set(w, i, x), w)`, or `w` in the `None` arm
 /// of a match on the set) moves into the set: the set fails only out of

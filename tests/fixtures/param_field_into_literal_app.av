@@ -1,0 +1,59 @@
+module ParamFieldIntoLiteral
+    intent =
+        "Fixture: a record param whose Map-holding field goes into a record literal handed to a function that writes the Map; as many steps as the first argument says."
+    effects [Console.print, Args.get]
+
+record St
+    seen: Map<Int, Int>
+    n: Int
+
+record RI
+    i: Int
+    st: St
+
+record RB
+    b: Bool
+    st: St
+
+fn remembered(rb: RB, k: Int) -> Result<RB, String>
+    ? "k remembered in the map, failing on a negative k."
+    match k < 0
+        true -> Result.Err("negative {k}")
+        false -> Result.Ok(RB(b = rb.b, st = St(seen = Map.set(rb.st.seen, k, k * 2), n = rb.st.n + 1)))
+
+fn bindingKept(r: RI, k: Int) -> Result<RI, String>
+    ? "The state after k is remembered; the field `st` goes into the literal."
+    i = r.i
+    kept = remembered(RB(b = i == 1, st = r.st), k)?
+    Result.Ok(RI(i = i + 1, st = kept.st))
+
+fn bindingEq(r: RI, k: Int) -> Result<RI, String>
+    ? "The same state, failing on a negative k."
+    match k < 0
+        true -> Result.Err("negative {k}")
+        false -> Result.Ok(r)
+
+fn steps(r: RI, k: Int, n: Int) -> Result<RI, String>
+    ? "n steps."
+    match k >= n
+        true -> Result.Ok(r)
+        false -> steps(bindingKept(bindingEq(r, k)?, k)?, k + 1, n)
+
+fn sizeArg() -> Int
+    ? "The first argument as a number, 1000 without one."
+    ! [Args.get]
+    match Vector.get(Vector.fromList(Args.get()), 0)
+        Option.Some(text) -> Result.withDefault(Int.fromString(text), 1000)
+        Option.None -> 1000
+
+fn report(r: Result<RI, String>) -> String
+    ? "The step count, the map size and the last value, or the error."
+    match r
+        Result.Ok(x) -> "i {x.i} n {x.st.n} len {Map.len(x.st.seen)} last {Option.withDefault(Map.get(x.st.seen, x.i - 1), -1)}"
+        Result.Err(e) -> e
+
+fn main()
+    ! [Console.print, Args.get]
+    n = sizeArg()
+    r = RI(i = 0, st = St(seen = {}, n = 0))
+    Console.print("{report(steps(r, 0, n))}")
