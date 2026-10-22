@@ -1251,16 +1251,16 @@ def charToDigit? : Char -> Option Nat
   | _ => none
 
 theorem charToDigit_digitChar : ∀ d : Nat, d < 10 -> charToDigit? (digitChar d) = some d
-  | 0, _ => by simp [digitChar, charToDigit?]
-  | 1, _ => by simp [digitChar, charToDigit?]
-  | 2, _ => by simp [digitChar, charToDigit?]
-  | 3, _ => by simp [digitChar, charToDigit?]
-  | 4, _ => by simp [digitChar, charToDigit?]
-  | 5, _ => by simp [digitChar, charToDigit?]
-  | 6, _ => by simp [digitChar, charToDigit?]
-  | 7, _ => by simp [digitChar, charToDigit?]
-  | 8, _ => by simp [digitChar, charToDigit?]
-  | 9, _ => by simp [digitChar, charToDigit?]
+  | 0, _ => by decide
+  | 1, _ => by decide
+  | 2, _ => by decide
+  | 3, _ => by decide
+  | 4, _ => by decide
+  | 5, _ => by decide
+  | 6, _ => by decide
+  | 7, _ => by decide
+  | 8, _ => by decide
+  | 9, _ => by decide
   | Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ n))))))))), h => by
       omega
 
