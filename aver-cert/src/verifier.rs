@@ -552,6 +552,8 @@ fn replay_args_for(mode: ReplayMode, override_binary: Option<&str>) -> Option<Ve
 const WITNESS_NAMESPACE: &str = "AverCertChecker";
 /// The export every paranoid kernel reads, and nanoda's configuration.
 const PARANOID_EXPORT_FILE: &str = "witness-closure.ndjson";
+/// nanoda's export, when declarations of the closure rest on `sorryAx`.
+const NANODA_EXPORT_FILE: &str = "witness-closure-nanoda.ndjson";
 const NANODA_CONFIG_FILE: &str = "nanoda.json";
 
 /// The paranoid final replay: one `leanexport` of the witness module and its
@@ -559,10 +561,15 @@ const NANODA_CONFIG_FILE: &str = "nanoda.json";
 /// then every kernel the pinned release ships over it, each judged by its own
 /// exit status. Fails closed on a failed or empty export, and on any kernel
 /// that is missing, cannot start, or rejects.
+///
+/// nanoda alone reads the export without the declarations that depend on
+/// `sorryAx` (see [`crate::nanoda_export`]). `credited` names the witness
+/// declarations a credit rests on; the replay fails if one of them is left out.
 fn paranoid_replay(
     lean: &LeanRunner,
     build_dir: &Path,
     kernels: &[crate::kernels::Kernel],
+    credited: &[String],
 ) -> Result<(), String> {
     let started = std::time::Instant::now();
     let exported = lean
@@ -593,9 +600,52 @@ fn paranoid_replay(
     let config_text = config_path.to_string_lossy().into_owned();
     std::fs::write(&export_path, &exported.stdout)
         .map_err(|error| format!("cannot write the paranoid export: {error}"))?;
+    let mut nanoda_path = export_path.clone();
+    let started = std::time::Instant::now();
+    let filtered = crate::nanoda_export::without_sorry(&exported.stdout)
+        .map_err(|error| format!("cannot read the paranoid export for nanoda: {error}"))?;
+    report_step_timing("nanoda export", started.elapsed(), &[]);
+    if let Some(filtered) = filtered {
+        if let Some(name) = filtered.dropped.iter().find(|name| credited.contains(name)) {
+            return Err(format!(
+                "certificate failed paranoid kernel replay: credited declaration `{}` depends \
+                 on sorryAx",
+                display_safe(name)
+            ));
+        }
+        nanoda_path = build_dir.join(NANODA_EXPORT_FILE);
+        std::fs::write(&nanoda_path, &filtered.export)
+            .map_err(|error| format!("cannot write the nanoda export: {error}"))?;
+        let shown: Vec<&str> = filtered
+            .dropped
+            .iter()
+            .take(5)
+            .map(String::as_str)
+            .collect();
+        output::line(
+            Stream::Out,
+            "paranoid:",
+            Style::Yellow,
+            &format!(
+                "nanoda reads the export without the {} declarations that depend on sorryAx \
+                 (none is credited; every other kernel checks them): {}{}",
+                filtered.dropped.len(),
+                shown.join(", "),
+                if filtered.dropped.len() > shown.len() {
+                    ", ..."
+                } else {
+                    ""
+                }
+            ),
+            Style::Plain,
+        );
+    }
     drop(exported);
-    std::fs::write(&config_path, crate::kernels::nanoda_config(&export_text))
-        .map_err(|error| format!("cannot write the nanoda configuration: {error}"))?;
+    std::fs::write(
+        &config_path,
+        crate::kernels::nanoda_config(&nanoda_path.to_string_lossy()),
+    )
+    .map_err(|error| format!("cannot write the nanoda configuration: {error}"))?;
     for kernel in kernels {
         let phase = format!("{} kernel", kernel.name);
         let mut arguments = vec!["env".to_string(), kernel.binary.to_string()];
@@ -613,6 +663,7 @@ fn paranoid_replay(
         }
     }
     let _ = std::fs::remove_file(&export_path);
+    let _ = std::fs::remove_file(build_dir.join(NANODA_EXPORT_FILE));
     Ok(())
 }
 
@@ -846,7 +897,13 @@ fn trusted_check(
     let bridged_laws = parse_bridged_law_audits(&audited.combined, &candidates.laws)?;
     let source_bridges = parse_bridge_audits(&audited.combined, &candidates.source_bridges)?;
     if replay_mode == ReplayMode::Paranoid {
-        paranoid_replay(&lean, &build.path, &crate::kernels::PARANOID_KERNELS)?;
+        let credited = credited_roots(&laws, &bridged_laws, &source_bridges);
+        paranoid_replay(
+            &lean,
+            &build.path,
+            &crate::kernels::PARANOID_KERNELS,
+            &credited,
+        )?;
     } else if let Some(replay_args) = kernel_replay_args(replay_mode) {
         let replay_args: Vec<&str> = replay_args.iter().map(String::as_str).collect();
         let replayed = run_lake(&lean, &build.path, "final kernel replay", &replay_args)?;
@@ -880,6 +937,33 @@ fn trusted_check(
         artifact_hash: actual_hash,
         manifest,
     })
+}
+
+/// The witness declarations a credit rests on: the accepted root, the report
+/// pins, and every law, bridged-law and bridge pin whose audit is clean.
+fn credited_roots(
+    laws: &[LawOutcome],
+    bridged_laws: &[LawOutcome],
+    source_bridges: &[BridgeOutcome],
+) -> Vec<String> {
+    let pins = |prefix: &str, clean: Vec<bool>| -> Vec<String> {
+        (clean.into_iter().enumerate())
+            .filter(|(_, clean)| *clean)
+            .map(|(index, _)| format!("{prefix}{index}"))
+            .collect()
+    };
+    let clean = |laws: &[LawOutcome]| laws.iter().map(|law| law.offending.is_empty()).collect();
+    std::iter::once(CHECKED_ROOT.to_string())
+        .chain((0..REPORT_PIN_COUNT).map(|index| format!("{REPORT_PIN_PREFIX}{index}")))
+        .chain(pins(LAW_PIN_PREFIX, clean(laws)))
+        .chain(pins(BRIDGED_LAW_PIN_PREFIX, clean(bridged_laws)))
+        .chain(pins(
+            BRIDGE_PIN_PREFIX,
+            (source_bridges.iter())
+                .map(|bridge| bridge.offending.is_empty())
+                .collect(),
+        ))
+        .collect()
 }
 
 /// The per-export line printed under a CERTIFIED/CHECKED verdict. Everything
@@ -5068,13 +5152,34 @@ mod tests {
         };
 
         build("def Elsewhere.marker : Nat := 1\n");
-        let error = paranoid_replay(&runner, &dir, &[missing]).unwrap_err();
+        let error = paranoid_replay(&runner, &dir, &[missing], &[]).unwrap_err();
         assert!(error.contains("does not contain the witness"), "{error}");
 
         build(&format!("def {WITNESS_NAMESPACE}.marker : Nat := 1\n"));
-        let error = paranoid_replay(&runner, &dir, &[missing]).unwrap_err();
+        let error = paranoid_replay(&runner, &dir, &[missing], &[]).unwrap_err();
         assert!(error.contains("`definitely-missing-kernel`"), "{error}");
         assert!(error.contains("not a skip"), "{error}");
+
+        // nanoda admits only the standard axioms and stops on `sorryAx`. It
+        // reads the export without what depends on `sorry`, and the replay
+        // fails when a credited declaration is among those.
+        let nanoda = crate::kernels::PARANOID_KERNELS
+            .into_iter()
+            .find(|kernel| kernel.input == crate::kernels::KernelInput::NanodaConfig)
+            .unwrap();
+        build(&format!(
+            "theorem {WITNESS_NAMESPACE}.open_claim : 1 = 2 := sorry\n\
+             theorem {WITNESS_NAMESPACE}.cites_open : 1 = 2 ∧ True := ⟨{WITNESS_NAMESPACE}.open_claim, trivial⟩\n\
+             theorem {WITNESS_NAMESPACE}.credited : 1 = 1 := rfl\n"
+        ));
+        let credited = [format!("{WITNESS_NAMESPACE}.credited")];
+        paranoid_replay(&runner, &dir, &[nanoda], &credited).unwrap();
+        let credited = [format!("{WITNESS_NAMESPACE}.cites_open")];
+        let error = paranoid_replay(&runner, &dir, &[nanoda], &credited).unwrap_err();
+        assert!(
+            error.contains("`AverCertChecker.cites_open` depends on sorryAx"),
+            "{error}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
