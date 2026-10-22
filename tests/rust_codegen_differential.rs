@@ -6155,16 +6155,30 @@ fn rateLet(samples: List<Sample>) -> Int
     newest = firstOr(samples)
     slopeOf(newest, lastOf(samples, newest))
 
+record Held
+    first: Int
+    kept: Sample
+
+fn pairUp(a: Sample, b: Sample) -> Held
+    ? "Read one sample, keep the other."
+    Held(first = a.done, kept = b)
+
+fn pairLet(samples: List<Sample>) -> Int
+    ? "Borrow a bound sample and hand the same one on in one call."
+    newest = firstOr(samples)
+    held = pairUp(newest, newest)
+    held.first + held.kept.done
+
 fn main() -> Unit
     ! [Console.print]
     samples = [Sample(atMs = 2, done = 4), Sample(atMs = 0, done = 1)]
-    Console.print("{rateOf(samples)}:{sameOf(samples)}:{rateLet(samples)}")
+    Console.print("{rateOf(samples)}:{sameOf(samples)}:{rateLet(samples)}:{pairLet(samples)}")
 "#,
     )
     .expect("write borrowed-call-argument probe source");
 
     let vm_stdout = run_vm(&source, None).expect("VM run");
-    assert_eq!(vm_stdout, "3:0:3");
+    assert_eq!(vm_stdout, "3:0:3:8");
 
     let project = ws.join("project");
     fs::create_dir_all(&project).expect("create project dir");
@@ -6175,6 +6189,12 @@ fn main() -> Unit
         if !emitted.contains("= lastOf(samples, newest.clone());\n    slopeOf(&newest, &__arg") {
             return Err(format!(
                 "the later argument was not bound before the borrow:\n{emitted}"
+            ));
+        }
+        // The same local borrowed and then moved in one call.
+        if !emitted.contains("pairUp(&newest.clone(), newest)") {
+            return Err(format!(
+                "the borrow was not detached before the move of the same local:\n{emitted}"
             ));
         }
         // A list head is borrowed from the list, so only the move clones it.
