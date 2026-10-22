@@ -414,7 +414,9 @@ impl TypeChecker {
             self.fn_bindings.clear();
 
             let errors_before = self.errors.len();
+            self.settled_bindings = self.settled_binding_types(f, &declared_effects);
             let last_type = self.check_stmts(f.body.stmts(), &f.name, &declared_effects);
+            self.settled_bindings.clear();
             if self.errors.len() == errors_before && !self.current_fn_generated {
                 self.report_unsettled_bindings(f.body.stmts(), &f.name);
             }
@@ -1101,7 +1103,8 @@ impl TypeChecker {
                         let parsed_ann = type_ann
                             .as_ref()
                             .and_then(|src| crate::types::parse_type_str_strict(src).ok())
-                            .map(|ty| self.canonicalize_named(ty));
+                            .map(|ty| self.canonicalize_named(ty))
+                            .or_else(|| self.settled_bindings.get(name).cloned());
                         let inferred = self.infer_type_with_expected(expr, parsed_ann.as_ref());
                         // Mirror the top-level rejection above — fn refs
                         // aren't supported as local bindings, period. See

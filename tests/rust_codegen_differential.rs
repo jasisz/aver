@@ -691,8 +691,9 @@ fn empty_literal_operands_match_between_rust_and_vm() {
 }
 
 /// An empty literal bound to a name without a type, settled by a later
-/// read (`e = {}` then `Map.set(e, 1, "a")`). The checker accepts it, and
-/// rustc settles the type from the same read, so the crate builds.
+/// read (`e = {}` then `Map.set(e, 1, "a")`). The checker stamps the
+/// binding with the type that read settles, so the crate builds.
+/// `tests/cross_backend_stress.rs` runs the same file on wasm-gc.
 #[test]
 fn bound_empty_literal_settled_later_matches_between_rust_and_vm() {
     assert_plain_parity("tests/fixtures/bound_empty_settled_later_app.av", None)

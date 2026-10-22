@@ -894,6 +894,10 @@ struct TypeChecker {
     used_names: HashSet<String>,
     /// Bindings defined in the current function body: (name, line).
     fn_bindings: Vec<(String, usize)>,
+    /// Types a later read settles for the current function's unannotated
+    /// open bindings (`e = {}` then `Map.set(e, 1, "a")`); the binding is
+    /// checked as if it carried that type. See `settled_binding_types`.
+    settled_bindings: HashMap<String, Type>,
     /// Unused binding warnings collected during checking: (binding_name, fn_name, line).
     unused_warnings: Vec<(String, String, usize)>,
     /// Oracle v1: `.result` / `.trace` / `.trace.*` projections are
@@ -954,6 +958,7 @@ impl TypeChecker {
             self_host_mode: false,
             used_names: HashSet::new(),
             fn_bindings: Vec::new(),
+            settled_bindings: HashMap::new(),
             unused_warnings: Vec::new(),
             in_verify_trace_context: false,
             capabilities: crate::capability::CapabilityRegistry::default(),
