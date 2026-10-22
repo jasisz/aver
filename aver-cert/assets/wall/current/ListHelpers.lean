@@ -661,6 +661,15 @@ theorem hRun_b (k : Nat) (x : BI) (rest : List HI) (l st : List WVal) :
       | none => none := by
   simp only [hRun]
 
+/-- `i64.const c` pushes `c`, for a symbolic `c`. The interpreter recurses on
+    the size of its instructions, and a constant's size is its magnitude: a
+    proof that runs it on a literal near `2 ^ 63` sends a kernel that unfolds
+    that recursion (nanoda does) through as many steps. Proofs use this
+    instead. -/
+theorem hRun_i64c (k : Nat) (c : Int) (rest : List HI) (l st : List WVal) :
+    hRun host (k + 1) (i64c c :: rest) l st = hRun host k rest l (.i64v c :: st) := by
+  simp [i64c, hRun_b, step1, eraseI, wRunF]
+
 theorem hRun_i64Add (k : Nat) (rest : List HI) (l : List WVal) (x y : Int) (st : List WVal) :
     hRun host (k + 1) (.i64Add :: rest) l (.i64v y :: .i64v x :: st) =
       hRun host k rest l (.i64v (wrapI64 (x + y)) :: st) := by
@@ -1244,13 +1253,13 @@ theorem satSem_spec {C : Nat} (S : AverCert.Schema.CarrierSpec C) (n : Int) (w r
     obtain ⟨hband, hsg0⟩ := S.canonBig n s lty les sg hrep hcan
     by_cases hpos : 0 < sg
     · simp [satSem, hCall, satCode, hRun_b, hRun_ifElse, step1, eraseI, wRunF, lg, isNull, b32,
-        i64c, hpos] at h
+        hRun_i64c, hpos] at h
       refine ⟨_, h.symm, fun m hm => ?_⟩
       have : 9223372036854775808 ≤ n := by omega
       omega
     · have hneg : sg < 0 := by omega
       simp [satSem, hCall, satCode, hRun_b, hRun_ifElse, step1, eraseI, wRunF, lg, isNull, b32,
-        i64c, hpos] at h
+        hRun_i64c, hpos] at h
       refine ⟨_, h.symm, fun m hm => ?_⟩
       have : n < 0 := hsg.mp hneg
       omega
