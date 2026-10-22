@@ -3818,6 +3818,62 @@ fn a_param_moved_and_read_in_one_call_is_read_first_and_moved() {
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// The same with a bounce between two mutually recursive functions
+/// (`step(st, t, localValue(st.lctx, n), n)`), a field read by an earlier
+/// argument (`putFirst(readOnly(w.st, w.e), w.st, w.e)`), and a field read
+/// by a later argument into an `Int` (`putLast(w.st, readOnly(w.st, w.e),
+/// w.e)`): the read runs first and the record or the field moves. Cloned,
+/// it kept a second owner of the Maps for the whole call and every write
+/// copied a whole Map. The compiled binary must make 2^16 steps of each
+/// within a minute.
+#[test]
+fn a_record_or_field_moved_and_read_in_one_call_is_read_first_and_moved() {
+    let relative = "tests/fixtures/moved_and_read_shapes_app.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("moved_and_read_shapes", &src);
+    for expected in [
+        "let __arg3 @ _ = localValue(&st.lctx, n.clone()); __MutualTco1::Step(st, t, __arg3, n) }",
+        "pub fn earlier(mut w @ _: W) -> St {",
+        "putFirst(readOnly(&w.st, w.e.clone()), w.st, w.e)",
+        "pub fn later(mut w @ _: W) -> St {",
+        "let __arg1 @ _ = readOnly(&w.st, w.e.clone());\n    putLast(w.st, __arg1, w.e)",
+    ] {
+        assert!(
+            emitted.contains(expected),
+            "missing `{expected}`:\n{emitted}"
+        );
+    }
+    assert!(
+        !emitted.contains("Step(st.clone()") && !emitted.contains("w.st.clone()"),
+        "no state may be cloned for the call:\n{emitted}"
+    );
+    let file = repo_root().join(relative);
+    let ws = temp_dir("moved_and_read_shapes");
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| {
+        compile_rust(&file, &project, "moved_and_read_shapes", None, &[])?;
+        let bin = cargo_build(&project, "moved_and_read_shapes")?;
+        let small = run_within(&bin, "1000", 60)?;
+        let vm = Command::new(aver_bin())
+            .current_dir(repo_root())
+            .args(["run", relative, "--", "1000"])
+            .output()
+            .map_err(|e| format!("vm run: {e}"))?;
+        let vm = String::from_utf8_lossy(&vm.stdout).trim().to_string();
+        if small != vm {
+            return Err(format!("--- VM ---\n{vm}\n--- Rust ---\n{small}"));
+        }
+        let got = run_within(&bin, "65536", 60)?;
+        match got == "walk 65536 earlier 65536 later 65536 at1 2" {
+            true => Ok(()),
+            false => Err(format!("at 2^16 steps: {got}")),
+        }
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A record param whose field holding a Map goes into a record literal at
 /// the param's last use (`remembered(RB(b = i == 1, st = r.st), k)?` after
 /// `i = r.i`) is taken by value and the field moves into the literal.

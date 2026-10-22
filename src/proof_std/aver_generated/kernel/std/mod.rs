@@ -667,7 +667,7 @@ fn __mutual_tco_trampoline_1(
                     match __t.view() {
                         crate::proof_std::aver_generated::kernel::std::Tactic__view::Auto => {
                             match crate::proof_std::aver_generated::kernel::std::refutedByWhen(
-                                &n.goal,
+                                n.goal.clone(),
                             ) {
                                 Ok(p @ _) => return Ok(p),
                                 Err(_) => __MutualTco1::Asked(
@@ -1837,16 +1837,16 @@ pub fn runScript(
 /// The claim in a case its `when` rules out, such as an empty list under a length bound: Auto tries this itself before it asks for the automatic steps.
 #[inline(always)]
 pub fn refutedByWhen(
-    goal @ _: &crate::proof_std::aver_generated::kernel::proof::Goal,
+    mut goal @ _: crate::proof_std::aver_generated::kernel::proof::Goal,
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Proof, AverStr> {
     crate::proof_std::cancel_checkpoint();
-    match crate::proof_std::aver_generated::kernel::lib::whenOf(goal) {
+    match crate::proof_std::aver_generated::kernel::lib::whenOf(&goal) {
         None => Err(::aver_rt::str_lit!("no `when`")),
         Some(p @ _) => crate::proof_std::aver_generated::kernel::lib::whenRefutes(
-            &crate::proof_std::aver_generated::kernel::lib::scope(goal),
+            &crate::proof_std::aver_generated::kernel::lib::scope(&goal),
             p,
-            goal.obligation.lhs.clone(),
-            goal.obligation.rhs.clone(),
+            goal.obligation.lhs,
+            goal.obligation.rhs,
         ),
     }
 }

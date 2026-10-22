@@ -5976,6 +5976,20 @@ fn emit_mir_trampoline_tail_expr(
             let e = emit_mir_trampoline_tail_expr(else_src, members, enum_name, rc_names, ctx)?;
             Some(format!("if {} {{ {} }} else {{ {} }}", cond, t, e))
         }
+        // A `let` before a bounce (an argument bound first, see
+        // `arg_order`) keeps its body in tail position.
+        MirExpr::Let(spanned_let) => {
+            let let_node = &spanned_let.node;
+            let value = emit_mir_statement_value(let_node, ctx)?;
+            let tail =
+                emit_mir_trampoline_tail_expr(&let_node.body, members, enum_name, rc_names, ctx)?;
+            Some(if let_node.binding_name.is_empty() {
+                format!("{{ {value}; {tail} }}")
+            } else {
+                let name = explicit_binding_pattern(&let_node.binding_name);
+                format!("{{ let {name} = {value}; {tail} }}")
+            })
+        }
         _ => Some(format!("return {}", emit_mir_value_return(expr, ctx)?)),
     }
 }

@@ -925,7 +925,7 @@ fn __mutual_tco_trampoline_5(
                             crate::proof_kernel::aver_generated::kernel::check::inductCase(
                                 &*d,
                                 &*r,
-                                &a,
+                                a,
                                 c,
                                 &*at,
                                 (*claim).clone(),
@@ -4710,8 +4710,8 @@ pub fn lawStep(
                     ),
                     &crate::proof_kernel::aver_generated::kernel::check::lawPremises(&l),
                     crate::proof_kernel::aver_generated::kernel::term::Eqn {
-                        lhs: l.lhs.clone(),
-                        rhs: l.rhs.clone(),
+                        lhs: l.lhs,
+                        rhs: l.rhs,
                     },
                     bs,
                     ps,
@@ -5485,7 +5485,7 @@ pub fn isCons(p @ _: &crate::proof_kernel::aver_generated::kernel::term::Pat) ->
 pub fn inductCase(
     d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
     r @ _: &crate::proof_kernel::aver_generated::kernel::induct::Recursion,
-    a @ _: &crate::proof_kernel::aver_generated::kernel::induct::ArmCalls,
+    mut a @ _: crate::proof_kernel::aver_generated::kernel::induct::ArmCalls,
     mut c @ _: crate::proof_kernel::aver_generated::kernel::proof::Case,
     at @ _: &crate::proof_kernel::aver_generated::kernel::induct::Call,
     mut claim @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
@@ -5649,7 +5649,7 @@ pub fn namesToVars(
 pub fn inductCaseNamed(
     d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
     r @ _: &crate::proof_kernel::aver_generated::kernel::induct::Recursion,
-    a @ _: &crate::proof_kernel::aver_generated::kernel::induct::ArmCalls,
+    mut a @ _: crate::proof_kernel::aver_generated::kernel::induct::ArmCalls,
     mut c @ _: crate::proof_kernel::aver_generated::kernel::proof::Case,
     ys @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     at @ _: &crate::proof_kernel::aver_generated::kernel::induct::Call,
@@ -5712,7 +5712,7 @@ pub fn inductCaseNamed(
         ),
         &crate::proof_kernel::aver_generated::kernel::check::caseVarsOf(
             &r.guard,
-            a.arm.pattern.clone(),
+            a.arm.pattern,
             &c.binders,
             vr.v.clone(),
             env,

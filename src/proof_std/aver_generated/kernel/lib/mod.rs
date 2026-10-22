@@ -148,13 +148,11 @@ fn __mutual_tco_trampoline_1(
                         if let (Some(a), Some(rest)) =
                             (__list_subject.first(), __list_subject.tail())
                         {
-                            __MutualTco1::SelectOne(
-                                a.clone(),
-                                rest,
-                                value.clone(),
-                                k,
-                                crate::proof_std::aver_generated::kernel::lib::shapeOf(&value),
-                            )
+                            {
+                                let __arg5 @ _ =
+                                    crate::proof_std::aver_generated::kernel::lib::shapeOf(&value);
+                                __MutualTco1::SelectOne(a.clone(), rest, value, k, __arg5)
+                            }
                         } else {
                             panic!("Aver Rust codegen: non-exhaustive list match")
                         }
@@ -753,19 +751,22 @@ pub fn projected(
     match v.clone() {
         None => Ok(inner),
         Some(x @ _) => Ok({
-            let __arg6 @ _ = crate::proof_std::aver_generated::kernel::lib::chain(
-                inner.to.clone(),
-                crate::proof_std::aver_generated::kernel::lib::Rw {
+            let __arg7 @ _ = {
+                let __arg6 @ _ = crate::proof_std::aver_generated::kernel::lib::Rw {
                     to: x.clone(),
                     proof: crate::proof_std::aver_generated::kernel::proof::Proof::PProj(
                         crate::proof_std::aver_generated::kernel::proof::Proof__PProj(
                             inner.to.clone(),
                         ),
                     ),
-                },
-                crate::proof_std::aver_generated::kernel::lib::evalWithin(s, x, depth)?,
-            );
-            crate::proof_std::aver_generated::kernel::lib::chain(t, inner, __arg6)
+                };
+                crate::proof_std::aver_generated::kernel::lib::chain(
+                    inner.to.clone(),
+                    __arg6,
+                    crate::proof_std::aver_generated::kernel::lib::evalWithin(s, x, depth)?,
+                )
+            };
+            crate::proof_std::aver_generated::kernel::lib::chain(t, inner, __arg7)
         }),
     }
 }
