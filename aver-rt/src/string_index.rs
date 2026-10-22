@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use crate::{AverInt, AverStr};
+use crate::{AverInt, AverStr, StaticStr};
 
 /// UTF-8 byte boundaries for one immutable string.
 ///
@@ -92,6 +92,11 @@ pub fn string_index_char_at(
     if position >= index.char_len() {
         return None;
     }
+    if let Boundaries::Ascii(_) = index.boundaries {
+        return Some(AverStr::from_static(
+            &ASCII_CHARS[usize::from(text.as_bytes()[position])],
+        ));
+    }
     let from = index.boundary(position);
     let to = index.boundary(position + 1);
     Some(AverStr::from(&text[from..to]))
@@ -107,6 +112,9 @@ pub fn string_index_code_at(text: &AverStr, index: &StringIndex, position: &Aver
     if position >= index.char_len() {
         return -1;
     }
+    if let Boundaries::Ascii(_) = index.boundaries {
+        return i64::from(text.as_bytes()[position]);
+    }
     let from = index.boundary(position);
     let to = index.boundary(position + 1);
     text[from..to]
@@ -114,6 +122,22 @@ pub fn string_index_code_at(text: &AverStr, index: &StringIndex, position: &Aver
         .next()
         .map_or(-1, |ch| i64::from(u32::from(ch)))
 }
+
+/// The one-character strings of ASCII, in statics: `charAt` on an ASCII
+/// string neither slices nor allocates.
+static ASCII_CHARS: [StaticStr<1>; 128] = {
+    let mut chars = [const { StaticStr::new("\0") }; 128];
+    let mut byte = 0;
+    while byte < 128 {
+        let text = [byte as u8];
+        let Ok(text) = std::str::from_utf8(&text) else {
+            panic!("an ASCII byte is UTF-8");
+        };
+        chars[byte] = StaticStr::new(text);
+        byte += 1;
+    }
+    chars
+};
 
 /// Indexed equivalent of `String.slice`, including its clamping semantics.
 pub fn string_index_slice(
@@ -169,6 +193,36 @@ mod tests {
             string_index_slice(&text, &index, &AverInt::from_i64(1), &AverInt::from_i64(3)),
             AverStr::from("ą😀")
         );
+    }
+
+    /// The table of ASCII boundaries gives what the UTF-8 one gives.
+    fn utf8_index(text: &str) -> StringIndex {
+        let mut boundaries: Vec<u32> = text.char_indices().map(|(byte, _)| byte as u32).collect();
+        boundaries.push(text.len() as u32);
+        StringIndex {
+            boundaries: Boundaries::U32(boundaries.into()),
+        }
+    }
+
+    #[test]
+    fn ascii_fast_path_matches_utf8_boundaries() {
+        let ascii: String = (0u8..128).map(char::from).collect();
+        for text in [ascii.as_str(), "", "a(b) x\n", "aą😀z"] {
+            let text = AverStr::from(text);
+            let fast = string_index_build(&text);
+            let slow = utf8_index(&text);
+            for position in -3..=(text.len() as i64 + 3) {
+                let position = AverInt::from_i64(position);
+                assert_eq!(
+                    string_index_char_at(&text, &fast, &position),
+                    string_index_char_at(&text, &slow, &position)
+                );
+                assert_eq!(
+                    string_index_code_at(&text, &fast, &position),
+                    string_index_code_at(&text, &slow, &position)
+                );
+            }
+        }
     }
 
     #[test]
