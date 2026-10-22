@@ -3918,6 +3918,49 @@ fn a_param_field_stored_into_a_literal_moves_and_the_param_is_taken_by_value() {
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A match subject that looks a key up in a Map handed out of the state
+/// (`found(Map.get(cacheFor(st, true), k), k)`) is bound by a `let` before
+/// the `match`. Matched in place, the Map's clone was a temporary of the
+/// scrutinee and lived through the arms, so the write in the `None` arm
+/// found the Map shared and copied all of it. The compiled binary must
+/// write 2^17 keys within a minute.
+#[test]
+fn a_match_subject_drops_its_temporaries_before_the_arms() {
+    let relative = "tests/fixtures/scrutinee_temporary_app.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("scrutinee_temporary", &src);
+    assert!(
+        emitted.contains("let __subject = found(&cacheFor(&st, true)")
+            && emitted.contains("match __subject {"),
+        "the subject must be bound before the match:\n{emitted}"
+    );
+    let file = repo_root().join(relative);
+    let ws = temp_dir("scrutinee_temporary");
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| {
+        compile_rust(&file, &project, "scrutinee_temporary", None, &[])?;
+        let bin = cargo_build(&project, "scrutinee_temporary")?;
+        let small = run_within(&bin, "1000", 60)?;
+        let vm = Command::new(aver_bin())
+            .current_dir(repo_root())
+            .args(["run", relative, "--", "1000"])
+            .output()
+            .map_err(|e| format!("vm run: {e}"))?;
+        let vm = String::from_utf8_lossy(&vm.stdout).trim().to_string();
+        if small != vm {
+            return Err(format!("--- VM ---\n{vm}\n--- Rust ---\n{small}"));
+        }
+        let got = run_within(&bin, "131072", 60)?;
+        match got == "hot 131071 cold 1" {
+            true => Ok(()),
+            false => Err(format!("at 2^17 keys: {got}")),
+        }
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A local Vector named again only as the fallback of its own `Vector.set`
 /// (`Option.withDefault(Vector.set(w, i, x), w)`, or `w` in the `None` arm
 /// of a match on the set) moves into the set: the set fails only out of

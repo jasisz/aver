@@ -95,7 +95,7 @@ pub fn withGiven(
         __record0
     };
     {
-        let __t = (
+        let __subject = (
             g.ty.clone(),
             crate::proof_std::aver_generated::kernel::types::finOf(
                 &g.ty,
@@ -112,46 +112,52 @@ pub fn withGiven(
                 &aver_rt::AverList::empty(),
             ),
         );
-        match (__t.0.view(), &__t.1) {
-            (crate::proof_std::aver_generated::kernel::term::Ty__view::TyList(__e_fields), _) => {
-                let e = __e_fields.0.clone();
-                Box::new(
+        {
+            let __t = __subject;
+            match (__t.0.view(), &__t.1) {
+                (
+                    crate::proof_std::aver_generated::kernel::term::Ty__view::TyList(__e_fields),
+                    _,
+                ) => {
+                    let e = __e_fields.0.clone();
+                    Box::new(
+                        crate::proof_std::aver_generated::kernel::proof::Goal__Fields {
+                            lists: aver_rt::AverList::concat(
+                                &base.lists,
+                                &aver_rt::AverList::from_vec(vec![g.name.clone()]),
+                            ),
+                            ..*base
+                        },
+                    )
+                }
+                (crate::proof_std::aver_generated::kernel::term::Ty__view::TyInt, _) => Box::new(
                     crate::proof_std::aver_generated::kernel::proof::Goal__Fields {
-                        lists: aver_rt::AverList::concat(
-                            &base.lists,
+                        ints: aver_rt::AverList::concat(
+                            &base.ints,
                             &aver_rt::AverList::from_vec(vec![g.name.clone()]),
                         ),
                         ..*base
                     },
-                )
+                ),
+                (_, Some(f)) => {
+                    let f = f.clone();
+                    Box::new(
+                        crate::proof_std::aver_generated::kernel::proof::Goal__Fields {
+                            finite: aver_rt::AverList::concat(
+                                &base.finite,
+                                &aver_rt::AverList::from_vec(vec![
+                                    crate::proof_std::aver_generated::kernel::proof::Given {
+                                        name: g.name.clone(),
+                                        fin: f,
+                                    },
+                                ]),
+                            ),
+                            ..*base
+                        },
+                    )
+                }
+                _ => base,
             }
-            (crate::proof_std::aver_generated::kernel::term::Ty__view::TyInt, _) => Box::new(
-                crate::proof_std::aver_generated::kernel::proof::Goal__Fields {
-                    ints: aver_rt::AverList::concat(
-                        &base.ints,
-                        &aver_rt::AverList::from_vec(vec![g.name.clone()]),
-                    ),
-                    ..*base
-                },
-            ),
-            (_, Some(f)) => {
-                let f = f.clone();
-                Box::new(
-                    crate::proof_std::aver_generated::kernel::proof::Goal__Fields {
-                        finite: aver_rt::AverList::concat(
-                            &base.finite,
-                            &aver_rt::AverList::from_vec(vec![
-                                crate::proof_std::aver_generated::kernel::proof::Given {
-                                    name: g.name.clone(),
-                                    fin: f,
-                                },
-                            ]),
-                        ),
-                        ..*base
-                    },
-                )
-            }
-            _ => base,
         }
     }
 }

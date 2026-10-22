@@ -1,0 +1,49 @@
+module ScrutineeTemporary
+    intent =
+        "Fixture: a match whose subject looks up a key in a Map handed out of the state, while an arm writes to that Map; as many keys as the first argument says."
+    effects [Console.print, Args.get]
+
+record St
+    hot: Map<Int, Int>
+    cold: Map<Int, Int>
+
+fn cacheFor(st: St, hot: Bool) -> Map<Int, Int>
+    ? "One of the two maps of st."
+    match hot
+        true -> st.hot
+        false -> st.cold
+
+fn found(o: Option<Int>, k: Int) -> Option<Int>
+    ? "A hit, or nothing for key 0."
+    match k == 0
+        true -> Option.None
+        false -> o
+
+fn remember(st: St, k: Int) -> St
+    ? "k written into the hot map."
+    St.update(st, hot = Map.set(st.hot, k, k + 1))
+
+fn openCached(st: St, k: Int) -> St
+    ? "Reads the hot map through cacheFor in the subject; the miss writes to it."
+    match found(Map.get(cacheFor(st, true), k), k)
+        Option.Some(_) -> st
+        Option.None -> remember(st, k)
+
+fn fill(st: St, k: Int, n: Int) -> St
+    ? "Keys k up to n, each looked up and written once."
+    match k >= n
+        true -> st
+        false -> fill(openCached(st, k), k + 1, n)
+
+fn sizeArg() -> Int
+    ? "The first argument as a number, 1000 without one."
+    ! [Args.get]
+    match Vector.get(Vector.fromList(Args.get()), 0)
+        Option.Some(text) -> Result.withDefault(Int.fromString(text), 1000)
+        Option.None -> 1000
+
+fn main()
+    ! [Console.print, Args.get]
+    n = sizeArg()
+    st = fill(St(hot = {}, cold = {0 => 1}), 1, n)
+    Console.print("hot {Map.len(st.hot)} cold {Map.len(st.cold)}")

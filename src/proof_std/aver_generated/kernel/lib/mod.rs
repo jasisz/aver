@@ -354,24 +354,27 @@ pub fn chain(
     mut b @ _: Rw,
 ) -> Rw {
     crate::proof_std::cancel_checkpoint();
-    match (
-        crate::proof_std::aver_generated::kernel::lib::isRefl(&a.proof),
-        crate::proof_std::aver_generated::kernel::lib::isRefl(&b.proof),
-    ) {
-        (true, _) => b,
-        (false, true) => crate::proof_std::aver_generated::kernel::lib::Rw {
-            to: a.to,
-            proof: a.proof,
-        },
-        (false, false) => crate::proof_std::aver_generated::kernel::lib::Rw {
-            to: b.to.clone(),
-            proof: crate::proof_std::aver_generated::kernel::proof::Proof::PTrans(
-                crate::proof_std::aver_generated::kernel::proof::Proof__PTrans(
-                    aver_rt::AverList::from_vec(vec![t, a.to, b.to.clone()]),
-                    aver_rt::AverList::from_vec(vec![a.proof, b.proof]),
+    {
+        let __subject = (
+            crate::proof_std::aver_generated::kernel::lib::isRefl(&a.proof),
+            crate::proof_std::aver_generated::kernel::lib::isRefl(&b.proof),
+        );
+        match __subject {
+            (true, _) => b,
+            (false, true) => crate::proof_std::aver_generated::kernel::lib::Rw {
+                to: a.to,
+                proof: a.proof,
+            },
+            (false, false) => crate::proof_std::aver_generated::kernel::lib::Rw {
+                to: b.to.clone(),
+                proof: crate::proof_std::aver_generated::kernel::proof::Proof::PTrans(
+                    crate::proof_std::aver_generated::kernel::proof::Proof__PTrans(
+                        aver_rt::AverList::from_vec(vec![t, a.to, b.to.clone()]),
+                        aver_rt::AverList::from_vec(vec![a.proof, b.proof]),
+                    ),
                 ),
-            ),
-        },
+            },
+        }
     }
 }
 

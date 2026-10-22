@@ -138,16 +138,19 @@ pub fn ctorOp(o @ _: AverStr, same @ _: &Option<bool>) -> Option<Val> {
 /// Two different constructors of one type differ whatever they hold; one constructor with no fields equals itself. The type is the name up to its last dot, so a constructor spelled two ways is never decided.
 pub fn sameCtor(c @ _: AverStr, d @ _: AverStr, fields @ _: aver_rt::AverInt) -> Option<bool> {
     crate::proof_std::cancel_checkpoint();
-    match (
-        (c == d),
-        (fields == aver_rt::AverInt::from_i64(0)),
-        ((crate::proof_std::aver_generated::kernel::eval::typeOf(c.clone())
-            == crate::proof_std::aver_generated::kernel::eval::typeOf(d))
-            && (&*crate::proof_std::aver_generated::kernel::eval::typeOf(c) != "")),
-    ) {
-        (true, true, _) => Some(true),
-        (false, _, true) => Some(false),
-        _ => None,
+    {
+        let __subject = (
+            (c == d),
+            (fields == aver_rt::AverInt::from_i64(0)),
+            ((crate::proof_std::aver_generated::kernel::eval::typeOf(c.clone())
+                == crate::proof_std::aver_generated::kernel::eval::typeOf(d))
+                && (&*crate::proof_std::aver_generated::kernel::eval::typeOf(c) != "")),
+        );
+        match __subject {
+            (true, true, _) => Some(true),
+            (false, _, true) => Some(false),
+            _ => None,
+        }
     }
 }
 

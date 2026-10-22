@@ -348,35 +348,38 @@ pub fn insertMono(mut m @ _: Mono, p @ _: &aver_rt::AverList<Mono>) -> aver_rt::
         } else {
             if let Some((x, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
                 {
-                    let __dispatch_subject = aver_rt::AverInt::from_i64(
+                    let __subject = aver_rt::AverInt::from_i64(
                         crate::proof_kernel::aver_generated::kernel::ring::compareAtoms(
                             m.atoms.clone(),
                             x.atoms.clone(),
                         ),
                     );
-                    if __dispatch_subject == aver_rt::AverInt::from_i64(0) {
-                        aver_rt::AverList::concat(
-                            &crate::proof_kernel::aver_generated::kernel::ring::nonzero(
-                                crate::proof_kernel::aver_generated::kernel::ring::Mono {
-                                    atoms: x.atoms,
-                                    coef: x.coef.add(&m.coef),
-                                },
-                            ),
-                            &rest,
-                        )
-                    } else {
-                        if __dispatch_subject == aver_rt::AverInt::from_i64(1) {
-                            aver_rt::AverList::prepend(
-                                x,
-                                &crate::proof_kernel::aver_generated::kernel::ring::insertMono(
-                                    m, &rest,
+                    {
+                        let __dispatch_subject = __subject;
+                        if __dispatch_subject == aver_rt::AverInt::from_i64(0) {
+                            aver_rt::AverList::concat(
+                                &crate::proof_kernel::aver_generated::kernel::ring::nonzero(
+                                    crate::proof_kernel::aver_generated::kernel::ring::Mono {
+                                        atoms: x.atoms,
+                                        coef: x.coef.add(&m.coef),
+                                    },
                                 ),
+                                &rest,
                             )
                         } else {
-                            aver_rt::AverList::concat(
-                                &crate::proof_kernel::aver_generated::kernel::ring::nonzero(m),
-                                &p.clone(),
-                            )
+                            if __dispatch_subject == aver_rt::AverInt::from_i64(1) {
+                                aver_rt::AverList::prepend(
+                                    x,
+                                    &crate::proof_kernel::aver_generated::kernel::ring::insertMono(
+                                        m, &rest,
+                                    ),
+                                )
+                            } else {
+                                aver_rt::AverList::concat(
+                                    &crate::proof_kernel::aver_generated::kernel::ring::nonzero(m),
+                                    &p.clone(),
+                                )
+                            }
                         }
                     }
                 }
@@ -564,23 +567,26 @@ pub fn linearContradiction(
     weights @ _: &aver_rt::AverIntList,
 ) -> bool {
     crate::proof_kernel::cancel_checkpoint();
-    match crate::proof_kernel::aver_generated::kernel::ring::readRows(
-        facts,
-        aver_rt::AverList::empty(),
-        &aver_rt::AverList::empty(),
-    ) {
-        None => false,
-        Some(rows @ _) => {
-            match crate::proof_kernel::aver_generated::kernel::ring::withCuts(rows, cuts) {
-                None => false,
-                Some(all @ _) => {
-                    crate::proof_kernel::aver_generated::kernel::ring::negativeConstant(
-                        &crate::proof_kernel::aver_generated::kernel::ring::sumRows(
-                            all,
-                            weights.clone(),
-                            aver_rt::AverList::empty(),
-                        ),
-                    )
+    {
+        let __subject = crate::proof_kernel::aver_generated::kernel::ring::readRows(
+            facts,
+            aver_rt::AverList::empty(),
+            &aver_rt::AverList::empty(),
+        );
+        match __subject {
+            None => false,
+            Some(rows @ _) => {
+                match crate::proof_kernel::aver_generated::kernel::ring::withCuts(rows, cuts) {
+                    None => false,
+                    Some(all @ _) => {
+                        crate::proof_kernel::aver_generated::kernel::ring::negativeConstant(
+                            &crate::proof_kernel::aver_generated::kernel::ring::sumRows(
+                                all,
+                                weights.clone(),
+                                aver_rt::AverList::empty(),
+                            ),
+                        )
+                    }
                 }
             }
         }
@@ -609,32 +615,26 @@ pub fn readRows(
             } else {
                 if let (Some(f), Some(fs)) = (__list_subject.first(), __list_subject.tail()) {
                     if crate::proof_kernel::aver_generated::kernel::ring::isTruth(&f.rhs) {
-                        match crate::proof_kernel::aver_generated::kernel::ring::asNonneg(
-                            &f.lhs,
-                            (f.rhs
-                                == crate::proof_kernel::aver_generated::kernel::term::Term::TBool(
-                                    crate::proof_kernel::aver_generated::kernel::term::Term__TBool(
-                                        true,
-                                    ),
-                                )),
-                            atoms,
-                        ) {
-                            None => {
-                                return None;
-                            }
-                            Some(read @ _) => {
-                                let __tco0 = fs;
-                                let __tco1 = aver_rt::AverList::concat(
-                                    &rows,
-                                    &aver_rt::AverList::from_vec(vec![read.poly]),
-                                );
-                                let __tco2 = read.atoms;
-                                __hold0 = __tco0;
-                                facts = &__hold0;
-                                rows = __tco1;
-                                __hold2 = __tco2;
-                                atoms = &__hold2;
-                                continue;
+                        {
+                            let __subject = crate::proof_kernel::aver_generated::kernel::ring::asNonneg(&f.lhs, (f.rhs == crate::proof_kernel::aver_generated::kernel::term::Term::TBool(crate::proof_kernel::aver_generated::kernel::term::Term__TBool(true))), atoms);
+                            match __subject {
+                                None => {
+                                    return None;
+                                }
+                                Some(read @ _) => {
+                                    let __tco0 = fs;
+                                    let __tco1 = aver_rt::AverList::concat(
+                                        &rows,
+                                        &aver_rt::AverList::from_vec(vec![read.poly]),
+                                    );
+                                    let __tco2 = read.atoms;
+                                    __hold0 = __tco0;
+                                    facts = &__hold0;
+                                    rows = __tco1;
+                                    __hold2 = __tco2;
+                                    atoms = &__hold2;
+                                    continue;
+                                }
                             }
                         }
                     } else {
@@ -708,32 +708,35 @@ pub fn withCuts(
                 return Some(rows);
             } else {
                 if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    match crate::proof_kernel::aver_generated::kernel::ring::sumRows(
-                        rows.clone(),
-                        c.weights.clone(),
-                        aver_rt::AverList::empty(),
-                    ) {
-                        None => {
-                            return None;
-                        }
-                        Some(sum @ _) => {
-                            match crate::proof_kernel::aver_generated::kernel::ring::rounded(
-                                &sum,
-                                c.divisor.clone(),
-                            ) {
-                                None => {
-                                    return None;
-                                }
-                                Some(row @ _) => {
-                                    let __tco0 = aver_rt::AverList::concat(
-                                        &rows,
-                                        &aver_rt::AverList::from_vec(vec![row]),
-                                    );
-                                    let __tco1 = rest;
-                                    rows = __tco0;
-                                    __hold1 = __tco1;
-                                    cuts = &__hold1;
-                                    continue;
+                    {
+                        let __subject = crate::proof_kernel::aver_generated::kernel::ring::sumRows(
+                            rows.clone(),
+                            c.weights.clone(),
+                            aver_rt::AverList::empty(),
+                        );
+                        match __subject {
+                            None => {
+                                return None;
+                            }
+                            Some(sum @ _) => {
+                                match crate::proof_kernel::aver_generated::kernel::ring::rounded(
+                                    &sum,
+                                    c.divisor.clone(),
+                                ) {
+                                    None => {
+                                        return None;
+                                    }
+                                    Some(row @ _) => {
+                                        let __tco0 = aver_rt::AverList::concat(
+                                            &rows,
+                                            &aver_rt::AverList::from_vec(vec![row]),
+                                        );
+                                        let __tco1 = rest;
+                                        rows = __tco0;
+                                        __hold1 = __tco1;
+                                        cuts = &__hold1;
+                                        continue;
+                                    }
                                 }
                             }
                         }
@@ -781,36 +784,39 @@ pub fn roundedBy(
                 return Some(acc);
             } else {
                 if let (Some(m), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    match (
-                        (match (m.coef).div_euclid(&(d)) {
-                            Some(__q) => Ok(__q),
-                            None => Err("division by zero".to_string()),
-                        })
-                        .into_aver(),
-                        (match (m.coef).rem_euclid(&(d)) {
-                            Some(__r) => Ok(__r),
-                            None => Err("division by zero".to_string()),
-                        })
-                        .into_aver(),
-                    ) {
-                        (Ok(q), Ok(r)) => {
-                            if ((m.atoms == aver_rt::AverIntList::empty())
-                                || (r == aver_rt::AverInt::from_i64(0)))
-                            {
+                    {
+                        let __subject = (
+                            (match (m.coef).div_euclid(&(d)) {
+                                Some(__q) => Ok(__q),
+                                None => Err("division by zero".to_string()),
+                            })
+                            .into_aver(),
+                            (match (m.coef).rem_euclid(&(d)) {
+                                Some(__r) => Ok(__r),
+                                None => Err("division by zero".to_string()),
+                            })
+                            .into_aver(),
+                        );
+                        match __subject {
+                            (Ok(q), Ok(r)) => {
+                                if ((m.atoms == aver_rt::AverIntList::empty())
+                                    || (r == aver_rt::AverInt::from_i64(0)))
                                 {
-                                    let __tco0 = rest;
-                                    let __tco2 = aver_rt::AverList::concat(&acc, &crate::proof_kernel::aver_generated::kernel::ring::nonzero(crate::proof_kernel::aver_generated::kernel::ring::Mono { atoms: m.atoms.clone(), coef: q }));
-                                    __hold0 = __tco0;
-                                    p = &__hold0;
-                                    acc = __tco2;
-                                    continue;
+                                    {
+                                        let __tco0 = rest;
+                                        let __tco2 = aver_rt::AverList::concat(&acc, &crate::proof_kernel::aver_generated::kernel::ring::nonzero(crate::proof_kernel::aver_generated::kernel::ring::Mono { atoms: m.atoms.clone(), coef: q }));
+                                        __hold0 = __tco0;
+                                        p = &__hold0;
+                                        acc = __tco2;
+                                        continue;
+                                    }
+                                } else {
+                                    return None;
                                 }
-                            } else {
+                            }
+                            _ => {
                                 return None;
                             }
-                        }
-                        _ => {
-                            return None;
                         }
                     }
                 } else {

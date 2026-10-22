@@ -1158,7 +1158,10 @@ fn __mutual_tco_trampoline_2(
                             let fnId = __fnId_fields.0.clone();
                             let argExprs = &__fnId_fields.1;
                             if (fnId == selfId) {
-                                match crate::aver_generated::domain::eval::core::evalArgsSlotToSlotEnv(argExprs, &env, &*slotMap, &*fns, match aver_rt::checked_vector_size(&(slotCount)) { Some(__n) => Ok(aver_rt::AverVector::new(__n, crate::aver_generated::domain::value::Val::ValUnit)), None => Err(aver_rt::AverStr::from(aver_rt::vector_size_error_message())) }?, aver_rt::AverInt::from_i64(0)) { Ok(nextEnv @ _) => { return Ok(crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailRecurEnv(nextEnv)) }, Err(e @ _) => { return Err(e) } }
+                                {
+                                    let __subject = crate::aver_generated::domain::eval::core::evalArgsSlotToSlotEnv(argExprs, &env, &*slotMap, &*fns, match aver_rt::checked_vector_size(&(slotCount)) { Some(__n) => Ok(aver_rt::AverVector::new(__n, crate::aver_generated::domain::value::Val::ValUnit)), None => Err(aver_rt::AverStr::from(aver_rt::vector_size_error_message())) }?, aver_rt::AverInt::from_i64(0));
+                                    match __subject { Ok(nextEnv @ _) => { return Ok(crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailRecurEnv(nextEnv)) }, Err(e @ _) => { return Err(e) } }
+                                }
                             } else {
                                 match crate::aver_generated::domain::eval::core::evalCallDirectSlot(fnId, argExprs, &env, &*slotMap, &*fns) { Ok(v @ _) => { return Ok(crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v)) }, Err(e @ _) => { return Err(e) } }
                             }
@@ -4607,12 +4610,13 @@ pub fn evalTailStmtSlot(
             )
         }
         _ => {
-            match crate::aver_generated::domain::eval::core::evalStmtsSlot(
+            let __subject = crate::aver_generated::domain::eval::core::evalStmtsSlot(
                 aver_rt::AverList::from_vec(vec![stmt]),
                 env,
                 slotMap,
                 fns,
-            ) {
+            );
+            match __subject {
                 Ok(v @ _) => {
                     Ok(crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v))
                 }
@@ -5009,27 +5013,31 @@ pub fn evalTopLevelStmts(
                 return Ok((last, env));
             } else {
                 if let (Some(s), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    match {
-                        let __arg10 @ _ = crate::aver_generated::domain::eval::store::withGlobals(
-                            fns.clone(),
-                            env.clone(),
-                        );
-                        crate::aver_generated::domain::eval::core::evalStmt(s, env, &__arg10)
-                    } {
-                        Err(e @ _) => {
-                            return Err(e);
-                        }
-                        Ok(pair @ _) => {
-                            let (v, newEnv) = pair;
-                            {
-                                let __tco0 = rest;
-                                let __tco1 = newEnv;
-                                let __tco2 = v;
-                                __hold0 = __tco0;
-                                stmts = &__hold0;
-                                env = __tco1;
-                                last = __tco2;
-                                continue;
+                    {
+                        let __subject = {
+                            let __arg10 @ _ =
+                                crate::aver_generated::domain::eval::store::withGlobals(
+                                    fns.clone(),
+                                    env.clone(),
+                                );
+                            crate::aver_generated::domain::eval::core::evalStmt(s, env, &__arg10)
+                        };
+                        match __subject {
+                            Err(e @ _) => {
+                                return Err(e);
+                            }
+                            Ok(pair @ _) => {
+                                let (v, newEnv) = pair;
+                                {
+                                    let __tco0 = rest;
+                                    let __tco1 = newEnv;
+                                    let __tco2 = v;
+                                    __hold0 = __tco0;
+                                    stmts = &__hold0;
+                                    env = __tco1;
+                                    last = __tco2;
+                                    continue;
+                                }
                             }
                         }
                     }

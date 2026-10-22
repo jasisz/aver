@@ -1206,14 +1206,20 @@ pub fn classifyFastForwardCall(
     args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
-    match crate::aver_generated::domain::resolver::fast::classifyFastForwardSlots__collected(
-        args,
-        aver_rt::int_list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
-    ) {
-        Some(slotArgs @ _) => {
-            crate::aver_generated::domain::ast::FnFastPath::FastForwardCall(fnId, slotArgs)
+    {
+        let __subject =
+            crate::aver_generated::domain::resolver::fast::classifyFastForwardSlots__collected(
+                args,
+                aver_rt::int_list_builder_new(
+                    (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                ),
+            );
+        match __subject {
+            Some(slotArgs @ _) => {
+                crate::aver_generated::domain::ast::FnFastPath::FastForwardCall(fnId, slotArgs)
+            }
+            None => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
         }
-        None => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
     }
 }
 

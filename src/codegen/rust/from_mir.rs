@@ -3973,6 +3973,22 @@ fn emit_mir_match_with(
             emit_ctx,
         )
     };
+    // Rust keeps the temporaries of a scrutinee (`get(&cacheFor(&st), k)`)
+    // alive through every arm, so a value one of them shares with what an arm
+    // writes is copied by the write. A subject computed from such values is
+    // bound by one `let` first, which drops them before any arm runs.
+    let (subj, bound) =
+        match !subject_is_bare && !match_on_ref && makes_temporaries(&m.subject.node) {
+            true => {
+                let name = generated_ident("subject");
+                (name.clone(), Some(format!("let {name} = {subj};")))
+            }
+            false => (subj, None),
+        };
+    let bind = |code: String| match &bound {
+        Some(bound) => format!("{{ {bound} {code} }}"),
+        None => code,
+    };
 
     // Bool match → if/else is unreachable here: the MIR optimizer
     // already rewrote two-arm bool matches into `IfThenElse`. If a
@@ -4001,7 +4017,7 @@ fn emit_mir_match_with(
             subj
         };
         let heads: HashSet<String> = lent.iter().flatten().cloned().collect();
-        return Some(emit_list_match(
+        return Some(bind(emit_list_match(
             subj,
             subject_lent,
             &heads,
@@ -4009,18 +4025,18 @@ fn emit_mir_match_with(
             list_shape,
             codegen,
             body_for_arm,
-        ));
+        )));
     }
 
     // ── 4. Dispatch table (literals / wrapper tags). ──
     if let Some(MatchDispatchPlan::Table(shape)) = dispatch_plan.as_ref() {
-        return Some(emit_dispatch_table_match(
+        return Some(bind(emit_dispatch_table_match(
             subj,
             &arms,
             shape,
             subject_is_bare,
             body_for_arm,
-        ));
+        )));
     }
 
     // ── 4b. Int-literal or tuple-with-list match → if/else-if guard chain. ──
@@ -4034,7 +4050,8 @@ fn emit_mir_match_with(
     // emitter is REQUIRED to render; if it can't, return `None` (hard
     // diagnostic).
     if any_int_literal_pattern {
-        return try_emit_int_literal_match(&subj, &arms, &arm_bodies, subject_is_bare, codegen);
+        return try_emit_int_literal_match(&subj, &arms, &arm_bodies, subject_is_bare, codegen)
+            .map(bind);
     }
 
     // ── 5. Generic `match`. ──
@@ -4091,10 +4108,30 @@ fn emit_mir_match_with(
     }
 
     let matched = format!("match {} {{\n{}\n    }}", match_expr, arm_strs.join(",\n"));
-    Some(match viewed {
+    Some(bind(match viewed {
         true => format!("{{ let {subject_temp} = {subj}; {matched} }}"),
         false => matched,
-    })
+    }))
+}
+
+/// Whether evaluating a match subject leaves temporaries behind: a call (or
+/// `?` over one) with an argument that is computed rather than read.
+fn makes_temporaries(subject: &MirExpr) -> bool {
+    let read = |expr: &MirExpr| match expr {
+        MirExpr::Literal(_) | MirExpr::FnValue(_) => true,
+        MirExpr::Box(inner) | MirExpr::Unbox(inner) => {
+            super::ownership::projection_root_local(&inner.node).is_some()
+        }
+        _ => super::ownership::projection_root_local(expr).is_some(),
+    };
+    match subject {
+        MirExpr::Try(inner) => makes_temporaries(&inner.node),
+        _ => {
+            let mut computed = false;
+            crate::ir::mir::expr::walk_children(subject, &mut |child| computed |= !read(child));
+            computed
+        }
+    }
 }
 
 /// `match Vector.set(v, i, x)` on an owned local `v` the `Some` arm does not

@@ -105,22 +105,27 @@ pub fn readListItem(
 #[inline(always)]
 pub fn readAll(text @ _: AverStr) -> Result<Sexp, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    match crate::proof_kernel::aver_generated::kernel::sexp::readOne(
-        &crate::proof_kernel::aver_generated::kernel::sexp::skipBlank(
-            (aver_rt::AverList::from_vec(text.chars().map(|c| c.to_string()).collect::<Vec<_>>()))
+    {
+        let __subject = crate::proof_kernel::aver_generated::kernel::sexp::readOne(
+            &crate::proof_kernel::aver_generated::kernel::sexp::skipBlank(
+                (aver_rt::AverList::from_vec(
+                    text.chars().map(|c| c.to_string()).collect::<Vec<_>>(),
+                ))
                 .into_aver(),
-        ),
-    ) {
-        Err(e @ _) => Err(e),
-        Ok(__pat0 @ _) => {
-            let (s, rest) = __pat0;
-            {
-                let __list_subject =
-                    crate::proof_kernel::aver_generated::kernel::sexp::skipBlank(rest);
-                if __list_subject.is_empty() {
-                    crate::proof_kernel::aver_generated::kernel::sexp::expand(s)
-                } else {
-                    Err(::aver_rt::str_lit!("text after the S-expression"))
+            ),
+        );
+        match __subject {
+            Err(e @ _) => Err(e),
+            Ok(__pat0 @ _) => {
+                let (s, rest) = __pat0;
+                {
+                    let __list_subject =
+                        crate::proof_kernel::aver_generated::kernel::sexp::skipBlank(rest);
+                    if __list_subject.is_empty() {
+                        crate::proof_kernel::aver_generated::kernel::sexp::expand(s)
+                    } else {
+                        Err(::aver_rt::str_lit!("text after the S-expression"))
+                    }
                 }
             }
         }
