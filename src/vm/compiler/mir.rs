@@ -471,6 +471,15 @@ pub(super) fn compile_mir_expr(
         // ── Phase 4c: record field access ───────────────────────
         MirExpr::Project(spanned_proj) => {
             let p = &spanned_proj.node;
+            // A binding another module exposes (`Lib.base`) is a global
+            // under its qualified name.
+            if let Some(dotted) = crate::ir::mir::expr::static_path(&expr.node)
+                && let Some(&idx) = fc.global_names().get(dotted.as_str())
+            {
+                fc.emit_op(LOAD_GLOBAL);
+                fc.emit_u16(idx);
+                return Ok(());
+            }
             // A path two or more fields below a local may take its last field
             // under the same conditions, checked at every record on the way
             // down (`field_take`).

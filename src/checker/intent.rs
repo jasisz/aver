@@ -659,6 +659,25 @@ pub fn check_module_intent_with_capabilities_in(
                         extra_spans: vec![],
                     });
                 }
+                // An importer reads an exposed binding's type from its
+                // annotation, so one listed in `exposes` must carry one.
+                for item in items {
+                    if let TopLevel::Stmt(Stmt::Binding(name, None, _)) = item
+                        && m.exposes.contains(name)
+                    {
+                        errors.push(CheckFinding {
+                            line: m.line,
+                            module: Some(m.name.clone()),
+                            file: source_file.map(|s| s.to_string()),
+                            fn_name: None,
+                            message: format!(
+                                "Binding '{}' is in exposes, so it needs a type annotation: `{}: <Type> = ...`",
+                                name, name
+                            ),
+                            extra_spans: vec![],
+                        });
+                    }
+                }
                 // Validate exposes_opaque: each name must be a TypeDef.
                 if !m.exposes_opaque.is_empty() {
                     let type_names: std::collections::HashSet<&str> = items

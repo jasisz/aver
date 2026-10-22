@@ -726,6 +726,8 @@ module Payments
 
 `effects [...]` declares the module's effect boundary: the union of the effects its functions may perform, in the same granular or namespace-shorthand form as a function-level `! [...]`. It goes after `intent`. `aver check` warns when a module with functions omits it, and a pure module declares `effects []` explicitly.
 
+`exposes [...]` lists the functions, types and module-level bindings other modules may use. An exposed binding is read as `Payments.fee` (and `Payments.fee.amount` for a field of a record); it is evaluated once, as inside its own module. The importer reads its type from the annotation, so a binding listed in `exposes` must have one (`fee: Money = Money(amount = 2)`). A module with no `exposes` list hands on its typed bindings whose names do not start with `_`, the same rule as for functions. A law reads an exposed binding the same way, and the proof export names it `Payments.fee`.
+
 ### Capability modules
 
 A capability module declares host-provided atoms without choosing how a host binds them. For `depends`, visibility and naming it is an ordinary module, but its `operation` declarations have signatures instead of Aver bodies:

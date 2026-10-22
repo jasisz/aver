@@ -2154,9 +2154,10 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // access, which is not a valid Rust path. The HIR walker saw
             // this as a single `StaticRef(full_name)`; on MIR the chain is
             // re-flattened here.
-            if let Some(dotted) = collapse_fnvalue_projection(&expr.node)
+            if let Some(dotted) = crate::ir::mir::expr::static_path(&expr.node)
                 && (dotted == "BranchPath.Root"
                     || resolve_module_call(&dotted, emit_ctx.module_prefixes).is_some())
+                && !reads_field_of_module_binding(&dotted, emit_ctx)
             {
                 return Some(emit_mir_static_ref(&dotted, emit_ctx));
             }
@@ -2664,21 +2665,17 @@ fn emit_mir_capability_call(
     Some(lines.join("\n"))
 }
 
-/// Reconstruct the dotted source name of a `Project` chain whose head
-/// is a `FnValue` — e.g. `Project(Project(FnValue("Apps"), "Notepad"),
-/// "Routes")` → `"Apps.Notepad.Routes"`. Returns `None` for any chain
-/// whose head is not a `FnValue` (a genuine record-field access). Used
-/// to recover a cross-module first-class fn reference that the resolver
-/// split into an `Ident` head plus dotted `Attr` tail.
-fn collapse_fnvalue_projection(expr: &MirExpr) -> Option<String> {
-    match expr {
-        MirExpr::FnValue(name) => Some(name.clone()),
-        MirExpr::Project(p) => {
-            let base = collapse_fnvalue_projection(&p.node.base.node)?;
-            Some(format!("{}.{}", base, p.node.field))
-        }
-        _ => None,
-    }
+/// `Lib.greeting.text`: a field of a binding another module exposes. Its
+/// base is the static ref (the binding's getter) and the field an ordinary
+/// projection of it.
+fn reads_field_of_module_binding(dotted: &str, ctx: &MirEmitCtx<'_>) -> bool {
+    let Some(cg) = ctx.codegen else {
+        return false;
+    };
+    resolve_module_call(dotted, ctx.module_prefixes).is_some_and(|(prefix, rest)| {
+        rest.split_once('.')
+            .is_some_and(|(head, _)| cg.is_module_binding(Some(prefix), head))
+    })
 }
 
 /// Mirror of HIR's `ResolvedLeafOp::StaticRef` emit
@@ -2699,6 +2696,18 @@ fn emit_mir_static_ref(name: &str, ctx: &MirEmitCtx<'_>) -> String {
         && cg.is_module_binding(ctx.current_module_scope, name)
     {
         return format!("{}()", module_binding_getter(name));
+    }
+    // A binding another module exposes, read as `Module.name`: that
+    // module's own getter.
+    if let Some(cg) = ctx.codegen
+        && let Some((prefix, bare)) = resolve_module_call(name, ctx.module_prefixes)
+        && cg.is_module_binding(Some(prefix), bare)
+    {
+        return format!(
+            "{}::{}()",
+            module_prefix_to_rust_path(prefix),
+            module_binding_getter(bare)
+        );
     }
     if name == "Option.None" || name == "None" {
         return "None".to_string();

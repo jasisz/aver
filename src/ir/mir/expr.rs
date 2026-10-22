@@ -210,6 +210,22 @@ pub enum MirExpr {
     Unbox(std::boxed::Box<Spanned<MirExpr>>),
 }
 
+/// The dotted name a chain of field reads over a [`MirExpr::FnValue`] head
+/// spells (`Lib.Names.base`): the resolver leaves the leading segment an
+/// `Ident` and the rest `Attr`, so a qualified name read as a value (a fn of
+/// another module, or a binding it exposes) arrives in this shape. `None`
+/// when the head is not a `FnValue`, i.e. a genuine record-field access.
+pub fn static_path(expr: &MirExpr) -> Option<String> {
+    match expr {
+        MirExpr::FnValue(name) => Some(name.clone()),
+        MirExpr::Project(p) => {
+            let base = static_path(&p.node.base.node)?;
+            Some(format!("{}.{}", base, p.node.field))
+        }
+        _ => None,
+    }
+}
+
 /// Apply `f` to every immediate sub-expression of `e` in evaluation order.
 ///
 /// The exhaustive match makes adding a `MirExpr` variant a compile error here,
