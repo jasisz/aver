@@ -23,11 +23,11 @@ mod cache;
 #[cfg(feature = "verify")]
 mod lean_process;
 #[cfg(feature = "verify")]
-mod nanoda_export;
-#[cfg(feature = "verify")]
 pub mod output;
 #[cfg(feature = "verify")]
 mod prelude_cache;
+#[cfg(feature = "verify")]
+mod sorry_free_export;
 #[cfg(feature = "verify")]
 mod verifier;
 #[cfg(feature = "verify")]

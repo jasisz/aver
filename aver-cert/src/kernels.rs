@@ -32,13 +32,17 @@ pub enum KernelInput {
 }
 
 /// One kernel: a display name, the toolchain binary, its leading arguments,
-/// and how it is given the export.
+/// how it is given the export, and whether it accepts declarations that use
+/// `sorryAx`. A kernel that does not (nanoda leaves the axiom out of its
+/// environment; con-leche and con-ron refuse it) reads the export without the
+/// declarations that depend on `sorryAx`, none of which a caller credits.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Kernel {
     pub name: &'static str,
     pub binary: &'static str,
     pub args: &'static [&'static str],
     pub input: KernelInput,
+    pub admits_sorry: bool,
 }
 
 /// Every kernel `--paranoid` runs, Lean's own first. All of them ship in the
@@ -49,36 +53,42 @@ pub const PARANOID_KERNELS: [Kernel; 6] = [
         binary: "leanchecker",
         args: &["--silent", "--from-export"],
         input: KernelInput::ExportPath,
+        admits_sorry: true,
     },
     Kernel {
         name: "Lean (hardened allocator)",
         binary: "leanchecker-paranoid",
         args: &["--silent", "--from-export"],
         input: KernelInput::ExportPath,
+        admits_sorry: true,
     },
     Kernel {
         name: "lean4lean",
         binary: "lean4lean",
         args: &["--import"],
         input: KernelInput::ExportPath,
+        admits_sorry: true,
     },
     Kernel {
         name: "nanoda",
         binary: "nanoda_bin",
         args: &[],
         input: KernelInput::NanodaConfig,
+        admits_sorry: false,
     },
     Kernel {
         name: "con-leche",
         binary: "con-leche",
         args: &[],
         input: KernelInput::ExportPath,
+        admits_sorry: false,
     },
     Kernel {
         name: "con-ron",
         binary: "con-ron",
         args: &[],
         input: KernelInput::ExportPath,
+        admits_sorry: false,
     },
 ];
 
