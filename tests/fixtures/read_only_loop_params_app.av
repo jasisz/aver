@@ -89,6 +89,45 @@ fn allLeaves(ts: List<Tree>, acc: Int) -> Int
         [] -> acc
         [t, ..rest] -> allLeaves(rest, acc + leaves(t))
 
+record Placed
+    name: String
+    c: Tree
+    at: Int
+
+fn placedBefore(p: Placed, upTo: Int) -> Option<Tree>
+    ? "The tree, when its place is below upTo."
+    match p.at < upTo
+        true -> Option.Some(p.c)
+        false -> Option.None
+
+fn findBefore(bucket: List<Placed>, n: String, upTo: Int) -> Option<Tree>
+    ? "The tree of the bucket named n, if placed before upTo: only the match hands its head on."
+    match bucket
+        [] -> Option.None
+        [p, ..rest] -> match p.name == n
+            true -> placedBefore(p, upTo)
+            false -> findBefore(rest, n, upTo)
+
+fn placedCopy(bucket: List<Placed>, acc: List<Placed>) -> List<Placed>
+    ? "The entries again, in order: each head goes into the list being built."
+    match bucket
+        [] -> List.reverse(acc)
+        [p, ..rest] -> placedCopy(rest, List.prepend(p, acc))
+
+fn treesOf(bucket: List<Placed>, acc: List<Tree>) -> List<Tree>
+    ? "The trees of the entries, in order: a field of each head goes into the list being built."
+    match bucket
+        [] -> List.reverse(acc)
+        [p, ..rest] -> treesOf(rest, List.prepend(p.c, acc))
+
+fn firstLong(names: List<String>) -> String
+    ? "The first name longer than four characters, returned as it is."
+    match names
+        [] -> "-"
+        [n, ..rest] -> match String.len(n) > 4
+            true -> n
+            false -> firstLong(rest)
+
 fn show(o: Option<String>) -> String
     ? "The value, or a dash."
     match o
@@ -115,3 +154,8 @@ fn main()
     Console.print("same {sameAs(st.names, "alpha")} lengths {lengths(st.names, 0)} long {anyLong(st.names)}")
     Console.print("leaves {leaves(st.cache)} all {allLeaves([st.cache, Tree.Empty, st.cache], 0)}")
     Console.print("kept{joined(keep(st.names, []), "")} names{joined(st.names, "")} depth {st.depth}")
+    placed = [Placed(name = "a", c = st.cache, at = 3), Placed(name = "b", c = Tree.Empty, at = 1)]
+    Console.print("before {leaves(Option.withDefault(findBefore(placed, "a", 4), Tree.Empty))} {leaves(Option.withDefault(findBefore(placed, "a", 2), Tree.Empty))} long {firstLong(st.names)}")
+    copied = placedCopy(placed, [])
+    trees = treesOf(placed, [])
+    Console.print("copied {List.len(copied)} trees {allLeaves(trees, 0)}")

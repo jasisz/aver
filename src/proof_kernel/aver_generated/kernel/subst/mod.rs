@@ -20,7 +20,20 @@ fn __mutual_tco_trampoline_1(
         __state = match __state {
             __MutualTco1::Capture(mut bs @ _) => {
                 crate::proof_kernel::cancel_checkpoint();
-                aver_list_match!(bs, [] => { return Ok(()) }, [b, rest] => __MutualTco1::CaptureOne(b, rest))
+                {
+                    let __list_subject = bs;
+                    if __list_subject.is_empty() {
+                        return Ok(());
+                    } else {
+                        if let (Some(b), Some(rest)) =
+                            (__list_subject.first(), __list_subject.tail())
+                        {
+                            __MutualTco1::CaptureOne(b.clone(), rest)
+                        } else {
+                            panic!("Aver Rust codegen: non-exhaustive list match")
+                        }
+                    }
+                }
             }
             __MutualTco1::CaptureOne(mut b @ _, mut rest @ _) => {
                 crate::proof_kernel::cancel_checkpoint();
@@ -99,9 +112,9 @@ pub fn lookup(
             if __list_subject.is_empty() {
                 return None;
             } else {
-                if let Some((b, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(b), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     if (b.name == name) {
-                        return Some(b.value);
+                        return Some(b.value.clone());
                     } else {
                         {
                             let __tco1 = rest;
@@ -355,7 +368,7 @@ pub fn freeVarsFields(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((f, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::concat(
                     &crate::proof_kernel::aver_generated::kernel::subst::freeVars(&f.value),
                     &crate::proof_kernel::aver_generated::kernel::subst::freeVarsFields(&rest),
@@ -378,7 +391,7 @@ pub fn freeVarsArms(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((a, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::concat(
                     &crate::proof_kernel::aver_generated::kernel::subst::without(
                         &crate::proof_kernel::aver_generated::kernel::subst::freeVars(&a.body),
@@ -573,7 +586,7 @@ pub fn holeCountFields(
         if __list_subject.is_empty() {
             aver_rt::AverInt::from_i64(0)
         } else {
-            if let Some((f, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 crate::proof_kernel::aver_generated::kernel::subst::holeCount(&f.value).add(
                     &crate::proof_kernel::aver_generated::kernel::subst::holeCountFields(&rest),
                 )
@@ -595,7 +608,7 @@ pub fn holeCountArms(
         if __list_subject.is_empty() {
             aver_rt::AverInt::from_i64(0)
         } else {
-            if let Some((a, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 crate::proof_kernel::aver_generated::kernel::subst::holeCount(&a.body)
                     .add(&crate::proof_kernel::aver_generated::kernel::subst::holeCountArms(&rest))
             } else {
@@ -788,9 +801,9 @@ pub fn substAll(
         if __list_subject.is_empty() {
             Ok(aver_rt::AverList::empty())
         } else {
-            if let Some((x, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 Ok(aver_rt::AverList::prepend(
-                    crate::proof_kernel::aver_generated::kernel::subst::subst(x, bs)?,
+                    crate::proof_kernel::aver_generated::kernel::subst::subst(x.clone(), bs)?,
                     &crate::proof_kernel::aver_generated::kernel::subst::substAll(&rest, bs)?,
                 ))
             } else {
@@ -812,12 +825,13 @@ pub fn substFields(
         if __list_subject.is_empty() {
             Ok(aver_rt::AverList::empty())
         } else {
-            if let Some((f, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 Ok(aver_rt::AverList::prepend(
                     crate::proof_kernel::aver_generated::kernel::term::Field {
-                        name: f.name,
+                        name: f.name.clone(),
                         value: crate::proof_kernel::aver_generated::kernel::subst::subst(
-                            f.value, bs,
+                            f.value.clone(),
+                            bs,
                         )?,
                     },
                     &crate::proof_kernel::aver_generated::kernel::subst::substFields(&rest, bs)?,
@@ -841,9 +855,9 @@ pub fn substArms(
         if __list_subject.is_empty() {
             Ok(aver_rt::AverList::empty())
         } else {
-            if let Some((a, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 Ok(aver_rt::AverList::prepend(
-                    crate::proof_kernel::aver_generated::kernel::subst::substArm(a, bs)?,
+                    crate::proof_kernel::aver_generated::kernel::subst::substArm(a.clone(), bs)?,
                     &crate::proof_kernel::aver_generated::kernel::subst::substArms(&rest, bs)?,
                 ))
             } else {
@@ -888,7 +902,7 @@ pub fn unbind(
             if __list_subject.is_empty() {
                 return aver_rt::AverList::empty();
             } else {
-                if let Some((b, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(b), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     if names.contains(&b.name) {
                         {
                             let __tco0 = rest;
@@ -898,7 +912,7 @@ pub fn unbind(
                         }
                     } else {
                         return aver_rt::AverList::prepend(
-                            b,
+                            b.clone(),
                             &crate::proof_kernel::aver_generated::kernel::subst::unbind(
                                 &rest, names,
                             ),

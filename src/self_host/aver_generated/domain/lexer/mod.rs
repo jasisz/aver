@@ -1684,8 +1684,8 @@ pub fn processIndentation(
         if __list_subject.is_empty() {
             crate::aver_generated::domain::lexer::emitFinalDedents(stack)
         } else {
-            if let Some((t, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                crate::aver_generated::domain::lexer::processIndentToken(&t, &rest, stack)
+            if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                crate::aver_generated::domain::lexer::processIndentToken(t, &rest, stack)
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
             }
@@ -1730,8 +1730,8 @@ pub fn processAfterNewline(
                 &crate::aver_generated::domain::lexer::emitFinalDedents(stack),
             )
         } else {
-            if let Some((t, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                crate::aver_generated::domain::lexer::processAfterNewlineToken(&t, &rest, stack)
+            if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                crate::aver_generated::domain::lexer::processAfterNewlineToken(t, &rest, stack)
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
             }

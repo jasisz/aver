@@ -260,6 +260,11 @@ pub(super) fn root_is_owned(local: &MirLocal, ctx: &MirEmitCtx<'_>) -> bool {
         && !ctx.loop_carried_params.contains(local.name.as_str())
 }
 
+/// Whether `local` is reached through a borrow (`&T` or a TCO wrapper).
+pub(super) fn root_is_borrowed(local: &MirLocal, ctx: &MirEmitCtx<'_>) -> bool {
+    local_value_facts(local, ctx).mode == RustValueMode::Borrowed
+}
+
 pub(super) fn projection_root_local(expr: &MirExpr) -> Option<&MirLocal> {
     match expr {
         MirExpr::Local(_) => local_of(expr),

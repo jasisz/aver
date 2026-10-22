@@ -8,11 +8,11 @@ pub fn oneArg(
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let Some((a, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+        if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
             {
                 let __list_subject = rest;
                 if __list_subject.is_empty() {
-                    Ok(a)
+                    Ok(a.clone())
                 } else {
                     Err(::aver_rt::str_lit!("expected 1 argument"))
                 }
@@ -36,14 +36,14 @@ pub fn twoArgs(
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let Some((a, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+        if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
             {
                 let __list_subject = rest;
-                if let Some((b, rest2)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                if let (Some(b), Some(rest2)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __list_subject = rest2;
                         if __list_subject.is_empty() {
-                            Ok((a, b))
+                            Ok((a.clone(), b.clone()))
                         } else {
                             Err(::aver_rt::str_lit!("expected 2 arguments"))
                         }

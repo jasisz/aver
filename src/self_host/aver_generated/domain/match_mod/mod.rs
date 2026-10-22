@@ -24,7 +24,39 @@ fn __mutual_tco_trampoline_1(
         __state = match __state {
             __MutualTco1::MatchPatTupleItemsAcc(mut pats @ _, mut items @ _, mut acc @ _) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(pats, [] => { return Ok(acc) }, [pat, restPats] => { aver_list_match!(items, [] => { return Err(::aver_rt::str_lit!("no match")) }, [item, restItems] => __MutualTco1::MatchPatTupleOne(pat, item, restPats, restItems, acc)) })
+                {
+                    let __list_subject = pats;
+                    if __list_subject.is_empty() {
+                        return Ok(acc);
+                    } else {
+                        if let (Some(pat), Some(restPats)) =
+                            (__list_subject.first(), __list_subject.tail())
+                        {
+                            {
+                                let __list_subject = items;
+                                if __list_subject.is_empty() {
+                                    return Err(::aver_rt::str_lit!("no match"));
+                                } else {
+                                    if let (Some(item), Some(restItems)) =
+                                        (__list_subject.first(), __list_subject.tail())
+                                    {
+                                        __MutualTco1::MatchPatTupleOne(
+                                            pat.clone(),
+                                            item.clone(),
+                                            restPats,
+                                            restItems,
+                                            acc,
+                                        )
+                                    } else {
+                                        panic!("Aver Rust codegen: non-exhaustive list match")
+                                    }
+                                }
+                            }
+                        } else {
+                            panic!("Aver Rust codegen: non-exhaustive list match")
+                        }
+                    }
+                }
             }
             __MutualTco1::MatchPatTupleOne(
                 mut pat @ _,
@@ -251,9 +283,11 @@ pub fn matchPatCons(
                     if __list_subject.is_empty() {
                         Err(::aver_rt::str_lit!("no match"))
                     } else {
-                        if let Some((head, tail)) = aver_rt::list_uncons_cloned(__list_subject) {
+                        if let (Some(head), Some(tail)) =
+                            (__list_subject.first(), __list_subject.tail())
+                        {
                             Ok(aver_rt::AverList::from_vec(vec![
-                                (h, head),
+                                (h, head.clone()),
                                 (
                                     t,
                                     crate::aver_generated::domain::value::Val::ValList(
@@ -647,11 +681,13 @@ pub fn zipBindingsAcc(
                         if __list_subject.is_empty() {
                             return reversed;
                         } else {
-                            if let Some((v, vs)) = aver_rt::list_uncons_cloned(__list_subject) {
+                            if let (Some(v), Some(vs)) =
+                                (__list_subject.first(), __list_subject.tail())
+                            {
                                 {
                                     let __tco0 = ns;
                                     let __tco1 = vs;
-                                    let __tco2 = aver_rt::AverList::prepend((n, v), &acc);
+                                    let __tco2 = aver_rt::AverList::prepend((n, v.clone()), &acc);
                                     __hold0 = __tco0;
                                     names = &__hold0;
                                     __hold1 = __tco1;

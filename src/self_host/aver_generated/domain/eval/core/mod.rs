@@ -605,12 +605,12 @@ fn __mutual_tco_trampoline_1(
                     if let Some((optionExpr, rest)) = aver_rt::list_uncons_cloned(&__list_subject) {
                         {
                             let __list_subject = rest;
-                            if let Some((defaultExpr, ignored)) =
-                                aver_rt::list_uncons_cloned(&__list_subject)
+                            if let (Some(defaultExpr), Some(ignored)) =
+                                (__list_subject.first(), __list_subject.tail())
                             {
                                 __MutualTco1::EvalOptionWithDefaultExprInner(
                                     optionExpr,
-                                    defaultExpr,
+                                    defaultExpr.clone(),
                                     env,
                                 )
                             } else {
@@ -689,18 +689,18 @@ fn __mutual_tco_trampoline_1(
                     if let Some((vecExpr, r1)) = aver_rt::list_uncons_cloned(&__list_subject) {
                         {
                             let __list_subject = r1;
-                            if let Some((idxExpr, r2)) =
-                                aver_rt::list_uncons_cloned(&__list_subject)
+                            if let (Some(idxExpr), Some(r2)) =
+                                (__list_subject.first(), __list_subject.tail())
                             {
                                 {
                                     let __list_subject = r2;
-                                    if let Some((valueExpr, ignored)) =
-                                        aver_rt::list_uncons_cloned(&__list_subject)
+                                    if let (Some(valueExpr), Some(ignored)) =
+                                        (__list_subject.first(), __list_subject.tail())
                                     {
                                         __MutualTco1::EvalVectorSetWithDefaultExprValues(
                                             vecExpr,
-                                            idxExpr,
-                                            valueExpr,
+                                            idxExpr.clone(),
+                                            valueExpr.clone(),
                                             defaultExpr,
                                             env,
                                         )
@@ -790,12 +790,12 @@ fn __mutual_tco_trampoline_1(
                     if let Some((vecExpr, r1)) = aver_rt::list_uncons_cloned(&__list_subject) {
                         {
                             let __list_subject = r1;
-                            if let Some((idxExpr, ignored)) =
-                                aver_rt::list_uncons_cloned(&__list_subject)
+                            if let (Some(idxExpr), Some(ignored)) =
+                                (__list_subject.first(), __list_subject.tail())
                             {
                                 __MutualTco1::EvalVectorGetWithDefaultExprValues(
                                     vecExpr,
-                                    idxExpr,
+                                    idxExpr.clone(),
                                     defaultExpr,
                                     env,
                                 )
@@ -859,7 +859,31 @@ fn __mutual_tco_trampoline_1(
             }
             __MutualTco1::EvalMatch(mut v @ _, mut arms @ _, mut env @ _) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(arms, [] => { return Err(::aver_rt::str_lit!("no matching arm")) }, [arm, rest] => match crate::aver_generated::domain::match_mod::matchPattern(&arm.pattern, v.clone()) { Ok(bindings @ _) => { __MutualTco1::EvalExpr(arm.body, crate::aver_generated::domain::eval::store::mergeBindings(&bindings, env)) }, Err(_) => { __MutualTco1::EvalMatch(v, rest, env) } })
+                {
+                    let __list_subject = arms;
+                    if __list_subject.is_empty() {
+                        return Err(::aver_rt::str_lit!("no matching arm"));
+                    } else {
+                        if let (Some(arm), Some(rest)) =
+                            (__list_subject.first(), __list_subject.tail())
+                        {
+                            match crate::aver_generated::domain::match_mod::matchPattern(
+                                &arm.pattern,
+                                v.clone(),
+                            ) {
+                                Ok(bindings @ _) => __MutualTco1::EvalExpr(
+                                    arm.body.clone(),
+                                    crate::aver_generated::domain::eval::store::mergeBindings(
+                                        &bindings, env,
+                                    ),
+                                ),
+                                Err(_) => __MutualTco1::EvalMatch(v, rest, env),
+                            }
+                        } else {
+                            panic!("Aver Rust codegen: non-exhaustive list match")
+                        }
+                    }
+                }
             }
         };
     }
@@ -1224,7 +1248,37 @@ fn __mutual_tco_trampoline_2(
                 mut env @ _,
             ) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(arms, [] => { return Err(::aver_rt::str_lit!("no matching arm")) }, [arm, rest] => match crate::aver_generated::domain::match_mod::matchPattern(&arm.pattern, v.clone()) { Ok(bindings @ _) => { __MutualTco2::EvalTailExprSlot(selfId, arm.body, slotCount, crate::aver_generated::domain::eval::core::mergeBindingsSlot(bindings, &arm.bindingSlots, env)) }, Err(_) => { __MutualTco2::EvalTailMatchSlot(selfId, v, rest, slotCount, env) } })
+                {
+                    let __list_subject = arms;
+                    if __list_subject.is_empty() {
+                        return Err(::aver_rt::str_lit!("no matching arm"));
+                    } else {
+                        if let (Some(arm), Some(rest)) =
+                            (__list_subject.first(), __list_subject.tail())
+                        {
+                            match crate::aver_generated::domain::match_mod::matchPattern(
+                                &arm.pattern,
+                                v.clone(),
+                            ) {
+                                Ok(bindings @ _) => __MutualTco2::EvalTailExprSlot(
+                                    selfId,
+                                    arm.body.clone(),
+                                    slotCount,
+                                    crate::aver_generated::domain::eval::core::mergeBindingsSlot(
+                                        bindings,
+                                        &arm.bindingSlots,
+                                        env,
+                                    ),
+                                ),
+                                Err(_) => {
+                                    __MutualTco2::EvalTailMatchSlot(selfId, v, rest, slotCount, env)
+                                }
+                            }
+                        } else {
+                            panic!("Aver Rust codegen: non-exhaustive list match")
+                        }
+                    }
+                }
             }
         };
     }
@@ -1823,12 +1877,12 @@ fn __mutual_tco_trampoline_3(
                     if let Some((optionExpr, rest)) = aver_rt::list_uncons_cloned(&__list_subject) {
                         {
                             let __list_subject = rest;
-                            if let Some((defaultExpr, ignored)) =
-                                aver_rt::list_uncons_cloned(&__list_subject)
+                            if let (Some(defaultExpr), Some(ignored)) =
+                                (__list_subject.first(), __list_subject.tail())
                             {
                                 __MutualTco3::EvalOptionWithDefaultExprSlotInner(
                                     optionExpr,
-                                    defaultExpr,
+                                    defaultExpr.clone(),
                                     env,
                                 )
                             } else {
@@ -1904,18 +1958,18 @@ fn __mutual_tco_trampoline_3(
                     if let Some((vecExpr, r1)) = aver_rt::list_uncons_cloned(&__list_subject) {
                         {
                             let __list_subject = r1;
-                            if let Some((idxExpr, r2)) =
-                                aver_rt::list_uncons_cloned(&__list_subject)
+                            if let (Some(idxExpr), Some(r2)) =
+                                (__list_subject.first(), __list_subject.tail())
                             {
                                 {
                                     let __list_subject = r2;
-                                    if let Some((valueExpr, ignored)) =
-                                        aver_rt::list_uncons_cloned(&__list_subject)
+                                    if let (Some(valueExpr), Some(ignored)) =
+                                        (__list_subject.first(), __list_subject.tail())
                                     {
                                         __MutualTco3::EvalVectorSetWithDefaultExprSlotValues(
                                             vecExpr,
-                                            idxExpr,
-                                            valueExpr,
+                                            idxExpr.clone(),
+                                            valueExpr.clone(),
                                             defaultExpr,
                                             env,
                                         )
@@ -2009,12 +2063,12 @@ fn __mutual_tco_trampoline_3(
                     if let Some((vecExpr, r1)) = aver_rt::list_uncons_cloned(&__list_subject) {
                         {
                             let __list_subject = r1;
-                            if let Some((idxExpr, ignored)) =
-                                aver_rt::list_uncons_cloned(&__list_subject)
+                            if let (Some(idxExpr), Some(ignored)) =
+                                (__list_subject.first(), __list_subject.tail())
                             {
                                 __MutualTco3::EvalVectorGetWithDefaultExprSlotValues(
                                     vecExpr,
-                                    idxExpr,
+                                    idxExpr.clone(),
                                     defaultExpr,
                                     env,
                                 )
@@ -2091,7 +2145,33 @@ fn __mutual_tco_trampoline_3(
             }
             __MutualTco3::EvalMatchSlot(mut v @ _, mut arms @ _, mut env @ _) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(arms, [] => { return Err(::aver_rt::str_lit!("no matching arm")) }, [arm, rest] => match crate::aver_generated::domain::match_mod::matchPattern(&arm.pattern, v.clone()) { Ok(bindings @ _) => { __MutualTco3::EvalExprSlot(arm.body, crate::aver_generated::domain::eval::core::mergeBindingsSlot(bindings, &arm.bindingSlots, env)) }, Err(_) => { __MutualTco3::EvalMatchSlot(v, rest, env) } })
+                {
+                    let __list_subject = arms;
+                    if __list_subject.is_empty() {
+                        return Err(::aver_rt::str_lit!("no matching arm"));
+                    } else {
+                        if let (Some(arm), Some(rest)) =
+                            (__list_subject.first(), __list_subject.tail())
+                        {
+                            match crate::aver_generated::domain::match_mod::matchPattern(
+                                &arm.pattern,
+                                v.clone(),
+                            ) {
+                                Ok(bindings @ _) => __MutualTco3::EvalExprSlot(
+                                    arm.body.clone(),
+                                    crate::aver_generated::domain::eval::core::mergeBindingsSlot(
+                                        bindings,
+                                        &arm.bindingSlots,
+                                        env,
+                                    ),
+                                ),
+                                Err(_) => __MutualTco3::EvalMatchSlot(v, rest, env),
+                            }
+                        } else {
+                            panic!("Aver Rust codegen: non-exhaustive list match")
+                        }
+                    }
+                }
             }
         };
     }
@@ -2382,7 +2462,29 @@ fn __mutual_tco_trampoline_4(
         __state = match __state {
             __MutualTco4::EvalArgsMapToNamedEnv(mut exprs @ _, mut params @ _, mut acc @ _) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(exprs, [] => { return Ok(acc) }, [e, restExprs] => { match crate::aver_generated::domain::eval::core::evalExpr(e, (*env).clone(), &*fns) { Err(err @ _) => { return Err(err) }, Ok(v @ _) => { __MutualTco4::EvalArgsMapToNamedEnvBind(restExprs, params, acc, v) } } })
+                {
+                    let __list_subject = exprs;
+                    if __list_subject.is_empty() {
+                        return Ok(acc);
+                    } else {
+                        if let (Some(e), Some(restExprs)) =
+                            (__list_subject.first(), __list_subject.tail())
+                        {
+                            match crate::aver_generated::domain::eval::core::evalExpr(
+                                e.clone(),
+                                (*env).clone(),
+                                &*fns,
+                            ) {
+                                Err(err @ _) => return Err(err),
+                                Ok(v @ _) => __MutualTco4::EvalArgsMapToNamedEnvBind(
+                                    restExprs, params, acc, v,
+                                ),
+                            }
+                        } else {
+                            panic!("Aver Rust codegen: non-exhaustive list match")
+                        }
+                    }
+                }
             }
             __MutualTco4::EvalArgsMapToNamedEnvBind(
                 mut restExprs @ _,
@@ -2453,7 +2555,30 @@ fn __mutual_tco_trampoline_5(
         __state = match __state {
             __MutualTco5::EvalArgsSlotToNamedEnv(mut exprs @ _, mut params @ _, mut acc @ _) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(exprs, [] => { return Ok(acc) }, [e, restExprs] => { match crate::aver_generated::domain::eval::core::evalExprSlot(e, (*env).clone(), &*slotMap, &*fns) { Err(err @ _) => { return Err(err) }, Ok(v @ _) => { __MutualTco5::EvalArgsSlotToNamedEnvBind(restExprs, params, acc, v) } } })
+                {
+                    let __list_subject = exprs;
+                    if __list_subject.is_empty() {
+                        return Ok(acc);
+                    } else {
+                        if let (Some(e), Some(restExprs)) =
+                            (__list_subject.first(), __list_subject.tail())
+                        {
+                            match crate::aver_generated::domain::eval::core::evalExprSlot(
+                                e.clone(),
+                                (*env).clone(),
+                                &*slotMap,
+                                &*fns,
+                            ) {
+                                Err(err @ _) => return Err(err),
+                                Ok(v @ _) => __MutualTco5::EvalArgsSlotToNamedEnvBind(
+                                    restExprs, params, acc, v,
+                                ),
+                            }
+                        } else {
+                            panic!("Aver Rust codegen: non-exhaustive list match")
+                        }
+                    }
+                }
             }
             __MutualTco5::EvalArgsSlotToNamedEnvBind(
                 mut restExprs @ _,
@@ -2822,7 +2947,37 @@ fn __mutual_tco_trampoline_8(
                 mut env @ _,
             ) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(stmts, [] => { return Ok(crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(crate::aver_generated::domain::value::Val::ValUnit)) }, [stmt, rest] => { { let __list_subject = rest.clone(); if __list_subject.is_empty() { return crate::aver_generated::domain::eval::core::evalTailStmtSlot(selfId, stmt, slotCount, env, &*slotMap, &*fns) } else { __MutualTco8::EvalStmtsSlotTailNext(selfId, stmt, rest, slotCount, env) } } })
+                {
+                    let __list_subject = stmts;
+                    if __list_subject.is_empty() {
+                        return Ok(
+                            crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(
+                                crate::aver_generated::domain::value::Val::ValUnit,
+                            ),
+                        );
+                    } else {
+                        if let (Some(stmt), Some(rest)) =
+                            (__list_subject.first(), __list_subject.tail())
+                        {
+                            {
+                                let __list_subject = rest.clone();
+                                if __list_subject.is_empty() {
+                                    return crate::aver_generated::domain::eval::core::evalTailStmtSlot(selfId, stmt.clone(), slotCount, env, &*slotMap, &*fns);
+                                } else {
+                                    __MutualTco8::EvalStmtsSlotTailNext(
+                                        selfId,
+                                        stmt.clone(),
+                                        rest,
+                                        slotCount,
+                                        env,
+                                    )
+                                }
+                            }
+                        } else {
+                            panic!("Aver Rust codegen: non-exhaustive list match")
+                        }
+                    }
+                }
             }
             __MutualTco8::EvalStmtsSlotTailNext(
                 mut selfId @ _,
@@ -3253,8 +3408,166 @@ pub fn evalIndependentItems(
         if __list_subject.is_empty() {
             Ok(aver_rt::AverList::empty())
         } else {
-            if let Some((a, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                aver_list_match!(rest, [] => match crate::aver_generated::domain::eval::core::evalExpr(a, env, fns) { Ok(va @ _) => { Ok(aver_rt::AverList::from_vec(vec![va])) }, Err(e @ _) => { Err(e) } }, [b, rest2] => { { let __list_subject = rest2; if __list_subject.is_empty() { { let (va, vb) = if crate::aver_replay::is_effect_tracking_active() { crate::aver_replay::enter_effect_group(); crate::aver_replay::set_effect_branch(0); let __r0 = crate::aver_generated::domain::eval::core::evalExpr(a, env.clone(), fns); crate::aver_replay::set_effect_branch(1); let __r1 = crate::aver_generated::domain::eval::core::evalExpr(b, env, fns); crate::aver_replay::exit_effect_group(); match (__r0, __r1) { (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)), (__r0, __r1) => { if let Err(__err) = __r0 { Err(__err) } else if let Err(__err) = __r1 { Err(__err) } else { unreachable!("independent product unwrap requires Result branches") } } }? } else { { let __parallel_scope = crate::aver_replay::capture_parallel_scope_context(); let __cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)); std::thread::scope(|__s| { let __parallel_scope0 = __parallel_scope.clone(); let __cancel_flag0 = __cancel_flag.clone(); let __h0 = { let env = env.clone(); let fns = fns; let a = a; aver_rt::spawn_scoped(__s, move || crate::aver_replay::with_parallel_scope_context(__parallel_scope0.clone(), move || { crate::run_cancelable_branch(__cancel_flag0.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalExpr(a, env.clone(), fns); if let Err(_) = &__result { __cancel_flag0.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })) }; let __parallel_scope1 = __parallel_scope.clone(); let __cancel_flag1 = __cancel_flag.clone(); let __h1 = { let env = env; let fns = fns; let b = b; aver_rt::spawn_scoped(__s, move || crate::aver_replay::with_parallel_scope_context(__parallel_scope1.clone(), move || { crate::run_cancelable_branch(__cancel_flag1.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalExpr(b, env, fns); if let Err(_) = &__result { __cancel_flag1.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })) }; let __b0 = __h0.join().unwrap(); let __b1 = __h1.join().unwrap(); match (__b0, __b1) { (crate::ParallelBranch::Completed(__r0), crate::ParallelBranch::Completed(__r1)) => match (__r0, __r1) { (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)), (__r0, __r1) => { if let Err(__err) = __r0 { Err(__err) } else if let Err(__err) = __r1 { Err(__err) } else { unreachable!("independent product unwrap requires Result branches") } } }, (__b0, __b1) => { if let crate::ParallelBranch::Completed(Err(__err)) = __b0 { Err(__err) } else if let crate::ParallelBranch::Completed(Err(__err)) = __b1 { Err(__err) } else { panic!("independent product branch cancelled by sibling branch") } } } })? }}; Ok(aver_rt::AverList::from_vec(vec![va, vb])) } } else { { let (leftExprs, rightExprs) = crate::aver_generated::domain::eval::core::splitIndependentExprs(exprs, aver_rt::AverList::empty(), aver_rt::AverList::empty(), true); { let (leftVals, rightVals) = if crate::aver_replay::is_effect_tracking_active() { crate::aver_replay::enter_effect_group(); crate::aver_replay::set_effect_branch(0); let __r0 = crate::aver_generated::domain::eval::core::evalIndependentItems(&leftExprs, env.clone(), fns); crate::aver_replay::set_effect_branch(1); let __r1 = crate::aver_generated::domain::eval::core::evalIndependentItems(&rightExprs, env, fns); crate::aver_replay::exit_effect_group(); match (__r0, __r1) { (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)), (__r0, __r1) => { if let Err(__err) = __r0 { Err(__err) } else if let Err(__err) = __r1 { Err(__err) } else { unreachable!("independent product unwrap requires Result branches") } } }? } else { { let __parallel_scope = crate::aver_replay::capture_parallel_scope_context(); let __cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)); std::thread::scope(|__s| { let __parallel_scope0 = __parallel_scope.clone(); let __cancel_flag0 = __cancel_flag.clone(); let __h0 = { let env = env.clone(); let fns = fns; let leftExprs = leftExprs; aver_rt::spawn_scoped(__s, move || crate::aver_replay::with_parallel_scope_context(__parallel_scope0.clone(), move || { crate::run_cancelable_branch(__cancel_flag0.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalIndependentItems(&leftExprs, env.clone(), fns); if let Err(_) = &__result { __cancel_flag0.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })) }; let __parallel_scope1 = __parallel_scope.clone(); let __cancel_flag1 = __cancel_flag.clone(); let __h1 = { let env = env; let fns = fns; let rightExprs = rightExprs; aver_rt::spawn_scoped(__s, move || crate::aver_replay::with_parallel_scope_context(__parallel_scope1.clone(), move || { crate::run_cancelable_branch(__cancel_flag1.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalIndependentItems(&rightExprs, env, fns); if let Err(_) = &__result { __cancel_flag1.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })) }; let __b0 = __h0.join().unwrap(); let __b1 = __h1.join().unwrap(); match (__b0, __b1) { (crate::ParallelBranch::Completed(__r0), crate::ParallelBranch::Completed(__r1)) => match (__r0, __r1) { (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)), (__r0, __r1) => { if let Err(__err) = __r0 { Err(__err) } else if let Err(__err) = __r1 { Err(__err) } else { unreachable!("independent product unwrap requires Result branches") } } }, (__b0, __b1) => { if let crate::ParallelBranch::Completed(Err(__err)) = __b0 { Err(__err) } else if let crate::ParallelBranch::Completed(Err(__err)) = __b1 { Err(__err) } else { panic!("independent product branch cancelled by sibling branch") } } } })? }}; Ok(crate::aver_generated::domain::eval::core::interleaveIndependentVals(&leftVals, &rightVals, true, aver_rt::AverList::empty())) } } } } })
+            if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                {
+                    let __list_subject = rest;
+                    if __list_subject.is_empty() {
+                        match crate::aver_generated::domain::eval::core::evalExpr(
+                            a.clone(),
+                            env,
+                            fns,
+                        ) {
+                            Ok(va @ _) => Ok(aver_rt::AverList::from_vec(vec![va])),
+                            Err(e @ _) => Err(e),
+                        }
+                    } else {
+                        if let (Some(b), Some(rest2)) =
+                            (__list_subject.first(), __list_subject.tail())
+                        {
+                            {
+                                let __list_subject = rest2;
+                                if __list_subject.is_empty() {
+                                    {
+                                        let (va, vb) =
+                                            if crate::aver_replay::is_effect_tracking_active() {
+                                                crate::aver_replay::enter_effect_group();
+                                                crate::aver_replay::set_effect_branch(0);
+                                                let __r0 = crate::aver_generated::domain::eval::core::evalExpr(a.clone(), env.clone(), fns);
+                                                crate::aver_replay::set_effect_branch(1);
+                                                let __r1 = crate::aver_generated::domain::eval::core::evalExpr(b.clone(), env, fns);
+                                                crate::aver_replay::exit_effect_group();
+                                                match (__r0, __r1) {
+                                                    (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)),
+                                                    (__r0, __r1) => {
+                                                        if let Err(__err) = __r0 {
+                                                            Err(__err)
+                                                        } else if let Err(__err) = __r1 {
+                                                            Err(__err)
+                                                        } else {
+                                                            unreachable!(
+                                                                "independent product unwrap requires Result branches"
+                                                            )
+                                                        }
+                                                    }
+                                                }?
+                                            } else {
+                                                {
+                                                    let __parallel_scope = crate::aver_replay::capture_parallel_scope_context();
+                                                    let __cancel_flag = std::sync::Arc::new(
+                                                        std::sync::atomic::AtomicBool::new(false),
+                                                    );
+                                                    std::thread::scope(|__s| {
+                                                        let __parallel_scope0 =
+                                                            __parallel_scope.clone();
+                                                        let __cancel_flag0 = __cancel_flag.clone();
+                                                        let __h0 = {
+                                                            let env = env.clone();
+                                                            let fns = fns;
+                                                            let a = a;
+                                                            aver_rt::spawn_scoped(__s, move || {
+                                                                crate::aver_replay::with_parallel_scope_context(__parallel_scope0.clone(), move || { crate::run_cancelable_branch(__cancel_flag0.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalExpr(a.clone(), env.clone(), fns); if let Err(_) = &__result { __cancel_flag0.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })
+                                                            })
+                                                        };
+                                                        let __parallel_scope1 =
+                                                            __parallel_scope.clone();
+                                                        let __cancel_flag1 = __cancel_flag.clone();
+                                                        let __h1 = {
+                                                            let env = env;
+                                                            let fns = fns;
+                                                            let b = b;
+                                                            aver_rt::spawn_scoped(__s, move || {
+                                                                crate::aver_replay::with_parallel_scope_context(__parallel_scope1.clone(), move || { crate::run_cancelable_branch(__cancel_flag1.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalExpr(b.clone(), env, fns); if let Err(_) = &__result { __cancel_flag1.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })
+                                                            })
+                                                        };
+                                                        let __b0 = __h0.join().unwrap();
+                                                        let __b1 = __h1.join().unwrap();
+                                                        match (__b0, __b1) { (crate::ParallelBranch::Completed(__r0), crate::ParallelBranch::Completed(__r1)) => match (__r0, __r1) { (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)), (__r0, __r1) => { if let Err(__err) = __r0 { Err(__err) } else if let Err(__err) = __r1 { Err(__err) } else { unreachable!("independent product unwrap requires Result branches") } } }, (__b0, __b1) => { if let crate::ParallelBranch::Completed(Err(__err)) = __b0 { Err(__err) } else if let crate::ParallelBranch::Completed(Err(__err)) = __b1 { Err(__err) } else { panic!("independent product branch cancelled by sibling branch") } } }
+                                                    })?
+                                                }
+                                            };
+                                        Ok(aver_rt::AverList::from_vec(vec![va, vb]))
+                                    }
+                                } else {
+                                    {
+                                        let (leftExprs, rightExprs) = crate::aver_generated::domain::eval::core::splitIndependentExprs(exprs, aver_rt::AverList::empty(), aver_rt::AverList::empty(), true);
+                                        {
+                                            let (leftVals, rightVals) =
+                                                if crate::aver_replay::is_effect_tracking_active() {
+                                                    crate::aver_replay::enter_effect_group();
+                                                    crate::aver_replay::set_effect_branch(0);
+                                                    let __r0 = crate::aver_generated::domain::eval::core::evalIndependentItems(&leftExprs, env.clone(), fns);
+                                                    crate::aver_replay::set_effect_branch(1);
+                                                    let __r1 = crate::aver_generated::domain::eval::core::evalIndependentItems(&rightExprs, env, fns);
+                                                    crate::aver_replay::exit_effect_group();
+                                                    match (__r0, __r1) {
+                                                        (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)),
+                                                        (__r0, __r1) => {
+                                                            if let Err(__err) = __r0 {
+                                                                Err(__err)
+                                                            } else if let Err(__err) = __r1 {
+                                                                Err(__err)
+                                                            } else {
+                                                                unreachable!(
+                                                                    "independent product unwrap requires Result branches"
+                                                                )
+                                                            }
+                                                        }
+                                                    }?
+                                                } else {
+                                                    {
+                                                        let __parallel_scope = crate::aver_replay::capture_parallel_scope_context();
+                                                        let __cancel_flag = std::sync::Arc::new(
+                                                            std::sync::atomic::AtomicBool::new(
+                                                                false,
+                                                            ),
+                                                        );
+                                                        std::thread::scope(|__s| {
+                                                            let __parallel_scope0 =
+                                                                __parallel_scope.clone();
+                                                            let __cancel_flag0 =
+                                                                __cancel_flag.clone();
+                                                            let __h0 = {
+                                                                let env = env.clone();
+                                                                let fns = fns;
+                                                                let leftExprs = leftExprs;
+                                                                aver_rt::spawn_scoped(
+                                                                    __s,
+                                                                    move || {
+                                                                        crate::aver_replay::with_parallel_scope_context(__parallel_scope0.clone(), move || { crate::run_cancelable_branch(__cancel_flag0.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalIndependentItems(&leftExprs, env.clone(), fns); if let Err(_) = &__result { __cancel_flag0.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })
+                                                                    },
+                                                                )
+                                                            };
+                                                            let __parallel_scope1 =
+                                                                __parallel_scope.clone();
+                                                            let __cancel_flag1 =
+                                                                __cancel_flag.clone();
+                                                            let __h1 = {
+                                                                let env = env;
+                                                                let fns = fns;
+                                                                let rightExprs = rightExprs;
+                                                                aver_rt::spawn_scoped(
+                                                                    __s,
+                                                                    move || {
+                                                                        crate::aver_replay::with_parallel_scope_context(__parallel_scope1.clone(), move || { crate::run_cancelable_branch(__cancel_flag1.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalIndependentItems(&rightExprs, env, fns); if let Err(_) = &__result { __cancel_flag1.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })
+                                                                    },
+                                                                )
+                                                            };
+                                                            let __b0 = __h0.join().unwrap();
+                                                            let __b1 = __h1.join().unwrap();
+                                                            match (__b0, __b1) { (crate::ParallelBranch::Completed(__r0), crate::ParallelBranch::Completed(__r1)) => match (__r0, __r1) { (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)), (__r0, __r1) => { if let Err(__err) = __r0 { Err(__err) } else if let Err(__err) = __r1 { Err(__err) } else { unreachable!("independent product unwrap requires Result branches") } } }, (__b0, __b1) => { if let crate::ParallelBranch::Completed(Err(__err)) = __b0 { Err(__err) } else if let crate::ParallelBranch::Completed(Err(__err)) = __b1 { Err(__err) } else { panic!("independent product branch cancelled by sibling branch") } } }
+                                                        })?
+                                                    }
+                                                };
+                                            Ok(crate::aver_generated::domain::eval::core::interleaveIndependentVals(&leftVals, &rightVals, true, aver_rt::AverList::empty()))
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            panic!("Aver Rust codegen: non-exhaustive list match")
+                        }
+                    }
+                }
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
             }
@@ -3282,11 +3595,11 @@ pub fn splitIndependentExprs(
             if __list_subject.is_empty() {
                 return (leftAcc.reverse(), rightAcc.reverse());
             } else {
-                if let Some((expr, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(expr), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     if sendLeft {
                         {
                             let __tco0 = rest;
-                            let __tco1 = aver_rt::AverList::prepend(expr, &leftAcc);
+                            let __tco1 = aver_rt::AverList::prepend(expr.clone(), &leftAcc);
                             let __tco3 = false;
                             __hold0 = __tco0;
                             exprs = &__hold0;
@@ -3297,7 +3610,7 @@ pub fn splitIndependentExprs(
                     } else {
                         {
                             let __tco0 = rest;
-                            let __tco2 = aver_rt::AverList::prepend(expr, &rightAcc);
+                            let __tco2 = aver_rt::AverList::prepend(expr.clone(), &rightAcc);
                             let __tco3 = true;
                             __hold0 = __tco0;
                             exprs = &__hold0;
@@ -3336,11 +3649,11 @@ pub fn interleaveIndependentVals(
                         right, acc,
                     );
                 } else {
-                    if let Some((v, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                         {
                             let __tco0 = rest;
                             let __tco2 = false;
-                            let __tco3 = aver_rt::AverList::prepend(v, &acc);
+                            let __tco3 = aver_rt::AverList::prepend(v.clone(), &acc);
                             __hold0 = __tco0;
                             left = &__hold0;
                             takeLeft = __tco2;
@@ -3360,11 +3673,11 @@ pub fn interleaveIndependentVals(
                         left, acc,
                     );
                 } else {
-                    if let Some((v, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                         {
                             let __tco1 = rest;
                             let __tco2 = true;
-                            let __tco3 = aver_rt::AverList::prepend(v, &acc);
+                            let __tco3 = aver_rt::AverList::prepend(v.clone(), &acc);
                             __hold1 = __tco1;
                             right = &__hold1;
                             takeLeft = __tco2;
@@ -3395,10 +3708,10 @@ pub fn finishIndependentVals(
             if __list_subject.is_empty() {
                 return acc.reverse();
             } else {
-                if let Some((v, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend(v, &acc);
+                        let __tco1 = aver_rt::AverList::prepend(v.clone(), &acc);
                         __hold0 = __tco0;
                         items = &__hold0;
                         acc = __tco1;
@@ -3584,8 +3897,12 @@ pub fn evalConcatParts(
                     crate::aver_generated::domain::value::Val__ValStr(acc),
                 ));
             } else {
-                if let Some((p, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    match crate::aver_generated::domain::eval::core::evalExpr(p, env.clone(), fns) {
+                if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    match crate::aver_generated::domain::eval::core::evalExpr(
+                        p.clone(),
+                        env.clone(),
+                        fns,
+                    ) {
                         Err(e @ _) => {
                             return Err(e);
                         }
@@ -3742,8 +4059,12 @@ pub fn evalListItemsRev(
             if __list_subject.is_empty() {
                 return Ok(acc.reverse());
             } else {
-                if let Some((e, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    match crate::aver_generated::domain::eval::core::evalExpr(e, env.clone(), fns) {
+                if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    match crate::aver_generated::domain::eval::core::evalExpr(
+                        e.clone(),
+                        env.clone(),
+                        fns,
+                    ) {
                         Err(err @ _) => {
                             return Err(err);
                         }
@@ -3795,8 +4116,12 @@ pub fn evalArgsRev(
             if __list_subject.is_empty() {
                 return Ok(acc.reverse());
             } else {
-                if let Some((e, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    match crate::aver_generated::domain::eval::core::evalExpr(e, env.clone(), fns) {
+                if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    match crate::aver_generated::domain::eval::core::evalExpr(
+                        e.clone(),
+                        env.clone(),
+                        fns,
+                    ) {
                         Err(err @ _) => {
                             return Err(err);
                         }
@@ -5024,9 +5349,9 @@ pub fn evalConcatPartsSlot(
                     crate::aver_generated::domain::value::Val__ValStr(acc),
                 ));
             } else {
-                if let Some((p, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     match crate::aver_generated::domain::eval::core::evalExprSlot(
-                        p,
+                        p.clone(),
                         env.clone(),
                         slotMap,
                         fns,
@@ -5115,9 +5440,9 @@ pub fn evalListItemsSlotRev(
             if __list_subject.is_empty() {
                 return Ok(acc.reverse());
             } else {
-                if let Some((e, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     match crate::aver_generated::domain::eval::core::evalExprSlot(
-                        e,
+                        e.clone(),
                         env.clone(),
                         slotMap,
                         fns,
@@ -5335,7 +5660,48 @@ pub fn evalArgsSlot(
             Ok(aver_rt::AverList::empty())
         } else {
             if let Some((e0, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                aver_list_match!(rest, [] => crate::aver_generated::domain::eval::core::evalArgsSlot1(e0, env, slotMap, fns), [e1, rest2] => { aver_list_match!(rest2, [] => crate::aver_generated::domain::eval::core::evalArgsSlot2(e0, e1, env, slotMap, fns), [e2, rest3] => { { let __list_subject = rest3; if __list_subject.is_empty() { crate::aver_generated::domain::eval::core::evalArgsSlot3(e0, e1, e2, env, slotMap, fns) } else { crate::aver_generated::domain::eval::core::evalArgsSlotRev(exprs, &env, slotMap, fns, aver_rt::AverList::empty()) } } }) })
+                {
+                    let __list_subject = rest;
+                    if __list_subject.is_empty() {
+                        crate::aver_generated::domain::eval::core::evalArgsSlot1(
+                            e0, env, slotMap, fns,
+                        )
+                    } else {
+                        if let (Some(e1), Some(rest2)) =
+                            (__list_subject.first(), __list_subject.tail())
+                        {
+                            {
+                                let __list_subject = rest2;
+                                if __list_subject.is_empty() {
+                                    crate::aver_generated::domain::eval::core::evalArgsSlot2(
+                                        e0,
+                                        e1.clone(),
+                                        env,
+                                        slotMap,
+                                        fns,
+                                    )
+                                } else {
+                                    if let (Some(e2), Some(rest3)) =
+                                        (__list_subject.first(), __list_subject.tail())
+                                    {
+                                        {
+                                            let __list_subject = rest3;
+                                            if __list_subject.is_empty() {
+                                                crate::aver_generated::domain::eval::core::evalArgsSlot3(e0, e1.clone(), e2.clone(), env, slotMap, fns)
+                                            } else {
+                                                crate::aver_generated::domain::eval::core::evalArgsSlotRev(exprs, &env, slotMap, fns, aver_rt::AverList::empty())
+                                            }
+                                        }
+                                    } else {
+                                        panic!("Aver Rust codegen: non-exhaustive list match")
+                                    }
+                                }
+                            }
+                        } else {
+                            panic!("Aver Rust codegen: non-exhaustive list match")
+                        }
+                    }
+                }
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
             }
@@ -5405,9 +5771,9 @@ pub fn evalArgsSlotRev(
             if __list_subject.is_empty() {
                 return Ok(acc.reverse());
             } else {
-                if let Some((e, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     match crate::aver_generated::domain::eval::core::evalExprSlot(
-                        e,
+                        e.clone(),
                         env.clone(),
                         slotMap,
                         fns,
@@ -5449,8 +5815,12 @@ pub fn evalArgsMapToSlotEnv(
             if __list_subject.is_empty() {
                 return Ok(acc);
             } else {
-                if let Some((e, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    match crate::aver_generated::domain::eval::core::evalExpr(e, env.clone(), fns) {
+                if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    match crate::aver_generated::domain::eval::core::evalExpr(
+                        e.clone(),
+                        env.clone(),
+                        fns,
+                    ) {
                         Err(err @ _) => {
                             return Err(err);
                         }
@@ -5495,9 +5865,9 @@ pub fn evalArgsSlotToSlotEnv(
             if __list_subject.is_empty() {
                 return Ok(acc);
             } else {
-                if let Some((e, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     match crate::aver_generated::domain::eval::core::evalExprSlot(
-                        e,
+                        e.clone(),
                         env.clone(),
                         slotMap,
                         fns,
@@ -5607,8 +5977,171 @@ pub fn evalIndependentItemsSlot(
         if __list_subject.is_empty() {
             Ok(aver_rt::AverList::empty())
         } else {
-            if let Some((a, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                aver_list_match!(rest, [] => match crate::aver_generated::domain::eval::core::evalExprSlot(a, env, slotMap, fns) { Ok(va @ _) => { Ok(aver_rt::AverList::from_vec(vec![va])) }, Err(e @ _) => { Err(e) } }, [b, rest2] => { { let __list_subject = rest2; if __list_subject.is_empty() { { let (va, vb) = if crate::aver_replay::is_effect_tracking_active() { crate::aver_replay::enter_effect_group(); crate::aver_replay::set_effect_branch(0); let __r0 = crate::aver_generated::domain::eval::core::evalExprSlot(a, env.clone(), slotMap, fns); crate::aver_replay::set_effect_branch(1); let __r1 = crate::aver_generated::domain::eval::core::evalExprSlot(b, env, slotMap, fns); crate::aver_replay::exit_effect_group(); match (__r0, __r1) { (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)), (__r0, __r1) => { if let Err(__err) = __r0 { Err(__err) } else if let Err(__err) = __r1 { Err(__err) } else { unreachable!("independent product unwrap requires Result branches") } } }? } else { { let __parallel_scope = crate::aver_replay::capture_parallel_scope_context(); let __cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)); std::thread::scope(|__s| { let __parallel_scope0 = __parallel_scope.clone(); let __cancel_flag0 = __cancel_flag.clone(); let __h0 = { let env = env.clone(); let slotMap = slotMap; let fns = fns; let a = a; aver_rt::spawn_scoped(__s, move || crate::aver_replay::with_parallel_scope_context(__parallel_scope0.clone(), move || { crate::run_cancelable_branch(__cancel_flag0.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalExprSlot(a, env.clone(), slotMap, fns); if let Err(_) = &__result { __cancel_flag0.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })) }; let __parallel_scope1 = __parallel_scope.clone(); let __cancel_flag1 = __cancel_flag.clone(); let __h1 = { let env = env; let slotMap = slotMap; let fns = fns; let b = b; aver_rt::spawn_scoped(__s, move || crate::aver_replay::with_parallel_scope_context(__parallel_scope1.clone(), move || { crate::run_cancelable_branch(__cancel_flag1.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalExprSlot(b, env, slotMap, fns); if let Err(_) = &__result { __cancel_flag1.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })) }; let __b0 = __h0.join().unwrap(); let __b1 = __h1.join().unwrap(); match (__b0, __b1) { (crate::ParallelBranch::Completed(__r0), crate::ParallelBranch::Completed(__r1)) => match (__r0, __r1) { (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)), (__r0, __r1) => { if let Err(__err) = __r0 { Err(__err) } else if let Err(__err) = __r1 { Err(__err) } else { unreachable!("independent product unwrap requires Result branches") } } }, (__b0, __b1) => { if let crate::ParallelBranch::Completed(Err(__err)) = __b0 { Err(__err) } else if let crate::ParallelBranch::Completed(Err(__err)) = __b1 { Err(__err) } else { panic!("independent product branch cancelled by sibling branch") } } } })? }}; Ok(aver_rt::AverList::from_vec(vec![va, vb])) } } else { { let (leftExprs, rightExprs) = crate::aver_generated::domain::eval::core::splitIndependentExprs(exprs, aver_rt::AverList::empty(), aver_rt::AverList::empty(), true); { let (leftVals, rightVals) = if crate::aver_replay::is_effect_tracking_active() { crate::aver_replay::enter_effect_group(); crate::aver_replay::set_effect_branch(0); let __r0 = crate::aver_generated::domain::eval::core::evalIndependentItemsSlot(&leftExprs, env.clone(), slotMap, fns); crate::aver_replay::set_effect_branch(1); let __r1 = crate::aver_generated::domain::eval::core::evalIndependentItemsSlot(&rightExprs, env, slotMap, fns); crate::aver_replay::exit_effect_group(); match (__r0, __r1) { (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)), (__r0, __r1) => { if let Err(__err) = __r0 { Err(__err) } else if let Err(__err) = __r1 { Err(__err) } else { unreachable!("independent product unwrap requires Result branches") } } }? } else { { let __parallel_scope = crate::aver_replay::capture_parallel_scope_context(); let __cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)); std::thread::scope(|__s| { let __parallel_scope0 = __parallel_scope.clone(); let __cancel_flag0 = __cancel_flag.clone(); let __h0 = { let env = env.clone(); let slotMap = slotMap; let fns = fns; let leftExprs = leftExprs; aver_rt::spawn_scoped(__s, move || crate::aver_replay::with_parallel_scope_context(__parallel_scope0.clone(), move || { crate::run_cancelable_branch(__cancel_flag0.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalIndependentItemsSlot(&leftExprs, env.clone(), slotMap, fns); if let Err(_) = &__result { __cancel_flag0.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })) }; let __parallel_scope1 = __parallel_scope.clone(); let __cancel_flag1 = __cancel_flag.clone(); let __h1 = { let env = env; let slotMap = slotMap; let fns = fns; let rightExprs = rightExprs; aver_rt::spawn_scoped(__s, move || crate::aver_replay::with_parallel_scope_context(__parallel_scope1.clone(), move || { crate::run_cancelable_branch(__cancel_flag1.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalIndependentItemsSlot(&rightExprs, env, slotMap, fns); if let Err(_) = &__result { __cancel_flag1.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })) }; let __b0 = __h0.join().unwrap(); let __b1 = __h1.join().unwrap(); match (__b0, __b1) { (crate::ParallelBranch::Completed(__r0), crate::ParallelBranch::Completed(__r1)) => match (__r0, __r1) { (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)), (__r0, __r1) => { if let Err(__err) = __r0 { Err(__err) } else if let Err(__err) = __r1 { Err(__err) } else { unreachable!("independent product unwrap requires Result branches") } } }, (__b0, __b1) => { if let crate::ParallelBranch::Completed(Err(__err)) = __b0 { Err(__err) } else if let crate::ParallelBranch::Completed(Err(__err)) = __b1 { Err(__err) } else { panic!("independent product branch cancelled by sibling branch") } } } })? }}; Ok(crate::aver_generated::domain::eval::core::interleaveIndependentVals(&leftVals, &rightVals, true, aver_rt::AverList::empty())) } } } } })
+            if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                {
+                    let __list_subject = rest;
+                    if __list_subject.is_empty() {
+                        match crate::aver_generated::domain::eval::core::evalExprSlot(
+                            a.clone(),
+                            env,
+                            slotMap,
+                            fns,
+                        ) {
+                            Ok(va @ _) => Ok(aver_rt::AverList::from_vec(vec![va])),
+                            Err(e @ _) => Err(e),
+                        }
+                    } else {
+                        if let (Some(b), Some(rest2)) =
+                            (__list_subject.first(), __list_subject.tail())
+                        {
+                            {
+                                let __list_subject = rest2;
+                                if __list_subject.is_empty() {
+                                    {
+                                        let (va, vb) =
+                                            if crate::aver_replay::is_effect_tracking_active() {
+                                                crate::aver_replay::enter_effect_group();
+                                                crate::aver_replay::set_effect_branch(0);
+                                                let __r0 = crate::aver_generated::domain::eval::core::evalExprSlot(a.clone(), env.clone(), slotMap, fns);
+                                                crate::aver_replay::set_effect_branch(1);
+                                                let __r1 = crate::aver_generated::domain::eval::core::evalExprSlot(b.clone(), env, slotMap, fns);
+                                                crate::aver_replay::exit_effect_group();
+                                                match (__r0, __r1) {
+                                                    (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)),
+                                                    (__r0, __r1) => {
+                                                        if let Err(__err) = __r0 {
+                                                            Err(__err)
+                                                        } else if let Err(__err) = __r1 {
+                                                            Err(__err)
+                                                        } else {
+                                                            unreachable!(
+                                                                "independent product unwrap requires Result branches"
+                                                            )
+                                                        }
+                                                    }
+                                                }?
+                                            } else {
+                                                {
+                                                    let __parallel_scope = crate::aver_replay::capture_parallel_scope_context();
+                                                    let __cancel_flag = std::sync::Arc::new(
+                                                        std::sync::atomic::AtomicBool::new(false),
+                                                    );
+                                                    std::thread::scope(|__s| {
+                                                        let __parallel_scope0 =
+                                                            __parallel_scope.clone();
+                                                        let __cancel_flag0 = __cancel_flag.clone();
+                                                        let __h0 = {
+                                                            let env = env.clone();
+                                                            let slotMap = slotMap;
+                                                            let fns = fns;
+                                                            let a = a;
+                                                            aver_rt::spawn_scoped(__s, move || {
+                                                                crate::aver_replay::with_parallel_scope_context(__parallel_scope0.clone(), move || { crate::run_cancelable_branch(__cancel_flag0.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalExprSlot(a.clone(), env.clone(), slotMap, fns); if let Err(_) = &__result { __cancel_flag0.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })
+                                                            })
+                                                        };
+                                                        let __parallel_scope1 =
+                                                            __parallel_scope.clone();
+                                                        let __cancel_flag1 = __cancel_flag.clone();
+                                                        let __h1 = {
+                                                            let env = env;
+                                                            let slotMap = slotMap;
+                                                            let fns = fns;
+                                                            let b = b;
+                                                            aver_rt::spawn_scoped(__s, move || {
+                                                                crate::aver_replay::with_parallel_scope_context(__parallel_scope1.clone(), move || { crate::run_cancelable_branch(__cancel_flag1.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalExprSlot(b.clone(), env, slotMap, fns); if let Err(_) = &__result { __cancel_flag1.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })
+                                                            })
+                                                        };
+                                                        let __b0 = __h0.join().unwrap();
+                                                        let __b1 = __h1.join().unwrap();
+                                                        match (__b0, __b1) { (crate::ParallelBranch::Completed(__r0), crate::ParallelBranch::Completed(__r1)) => match (__r0, __r1) { (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)), (__r0, __r1) => { if let Err(__err) = __r0 { Err(__err) } else if let Err(__err) = __r1 { Err(__err) } else { unreachable!("independent product unwrap requires Result branches") } } }, (__b0, __b1) => { if let crate::ParallelBranch::Completed(Err(__err)) = __b0 { Err(__err) } else if let crate::ParallelBranch::Completed(Err(__err)) = __b1 { Err(__err) } else { panic!("independent product branch cancelled by sibling branch") } } }
+                                                    })?
+                                                }
+                                            };
+                                        Ok(aver_rt::AverList::from_vec(vec![va, vb]))
+                                    }
+                                } else {
+                                    {
+                                        let (leftExprs, rightExprs) = crate::aver_generated::domain::eval::core::splitIndependentExprs(exprs, aver_rt::AverList::empty(), aver_rt::AverList::empty(), true);
+                                        {
+                                            let (leftVals, rightVals) =
+                                                if crate::aver_replay::is_effect_tracking_active() {
+                                                    crate::aver_replay::enter_effect_group();
+                                                    crate::aver_replay::set_effect_branch(0);
+                                                    let __r0 = crate::aver_generated::domain::eval::core::evalIndependentItemsSlot(&leftExprs, env.clone(), slotMap, fns);
+                                                    crate::aver_replay::set_effect_branch(1);
+                                                    let __r1 = crate::aver_generated::domain::eval::core::evalIndependentItemsSlot(&rightExprs, env, slotMap, fns);
+                                                    crate::aver_replay::exit_effect_group();
+                                                    match (__r0, __r1) {
+                                                        (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)),
+                                                        (__r0, __r1) => {
+                                                            if let Err(__err) = __r0 {
+                                                                Err(__err)
+                                                            } else if let Err(__err) = __r1 {
+                                                                Err(__err)
+                                                            } else {
+                                                                unreachable!(
+                                                                    "independent product unwrap requires Result branches"
+                                                                )
+                                                            }
+                                                        }
+                                                    }?
+                                                } else {
+                                                    {
+                                                        let __parallel_scope = crate::aver_replay::capture_parallel_scope_context();
+                                                        let __cancel_flag = std::sync::Arc::new(
+                                                            std::sync::atomic::AtomicBool::new(
+                                                                false,
+                                                            ),
+                                                        );
+                                                        std::thread::scope(|__s| {
+                                                            let __parallel_scope0 =
+                                                                __parallel_scope.clone();
+                                                            let __cancel_flag0 =
+                                                                __cancel_flag.clone();
+                                                            let __h0 = {
+                                                                let env = env.clone();
+                                                                let slotMap = slotMap;
+                                                                let fns = fns;
+                                                                let leftExprs = leftExprs;
+                                                                aver_rt::spawn_scoped(
+                                                                    __s,
+                                                                    move || {
+                                                                        crate::aver_replay::with_parallel_scope_context(__parallel_scope0.clone(), move || { crate::run_cancelable_branch(__cancel_flag0.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalIndependentItemsSlot(&leftExprs, env.clone(), slotMap, fns); if let Err(_) = &__result { __cancel_flag0.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })
+                                                                    },
+                                                                )
+                                                            };
+                                                            let __parallel_scope1 =
+                                                                __parallel_scope.clone();
+                                                            let __cancel_flag1 =
+                                                                __cancel_flag.clone();
+                                                            let __h1 = {
+                                                                let env = env;
+                                                                let slotMap = slotMap;
+                                                                let fns = fns;
+                                                                let rightExprs = rightExprs;
+                                                                aver_rt::spawn_scoped(
+                                                                    __s,
+                                                                    move || {
+                                                                        crate::aver_replay::with_parallel_scope_context(__parallel_scope1.clone(), move || { crate::run_cancelable_branch(__cancel_flag1.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalIndependentItemsSlot(&rightExprs, env, slotMap, fns); if let Err(_) = &__result { __cancel_flag1.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })
+                                                                    },
+                                                                )
+                                                            };
+                                                            let __b0 = __h0.join().unwrap();
+                                                            let __b1 = __h1.join().unwrap();
+                                                            match (__b0, __b1) { (crate::ParallelBranch::Completed(__r0), crate::ParallelBranch::Completed(__r1)) => match (__r0, __r1) { (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)), (__r0, __r1) => { if let Err(__err) = __r0 { Err(__err) } else if let Err(__err) = __r1 { Err(__err) } else { unreachable!("independent product unwrap requires Result branches") } } }, (__b0, __b1) => { if let crate::ParallelBranch::Completed(Err(__err)) = __b0 { Err(__err) } else if let crate::ParallelBranch::Completed(Err(__err)) = __b1 { Err(__err) } else { panic!("independent product branch cancelled by sibling branch") } } }
+                                                        })?
+                                                    }
+                                                };
+                                            Ok(crate::aver_generated::domain::eval::core::interleaveIndependentVals(&leftVals, &rightVals, true, aver_rt::AverList::empty()))
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            panic!("Aver Rust codegen: non-exhaustive list match")
+                        }
+                    }
+                }
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
             }

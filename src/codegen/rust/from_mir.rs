@@ -3790,7 +3790,7 @@ fn emit_mir_match_with(
                 codegen,
                 emit_ctx,
             ),
-            (MatchPath::List, Some(_)) => lent_head(&arm.pattern, &arm.body, emit_ctx),
+            (MatchPath::List, Some(_)) => lent_head(&arm.pattern, &arm.body),
             (MatchPath::LentTuple, Some(_)) => lent_tuple_parts(&arm.pattern, &arm.body, emit_ctx),
             _ => HashSet::new(),
         };
@@ -4246,20 +4246,17 @@ fn lent_tuple_parts(
         .collect()
 }
 
-/// The head a list arm binds and only reads (see [`reads_only_borrow`]),
-/// which it then borrows from the list instead of cloning it out.
-fn lent_head(
-    pattern: &MirPattern,
-    body: &Spanned<MirExpr>,
-    ctx: &MirEmitCtx<'_>,
-) -> HashSet<String> {
+/// The head a list arm binds, which it borrows from the list instead of
+/// cloning it out: a read that needs the value owned clones it there, as it
+/// does a borrowed param, so a branch that only reads the head copies
+/// nothing and one that hands it on copies what it hands on, once.
+fn lent_head(pattern: &MirPattern, body: &Spanned<MirExpr>) -> HashSet<String> {
     match pattern {
         MirPattern::Cons {
             head, head_name, ..
         } if !head_name.is_empty()
             && head_name != "_"
-            && read_type(&body.node, *head).is_some_and(should_borrow_param)
-            && reads_only_borrow(&body.node, *head, ctx) =>
+            && read_type(&body.node, *head).is_some_and(should_borrow_param) =>
         {
             HashSet::from([head_name.clone()])
         }
@@ -7394,7 +7391,16 @@ fn emit_mir_intrinsic_call(
         }
         BuiltinIntrinsic::LstPush => {
             let builder = emit_mir_expr(&args[0], ctx)?;
+            // An item read through a borrow (a lent list head, a borrowed
+            // param, or a field of one) is cloned into the builder; an owned
+            // one moves in.
             let item = emit_mir_expr(&args[1], ctx)?;
+            let item = match super::ownership::projection_root_local(&args[1].node) {
+                Some(root) if super::ownership::root_is_borrowed(root, ctx) => {
+                    materialize_owned(item, &args[1].node, ctx)
+                }
+                _ => item,
+            };
             let push = if type_is_int_list(result_ty) {
                 "int_list_builder_push"
             } else {

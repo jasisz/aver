@@ -495,9 +495,9 @@ pub fn tokenAtWalk(
             if __list_subject.is_empty() {
                 return crate::aver_generated::domain::token::Token::TkEof;
             } else {
-                if let Some((t, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     if (idx == target) {
-                        return t;
+                        return t.clone();
                     } else {
                         {
                             let __tco0 = rest;

@@ -1230,11 +1230,11 @@ pub fn oneProof(
     crate::proof_std::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let Some((p, __pat0)) = aver_rt::list_uncons_cloned(__list_subject) {
+        if let (Some(p), Some(__pat0)) = (__list_subject.first(), __list_subject.tail()) {
             {
                 let __list_subject = __pat0;
                 if __list_subject.is_empty() {
-                    crate::proof_std::aver_generated::kernel::decode::proof(&p)
+                    crate::proof_std::aver_generated::kernel::decode::proof(p)
                 } else {
                     Err(::aver_rt::str_lit!("expected one proof"))
                 }

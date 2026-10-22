@@ -154,9 +154,9 @@ pub fn listTake(
             if __list_subject.is_empty() {
                 aver_rt::AverList::empty()
             } else {
-                if let Some((item, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(item), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     aver_rt::AverList::prepend(
-                        item,
+                        item.clone(),
                         &crate::aver_generated::domain::builtins::list::listTake(
                             &rest,
                             count.sub(&aver_rt::AverInt::from_i64(1)),
@@ -378,20 +378,25 @@ pub fn zipListsAcc(
             if __list_subject.is_empty() {
                 return reversed;
             } else {
-                if let Some((x, xs)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(x), Some(xs)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __list_subject = b;
                         if __list_subject.is_empty() {
                             return reversed;
                         } else {
-                            if let Some((y, ys)) = aver_rt::list_uncons_cloned(__list_subject) {
+                            if let (Some(y), Some(ys)) =
+                                (__list_subject.first(), __list_subject.tail())
+                            {
                                 {
                                     let __tco0 = xs;
                                     let __tco1 = ys;
                                     let __tco2 = aver_rt::AverList::prepend(
                                         crate::aver_generated::domain::value::Val::ValTuple(
                                             crate::aver_generated::domain::value::Val__ValTuple(
-                                                aver_rt::AverList::from_vec(vec![x, y]),
+                                                aver_rt::AverList::from_vec(vec![
+                                                    x.clone(),
+                                                    y.clone(),
+                                                ]),
                                             ),
                                         ),
                                         &acc,
@@ -423,7 +428,20 @@ pub fn builtinListHead(
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let items @ _ = crate::aver_generated::domain::builtins::helpers::expectList(&v)?;
-    aver_list_match!(items, [] => Ok(crate::aver_generated::domain::value::Val::ValNone), [h, rest] => Ok(crate::aver_generated::domain::value::Val::ValSome(crate::aver_generated::domain::value::Val__ValSome(h))))
+    {
+        let __list_subject = items;
+        if __list_subject.is_empty() {
+            Ok(crate::aver_generated::domain::value::Val::ValNone)
+        } else {
+            if let (Some(h), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                Ok(crate::aver_generated::domain::value::Val::ValSome(
+                    crate::aver_generated::domain::value::Val__ValSome(h.clone()),
+                ))
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// List.tail(list) -> Option of rest.

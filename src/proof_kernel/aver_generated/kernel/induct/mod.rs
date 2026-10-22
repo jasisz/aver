@@ -449,7 +449,7 @@ pub fn callsFields(
         if __list_subject.is_empty() {
             Ok(aver_rt::AverList::empty())
         } else {
-            if let Some((x, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 Ok(aver_rt::AverList::concat(
                     &crate::proof_kernel::aver_generated::kernel::induct::selfCalls(
                         &x.value,
@@ -484,7 +484,7 @@ pub fn callsArms(
         if __list_subject.is_empty() {
             Ok(aver_rt::AverList::empty())
         } else {
-            if let Some((a, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 Ok(aver_rt::AverList::concat(
                     &crate::proof_kernel::aver_generated::kernel::induct::selfCalls(
                         &a.body,
@@ -656,14 +656,15 @@ pub fn letsInlined(
             if __list_subject.is_empty() {
                 return Ok(done);
             } else {
-                if let Some((b, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(b), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
                         let __tco1 = aver_rt::AverList::prepend(
                             crate::proof_kernel::aver_generated::kernel::term::bind(
-                                b.name,
+                                b.name.clone(),
                                 crate::proof_kernel::aver_generated::kernel::subst::subst(
-                                    b.value, &done,
+                                    b.value.clone(),
+                                    &done,
                                 )?,
                             ),
                             &done,
@@ -840,9 +841,9 @@ pub fn defNamed(
             if __list_subject.is_empty() {
                 return None;
             } else {
-                if let Some((d, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(d), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     if (d.name == n) {
-                        return Some(d);
+                        return Some(d.clone());
                     } else {
                         {
                             let __tco1 = rest;
@@ -873,7 +874,7 @@ pub fn letCalls(
         if __list_subject.is_empty() {
             Ok(aver_rt::AverInt::from_i64(0))
         } else {
-            if let Some((b, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(b), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 Ok(aver_rt::AverInt::from_i64(
                     crate::proof_kernel::aver_generated::kernel::induct::selfCalls(
                         &b.value,
@@ -1094,7 +1095,7 @@ pub fn armCalls(
         if __list_subject.is_empty() {
             Ok(aver_rt::AverList::empty())
         } else {
-            if let Some((a, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 Ok(aver_rt::AverList::prepend(
                     crate::proof_kernel::aver_generated::kernel::induct::ArmCalls {
                         arm: a.clone(),
@@ -1385,7 +1386,7 @@ pub fn callsDescend(
         if __list_subject.is_empty() {
             true
         } else {
-            if let Some((c, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 (((aver_rt::AverInt::from_i64(c.args.len() as i64) == n)
                     && (crate::proof_kernel::aver_generated::kernel::induct::descends(
                         &crate::proof_kernel::aver_generated::kernel::induct::nthTerm(
@@ -1797,7 +1798,7 @@ pub fn shorterArms(
         if __list_subject.is_empty() {
             true
         } else {
-            if let Some((a, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 (crate::proof_kernel::aver_generated::kernel::induct::shorter(
                     &a.body,
                     m,
@@ -1887,9 +1888,9 @@ pub fn fieldValues(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((x, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::prepend(
-                    x.value,
+                    x.value.clone(),
                     &crate::proof_kernel::aver_generated::kernel::induct::fieldValues(&rest),
                 )
             } else {
@@ -2101,7 +2102,7 @@ pub fn armsShrink(
         if __list_subject.is_empty() {
             Ok(true)
         } else {
-            if let Some((a, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 Ok(
                     (crate::proof_kernel::aver_generated::kernel::induct::callsShrink(
                         &crate::proof_kernel::aver_generated::kernel::induct::calls(
@@ -2135,7 +2136,7 @@ pub fn callsShrink(
         if __list_subject.is_empty() {
             true
         } else {
-            if let Some((c, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 (((aver_rt::AverInt::from_i64(c.args.len() as i64) == n)
                     && crate::proof_kernel::aver_generated::kernel::induct::smaller(
                         crate::proof_kernel::aver_generated::kernel::induct::nthTerm(
@@ -2143,7 +2144,7 @@ pub fn callsShrink(
                             j.clone(),
                         ),
                         parts.clone(),
-                        c.inner,
+                        c.inner.clone(),
                     ))
                     && crate::proof_kernel::aver_generated::kernel::induct::callsShrink(
                         &rest, parts, j, n,
@@ -2181,8 +2182,8 @@ pub fn smaller(
                         match &*__pat1 {
                             "List.drop" => {
                                 let __list_subject = __pat2;
-                                if let Some((l, __pat3)) =
-                                    aver_rt::list_uncons_cloned(__list_subject)
+                                if let (Some(l), Some(__pat3)) =
+                                    (__list_subject.first(), __list_subject.tail())
                                 {
                                     {
                                         let __list_subject = __pat3;
@@ -2193,7 +2194,7 @@ pub fn smaller(
                                                 let __list_subject = __pat4;
                                                 if __list_subject.is_empty() {
                                                     {
-                                                        let __tco0 = Some(l);
+                                                        let __tco0 = Some(l.clone());
                                                         t = __tco0;
                                                         continue;
                                                     }
@@ -2279,9 +2280,9 @@ pub fn nthTerm(
             if __list_subject.is_empty() {
                 return None;
             } else {
-                if let Some((x, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     if (i == aver_rt::AverInt::from_i64(0)) {
-                        return Some(x);
+                        return Some(x.clone());
                     } else {
                         {
                             let __tco0 = rest;
@@ -2331,15 +2332,15 @@ pub fn eachNotMutual(
             if __list_subject.is_empty() {
                 return Ok(());
             } else {
-                if let Some((d, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(d), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     if (crate::proof_kernel::aver_generated::kernel::induct::reaches(
-                        crate::proof_kernel::aver_generated::kernel::induct::callees(&d, ds),
+                        crate::proof_kernel::aver_generated::kernel::induct::callees(d, ds),
                         d.name.clone(),
                         ds,
                         aver_rt::AverList::empty(),
                         aver_rt::AverInt::from_i64(ds.len() as i64),
                     ) && (!crate::proof_kernel::aver_generated::kernel::induct::rooted(
-                        &d, ds, ds,
+                        d, ds, ds,
                     ))) {
                         return Err(aver_rt::AverStr::from({
                             let mut __b = {
@@ -2490,7 +2491,7 @@ pub fn letNames(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((b, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(b), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::concat(
                     &crate::proof_kernel::aver_generated::kernel::induct::namesCalled(&b.value),
                     &crate::proof_kernel::aver_generated::kernel::induct::letNames(&rest),
@@ -2559,7 +2560,7 @@ pub fn isDef(
         if __list_subject.is_empty() {
             false
         } else {
-            if let Some((d, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(d), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 ((d.name == n)
                     || crate::proof_kernel::aver_generated::kernel::induct::isDef(n, &rest))
             } else {
@@ -2714,7 +2715,7 @@ pub fn namesFields(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((x, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::concat(
                     &crate::proof_kernel::aver_generated::kernel::induct::namesCalled(&x.value),
                     &crate::proof_kernel::aver_generated::kernel::induct::namesFields(&rest),
@@ -2737,7 +2738,7 @@ pub fn namesArms(
         if __list_subject.is_empty() {
             aver_rt::AverList::empty()
         } else {
-            if let Some((a, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::concat(
                     &crate::proof_kernel::aver_generated::kernel::induct::namesCalled(&a.body),
                     &crate::proof_kernel::aver_generated::kernel::induct::namesArms(&rest),

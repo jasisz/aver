@@ -527,11 +527,13 @@ pub fn maxSlotInExprs(
             if __list_subject.is_empty() {
                 return acc;
             } else {
-                if let Some((e, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
-                        let __tco1 =
-                            crate::aver_generated::domain::resolver::core::maxSlotInExpr(e, acc);
+                        let __tco1 = crate::aver_generated::domain::resolver::core::maxSlotInExpr(
+                            e.clone(),
+                            acc,
+                        );
                         __hold0 = __tco0;
                         exprs = &__hold0;
                         acc = __tco1;
@@ -599,11 +601,12 @@ pub fn maxSlotInArms(
             if __list_subject.is_empty() {
                 return acc;
             } else {
-                if let Some((arm, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(arm), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
                         let __tco1 = crate::aver_generated::domain::resolver::core::maxSlotInExpr(
-                            arm.body, acc,
+                            arm.body.clone(),
+                            acc,
                         );
                         __hold0 = __tco0;
                         arms = &__hold0;
@@ -646,8 +649,8 @@ pub fn resolveStmts(
             if __list_subject.is_empty() {
                 return (acc.reverse(), next, slots);
             } else {
-                if let Some((s, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    match &s {
+                if let (Some(s), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    match s {
                         crate::aver_generated::domain::ast::Stmt::StmtBind(__stp1, __stp0) => {
                             let __stp1 = __stp1.clone();
                             let __stp0 = __stp0.clone();
@@ -704,7 +707,7 @@ pub fn resolveStmts(
                         }
                         crate::aver_generated::domain::ast::Stmt::StmtBindSlot(_, _) => {
                             let __tco0 = rest;
-                            let __tco3 = aver_rt::AverList::prepend(s, &acc);
+                            let __tco3 = aver_rt::AverList::prepend(s.clone(), &acc);
                             __hold0 = __tco0;
                             stmts = &__hold0;
                             acc = __tco3;
@@ -1589,12 +1592,12 @@ pub fn resolveExprs(
             if __list_subject.is_empty() {
                 return acc.reverse();
             } else {
-                if let Some((e, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
                         let __tco2 = aver_rt::AverList::prepend(
                             crate::aver_generated::domain::resolver::core::resolveExprSimple(
-                                e,
+                                e.clone(),
                                 slots.clone(),
                             ),
                             &acc,
@@ -1668,10 +1671,12 @@ pub fn resolveArms(
             if __list_subject.is_empty() {
                 return (acc.reverse(), slots);
             } else {
-                if let Some((arm, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(arm), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
-                        let (__stp0, _) =
-                            crate::aver_generated::domain::resolver::core::resolveArm(arm, &slots);
+                        let (__stp0, _) = crate::aver_generated::domain::resolver::core::resolveArm(
+                            arm.clone(),
+                            &slots,
+                        );
                         {
                             let __tco0 = rest;
                             let __tco2 = aver_rt::AverList::prepend(__stp0, &acc);
@@ -2162,8 +2167,8 @@ pub fn resolveStmts__collected(
             if __list_subject.is_empty() {
                 return (aver_rt::list_builder_finalize(acc), next, slots);
             } else {
-                if let Some((s, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    match &s {
+                if let (Some(s), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    match s {
                         crate::aver_generated::domain::ast::Stmt::StmtBind(__stp1, __stp0) => {
                             let __stp1 = __stp1.clone();
                             let __stp0 = __stp0.clone();
@@ -2220,7 +2225,7 @@ pub fn resolveStmts__collected(
                         }
                         crate::aver_generated::domain::ast::Stmt::StmtBindSlot(_, _) => {
                             let __tco0 = rest;
-                            let __tco3 = aver_rt::list_builder_push(acc, s);
+                            let __tco3 = aver_rt::list_builder_push(acc, s.clone());
                             __hold0 = __tco0;
                             stmts = &__hold0;
                             acc = __tco3;
@@ -2251,13 +2256,13 @@ pub fn resolveExprs__collected(
             if __list_subject.is_empty() {
                 return aver_rt::list_builder_finalize(acc);
             } else {
-                if let Some((e, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
                         let __tco2 = aver_rt::list_builder_push(
                             acc,
                             crate::aver_generated::domain::resolver::core::resolveExprSimple(
-                                e,
+                                e.clone(),
                                 slots.clone(),
                             ),
                         );
@@ -2330,10 +2335,12 @@ pub fn resolveArms__collected(
             if __list_subject.is_empty() {
                 return (aver_rt::list_builder_finalize(acc), slots);
             } else {
-                if let Some((arm, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(arm), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
-                        let (__stp0, _) =
-                            crate::aver_generated::domain::resolver::core::resolveArm(arm, &slots);
+                        let (__stp0, _) = crate::aver_generated::domain::resolver::core::resolveArm(
+                            arm.clone(),
+                            &slots,
+                        );
                         {
                             let __tco0 = rest;
                             let __tco2 = aver_rt::list_builder_push(acc, __stp0);

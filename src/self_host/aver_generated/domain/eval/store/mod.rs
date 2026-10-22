@@ -206,11 +206,13 @@ pub fn zipArgs(
                         if __list_subject.is_empty() {
                             return acc;
                         } else {
-                            if let Some((a, as_)) = aver_rt::list_uncons_cloned(__list_subject) {
+                            if let (Some(a), Some(as_)) =
+                                (__list_subject.first(), __list_subject.tail())
+                            {
                                 {
                                     let __tco0 = ps;
                                     let __tco1 = as_;
-                                    let __tco2 = acc.insert_owned(p, a);
+                                    let __tco2 = acc.insert_owned(p, a.clone());
                                     __hold0 = __tco0;
                                     params = &__hold0;
                                     __hold1 = __tco1;
@@ -300,10 +302,10 @@ pub fn fnsToIdMap(
             if __list_subject.is_empty() {
                 return acc;
             } else {
-                if let Some((f, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
-                        let __tco1 = acc.insert_owned(f.name, idx.clone());
+                        let __tco1 = acc.insert_owned(f.name.clone(), idx.clone());
                         let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
                         __hold0 = __tco0;
                         fns = &__hold0;
