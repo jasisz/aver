@@ -468,14 +468,18 @@ aver = { path = "..", version = "=0.26.0", package = "aver-lang" }
         cert = tomllib.loads((REPO_ROOT / "aver-cert" / "Cargo.toml").read_text())
         dep = root["dependencies"]["aver-cert"]
 
-        self.assertIn("dep:aver-cert", root["features"]["wasm-compile"])
+        self.assertIn("aver-cert/plans", root["features"]["wasm-compile"])
         self.assertEqual(dep["version"], f"={cert['package']['version']}")
         self.assertFalse(dep["default-features"])
-        # The base dependency carries only the plan surface; certificate
-        # production is opted into through the root `certify` feature, which
-        # also pulls the wasm-gc compile pipeline it certifies so `certify`
-        # is a complete, compilable feature combination on its own.
-        self.assertEqual(dep["features"], ["plans"])
+        # The base dependency carries only the paranoid kernel list (which
+        # `aver proof --paranoid` reads) and needs nothing but serde_json; the
+        # wasm-gc pipeline adds the plan surface, and certificate production
+        # is opted into through the root `certify` feature, which also pulls
+        # the wasm-gc compile pipeline it certifies so `certify` is a
+        # complete, compilable feature combination on its own.
+        self.assertNotIn("optional", dep)
+        self.assertEqual(dep["features"], ["kernels"])
+        self.assertEqual(cert["features"]["kernels"], ["dep:serde_json"])
         self.assertEqual(
             root["features"]["certify"], ["wasm-compile", "aver-cert/producer"]
         )
@@ -503,7 +507,7 @@ aver = { path = "..", version = "=0.26.0", package = "aver-lang" }
         def forwarded_cert_features(feature: str) -> set[str]:
             # Dependency-feature edges like `aver-cert/producer` (and the weak
             # form `aver-cert?/…`) are the only way a root feature can enable
-            # more of aver-cert than the base dependency's `plans` surface.
+            # more of aver-cert than the base dependency's `kernels` list.
             return {
                 name
                 for name in feature_closure(feature)
@@ -512,12 +516,14 @@ aver = { path = "..", version = "=0.26.0", package = "aver-lang" }
 
         # Publishing builds with `--features wasm`, so the crates.io binary
         # must keep the certificate producer — and nothing else beyond it.
-        self.assertEqual(forwarded_cert_features("wasm"), {"aver-cert/producer"})
+        self.assertEqual(
+            forwarded_cert_features("wasm"), {"aver-cert/plans", "aver-cert/producer"}
+        )
         # Browser/component builds must stay on the plan surface only: no
-        # aver-cert feature at all may be forwarded (not producer, and not a
+        # other aver-cert feature may be forwarded (not producer, and not a
         # sibling like engine or verify slipping in around it).
-        self.assertEqual(forwarded_cert_features("playground"), set())
-        self.assertEqual(forwarded_cert_features("wasip2"), set())
+        self.assertEqual(forwarded_cert_features("playground"), {"aver-cert/plans"})
+        self.assertEqual(forwarded_cert_features("wasip2"), {"aver-cert/plans"})
 
     def test_saved_targets_repair_a_main_written_before_lsp(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
