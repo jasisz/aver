@@ -701,7 +701,7 @@ fn a_matched_or_handed_on_value_is_not_cloned_whole() {
             "pub fn wrap(mut r @ _: R) -> W {",
             "pub fn yes(mut r @ _: R) -> Result<W, AverStr> {",
             "pub fn pick(mut r @ _: R, ",
-            "match yes(wrap(grow(same(r), ",
+            "let __subject = yes(wrap(grow(same(r), ",
             "let copy @ _ = same(r.clone());",
         ] {
             if !entry.contains(expected) {
