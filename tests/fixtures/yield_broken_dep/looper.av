@@ -5,10 +5,10 @@ module Looper
     exposes [loop]
 
 fn loop(id: Int, seen: Int) -> Int
-    ? "Carries an empty map across the request; nothing in the body ever says what the map holds."
+    ? "Claims two handles at once; a request inside an independent product is not something the lowering cuts."
     ! [Pool.claim]
-    kept = {}
-    handle = Pool.claim(id)
-    match id
-        0 -> seen + handle + Map.len(kept)
-        _ -> loop(id - 1, seen + handle)
+    both = (Pool.claim(id), Pool.claim(id + 1))!
+    match both
+        (first, second) -> match id
+            0 -> seen + first + second
+            _ -> loop(id - 1, seen + first)

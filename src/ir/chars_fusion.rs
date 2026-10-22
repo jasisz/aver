@@ -1756,7 +1756,7 @@ fn pattern_bindings(pattern: &Pattern) -> Vec<String> {
 
 /// Visit every direct sub-expression. Exhaustive so a new `Expr`
 /// variant has to be classified before this compiles.
-pub(super) fn walk_children(expr: &Spanned<Expr>, f: &mut impl FnMut(&Spanned<Expr>)) {
+pub(crate) fn walk_children<'a>(expr: &'a Spanned<Expr>, f: &mut impl FnMut(&'a Spanned<Expr>)) {
     match &expr.node {
         Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => {}
         Expr::Attr(base, _) | Expr::Neg(base) | Expr::ErrorProp(base) => f(base),

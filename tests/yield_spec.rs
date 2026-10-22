@@ -462,14 +462,12 @@ fn a_dependency_that_cannot_be_lowered_reports_at_the_importers_door() {
         "the last section should be the importer's:\n{importer}"
     );
     assert!(
-        dependency.contains("The type of 'kept' is not settled")
+        dependency.contains("inside an independent product")
             && dependency.contains("looper.av:10:1"),
         "the dependency's reason, against the dependency's own section:\n{dependency}"
     );
     assert_eq!(
-        importer
-            .matches("The type of 'kept' is not settled")
-            .count(),
+        importer.matches("inside an independent product").count(),
         0,
         "the dependency's reason must not repeat in the importer's section:\n{importer}"
     );
@@ -483,9 +481,9 @@ fn a_dependency_that_cannot_be_lowered_reports_at_the_importers_door() {
 
 /// `seen = {}` is `Map<K, V>` and nothing in the body says what it holds.
 /// Writing that into a state variant would declare `K` and `V` nowhere and
-/// report three type errors about generated names; the lowering stops
-/// instead, with one error at the user's binding about the user's
-/// variable, and generates nothing.
+/// report three type errors about generated names; the checker stops it
+/// first, with one error at the user's binding about the user's variable,
+/// and nothing is generated.
 #[test]
 fn an_unsettled_live_variable_asks_for_an_annotation_at_its_binding() {
     let out = aver("yield_open_type", &["check"]);
@@ -502,13 +500,13 @@ fn an_unsettled_live_variable_asks_for_an_annotation_at_its_binding() {
     assert_eq!(errors.len(), 1, "one error only:\n{}", format_output(&out));
     assert!(
         errors[0].contains("The type of 'seen' is not settled ('Map<K, V>')")
-            && errors[0].contains("'seen: <type> = ...'"),
+            && errors[0].contains("'seen: Map<K, V> = {}'"),
         "{}",
         format_output(&out)
     );
     // At the binding, and with no generated name anywhere in the output.
     assert!(
-        stdout.contains("main.av:10:1"),
+        stdout.contains("main.av:10:5"),
         "expected the error at the binding on line 10:\n{}",
         format_output(&out)
     );

@@ -937,6 +937,41 @@ fn binding_empty_list_literal_is_error() {
     assert_error_containing(src, "Binding 'x' to empty list literal is not allowed");
 }
 
+// A binding whose type nothing in its function settles is reported with the
+// type to write; one that a later read settles, or that is annotated, is not.
+
+#[test]
+fn binding_whose_value_type_nothing_settles_asks_for_its_type() {
+    let src = "fn has() -> Bool\n    e = {}\n    Map.has(e, 1)\n";
+    assert_error_containing(
+        src,
+        "The type of 'e' is not settled ('Map<Int, V>'): nothing in 'has' fixes V — give the binding a type: 'e: Map<Int, V> = {}'",
+    );
+}
+
+#[test]
+fn binding_whose_element_type_nothing_settles_asks_for_its_type() {
+    let src = "fn size() -> Int\n    v = Vector.fromList([])\n    Vector.len(v)\n";
+    assert_error_containing(src, "The type of 'v' is not settled ('Vector<T>')");
+    let src = "fn same() -> Bool\n    o = Option.None\n    o == Option.None\n";
+    assert_error_containing(src, "The type of 'o' is not settled ('Option<T>')");
+}
+
+#[test]
+fn annotated_empty_binding_is_settled() {
+    assert_no_errors("fn has() -> Bool\n    e: Map<Int, Int> = {}\n    Map.has(e, 1)\n");
+    assert_no_errors(
+        "fn size() -> Int\n    v: Vector<Int> = Vector.fromList([])\n    Vector.len(v)\n",
+    );
+}
+
+#[test]
+fn empty_binding_settled_by_a_later_read_is_not_reported() {
+    assert_no_errors("fn size() -> Int\n    e = {}\n    Map.len(Map.set(e, 1, \"a\"))\n");
+    assert_no_errors("fn first() -> Int\n    e = {}\n    Option.withDefault(Map.get(e, 1), 0)\n");
+    assert_no_errors("fn same() -> Bool\n    o = Option.None\n    o == Option.Some(1)\n");
+}
+
 #[test]
 fn error_list_prepend_mismatched_element_type() {
     let src = "fn bad(xs: List<Int>) -> List<Int>\n    List.prepend(\"x\", xs)\n";

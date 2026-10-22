@@ -46,7 +46,7 @@ age: Int = 30
 xs: List<Int> = []
 ```
 
-A type annotation is optional and gives the type checker a hint. When the annotation and inference are compatible, the annotation wins. Binding an empty list literal without an annotation (`x = []`) is a type error.
+A type annotation is optional and gives the type checker a hint. When the annotation and inference are compatible, the annotation wins. Binding an empty list literal without an annotation (`x = []`) is a type error. So is any other binding whose type nothing in its function settles: `e = {}` read only by `Map.has(e, 1)` never says what the map's values are, and the checker asks for the type (`e: Map<Int, String> = {}`) instead of guessing one. A later read that does say it, such as `Map.set(e, 1, "a")`, is enough.
 
 An empty literal (`[]`, `{}`, `Option.None`) passed to a `List`, `Map` or `Vector` function takes its element type from the call's other arguments (`List.contains([], name)` is a `List<String>` when `name` is a `String`) or from where the result goes. When neither says, and the call's result does not show it either (`List.len([])`, `Map.has({}, 1)`, `[] == []`), the element type is `Int`.
 
