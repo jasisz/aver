@@ -58,13 +58,13 @@ fn __mutual_tco_trampoline_1(
                             if let (Some(vV), Some(ignored)) =
                                 (__list_subject.first(), __list_subject.tail())
                             {
-                                __MutualTco1::TuplesToMap(
-                                    rest,
-                                    acc.insert_owned(
+                                {
+                                    let __arg7 @ _ = acc.insert_owned(
                                         crate::aver_generated::domain::value::mapKeyRepr(kV),
                                         vV.clone(),
-                                    ),
-                                )
+                                    );
+                                    __MutualTco1::TuplesToMap(rest, __arg7)
+                                }
                             } else {
                                 if __list_subject.is_empty() {
                                     __MutualTco1::TuplesToMap(rest, acc)
@@ -109,11 +109,8 @@ pub fn callBuiltin(
     args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::builtins::callBuiltin__indexed(
-        name.clone(),
-        args,
-        aver_rt::string_index_build(&name),
-    )
+    let __arg2 @ _ = aver_rt::string_index_build(&name);
+    crate::aver_generated::domain::builtins::callBuiltin__indexed(name, args, __arg2)
 }
 
 /// Fast exact-match dispatch for the hottest builtins.
@@ -123,11 +120,8 @@ pub fn callBuiltinFast(
     args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Option<Result<crate::aver_generated::domain::value::Val, AverStr>> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::builtins::callBuiltinFast__indexed(
-        name.clone(),
-        args,
-        &aver_rt::string_index_build(&name),
-    )
+    let __arg2 @ _ = aver_rt::string_index_build(&name);
+    crate::aver_generated::domain::builtins::callBuiltinFast__indexed(name, args, &__arg2)
 }
 
 /// Dispatch pre-evaluated args by integer builtin ID. IDs assigned in Ast.builtinNameToId.
@@ -231,11 +225,8 @@ pub fn callBuiltinAfterList(
     args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::builtins::callBuiltinAfterList__indexed(
-        name.clone(),
-        args,
-        aver_rt::string_index_build(&name),
-    )
+    let __arg2 @ _ = aver_rt::string_index_build(&name);
+    crate::aver_generated::domain::builtins::callBuiltinAfterList__indexed(name, args, __arg2)
 }
 
 /// Handle non-prefixed builtins: Result.*, Option.*, Bool.*, Map.*, services, and variant constructors.
@@ -244,11 +235,8 @@ pub fn callBuiltinOther(
     args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::builtins::callBuiltinOther__indexed(
-        name.clone(),
-        args,
-        aver_rt::string_index_build(&name),
-    )
+    let __arg2 @ _ = aver_rt::string_index_build(&name);
+    crate::aver_generated::domain::builtins::callBuiltinOther__indexed(name, args, __arg2)
 }
 
 /// Console.print(v) -> print any value and return Unit.
@@ -452,12 +440,11 @@ pub fn builtinArgsGet(
         )
     };
     Ok(crate::aver_generated::domain::value::Val::ValList(
-        crate::aver_generated::domain::value::Val__ValList(
-            crate::aver_generated::domain::builtins::stringsToVals__collected(
-                &rawArgs,
-                aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
-            ),
-        ),
+        crate::aver_generated::domain::value::Val__ValList({
+            let __arg2 @ _ =
+                aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0));
+            crate::aver_generated::domain::builtins::stringsToVals__collected(&rawArgs, __arg2)
+        }),
     ))
 }
 
@@ -612,19 +599,22 @@ pub fn builtinMapEntries(
             crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
                 let m = __m_fields.0.clone();
                 Ok(crate::aver_generated::domain::value::Val::ValList(
-                    crate::aver_generated::domain::value::Val__ValList(
-                        crate::aver_generated::domain::builtins::mapEntriesToTuples__collected(
-                            &{
-                                let mut es: Vec<_> =
-                                    m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                                es.sort_by(|a, b| a.0.cmp(&b.0));
-                                aver_rt::AverList::from_vec(es)
-                            },
-                            aver_rt::list_builder_new(
+                    crate::aver_generated::domain::value::Val__ValList({
+                        let __arg3 @ _ = {
+                            let mut es: Vec<_> =
+                                m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                            es.sort_by(|a, b| a.0.cmp(&b.0));
+                            aver_rt::AverList::from_vec(es)
+                        };
+                        {
+                            let __arg4 @ _ = aver_rt::list_builder_new(
                                 (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            ),
-                        ),
-                    ),
+                            );
+                            crate::aver_generated::domain::builtins::mapEntriesToTuples__collected(
+                                &__arg3, __arg4,
+                            )
+                        }
+                    }),
                 ))
             }
             _ => Err(::aver_rt::str_lit!("Map.entries requires a Map")),
@@ -694,18 +684,21 @@ pub fn builtinMapKeys(
             crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
                 let m = __m_fields.0.clone();
                 Ok(crate::aver_generated::domain::value::Val::ValList(
-                    crate::aver_generated::domain::value::Val__ValList(
-                        crate::aver_generated::domain::builtins::stringsToVals__collected(
-                            &{
-                                let mut ks: Vec<_> = m.keys().cloned().collect();
-                                ks.sort();
-                                aver_rt::AverList::from_vec(ks)
-                            },
-                            aver_rt::list_builder_new(
+                    crate::aver_generated::domain::value::Val__ValList({
+                        let __arg3 @ _ = {
+                            let mut ks: Vec<_> = m.keys().cloned().collect();
+                            ks.sort();
+                            aver_rt::AverList::from_vec(ks)
+                        };
+                        {
+                            let __arg4 @ _ = aver_rt::list_builder_new(
                                 (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            ),
-                        ),
-                    ),
+                            );
+                            crate::aver_generated::domain::builtins::stringsToVals__collected(
+                                &__arg3, __arg4,
+                            )
+                        }
+                    }),
                 ))
             }
             _ => Err(::aver_rt::str_lit!("Map.keys requires a Map")),
@@ -748,9 +741,11 @@ pub fn builtinMapFromList(
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let items @ _ = crate::aver_generated::domain::builtins::helpers::expectList(&v)?;
     Ok(crate::aver_generated::domain::value::Val::ValMap(
-        crate::aver_generated::domain::value::Val__ValMap(
-            crate::aver_generated::domain::builtins::tuplesToMap(items, HashMap::new()),
-        ),
+        crate::aver_generated::domain::value::Val__ValMap({
+            let __arg3 @ _ =
+                <aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>>::new();
+            crate::aver_generated::domain::builtins::tuplesToMap(items, __arg3)
+        }),
     ))
 }
 
@@ -816,11 +811,8 @@ pub fn callBuiltinServices(
     args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::builtins::callBuiltinServices__indexed(
-        name.clone(),
-        args,
-        aver_rt::string_index_build(&name),
-    )
+    let __arg2 @ _ = aver_rt::string_index_build(&name);
+    crate::aver_generated::domain::builtins::callBuiltinServices__indexed(name, args, __arg2)
 }
 
 /// Random.int(min, max) -> random integer.
@@ -963,11 +955,8 @@ pub fn builtinTerminalNoArg(
     args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(
-        name.clone(),
-        args,
-        &aver_rt::string_index_build(&name),
-    )
+    let __arg2 @ _ = aver_rt::string_index_build(&name);
+    crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, &__arg2)
 }
 
 /// Clear the terminal screen.
@@ -1335,9 +1324,10 @@ pub fn builtinTerminalPrint(
                 let s = __s_fields.0.clone();
                 crate::aver_generated::domain::builtins::termPrintStr(s)
             }
-            _ => crate::aver_generated::domain::builtins::termPrintStr(
-                crate::aver_generated::domain::value::valRepr(&v),
-            ),
+            _ => {
+                let __arg3 @ _ = crate::aver_generated::domain::value::valRepr(&v);
+                crate::aver_generated::domain::builtins::termPrintStr(__arg3)
+            }
         }
     }
 }
@@ -1809,14 +1799,14 @@ pub fn builtinDiskListDir(
         Ok(entries @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
             crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValList(
-                    crate::aver_generated::domain::value::Val__ValList(
+                    crate::aver_generated::domain::value::Val__ValList({
+                        let __arg5 @ _ = aver_rt::list_builder_new(
+                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                        );
                         crate::aver_generated::domain::builtins::stringsToVals__collected(
-                            &entries,
-                            aver_rt::list_builder_new(
-                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            ),
-                        ),
-                    ),
+                            &entries, __arg5,
+                        )
+                    }),
                 ),
             ),
         )),
@@ -1837,21 +1827,16 @@ pub fn tryVariantConstructor(
     args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::builtins::tryVariantConstructor__indexed(
-        name.clone(),
-        args,
-        aver_rt::string_index_build(&name),
-    )
+    let __arg2 @ _ = aver_rt::string_index_build(&name);
+    crate::aver_generated::domain::builtins::tryVariantConstructor__indexed(name, args, __arg2)
 }
 
 /// Split 'Type.Ctor' into (Type, Ctor). Returns None if no dot.
 #[inline(always)]
 pub fn splitDotted(name @ _: AverStr) -> Option<(AverStr, AverStr)> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::builtins::splitDotted__indexed(
-        name.clone(),
-        aver_rt::string_index_build(&name),
-    )
+    let __arg1 @ _ = aver_rt::string_index_build(&name);
+    crate::aver_generated::domain::builtins::splitDotted__indexed(name, __arg1)
 }
 
 /// Find first dot and split.
@@ -1862,12 +1847,8 @@ pub fn splitDottedLoop(
     total @ _: aver_rt::AverInt,
 ) -> Option<(AverStr, AverStr)> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::builtins::splitDottedLoop__indexed(
-        name.clone(),
-        pos,
-        total,
-        aver_rt::string_index_build(&name),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&name);
+    crate::aver_generated::domain::builtins::splitDottedLoop__indexed(name, pos, total, __arg3)
 }
 
 /// Bool.or(a, b) -> a || b.
@@ -2158,8 +2139,8 @@ pub fn builtinHttpSimple(
     {
         let __dispatch_subject = method;
         if &*__dispatch_subject == "get" {
-            Ok(crate::aver_generated::domain::builtins::httpResponseToVal(
-                &{
+            Ok({
+                let __arg4 @ _ = {
                     let __provider_arg0: AverStr = url;
                     crate::cancel_checkpoint();
                     crate::aver_replay::invoke_capability_effect(
@@ -2182,12 +2163,13 @@ pub fn builtinHttpSimple(
                             )
                         },
                     )
-                },
-            ))
+                };
+                crate::aver_generated::domain::builtins::httpResponseToVal(&__arg4)
+            })
         } else {
             if &*__dispatch_subject == "head" {
-                Ok(crate::aver_generated::domain::builtins::httpResponseToVal(
-                    &{
+                Ok({
+                    let __arg5 @ _ = {
                         let __provider_arg0: AverStr = url;
                         crate::cancel_checkpoint();
                         crate::aver_replay::invoke_capability_effect(
@@ -2210,11 +2192,12 @@ pub fn builtinHttpSimple(
                                 )
                             },
                         )
-                    },
-                ))
+                    };
+                    crate::aver_generated::domain::builtins::httpResponseToVal(&__arg5)
+                })
             } else {
-                Ok(crate::aver_generated::domain::builtins::httpResponseToVal(
-                    &{
+                Ok({
+                    let __arg6 @ _ = {
                         let __provider_arg0: AverStr = url;
                         crate::cancel_checkpoint();
                         crate::aver_replay::invoke_capability_effect(
@@ -2237,8 +2220,9 @@ pub fn builtinHttpSimple(
                                 )
                             },
                         )
-                    },
-                ))
+                    };
+                    crate::aver_generated::domain::builtins::httpResponseToVal(&__arg6)
+                })
             }
         }
     }
@@ -2302,8 +2286,8 @@ pub fn builtinHttpBodyInner(
     {
         let __dispatch_subject = method;
         if &*__dispatch_subject == "post" {
-            Ok(crate::aver_generated::domain::builtins::httpResponseToVal(
-                &{
+            Ok({
+                let __arg8 @ _ = {
                     let __provider_arg0: AverStr = url;
                     let __provider_arg1: AverStr = body;
                     let __provider_arg2: AverStr = ct;
@@ -2338,12 +2322,13 @@ pub fn builtinHttpBodyInner(
                             )
                         },
                     )
-                },
-            ))
+                };
+                crate::aver_generated::domain::builtins::httpResponseToVal(&__arg8)
+            })
         } else {
             if &*__dispatch_subject == "put" {
-                Ok(crate::aver_generated::domain::builtins::httpResponseToVal(
-                    &{
+                Ok({
+                    let __arg9 @ _ = {
                         let __provider_arg0: AverStr = url;
                         let __provider_arg1: AverStr = body;
                         let __provider_arg2: AverStr = ct;
@@ -2386,11 +2371,12 @@ pub fn builtinHttpBodyInner(
                                 )
                             },
                         )
-                    },
-                ))
+                    };
+                    crate::aver_generated::domain::builtins::httpResponseToVal(&__arg9)
+                })
             } else {
-                Ok(crate::aver_generated::domain::builtins::httpResponseToVal(
-                    &{
+                Ok({
+                    let __arg10 @ _ = {
                         let __provider_arg0: AverStr = url;
                         let __provider_arg1: AverStr = body;
                         let __provider_arg2: AverStr = ct;
@@ -2433,8 +2419,9 @@ pub fn builtinHttpBodyInner(
                                 )
                             },
                         )
-                    },
-                ))
+                    };
+                    crate::aver_generated::domain::builtins::httpResponseToVal(&__arg10)
+                })
             }
         }
     }
@@ -2492,17 +2479,18 @@ pub fn headersToVal(
 ) -> crate::aver_generated::domain::value::Val {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::value::Val::ValMap(
-        crate::aver_generated::domain::value::Val__ValMap(
-            crate::aver_generated::domain::builtins::headersToValMap(
-                headers,
-                &{
-                    let mut ks: Vec<_> = headers.keys().cloned().collect();
-                    ks.sort();
-                    aver_rt::AverList::from_vec(ks)
-                },
-                HashMap::new(),
-            ),
-        ),
+        crate::aver_generated::domain::value::Val__ValMap({
+            let __arg1 @ _ = {
+                let mut ks: Vec<_> = headers.keys().cloned().collect();
+                ks.sort();
+                aver_rt::AverList::from_vec(ks)
+            };
+            {
+                let __arg2 @ _ =
+                    <aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>>::new();
+                crate::aver_generated::domain::builtins::headersToValMap(headers, &__arg1, __arg2)
+            }
+        }),
     )
 }
 
@@ -2526,7 +2514,7 @@ pub fn headersToValMap(
                     match headers.get(&name).cloned() {
                         Some(values @ _) => {
                             let __tco1 = rest;
-                            let __tco2 = acc.insert_owned(name, crate::aver_generated::domain::value::Val::ValList(crate::aver_generated::domain::value::Val__ValList(crate::aver_generated::domain::builtins::stringsToValStrs__collected(&values, aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0))))));
+                            let __tco2 = acc.insert_owned(name, crate::aver_generated::domain::value::Val::ValList(crate::aver_generated::domain::value::Val__ValList({ let __arg6 @ _ = aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)); crate::aver_generated::domain::builtins::stringsToValStrs__collected(&values, __arg6) })));
                             __hold1 = __tco1;
                             names = &__hold1;
                             acc = __tco2;
@@ -3344,17 +3332,21 @@ pub fn builtinTcpPollInner(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let timeoutMs @ _ = crate::aver_generated::domain::builtins::helpers::expectInt(timeoutV)?;
-    let typedSockets @ _ = crate::aver_generated::domain::builtins::tcpSocketEntriesToMap(
-        &{
+    let typedSockets @ _ = {
+        let __arg6 @ _ = {
             let mut es: Vec<_> = sockets
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
             es.sort_by(|a, b| a.0.cmp(&b.0));
             aver_rt::AverList::from_vec(es)
-        },
-        HashMap::new(),
-    )?;
+        };
+        {
+            let __arg7 @ _ =
+                <aver_rt::AverMap<aver_rt::AverInt, crate::aver_generated::tcp::Socket>>::new();
+            crate::aver_generated::domain::builtins::tcpSocketEntriesToMap(&__arg6, __arg7)
+        }
+    }?;
     match {
         let __provider_arg0: aver_rt::AverMap<
             aver_rt::AverInt,
@@ -3388,14 +3380,14 @@ pub fn builtinTcpPollInner(
         Ok(keys @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
             crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValList(
-                    crate::aver_generated::domain::value::Val__ValList(
+                    crate::aver_generated::domain::value::Val__ValList({
+                        let __arg8 @ _ = aver_rt::list_builder_new(
+                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                        );
                         crate::aver_generated::domain::builtins::tcpReadyKeysToVals__collected(
-                            &keys,
-                            aver_rt::list_builder_new(
-                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            ),
-                        ),
-                    ),
+                            &keys, __arg8,
+                        )
+                    }),
                 ),
             ),
         )),
@@ -4110,10 +4102,11 @@ pub fn splitDotted__indexed(
     mut __str_index @ _: aver_rt::StringIndex,
 ) -> Option<(AverStr, AverStr)> {
     crate::cancel_checkpoint();
+    let __arg2 @ _ = aver_rt::AverInt::from_i64(name.chars().count() as i64);
     crate::aver_generated::domain::builtins::splitDottedLoop__indexed(
-        name.clone(),
+        name,
         aver_rt::AverInt::from_i64(0),
-        aver_rt::AverInt::from_i64(name.chars().count() as i64),
+        __arg2,
         __str_index,
     )
 }

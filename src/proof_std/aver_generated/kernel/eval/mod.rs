@@ -87,33 +87,41 @@ pub fn evalClosed(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) 
         crate::proof_std::aver_generated::kernel::term::Term__view::TCtor(__d_fields) => {
             let d = __d_fields.0.clone();
             let ys = &__d_fields.1;
-            crate::proof_std::aver_generated::kernel::eval::ctorOp(o, &crate::proof_std::aver_generated::kernel::eval::sameCtor(c, d, aver_rt::AverInt::from_i64(xs.len() as i64).add(&aver_rt::AverInt::from_i64(ys.len() as i64))))
+            { let __arg15 @ _ = { let __arg14 @ _ = aver_rt::AverInt::from_i64(xs.len() as i64).add(&aver_rt::AverInt::from_i64(ys.len() as i64)); crate::proof_std::aver_generated::kernel::eval::sameCtor(c, d, __arg14) }; crate::proof_std::aver_generated::kernel::eval::ctorOp(o, &__arg15) }
         },
         _ => {
-            crate::proof_std::aver_generated::kernel::eval::evalOp(o, &crate::proof_std::aver_generated::kernel::eval::evalClosed(a), &crate::proof_std::aver_generated::kernel::eval::evalClosed(b))
+            { let __arg16 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(a); { let __arg17 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(b); crate::proof_std::aver_generated::kernel::eval::evalOp(o, &__arg16, &__arg17) } }
         }
     }
                             }
                         }
-                        _ => crate::proof_std::aver_generated::kernel::eval::evalOp(
-                            o,
-                            &crate::proof_std::aver_generated::kernel::eval::evalClosed(a),
-                            &crate::proof_std::aver_generated::kernel::eval::evalClosed(b),
-                        ),
+                        _ => {
+                            let __arg18 @ _ =
+                                crate::proof_std::aver_generated::kernel::eval::evalClosed(a);
+                            {
+                                let __arg19 @ _ =
+                                    crate::proof_std::aver_generated::kernel::eval::evalClosed(b);
+                                crate::proof_std::aver_generated::kernel::eval::evalOp(
+                                    o, &__arg18, &__arg19,
+                                )
+                            }
+                        }
                     }
                 }
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TNeg(__a_fields) => {
                 let a = &__a_fields.0;
-                crate::proof_std::aver_generated::kernel::eval::negated(
-                    &crate::proof_std::aver_generated::kernel::eval::evalClosed(a),
-                )
+                {
+                    let __arg20 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(a);
+                    crate::proof_std::aver_generated::kernel::eval::negated(&__arg20)
+                }
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TList(__xs_fields) => {
                 let xs = &__xs_fields.0;
-                crate::proof_std::aver_generated::kernel::eval::listOf(
-                    &crate::proof_std::aver_generated::kernel::eval::evalAll(xs),
-                )
+                {
+                    let __arg21 @ _ = crate::proof_std::aver_generated::kernel::eval::evalAll(xs);
+                    crate::proof_std::aver_generated::kernel::eval::listOf(&__arg21)
+                }
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TBi(__name_fields) => {
                 let name = __name_fields.0.clone();
@@ -214,10 +222,11 @@ pub fn listOf(vs @ _: &aver_rt::AverList<Option<Val>>) -> Option<Val> {
                 match __pat0 {
                     Some(v) => {
                         let v = v.clone();
-                        crate::proof_std::aver_generated::kernel::eval::consOnto(
-                            &v,
-                            &crate::proof_std::aver_generated::kernel::eval::listOf(&rest),
-                        )
+                        {
+                            let __arg4 @ _ =
+                                crate::proof_std::aver_generated::kernel::eval::listOf(&rest);
+                            crate::proof_std::aver_generated::kernel::eval::consOnto(&v, &__arg4)
+                        }
                     }
                     _ => None,
                 }
@@ -439,7 +448,15 @@ pub fn evalBuiltin(
                                 {
                                     let __list_subject = __pat3;
                                     if __list_subject.is_empty() {
-                                        crate::proof_std::aver_generated::kernel::eval::both(&crate::proof_std::aver_generated::kernel::eval::evalClosed(a), &crate::proof_std::aver_generated::kernel::eval::evalClosed(b), true)
+                                        {
+                                            let __arg26 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(a);
+                                            {
+                                                let __arg27 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(b);
+                                                crate::proof_std::aver_generated::kernel::eval::both(
+                                                    &__arg26, &__arg27, true,
+                                                )
+                                            }
+                                        }
                                     } else {
                                         crate::proof_std::aver_generated::kernel::eval::listBuiltin(
                                             name, args,
@@ -471,7 +488,13 @@ pub fn evalBuiltin(
                                     {
                                         let __list_subject = __pat5;
                                         if __list_subject.is_empty() {
-                                            crate::proof_std::aver_generated::kernel::eval::both(&crate::proof_std::aver_generated::kernel::eval::evalClosed(a), &crate::proof_std::aver_generated::kernel::eval::evalClosed(b), false)
+                                            {
+                                                let __arg28 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(a);
+                                                {
+                                                    let __arg29 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(b);
+                                                    crate::proof_std::aver_generated::kernel::eval::both(&__arg28, &__arg29, false)
+                                                }
+                                            }
                                         } else {
                                             crate::proof_std::aver_generated::kernel::eval::listBuiltin(name, args)
                                         }
@@ -496,7 +519,12 @@ pub fn evalBuiltin(
                                 {
                                     let __list_subject = __pat6;
                                     if __list_subject.is_empty() {
-                                        crate::proof_std::aver_generated::kernel::eval::negate(&crate::proof_std::aver_generated::kernel::eval::evalClosed(a))
+                                        {
+                                            let __arg30 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(a);
+                                            crate::proof_std::aver_generated::kernel::eval::negate(
+                                                &__arg30,
+                                            )
+                                        }
                                     } else {
                                         crate::proof_std::aver_generated::kernel::eval::listBuiltin(
                                             name, args,
@@ -524,7 +552,13 @@ pub fn evalBuiltin(
                                             {
                                                 let __list_subject = __pat8;
                                                 if __list_subject.is_empty() {
-                                                    crate::proof_std::aver_generated::kernel::eval::division(&crate::proof_std::aver_generated::kernel::eval::evalClosed(a), &crate::proof_std::aver_generated::kernel::eval::evalClosed(k), true)
+                                                    {
+                                                        let __arg31 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(a);
+                                                        {
+                                                            let __arg32 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(k);
+                                                            crate::proof_std::aver_generated::kernel::eval::division(&__arg31, &__arg32, true)
+                                                        }
+                                                    }
                                                 } else {
                                                     crate::proof_std::aver_generated::kernel::eval::listBuiltin(name, args)
                                                 }
@@ -554,7 +588,13 @@ pub fn evalBuiltin(
                                                 {
                                                     let __list_subject = __pat10;
                                                     if __list_subject.is_empty() {
-                                                        crate::proof_std::aver_generated::kernel::eval::division(&crate::proof_std::aver_generated::kernel::eval::evalClosed(a), &crate::proof_std::aver_generated::kernel::eval::evalClosed(k), false)
+                                                        {
+                                                            let __arg33 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(a);
+                                                            {
+                                                                let __arg34 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(k);
+                                                                crate::proof_std::aver_generated::kernel::eval::division(&__arg33, &__arg34, false)
+                                                            }
+                                                        }
                                                     } else {
                                                         crate::proof_std::aver_generated::kernel::eval::listBuiltin(name, args)
                                                     }
@@ -584,7 +624,13 @@ pub fn evalBuiltin(
                                                     {
                                                         let __list_subject = __pat12;
                                                         if __list_subject.is_empty() {
-                                                            crate::proof_std::aver_generated::kernel::eval::shifted(&crate::proof_std::aver_generated::kernel::eval::evalClosed(a), &crate::proof_std::aver_generated::kernel::eval::evalClosed(n))
+                                                            {
+                                                                let __arg35 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(a);
+                                                                {
+                                                                    let __arg36 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(n);
+                                                                    crate::proof_std::aver_generated::kernel::eval::shifted(&__arg35, &__arg36)
+                                                                }
+                                                            }
                                                         } else {
                                                             crate::proof_std::aver_generated::kernel::eval::listBuiltin(name, args)
                                                         }
@@ -767,7 +813,13 @@ pub fn listBuiltin(
                                 {
                                     let __list_subject = __pat3;
                                     if __list_subject.is_empty() {
-                                        crate::proof_std::aver_generated::kernel::eval::prepended(&crate::proof_std::aver_generated::kernel::eval::evalClosed(a), &crate::proof_std::aver_generated::kernel::eval::evalClosed(l))
+                                        {
+                                            let __arg24 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(a);
+                                            {
+                                                let __arg25 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(l);
+                                                crate::proof_std::aver_generated::kernel::eval::prepended(&__arg24, &__arg25)
+                                            }
+                                        }
                                     } else {
                                         None
                                     }
@@ -795,7 +847,13 @@ pub fn listBuiltin(
                                     {
                                         let __list_subject = __pat5;
                                         if __list_subject.is_empty() {
-                                            crate::proof_std::aver_generated::kernel::eval::concatenated(&crate::proof_std::aver_generated::kernel::eval::evalClosed(a), &crate::proof_std::aver_generated::kernel::eval::evalClosed(b))
+                                            {
+                                                let __arg26 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(a);
+                                                {
+                                                    let __arg27 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(b);
+                                                    crate::proof_std::aver_generated::kernel::eval::concatenated(&__arg26, &__arg27)
+                                                }
+                                            }
                                         } else {
                                             None
                                         }
@@ -818,7 +876,12 @@ pub fn listBuiltin(
                                 {
                                     let __list_subject = __pat6;
                                     if __list_subject.is_empty() {
-                                        crate::proof_std::aver_generated::kernel::eval::lengthOf(&crate::proof_std::aver_generated::kernel::eval::evalClosed(l))
+                                        {
+                                            let __arg28 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(l);
+                                            crate::proof_std::aver_generated::kernel::eval::lengthOf(
+                                                &__arg28,
+                                            )
+                                        }
                                     } else {
                                         None
                                     }
@@ -837,7 +900,10 @@ pub fn listBuiltin(
                                     {
                                         let __list_subject = __pat7;
                                         if __list_subject.is_empty() {
-                                            crate::proof_std::aver_generated::kernel::eval::reversed(&crate::proof_std::aver_generated::kernel::eval::evalClosed(l))
+                                            {
+                                                let __arg29 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(l);
+                                                crate::proof_std::aver_generated::kernel::eval::reversed(&__arg29)
+                                            }
                                         } else {
                                             None
                                         }
@@ -861,7 +927,13 @@ pub fn listBuiltin(
                                                 {
                                                     let __list_subject = __pat9;
                                                     if __list_subject.is_empty() {
-                                                        crate::proof_std::aver_generated::kernel::eval::sliced(&crate::proof_std::aver_generated::kernel::eval::evalClosed(l), &crate::proof_std::aver_generated::kernel::eval::evalClosed(n), true)
+                                                        {
+                                                            let __arg30 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(l);
+                                                            {
+                                                                let __arg31 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(n);
+                                                                crate::proof_std::aver_generated::kernel::eval::sliced(&__arg30, &__arg31, true)
+                                                            }
+                                                        }
                                                     } else {
                                                         None
                                                     }
@@ -889,7 +961,13 @@ pub fn listBuiltin(
                                                     {
                                                         let __list_subject = __pat11;
                                                         if __list_subject.is_empty() {
-                                                            crate::proof_std::aver_generated::kernel::eval::sliced(&crate::proof_std::aver_generated::kernel::eval::evalClosed(l), &crate::proof_std::aver_generated::kernel::eval::evalClosed(n), false)
+                                                            {
+                                                                let __arg32 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(l);
+                                                                {
+                                                                    let __arg33 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(n);
+                                                                    crate::proof_std::aver_generated::kernel::eval::sliced(&__arg32, &__arg33, false)
+                                                                }
+                                                            }
                                                         } else {
                                                             None
                                                         }

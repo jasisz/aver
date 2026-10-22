@@ -308,20 +308,22 @@ pub fn classifyFastLeafExpr(
             crate::aver_generated::domain::ast::Expr__view::ExprAdd(__a_fields) => {
                 let a = &__a_fields.0;
                 let b = &__a_fields.1;
-                crate::aver_generated::domain::resolver::fast::classifyFastBinopSlots(
-                    crate::aver_generated::domain::ast::BinOp::OpAdd,
-                    a,
-                    b,
-                )
+                {
+                    let __arg14 @ _ = crate::aver_generated::domain::ast::BinOp::OpAdd;
+                    crate::aver_generated::domain::resolver::fast::classifyFastBinopSlots(
+                        __arg14, a, b,
+                    )
+                }
             }
             crate::aver_generated::domain::ast::Expr__view::ExprSub(__a_fields) => {
                 let a = &__a_fields.0;
                 let b = &__a_fields.1;
-                crate::aver_generated::domain::resolver::fast::classifyFastBinopSlots(
-                    crate::aver_generated::domain::ast::BinOp::OpSub,
-                    a,
-                    b,
-                )
+                {
+                    let __arg15 @ _ = crate::aver_generated::domain::ast::BinOp::OpSub;
+                    crate::aver_generated::domain::resolver::fast::classifyFastBinopSlots(
+                        __arg15, a, b,
+                    )
+                }
             }
             _ => crate::aver_generated::domain::resolver::fast::classifyFastLeafExprTail(expr),
         }
@@ -339,74 +341,82 @@ pub fn classifyFastLeafExprTail(
             crate::aver_generated::domain::ast::Expr__view::ExprMul(__a_fields) => {
                 let a = &__a_fields.0;
                 let b = &__a_fields.1;
-                crate::aver_generated::domain::resolver::fast::classifyFastBinopSlots(
-                    crate::aver_generated::domain::ast::BinOp::OpMul,
-                    a,
-                    b,
-                )
+                {
+                    let __arg17 @ _ = crate::aver_generated::domain::ast::BinOp::OpMul;
+                    crate::aver_generated::domain::resolver::fast::classifyFastBinopSlots(
+                        __arg17, a, b,
+                    )
+                }
             }
             crate::aver_generated::domain::ast::Expr__view::ExprDiv(__a_fields) => {
                 let a = &__a_fields.0;
                 let b = &__a_fields.1;
-                crate::aver_generated::domain::resolver::fast::classifyFastBinopSlots(
-                    crate::aver_generated::domain::ast::BinOp::OpDiv,
-                    a,
-                    b,
-                )
+                {
+                    let __arg18 @ _ = crate::aver_generated::domain::ast::BinOp::OpDiv;
+                    crate::aver_generated::domain::resolver::fast::classifyFastBinopSlots(
+                        __arg18, a, b,
+                    )
+                }
             }
             crate::aver_generated::domain::ast::Expr__view::ExprEq(__a_fields) => {
                 let a = &__a_fields.0;
                 let b = &__a_fields.1;
-                crate::aver_generated::domain::resolver::fast::classifyFastCmpSlots(
-                    crate::aver_generated::domain::ast::CmpOp::CmpEq,
-                    a,
-                    b,
-                )
+                {
+                    let __arg19 @ _ = crate::aver_generated::domain::ast::CmpOp::CmpEq;
+                    crate::aver_generated::domain::resolver::fast::classifyFastCmpSlots(
+                        __arg19, a, b,
+                    )
+                }
             }
             crate::aver_generated::domain::ast::Expr__view::ExprNeq(__a_fields) => {
                 let a = &__a_fields.0;
                 let b = &__a_fields.1;
-                crate::aver_generated::domain::resolver::fast::classifyFastCmpSlots(
-                    crate::aver_generated::domain::ast::CmpOp::CmpNeq,
-                    a,
-                    b,
-                )
+                {
+                    let __arg20 @ _ = crate::aver_generated::domain::ast::CmpOp::CmpNeq;
+                    crate::aver_generated::domain::resolver::fast::classifyFastCmpSlots(
+                        __arg20, a, b,
+                    )
+                }
             }
             crate::aver_generated::domain::ast::Expr__view::ExprLt(__a_fields) => {
                 let a = &__a_fields.0;
                 let b = &__a_fields.1;
-                crate::aver_generated::domain::resolver::fast::classifyFastCmpSlots(
-                    crate::aver_generated::domain::ast::CmpOp::CmpLt,
-                    a,
-                    b,
-                )
+                {
+                    let __arg21 @ _ = crate::aver_generated::domain::ast::CmpOp::CmpLt;
+                    crate::aver_generated::domain::resolver::fast::classifyFastCmpSlots(
+                        __arg21, a, b,
+                    )
+                }
             }
             crate::aver_generated::domain::ast::Expr__view::ExprGt(__a_fields) => {
                 let a = &__a_fields.0;
                 let b = &__a_fields.1;
-                crate::aver_generated::domain::resolver::fast::classifyFastCmpSlots(
-                    crate::aver_generated::domain::ast::CmpOp::CmpGt,
-                    a,
-                    b,
-                )
+                {
+                    let __arg22 @ _ = crate::aver_generated::domain::ast::CmpOp::CmpGt;
+                    crate::aver_generated::domain::resolver::fast::classifyFastCmpSlots(
+                        __arg22, a, b,
+                    )
+                }
             }
             crate::aver_generated::domain::ast::Expr__view::ExprLte(__a_fields) => {
                 let a = &__a_fields.0;
                 let b = &__a_fields.1;
-                crate::aver_generated::domain::resolver::fast::classifyFastCmpSlots(
-                    crate::aver_generated::domain::ast::CmpOp::CmpLte,
-                    a,
-                    b,
-                )
+                {
+                    let __arg23 @ _ = crate::aver_generated::domain::ast::CmpOp::CmpLte;
+                    crate::aver_generated::domain::resolver::fast::classifyFastCmpSlots(
+                        __arg23, a, b,
+                    )
+                }
             }
             crate::aver_generated::domain::ast::Expr__view::ExprGte(__a_fields) => {
                 let a = &__a_fields.0;
                 let b = &__a_fields.1;
-                crate::aver_generated::domain::resolver::fast::classifyFastCmpSlots(
-                    crate::aver_generated::domain::ast::CmpOp::CmpGte,
-                    a,
-                    b,
-                )
+                {
+                    let __arg24 @ _ = crate::aver_generated::domain::ast::CmpOp::CmpGte;
+                    crate::aver_generated::domain::resolver::fast::classifyFastCmpSlots(
+                        __arg24, a, b,
+                    )
+                }
             }
             _ => None,
         }
@@ -1207,13 +1217,14 @@ pub fn classifyFastForwardCall(
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
     {
-        let __subject =
-            crate::aver_generated::domain::resolver::fast::classifyFastForwardSlots__collected(
-                args,
-                aver_rt::int_list_builder_new(
-                    (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                ),
+        let __subject = {
+            let __arg3 @ _ = aver_rt::int_list_builder_new(
+                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
             );
+            crate::aver_generated::domain::resolver::fast::classifyFastForwardSlots__collected(
+                args, __arg3,
+            )
+        };
         match __subject {
             Some(slotArgs @ _) => {
                 crate::aver_generated::domain::ast::FnFastPath::FastForwardCall(fnId, slotArgs)

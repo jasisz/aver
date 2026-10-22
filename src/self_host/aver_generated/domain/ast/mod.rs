@@ -3541,20 +3541,16 @@ pub fn userTagSpan() -> aver_rt::AverInt {
 #[inline(always)]
 pub fn ctorNameToTag(name @ _: AverStr) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::ast::ctorNameToTag__indexed(
-        name.clone(),
-        aver_rt::string_index_build(&name),
-    )
+    let __arg1 @ _ = aver_rt::string_index_build(&name);
+    crate::aver_generated::domain::ast::ctorNameToTag__indexed(name, __arg1)
 }
 
 /// Compute a stable non-zero offset for a user-defined constructor tag from its full dotted name.
 #[inline(always)]
 pub fn userCtorTagOffset(name @ _: AverStr) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::ast::userCtorTagOffset__indexed(
-        name.clone(),
-        aver_rt::string_index_build(&name),
-    )
+    let __arg1 @ _ = aver_rt::string_index_build(&name);
+    crate::aver_generated::domain::ast::userCtorTagOffset__indexed(name, __arg1)
 }
 
 /// Walk the constructor name and accumulate a bounded rolling hash.
@@ -3565,12 +3561,8 @@ pub fn userCtorTagOffsetLoop(
     acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::ast::userCtorTagOffsetLoop__indexed(
-        name.clone(),
-        pos,
-        acc,
-        aver_rt::string_index_build(&name),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&name);
+    crate::aver_generated::domain::ast::userCtorTagOffsetLoop__indexed(name, pos, acc, __arg3)
 }
 
 /// Update the user constructor rolling hash and keep it in a bounded range.
@@ -3586,10 +3578,8 @@ pub fn userCtorTagStep(acc @ _: aver_rt::AverInt, code @ _: aver_rt::AverInt) ->
 #[inline(always)]
 pub fn canonicalCtorName(name @ _: AverStr) -> AverStr {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::ast::canonicalCtorName__indexed(
-        name.clone(),
-        &aver_rt::string_index_build(&name),
-    )
+    let __arg1 @ _ = aver_rt::string_index_build(&name);
+    crate::aver_generated::domain::ast::canonicalCtorName__indexed(name, &__arg1)
 }
 
 /// A name with at most one dot is already the shortest spelling it has.
@@ -3600,11 +3590,9 @@ pub fn canonicalCtorNameAtLastDot(
     lastDot @ _: aver_rt::AverInt,
 ) -> AverStr {
     crate::cancel_checkpoint();
+    let __arg3 @ _ = aver_rt::string_index_build(&name);
     crate::aver_generated::domain::ast::canonicalCtorNameAtLastDot__indexed(
-        name.clone(),
-        total,
-        lastDot,
-        &aver_rt::string_index_build(&name),
+        name, total, lastDot, &__arg3,
     )
 }
 
@@ -3617,12 +3605,9 @@ pub fn canonicalCtorNameAtBothDots(
     prevDot @ _: aver_rt::AverInt,
 ) -> AverStr {
     crate::cancel_checkpoint();
+    let __arg4 @ _ = aver_rt::string_index_build(&name);
     crate::aver_generated::domain::ast::canonicalCtorNameAtBothDots__indexed(
-        name.clone(),
-        total,
-        lastDot,
-        prevDot,
-        &aver_rt::string_index_build(&name),
+        name, total, lastDot, prevDot, &__arg4,
     )
 }
 
@@ -3652,11 +3637,8 @@ pub fn beginsUppercase(segment @ _: AverStr) -> bool {
 #[inline(always)]
 pub fn lastDotAtOrBefore(name @ _: AverStr, pos @ _: aver_rt::AverInt) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::ast::lastDotAtOrBefore__indexed(
-        name.clone(),
-        pos,
-        aver_rt::string_index_build(&name),
-    )
+    let __arg2 @ _ = aver_rt::string_index_build(&name);
+    crate::aver_generated::domain::ast::lastDotAtOrBefore__indexed(name, pos, __arg2)
 }
 
 /// Map builtin function names to integer IDs for fast dispatch.
@@ -3818,13 +3800,14 @@ pub fn userCtorTagOffsetLoop__indexed(
             match aver_rt::string_index_char_at(&name, &__str_index, &pos) {
                 Some(ch @ _) => {
                     let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
-                    let __tco2 = crate::aver_generated::domain::ast::userCtorTagStep(
-                        acc,
-                        (ch).chars()
+                    let __tco2 = {
+                        let __arg6 @ _ = (ch)
+                            .chars()
                             .next()
                             .map(|c| aver_rt::AverInt::from_i64(c as i64))
-                            .unwrap_or(aver_rt::AverInt::from_i64(0)),
-                    );
+                            .unwrap_or(aver_rt::AverInt::from_i64(0));
+                        crate::aver_generated::domain::ast::userCtorTagStep(acc, __arg6)
+                    };
                     pos = __tco1;
                     acc = __tco2;
                     continue;
@@ -3847,14 +3830,15 @@ pub fn canonicalCtorName__indexed(
 ) -> AverStr {
     crate::cancel_checkpoint();
     let total @ _ = aver_rt::AverInt::from_i64(name.chars().count() as i64);
-    crate::aver_generated::domain::ast::canonicalCtorNameAtLastDot__indexed(
+    let __arg3 @ _ = crate::aver_generated::domain::ast::lastDotAtOrBefore__indexed(
         name.clone(),
-        total.clone(),
-        crate::aver_generated::domain::ast::lastDotAtOrBefore__indexed(
-            name,
-            total.sub(&aver_rt::AverInt::from_i64(1)),
-            __str_index.clone(),
-        ),
+        total.sub(&aver_rt::AverInt::from_i64(1)),
+        __str_index.clone(),
+    );
+    crate::aver_generated::domain::ast::canonicalCtorNameAtLastDot__indexed(
+        name,
+        total,
+        __arg3,
         __str_index,
     )
 }
@@ -3869,17 +3853,20 @@ pub fn canonicalCtorNameAtLastDot__indexed(
 ) -> AverStr {
     crate::cancel_checkpoint();
     if (lastDot > aver_rt::AverInt::from_i64(0)) {
-        crate::aver_generated::domain::ast::canonicalCtorNameAtBothDots__indexed(
-            name.clone(),
-            total,
-            lastDot.clone(),
-            crate::aver_generated::domain::ast::lastDotAtOrBefore__indexed(
-                name,
+        {
+            let __arg4 @ _ = crate::aver_generated::domain::ast::lastDotAtOrBefore__indexed(
+                name.clone(),
                 lastDot.sub(&aver_rt::AverInt::from_i64(1)),
                 __str_index.clone(),
-            ),
-            __str_index,
-        )
+            );
+            crate::aver_generated::domain::ast::canonicalCtorNameAtBothDots__indexed(
+                name,
+                total,
+                lastDot,
+                __arg4,
+                __str_index,
+            )
+        }
     } else {
         name
     }
@@ -3898,20 +3885,23 @@ pub fn canonicalCtorNameAtBothDots__indexed(
     if (prevDot < aver_rt::AverInt::from_i64(0)) {
         name
     } else {
-        if crate::aver_generated::domain::ast::isTypeVariantTail(
-            aver_rt::string_index_slice(
+        if {
+            let __arg5 @ _ = aver_rt::string_index_slice(
                 &name,
                 &__str_index,
                 &prevDot.add(&aver_rt::AverInt::from_i64(1)),
                 &lastDot,
-            ),
-            aver_rt::string_index_slice(
-                &name,
-                &__str_index,
-                &lastDot.add(&aver_rt::AverInt::from_i64(1)),
-                &total,
-            ),
-        ) {
+            );
+            {
+                let __arg6 @ _ = aver_rt::string_index_slice(
+                    &name,
+                    &__str_index,
+                    &lastDot.add(&aver_rt::AverInt::from_i64(1)),
+                    &total,
+                );
+                crate::aver_generated::domain::ast::isTypeVariantTail(__arg5, __arg6)
+            }
+        } {
             aver_rt::string_index_slice(
                 &name,
                 &__str_index,

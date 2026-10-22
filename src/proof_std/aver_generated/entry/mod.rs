@@ -18,7 +18,10 @@ pub fn run(plan @ _: AverStr, text @ _: AverStr) -> AverStr {
             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(why))));
             __b
         }),
-        Ok(g @ _) => crate::proof_std::aver_generated::kernel::lib::writeAnswer(&byName(plan, &g)),
+        Ok(g @ _) => {
+            let __arg4 @ _ = byName(plan, &g);
+            crate::proof_std::aver_generated::kernel::lib::writeAnswer(&__arg4)
+        }
     }
 }
 

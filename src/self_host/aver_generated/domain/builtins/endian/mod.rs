@@ -88,14 +88,17 @@ pub fn bytesVal(
             aver_rt::AverList::from_vec(vec![(
                 ::aver_rt::str_lit!("values"),
                 crate::aver_generated::domain::value::Val::ValList(
-                    crate::aver_generated::domain::value::Val__ValList(
-                        crate::aver_generated::domain::builtins::endian::byteVals__collected(
-                            &crate::aver_generated::bytes::octets(bytes),
-                            aver_rt::list_builder_new(
+                    crate::aver_generated::domain::value::Val__ValList({
+                        let __arg1 @ _ = crate::aver_generated::bytes::octets(bytes);
+                        {
+                            let __arg2 @ _ = aver_rt::list_builder_new(
                                 (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            ),
-                        ),
-                    ),
+                            );
+                            crate::aver_generated::domain::builtins::endian::byteVals__collected(
+                                &__arg1, __arg2,
+                            )
+                        }
+                    }),
                 ),
             )]),
         ),

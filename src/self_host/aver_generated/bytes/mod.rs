@@ -420,10 +420,12 @@ pub fn hexDigitValue(digit @ _: AverStr) -> Option<aver_rt::AverInt> {
 #[inline(always)]
 pub fn fromHex(text @ _: AverStr) -> Result<Bytes, AverStr> {
     crate::cancel_checkpoint();
+    let __arg1 @ _ =
+        aver_rt::byte_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0));
     crate::aver_generated::bytes::parseHexChars__cursor__collected(
         text,
         aver_rt::AverInt::from_i64(0),
-        aver_rt::byte_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
+        __arg1,
     )
 }
 
@@ -530,9 +532,13 @@ pub fn lowNibble(value @ _: aver_rt::AverInt) -> aver_rt::AverInt {
 /// Encode one validated octet as two lowercase hexadecimal characters.
 pub fn byteToHex(value @ _: aver_rt::AverInt) -> AverStr {
     crate::cancel_checkpoint();
-    (crate::aver_generated::bytes::hexDigit(crate::aver_generated::bytes::highNibble(
-        value.clone(),
-    )) + &crate::aver_generated::bytes::hexDigit(crate::aver_generated::bytes::lowNibble(value)))
+    ({
+        let __arg1 @ _ = crate::aver_generated::bytes::highNibble(value.clone());
+        crate::aver_generated::bytes::hexDigit(__arg1)
+    } + &{
+        let __arg2 @ _ = crate::aver_generated::bytes::lowNibble(value);
+        crate::aver_generated::bytes::hexDigit(__arg2)
+    })
 }
 
 /// Encode validated octets into lowercase two-character pieces.
@@ -574,11 +580,19 @@ pub fn hexParts(
 #[inline(always)]
 pub fn toHex(bytes @ _: &Bytes) -> AverStr {
     crate::cancel_checkpoint();
-    aver_rt::AverStr::from(crate::aver_generated::bytes::hexParts__buffered(
-        &crate::aver_generated::bytes::octets(bytes),
-        aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(8192)).to_usize().unwrap_or(0)),
-        ::aver_rt::str_lit!(""),
-    ))
+    aver_rt::AverStr::from({
+        let __arg1 @ _ = crate::aver_generated::bytes::octets(bytes);
+        {
+            let __arg2 @ _ = aver_rt::Buffer::with_capacity(
+                (aver_rt::AverInt::from_i64(8192)).to_usize().unwrap_or(0),
+            );
+            crate::aver_generated::bytes::hexParts__buffered(
+                &__arg1,
+                __arg2,
+                ::aver_rt::str_lit!(""),
+            )
+        }
+    })
 }
 
 /// Synthesized buffered variant of `hexParts` for deforestation lowering. Call sites that match `String.join(hexParts(...), sep)` are rewritten to alloc a buffer + call this variant + finalize, skipping the intermediate List.

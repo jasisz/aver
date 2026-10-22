@@ -745,11 +745,14 @@ pub fn valRepr(v @ _: &Val) -> AverStr {
             crate::aver_generated::domain::value::Val__view::ValVector(__vec_fields) => {
                 let vec = __vec_fields.0.clone();
                 (::aver_rt::str_lit!("Vector")
-                    + &crate::aver_generated::domain::value::valListRepr(
-                        &vec.to_list(),
-                        ::aver_rt::str_lit!(""),
-                        true,
-                    ))
+                    + &{
+                        let __arg16 @ _ = vec.to_list();
+                        crate::aver_generated::domain::value::valListRepr(
+                            &__arg16,
+                            ::aver_rt::str_lit!(""),
+                            true,
+                        )
+                    })
             }
             crate::aver_generated::domain::value::Val__view::ValOk(__inner_fields) => {
                 let inner = &__inner_fields.0;
@@ -863,16 +866,19 @@ pub fn valRepr(v @ _: &Val) -> AverStr {
             }
             crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
                 let m = __m_fields.0.clone();
-                crate::aver_generated::domain::value::valMapRepr(
-                    &{
+                {
+                    let __arg17 @ _ = {
                         let mut es: Vec<_> =
                             m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
                         es.sort_by(|a, b| a.0.cmp(&b.0));
                         aver_rt::AverList::from_vec(es)
-                    },
-                    ::aver_rt::str_lit!(""),
-                    true,
-                )
+                    };
+                    crate::aver_generated::domain::value::valMapRepr(
+                        &__arg17,
+                        ::aver_rt::str_lit!(""),
+                        true,
+                    )
+                }
             }
             crate::aver_generated::domain::value::Val__view::ValVariant(__fullName_fields) => {
                 let fullName = __fullName_fields.1.clone();
@@ -941,11 +947,14 @@ pub fn valReprInner(v @ _: &Val) -> AverStr {
             crate::aver_generated::domain::value::Val__view::ValVector(__vec_fields) => {
                 let vec = __vec_fields.0.clone();
                 (::aver_rt::str_lit!("Vector")
-                    + &crate::aver_generated::domain::value::valListRepr(
-                        &vec.to_list(),
-                        ::aver_rt::str_lit!(""),
-                        true,
-                    ))
+                    + &{
+                        let __arg6 @ _ = vec.to_list();
+                        crate::aver_generated::domain::value::valListRepr(
+                            &__arg6,
+                            ::aver_rt::str_lit!(""),
+                            true,
+                        )
+                    })
             }
             crate::aver_generated::domain::value::Val__view::ValList(__items_fields) => {
                 let items = __items_fields.0.clone();

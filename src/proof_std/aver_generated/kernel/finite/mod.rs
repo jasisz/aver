@@ -23,20 +23,24 @@ pub fn values(
         }
         crate::proof_std::aver_generated::kernel::term::Fin::FRec(n, fs) => {
             let n = n.clone();
-            crate::proof_std::aver_generated::kernel::finite::recValues(
-                n,
-                &crate::proof_std::aver_generated::kernel::finite::fieldNames(fs),
-                &crate::proof_std::aver_generated::kernel::finite::product(
-                    &crate::proof_std::aver_generated::kernel::finite::fieldValues(fs),
-                ),
-            )
+            {
+                let __arg6 @ _ = crate::proof_std::aver_generated::kernel::finite::fieldNames(fs);
+                {
+                    let __arg7 @ _ = {
+                        let __arg5 @ _ =
+                            crate::proof_std::aver_generated::kernel::finite::fieldValues(fs);
+                        crate::proof_std::aver_generated::kernel::finite::product(&__arg5)
+                    };
+                    crate::proof_std::aver_generated::kernel::finite::recValues(n, &__arg6, &__arg7)
+                }
+            }
         }
         crate::proof_std::aver_generated::kernel::term::Fin::FTuple(ts) => {
-            crate::proof_std::aver_generated::kernel::finite::tupleValues(
-                &crate::proof_std::aver_generated::kernel::finite::product(
-                    &crate::proof_std::aver_generated::kernel::finite::partValues(ts),
-                ),
-            )
+            let __arg9 @ _ = {
+                let __arg8 @ _ = crate::proof_std::aver_generated::kernel::finite::partValues(ts);
+                crate::proof_std::aver_generated::kernel::finite::product(&__arg8)
+            };
+            crate::proof_std::aver_generated::kernel::finite::tupleValues(&__arg9)
         }
     }
 }
@@ -152,10 +156,11 @@ pub fn product(
             aver_rt::AverList::from_vec(vec![aver_rt::AverList::empty()])
         } else {
             if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                crate::proof_std::aver_generated::kernel::finite::prefixEach(
-                    p,
-                    &crate::proof_std::aver_generated::kernel::finite::product(&rest),
-                )
+                {
+                    let __arg3 @ _ =
+                        crate::proof_std::aver_generated::kernel::finite::product(&rest);
+                    crate::proof_std::aver_generated::kernel::finite::prefixEach(p, &__arg3)
+                }
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
             }

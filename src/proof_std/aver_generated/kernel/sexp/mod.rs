@@ -74,10 +74,14 @@ fn __mutual_tco_trampoline_1(
                     Err(e @ _) => return Err(e),
                     Ok(__pat0 @ _) => {
                         let (item, rest) = __pat0;
-                        __MutualTco1::ReadList(
-                            crate::proof_std::aver_generated::kernel::sexp::skipBlank(rest),
-                            aver_rt::AverList::prepend(item, &acc),
-                        )
+                        {
+                            let __arg6 @ _ =
+                                crate::proof_std::aver_generated::kernel::sexp::skipBlank(rest);
+                            {
+                                let __arg7 @ _ = aver_rt::AverList::prepend(item, &acc);
+                                __MutualTco1::ReadList(__arg6, __arg7)
+                            }
+                        }
                     }
                 }
             }
@@ -106,14 +110,16 @@ pub fn readListItem(
 pub fn readAll(text @ _: AverStr) -> Result<Sexp, AverStr> {
     crate::proof_std::cancel_checkpoint();
     {
-        let __subject = crate::proof_std::aver_generated::kernel::sexp::readOne(
-            &crate::proof_std::aver_generated::kernel::sexp::skipBlank(
-                (aver_rt::AverList::from_vec(
+        let __subject = {
+            let __arg6 @ _ = {
+                let __arg5 @ _ = (aver_rt::AverList::from_vec(
                     text.chars().map(|c| c.to_string()).collect::<Vec<_>>(),
                 ))
-                .into_aver(),
-            ),
-        );
+                .into_aver();
+                crate::proof_std::aver_generated::kernel::sexp::skipBlank(__arg5)
+            };
+            crate::proof_std::aver_generated::kernel::sexp::readOne(&__arg6)
+        };
         match __subject {
             Err(e @ _) => Err(e),
             Ok(__pat0 @ _) => {
@@ -154,7 +160,7 @@ pub fn expand(mut s @ _: Sexp) -> Result<Sexp, AverStr> {
                                     {
                                         match __pat4 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Node(parts) => {
-            { let __list_subject = __pat5; if let (Some(body), Some(__pat6)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat6; if __list_subject.is_empty() { { let (b, n) = crate::proof_std::aver_generated::kernel::sexp::bounded(&crate::proof_std::aver_generated::kernel::sexp::within(body.clone(), &crate::proof_std::aver_generated::kernel::sexp::define(parts, HashMap::new())?)?)?; Ok(b) } } else { Ok(s) } } } else { Ok(s) } }
+            { let __list_subject = __pat5; if let (Some(body), Some(__pat6)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat6; if __list_subject.is_empty() { { let (b, n) = { let __arg14 @ _ = { let __arg13 @ _ = { let __arg12 @ _ = <aver_rt::AverMap<AverStr, (Sexp, aver_rt::AverInt)>>::new(); crate::proof_std::aver_generated::kernel::sexp::define(parts, __arg12) }?; crate::proof_std::aver_generated::kernel::sexp::within(body.clone(), &__arg13) }?; crate::proof_std::aver_generated::kernel::sexp::bounded(&__arg14) }?; Ok(b) } } else { Ok(s) } } } else { Ok(s) } }
         },
         _ => {
             Ok(s)
@@ -216,7 +222,7 @@ pub fn define(
                                                     if __list_subject.is_empty() {
                                                         {
                                                             let __tco0 = rest;
-                                                            let __tco1 = table.clone().insert_owned(crate::proof_std::aver_generated::kernel::sexp::fresh(n, &table)?, crate::proof_std::aver_generated::kernel::sexp::bounded(&crate::proof_std::aver_generated::kernel::sexp::within(s.clone(), &table)?)?);
+                                                            let __tco1 = table.clone().insert_owned(crate::proof_std::aver_generated::kernel::sexp::fresh(n, &table)?, { let __arg10 @ _ = crate::proof_std::aver_generated::kernel::sexp::within(s.clone(), &table)?; crate::proof_std::aver_generated::kernel::sexp::bounded(&__arg10) }?);
                                                             __hold0 = __tco0;
                                                             parts = &__hold0;
                                                             table = __tco1;
@@ -341,12 +347,15 @@ pub fn within(
         }
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Node(xs) => {
             let xs = xs.clone();
-            crate::proof_std::aver_generated::kernel::sexp::withinAll(
-                &xs,
-                table,
-                aver_rt::AverList::empty(),
-                aver_rt::AverInt::from_i64(1),
-            )
+            {
+                let __arg5 @ _ = <aver_rt::AverList<Sexp>>::empty();
+                crate::proof_std::aver_generated::kernel::sexp::withinAll(
+                    &xs,
+                    table,
+                    __arg5,
+                    aver_rt::AverInt::from_i64(1),
+                )
+            }
         }
     }
 }
@@ -412,10 +421,16 @@ pub fn readOne(
                     let __dispatch_subject =
                         aver_rt::AverInt::from_i64(aver_rt::str_code1(&__pat0));
                     if __dispatch_subject == aver_rt::AverInt::from_i64(40) {
-                        crate::proof_std::aver_generated::kernel::sexp::readList(
-                            crate::proof_std::aver_generated::kernel::sexp::skipBlank(rest),
-                            aver_rt::AverList::empty(),
-                        )
+                        {
+                            let __arg3 @ _ =
+                                crate::proof_std::aver_generated::kernel::sexp::skipBlank(rest);
+                            {
+                                let __arg4 @ _ = <aver_rt::AverList<Sexp>>::empty();
+                                crate::proof_std::aver_generated::kernel::sexp::readList(
+                                    __arg3, __arg4,
+                                )
+                            }
+                        }
                     } else {
                         if __dispatch_subject == aver_rt::AverInt::from_i64(34) {
                             crate::proof_std::aver_generated::kernel::sexp::readText(

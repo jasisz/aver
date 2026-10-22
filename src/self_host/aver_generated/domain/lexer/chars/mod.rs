@@ -170,12 +170,8 @@ pub fn readNumberLoop(
     acc @ _: aver_rt::AverInt,
 ) -> (aver_rt::AverInt, aver_rt::AverInt) {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::chars::readNumberLoop__indexed(
-        src.clone(),
-        pos,
-        acc,
-        aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::chars::readNumberLoop__indexed(src, pos, acc, __arg3)
 }
 
 /// Read consecutive digits from pos, return (number, newPos).
@@ -186,12 +182,8 @@ pub fn readNumber(
     acc @ _: aver_rt::AverInt,
 ) -> (aver_rt::AverInt, aver_rt::AverInt) {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::chars::readNumber__indexed(
-        src.clone(),
-        pos,
-        acc,
-        aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::chars::readNumber__indexed(src, pos, acc, __arg3)
 }
 
 /// Check if character can continue a dotted identifier (alphanumeric, underscore, or dot).
@@ -220,12 +212,8 @@ pub fn readIdentLoopDotted(
     acc @ _: AverStr,
 ) -> (AverStr, aver_rt::AverInt) {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::chars::readIdentLoopDotted__indexed(
-        src.clone(),
-        pos,
-        acc,
-        aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::chars::readIdentLoopDotted__indexed(src, pos, acc, __arg3)
 }
 
 /// Read identifier without dots (for local variables).
@@ -236,12 +224,8 @@ pub fn readIdentLoopPlain(
     acc @ _: AverStr,
 ) -> (AverStr, aver_rt::AverInt) {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::chars::readIdentLoopPlain__indexed(
-        src.clone(),
-        pos,
-        acc,
-        aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::chars::readIdentLoopPlain__indexed(src, pos, acc, __arg3)
 }
 
 /// Read identifier, dotted if starts with uppercase.
@@ -253,13 +237,8 @@ pub fn readIdent(
     dotted @ _: bool,
 ) -> (AverStr, aver_rt::AverInt) {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::chars::readIdent__indexed(
-        src.clone(),
-        pos,
-        acc,
-        dotted,
-        aver_rt::string_index_build(&src),
-    )
+    let __arg4 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::chars::readIdent__indexed(src, pos, acc, dotted, __arg4)
 }
 
 /// Classify an identifier as keyword or plain ident.

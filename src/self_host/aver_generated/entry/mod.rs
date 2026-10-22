@@ -55,11 +55,9 @@ fn __mutual_tco_trampoline_1(
                     fastPath: f.fastPath.clone(),
                     tailLoop: f.tailLoop,
                 });
-                __MutualTco1::QualifyFns__indexed(
-                    rest,
-                    prefix,
-                    aver_rt::AverList::prepend(f, &aver_rt::AverList::prepend(qualified, &acc)),
-                )
+                let __arg6 @ _ =
+                    aver_rt::AverList::prepend(f, &aver_rt::AverList::prepend(qualified, &acc));
+                __MutualTco1::QualifyFns__indexed(rest, prefix, __arg6)
             }
         };
     }
@@ -97,12 +95,10 @@ pub fn run(source @ _: AverStr) -> Result<crate::aver_generated::domain::value::
     crate::cancel_checkpoint();
     let tokens @ _ = crate::aver_generated::domain::lexer::lex(source);
     let prog @ _ = crate::aver_generated::domain::parser::parse(&tokens)?;
-    let resolved @ _ = crate::aver_generated::domain::resolver::resolveProgram(prog);
-    runGuestProgram(
-        resolved,
-        &aver_rt::AverList::empty(),
-        &aver_rt::AverList::empty(),
-    )
+    let resolved @ _ = crate::aver_generated::domain::resolver::resolveProgram(&prog);
+    let __arg4 @ _ = <aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>>::empty();
+    let __arg5 @ _ = <aver_rt::AverList<AverStr>>::empty();
+    runGuestProgram(&resolved, &__arg4, &__arg5)
 }
 
 /// Lex, parse, resolve, load modules, and evaluate.
@@ -114,7 +110,10 @@ pub fn runWithModules(
     let prepared @ _ = prepareProgramWithModules(source, moduleRoot)?;
     {
         let (prog, moduleFns) = prepared;
-        runGuestProgram(prog, &moduleFns, &aver_rt::AverList::empty())
+        {
+            let __arg5 @ _ = <aver_rt::AverList<AverStr>>::empty();
+            runGuestProgram(&prog, &moduleFns, &__arg5)
+        }
     }
 }
 
@@ -132,13 +131,14 @@ pub fn prepareProgramWithModules(
     crate::cancel_checkpoint();
     let tokens @ _ = crate::aver_generated::domain::lexer::lex(source);
     let prog @ _ = crate::aver_generated::domain::parser::parse(&tokens)?;
-    let resolved @ _ = crate::aver_generated::domain::resolver::resolveProgram(prog);
-    let r @ _ = loadModules(
-        &resolved.deps,
-        moduleRoot,
-        aver_rt::AverList::empty(),
-        HashMap::new(),
-    )?;
+    let resolved @ _ = crate::aver_generated::domain::resolver::resolveProgram(&prog);
+    let r @ _ = {
+        let __arg7 @ _ = <aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>>::empty();
+        {
+            let __arg8 @ _ = <aver_rt::AverMap<AverStr, bool>>::new();
+            loadModules(&resolved.deps, moduleRoot, __arg7, __arg8)
+        }
+    }?;
     {
         let (moduleFns, _) = r;
         Ok((resolved, moduleFns))
@@ -147,20 +147,21 @@ pub fn prepareProgramWithModules(
 
 /// Execute an already-loaded guest program. guestArgs marks the guest input boundary for scoped replay and policy in generated Rust.
 pub fn runGuestProgram(
-    mut prog @ _: crate::aver_generated::domain::ast::Program,
+    prog @ _: &crate::aver_generated::domain::ast::Program,
     moduleFns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     guestArgs @ _: &aver_rt::AverList<AverStr>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::eval::evalProgramWithFns(
-        &shiftFnIdsInProgram(prog, aver_rt::AverInt::from_i64(moduleFns.len() as i64)),
-        moduleFns,
-    )
+    let __arg4 @ _ = {
+        let __arg3 @ _ = aver_rt::AverInt::from_i64(moduleFns.len() as i64);
+        shiftFnIdsInProgram(prog, __arg3)
+    };
+    crate::aver_generated::domain::eval::evalProgramWithFns(&__arg4, moduleFns)
 }
 
 /// Execute a loaded guest program with CLI-compatible main semantics inside the guest boundary. Returns the user main()'s return Val so the replay scope can serialise it as recording.output (and replay-mode output comparison sees the live value), instead of dropping it to Unit before the wrapping aver_replay scope captures the result.
 pub fn runGuestCliProgram(
-    mut prog @ _: crate::aver_generated::domain::ast::Program,
+    prog @ _: &crate::aver_generated::domain::ast::Program,
     moduleFns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     localFns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     guestArgs @ _: &aver_rt::AverList<AverStr>,
@@ -242,27 +243,23 @@ pub fn loadOneModule(
     AverStr,
 > {
     crate::cancel_checkpoint();
-    loadOneModule__indexed(
-        dep.clone(),
-        rest,
-        moduleRoot,
-        acc,
-        loaded,
-        &aver_rt::string_index_build(&dep),
-    )
+    let __arg5 @ _ = aver_rt::string_index_build(&dep);
+    loadOneModule__indexed(dep, rest, moduleRoot, acc, loaded, &__arg5)
 }
 
 /// Find module file, trying root then parent dirs.
 pub fn findModulePath(dep @ _: AverStr, root @ _: AverStr, depth @ _: aver_rt::AverInt) -> AverStr {
     crate::cancel_checkpoint();
-    findModulePath__indexed(dep.clone(), root, depth, &aver_rt::string_index_build(&dep))
+    let __arg3 @ _ = aver_rt::string_index_build(&dep);
+    findModulePath__indexed(dep, root, depth, &__arg3)
 }
 
 /// Convert Module.Name to file path: Domain.Foo -> domain/foo.av
 #[inline(always)]
 pub fn modulePathFromName(name @ _: AverStr, moduleRoot @ _: AverStr) -> AverStr {
     crate::cancel_checkpoint();
-    modulePathFromName__indexed(name.clone(), moduleRoot, aver_rt::string_index_build(&name))
+    let __arg2 @ _ = aver_rt::string_index_build(&name);
+    modulePathFromName__indexed(name, moduleRoot, __arg2)
 }
 
 /// Replace dots with slashes and lowercase first char of each segment.
@@ -274,13 +271,8 @@ pub fn dotToSlash(
     acc @ _: AverStr,
 ) -> AverStr {
     crate::cancel_checkpoint();
-    dotToSlash__indexed(
-        name.clone(),
-        pos,
-        total,
-        acc,
-        aver_rt::string_index_build(&name),
-    )
+    let __arg4 @ _ = aver_rt::string_index_build(&name);
+    dotToSlash__indexed(name, pos, total, acc, __arg4)
 }
 
 /// Register functions with both qualified (Domain.Foo.bar) and unqualified (bar) names.
@@ -291,12 +283,8 @@ pub fn qualifyFns(
     acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
     crate::cancel_checkpoint();
-    qualifyFns__indexed(
-        fns.clone(),
-        prefix.clone(),
-        acc.clone(),
-        &aver_rt::string_index_build(&prefix),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&prefix);
+    qualifyFns__indexed(fns.clone(), prefix, acc.clone(), &__arg3)
 }
 
 /// Add both qualified and unqualified versions.
@@ -308,13 +296,8 @@ pub fn qualifyFnsOne(
     acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
     crate::cancel_checkpoint();
-    qualifyFnsOne__indexed(
-        f,
-        rest.clone(),
-        prefix.clone(),
-        acc.clone(),
-        &aver_rt::string_index_build(&prefix),
-    )
+    let __arg4 @ _ = aver_rt::string_index_build(&prefix);
+    qualifyFnsOne__indexed(f, rest.clone(), prefix, acc.clone(), &__arg4)
 }
 
 /// Duplicate module function names first, then resolve locally so direct-call ids are consistent within that module.
@@ -324,7 +307,8 @@ pub fn resolveQualifiedModuleFns(
     dep @ _: AverStr,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
     crate::cancel_checkpoint();
-    resolveQualifiedModuleFns__indexed(prog, dep.clone(), &aver_rt::string_index_build(&dep))
+    let __arg2 @ _ = aver_rt::string_index_build(&dep);
+    resolveQualifiedModuleFns__indexed(prog, dep, &__arg2)
 }
 
 /// Shift module-local direct-call ids so they point into the final combined function store.
@@ -365,22 +349,22 @@ pub fn shiftFnIdsInFns(
 
 /// Shift entry-program direct-call ids before prepending loaded module functions.
 pub fn shiftFnIdsInProgram(
-    mut prog @ _: crate::aver_generated::domain::ast::Program,
+    prog @ _: &crate::aver_generated::domain::ast::Program,
     offset @ _: aver_rt::AverInt,
 ) -> crate::aver_generated::domain::ast::Program {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::ast::Program {
-        deps: prog.deps,
-        fns: shiftFnIdsInFns__collected(
-            &prog.fns,
-            offset.clone(),
-            aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
-        ),
-        stmts: shiftFnIdsInStmts__collected(
-            &prog.stmts,
-            offset,
-            aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
-        ),
+        deps: prog.deps.clone(),
+        fns: {
+            let __arg2 @ _ =
+                aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0));
+            shiftFnIdsInFns__collected(&prog.fns, offset.clone(), __arg2)
+        },
+        stmts: {
+            let __arg3 @ _ =
+                aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0));
+            shiftFnIdsInStmts__collected(&prog.stmts, offset, __arg3)
+        },
     }
 }
 
@@ -393,11 +377,11 @@ pub fn shiftFnIdsInFn(
     Box::new(crate::aver_generated::domain::ast::FnDef__Fields {
         name: fd.name,
         params: fd.params,
-        body: shiftFnIdsInStmts__collected(
-            &fd.body,
-            offset.clone(),
-            aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
-        ),
+        body: {
+            let __arg2 @ _ =
+                aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0));
+            shiftFnIdsInStmts__collected(&fd.body, offset.clone(), __arg2)
+        },
         slotCount: fd.slotCount,
         slotMap: fd.slotMap,
         fastPath: shiftFnIdsInFastPath(fd.fastPath, offset),
@@ -651,59 +635,46 @@ pub fn shiftFnIdsInExprTail(
             crate::aver_generated::domain::ast::Expr__view::ExprConcat(__parts_fields) => {
                 let parts = &__parts_fields.0;
                 crate::aver_generated::domain::ast::Expr::ExprConcat(
-                    crate::aver_generated::domain::ast::Expr__ExprConcat(
-                        shiftFnIdsInExprs__collected(
-                            parts,
-                            offset,
-                            aver_rt::list_builder_new(
-                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            ),
-                        ),
-                    ),
+                    crate::aver_generated::domain::ast::Expr__ExprConcat({
+                        let __arg15 @ _ = aver_rt::list_builder_new(
+                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                        );
+                        shiftFnIdsInExprs__collected(parts, offset, __arg15)
+                    }),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprTuple(__exprs_fields) => {
                 let exprs = &__exprs_fields.0;
                 crate::aver_generated::domain::ast::Expr::ExprTuple(
-                    crate::aver_generated::domain::ast::Expr__ExprTuple(
-                        shiftFnIdsInExprs__collected(
-                            exprs,
-                            offset,
-                            aver_rt::list_builder_new(
-                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            ),
-                        ),
-                    ),
+                    crate::aver_generated::domain::ast::Expr__ExprTuple({
+                        let __arg16 @ _ = aver_rt::list_builder_new(
+                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                        );
+                        shiftFnIdsInExprs__collected(exprs, offset, __arg16)
+                    }),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprList(__exprs_fields) => {
                 let exprs = &__exprs_fields.0;
                 crate::aver_generated::domain::ast::Expr::ExprList(
-                    crate::aver_generated::domain::ast::Expr__ExprList(
-                        shiftFnIdsInExprs__collected(
-                            exprs,
-                            offset,
-                            aver_rt::list_builder_new(
-                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            ),
-                        ),
-                    ),
+                    crate::aver_generated::domain::ast::Expr__ExprList({
+                        let __arg17 @ _ = aver_rt::list_builder_new(
+                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                        );
+                        shiftFnIdsInExprs__collected(exprs, offset, __arg17)
+                    }),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprRecord(__name_fields) => {
                 let name = __name_fields.0.clone();
                 let fields = &__name_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprRecord(
-                    crate::aver_generated::domain::ast::Expr__ExprRecord(
-                        name,
-                        shiftFnIdsInFields__collected(
-                            fields,
-                            offset,
-                            aver_rt::list_builder_new(
-                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            ),
-                        ),
-                    ),
+                    crate::aver_generated::domain::ast::Expr__ExprRecord(name, {
+                        let __arg18 @ _ = aver_rt::list_builder_new(
+                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                        );
+                        shiftFnIdsInFields__collected(fields, offset, __arg18)
+                    }),
                 )
             }
             _ => shiftFnIdsInExprCalls(expr, offset),
@@ -734,64 +705,48 @@ pub fn shiftFnIdsInExprCalls(
                 let name = __name_fields.0.clone();
                 let args = &__name_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprCall(
-                    crate::aver_generated::domain::ast::Expr__ExprCall(
-                        name,
-                        shiftFnIdsInExprs__collected(
-                            args,
-                            offset,
-                            aver_rt::list_builder_new(
-                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            ),
-                        ),
-                    ),
+                    crate::aver_generated::domain::ast::Expr__ExprCall(name, {
+                        let __arg17 @ _ = aver_rt::list_builder_new(
+                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                        );
+                        shiftFnIdsInExprs__collected(args, offset, __arg17)
+                    }),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallDirect(__fnId_fields) => {
                 let fnId = __fnId_fields.0.clone();
                 let args = &__fnId_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprCallDirect(
-                    crate::aver_generated::domain::ast::Expr__ExprCallDirect(
-                        fnId.add(&offset),
-                        shiftFnIdsInExprs__collected(
-                            args,
-                            offset,
-                            aver_rt::list_builder_new(
-                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            ),
-                        ),
-                    ),
+                    crate::aver_generated::domain::ast::Expr__ExprCallDirect(fnId.add(&offset), {
+                        let __arg18 @ _ = aver_rt::list_builder_new(
+                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                        );
+                        shiftFnIdsInExprs__collected(args, offset, __arg18)
+                    }),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltin(__name_fields) => {
                 let name = __name_fields.0.clone();
                 let args = &__name_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                    crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                        name,
-                        shiftFnIdsInExprs__collected(
-                            args,
-                            offset,
-                            aver_rt::list_builder_new(
-                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            ),
-                        ),
-                    ),
+                    crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(name, {
+                        let __arg19 @ _ = aver_rt::list_builder_new(
+                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                        );
+                        shiftFnIdsInExprs__collected(args, offset, __arg19)
+                    }),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltinId(__id_fields) => {
                 let id = __id_fields.0.clone();
                 let args = &__id_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(
-                    crate::aver_generated::domain::ast::Expr__ExprCallBuiltinId(
-                        id,
-                        shiftFnIdsInExprs__collected(
-                            args,
-                            offset,
-                            aver_rt::list_builder_new(
-                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            ),
-                        ),
-                    ),
+                    crate::aver_generated::domain::ast::Expr__ExprCallBuiltinId(id, {
+                        let __arg20 @ _ = aver_rt::list_builder_new(
+                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                        );
+                        shiftFnIdsInExprs__collected(args, offset, __arg20)
+                    }),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprMatch(__scrutinee_fields) => {
@@ -800,13 +755,12 @@ pub fn shiftFnIdsInExprCalls(
                 crate::aver_generated::domain::ast::Expr::ExprMatch(
                     crate::aver_generated::domain::ast::Expr__ExprMatch(
                         shiftFnIdsInExpr(scrutinee, offset.clone()),
-                        shiftFnIdsInArms__collected(
-                            arms,
-                            offset,
-                            aver_rt::list_builder_new(
+                        {
+                            let __arg21 @ _ = aver_rt::list_builder_new(
                                 (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            ),
-                        ),
+                            );
+                            shiftFnIdsInArms__collected(arms, offset, __arg21)
+                        },
                     ),
                 )
             }
@@ -825,13 +779,12 @@ pub fn shiftFnIdsInExprCalls(
                 let unwrap = __exprs_fields.1.clone();
                 crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(
                     crate::aver_generated::domain::ast::Expr__ExprIndependentProduct(
-                        shiftFnIdsInExprs__collected(
-                            exprs,
-                            offset,
-                            aver_rt::list_builder_new(
+                        {
+                            let __arg22 @ _ = aver_rt::list_builder_new(
                                 (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            ),
-                        ),
+                            );
+                            shiftFnIdsInExprs__collected(exprs, offset, __arg22)
+                        },
                         unwrap,
                     ),
                 )
@@ -982,7 +935,7 @@ pub fn runFile(path @ _: AverStr, moduleRoot @ _: AverStr) -> Result<AverStr, Av
     match loadProgramFromFile(path, moduleRoot) {
         Ok(pair @ _) => {
             let (prog, moduleFns) = pair;
-            runFileLoaded(prog, &moduleFns)
+            runFileLoaded(&prog, &moduleFns)
         }
         Err(e @ _) => Err(e),
     }
@@ -990,12 +943,15 @@ pub fn runFile(path @ _: AverStr, moduleRoot @ _: AverStr) -> Result<AverStr, Av
 
 /// Turn a loaded guest program into a representation string.
 pub fn runFileLoaded(
-    mut prog @ _: crate::aver_generated::domain::ast::Program,
+    prog @ _: &crate::aver_generated::domain::ast::Program,
     moduleFns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> Result<AverStr, AverStr> {
     crate::cancel_checkpoint();
     {
-        let __subject = runGuestProgram(prog, moduleFns, &aver_rt::AverList::empty());
+        let __subject = {
+            let __arg4 @ _ = <aver_rt::AverList<AverStr>>::empty();
+            runGuestProgram(prog, moduleFns, &__arg4)
+        };
         match __subject {
             Ok(val @ _) => Ok(crate::aver_generated::domain::value::valRepr(&val)),
             Err(e @ _) => Err(e),
@@ -1052,7 +1008,10 @@ pub fn runFromFileWithRest(
             runCliFile(path, moduleRoot, &guestArgs)
         } else {
             if __list_subject.is_empty() {
-                runCliFile(path, ::aver_rt::str_lit!("."), &aver_rt::AverList::empty())
+                {
+                    let __arg4 @ _ = <aver_rt::AverList<AverStr>>::empty();
+                    runCliFile(path, ::aver_rt::str_lit!("."), &__arg4)
+                }
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
             }
@@ -1070,10 +1029,7 @@ pub fn runCliFile(
     let prepared @ _ = loadProgramFromFile(path, moduleRoot)?;
     {
         let (prog, moduleFns) = prepared;
-        {
-            let __arg6 @ _ = prog.fns.clone();
-            runGuestCliProgram(prog, &moduleFns, &__arg6, guestArgs)
-        }
+        runGuestCliProgram(&prog, &moduleFns, &prog.fns, guestArgs)
     }
 }
 
@@ -1468,21 +1424,18 @@ pub fn loadOneModule__indexed(
     let innerResult @ _ = loadModules(&prog.deps, moduleRoot.clone(), acc.clone(), loaded2)?;
     {
         let (accWithInner, loaded3) = innerResult;
-        loadModules(
-            rest,
-            moduleRoot,
-            aver_rt::AverList::concat(
-                &accWithInner.clone(),
-                &shiftFnIdsInFns__collected(
-                    &moduleFns,
-                    aver_rt::AverInt::from_i64(accWithInner.len() as i64),
-                    aver_rt::list_builder_new(
+        {
+            let __arg17 @ _ = aver_rt::AverList::concat(&accWithInner.clone(), &{
+                let __arg15 @ _ = aver_rt::AverInt::from_i64(accWithInner.len() as i64);
+                {
+                    let __arg16 @ _ = aver_rt::list_builder_new(
                         (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                    ),
-                ),
-            ),
-            loaded3,
-        )
+                    );
+                    shiftFnIdsInFns__collected(&moduleFns, __arg15, __arg16)
+                }
+            });
+            loadModules(rest, moduleRoot, __arg17, loaded3)
+        }
     }
 }
 
@@ -1543,13 +1496,16 @@ pub fn modulePathFromName__indexed(
 ) -> AverStr {
     crate::cancel_checkpoint();
     (((moduleRoot + &::aver_rt::str_lit!("/"))
-        + &dotToSlash__indexed(
-            name.clone(),
-            aver_rt::AverInt::from_i64(0),
-            aver_rt::AverInt::from_i64(name.chars().count() as i64),
-            ::aver_rt::str_lit!(""),
-            __str_index,
-        ))
+        + &{
+            let __arg3 @ _ = aver_rt::AverInt::from_i64(name.chars().count() as i64);
+            dotToSlash__indexed(
+                name,
+                aver_rt::AverInt::from_i64(0),
+                __arg3,
+                ::aver_rt::str_lit!(""),
+                __str_index,
+            )
+        })
         + &::aver_rt::str_lit!(".av"))
 }
 
@@ -1605,15 +1561,14 @@ pub fn resolveQualifiedModuleFns__indexed(
     crate::cancel_checkpoint();
     let qualifiedProg @ _ = crate::aver_generated::domain::ast::Program {
         deps: prog.deps.clone(),
-        fns: qualifyFns__indexed(
-            prog.fns.clone(),
-            dep,
-            aver_rt::AverList::empty(),
-            __str_index,
-        ),
+        fns: {
+            let __arg4 @ _ =
+                <aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>>::empty();
+            qualifyFns__indexed(prog.fns.clone(), dep, __arg4, __str_index)
+        },
         stmts: prog.stmts.clone(),
     };
-    crate::aver_generated::domain::resolver::resolveProgram(qualifiedProg).fns
+    crate::aver_generated::domain::resolver::resolveProgram(&qualifiedProg).fns
 }
 
 /// Synthesized collecting variant of `shiftFnIdsInFns`. Appends to a builder where `shiftFnIdsInFns` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
