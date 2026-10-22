@@ -3442,7 +3442,7 @@ fn main() -> Unit
         "grow must update the owned Map without cloning it:\n{emitted}"
     );
     assert!(
-        emitted.contains("= grow(table, "),
+        emitted.contains("grow(table, __arg"),
         "the fill loop must move its map into grow:\n{emitted}"
     );
     assert!(
@@ -3478,11 +3478,11 @@ fn emitted_entry_module(name: &str, src: &str) -> String {
 /// call still reads it. Aver evaluates `bumpNode(s, nodeAt(s, id))` left to
 /// right, so the first `s` was not the last read and Rust cloned the store;
 /// the clone kept the caller's map alive and `Map.set` in `bumpNode` copied
-/// the whole map on every call. `nodeAt` has no effect, so it now runs
-/// first into a local and `s` moves. A later argument with an effect keeps
-/// its place and the clone.
+/// the whole map on every call. The computed argument is now bound to a
+/// local first and `s` moves; reading `s` has no effect, so this keeps
+/// Aver's order, also when the later argument has one (`noisy`).
 #[test]
-fn rust_pure_later_argument_runs_before_the_moved_one() {
+fn rust_later_computed_argument_runs_before_the_moved_one() {
     let src = r#"module ArgOrder
     intent = "Thread a store through calls whose later argument reads it"
     depends []
@@ -3573,8 +3573,8 @@ fn main() -> Unit
         "bumpBoth must read both nodes first, then move its store:\n{emitted}"
     );
     assert!(
-        emitted.contains("bumpNode(s.clone(), &noisy("),
-        "an effectful later argument keeps its place, so the store is cloned:\n{emitted}"
+        emitted.contains("= noisy(&s, id);") && !emitted.contains("bumpNode(s.clone()"),
+        "an effectful later argument is bound first too, and the store moves:\n{emitted}"
     );
 }
 
@@ -3834,7 +3834,7 @@ fn a_record_or_field_moved_and_read_in_one_call_is_read_first_and_moved() {
     for expected in [
         "let __arg3 @ _ = localValue(&st.lctx, n.clone()); __MutualTco1::Step(st, t, __arg3, n) }",
         "pub fn earlier(mut w @ _: W) -> St {",
-        "putFirst(readOnly(&w.st, w.e.clone()), w.st, w.e)",
+        "let __arg1 @ _ = readOnly(&w.st, w.e.clone());\n    putFirst(__arg1, w.st, w.e)",
         "pub fn later(mut w @ _: W) -> St {",
         "let __arg1 @ _ = readOnly(&w.st, w.e.clone());\n    putLast(w.st, __arg1, w.e)",
     ] {
@@ -3922,17 +3922,22 @@ fn a_param_field_stored_into_a_literal_moves_and_the_param_is_taken_by_value() {
 /// (`found(Map.get(cacheFor(st, true), k), k)`) is bound by a `let` before
 /// the `match`. Matched in place, the Map's clone was a temporary of the
 /// scrutinee and lived through the arms, so the write in the `None` arm
-/// found the Map shared and copied all of it. The compiled binary must
-/// write 2^17 keys within a minute.
+/// found the Map shared and copied all of it. The same lookup as an argument
+/// before the state is handed on (`rememberMiss(found(..), st, k)`) is bound
+/// first as well, and the self-tail-recursive `fill` stays a loop. The
+/// compiled binary must write 2^17 keys each way within a minute.
 #[test]
 fn a_match_subject_drops_its_temporaries_before_the_arms() {
     let relative = "tests/fixtures/scrutinee_temporary_app.av";
     let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
     let emitted = emitted_entry_module("scrutinee_temporary", &src);
     assert!(
-        emitted.contains("let __subject = found(&cacheFor(&st, true)")
-            && emitted.contains("match __subject {"),
-        "the subject must be bound before the match:\n{emitted}"
+        emitted
+            .contains("let __subject = { let __arg2 @ _ = cacheFor(&st, true).get(&k).cloned();")
+            && emitted.contains("match __subject {")
+            && emitted.contains("rememberMiss(&__arg3, st, k)")
+            && emitted.contains("loop {"),
+        "the subject and the argument must be bound first, fill must loop:\n{emitted}"
     );
     let file = repo_root().join(relative);
     let ws = temp_dir("scrutinee_temporary");
@@ -3952,7 +3957,7 @@ fn a_match_subject_drops_its_temporaries_before_the_arms() {
             return Err(format!("--- VM ---\n{vm}\n--- Rust ---\n{small}"));
         }
         let got = run_within(&bin, "131072", 60)?;
-        match got == "hot 131071 cold 1" {
+        match got == "hot 131071 cold 1 arg 131071" {
             true => Ok(()),
             false => Err(format!("at 2^17 keys: {got}")),
         }
@@ -6100,8 +6105,9 @@ fn main() -> Unit
 
 /// Regression for #1130: Rust keeps a borrow from an earlier call argument
 /// alive while evaluating every later argument. If one of those later
-/// expressions consumes the same owned binding, the earlier borrow must
-/// point at a detached clone rather than the value being moved.
+/// expressions consumes the same owned binding, the earlier borrow must not
+/// overlap the move: the later argument is bound first, and the borrow comes
+/// after it.
 #[test]
 fn borrowed_call_argument_detaches_before_later_move() {
     let ws = temp_dir("borrowed_call_arg_later_move");
@@ -6165,13 +6171,14 @@ fn main() -> Unit
     let result = (|| -> Result<(), String> {
         compile_rust(&source, &project, "borrowed_call_arg_later_move", None, &[])?;
         let emitted = generated_entry(&project)?;
-        if !emitted.contains("slopeOf(&newest.clone(), &lastOf(samples, newest))") {
+        // The later argument is bound first, so the borrow comes after it.
+        if !emitted.contains("= lastOf(samples, newest.clone());\n    slopeOf(&newest, &__arg") {
             return Err(format!(
-                "the earlier borrow was not detached before the later move:\n{emitted}"
+                "the later argument was not bound before the borrow:\n{emitted}"
             ));
         }
         // A list head is borrowed from the list, so only the move clones it.
-        if !emitted.contains("slopeOf(newest, &lastOf(&older, newest.clone()))") {
+        if !emitted.contains("= lastOf(&older, newest.clone()); slopeOf(newest, &__arg") {
             return Err(format!(
                 "the head handed on was not borrowed and cloned at the move:\n{emitted}"
             ));

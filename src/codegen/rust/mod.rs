@@ -178,16 +178,8 @@ fn transpile_project(
         ctx.mir_program = Some(
             crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_rust(prog, &boxed, &carrier),
         );
+        arg_order::bind_computed_arguments(ctx);
         ctx.rust_owned_record_params = from_mir::compute_owned_record_params(ctx);
-        // Bind pure later arguments first where that turns an earlier
-        // argument into a move; a moved param can make its own function
-        // take it by value, which can enable the same rewrite in callers.
-        for _ in 0..8 {
-            if !arg_order::hoist_reads_before_moves(ctx) {
-                break;
-            }
-            ctx.rust_owned_record_params = from_mir::compute_owned_record_params(ctx);
-        }
     }
     let has_embedded_policy = ctx.policy.is_some();
     let has_runtime_policy = ctx.runtime_policy_from_env;

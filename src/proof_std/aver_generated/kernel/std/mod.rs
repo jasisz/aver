@@ -670,10 +670,8 @@ fn __mutual_tco_trampoline_1(
                                 n.goal.clone(),
                             ) {
                                 Ok(p @ _) => return Ok(p),
-                                Err(_) => __MutualTco1::Asked(
-                                    n.clone(),
-                                    ::aver_rt::str_lit!("Auto"),
-                                    aver_rt::AverStr::from({
+                                Err(_) => {
+                                    let __arg20 @ _ = aver_rt::AverStr::from({
                                         let mut __b = {
                                             let mut __b = aver_rt::Buffer::with_capacity(
                                                 (aver_rt::AverInt::from_i64(21))
@@ -685,17 +683,17 @@ fn __mutual_tco_trampoline_1(
                                         };
                                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::std::subText(&n)))));
                                         __b
-                                    }),
-                                ),
+                                    });
+                                    __MutualTco1::Asked(n, ::aver_rt::str_lit!("Auto"), __arg20)
+                                }
                             }
                         }
                         crate::proof_std::aver_generated::kernel::std::Tactic__view::Plan(
                             __name_fields,
                         ) => {
                             let name = __name_fields.0.clone();
-                            __MutualTco1::Asked(
-                                n.clone(),
-                                aver_rt::AverStr::from({
+                            {
+                                let __arg21 @ _ = aver_rt::AverStr::from({
                                     let mut __b = {
                                         let mut __b = {
                                             let mut __b = aver_rt::Buffer::with_capacity(
@@ -713,47 +711,47 @@ fn __mutual_tco_trampoline_1(
                                     };
                                     __b.push_str(&::aver_rt::str_lit!(")"));
                                     __b
-                                }),
-                                aver_rt::AverStr::from({
-                                    let mut __b = {
+                                });
+                                {
+                                    let __arg22 @ _ = aver_rt::AverStr::from({
                                         let mut __b = {
                                             let mut __b = {
-                                                let mut __b = aver_rt::Buffer::with_capacity(
-                                                    (aver_rt::AverInt::from_i64(38))
-                                                        .to_usize()
-                                                        .unwrap_or(0),
-                                                );
-                                                __b.push_str(&::aver_rt::str_lit!("plan "));
+                                                let mut __b = {
+                                                    let mut __b = aver_rt::Buffer::with_capacity(
+                                                        (aver_rt::AverInt::from_i64(38))
+                                                            .to_usize()
+                                                            .unwrap_or(0),
+                                                    );
+                                                    __b.push_str(&::aver_rt::str_lit!("plan "));
+                                                    __b
+                                                };
+                                                __b.push_str(&aver_rt::AverStr::from(
+                                                    aver_rt::aver_display(&(name)),
+                                                ));
                                                 __b
                                             };
-                                            __b.push_str(&aver_rt::AverStr::from(
-                                                aver_rt::aver_display(&(name)),
-                                            ));
+                                            __b.push_str(&::aver_rt::str_lit!("\n"));
                                             __b
                                         };
-                                        __b.push_str(&::aver_rt::str_lit!("\n"));
+                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::std::subText(&n)))));
                                         __b
-                                    };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(crate::proof_std::aver_generated::kernel::std::subText(
-                                            &n,
-                                        )),
-                                    )));
-                                    __b
-                                }),
-                            )
+                                    });
+                                    __MutualTco1::Asked(n, __arg21, __arg22)
+                                }
+                            }
                         }
                         crate::proof_std::aver_generated::kernel::std::Tactic__view::Cases(
                             __next_fields,
                         ) => {
                             let next = __next_fields.0.clone();
-                            __MutualTco1::CasesAt(
-                                crate::proof_std::aver_generated::kernel::std::down(
-                                    n,
-                                    ::aver_rt::str_lit!("Cases"),
-                                ),
-                                next,
-                            )
+                            {
+                                let __arg23 @ _ =
+                                    crate::proof_std::aver_generated::kernel::std::down(
+                                        n,
+                                        ::aver_rt::str_lit!("Cases"),
+                                    );
+                                __MutualTco1::CasesAt(__arg23, next)
+                            }
                         }
                         crate::proof_std::aver_generated::kernel::std::Tactic__view::Induction(
                             __v_fields,
@@ -763,10 +761,9 @@ fn __mutual_tco_trampoline_1(
                             let tl = __v_fields.2.clone();
                             let nil = __v_fields.3.clone();
                             let cons = __v_fields.4.clone();
-                            return crate::proof_std::aver_generated::kernel::std::listStep(
-                                crate::proof_std::aver_generated::kernel::std::down(
-                                    n,
-                                    aver_rt::AverStr::from({
+                            {
+                                let __arg25 @ _ = {
+                                    let __arg24 @ _ = aver_rt::AverStr::from({
                                         let mut __b = {
                                             let mut __b = {
                                                 let mut __b = aver_rt::Buffer::with_capacity(
@@ -784,16 +781,13 @@ fn __mutual_tco_trampoline_1(
                                         };
                                         __b.push_str(&::aver_rt::str_lit!(")"));
                                         __b
-                                    }),
-                                ),
-                                v,
-                                h,
-                                tl,
-                                nil,
-                                cons,
-                                true,
-                                &*answers,
-                            );
+                                    });
+                                    crate::proof_std::aver_generated::kernel::std::down(n, __arg24)
+                                };
+                                return crate::proof_std::aver_generated::kernel::std::listStep(
+                                    __arg25, v, h, tl, nil, cons, true, &*answers,
+                                );
+                            }
                         }
                         crate::proof_std::aver_generated::kernel::std::Tactic__view::Split(
                             __v_fields,
@@ -803,10 +797,9 @@ fn __mutual_tco_trampoline_1(
                             let tl = __v_fields.2.clone();
                             let nil = __v_fields.3.clone();
                             let cons = __v_fields.4.clone();
-                            return crate::proof_std::aver_generated::kernel::std::listStep(
-                                crate::proof_std::aver_generated::kernel::std::down(
-                                    n,
-                                    aver_rt::AverStr::from({
+                            {
+                                let __arg27 @ _ = {
+                                    let __arg26 @ _ = aver_rt::AverStr::from({
                                         let mut __b = {
                                             let mut __b = {
                                                 let mut __b = aver_rt::Buffer::with_capacity(
@@ -824,16 +817,13 @@ fn __mutual_tco_trampoline_1(
                                         };
                                         __b.push_str(&::aver_rt::str_lit!(")"));
                                         __b
-                                    }),
-                                ),
-                                v,
-                                h,
-                                tl,
-                                nil,
-                                cons,
-                                false,
-                                &*answers,
-                            );
+                                    });
+                                    crate::proof_std::aver_generated::kernel::std::down(n, __arg26)
+                                };
+                                return crate::proof_std::aver_generated::kernel::std::listStep(
+                                    __arg27, v, h, tl, nil, cons, false, &*answers,
+                                );
+                            }
                         }
                         crate::proof_std::aver_generated::kernel::std::Tactic__view::SplitBool(
                             __c_fields,
@@ -841,28 +831,31 @@ fn __mutual_tco_trampoline_1(
                             let c = __c_fields.0.clone();
                             let yes = __c_fields.1.clone();
                             let no = __c_fields.2.clone();
-                            return crate::proof_std::aver_generated::kernel::std::boolStep(
-                                &crate::proof_std::aver_generated::kernel::std::down(
-                                    n,
-                                    ::aver_rt::str_lit!("SplitBool"),
-                                ),
-                                c,
-                                yes,
-                                no,
-                                &*answers,
-                            );
+                            {
+                                let __arg28 @ _ =
+                                    crate::proof_std::aver_generated::kernel::std::down(
+                                        n,
+                                        ::aver_rt::str_lit!("SplitBool"),
+                                    );
+                                return crate::proof_std::aver_generated::kernel::std::boolStep(
+                                    &__arg28, c, yes, no, &*answers,
+                                );
+                            }
                         }
                         crate::proof_std::aver_generated::kernel::std::Tactic__view::First(
                             __ts_fields,
                         ) => {
                             let ts = __ts_fields.0.clone();
-                            return crate::proof_std::aver_generated::kernel::std::first(
-                                &n,
-                                &ts,
-                                aver_rt::AverInt::from_i64(1),
-                                aver_rt::AverList::empty(),
-                                &*answers,
-                            );
+                            {
+                                let __arg29 @ _ = <aver_rt::AverList<AverStr>>::empty();
+                                return crate::proof_std::aver_generated::kernel::std::first(
+                                    &n,
+                                    &ts,
+                                    aver_rt::AverInt::from_i64(1),
+                                    __arg29,
+                                    &*answers,
+                                );
+                            }
                         }
                     }
                 }
@@ -909,17 +902,17 @@ fn __mutual_tco_trampoline_1(
                         }
                         crate::proof_std::aver_generated::kernel::std::Reply::Script(next) => {
                             if (n.depth < aver_rt::AverInt::from_i64(64)) {
-                                __MutualTco1::Within(
-                                    crate::proof_std::aver_generated::kernel::std::Node {
-                                        depth: n.depth.add(&aver_rt::AverInt::from_i64(1)),
-                                        ..here
-                                    },
-                                    next,
-                                )
+                                {
+                                    let __arg10 @ _ =
+                                        crate::proof_std::aver_generated::kernel::std::Node {
+                                            depth: n.depth.add(&aver_rt::AverInt::from_i64(1)),
+                                            ..here
+                                        };
+                                    __MutualTco1::Within(__arg10, next)
+                                }
                             } else {
-                                return crate::proof_std::aver_generated::kernel::std::refuse(
-                                    here.path,
-                                    aver_rt::AverStr::from({
+                                {
+                                    let __arg9 @ _ = aver_rt::AverStr::from({
                                         let mut __b = {
                                             let mut __b = {
                                                 let mut __b = aver_rt::Buffer::with_capacity(
@@ -941,8 +934,11 @@ fn __mutual_tco_trampoline_1(
                                             " plans run inside one another"
                                         ));
                                         __b
-                                    }),
-                                );
+                                    });
+                                    return crate::proof_std::aver_generated::kernel::std::refuse(
+                                        here.path, __arg9,
+                                    );
+                                }
                             }
                         }
                     },
@@ -963,9 +959,8 @@ fn __mutual_tco_trampoline_1(
                         {
                             let gs = __list_subject.clone();
                             if (count > aver_rt::AverInt::from_i64(64)) {
-                                return crate::proof_std::aver_generated::kernel::std::refuse(
-                                    n.path,
-                                    aver_rt::AverStr::from({
+                                {
+                                    let __arg5 @ _ = aver_rt::AverStr::from({
                                         let mut __b = {
                                             let mut __b = aver_rt::Buffer::with_capacity(
                                                 (aver_rt::AverInt::from_i64(53))
@@ -981,8 +976,11 @@ fn __mutual_tco_trampoline_1(
                                             " cases is more than a split may write"
                                         ));
                                         __b
-                                    }),
-                                );
+                                    });
+                                    return crate::proof_std::aver_generated::kernel::std::refuse(
+                                        n.path, __arg5,
+                                    );
+                                }
                             } else {
                                 __MutualTco1::EachGiven(n, gs, next)
                             }
@@ -1001,7 +999,26 @@ fn __mutual_tco_trampoline_1(
                         if let (Some(g), Some(rest)) =
                             (__list_subject.first(), __list_subject.tail())
                         {
-                            return Ok(crate::proof_std::aver_generated::kernel::proof::Proof::PEnum(crate::proof_std::aver_generated::kernel::proof::Proof__PEnum(g.name.clone(), ob.lhs, ob.rhs, crate::proof_std::aver_generated::kernel::std::eachCase(&n, g.name.clone(), &crate::proof_std::aver_generated::kernel::finite::values(&g.fin), &rest, &next, &*answers)?)));
+                            return Ok(
+                                crate::proof_std::aver_generated::kernel::proof::Proof::PEnum(
+                                    crate::proof_std::aver_generated::kernel::proof::Proof__PEnum(
+                                        g.name.clone(),
+                                        ob.lhs,
+                                        ob.rhs,
+                                        {
+                                            let __arg7 @ _ = crate::proof_std::aver_generated::kernel::finite::values(&g.fin);
+                                            crate::proof_std::aver_generated::kernel::std::eachCase(
+                                                &n,
+                                                g.name.clone(),
+                                                &__arg7,
+                                                &rest,
+                                                &next,
+                                                &*answers,
+                                            )
+                                        }?,
+                                    ),
+                                ),
+                            );
                         } else {
                             panic!("Aver Rust codegen: non-exhaustive list match")
                         }
@@ -1132,12 +1149,18 @@ pub fn splitAll(
                             g.name.clone(),
                             goal.obligation.lhs.clone(),
                             goal.obligation.rhs.clone(),
-                            crate::proof_std::aver_generated::kernel::std::eachValue(
-                                goal,
-                                g.name.clone(),
-                                &crate::proof_std::aver_generated::kernel::finite::values(&g.fin),
-                                &rest,
-                            )?,
+                            {
+                                let __arg4 @ _ =
+                                    crate::proof_std::aver_generated::kernel::finite::values(
+                                        &g.fin,
+                                    );
+                                crate::proof_std::aver_generated::kernel::std::eachValue(
+                                    goal,
+                                    g.name.clone(),
+                                    &__arg4,
+                                    &rest,
+                                )
+                            }?,
                         ),
                     ),
                 )
@@ -1164,14 +1187,14 @@ pub fn eachValue(
         } else {
             if let (Some(x), Some(xs)) = (__list_subject.first(), __list_subject.tail()) {
                 Ok(aver_rt::AverList::prepend(
-                    crate::proof_std::aver_generated::kernel::std::splitAll(
-                        &crate::proof_std::aver_generated::kernel::std::at(
+                    {
+                        let __arg6 @ _ = crate::proof_std::aver_generated::kernel::std::at(
                             goal.clone(),
                             v.clone(),
                             x,
-                        )?,
-                        rest,
-                    )?,
+                        )?;
+                        crate::proof_std::aver_generated::kernel::std::splitAll(&__arg6, rest)
+                    }?,
                     &crate::proof_std::aver_generated::kernel::std::eachValue(goal, v, &xs, rest)?,
                 ))
             } else {
@@ -1190,12 +1213,15 @@ pub fn leaf(
     match crate::proof_std::aver_generated::kernel::lib::whenOf(goal) {
         None => crate::proof_std::aver_generated::kernel::std::close(goal),
         Some(p @ _) => {
-            let __subject = crate::proof_std::aver_generated::kernel::lib::whenRefutes(
-                &crate::proof_std::aver_generated::kernel::lib::scope(goal),
-                p,
-                goal.obligation.lhs.clone(),
-                goal.obligation.rhs.clone(),
-            );
+            let __subject = {
+                let __arg3 @ _ = crate::proof_std::aver_generated::kernel::lib::scope(goal);
+                crate::proof_std::aver_generated::kernel::lib::whenRefutes(
+                    &__arg3,
+                    p,
+                    goal.obligation.lhs.clone(),
+                    goal.obligation.rhs.clone(),
+                )
+            };
             match __subject {
                 Ok(proof @ _) => Ok(proof),
                 Err(_) => crate::proof_std::aver_generated::kernel::std::close(goal),
@@ -1388,15 +1414,18 @@ pub fn close(
         aver_rt::AverInt::from_i64(16),
     )?;
     if (l.to == r.to) {
-        crate::proof_std::aver_generated::kernel::lib::trans(
-            &aver_rt::AverList::from_vec(vec![lhs, l.to.clone(), rhs]),
-            &aver_rt::AverList::from_vec(vec![
-                l.proof,
-                crate::proof_std::aver_generated::kernel::proof::Proof::PSymm(
-                    crate::proof_std::aver_generated::kernel::proof::Proof__PSymm(r.proof),
-                ),
-            ]),
-        )
+        {
+            let __arg6 @ _ = aver_rt::AverList::from_vec(vec![lhs, l.to.clone(), rhs]);
+            {
+                let __arg7 @ _ = aver_rt::AverList::from_vec(vec![
+                    l.proof,
+                    crate::proof_std::aver_generated::kernel::proof::Proof::PSymm(
+                        crate::proof_std::aver_generated::kernel::proof::Proof__PSymm(r.proof),
+                    ),
+                ]);
+                crate::proof_std::aver_generated::kernel::lib::trans(&__arg6, &__arg7)
+            }
+        }
     } else {
         Err(aver_rt::AverStr::from({
             let mut __b = {
@@ -1487,7 +1516,22 @@ pub fn rewriteOnce(
                                 continue;
                             }
                             Some(c @ _) => {
-                                return Ok(Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: crate::proof_std::aver_generated::kernel::subst::subst(c.clone(), &aver_rt::AverList::from_vec(vec![crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("□"), h.eqn.rhs.clone())]))?, proof: crate::proof_std::aver_generated::kernel::std::congrHyp(c, h.name.clone()) }));
+                                return Ok(Some(
+                                    crate::proof_std::aver_generated::kernel::lib::Rw {
+                                        to: {
+                                            let __arg5 @ _ = aver_rt::AverList::from_vec(vec![crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("□"), h.eqn.rhs.clone())]);
+                                            crate::proof_std::aver_generated::kernel::subst::subst(
+                                                c.clone(),
+                                                &__arg5,
+                                            )
+                                        }?,
+                                        proof:
+                                            crate::proof_std::aver_generated::kernel::std::congrHyp(
+                                                c,
+                                                h.name.clone(),
+                                            ),
+                                    },
+                                ));
                             }
                         }
                     }
@@ -1551,87 +1595,114 @@ pub fn holeBelow(
             crate::proof_std::aver_generated::kernel::term::Term__view::TCall(__f_fields) => {
                 let f = __f_fields.0.clone();
                 let xs = &__f_fields.1;
-                crate::proof_std::aver_generated::kernel::std::mapSome(
-                    &crate::proof_std::aver_generated::kernel::std::holeInList(xs, target),
-                    &crate::proof_std::aver_generated::kernel::term::Term::TCall(
-                        crate::proof_std::aver_generated::kernel::term::Term__TCall(
-                            f,
-                            aver_rt::AverList::empty(),
-                        ),
-                    ),
-                )
+                {
+                    let __arg16 @ _ =
+                        crate::proof_std::aver_generated::kernel::std::holeInList(xs, target);
+                    {
+                        let __arg17 @ _ =
+                            crate::proof_std::aver_generated::kernel::term::Term::TCall(
+                                crate::proof_std::aver_generated::kernel::term::Term__TCall(
+                                    f,
+                                    aver_rt::AverList::empty(),
+                                ),
+                            );
+                        crate::proof_std::aver_generated::kernel::std::mapSome(&__arg16, &__arg17)
+                    }
+                }
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TBi(__f_fields) => {
                 let f = __f_fields.0.clone();
                 let xs = &__f_fields.1;
-                crate::proof_std::aver_generated::kernel::std::mapSome(
-                    &crate::proof_std::aver_generated::kernel::std::holeInList(xs, target),
-                    &crate::proof_std::aver_generated::kernel::term::Term::TBi(
-                        crate::proof_std::aver_generated::kernel::term::Term__TBi(
-                            f,
-                            aver_rt::AverList::empty(),
-                        ),
-                    ),
-                )
+                {
+                    let __arg18 @ _ =
+                        crate::proof_std::aver_generated::kernel::std::holeInList(xs, target);
+                    {
+                        let __arg19 @ _ = crate::proof_std::aver_generated::kernel::term::Term::TBi(
+                            crate::proof_std::aver_generated::kernel::term::Term__TBi(
+                                f,
+                                aver_rt::AverList::empty(),
+                            ),
+                        );
+                        crate::proof_std::aver_generated::kernel::std::mapSome(&__arg18, &__arg19)
+                    }
+                }
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TCtor(__c_fields) => {
                 let c = __c_fields.0.clone();
                 let xs = &__c_fields.1;
-                crate::proof_std::aver_generated::kernel::std::mapSome(
-                    &crate::proof_std::aver_generated::kernel::std::holeInList(xs, target),
-                    &crate::proof_std::aver_generated::kernel::term::Term::TCtor(
-                        crate::proof_std::aver_generated::kernel::term::Term__TCtor(
-                            c,
-                            aver_rt::AverList::empty(),
-                        ),
-                    ),
-                )
+                {
+                    let __arg20 @ _ =
+                        crate::proof_std::aver_generated::kernel::std::holeInList(xs, target);
+                    {
+                        let __arg21 @ _ =
+                            crate::proof_std::aver_generated::kernel::term::Term::TCtor(
+                                crate::proof_std::aver_generated::kernel::term::Term__TCtor(
+                                    c,
+                                    aver_rt::AverList::empty(),
+                                ),
+                            );
+                        crate::proof_std::aver_generated::kernel::std::mapSome(&__arg20, &__arg21)
+                    }
+                }
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TList(__xs_fields) => {
                 let xs = &__xs_fields.0;
-                crate::proof_std::aver_generated::kernel::std::mapSome(
-                    &crate::proof_std::aver_generated::kernel::std::holeInList(xs, target),
-                    &crate::proof_std::aver_generated::kernel::term::Term::TList(
-                        crate::proof_std::aver_generated::kernel::term::Term__TList(
-                            aver_rt::AverList::empty(),
-                        ),
-                    ),
-                )
+                {
+                    let __arg22 @ _ =
+                        crate::proof_std::aver_generated::kernel::std::holeInList(xs, target);
+                    {
+                        let __arg23 @ _ =
+                            crate::proof_std::aver_generated::kernel::term::Term::TList(
+                                crate::proof_std::aver_generated::kernel::term::Term__TList(
+                                    aver_rt::AverList::empty(),
+                                ),
+                            );
+                        crate::proof_std::aver_generated::kernel::std::mapSome(&__arg22, &__arg23)
+                    }
+                }
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TTuple(__xs_fields) => {
                 let xs = &__xs_fields.0;
-                crate::proof_std::aver_generated::kernel::std::mapSome(
-                    &crate::proof_std::aver_generated::kernel::std::holeInList(xs, target),
-                    &crate::proof_std::aver_generated::kernel::term::Term::TTuple(
-                        crate::proof_std::aver_generated::kernel::term::Term__TTuple(
-                            aver_rt::AverList::empty(),
-                        ),
-                    ),
-                )
+                {
+                    let __arg24 @ _ =
+                        crate::proof_std::aver_generated::kernel::std::holeInList(xs, target);
+                    {
+                        let __arg25 @ _ =
+                            crate::proof_std::aver_generated::kernel::term::Term::TTuple(
+                                crate::proof_std::aver_generated::kernel::term::Term__TTuple(
+                                    aver_rt::AverList::empty(),
+                                ),
+                            );
+                        crate::proof_std::aver_generated::kernel::std::mapSome(&__arg24, &__arg25)
+                    }
+                }
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TOp(__o_fields) => {
                 let o = __o_fields.0.clone();
                 let a = __o_fields.1.clone();
                 let b = __o_fields.2.clone();
                 {
-                    let __arg16 @ _ =
+                    let __arg26 @ _ =
                         crate::proof_std::aver_generated::kernel::std::holeAt(&a, target);
-                    crate::proof_std::aver_generated::kernel::std::opWith(o, a, b, &__arg16, target)
+                    crate::proof_std::aver_generated::kernel::std::opWith(o, a, b, &__arg26, target)
                 }
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TNeg(__a_fields) => {
                 let a = &__a_fields.0;
-                crate::proof_std::aver_generated::kernel::std::negWith(
-                    &crate::proof_std::aver_generated::kernel::std::holeAt(a, target),
-                )
+                {
+                    let __arg27 @ _ =
+                        crate::proof_std::aver_generated::kernel::std::holeAt(a, target);
+                    crate::proof_std::aver_generated::kernel::std::negWith(&__arg27)
+                }
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TGet(__a_fields) => {
                 let a = &__a_fields.0;
                 let f = __a_fields.1.clone();
-                crate::proof_std::aver_generated::kernel::std::getWith(
-                    &crate::proof_std::aver_generated::kernel::std::holeAt(a, target),
-                    f,
-                )
+                {
+                    let __arg28 @ _ =
+                        crate::proof_std::aver_generated::kernel::std::holeAt(a, target);
+                    crate::proof_std::aver_generated::kernel::std::getWith(&__arg28, f)
+                }
             }
             _ => None,
         }
@@ -1748,10 +1819,12 @@ pub fn holeInList(
             if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 match crate::proof_std::aver_generated::kernel::std::holeAt(x, target) {
                     Some(c @ _) => Some(aver_rt::AverList::prepend(c, &rest)),
-                    None => crate::proof_std::aver_generated::kernel::std::prependTo(
-                        x,
-                        &crate::proof_std::aver_generated::kernel::std::holeInList(&rest, target),
-                    ),
+                    None => {
+                        let __arg5 @ _ = crate::proof_std::aver_generated::kernel::std::holeInList(
+                            &rest, target,
+                        );
+                        crate::proof_std::aver_generated::kernel::std::prependTo(x, &__arg5)
+                    }
                 }
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -1782,26 +1855,27 @@ pub fn splitBool(
     ) -> Result<crate::proof_std::aver_generated::kernel::proof::Proof, AverStr>,
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Proof, AverStr> {
     crate::proof_std::cancel_checkpoint();
-    let h @ _ = crate::proof_std::aver_generated::kernel::lib::fresh(
-        ::aver_rt::str_lit!("c"),
-        &crate::proof_std::aver_generated::kernel::lib::taken(&goal),
-    );
-    let yes @ _ = next(crate::proof_std::aver_generated::kernel::std::assume(
-        goal.clone(),
-        h.clone(),
-        on.clone(),
-        crate::proof_std::aver_generated::kernel::term::Term::TBool(
+    let h @ _ = {
+        let __arg6 @ _ = crate::proof_std::aver_generated::kernel::lib::taken(&goal);
+        crate::proof_std::aver_generated::kernel::lib::fresh(::aver_rt::str_lit!("c"), &__arg6)
+    };
+    let yes @ _ = next({
+        let __arg7 @ _ = crate::proof_std::aver_generated::kernel::term::Term::TBool(
             crate::proof_std::aver_generated::kernel::term::Term__TBool(true),
-        ),
-    ))?;
-    let no @ _ = next(crate::proof_std::aver_generated::kernel::std::assume(
-        goal,
-        h.clone(),
-        on.clone(),
-        crate::proof_std::aver_generated::kernel::term::Term::TBool(
+        );
+        crate::proof_std::aver_generated::kernel::std::assume(
+            goal.clone(),
+            h.clone(),
+            on.clone(),
+            __arg7,
+        )
+    })?;
+    let no @ _ = next({
+        let __arg8 @ _ = crate::proof_std::aver_generated::kernel::term::Term::TBool(
             crate::proof_std::aver_generated::kernel::term::Term__TBool(false),
-        ),
-    ))?;
+        );
+        crate::proof_std::aver_generated::kernel::std::assume(goal, h.clone(), on.clone(), __arg8)
+    })?;
     Ok(
         crate::proof_std::aver_generated::kernel::proof::Proof::PCases(
             crate::proof_std::aver_generated::kernel::proof::Proof__PCases(on, h, yes, no),
@@ -1823,16 +1897,13 @@ pub fn runScript(
     answers @ _: &aver_rt::AverList<Answer>,
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Proof, Stop> {
     crate::proof_std::cancel_checkpoint();
-    crate::proof_std::aver_generated::kernel::std::within(
-        crate::proof_std::aver_generated::kernel::std::Node {
-            goal: goal,
-            path: ::aver_rt::str_lit!(""),
-            from: aver_rt::AverList::empty(),
-            depth: aver_rt::AverInt::from_i64(0),
-        },
-        t,
-        answers,
-    )
+    let __arg3 @ _ = crate::proof_std::aver_generated::kernel::std::Node {
+        goal: goal,
+        path: ::aver_rt::str_lit!(""),
+        from: aver_rt::AverList::empty(),
+        depth: aver_rt::AverInt::from_i64(0),
+    };
+    crate::proof_std::aver_generated::kernel::std::within(__arg3, t, answers)
 }
 
 /// The claim in a case its `when` rules out, such as an empty list under a length bound: Auto tries this itself before it asks for the automatic steps.
@@ -1843,12 +1914,15 @@ pub fn refutedByWhen(
     crate::proof_std::cancel_checkpoint();
     match crate::proof_std::aver_generated::kernel::lib::whenOf(&goal) {
         None => Err(::aver_rt::str_lit!("no `when`")),
-        Some(p @ _) => crate::proof_std::aver_generated::kernel::lib::whenRefutes(
-            &crate::proof_std::aver_generated::kernel::lib::scope(&goal),
-            p,
-            goal.obligation.lhs,
-            goal.obligation.rhs,
-        ),
+        Some(p @ _) => {
+            let __arg2 @ _ = crate::proof_std::aver_generated::kernel::lib::scope(&goal);
+            crate::proof_std::aver_generated::kernel::lib::whenRefutes(
+                &__arg2,
+                p,
+                goal.obligation.lhs,
+                goal.obligation.rhs,
+            )
+        }
     }
 }
 
@@ -1991,14 +2065,17 @@ pub fn first(
             } else {
                 if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
-                        let __subject = crate::proof_std::aver_generated::kernel::std::within(
-                            crate::proof_std::aver_generated::kernel::std::Node {
+                        let __subject = {
+                            let __arg11 @ _ = crate::proof_std::aver_generated::kernel::std::Node {
                                 path: ::aver_rt::str_lit!(""),
                                 ..n.clone()
-                            },
-                            t.clone(),
-                            answers,
-                        );
+                            };
+                            crate::proof_std::aver_generated::kernel::std::within(
+                                __arg11,
+                                t.clone(),
+                                answers,
+                            )
+                        };
                         match __subject {
                             Ok(p @ _) => {
                                 return Ok(p);
@@ -2075,16 +2152,19 @@ pub fn eachCase(
         } else {
             if let (Some(x), Some(xs)) = (__list_subject.first(), __list_subject.tail()) {
                 Ok(aver_rt::AverList::prepend(
-                    crate::proof_std::aver_generated::kernel::std::eachGiven(
-                        crate::proof_std::aver_generated::kernel::std::caseNode(
+                    {
+                        let __arg8 @ _ = crate::proof_std::aver_generated::kernel::std::caseNode(
                             n.clone(),
                             v.clone(),
                             x,
-                        )?,
-                        rest.clone(),
-                        next.clone(),
-                        answers,
-                    )?,
+                        )?;
+                        crate::proof_std::aver_generated::kernel::std::eachGiven(
+                            __arg8,
+                            rest.clone(),
+                            next.clone(),
+                            answers,
+                        )
+                    }?,
                     &crate::proof_std::aver_generated::kernel::std::eachCase(
                         n, v, &xs, rest, next, answers,
                     )?,
@@ -2106,9 +2186,8 @@ pub fn caseNode(
     crate::proof_std::cancel_checkpoint();
     match crate::proof_std::aver_generated::kernel::std::at(n.goal.clone(), v.clone(), x) {
         Ok(g @ _) => Ok({
-            let __base = crate::proof_std::aver_generated::kernel::std::down(
-                n,
-                aver_rt::AverStr::from({
+            let __base = {
+                let __arg5 @ _ = aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
                             let mut __b = aver_rt::Buffer::with_capacity(
@@ -2124,8 +2203,9 @@ pub fn caseNode(
                         &(crate::proof_std::aver_generated::kernel::std::valueText(x)),
                     )));
                     __b
-                }),
-            );
+                });
+                crate::proof_std::aver_generated::kernel::std::down(n, __arg5)
+            };
             crate::proof_std::aver_generated::kernel::std::Node { goal: g, ..__base }
         }),
         Err(why @ _) => Err(
@@ -2327,10 +2407,13 @@ pub fn mentionedBelow(
     v @ _: AverStr,
 ) -> bool {
     crate::proof_std::cancel_checkpoint();
-    crate::proof_std::aver_generated::kernel::subst::freeVarsAll(&aver_rt::AverList::concat(
-        &goal.obligation.premise.clone(),
-        &crate::proof_std::aver_generated::kernel::std::hypTerms(&goal.hyps),
-    ))
+    {
+        let __arg2 @ _ = aver_rt::AverList::concat(
+            &goal.obligation.premise.clone(),
+            &crate::proof_std::aver_generated::kernel::std::hypTerms(&goal.hyps),
+        );
+        crate::proof_std::aver_generated::kernel::subst::freeVarsAll(&__arg2)
+    }
     .contains(&v)
 }
 
@@ -2374,58 +2457,76 @@ pub fn listCases(
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Proof, Stop> {
     crate::proof_std::cancel_checkpoint();
     let ob @ _ = n.goal.obligation.clone();
-    let nilGoal @ _ = crate::proof_std::aver_generated::kernel::std::withoutList(
-        crate::proof_std::aver_generated::kernel::std::substituted(
-            &n,
-            &crate::proof_std::aver_generated::kernel::std::at(
-                n.goal.clone(),
-                v.clone(),
-                &crate::proof_std::aver_generated::kernel::term::Term::TList(
+    let nilGoal @ _ = {
+        let __arg19 @ _ = {
+            let __arg18 @ _ = {
+                let __arg17 @ _ = crate::proof_std::aver_generated::kernel::term::Term::TList(
                     crate::proof_std::aver_generated::kernel::term::Term__TList(
                         aver_rt::AverList::empty(),
                     ),
-                ),
-            ),
-        )?,
-        v.clone(),
-    );
-    let cellGoal @ _ = crate::proof_std::aver_generated::kernel::std::opened(
-        crate::proof_std::aver_generated::kernel::std::substituted(
-            &n,
-            &crate::proof_std::aver_generated::kernel::std::at(
-                n.goal.clone(),
-                v.clone(),
-                &crate::proof_std::aver_generated::kernel::lib::cons(
-                    crate::proof_std::aver_generated::kernel::term::Term::TVar(
+                );
+                crate::proof_std::aver_generated::kernel::std::at(
+                    n.goal.clone(),
+                    v.clone(),
+                    &__arg17,
+                )
+            };
+            crate::proof_std::aver_generated::kernel::std::substituted(&n, &__arg18)
+        }?;
+        crate::proof_std::aver_generated::kernel::std::withoutList(__arg19, v.clone())
+    };
+    let cellGoal @ _ = {
+        let __arg24 @ _ = {
+            let __arg23 @ _ = {
+                let __arg22 @ _ = {
+                    let __arg20 @ _ = crate::proof_std::aver_generated::kernel::term::Term::TVar(
                         crate::proof_std::aver_generated::kernel::term::Term__TVar(h.clone()),
-                    ),
-                    crate::proof_std::aver_generated::kernel::term::Term::TVar(
-                        crate::proof_std::aver_generated::kernel::term::Term__TVar(tl.clone()),
-                    ),
-                ),
-            ),
-        )?,
-        v.clone(),
-        h.clone(),
-        tl.clone(),
-    );
-    let ih @ _ = crate::proof_std::aver_generated::kernel::lib::fresh(
-        ::aver_rt::str_lit!("ih"),
-        &aver_rt::AverList::concat(
+                    );
+                    {
+                        let __arg21 @ _ =
+                            crate::proof_std::aver_generated::kernel::term::Term::TVar(
+                                crate::proof_std::aver_generated::kernel::term::Term__TVar(
+                                    tl.clone(),
+                                ),
+                            );
+                        crate::proof_std::aver_generated::kernel::lib::cons(__arg20, __arg21)
+                    }
+                };
+                crate::proof_std::aver_generated::kernel::std::at(
+                    n.goal.clone(),
+                    v.clone(),
+                    &__arg22,
+                )
+            };
+            crate::proof_std::aver_generated::kernel::std::substituted(&n, &__arg23)
+        }?;
+        crate::proof_std::aver_generated::kernel::std::opened(
+            __arg24,
+            v.clone(),
+            h.clone(),
+            tl.clone(),
+        )
+    };
+    let ih @ _ = {
+        let __arg25 @ _ = aver_rt::AverList::concat(
             &aver_rt::AverList::from_vec(vec![h.clone(), tl.clone()]),
             &used.clone(),
-        ),
-    );
-    let consGoal @ _ = crate::proof_std::aver_generated::kernel::std::withIh(
-        cellGoal,
-        induct,
-        ih.clone(),
-        ob.clone(),
-        v.clone(),
-        crate::proof_std::aver_generated::kernel::term::Term::TVar(
+        );
+        crate::proof_std::aver_generated::kernel::lib::fresh(::aver_rt::str_lit!("ih"), &__arg25)
+    };
+    let consGoal @ _ = {
+        let __arg26 @ _ = crate::proof_std::aver_generated::kernel::term::Term::TVar(
             crate::proof_std::aver_generated::kernel::term::Term__TVar(tl.clone()),
-        ),
-    )?;
+        );
+        crate::proof_std::aver_generated::kernel::std::withIh(
+            cellGoal,
+            induct,
+            ih.clone(),
+            ob.clone(),
+            v.clone(),
+            __arg26,
+        )
+    }?;
     let cells @ _ = aver_rt::AverList::prepend(
         crate::proof_std::aver_generated::kernel::std::Origin {
             name: tl.clone(),
@@ -2441,8 +2542,8 @@ pub fn listCases(
             &n.from.clone(),
         ),
     );
-    let nilProof @ _ = crate::proof_std::aver_generated::kernel::std::within(
-        {
+    let nilProof @ _ = {
+        let __arg27 @ _ = {
             let __base = crate::proof_std::aver_generated::kernel::std::down(
                 n.clone(),
                 ::aver_rt::str_lit!("nil"),
@@ -2451,12 +2552,11 @@ pub fn listCases(
                 goal: nilGoal,
                 ..__base
             }
-        },
-        nil,
-        answers,
-    )?;
-    let consProof @ _ = crate::proof_std::aver_generated::kernel::std::within(
-        {
+        };
+        crate::proof_std::aver_generated::kernel::std::within(__arg27, nil, answers)
+    }?;
+    let consProof @ _ = {
+        let __arg28 @ _ = {
             let __base =
                 crate::proof_std::aver_generated::kernel::std::down(n, ::aver_rt::str_lit!("cons"));
             crate::proof_std::aver_generated::kernel::std::Node {
@@ -2464,10 +2564,9 @@ pub fn listCases(
                 from: cells,
                 ..__base
             }
-        },
-        cons,
-        answers,
-    )?;
+        };
+        crate::proof_std::aver_generated::kernel::std::within(__arg28, cons, answers)
+    }?;
     if induct {
         Ok(
             crate::proof_std::aver_generated::kernel::proof::Proof::PListInduct(
@@ -2543,16 +2642,18 @@ pub fn withIh(
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Goal, Stop> {
     crate::proof_std::cancel_checkpoint();
     if induct {
-        crate::proof_std::aver_generated::kernel::std::withIhOf(
-            goal,
-            ih,
-            &crate::proof_std::aver_generated::kernel::lib::substitute(
+        {
+            let __arg6 @ _ = crate::proof_std::aver_generated::kernel::lib::substitute(
                 ob.lhs,
                 v.clone(),
                 tl.clone(),
-            ),
-            &crate::proof_std::aver_generated::kernel::lib::substitute(ob.rhs, v, tl),
-        )
+            );
+            {
+                let __arg7 @ _ =
+                    crate::proof_std::aver_generated::kernel::lib::substitute(ob.rhs, v, tl);
+                crate::proof_std::aver_generated::kernel::std::withIhOf(goal, ih, &__arg6, &__arg7)
+            }
+        }
     } else {
         Ok(goal)
     }
@@ -2645,18 +2746,17 @@ pub fn opened(
     crate::proof_std::cancel_checkpoint();
     let elem @ _ =
         crate::proof_std::aver_generated::kernel::std::elemType(&goal.obligation.givens, v.clone());
-    crate::proof_std::aver_generated::kernel::wire::withGivens(
-        crate::proof_std::aver_generated::kernel::std::withoutList(goal, v),
-        &aver_rt::AverList::from_vec(vec![
-            crate::proof_std::aver_generated::kernel::term::typed(h, elem.clone()),
-            crate::proof_std::aver_generated::kernel::term::typed(
-                tl,
-                crate::proof_std::aver_generated::kernel::term::Ty::TyList(
-                    crate::proof_std::aver_generated::kernel::term::Ty__TyList(elem),
-                ),
-            ),
-        ]),
-    )
+    let __arg6 @ _ = crate::proof_std::aver_generated::kernel::std::withoutList(goal, v);
+    let __arg7 @ _ = aver_rt::AverList::from_vec(vec![
+        crate::proof_std::aver_generated::kernel::term::typed(h, elem.clone()),
+        {
+            let __arg5 @ _ = crate::proof_std::aver_generated::kernel::term::Ty::TyList(
+                crate::proof_std::aver_generated::kernel::term::Ty__TyList(elem),
+            );
+            crate::proof_std::aver_generated::kernel::term::typed(tl, __arg5)
+        },
+    ]);
+    crate::proof_std::aver_generated::kernel::wire::withGivens(__arg6, &__arg7)
 }
 
 /// What the list given v holds; anything when the goal does not say.
@@ -2741,52 +2841,56 @@ pub fn boolStep(
     answers @ _: &aver_rt::AverList<Answer>,
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Proof, Stop> {
     crate::proof_std::cancel_checkpoint();
-    let h @ _ = crate::proof_std::aver_generated::kernel::lib::fresh(
-        ::aver_rt::str_lit!("c"),
-        &crate::proof_std::aver_generated::kernel::lib::taken(&n.goal),
-    );
-    let t @ _ = crate::proof_std::aver_generated::kernel::std::within(
-        {
+    let h @ _ = {
+        let __arg8 @ _ = crate::proof_std::aver_generated::kernel::lib::taken(&n.goal);
+        crate::proof_std::aver_generated::kernel::lib::fresh(::aver_rt::str_lit!("c"), &__arg8)
+    };
+    let t @ _ = {
+        let __arg10 @ _ = {
             let __base = crate::proof_std::aver_generated::kernel::std::down(
                 n.clone(),
                 ::aver_rt::str_lit!("true"),
             );
             crate::proof_std::aver_generated::kernel::std::Node {
-                goal: crate::proof_std::aver_generated::kernel::std::assume(
-                    n.goal.clone(),
-                    h.clone(),
-                    c.clone(),
-                    crate::proof_std::aver_generated::kernel::term::Term::TBool(
+                goal: {
+                    let __arg9 @ _ = crate::proof_std::aver_generated::kernel::term::Term::TBool(
                         crate::proof_std::aver_generated::kernel::term::Term__TBool(true),
-                    ),
-                ),
+                    );
+                    crate::proof_std::aver_generated::kernel::std::assume(
+                        n.goal.clone(),
+                        h.clone(),
+                        c.clone(),
+                        __arg9,
+                    )
+                },
                 ..__base
             }
-        },
-        yes,
-        answers,
-    )?;
-    let f @ _ = crate::proof_std::aver_generated::kernel::std::within(
-        {
+        };
+        crate::proof_std::aver_generated::kernel::std::within(__arg10, yes, answers)
+    }?;
+    let f @ _ = {
+        let __arg12 @ _ = {
             let __base = crate::proof_std::aver_generated::kernel::std::down(
                 n.clone(),
                 ::aver_rt::str_lit!("false"),
             );
             crate::proof_std::aver_generated::kernel::std::Node {
-                goal: crate::proof_std::aver_generated::kernel::std::assume(
-                    n.goal.clone(),
-                    h.clone(),
-                    c.clone(),
-                    crate::proof_std::aver_generated::kernel::term::Term::TBool(
+                goal: {
+                    let __arg11 @ _ = crate::proof_std::aver_generated::kernel::term::Term::TBool(
                         crate::proof_std::aver_generated::kernel::term::Term__TBool(false),
-                    ),
-                ),
+                    );
+                    crate::proof_std::aver_generated::kernel::std::assume(
+                        n.goal.clone(),
+                        h.clone(),
+                        c.clone(),
+                        __arg11,
+                    )
+                },
                 ..__base
             }
-        },
-        no,
-        answers,
-    )?;
+        };
+        crate::proof_std::aver_generated::kernel::std::within(__arg12, no, answers)
+    }?;
     Ok(
         crate::proof_std::aver_generated::kernel::proof::Proof::PCases(
             crate::proof_std::aver_generated::kernel::proof::Proof__PCases(c, h, t, f),
@@ -2800,15 +2904,24 @@ pub fn subText(n @ _: &Node) -> AverStr {
     crate::proof_std::cancel_checkpoint();
     let g @ _ = n.goal.clone();
     let ob @ _ = g.obligation;
-    let givens @ _ = crate::proof_std::aver_generated::kernel::wire::spaced(
-        &crate::proof_std::aver_generated::kernel::std::givenTexts(&ob.givens),
-    );
-    let from @ _ = crate::proof_std::aver_generated::kernel::wire::spaced(
-        &crate::proof_std::aver_generated::kernel::std::originTexts(&n.from.reverse()),
-    );
-    let hyps @ _ = crate::proof_std::aver_generated::kernel::wire::spaced(
-        &crate::proof_std::aver_generated::kernel::std::hypTexts(&g.hyps.reverse()),
-    );
+    let givens @ _ = {
+        let __arg6 @ _ = crate::proof_std::aver_generated::kernel::std::givenTexts(&ob.givens);
+        crate::proof_std::aver_generated::kernel::wire::spaced(&__arg6)
+    };
+    let from @ _ = {
+        let __arg8 @ _ = {
+            let __arg7 @ _ = n.from.reverse();
+            crate::proof_std::aver_generated::kernel::std::originTexts(&__arg7)
+        };
+        crate::proof_std::aver_generated::kernel::wire::spaced(&__arg8)
+    };
+    let hyps @ _ = {
+        let __arg10 @ _ = {
+            let __arg9 @ _ = g.hyps.reverse();
+            crate::proof_std::aver_generated::kernel::std::hypTexts(&__arg9)
+        };
+        crate::proof_std::aver_generated::kernel::wire::spaced(&__arg10)
+    };
     aver_rt::AverStr::from({
         let mut __b = {
             let mut __b = {
@@ -3131,10 +3244,10 @@ pub fn readSub(
     if (&*text == "") {
         Ok(base)
     } else {
-        crate::proof_std::aver_generated::kernel::std::subOf(
-            base,
-            &crate::proof_std::aver_generated::kernel::sexp::readAll(text)?,
-        )
+        {
+            let __arg2 @ _ = crate::proof_std::aver_generated::kernel::sexp::readAll(text)?;
+            crate::proof_std::aver_generated::kernel::std::subOf(base, &__arg2)
+        }
     }
 }
 
@@ -3173,7 +3286,7 @@ pub fn subOf(
             let __pat15 = __pat15.clone();
             match &*__pat15 {
         "hyps" => {
-            { let __list_subject = __pat12; if let (Some(p), Some(__pat16)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat16; if let (Some(l), Some(__pat17)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat17; if let (Some(r), Some(__pat18)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat18; if __list_subject.is_empty() { crate::proof_std::aver_generated::kernel::std::subGoal(crate::proof_std::aver_generated::kernel::wire::withGivens({ let __field0 = crate::proof_std::aver_generated::kernel::proof::Law { givens: aver_rt::AverList::empty(), ..base.obligation }; let __field1 = aver_rt::AverList::empty(); let __field2 = aver_rt::AverList::empty(); let __field3 = aver_rt::AverList::empty(); base.obligation = __field0; base.finite = __field1; base.lists = __field2; base.ints = __field3; base }, &crate::proof_std::aver_generated::kernel::decode::typedVars(gs, false)?), &crate::proof_std::aver_generated::kernel::std::readPremise(p)?, &crate::proof_std::aver_generated::kernel::decode::term(l)?, &crate::proof_std::aver_generated::kernel::decode::term(r)?, &crate::proof_std::aver_generated::kernel::std::readHyps(&hs)?) } else { Err(::aver_rt::str_lit!("malformed question")) } } } else { Err(::aver_rt::str_lit!("malformed question")) } } } else { Err(::aver_rt::str_lit!("malformed question")) } } } else { Err(::aver_rt::str_lit!("malformed question")) } }
+            { let __list_subject = __pat12; if let (Some(p), Some(__pat16)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat16; if let (Some(l), Some(__pat17)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat17; if let (Some(r), Some(__pat18)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat18; if __list_subject.is_empty() { { let __arg28 @ _ = { let __arg26 @ _ = { let __field0 = crate::proof_std::aver_generated::kernel::proof::Law { givens: aver_rt::AverList::empty(), ..base.obligation }; let __field1 = aver_rt::AverList::empty(); let __field2 = aver_rt::AverList::empty(); let __field3 = aver_rt::AverList::empty(); base.obligation = __field0; base.finite = __field1; base.lists = __field2; base.ints = __field3; base }; { let __arg27 @ _ = crate::proof_std::aver_generated::kernel::decode::typedVars(gs, false)?; crate::proof_std::aver_generated::kernel::wire::withGivens(__arg26, &__arg27) } }; { let __arg29 @ _ = crate::proof_std::aver_generated::kernel::std::readPremise(p)?; { let __arg30 @ _ = crate::proof_std::aver_generated::kernel::decode::term(l)?; { let __arg31 @ _ = crate::proof_std::aver_generated::kernel::decode::term(r)?; { let __arg32 @ _ = crate::proof_std::aver_generated::kernel::std::readHyps(&hs)?; crate::proof_std::aver_generated::kernel::std::subGoal(__arg28, &__arg29, &__arg30, &__arg31, &__arg32) } } } } } } else { Err(::aver_rt::str_lit!("malformed question")) } } } else { Err(::aver_rt::str_lit!("malformed question")) } } } else { Err(::aver_rt::str_lit!("malformed question")) } } } else { Err(::aver_rt::str_lit!("malformed question")) } }
         },
         _ => {
             Err(::aver_rt::str_lit!("malformed question"))
@@ -3579,12 +3692,17 @@ pub fn tacticText(t @ _: &Tactic) -> AverStr {
             }
             crate::proof_std::aver_generated::kernel::std::Tactic__view::First(__ts_fields) => {
                 let ts = &__ts_fields.0;
-                crate::proof_std::aver_generated::kernel::std::headedText(
-                    ::aver_rt::str_lit!("first"),
-                    crate::proof_std::aver_generated::kernel::wire::spaced(
-                        &crate::proof_std::aver_generated::kernel::std::tacticTexts(ts),
-                    ),
-                )
+                {
+                    let __arg18 @ _ = {
+                        let __arg17 @ _ =
+                            crate::proof_std::aver_generated::kernel::std::tacticTexts(ts);
+                        crate::proof_std::aver_generated::kernel::wire::spaced(&__arg17)
+                    };
+                    crate::proof_std::aver_generated::kernel::std::headedText(
+                        ::aver_rt::str_lit!("first"),
+                        __arg18,
+                    )
+                }
             }
             crate::proof_std::aver_generated::kernel::std::Tactic__view::Plan(__name_fields) => {
                 let name = __name_fields.0.clone();
@@ -4070,9 +4188,11 @@ pub fn script(goalText @ _: AverStr, scriptText @ _: AverStr, answersText @ _: A
         }),
         Ok(__pat0 @ _) => {
             let (g, t, r#as) = __pat0;
-            crate::proof_std::aver_generated::kernel::std::outcome(
-                &crate::proof_std::aver_generated::kernel::std::runScript(g, t, &r#as),
-            )
+            {
+                let __arg8 @ _ =
+                    crate::proof_std::aver_generated::kernel::std::runScript(g, t, &r#as);
+                crate::proof_std::aver_generated::kernel::std::outcome(&__arg8)
+            }
         }
     }
 }
@@ -4093,9 +4213,10 @@ pub fn readScriptInput(
     crate::proof_std::cancel_checkpoint();
     Ok((
         crate::proof_std::aver_generated::kernel::wire::goal(goalText)?,
-        crate::proof_std::aver_generated::kernel::std::readTactic(
-            &crate::proof_std::aver_generated::kernel::sexp::readAll(scriptText)?,
-        )?,
+        {
+            let __arg3 @ _ = crate::proof_std::aver_generated::kernel::sexp::readAll(scriptText)?;
+            crate::proof_std::aver_generated::kernel::std::readTactic(&__arg3)
+        }?,
         crate::proof_std::aver_generated::kernel::std::readAnswers(answersText)?,
     ))
 }
@@ -4190,8 +4311,6 @@ pub fn goalAt(
     sub @ _: AverStr,
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Goal, AverStr> {
     crate::proof_std::cancel_checkpoint();
-    crate::proof_std::aver_generated::kernel::std::readSub(
-        crate::proof_std::aver_generated::kernel::wire::goal(text)?,
-        sub,
-    )
+    let __arg2 @ _ = crate::proof_std::aver_generated::kernel::wire::goal(text)?;
+    crate::proof_std::aver_generated::kernel::std::readSub(__arg2, sub)
 }

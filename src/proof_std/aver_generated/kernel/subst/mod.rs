@@ -39,13 +39,14 @@ fn __mutual_tco_trampoline_1(
                 crate::proof_std::cancel_checkpoint();
                 if used.contains(&b.name) {
                     {
-                        let __subject =
+                        let __subject = {
+                            let __arg5 @ _ =
+                                crate::proof_std::aver_generated::kernel::subst::freeVars(&b.value);
                             crate::proof_std::aver_generated::kernel::subst::firstShared(
-                                &crate::proof_std::aver_generated::kernel::subst::freeVars(
-                                    &b.value,
-                                ),
+                                &__arg5,
                                 (*bound).clone(),
-                            );
+                            )
+                        };
                         match __subject {
                             Some(c @ _) => {
                                 return Err(aver_rt::AverStr::from({
@@ -147,16 +148,18 @@ pub fn patNames(
     match p {
         crate::proof_std::aver_generated::kernel::term::Pat::PVar(n) => {
             let n = n.clone();
-            crate::proof_std::aver_generated::kernel::subst::dropWild(&aver_rt::AverList::from_vec(
-                vec![n],
-            ))
+            {
+                let __arg7 @ _ = aver_rt::AverList::from_vec(vec![n]);
+                crate::proof_std::aver_generated::kernel::subst::dropWild(&__arg7)
+            }
         }
         crate::proof_std::aver_generated::kernel::term::Pat::PCons(h, t) => {
             let h = h.clone();
             let t = t.clone();
-            crate::proof_std::aver_generated::kernel::subst::dropWild(&aver_rt::AverList::from_vec(
-                vec![h, t],
-            ))
+            {
+                let __arg8 @ _ = aver_rt::AverList::from_vec(vec![h, t]);
+                crate::proof_std::aver_generated::kernel::subst::dropWild(&__arg8)
+            }
         }
         crate::proof_std::aver_generated::kernel::term::Pat::PCtor(c, ns) => {
             let c = c.clone();
@@ -389,10 +392,19 @@ pub fn freeVarsArms(
         } else {
             if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::concat(
-                    &crate::proof_std::aver_generated::kernel::subst::without(
-                        &crate::proof_std::aver_generated::kernel::subst::freeVars(&a.body),
-                        crate::proof_std::aver_generated::kernel::subst::patNames(&a.pattern),
-                    ),
+                    &{
+                        let __arg3 @ _ =
+                            crate::proof_std::aver_generated::kernel::subst::freeVars(&a.body);
+                        {
+                            let __arg4 @ _ =
+                                crate::proof_std::aver_generated::kernel::subst::patNames(
+                                    &a.pattern,
+                                );
+                            crate::proof_std::aver_generated::kernel::subst::without(
+                                &__arg3, __arg4,
+                            )
+                        }
+                    },
                     &crate::proof_std::aver_generated::kernel::subst::freeVarsArms(&rest),
                 )
             } else {
@@ -829,11 +841,10 @@ pub fn substArm(
     crate::proof_std::cancel_checkpoint();
     let bound @ _ = crate::proof_std::aver_generated::kernel::subst::patNames(&a.pattern);
     let inner @ _ = crate::proof_std::aver_generated::kernel::subst::unbind(bs, bound.clone());
-    crate::proof_std::aver_generated::kernel::subst::capture(
-        inner.clone(),
-        &crate::proof_std::aver_generated::kernel::subst::freeVars(&a.body),
-        &bound,
-    )?;
+    {
+        let __arg5 @ _ = crate::proof_std::aver_generated::kernel::subst::freeVars(&a.body);
+        crate::proof_std::aver_generated::kernel::subst::capture(inner.clone(), &__arg5, &bound)
+    }?;
     Ok(crate::proof_std::aver_generated::kernel::term::Arm {
         pattern: a.pattern,
         body: crate::proof_std::aver_generated::kernel::subst::subst(a.body, &inner)?,

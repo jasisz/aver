@@ -188,7 +188,10 @@ pub fn evalBinopVals(
             ) => {
                 let x = __x_fields.0.clone();
                 let y = __y_fields.0.clone();
-                crate::aver_generated::domain::eval::ops::applyBinopFloat(x.to_f64(), y, op)
+                {
+                    let __arg13 @ _ = x.to_f64();
+                    crate::aver_generated::domain::eval::ops::applyBinopFloat(__arg13, y, op)
+                }
             }
             (
                 crate::aver_generated::domain::value::Val__view::ValFloat(__x_fields),
@@ -196,7 +199,10 @@ pub fn evalBinopVals(
             ) => {
                 let x = __x_fields.0.clone();
                 let y = __y_fields.0.clone();
-                crate::aver_generated::domain::eval::ops::applyBinopFloat(x, y.to_f64(), op)
+                {
+                    let __arg14 @ _ = y.to_f64();
+                    crate::aver_generated::domain::eval::ops::applyBinopFloat(x, __arg14, op)
+                }
             }
             (
                 crate::aver_generated::domain::value::Val__view::ValStr(__x_fields),
@@ -279,11 +285,10 @@ pub fn evalCmpVals(
             ) => {
                 let x = __x_fields.0.clone();
                 let y = __y_fields.0.clone();
-                Ok(crate::aver_generated::domain::eval::ops::applyCmpFloat(
-                    x.to_f64(),
-                    y,
-                    op,
-                ))
+                Ok({
+                    let __arg17 @ _ = x.to_f64();
+                    crate::aver_generated::domain::eval::ops::applyCmpFloat(__arg17, y, op)
+                })
             }
             (
                 crate::aver_generated::domain::value::Val__view::ValFloat(__x_fields),
@@ -291,11 +296,10 @@ pub fn evalCmpVals(
             ) => {
                 let x = __x_fields.0.clone();
                 let y = __y_fields.0.clone();
-                Ok(crate::aver_generated::domain::eval::ops::applyCmpFloat(
-                    x,
-                    y.to_f64(),
-                    op,
-                ))
+                Ok({
+                    let __arg18 @ _ = y.to_f64();
+                    crate::aver_generated::domain::eval::ops::applyCmpFloat(x, __arg18, op)
+                })
             }
             (
                 crate::aver_generated::domain::value::Val__view::ValStr(__x_fields),

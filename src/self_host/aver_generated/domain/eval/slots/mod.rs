@@ -7,19 +7,20 @@ pub fn buildSlotEnv(
     slotCount @ _: aver_rt::AverInt,
 ) -> Result<aver_rt::AverVector<crate::aver_generated::domain::value::Val>, AverStr> {
     crate::cancel_checkpoint();
-    Ok(
+    Ok({
+        let __arg2 @ _ = match aver_rt::checked_vector_size(&(slotCount)) {
+            Some(__n) => Ok(aver_rt::AverVector::new(
+                __n,
+                crate::aver_generated::domain::value::Val::ValUnit,
+            )),
+            None => Err(aver_rt::AverStr::from(aver_rt::vector_size_error_message())),
+        }?;
         crate::aver_generated::domain::eval::slots::buildSlotEnvLoop(
             args,
-            match aver_rt::checked_vector_size(&(slotCount)) {
-                Some(__n) => Ok(aver_rt::AverVector::new(
-                    __n,
-                    crate::aver_generated::domain::value::Val::ValUnit,
-                )),
-                None => Err(aver_rt::AverStr::from(aver_rt::vector_size_error_message())),
-            }?,
+            __arg2,
             aver_rt::AverInt::from_i64(0),
-        ),
-    )
+        )
+    })
 }
 
 /// Fill slot env from arg list.

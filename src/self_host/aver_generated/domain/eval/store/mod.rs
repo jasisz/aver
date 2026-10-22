@@ -274,11 +274,14 @@ pub fn fnsToStore(
     fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> FnStore {
     crate::cancel_checkpoint();
-    let nameToId @ _ = crate::aver_generated::domain::eval::store::fnsToIdMap(
-        fns,
-        HashMap::new(),
-        aver_rt::AverInt::from_i64(0),
-    );
+    let nameToId @ _ = {
+        let __arg2 @ _ = <aver_rt::AverMap<AverStr, aver_rt::AverInt>>::new();
+        crate::aver_generated::domain::eval::store::fnsToIdMap(
+            fns,
+            __arg2,
+            aver_rt::AverInt::from_i64(0),
+        )
+    };
     crate::aver_generated::domain::eval::store::FnStore {
         nameToId: nameToId,
         byId: aver_rt::AverVector::from_vec(fns.to_vec()),

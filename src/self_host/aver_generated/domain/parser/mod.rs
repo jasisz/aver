@@ -42,10 +42,10 @@ fn __mutual_tco_trampoline_1(
                 let r @ _ = crate::aver_generated::domain::parser::parseStmt(&*tokens, pos)?;
                 {
                     let (stmt, pos2) = r;
-                    __MutualTco1::ParseFnBodyStmtsIndented(
-                        pos2,
-                        aver_rt::AverList::prepend(stmt, &acc),
-                    )
+                    {
+                        let __arg6 @ _ = aver_rt::AverList::prepend(stmt, &acc);
+                        __MutualTco1::ParseFnBodyStmtsIndented(pos2, __arg6)
+                    }
                 }
             }
         };
@@ -124,10 +124,10 @@ fn __mutual_tco_trampoline_2(
                 let r @ _ = crate::aver_generated::domain::parser::parseStmt(&*tokens, pos)?;
                 {
                     let (stmt, pos2) = r;
-                    __MutualTco2::ParseFnBodyAfterStmtFlat(
-                        pos2,
-                        aver_rt::AverList::prepend(stmt, &acc),
-                    )
+                    {
+                        let __arg6 @ _ = aver_rt::AverList::prepend(stmt, &acc);
+                        __MutualTco2::ParseFnBodyAfterStmtFlat(pos2, __arg6)
+                    }
                 }
             }
             __MutualTco2::ParseFnBodyAfterStmtFlat(mut pos @ _, mut acc @ _) => {
@@ -273,44 +273,37 @@ fn __mutual_tco_trampoline_3(
                         __MutualTco3::ParseProgramModuleHeader(nextPos, fns, stmts)
                     } else {
                         if &*__dispatch_subject == "type" {
-                            __MutualTco3::ParseProgram(
-                                crate::aver_generated::domain::parser_match::skipBlock(
-                                    &*tokens, nextPos,
-                                ),
-                                deps,
-                                fns,
-                                stmts,
-                            )
-                        } else {
-                            if &*__dispatch_subject == "record" {
-                                __MutualTco3::ParseProgram(
+                            {
+                                let __arg7 @ _ =
                                     crate::aver_generated::domain::parser_match::skipBlock(
                                         &*tokens, nextPos,
-                                    ),
-                                    deps,
-                                    fns,
-                                    stmts,
-                                )
-                            } else {
-                                if &*__dispatch_subject == "verify" {
-                                    __MutualTco3::ParseProgram(
+                                    );
+                                __MutualTco3::ParseProgram(__arg7, deps, fns, stmts)
+                            }
+                        } else {
+                            if &*__dispatch_subject == "record" {
+                                {
+                                    let __arg8 @ _ =
                                         crate::aver_generated::domain::parser_match::skipBlock(
                                             &*tokens, nextPos,
-                                        ),
-                                        deps,
-                                        fns,
-                                        stmts,
-                                    )
-                                } else {
-                                    if &*__dispatch_subject == "decision" {
-                                        __MutualTco3::ParseProgram(
+                                        );
+                                    __MutualTco3::ParseProgram(__arg8, deps, fns, stmts)
+                                }
+                            } else {
+                                if &*__dispatch_subject == "verify" {
+                                    {
+                                        let __arg9 @ _ =
                                             crate::aver_generated::domain::parser_match::skipBlock(
                                                 &*tokens, nextPos,
-                                            ),
-                                            deps,
-                                            fns,
-                                            stmts,
-                                        )
+                                            );
+                                        __MutualTco3::ParseProgram(__arg9, deps, fns, stmts)
+                                    }
+                                } else {
+                                    if &*__dispatch_subject == "decision" {
+                                        {
+                                            let __arg10 @ _ = crate::aver_generated::domain::parser_match::skipBlock(&*tokens, nextPos);
+                                            __MutualTco3::ParseProgram(__arg10, deps, fns, stmts)
+                                        }
                                     } else {
                                         __MutualTco3::ParseProgramStmt(pos, deps, fns, stmts)
                                     }
@@ -334,12 +327,15 @@ fn __mutual_tco_trampoline_3(
                 let r @ _ = crate::aver_generated::domain::parser::parseFnDef(&*tokens, pos)?;
                 {
                     let (fd, pos2) = r;
-                    __MutualTco3::ParseProgram(
-                        crate::aver_generated::domain::parser_match::skipNewlines(&*tokens, pos2),
-                        deps,
-                        aver_rt::AverList::prepend(fd, &fns),
-                        stmts,
-                    )
+                    {
+                        let __arg8 @ _ = crate::aver_generated::domain::parser_match::skipNewlines(
+                            &*tokens, pos2,
+                        );
+                        {
+                            let __arg9 @ _ = aver_rt::AverList::prepend(fd, &fns);
+                            __MutualTco3::ParseProgram(__arg8, deps, __arg9, stmts)
+                        }
+                    }
                 }
             }
             __MutualTco3::ParseProgramStmt(
@@ -352,12 +348,15 @@ fn __mutual_tco_trampoline_3(
                 let r @ _ = crate::aver_generated::domain::parser::parseStmt(&*tokens, pos)?;
                 {
                     let (st, pos2) = r;
-                    __MutualTco3::ParseProgram(
-                        crate::aver_generated::domain::parser_match::skipNewlines(&*tokens, pos2),
-                        deps,
-                        fns,
-                        aver_rt::AverList::prepend(st, &stmts),
-                    )
+                    {
+                        let __arg8 @ _ = crate::aver_generated::domain::parser_match::skipNewlines(
+                            &*tokens, pos2,
+                        );
+                        {
+                            let __arg9 @ _ = aver_rt::AverList::prepend(st, &stmts);
+                            __MutualTco3::ParseProgram(__arg8, deps, fns, __arg9)
+                        }
+                    }
                 }
             }
         };
@@ -463,11 +462,9 @@ pub fn parseStmtAfterIdent(
             )
         }
         crate::aver_generated::domain::token::Token::TkColon => {
-            crate::aver_generated::domain::parser::parseBinding(
-                tokens,
-                crate::aver_generated::domain::parser::skipTypeAnnotationAndEq(tokens, pos),
-                name,
-            )
+            let __arg3 @ _ =
+                crate::aver_generated::domain::parser::skipTypeAnnotationAndEq(tokens, pos);
+            crate::aver_generated::domain::parser::parseBinding(tokens, __arg3, name)
         }
         _ => crate::aver_generated::domain::parser::parseStmtExprFrom(tokens, pos, name),
     }
@@ -719,16 +716,14 @@ pub fn parseFnDefParams(
     name @ _: AverStr,
 ) -> Result<(crate::aver_generated::domain::ast::FnDef, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
-    let pos2 @ _ = crate::aver_generated::domain::parser_match::expect(
-        tokens,
-        pos,
-        &crate::aver_generated::domain::token::Token::TkLParen,
-    )?;
-    let pr @ _ = crate::aver_generated::domain::parser_match::parseParamList(
-        tokens,
-        pos2,
-        aver_rt::AverList::empty(),
-    )?;
+    let pos2 @ _ = {
+        let __arg7 @ _ = crate::aver_generated::domain::token::Token::TkLParen;
+        crate::aver_generated::domain::parser_match::expect(tokens, pos, &__arg7)
+    }?;
+    let pr @ _ = {
+        let __arg8 @ _ = <aver_rt::AverList<AverStr>>::empty();
+        crate::aver_generated::domain::parser_match::parseParamList(tokens, pos2, __arg8)
+    }?;
     {
         let (params, pos3) = pr;
         crate::aver_generated::domain::parser::parseFnDefBody(tokens, pos3, name, &params)
@@ -767,11 +762,10 @@ pub fn parseFnDefBodyIndented(
 ) -> Result<(crate::aver_generated::domain::ast::FnDef, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     let pos2 @ _ = crate::aver_generated::domain::parser_match::skipDescAndEffects(tokens, pos);
-    let sr @ _ = crate::aver_generated::domain::parser::parseFnBodyStmtsIndented(
-        tokens,
-        pos2,
-        aver_rt::AverList::empty(),
-    )?;
+    let sr @ _ = {
+        let __arg8 @ _ = <aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>>::empty();
+        crate::aver_generated::domain::parser::parseFnBodyStmtsIndented(tokens, pos2, __arg8)
+    }?;
     {
         let (stmts, pos3) = sr;
         Ok((
@@ -798,11 +792,10 @@ pub fn parseFnDefBodyFlat(
 ) -> Result<(crate::aver_generated::domain::ast::FnDef, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     let pos2 @ _ = crate::aver_generated::domain::parser_match::skipDescAndEffects(tokens, pos);
-    let sr @ _ = crate::aver_generated::domain::parser::parseFnBodyStmtsFlat(
-        tokens,
-        pos2,
-        aver_rt::AverList::empty(),
-    )?;
+    let sr @ _ = {
+        let __arg8 @ _ = <aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>>::empty();
+        crate::aver_generated::domain::parser::parseFnBodyStmtsFlat(tokens, pos2, __arg8)
+    }?;
     {
         let (stmts, pos3) = sr;
         Ok((
@@ -826,12 +819,15 @@ pub fn parse(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
 ) -> Result<crate::aver_generated::domain::ast::Program, AverStr> {
     crate::cancel_checkpoint();
+    let __arg1 @ _ = <aver_rt::AverList<AverStr>>::empty();
+    let __arg2 @ _ = <aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>>::empty();
+    let __arg3 @ _ = <aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>>::empty();
     crate::aver_generated::domain::parser::parseProgram(
         tokens,
         aver_rt::AverInt::from_i64(0),
-        aver_rt::AverList::empty(),
-        aver_rt::AverList::empty(),
-        aver_rt::AverList::empty(),
+        __arg1,
+        __arg2,
+        __arg3,
     )
 }
 

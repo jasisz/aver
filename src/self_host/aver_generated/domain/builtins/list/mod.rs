@@ -356,7 +356,8 @@ pub fn zipLists(
     b @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::builtins::list::zipListsAcc(a, b, aver_rt::AverList::empty())
+    let __arg2 @ _ = <aver_rt::AverList<crate::aver_generated::domain::value::Val>>::empty();
+    crate::aver_generated::domain::builtins::list::zipListsAcc(a, b, __arg2)
 }
 
 /// Accumulate zipped pairs in reverse, then reverse at end.

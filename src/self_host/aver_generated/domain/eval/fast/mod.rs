@@ -141,12 +141,12 @@ pub fn fastEqIntBranch(
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValInt(__actual_fields) => {
                 let actual = __actual_fields.0.clone();
-                crate::aver_generated::domain::eval::fast::selectFastLeaf(
-                    (actual == expected),
-                    thenLeaf,
-                    elseLeaf,
-                    calleeEnv,
-                )
+                {
+                    let __arg7 @ _ = (actual == expected);
+                    crate::aver_generated::domain::eval::fast::selectFastLeaf(
+                        __arg7, thenLeaf, elseLeaf, calleeEnv,
+                    )
+                }
             }
             _ => Err(::aver_rt::str_lit!("fast int branch expects Int slot")),
         }
@@ -168,12 +168,12 @@ pub fn fastEqStringBranch(
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValStr(__actual_fields) => {
                 let actual = __actual_fields.0.clone();
-                crate::aver_generated::domain::eval::fast::selectFastLeaf(
-                    (actual == expected),
-                    thenLeaf,
-                    elseLeaf,
-                    calleeEnv,
-                )
+                {
+                    let __arg7 @ _ = (actual == expected);
+                    crate::aver_generated::domain::eval::fast::selectFastLeaf(
+                        __arg7, thenLeaf, elseLeaf, calleeEnv,
+                    )
+                }
             }
             _ => Err(::aver_rt::str_lit!(
                 "fast string branch expects String slot"
@@ -203,12 +203,12 @@ pub fn fastLtIntSlotsBranch(
                     match __t.view() {
                         crate::aver_generated::domain::value::Val__view::ValInt(__rhs_fields) => {
                             let rhs = __rhs_fields.0.clone();
-                            crate::aver_generated::domain::eval::fast::selectFastLeaf(
-                                (lhs < rhs),
-                                thenLeaf,
-                                elseLeaf,
-                                calleeEnv,
-                            )
+                            {
+                                let __arg9 @ _ = (lhs < rhs);
+                                crate::aver_generated::domain::eval::fast::selectFastLeaf(
+                                    __arg9, thenLeaf, elseLeaf, calleeEnv,
+                                )
+                            }
                         }
                         _ => Err(::aver_rt::str_lit!("fast lt branch expects Int rhs slot")),
                     }
@@ -277,18 +277,22 @@ pub fn fastListSlotBranchItems(
             crate::aver_generated::domain::eval::fast::runFastLeafSlot(emptyLeaf, &calleeEnv)
         } else {
             if let (Some(head), Some(tail)) = (__list_subject.first(), __list_subject.tail()) {
-                crate::aver_generated::domain::eval::fast::runFastLeafSlot(
-                    consLeaf,
-                    &crate::aver_generated::domain::eval::slots::setSlot(
-                        crate::aver_generated::domain::eval::slots::setSlot(
+                {
+                    let __arg10 @ _ = {
+                        let __arg8 @ _ = crate::aver_generated::domain::eval::slots::setSlot(
                             calleeEnv, headSlot, head,
-                        ),
-                        tailSlot,
-                        &crate::aver_generated::domain::value::Val::ValList(
-                            crate::aver_generated::domain::value::Val__ValList(tail),
-                        ),
-                    ),
-                )
+                        );
+                        {
+                            let __arg9 @ _ = crate::aver_generated::domain::value::Val::ValList(
+                                crate::aver_generated::domain::value::Val__ValList(tail),
+                            );
+                            crate::aver_generated::domain::eval::slots::setSlot(
+                                __arg8, tailSlot, &__arg9,
+                            )
+                        }
+                    };
+                    crate::aver_generated::domain::eval::fast::runFastLeafSlot(consLeaf, &__arg10)
+                }
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
             }

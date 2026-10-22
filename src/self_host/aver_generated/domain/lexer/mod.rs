@@ -300,62 +300,67 @@ fn __mutual_tco_trampoline_2(
                     Some(c @ _) => {
                         let __dispatch_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
                         if __dispatch_subject == aver_rt::AverInt::from_i64(110) {
-                            __MutualTco2::TokenizeString__indexed(
-                                src,
-                                nextPos,
-                                (acc + &::aver_rt::str_lit!("\n")),
-                            )
+                            {
+                                let __arg6 @ _ = (acc + &::aver_rt::str_lit!("\n"));
+                                __MutualTco2::TokenizeString__indexed(src, nextPos, __arg6)
+                            }
                         } else {
                             if __dispatch_subject == aver_rt::AverInt::from_i64(116) {
-                                __MutualTco2::TokenizeString__indexed(
-                                    src,
-                                    nextPos,
-                                    (acc + &::aver_rt::str_lit!("\t")),
-                                )
+                                {
+                                    let __arg7 @ _ = (acc + &::aver_rt::str_lit!("\t"));
+                                    __MutualTco2::TokenizeString__indexed(src, nextPos, __arg7)
+                                }
                             } else {
                                 if __dispatch_subject == aver_rt::AverInt::from_i64(114) {
-                                    __MutualTco2::TokenizeString__indexed(
-                                        src,
-                                        nextPos,
-                                        (acc + &::aver_rt::str_lit!("\r")),
-                                    )
+                                    {
+                                        let __arg8 @ _ = (acc + &::aver_rt::str_lit!("\r"));
+                                        __MutualTco2::TokenizeString__indexed(src, nextPos, __arg8)
+                                    }
                                 } else {
                                     if __dispatch_subject == aver_rt::AverInt::from_i64(98) {
-                                        __MutualTco2::TokenizeString__indexed(
-                                            src,
-                                            nextPos,
-                                            (acc + &::aver_rt::str_lit!("\u{8}")),
-                                        )
+                                        {
+                                            let __arg9 @ _ = (acc + &::aver_rt::str_lit!("\u{8}"));
+                                            __MutualTco2::TokenizeString__indexed(
+                                                src, nextPos, __arg9,
+                                            )
+                                        }
                                     } else {
                                         if __dispatch_subject == aver_rt::AverInt::from_i64(102) {
-                                            __MutualTco2::TokenizeString__indexed(
-                                                src,
-                                                nextPos,
-                                                (acc + &::aver_rt::str_lit!("\u{c}")),
-                                            )
+                                            {
+                                                let __arg10 @ _ =
+                                                    (acc + &::aver_rt::str_lit!("\u{c}"));
+                                                __MutualTco2::TokenizeString__indexed(
+                                                    src, nextPos, __arg10,
+                                                )
+                                            }
                                         } else {
                                             if __dispatch_subject == aver_rt::AverInt::from_i64(34)
                                             {
-                                                __MutualTco2::TokenizeString__indexed(
-                                                    src,
-                                                    nextPos,
-                                                    (acc + &::aver_rt::str_lit!("\"")),
-                                                )
+                                                {
+                                                    let __arg11 @ _ =
+                                                        (acc + &::aver_rt::str_lit!("\""));
+                                                    __MutualTco2::TokenizeString__indexed(
+                                                        src, nextPos, __arg11,
+                                                    )
+                                                }
                                             } else {
                                                 if __dispatch_subject
                                                     == aver_rt::AverInt::from_i64(92)
                                                 {
-                                                    __MutualTco2::TokenizeString__indexed(
-                                                        src,
-                                                        nextPos,
-                                                        (acc + &::aver_rt::str_lit!("\\")),
-                                                    )
+                                                    {
+                                                        let __arg12 @ _ =
+                                                            (acc + &::aver_rt::str_lit!("\\"));
+                                                        __MutualTco2::TokenizeString__indexed(
+                                                            src, nextPos, __arg12,
+                                                        )
+                                                    }
                                                 } else {
-                                                    __MutualTco2::TokenizeString__indexed(
-                                                        src,
-                                                        nextPos,
-                                                        (acc + &c),
-                                                    )
+                                                    {
+                                                        let __arg13 @ _ = (acc + &c);
+                                                        __MutualTco2::TokenizeString__indexed(
+                                                            src, nextPos, __arg13,
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
@@ -715,12 +720,16 @@ fn __mutual_tco_trampoline_3(
                 crate::cancel_checkpoint();
                 match aver_rt::string_index_char_at(&src, &__str_index, &pos) {
                     Some(c @ _) => {
-                        let (word, newPos) = crate::aver_generated::domain::lexer::chars::readIdent(
-                            src.clone(),
-                            pos,
-                            ::aver_rt::str_lit!(""),
-                            crate::aver_generated::domain::lexer::chars::isUpper(c),
-                        );
+                        let (word, newPos) = {
+                            let __arg6 @ _ =
+                                crate::aver_generated::domain::lexer::chars::isUpper(c);
+                            crate::aver_generated::domain::lexer::chars::readIdent(
+                                src.clone(),
+                                pos,
+                                ::aver_rt::str_lit!(""),
+                                __arg6,
+                            )
+                        };
                         return aver_rt::AverList::prepend(
                             crate::aver_generated::domain::lexer::chars::keywordOrIdent(word),
                             &crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
@@ -915,11 +924,8 @@ pub fn tokenizeDigit(
     pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeDigit__indexed(
-        src.clone(),
-        pos,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg2 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeDigit__indexed(src, pos, &__arg2)
 }
 
 /// After reading integer part, check for decimal point to form a float.
@@ -930,12 +936,8 @@ pub fn tokenizeAfterInt(
     n @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeAfterInt__indexed(
-        src.clone(),
-        pos,
-        n,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeAfterInt__indexed(src, pos, n, &__arg3)
 }
 
 /// After integer and dot, check if next char is digit (float) or not (int + dot).
@@ -946,12 +948,8 @@ pub fn tokenizeAfterIntDot(
     n @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeAfterIntDot__indexed(
-        src.clone(),
-        pos,
-        n,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeAfterIntDot__indexed(src, pos, n, &__arg3)
 }
 
 /// Read decimal digits and build float token.
@@ -962,12 +960,8 @@ pub fn tokenizeFloat(
     intPart @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeFloat__indexed(
-        src.clone(),
-        pos,
-        intPart,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeFloat__indexed(src, pos, intPart, &__arg3)
 }
 
 /// Construct float from integer and decimal parts.
@@ -980,13 +974,9 @@ pub fn buildFloat(
     decDigits @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
+    let __arg5 @ _ = aver_rt::string_index_build(&src);
     crate::aver_generated::domain::lexer::buildFloat__indexed(
-        src.clone(),
-        pos,
-        intPart,
-        decPart,
-        decDigits,
-        &aver_rt::string_index_build(&src),
+        src, pos, intPart, decPart, decDigits, &__arg5,
     )
 }
 
@@ -1023,11 +1013,8 @@ pub fn tokenizeAlpha(
     pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeAlpha__indexed(
-        src.clone(),
-        pos,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg2 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeAlpha__indexed(src, pos, &__arg2)
 }
 
 /// Tokenize identifier with known dotted mode.
@@ -1038,12 +1025,8 @@ pub fn tokenizeAlphaWith(
     dotted @ _: bool,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeAlphaWith__indexed(
-        src.clone(),
-        pos,
-        dotted,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeAlphaWith__indexed(src, pos, dotted, &__arg3)
 }
 
 /// Check if a character is the greater-than sign.
@@ -1059,11 +1042,8 @@ pub fn tokenizeMinus(
     pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeMinus__indexed(
-        src.clone(),
-        pos,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg2 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeMinus__indexed(src, pos, &__arg2)
 }
 
 /// Tokenize a character that is not a known single-char token.
@@ -1074,12 +1054,8 @@ pub fn tokenizeDefault(
     pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeDefault__indexed(
-        c,
-        src.clone(),
-        pos,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeDefault__indexed(c, src, pos, &__arg3)
 }
 
 /// Handle brace tokens or skip unknown chars.
@@ -1090,12 +1066,8 @@ pub fn tokenizeBraceOrSkip(
     pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeBraceOrSkip__indexed(
-        c,
-        src.clone(),
-        pos,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeBraceOrSkip__indexed(c, src, pos, &__arg3)
 }
 
 /// Read string literal with interpolation and escape sequences.
@@ -1106,12 +1078,8 @@ pub fn tokenizeString(
     acc @ _: AverStr,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeString__indexed(
-        src.clone(),
-        pos,
-        acc,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeString__indexed(src, pos, acc, &__arg3)
 }
 
 /// Read one character of string.
@@ -1122,12 +1090,8 @@ pub fn tokenizeStringAt(
     acc @ _: AverStr,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeStringAt__indexed(
-        src.clone(),
-        pos,
-        acc,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeStringAt__indexed(src, pos, acc, &__arg3)
 }
 
 /// Handle escape sequence in string: \n -> newline, \t -> tab, etc.
@@ -1138,12 +1102,8 @@ pub fn tokenizeStringEscape(
     acc @ _: AverStr,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeStringEscape__indexed(
-        src.clone(),
-        pos,
-        acc,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeStringEscape__indexed(src, pos, acc, &__arg3)
 }
 
 /// Return the opening brace character.
@@ -1167,13 +1127,8 @@ pub fn tokenizeStringChar(
     c @ _: AverStr,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeStringChar__indexed(
-        src.clone(),
-        pos,
-        acc,
-        c,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg4 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeStringChar__indexed(src, pos, acc, c, &__arg4)
 }
 
 /// Check for interpolation start, { escape, or continue string.
@@ -1185,12 +1140,9 @@ pub fn tokenizeStringCharInner(
     c @ _: AverStr,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
+    let __arg4 @ _ = aver_rt::string_index_build(&src);
     crate::aver_generated::domain::lexer::tokenizeStringCharInner__indexed(
-        src.clone(),
-        pos,
-        acc,
-        c,
-        &aver_rt::string_index_build(&src),
+        src, pos, acc, c, &__arg4,
     )
 }
 
@@ -1202,11 +1154,9 @@ pub fn tokenizeStringMaybeEscapedBrace(
     acc @ _: AverStr,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
     crate::aver_generated::domain::lexer::tokenizeStringMaybeEscapedBrace__indexed(
-        src.clone(),
-        pos,
-        acc,
-        &aver_rt::string_index_build(&src),
+        src, pos, acc, &__arg3,
     )
 }
 
@@ -1218,11 +1168,9 @@ pub fn tokenizeStringMaybeEscapedClose(
     acc @ _: AverStr,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
     crate::aver_generated::domain::lexer::tokenizeStringMaybeEscapedClose__indexed(
-        src.clone(),
-        pos,
-        acc,
-        &aver_rt::string_index_build(&src),
+        src, pos, acc, &__arg3,
     )
 }
 
@@ -1234,12 +1182,8 @@ pub fn tokenizeInterp(
     acc @ _: AverStr,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeInterp__indexed(
-        src.clone(),
-        pos,
-        acc,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeInterp__indexed(src, pos, acc, &__arg3)
 }
 
 /// Tokenize expression inside interpolation braces.
@@ -1249,11 +1193,8 @@ pub fn tokenizeInterpExpr(
     pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
-        src.clone(),
-        pos,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg2 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(src, pos, &__arg2)
 }
 
 /// Read one token of interpolation expression.
@@ -1263,11 +1204,8 @@ pub fn tokenizeInterpExprAt(
     pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeInterpExprAt__indexed(
-        src.clone(),
-        pos,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg2 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeInterpExprAt__indexed(src, pos, &__arg2)
 }
 
 /// Return the closing brace character.
@@ -1290,12 +1228,8 @@ pub fn tokenizeInterpExprC(
     c @ _: AverStr,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeInterpExprC__indexed(
-        src.clone(),
-        pos,
-        c,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeInterpExprC__indexed(src, pos, c, &__arg3)
 }
 
 /// Tokenize one char of interpolation expression.
@@ -1306,12 +1240,8 @@ pub fn tokenizeInterpExprChar(
     c @ _: AverStr,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeInterpExprChar__indexed(
-        src.clone(),
-        pos,
-        c,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeInterpExprChar__indexed(src, pos, c, &__arg3)
 }
 
 /// Handle non-digit char in interpolation.
@@ -1322,12 +1252,8 @@ pub fn tokenizeInterpNonDigit(
     c @ _: AverStr,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeInterpNonDigit__indexed(
-        src.clone(),
-        pos,
-        c,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeInterpNonDigit__indexed(src, pos, c, &__arg3)
 }
 
 /// Handle punctuation in interpolation.
@@ -1338,12 +1264,8 @@ pub fn tokenizeInterpPunct(
     c @ _: AverStr,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeInterpPunct__indexed(
-        src.clone(),
-        pos,
-        c,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeInterpPunct__indexed(src, pos, c, &__arg3)
 }
 
 /// Read string literal inside interpolation braces.
@@ -1354,12 +1276,8 @@ pub fn tokenizeInterpString(
     acc @ _: AverStr,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeInterpString__indexed(
-        src.clone(),
-        pos,
-        acc,
-        aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeInterpString__indexed(src, pos, acc, __arg3)
 }
 
 /// Read number inside interpolation; may be an int or a float literal.
@@ -1369,11 +1287,8 @@ pub fn tokenizeInterpDigit(
     pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeInterpDigit__indexed(
-        src.clone(),
-        pos,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg2 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeInterpDigit__indexed(src, pos, &__arg2)
 }
 
 /// After integer part inside interpolation, check for a decimal point.
@@ -1384,12 +1299,8 @@ pub fn tokenizeInterpAfterInt(
     n @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeInterpAfterInt__indexed(
-        src.clone(),
-        pos,
-        n,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeInterpAfterInt__indexed(src, pos, n, &__arg3)
 }
 
 /// After integer and dot inside interpolation: digit -> float, else int + dot.
@@ -1400,12 +1311,8 @@ pub fn tokenizeInterpAfterIntDot(
     n @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeInterpAfterIntDot__indexed(
-        src.clone(),
-        pos,
-        n,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeInterpAfterIntDot__indexed(src, pos, n, &__arg3)
 }
 
 /// Read decimal digits and build a float token inside interpolation.
@@ -1416,12 +1323,8 @@ pub fn tokenizeInterpFloat(
     intPart @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeInterpFloat__indexed(
-        src.clone(),
-        pos,
-        intPart,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeInterpFloat__indexed(src, pos, intPart, &__arg3)
 }
 
 /// Construct a float from integer and decimal parts inside interpolation.
@@ -1434,13 +1337,9 @@ pub fn tokenizeInterpBuildFloat(
     decDigits @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
+    let __arg5 @ _ = aver_rt::string_index_build(&src);
     crate::aver_generated::domain::lexer::tokenizeInterpBuildFloat__indexed(
-        src.clone(),
-        pos,
-        intPart,
-        decPart,
-        decDigits,
-        &aver_rt::string_index_build(&src),
+        src, pos, intPart, decPart, decDigits, &__arg5,
     )
 }
 
@@ -1451,11 +1350,8 @@ pub fn tokenizeInterpAlpha(
     pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeInterpAlpha__indexed(
-        src.clone(),
-        pos,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg2 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeInterpAlpha__indexed(src, pos, &__arg2)
 }
 
 /// Tokenize / (division) or // (line comment).
@@ -1465,11 +1361,8 @@ pub fn tokenizeSlashOrComment(
     pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeSlashOrComment__indexed(
-        src.clone(),
-        pos,
-        aver_rt::string_index_build(&src),
-    )
+    let __arg2 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeSlashOrComment__indexed(src, pos, __arg2)
 }
 
 /// Skip characters until newline or EOF. Newline goes through indent handling.
@@ -1479,11 +1372,8 @@ pub fn skipLineComment(
     pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::skipLineComment__indexed(
-        src.clone(),
-        pos,
-        aver_rt::string_index_build(&src),
-    )
+    let __arg2 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::skipLineComment__indexed(src, pos, __arg2)
 }
 
 /// Tokenize . (field access) or .. (rest pattern).
@@ -1493,11 +1383,8 @@ pub fn tokenizeDot(
     pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeDot__indexed(
-        src.clone(),
-        pos,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg2 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeDot__indexed(src, pos, &__arg2)
 }
 
 /// Tokenize < or <=.
@@ -1507,11 +1394,8 @@ pub fn tokenizeLt(
     pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeLt__indexed(
-        src.clone(),
-        pos,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg2 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeLt__indexed(src, pos, &__arg2)
 }
 
 /// Tokenize > or >=.
@@ -1521,11 +1405,8 @@ pub fn tokenizeGt(
     pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeGt__indexed(
-        src.clone(),
-        pos,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg2 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeGt__indexed(src, pos, &__arg2)
 }
 
 /// Tokenize ! or !=.
@@ -1535,11 +1416,8 @@ pub fn tokenizeBang(
     pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeBang__indexed(
-        src.clone(),
-        pos,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg2 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeBang__indexed(src, pos, &__arg2)
 }
 
 /// Tokenize =, ==, or =>.
@@ -1549,11 +1427,8 @@ pub fn tokenizeEq(
     pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeEq__indexed(
-        src.clone(),
-        pos,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg2 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeEq__indexed(src, pos, &__arg2)
 }
 
 /// Tokenize based on the current character.
@@ -1564,12 +1439,8 @@ pub fn tokenizeChar(
     pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeChar__indexed(
-        c,
-        src.clone(),
-        pos,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeChar__indexed(c, src, pos, &__arg3)
 }
 
 /// Tokenize when charAt returned Some.
@@ -1580,12 +1451,8 @@ pub fn tokenizeSome(
     pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeSome__indexed(
-        c,
-        src.clone(),
-        pos,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeSome__indexed(c, src, pos, &__arg3)
 }
 
 /// Tokenize at given position after bounds check.
@@ -1595,11 +1462,8 @@ pub fn tokenizeAtPos(
     pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeAtPos__indexed(
-        src.clone(),
-        pos,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg2 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeAtPos__indexed(src, pos, &__arg2)
 }
 
 /// Tokenize source string starting from pos.
@@ -1609,11 +1473,8 @@ pub fn tokenize(
     pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenize__indexed(
-        src.clone(),
-        pos,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg2 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenize__indexed(src, pos, &__arg2)
 }
 
 /// Handle newline: count indent of next line, emit NEWLINE + raw indent marker.
@@ -1623,11 +1484,8 @@ pub fn tokenizeNewline(
     pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::tokenizeNewline__indexed(
-        src.clone(),
-        pos,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg2 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::tokenizeNewline__indexed(src, pos, &__arg2)
 }
 
 /// Count leading spaces after newline. Skip blank lines (reset on another newline).
@@ -1638,12 +1496,8 @@ pub fn countIndent(
     spaces @ _: aver_rt::AverInt,
 ) -> (aver_rt::AverInt, aver_rt::AverInt) {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::countIndent__indexed(
-        src.clone(),
-        pos,
-        spaces,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::countIndent__indexed(src, pos, spaces, &__arg3)
 }
 
 /// Check one character for indent counting.
@@ -1654,22 +1508,16 @@ pub fn countIndentChar(
     spaces @ _: aver_rt::AverInt,
 ) -> (aver_rt::AverInt, aver_rt::AverInt) {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::countIndentChar__indexed(
-        src.clone(),
-        pos,
-        spaces,
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg3 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::countIndentChar__indexed(src, pos, spaces, &__arg3)
 }
 
 /// Tokenize a complete source string with INDENT/DEDENT.
 #[inline(always)]
 pub fn lex(src @ _: AverStr) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::lex__indexed(
-        src.clone(),
-        &aver_rt::string_index_build(&src),
-    )
+    let __arg1 @ _ = aver_rt::string_index_build(&src);
+    crate::aver_generated::domain::lexer::lex__indexed(src, &__arg1)
 }
 
 /// Convert raw indent markers (negative TkInt after TkNewline) into INDENT/DEDENT tokens.
@@ -1789,13 +1637,10 @@ pub fn emitIndentChange(
     if (indent > currentIndent) {
         aver_rt::AverList::prepend(
             crate::aver_generated::domain::token::Token::TkNewline,
-            &aver_rt::AverList::prepend(
-                crate::aver_generated::domain::token::Token::TkIndent,
-                &crate::aver_generated::domain::lexer::processIndentation(
-                    rest,
-                    &aver_rt::AverIntList::prepend(indent, &stack.clone()),
-                ),
-            ),
+            &aver_rt::AverList::prepend(crate::aver_generated::domain::token::Token::TkIndent, &{
+                let __arg4 @ _ = aver_rt::AverIntList::prepend(indent, &stack.clone());
+                crate::aver_generated::domain::lexer::processIndentation(rest, &__arg4)
+            }),
         )
     } else {
         if (indent < currentIndent) {
@@ -1816,12 +1661,8 @@ pub fn emitDedents(
     stack @ _: &aver_rt::AverIntList,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::emitDedentsAcc(
-        targetIndent,
-        rest,
-        stack,
-        aver_rt::AverList::empty(),
-    )
+    let __arg3 @ _ = <aver_rt::AverList<crate::aver_generated::domain::token::Token>>::empty();
+    crate::aver_generated::domain::lexer::emitDedentsAcc(targetIndent, rest, stack, __arg3)
 }
 
 /// Accumulate DEDENT tokens until stack matches target indent.
@@ -1840,13 +1681,11 @@ pub fn emitDedentsAcc(
         {
             let __list_subject = stack;
             if __list_subject.is_empty() {
-                return aver_rt::AverList::concat(
-                    &reversed,
-                    &crate::aver_generated::domain::lexer::processIndentation(
-                        rest,
-                        &aver_rt::AverIntList::from_vec(vec![aver_rt::AverInt::from_i64(0)]),
-                    ),
-                );
+                return aver_rt::AverList::concat(&reversed, &{
+                    let __arg7 @ _ =
+                        aver_rt::AverIntList::from_vec(vec![aver_rt::AverInt::from_i64(0)]);
+                    crate::aver_generated::domain::lexer::processIndentation(rest, &__arg7)
+                });
             } else {
                 if let Some((top, below)) = aver_rt::list_uncons_cloned(__list_subject) {
                     if (top > targetIndent) {
@@ -1886,7 +1725,8 @@ pub fn emitFinalDedents(
     stack @ _: &aver_rt::AverIntList,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::emitFinalDedentsAcc(stack, aver_rt::AverList::empty())
+    let __arg1 @ _ = <aver_rt::AverList<crate::aver_generated::domain::token::Token>>::empty();
+    crate::aver_generated::domain::lexer::emitFinalDedentsAcc(stack, __arg1)
 }
 
 /// Accumulate DEDENT tokens for each indent level above 0.
@@ -2081,12 +1921,15 @@ pub fn tokenizeAlpha__indexed(
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
     match aver_rt::string_index_char_at(&src, &__str_index, &pos) {
-        Some(c @ _) => crate::aver_generated::domain::lexer::tokenizeAlphaWith__indexed(
-            src,
-            pos,
-            crate::aver_generated::domain::lexer::chars::isUpper(c),
-            __str_index,
-        ),
+        Some(c @ _) => {
+            let __arg4 @ _ = crate::aver_generated::domain::lexer::chars::isUpper(c);
+            crate::aver_generated::domain::lexer::tokenizeAlphaWith__indexed(
+                src,
+                pos,
+                __arg4,
+                __str_index,
+            )
+        }
         None => {
             aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::token::Token::TkEof])
         }
@@ -2701,10 +2544,10 @@ pub fn lex__indexed(
         aver_rt::AverInt::from_i64(0),
         __str_index,
     );
-    let processed @ _ = crate::aver_generated::domain::lexer::processIndentation(
-        &raw,
-        &aver_rt::AverIntList::from_vec(vec![aver_rt::AverInt::from_i64(0)]),
-    );
+    let processed @ _ = {
+        let __arg4 @ _ = aver_rt::AverIntList::from_vec(vec![aver_rt::AverInt::from_i64(0)]);
+        crate::aver_generated::domain::lexer::processIndentation(&raw, &__arg4)
+    };
     processed
 }
 

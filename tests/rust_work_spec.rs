@@ -652,7 +652,7 @@ fn a_nested_update_moves_the_rest_of_the_inner_record() {
             .map_err(|error| format!("read the generated entry module: {error}"))?;
         for expected in [
             "Setting { window: Window { created: setting.window.created.insert_owned(left.clone(), left.clone()), ..setting.window }, height: setting.height.add(",
-            "Window { created: setting.window.created.clone().insert_owned(left.clone(), left.clone()), ..setting.window.clone() }, &setting.window, left)",
+            "= Window { created: setting.window.created.clone().insert_owned(left.clone(), left.clone()), ..setting.window.clone() }; keptOn(&__arg2, &setting.window, left)",
         ] {
             if !entry.contains(expected) {
                 return Err(format!(
@@ -701,7 +701,7 @@ fn a_matched_or_handed_on_value_is_not_cloned_whole() {
             "pub fn wrap(mut r @ _: R) -> W {",
             "pub fn yes(mut r @ _: R) -> Result<W, AverStr> {",
             "pub fn pick(mut r @ _: R, ",
-            "let __subject = yes(wrap(grow(same(r), ",
+            "let __arg4 @ _ = same(r); grow(__arg4, k.clone())",
             "let copy @ _ = same(r.clone());",
         ] {
             if !entry.contains(expected) {
@@ -756,8 +756,8 @@ fn an_update_after_a_field_read_of_the_replaced_field_builds_and_moves() {
         for moved in [
             "pub fn grow(mut progress @ _: aver_rt::AverMap<",
             "let progress @ _ = flight.progress;\n",
-            "__MutualTco1::Pong(Flight { progress: grow(progress, left.clone()), ..flight }",
-            "__MutualTco1::Ping(Flight { progress: grow(flight.progress, ",
+            "= Flight { progress: grow(progress, left.clone()), ..flight };",
+            "= Flight { progress: grow(flight.progress, left.add(",
             "Flight { progress: grow(progress, key), ..flight }",
             "Flight { progress: grow(flight.progress, key), ..flight }",
             "let progress @ _ = flight.progress.clone();",

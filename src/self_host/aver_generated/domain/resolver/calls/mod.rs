@@ -84,11 +84,13 @@ pub fn resolveCallsInFn(
     Box::new(crate::aver_generated::domain::ast::FnDef__Fields {
         name: fd.name,
         params: fd.params,
-        body: crate::aver_generated::domain::resolver::calls::resolveCallsInStmts__collected(
-            &fd.body,
-            fnMap,
-            aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
-        ),
+        body: {
+            let __arg2 @ _ =
+                aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0));
+            crate::aver_generated::domain::resolver::calls::resolveCallsInStmts__collected(
+                &fd.body, fnMap, __arg2,
+            )
+        },
         slotCount: fd.slotCount,
         slotMap: fd.slotMap,
         fastPath: fd.fastPath,
@@ -201,17 +203,48 @@ pub fn resolveCallsInExpr(
             crate::aver_generated::domain::ast::Expr__view::ExprCallDirect(__fnId_fields) => {
                 let fnId = __fnId_fields.0.clone();
                 let args = &__fnId_fields.1;
-                crate::aver_generated::domain::ast::Expr::ExprCallDirect(crate::aver_generated::domain::ast::Expr__ExprCallDirect(fnId, crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(args, fnMap, aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)))))
+                crate::aver_generated::domain::ast::Expr::ExprCallDirect(
+                    crate::aver_generated::domain::ast::Expr__ExprCallDirect(fnId, {
+                        let __arg14 @ _ = aver_rt::list_builder_new(
+                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                        );
+                        crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(args, fnMap, __arg14)
+                    }),
+                )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltin(__name_fields) => {
                 let name = __name_fields.0.clone();
                 let args = &__name_fields.1;
-                match crate::aver_generated::domain::ast::builtinNameToId(name.clone()) { Some(id @ _) => { crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(crate::aver_generated::domain::ast::Expr__ExprCallBuiltinId(id, crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(args, fnMap, aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0))))) }, None => { crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(name, crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(args, fnMap, aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0))))) } }
+                match crate::aver_generated::domain::ast::builtinNameToId(name.clone()) {
+                    Some(id @ _) => crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(
+                        crate::aver_generated::domain::ast::Expr__ExprCallBuiltinId(id, {
+                            let __arg15 @ _ = aver_rt::list_builder_new(
+                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                            );
+                            crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(args, fnMap, __arg15)
+                        }),
+                    ),
+                    None => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+                        crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(name, {
+                            let __arg16 @ _ = aver_rt::list_builder_new(
+                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                            );
+                            crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(args, fnMap, __arg16)
+                        }),
+                    ),
+                }
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltinId(__id_fields) => {
                 let id = __id_fields.0.clone();
                 let args = &__id_fields.1;
-                crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(crate::aver_generated::domain::ast::Expr__ExprCallBuiltinId(id, crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(args, fnMap, aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)))))
+                crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(
+                    crate::aver_generated::domain::ast::Expr__ExprCallBuiltinId(id, {
+                        let __arg17 @ _ = aver_rt::list_builder_new(
+                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                        );
+                        crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(args, fnMap, __arg17)
+                    }),
+                )
             }
             _ => crate::aver_generated::domain::resolver::calls::resolveCallsInExprInternal(
                 expr, fnMap,
@@ -436,7 +469,19 @@ pub fn resolveCallsInExprTail(
             crate::aver_generated::domain::ast::Expr__view::ExprMatch(__subj_fields) => {
                 let subj = __subj_fields.0.clone();
                 let arms = &__subj_fields.1;
-                crate::aver_generated::domain::ast::Expr::ExprMatch(crate::aver_generated::domain::ast::Expr__ExprMatch(crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(subj, fnMap), crate::aver_generated::domain::resolver::calls::resolveCallsInArms__collected(arms, fnMap, aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)))))
+                crate::aver_generated::domain::ast::Expr::ExprMatch(
+                    crate::aver_generated::domain::ast::Expr__ExprMatch(
+                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
+                            subj, fnMap,
+                        ),
+                        {
+                            let __arg26 @ _ = aver_rt::list_builder_new(
+                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                            );
+                            crate::aver_generated::domain::resolver::calls::resolveCallsInArms__collected(arms, fnMap, __arg26)
+                        },
+                    ),
+                )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprPropagate(__inner_fields) => {
                 let inner = __inner_fields.0.clone();
@@ -450,27 +495,65 @@ pub fn resolveCallsInExprTail(
             }
             crate::aver_generated::domain::ast::Expr__view::ExprConcat(__parts_fields) => {
                 let parts = &__parts_fields.0;
-                crate::aver_generated::domain::ast::Expr::ExprConcat(crate::aver_generated::domain::ast::Expr__ExprConcat(crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(parts, fnMap, aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)))))
+                crate::aver_generated::domain::ast::Expr::ExprConcat(
+                    crate::aver_generated::domain::ast::Expr__ExprConcat({
+                        let __arg27 @ _ = aver_rt::list_builder_new(
+                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                        );
+                        crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(parts, fnMap, __arg27)
+                    }),
+                )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprTuple(__exprs_fields) => {
                 let exprs = &__exprs_fields.0;
-                crate::aver_generated::domain::ast::Expr::ExprTuple(crate::aver_generated::domain::ast::Expr__ExprTuple(crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(exprs, fnMap, aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)))))
+                crate::aver_generated::domain::ast::Expr::ExprTuple(
+                    crate::aver_generated::domain::ast::Expr__ExprTuple({
+                        let __arg28 @ _ = aver_rt::list_builder_new(
+                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                        );
+                        crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(exprs, fnMap, __arg28)
+                    }),
+                )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprIndependentProduct(
                 __exprs_fields,
             ) => {
                 let exprs = &__exprs_fields.0;
                 let unwrap = __exprs_fields.1.clone();
-                crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(crate::aver_generated::domain::ast::Expr__ExprIndependentProduct(crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(exprs, fnMap, aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0))), unwrap))
+                crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(
+                    crate::aver_generated::domain::ast::Expr__ExprIndependentProduct(
+                        {
+                            let __arg29 @ _ = aver_rt::list_builder_new(
+                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                            );
+                            crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(exprs, fnMap, __arg29)
+                        },
+                        unwrap,
+                    ),
+                )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprList(__exprs_fields) => {
                 let exprs = &__exprs_fields.0;
-                crate::aver_generated::domain::ast::Expr::ExprList(crate::aver_generated::domain::ast::Expr__ExprList(crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(exprs, fnMap, aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)))))
+                crate::aver_generated::domain::ast::Expr::ExprList(
+                    crate::aver_generated::domain::ast::Expr__ExprList({
+                        let __arg30 @ _ = aver_rt::list_builder_new(
+                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                        );
+                        crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(exprs, fnMap, __arg30)
+                    }),
+                )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprRecord(__name_fields) => {
                 let name = __name_fields.0.clone();
                 let fields = &__name_fields.1;
-                crate::aver_generated::domain::ast::Expr::ExprRecord(crate::aver_generated::domain::ast::Expr__ExprRecord(name, crate::aver_generated::domain::resolver::calls::resolveCallsInFields__collected(fields, fnMap, aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)))))
+                crate::aver_generated::domain::ast::Expr::ExprRecord(
+                    crate::aver_generated::domain::ast::Expr__ExprRecord(name, {
+                        let __arg31 @ _ = aver_rt::list_builder_new(
+                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                        );
+                        crate::aver_generated::domain::resolver::calls::resolveCallsInFields__collected(fields, fnMap, __arg31)
+                    }),
+                )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprFieldAccess(__obj_fields) => {
                 let obj = __obj_fields.0.clone();
@@ -497,12 +580,13 @@ pub fn resolveOneCall(
     fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
-    let resolvedArgs @ _ =
+    let resolvedArgs @ _ = {
+        let __arg5 @ _ =
+            aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0));
         crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(
-            args,
-            fnMap,
-            aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
-        );
+            args, fnMap, __arg5,
+        )
+    };
     match fnMap.get(&name).cloned() {
         Some(fnId @ _) => crate::aver_generated::domain::ast::Expr::ExprCallDirect(
             crate::aver_generated::domain::ast::Expr__ExprCallDirect(fnId, resolvedArgs),
@@ -642,143 +726,141 @@ pub fn isBareNonzeroIntLiteral(expr @ _: &crate::aver_generated::domain::ast::Ex
 #[inline(always)]
 pub fn isBuiltinCallName(name @ _: AverStr) -> bool {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::resolver::calls::isBuiltinCallNameFrom(
-        name,
-        &aver_rt::AverList::from_vec(vec![
-            ::aver_rt::str_lit!("Args.get"),
-            ::aver_rt::str_lit!("Bool.and"),
-            ::aver_rt::str_lit!("Bool.not"),
-            ::aver_rt::str_lit!("Bool.or"),
-            ::aver_rt::str_lit!("String.fromCodePoint"),
-            ::aver_rt::str_lit!("String.firstCodePoint"),
-            ::aver_rt::str_lit!("Console.error"),
-            ::aver_rt::str_lit!("Console.print"),
-            ::aver_rt::str_lit!("Console.readLine"),
-            ::aver_rt::str_lit!("Console.warn"),
-            ::aver_rt::str_lit!("Disk.appendText"),
-            ::aver_rt::str_lit!("Disk.delete"),
-            ::aver_rt::str_lit!("Disk.deleteDir"),
-            ::aver_rt::str_lit!("Disk.exists"),
-            ::aver_rt::str_lit!("Disk.listDir"),
-            ::aver_rt::str_lit!("Disk.makeDir"),
-            ::aver_rt::str_lit!("Disk.readText"),
-            ::aver_rt::str_lit!("Disk.writeText"),
-            ::aver_rt::str_lit!("Env.get"),
-            ::aver_rt::str_lit!("Env.set"),
-            ::aver_rt::str_lit!("Float.abs"),
-            ::aver_rt::str_lit!("Float.atan2"),
-            ::aver_rt::str_lit!("Float.ceil"),
-            ::aver_rt::str_lit!("Float.cos"),
-            ::aver_rt::str_lit!("Float.floor"),
-            ::aver_rt::str_lit!("Float.fromInt"),
-            ::aver_rt::str_lit!("Float.fromString"),
-            ::aver_rt::str_lit!("Float.max"),
-            ::aver_rt::str_lit!("Float.min"),
-            ::aver_rt::str_lit!("Float.pi"),
-            ::aver_rt::str_lit!("Float.pow"),
-            ::aver_rt::str_lit!("Float.round"),
-            ::aver_rt::str_lit!("Float.sin"),
-            ::aver_rt::str_lit!("Float.sqrt"),
-            ::aver_rt::str_lit!("String.fromFloat"),
-            ::aver_rt::str_lit!("Http.delete"),
-            ::aver_rt::str_lit!("Http.get"),
-            ::aver_rt::str_lit!("Http.head"),
-            ::aver_rt::str_lit!("Http.patch"),
-            ::aver_rt::str_lit!("Http.post"),
-            ::aver_rt::str_lit!("Http.put"),
-            ::aver_rt::str_lit!("Int.abs"),
-            ::aver_rt::str_lit!("Int.div"),
-            ::aver_rt::str_lit!("Int.fromString"),
-            ::aver_rt::str_lit!("Int.toBigEndian"),
-            ::aver_rt::str_lit!("Int.toLittleEndian"),
-            ::aver_rt::str_lit!("Int.fromBigEndian"),
-            ::aver_rt::str_lit!("Int.fromLittleEndian"),
-            ::aver_rt::str_lit!("Int.max"),
-            ::aver_rt::str_lit!("Int.min"),
-            ::aver_rt::str_lit!("Int.mod"),
-            ::aver_rt::str_lit!("Float.fromInt"),
-            ::aver_rt::str_lit!("String.fromInt"),
-            ::aver_rt::str_lit!("List.concat"),
-            ::aver_rt::str_lit!("List.contains"),
-            ::aver_rt::str_lit!("List.drop"),
-            ::aver_rt::str_lit!("List.head"),
-            ::aver_rt::str_lit!("List.len"),
-            ::aver_rt::str_lit!("List.prepend"),
-            ::aver_rt::str_lit!("List.reverse"),
-            ::aver_rt::str_lit!("List.take"),
-            ::aver_rt::str_lit!("List.tail"),
-            ::aver_rt::str_lit!("List.zip"),
-            ::aver_rt::str_lit!("Map.entries"),
-            ::aver_rt::str_lit!("Map.fromList"),
-            ::aver_rt::str_lit!("Map.get"),
-            ::aver_rt::str_lit!("Map.has"),
-            ::aver_rt::str_lit!("Map.keys"),
-            ::aver_rt::str_lit!("Map.remove"),
-            ::aver_rt::str_lit!("Map.set"),
-            ::aver_rt::str_lit!("Map.size"),
-            ::aver_rt::str_lit!("Map.values"),
-            ::aver_rt::str_lit!("Option.None"),
-            ::aver_rt::str_lit!("Option.Some"),
-            ::aver_rt::str_lit!("Result.fromOption"),
-            ::aver_rt::str_lit!("Option.withDefault"),
-            ::aver_rt::str_lit!("Random.int"),
-            ::aver_rt::str_lit!("Result.Err"),
-            ::aver_rt::str_lit!("Result.Ok"),
-            ::aver_rt::str_lit!("Result.withDefault"),
-            ::aver_rt::str_lit!("String.charAt"),
-            ::aver_rt::str_lit!("String.chars"),
-            ::aver_rt::str_lit!("String.contains"),
-            ::aver_rt::str_lit!("String.endsWith"),
-            ::aver_rt::str_lit!("String.fromBool"),
-            ::aver_rt::str_lit!("String.fromFloat"),
-            ::aver_rt::str_lit!("String.fromInt"),
-            ::aver_rt::str_lit!("String.join"),
-            ::aver_rt::str_lit!("String.len"),
-            ::aver_rt::str_lit!("String.repeat"),
-            ::aver_rt::str_lit!("String.replace"),
-            ::aver_rt::str_lit!("String.slice"),
-            ::aver_rt::str_lit!("String.split"),
-            ::aver_rt::str_lit!("String.startsWith"),
-            ::aver_rt::str_lit!("String.toLower"),
-            ::aver_rt::str_lit!("String.toUpper"),
-            ::aver_rt::str_lit!("String.trim"),
-            ::aver_rt::str_lit!("Tcp.close"),
-            ::aver_rt::str_lit!("Tcp.closeDial"),
-            ::aver_rt::str_lit!("Tcp.closeListener"),
-            ::aver_rt::str_lit!("Tcp.connect"),
-            ::aver_rt::str_lit!("Tcp.beginConnect"),
-            ::aver_rt::str_lit!("Tcp.dialled"),
-            ::aver_rt::str_lit!("Tcp.listen"),
-            ::aver_rt::str_lit!("Tcp.accept"),
-            ::aver_rt::str_lit!("Tcp.peerAddress"),
-            ::aver_rt::str_lit!("Tcp.ping"),
-            ::aver_rt::str_lit!("Tcp.poll"),
-            ::aver_rt::str_lit!("Tcp.readLine"),
-            ::aver_rt::str_lit!("Tcp.send"),
-            ::aver_rt::str_lit!("Tcp.writeLine"),
-            ::aver_rt::str_lit!("Terminal.clear"),
-            ::aver_rt::str_lit!("Terminal.disableRawMode"),
-            ::aver_rt::str_lit!("Terminal.enableRawMode"),
-            ::aver_rt::str_lit!("Terminal.flush"),
-            ::aver_rt::str_lit!("Terminal.hideCursor"),
-            ::aver_rt::str_lit!("Terminal.moveTo"),
-            ::aver_rt::str_lit!("Terminal.print"),
-            ::aver_rt::str_lit!("Terminal.readKey"),
-            ::aver_rt::str_lit!("Terminal.resetColor"),
-            ::aver_rt::str_lit!("Terminal.setColor"),
-            ::aver_rt::str_lit!("Terminal.showCursor"),
-            ::aver_rt::str_lit!("Terminal.size"),
-            ::aver_rt::str_lit!("Time.now"),
-            ::aver_rt::str_lit!("Time.sleep"),
-            ::aver_rt::str_lit!("Time.unixMs"),
-            ::aver_rt::str_lit!("Vector.fromList"),
-            ::aver_rt::str_lit!("Vector.get"),
-            ::aver_rt::str_lit!("Vector.len"),
-            ::aver_rt::str_lit!("Vector.new"),
-            ::aver_rt::str_lit!("Vector.set"),
-            ::aver_rt::str_lit!("List.fromVector"),
-        ]),
-    )
+    let __arg1 @ _ = aver_rt::AverList::from_vec(vec![
+        ::aver_rt::str_lit!("Args.get"),
+        ::aver_rt::str_lit!("Bool.and"),
+        ::aver_rt::str_lit!("Bool.not"),
+        ::aver_rt::str_lit!("Bool.or"),
+        ::aver_rt::str_lit!("String.fromCodePoint"),
+        ::aver_rt::str_lit!("String.firstCodePoint"),
+        ::aver_rt::str_lit!("Console.error"),
+        ::aver_rt::str_lit!("Console.print"),
+        ::aver_rt::str_lit!("Console.readLine"),
+        ::aver_rt::str_lit!("Console.warn"),
+        ::aver_rt::str_lit!("Disk.appendText"),
+        ::aver_rt::str_lit!("Disk.delete"),
+        ::aver_rt::str_lit!("Disk.deleteDir"),
+        ::aver_rt::str_lit!("Disk.exists"),
+        ::aver_rt::str_lit!("Disk.listDir"),
+        ::aver_rt::str_lit!("Disk.makeDir"),
+        ::aver_rt::str_lit!("Disk.readText"),
+        ::aver_rt::str_lit!("Disk.writeText"),
+        ::aver_rt::str_lit!("Env.get"),
+        ::aver_rt::str_lit!("Env.set"),
+        ::aver_rt::str_lit!("Float.abs"),
+        ::aver_rt::str_lit!("Float.atan2"),
+        ::aver_rt::str_lit!("Float.ceil"),
+        ::aver_rt::str_lit!("Float.cos"),
+        ::aver_rt::str_lit!("Float.floor"),
+        ::aver_rt::str_lit!("Float.fromInt"),
+        ::aver_rt::str_lit!("Float.fromString"),
+        ::aver_rt::str_lit!("Float.max"),
+        ::aver_rt::str_lit!("Float.min"),
+        ::aver_rt::str_lit!("Float.pi"),
+        ::aver_rt::str_lit!("Float.pow"),
+        ::aver_rt::str_lit!("Float.round"),
+        ::aver_rt::str_lit!("Float.sin"),
+        ::aver_rt::str_lit!("Float.sqrt"),
+        ::aver_rt::str_lit!("String.fromFloat"),
+        ::aver_rt::str_lit!("Http.delete"),
+        ::aver_rt::str_lit!("Http.get"),
+        ::aver_rt::str_lit!("Http.head"),
+        ::aver_rt::str_lit!("Http.patch"),
+        ::aver_rt::str_lit!("Http.post"),
+        ::aver_rt::str_lit!("Http.put"),
+        ::aver_rt::str_lit!("Int.abs"),
+        ::aver_rt::str_lit!("Int.div"),
+        ::aver_rt::str_lit!("Int.fromString"),
+        ::aver_rt::str_lit!("Int.toBigEndian"),
+        ::aver_rt::str_lit!("Int.toLittleEndian"),
+        ::aver_rt::str_lit!("Int.fromBigEndian"),
+        ::aver_rt::str_lit!("Int.fromLittleEndian"),
+        ::aver_rt::str_lit!("Int.max"),
+        ::aver_rt::str_lit!("Int.min"),
+        ::aver_rt::str_lit!("Int.mod"),
+        ::aver_rt::str_lit!("Float.fromInt"),
+        ::aver_rt::str_lit!("String.fromInt"),
+        ::aver_rt::str_lit!("List.concat"),
+        ::aver_rt::str_lit!("List.contains"),
+        ::aver_rt::str_lit!("List.drop"),
+        ::aver_rt::str_lit!("List.head"),
+        ::aver_rt::str_lit!("List.len"),
+        ::aver_rt::str_lit!("List.prepend"),
+        ::aver_rt::str_lit!("List.reverse"),
+        ::aver_rt::str_lit!("List.take"),
+        ::aver_rt::str_lit!("List.tail"),
+        ::aver_rt::str_lit!("List.zip"),
+        ::aver_rt::str_lit!("Map.entries"),
+        ::aver_rt::str_lit!("Map.fromList"),
+        ::aver_rt::str_lit!("Map.get"),
+        ::aver_rt::str_lit!("Map.has"),
+        ::aver_rt::str_lit!("Map.keys"),
+        ::aver_rt::str_lit!("Map.remove"),
+        ::aver_rt::str_lit!("Map.set"),
+        ::aver_rt::str_lit!("Map.size"),
+        ::aver_rt::str_lit!("Map.values"),
+        ::aver_rt::str_lit!("Option.None"),
+        ::aver_rt::str_lit!("Option.Some"),
+        ::aver_rt::str_lit!("Result.fromOption"),
+        ::aver_rt::str_lit!("Option.withDefault"),
+        ::aver_rt::str_lit!("Random.int"),
+        ::aver_rt::str_lit!("Result.Err"),
+        ::aver_rt::str_lit!("Result.Ok"),
+        ::aver_rt::str_lit!("Result.withDefault"),
+        ::aver_rt::str_lit!("String.charAt"),
+        ::aver_rt::str_lit!("String.chars"),
+        ::aver_rt::str_lit!("String.contains"),
+        ::aver_rt::str_lit!("String.endsWith"),
+        ::aver_rt::str_lit!("String.fromBool"),
+        ::aver_rt::str_lit!("String.fromFloat"),
+        ::aver_rt::str_lit!("String.fromInt"),
+        ::aver_rt::str_lit!("String.join"),
+        ::aver_rt::str_lit!("String.len"),
+        ::aver_rt::str_lit!("String.repeat"),
+        ::aver_rt::str_lit!("String.replace"),
+        ::aver_rt::str_lit!("String.slice"),
+        ::aver_rt::str_lit!("String.split"),
+        ::aver_rt::str_lit!("String.startsWith"),
+        ::aver_rt::str_lit!("String.toLower"),
+        ::aver_rt::str_lit!("String.toUpper"),
+        ::aver_rt::str_lit!("String.trim"),
+        ::aver_rt::str_lit!("Tcp.close"),
+        ::aver_rt::str_lit!("Tcp.closeDial"),
+        ::aver_rt::str_lit!("Tcp.closeListener"),
+        ::aver_rt::str_lit!("Tcp.connect"),
+        ::aver_rt::str_lit!("Tcp.beginConnect"),
+        ::aver_rt::str_lit!("Tcp.dialled"),
+        ::aver_rt::str_lit!("Tcp.listen"),
+        ::aver_rt::str_lit!("Tcp.accept"),
+        ::aver_rt::str_lit!("Tcp.peerAddress"),
+        ::aver_rt::str_lit!("Tcp.ping"),
+        ::aver_rt::str_lit!("Tcp.poll"),
+        ::aver_rt::str_lit!("Tcp.readLine"),
+        ::aver_rt::str_lit!("Tcp.send"),
+        ::aver_rt::str_lit!("Tcp.writeLine"),
+        ::aver_rt::str_lit!("Terminal.clear"),
+        ::aver_rt::str_lit!("Terminal.disableRawMode"),
+        ::aver_rt::str_lit!("Terminal.enableRawMode"),
+        ::aver_rt::str_lit!("Terminal.flush"),
+        ::aver_rt::str_lit!("Terminal.hideCursor"),
+        ::aver_rt::str_lit!("Terminal.moveTo"),
+        ::aver_rt::str_lit!("Terminal.print"),
+        ::aver_rt::str_lit!("Terminal.readKey"),
+        ::aver_rt::str_lit!("Terminal.resetColor"),
+        ::aver_rt::str_lit!("Terminal.setColor"),
+        ::aver_rt::str_lit!("Terminal.showCursor"),
+        ::aver_rt::str_lit!("Terminal.size"),
+        ::aver_rt::str_lit!("Time.now"),
+        ::aver_rt::str_lit!("Time.sleep"),
+        ::aver_rt::str_lit!("Time.unixMs"),
+        ::aver_rt::str_lit!("Vector.fromList"),
+        ::aver_rt::str_lit!("Vector.get"),
+        ::aver_rt::str_lit!("Vector.len"),
+        ::aver_rt::str_lit!("Vector.new"),
+        ::aver_rt::str_lit!("Vector.set"),
+        ::aver_rt::str_lit!("List.fromVector"),
+    ]);
+    crate::aver_generated::domain::resolver::calls::isBuiltinCallNameFrom(name, &__arg1)
 }
 
 /// Check builtin/service call names recursively by exact match.

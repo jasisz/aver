@@ -6,7 +6,6 @@ use ::aver_rt::aver_list_match;
 pub fn verdict(text @ _: AverStr) -> Result<AverStr, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
     let sexp @ _ = crate::proof_kernel::aver_generated::kernel::sexp::readAll(text)?;
-    crate::proof_kernel::aver_generated::kernel::check::checkScript(
-        crate::proof_kernel::aver_generated::kernel::decode::script(&sexp)?,
-    )
+    let __arg2 @ _ = crate::proof_kernel::aver_generated::kernel::decode::script(&sexp)?;
+    crate::proof_kernel::aver_generated::kernel::check::checkScript(__arg2)
 }

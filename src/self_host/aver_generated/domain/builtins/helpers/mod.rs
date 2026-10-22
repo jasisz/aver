@@ -155,7 +155,14 @@ pub fn expectBytesFields(
                                         __items_fields,
                                     ) => {
                                         let items = &__items_fields.0;
-                                        return crate::aver_generated::domain::builtins::helpers::expectByteItems__collected(items, aver_rt::int_list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)));
+                                        return {
+                                            let __arg6 @ _ = aver_rt::int_list_builder_new(
+                                                (aver_rt::AverInt::from_i64(0))
+                                                    .to_usize()
+                                                    .unwrap_or(0),
+                                            );
+                                            crate::aver_generated::domain::builtins::helpers::expectByteItems__collected(items, __arg6)
+                                        };
                                     }
                                     _ => {
                                         return Err(::aver_rt::str_lit!("expected Bytes argument"));

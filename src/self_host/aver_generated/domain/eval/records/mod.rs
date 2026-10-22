@@ -170,10 +170,12 @@ pub fn mergeRecordFields(
     overrides @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
     crate::cancel_checkpoint();
+    let __arg2 @ _ =
+        aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0));
     crate::aver_generated::domain::eval::records::mergeRecordFieldsAcc__collected(
         existing,
         overrides.clone(),
-        aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
+        __arg2,
     )
 }
 
@@ -244,16 +246,24 @@ pub fn mergeOneField(
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::eval::records::findOverride(k.clone(), overrides) {
-        Some(newV @ _) => crate::aver_generated::domain::eval::records::mergeRecordFieldsAcc(
-            rest,
-            crate::aver_generated::domain::eval::records::removeOverride(k.clone(), overrides),
-            aver_rt::AverList::prepend((k, newV), &acc.clone()),
-        ),
-        None => crate::aver_generated::domain::eval::records::mergeRecordFieldsAcc(
-            rest,
-            overrides.clone(),
-            aver_rt::AverList::prepend((k, v), &acc.clone()),
-        ),
+        Some(newV @ _) => {
+            let __arg6 @ _ =
+                crate::aver_generated::domain::eval::records::removeOverride(k.clone(), overrides);
+            {
+                let __arg7 @ _ = aver_rt::AverList::prepend((k, newV), &acc.clone());
+                crate::aver_generated::domain::eval::records::mergeRecordFieldsAcc(
+                    rest, __arg6, __arg7,
+                )
+            }
+        }
+        None => {
+            let __arg8 @ _ = aver_rt::AverList::prepend((k, v), &acc.clone());
+            crate::aver_generated::domain::eval::records::mergeRecordFieldsAcc(
+                rest,
+                overrides.clone(),
+                __arg8,
+            )
+        }
     }
 }
 
@@ -304,11 +314,9 @@ pub fn removeOverride(
     overrides @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::eval::records::removeOverrideAcc(
-        k,
-        overrides,
-        aver_rt::AverList::empty(),
-    )
+    let __arg2 @ _ =
+        <aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>>::empty();
+    crate::aver_generated::domain::eval::records::removeOverrideAcc(k, overrides, __arg2)
 }
 
 /// Accumulate non-matching fields, then concat remainder when match found.

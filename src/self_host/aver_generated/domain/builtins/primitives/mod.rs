@@ -436,10 +436,13 @@ pub fn builtinStringJoinInner(
     crate::cancel_checkpoint();
     let items @ _ = crate::aver_generated::domain::builtins::helpers::expectList(lstV)?;
     let sep @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(sepV)?;
-    let strs @ _ = crate::aver_generated::domain::builtins::primitives::extractStrings__collected(
-        &items,
-        aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
-    )?;
+    let strs @ _ = {
+        let __arg5 @ _ =
+            aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0));
+        crate::aver_generated::domain::builtins::primitives::extractStrings__collected(
+            &items, __arg5,
+        )
+    }?;
     Ok(crate::aver_generated::domain::value::Val::ValStr(
         crate::aver_generated::domain::value::Val__ValStr(
             (aver_rt::string_join(&strs, &sep)).into_aver(),
@@ -748,14 +751,19 @@ pub fn builtinStringChars(
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let s @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
     Ok(crate::aver_generated::domain::value::Val::ValList(
-        crate::aver_generated::domain::value::Val__ValList(
-            crate::aver_generated::domain::builtins::primitives::stringToCharList(
-                s.clone(),
-                aver_rt::AverInt::from_i64(0),
-                aver_rt::AverInt::from_i64(s.chars().count() as i64),
-                &aver_rt::AverList::empty(),
-            ),
-        ),
+        crate::aver_generated::domain::value::Val__ValList({
+            let __arg3 @ _ = aver_rt::AverInt::from_i64(s.chars().count() as i64);
+            {
+                let __arg4 @ _ =
+                    <aver_rt::AverList<crate::aver_generated::domain::value::Val>>::empty();
+                crate::aver_generated::domain::builtins::primitives::stringToCharList(
+                    s,
+                    aver_rt::AverInt::from_i64(0),
+                    __arg3,
+                    &__arg4,
+                )
+            }
+        }),
     ))
 }
 
@@ -768,12 +776,13 @@ pub fn stringToCharList(
     acc @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     crate::cancel_checkpoint();
+    let __arg4 @ _ = aver_rt::string_index_build(&s);
     crate::aver_generated::domain::builtins::primitives::stringToCharList__indexed(
-        s.clone(),
+        s,
         pos,
         total,
         acc.clone(),
-        aver_rt::string_index_build(&s),
+        __arg4,
     )
 }
 
@@ -1260,12 +1269,13 @@ pub fn builtinStringSplitInner(
         (aver_rt::AverList::from_vec(s.split(&*sep).map(|s| s.to_string()).collect::<Vec<_>>()))
             .into_aver();
     Ok(crate::aver_generated::domain::value::Val::ValList(
-        crate::aver_generated::domain::value::Val__ValList(
+        crate::aver_generated::domain::value::Val__ValList({
+            let __arg5 @ _ =
+                aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0));
             crate::aver_generated::domain::builtins::primitives::strPartsToVals__collected(
-                &parts,
-                aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
-            ),
-        ),
+                &parts, __arg5,
+            )
+        }),
     ))
 }
 

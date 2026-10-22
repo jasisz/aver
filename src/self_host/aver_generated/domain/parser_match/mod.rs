@@ -23,16 +23,30 @@ fn __mutual_tco_trampoline_1(
                 crate::cancel_checkpoint();
                 let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
                 match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
-        crate::aver_generated::domain::token::Token::TkDot => {
-            __MutualTco1::ParseIdentPatternDotted(nextPos, name)
-        },
-        crate::aver_generated::domain::token::Token::TkLParen => {
-            return crate::aver_generated::domain::parser_match::parseConstructorPatternBindings(&*tokens, nextPos, name, aver_rt::AverList::empty())
-        },
-        _ => {
-            if name.contains(".") { return Ok((crate::aver_generated::domain::ast::Pattern::PatConstructor(name, aver_rt::AverList::empty()), pos)) } else { return Ok((crate::aver_generated::domain::ast::Pattern::PatVar(name), pos)) }
-        }
-    }
+                    crate::aver_generated::domain::token::Token::TkDot => {
+                        __MutualTco1::ParseIdentPatternDotted(nextPos, name)
+                    }
+                    crate::aver_generated::domain::token::Token::TkLParen => {
+                        let __arg4 @ _ = <aver_rt::AverList<AverStr>>::empty();
+                        return crate::aver_generated::domain::parser_match::parseConstructorPatternBindings(&*tokens, nextPos, name, __arg4);
+                    }
+                    _ => {
+                        if name.contains(".") {
+                            return Ok((
+                                crate::aver_generated::domain::ast::Pattern::PatConstructor(
+                                    name,
+                                    aver_rt::AverList::empty(),
+                                ),
+                                pos,
+                            ));
+                        } else {
+                            return Ok((
+                                crate::aver_generated::domain::ast::Pattern::PatVar(name),
+                                pos,
+                            ));
+                        }
+                    }
+                }
             }
             __MutualTco1::ParseIdentPatternDotted(mut pos @ _, mut prefix @ _) => {
                 crate::cancel_checkpoint();
@@ -249,10 +263,10 @@ fn __mutual_tco_trampoline_3(
                     crate::aver_generated::domain::parser_match::parsePattern(&*tokens, pos)?;
                 {
                     let (pat, pos2) = pr;
-                    __MutualTco3::ParseTuplePatternElementTail(
-                        pos2,
-                        aver_rt::AverList::prepend(pat, &acc),
-                    )
+                    {
+                        let __arg6 @ _ = aver_rt::AverList::prepend(pat, &acc);
+                        __MutualTco3::ParseTuplePatternElementTail(pos2, __arg6)
+                    }
                 }
             }
             __MutualTco3::ParseTuplePatternElementTail(mut pos @ _, mut acc @ _) => {
@@ -420,13 +434,15 @@ fn __mutual_tco_trampoline_5(
                         return Ok((acc.reverse(), pos.add(&aver_rt::AverInt::from_i64(1))));
                     }
                     crate::aver_generated::domain::token::Token::TkIdent(name) => {
-                        __MutualTco5::ParseParamListTail(
+                        let __arg4 @ _ =
                             crate::aver_generated::domain::parser_match::skipTypeAnnotation(
                                 &*tokens,
                                 pos.add(&aver_rt::AverInt::from_i64(1)),
-                            ),
-                            aver_rt::AverList::prepend(name, &acc),
-                        )
+                            );
+                        {
+                            let __arg5 @ _ = aver_rt::AverList::prepend(name, &acc);
+                            __MutualTco5::ParseParamListTail(__arg4, __arg5)
+                        }
                     }
                     _ => return Err(::aver_rt::str_lit!("Expected parameter name or ')'")),
                 }
@@ -780,11 +796,8 @@ pub fn parseTuplePattern(
     AverStr,
 > {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::parser_match::parseTuplePatternElements(
-        tokens,
-        pos,
-        aver_rt::AverList::empty(),
-    )
+    let __arg2 @ _ = <aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>>::empty();
+    crate::aver_generated::domain::parser_match::parseTuplePatternElements(tokens, pos, __arg2)
 }
 
 /// Parse [] or [h, ..t] list pattern.
@@ -830,16 +843,14 @@ pub fn parseConsPattern(
     AverStr,
 > {
     crate::cancel_checkpoint();
-    let pos2 @ _ = crate::aver_generated::domain::parser_match::expect(
-        tokens,
-        pos,
-        &crate::aver_generated::domain::token::Token::TkComma,
-    )?;
-    let pos3 @ _ = crate::aver_generated::domain::parser_match::expect(
-        tokens,
-        pos2,
-        &crate::aver_generated::domain::token::Token::TkDotDot,
-    )?;
+    let pos2 @ _ = {
+        let __arg7 @ _ = crate::aver_generated::domain::token::Token::TkComma;
+        crate::aver_generated::domain::parser_match::expect(tokens, pos, &__arg7)
+    }?;
+    let pos3 @ _ = {
+        let __arg8 @ _ = crate::aver_generated::domain::token::Token::TkDotDot;
+        crate::aver_generated::domain::parser_match::expect(tokens, pos2, &__arg8)
+    }?;
     let t @ _ = crate::aver_generated::domain::parser_match::tokenAt(tokens, pos3.clone());
     match t {
         crate::aver_generated::domain::token::Token::TkIdent(tail) => Ok((
