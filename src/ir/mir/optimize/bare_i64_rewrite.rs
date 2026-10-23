@@ -370,12 +370,14 @@ fn rewrite_boxed(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<MirExpr> 
         let inner = rewrite_children(e, ctx);
         return box_node(inner);
     }
-    // A directly raw-rendering leaf / compound (a bare `Local`, or an
-    // in-range `Add`/`Sub`/`Mul`/`Neg` tree): box it. Its raw operands stay
-    // raw inside (rewrite_children leaves them — they are consumed by the
-    // native arithmetic that the Box wraps).
+    // A directly raw-rendering leaf / compound (a bare `Local`, an
+    // in-range `Add`/`Sub`/`Mul`/`Neg` tree, or a carrier intrinsic): box
+    // it. Its raw operands stay raw inside (rewrite_children leaves them —
+    // they are consumed by the native arithmetic that the Box wraps), and a
+    // carrier intrinsic's own arguments still get their boundaries (a
+    // cursor step reading a boxed offset unboxes it).
     if renders_raw(&e.node, ctx.facts) {
-        return box_node(e);
+        return box_node(rewrite_children(e, ctx));
     }
     // A `Match` / `IfThenElse` in a boxed context yields its result from each
     // arm/branch body, so EACH body is itself a boxed-context value: a body

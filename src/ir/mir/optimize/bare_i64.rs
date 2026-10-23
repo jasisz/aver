@@ -97,8 +97,9 @@ pub(super) fn intrinsic_accepts_raw_code_arg(callee: &MirCallee, i: usize) -> bo
     }
 }
 
-/// Compiler-synthesized `__code` and `__cursor` functions are unnameable
-/// from Aver source. Their reserved parameters are populated only from
+/// Compiler-synthesized `__code` and `__cursor` functions (and their own
+/// specializations) are unnameable from Aver source. Their reserved
+/// parameters are populated only from
 /// `StrIndexCodeAt` / `StrCursorCode` (the code), from the literal start or
 /// `StrCursorNext` (the cursor offset), or from another such parameter.
 /// Their range is therefore a construction invariant, not a guess based on
@@ -113,7 +114,9 @@ fn carrier_param_interval(f: &MirFn, i: usize) -> Option<Interval> {
     {
         return Some(index_code_interval());
     }
-    (f.name.ends_with(crate::ir::chars_fusion::CURSOR_SUFFIX)
+    // `contains`: a cursor loop that a later pass specializes again (the
+    // list-build `__cursor__collected`) keeps the same offset parameter.
+    (f.name.contains(crate::ir::chars_fusion::CURSOR_SUFFIX)
         && p.name == crate::ir::chars_fusion::CURSOR_IDX_PARAM)
         .then(cursor_offset_interval)
 }
