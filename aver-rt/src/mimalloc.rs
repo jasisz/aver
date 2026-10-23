@@ -18,8 +18,9 @@ use libmimalloc_sys::{
 // mimalloc's options API, which `libmimalloc-sys` declares only under its
 // `extended` feature.
 unsafe extern "C" {
+    #[cfg(not(miri))]
     fn mi_option_set(option: c_int, value: c_long);
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     fn mi_option_get(option: c_int) -> c_long;
 }
 
@@ -27,21 +28,26 @@ unsafe extern "C" {
 /// `libmimalloc-sys` 0.1.49 builds: every this many
 /// allocations that reach its slow path, mimalloc walks all of the thread's
 /// pages. Pages left empty are given back every 1000 anyway.
+#[cfg(not(miri))]
 const MI_OPTION_GENERIC_COLLECT: c_int = 34;
 
 /// The walk every million slow-path allocations rather than every 10,000:
 /// on a heap of gigabytes the walk is long and finds little.
+#[cfg(not(miri))]
 const GENERIC_COLLECT: c_long = 1_000_000;
 
 /// Sets mimalloc's options when the process loads, before `main` and before
 /// the first allocation of any thread. `MIMALLOC_GENERIC_COLLECT` in the
-/// environment still decides, as for any mimalloc option.
+/// environment still decides, as for any mimalloc option. Miri cannot call
+/// into mimalloc, so under it nothing is set.
+#[cfg(not(miri))]
 extern "C" fn set_options() {
     if std::env::var_os("MIMALLOC_GENERIC_COLLECT").is_none() {
         unsafe { mi_option_set(MI_OPTION_GENERIC_COLLECT, GENERIC_COLLECT) };
     }
 }
 
+#[cfg(not(miri))]
 #[used]
 #[cfg_attr(
     target_vendor = "apple",
@@ -112,6 +118,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(miri))]
     fn the_page_walk_runs_every_million_allocations() {
         if std::env::var_os("MIMALLOC_GENERIC_COLLECT").is_none() {
             let value = unsafe { mi_option_get(MI_OPTION_GENERIC_COLLECT) };
