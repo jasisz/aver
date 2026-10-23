@@ -1,0 +1,26 @@
+(steps 16
+  (obligation exploit ((n (named N))) (none)
+    (op == (v n) (ctor N.B))
+    (b false))
+  (defs
+    (def f ((n (named N))) int ()
+      (match (v n)
+        (arm (pc N.A) (i 0))
+        (arm (pc N.S t) (call f (v t))))))
+  (consts)
+  (sums
+    (sum N eq
+      (N.A)
+      (N.B)
+      (N.S (named N))))
+  (recs)
+  (sigs)
+  (laws)
+  (proof
+    (induct f ((v n))
+      (op == (v n) (ctor N.B))
+      (b false)
+      (case () () ()
+        (compute (op == (ctor N.A) (ctor N.B)) (b false)))
+      (case (t) (_) ()
+        (compute (op == (ctor N.S (v t)) (ctor N.B)) (b false))))))
