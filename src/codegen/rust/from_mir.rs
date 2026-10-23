@@ -889,7 +889,8 @@ fn collect_fn_values(expr: &MirExpr, out: &mut HashSet<String>) {
 /// call can move: one just computed, a list's rest bound by `[h, ..t]` or a
 /// local bound by a `let` to a computed value, read for the last time, or the
 /// caller's own param at its last use when `owned` takes that by value. A
-/// field read, a still-live local and a borrowed param would be copied.
+/// field read, a still-live local and a borrowed param would be copied. A
+/// function no code here calls keeps the borrowed ABI.
 fn list_param_fed_owned(
     program: &crate::ir::mir::MirProgram,
     owned: &HashMap<crate::ir::FnId, Vec<bool>>,
@@ -926,12 +927,14 @@ fn list_param_fed_owned(
         }
         crate::ir::mir::expr::walk_children(expr, &mut |child| computed(child, out));
     }
-    program.iter().all(|(caller, mir_fn)| {
+    let mut called = false;
+    let fed = program.iter().all(|(caller, mir_fn)| {
         let mut calls = Vec::new();
         sites(&mir_fn.body.node, id, &mut calls);
         if calls.is_empty() {
             return true;
         }
+        called = true;
         let mut fresh = HashSet::new();
         computed(&mir_fn.body.node, &mut fresh);
         calls
@@ -951,7 +954,8 @@ fn list_param_fed_owned(
                 }
                 Some(_) => true,
             })
-    })
+    });
+    called && fed
 }
 
 /// [`compute_owned_record_params`] for one set of `List` params allowed to be

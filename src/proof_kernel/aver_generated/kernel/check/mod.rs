@@ -8284,7 +8284,7 @@ pub fn withRec(env @ _: &Env) -> Env {
 
 /// No definitions, laws or hypotheses, and these givens of list type.
 #[inline(always)]
-pub fn listsEnv(mut ns @ _: aver_rt::AverList<AverStr>) -> Env {
+pub fn listsEnv(ns @ _: &aver_rt::AverList<AverStr>) -> Env {
     crate::proof_kernel::cancel_checkpoint();
     let __arg2 @ _ = crate::proof_kernel::aver_generated::kernel::check::emptyEnv();
     let __arg3 @ _ = {
@@ -8301,11 +8301,25 @@ pub fn listsEnv(mut ns @ _: aver_rt::AverList<AverStr>) -> Env {
 /// Each name with the one type.
 #[inline(always)]
 pub fn typedAll(
-    mut ns @ _: aver_rt::AverList<AverStr>,
+    ns @ _: &aver_rt::AverList<AverStr>,
     t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ty,
 ) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar> {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(ns, [] => aver_rt::AverList::empty(), [n, rest] => aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::term::typed(n, t.clone()), crate::proof_kernel::aver_generated::kernel::check::typedAll(rest, t)))
+    {
+        let __list_subject = ns;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let Some((n, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                aver_rt::AverList::prepend_owned(
+                    crate::proof_kernel::aver_generated::kernel::term::typed(n, t.clone()),
+                    crate::proof_kernel::aver_generated::kernel::check::typedAll(&rest, t),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// The empty-list case, then the cell case; each under the hypotheses in scope at its value of v, the head and the tail typed by what the list holds, and the cell case under one hypothesis per entry of ihs once the carried ones are proved there. A split is these cases with no entry.
@@ -8548,7 +8562,7 @@ pub fn hypLabels(
 
 /// No definitions, laws or hypotheses, and these givens of type Int.
 #[inline(always)]
-pub fn intsEnv(mut ns @ _: aver_rt::AverList<AverStr>) -> Env {
+pub fn intsEnv(ns @ _: &aver_rt::AverList<AverStr>) -> Env {
     crate::proof_kernel::cancel_checkpoint();
     let __arg2 @ _ = crate::proof_kernel::aver_generated::kernel::check::emptyEnv();
     let __arg3 @ _ = {

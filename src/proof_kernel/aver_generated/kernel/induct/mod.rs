@@ -2031,7 +2031,7 @@ pub fn walks() -> crate::proof_kernel::aver_generated::kernel::proof::Def {
 
 /// A fixture for the tests: skip(n, rest) with these local bindings and this body.
 pub fn skipping(
-    mut lets @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
+    lets @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
     mut body @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
 ) -> crate::proof_kernel::aver_generated::kernel::proof::Def {
     crate::proof_kernel::cancel_checkpoint();
@@ -2054,7 +2054,7 @@ pub fn skipping(
             },
         ]),
         ret: crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny,
-        lets: lets,
+        lets: lets.clone(),
         body: body,
     }
 }

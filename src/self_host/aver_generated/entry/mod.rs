@@ -267,26 +267,26 @@ pub fn dotToSlash(
 /// Register functions with both qualified (Domain.Foo.bar) and unqualified (bar) names.
 #[inline(always)]
 pub fn qualifyFns(
-    mut fns @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     prefix @ _: AverStr,
-    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
     crate::cancel_checkpoint();
     let __arg3 @ _ = aver_rt::string_index_build(&prefix);
-    qualifyFns__indexed(fns, prefix, acc, &__arg3)
+    qualifyFns__indexed(fns.clone(), prefix, acc.clone(), &__arg3)
 }
 
 /// Add both qualified and unqualified versions.
 #[inline(always)]
 pub fn qualifyFnsOne(
     mut f @ _: crate::aver_generated::domain::ast::FnDef,
-    mut rest @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    rest @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     prefix @ _: AverStr,
-    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
     crate::cancel_checkpoint();
     let __arg4 @ _ = aver_rt::string_index_build(&prefix);
-    qualifyFnsOne__indexed(f, rest, prefix, acc, &__arg4)
+    qualifyFnsOne__indexed(f, rest.clone(), prefix, acc.clone(), &__arg4)
 }
 
 /// Duplicate module function names first, then resolve locally so direct-call ids are consistent within that module.
