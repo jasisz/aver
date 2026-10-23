@@ -3848,6 +3848,34 @@ fn borrowed_payloads_and_handed_lists_match_vm() {
     assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A list a match takes apart as it dies goes through `aver_list_match!`,
+/// which moves the head and the rest out of a node it alone holds, also in a
+/// mutual tail-call arm; a list the function only borrows still lends its
+/// head. A `String` param a function only reads in place is borrowed, so the
+/// loop calling it on every character lends the string, and `String.split`
+/// makes each line once. The compiled program must print what the VM does.
+#[test]
+fn dying_lists_and_read_strings_match_vm() {
+    let relative = "tests/fixtures/dying_lists_read_strings_app.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("dying_lists_read_strings", &src);
+    for expected in [
+        "aver_list_match!(stack, [] =>",
+        "[c, others] => { { let __arg",
+        "fn digitAt__indexed(s @ _: &AverStr,",
+        "digitAt__indexed(&s, ",
+        "fn sameAt(s @ _: &AverStr, i @ _: aver_rt::AverInt, t @ _: &AverStr)",
+        "sameAt(&s, ",
+        ".split(&*::aver_rt::str_lit!(\"\\n\")).map(aver_rt::AverStr::from)",
+    ] {
+        assert!(
+            emitted.contains(expected),
+            "missing `{expected}`:\n{emitted}"
+        );
+    }
+    assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// The same with a bounce between two mutually recursive functions
 /// (`step(st, t, localValue(st.lctx, n), n)`), a field read by an earlier
 /// argument (`putFirst(readOnly(w.st, w.e), w.st, w.e)`), and a field read
@@ -6497,7 +6525,7 @@ fn main() -> Unit
         if !emitted.contains("script == &(made())")
             || !emitted.contains("&(made()) == script")
             || !emitted.contains("script == &(made())")
-            || !emitted.contains("&*name == \"anchor\"")
+            || !emitted.contains("&**name == \"anchor\"")
         {
             return Err(format!(
                 "match-subject comparisons were not aligned with the borrowed params:\n{emitted}"

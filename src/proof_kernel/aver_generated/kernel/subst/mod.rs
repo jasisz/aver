@@ -20,20 +20,7 @@ fn __mutual_tco_trampoline_1(
         __state = match __state {
             __MutualTco1::Capture(mut bs @ _) => {
                 crate::proof_kernel::cancel_checkpoint();
-                {
-                    let __list_subject = bs;
-                    if __list_subject.is_empty() {
-                        return Ok(());
-                    } else {
-                        if let (Some(b), Some(rest)) =
-                            (__list_subject.first(), __list_subject.tail())
-                        {
-                            __MutualTco1::CaptureOne(b.clone(), rest)
-                        } else {
-                            panic!("Aver Rust codegen: non-exhaustive list match")
-                        }
-                    }
-                }
+                aver_list_match!(bs, [] => { return Ok(()) }, [b, rest] => __MutualTco1::CaptureOne(b, rest))
             }
             __MutualTco1::CaptureOne(mut b @ _, mut rest @ _) => {
                 crate::proof_kernel::cancel_checkpoint();

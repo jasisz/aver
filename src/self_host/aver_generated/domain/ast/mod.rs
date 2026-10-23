@@ -3615,13 +3615,13 @@ pub fn canonicalCtorNameAtBothDots(
 #[inline(always)]
 pub fn isTypeVariantTail(typeName @ _: AverStr, variantName @ _: AverStr) -> bool {
     crate::cancel_checkpoint();
-    (crate::aver_generated::domain::ast::beginsUppercase(typeName)
-        && crate::aver_generated::domain::ast::beginsUppercase(variantName))
+    (crate::aver_generated::domain::ast::beginsUppercase(&typeName)
+        && crate::aver_generated::domain::ast::beginsUppercase(&variantName))
 }
 
 /// Whether a dotted-name segment begins with an uppercase letter.
 #[inline(always)]
-pub fn beginsUppercase(segment @ _: AverStr) -> bool {
+pub fn beginsUppercase(segment @ _: &AverStr) -> bool {
     crate::cancel_checkpoint();
     match ((aver_rt::AverInt::from_i64(0))
         .to_usize()

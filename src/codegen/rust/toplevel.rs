@@ -947,7 +947,22 @@ fn emit_fn_def_with_visibility(
     let params = if has_tco {
         emit_fn_params_with_owned(&fd.params, has_tco, &owned_collection_params, ctx, scope)
     } else {
-        emit_fn_params_with_bare(&fd.params, &owned_collection_params, bare_facts, ctx, scope)
+        let lent_strings = ctx
+            .mir_program
+            .as_ref()
+            .and_then(|p| Some((p.fn_by_id(resolved_fd.fn_id)?, &p.builtins)))
+            .map(|(mir_fn, builtins)| {
+                super::from_mir::lent_string_params(mir_fn, &resolved_fd.params, builtins)
+            })
+            .unwrap_or_default();
+        emit_fn_params_with_bare(
+            &fd.params,
+            &owned_collection_params,
+            &lent_strings,
+            bare_facts,
+            ctx,
+            scope,
+        )
     };
     let ret_type = if fd.return_type.is_empty() {
         "()".to_string()
@@ -1253,6 +1268,7 @@ fn emit_fn_params_with_owned(
 fn emit_fn_params_with_bare(
     params: &[(String, String)],
     owned_params: &HashSet<String>,
+    lent_strings: &HashSet<String>,
     bare_facts: Option<&crate::ir::mir::FnBareFacts>,
     ctx: &CodegenContext,
     scope: Option<&str>,
@@ -1265,11 +1281,15 @@ fn emit_fn_params_with_bare(
                 return format!("{}: i64", explicit_parameter_pattern(name, false));
             }
             // Fall back to the single-param shape the inner emitter would
-            // produce for a non-bare, non-rc param.
+            // produce for a non-bare param; a lent string is `&AverStr`.
+            let lent = match lent_strings.contains(&aver_name_to_rust(name)) {
+                true => HashSet::from([0]),
+                false => HashSet::new(),
+            };
             emit_fn_params_inner(
                 std::slice::from_ref(&(name.clone(), type_ann.clone())),
                 false,
-                &HashSet::new(),
+                &lent,
                 owned_params,
                 ctx,
                 scope,

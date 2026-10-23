@@ -21,66 +21,19 @@ fn __mutual_tco_trampoline_1(
         __state = match __state {
             __MutualTco1::TuplesToMap(mut items @ _, mut acc @ _) => {
                 crate::cancel_checkpoint();
-                {
-                    let __list_subject = items;
-                    if __list_subject.is_empty() {
-                        return acc;
-                    } else {
-                        if let (Some(item), Some(rest)) =
-                            (__list_subject.first(), __list_subject.tail())
-                        {
-                            {
-                                let __t = item;
-                                match __t.view() {
-                                    crate::aver_generated::domain::value::Val__view::ValTuple(
-                                        __parts_fields,
-                                    ) => {
-                                        let parts = &__parts_fields.0;
-                                        __MutualTco1::TuplesToMapOne(parts.clone(), rest, acc)
-                                    }
-                                    _ => __MutualTco1::TuplesToMap(rest, acc),
-                                }
-                            }
-                        } else {
-                            panic!("Aver Rust codegen: non-exhaustive list match")
-                        }
-                    }
-                }
+                aver_list_match!(items, [] => { return acc }, [item, rest] => { { let __t = item; match __t.view() {
+        crate::aver_generated::domain::value::Val__view::ValTuple(__parts_fields) => {
+            let parts = &__parts_fields.0;
+            __MutualTco1::TuplesToMapOne(parts.clone(), rest, acc)
+        },
+        _ => {
+            __MutualTco1::TuplesToMap(rest, acc)
+        }
+    } } })
             }
             __MutualTco1::TuplesToMapOne(mut parts @ _, mut rest @ _, mut acc @ _) => {
                 crate::cancel_checkpoint();
-                {
-                    let __list_subject = parts;
-                    if let (Some(kV), Some(tail)) = (__list_subject.first(), __list_subject.tail())
-                    {
-                        {
-                            let __list_subject = tail;
-                            if let (Some(vV), Some(ignored)) =
-                                (__list_subject.first(), __list_subject.tail())
-                            {
-                                {
-                                    let __arg7 @ _ = acc.insert_owned(
-                                        crate::aver_generated::domain::value::mapKeyRepr(kV),
-                                        vV.clone(),
-                                    );
-                                    __MutualTco1::TuplesToMap(rest, __arg7)
-                                }
-                            } else {
-                                if __list_subject.is_empty() {
-                                    __MutualTco1::TuplesToMap(rest, acc)
-                                } else {
-                                    panic!("Aver Rust codegen: non-exhaustive list match")
-                                }
-                            }
-                        }
-                    } else {
-                        if __list_subject.is_empty() {
-                            __MutualTco1::TuplesToMap(rest, acc)
-                        } else {
-                            panic!("Aver Rust codegen: non-exhaustive list match")
-                        }
-                    }
-                }
+                aver_list_match!(parts, [] => __MutualTco1::TuplesToMap(rest, acc), [kV, tail] => { aver_list_match!(tail, [] => __MutualTco1::TuplesToMap(rest, acc), [vV, ignored] => { { let __arg7 @ _ = acc.insert_owned(crate::aver_generated::domain::value::mapKeyRepr(&kV), vV); __MutualTco1::TuplesToMap(rest, __arg7) } }) })
             }
         };
     }

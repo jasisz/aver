@@ -1443,10 +1443,7 @@ pub fn callsDescend(
                                 &c.args,
                                 j.clone(),
                             );
-                        crate::proof_kernel::aver_generated::kernel::induct::descends(
-                            &__arg6,
-                            p.clone(),
-                        )
+                        crate::proof_kernel::aver_generated::kernel::induct::descends(&__arg6, &p)
                     } && (!c.inner.contains(&p))))
                     && crate::proof_kernel::aver_generated::kernel::induct::callsDescend(
                         &rest, p, j, n,
@@ -1461,7 +1458,7 @@ pub fn callsDescend(
 /// Whether t is p - 1, or p / k for a literal k of at least 2: for p > 0 each is at least 0 and below p.
 pub fn descends(
     t @ _: &Option<crate::proof_kernel::aver_generated::kernel::term::Term>,
-    p @ _: AverStr,
+    p @ _: &AverStr,
 ) -> bool {
     crate::proof_kernel::cancel_checkpoint();
     match t {
@@ -1488,7 +1485,7 @@ pub fn descends(
             { let __t = __pat3; match __t.view() {
         crate::proof_kernel::aver_generated::kernel::term::Term__view::TInt(____pat4_fields) => {
             let __pat4 = ____pat4_fields.0.clone();
-            { let __int_match_subject = __pat4; if __int_match_subject == aver_rt::AverInt::from_i64(1) { (q == p) } else { false } }
+            { let __int_match_subject = __pat4; if __int_match_subject == aver_rt::AverInt::from_i64(1) { (&(q) == p) } else { false } }
         },
         _ => {
             false
@@ -1524,7 +1521,7 @@ pub fn descends(
             { let __list_subject = __pat8; if let (Some(__pat9), Some(__pat10)) = (__list_subject.first(), __list_subject.tail()) { { let __t = __pat9; match __t.view() {
         crate::proof_kernel::aver_generated::kernel::term::Term__view::TInt(__k_fields) => {
             let k = __k_fields.0.clone();
-            { let __list_subject = __pat10; if __list_subject.is_empty() { ((q == p) && (k >= aver_rt::AverInt::from_i64(2))) } else { false } }
+            { let __list_subject = __pat10; if __list_subject.is_empty() { ((&(q) == p) && (k >= aver_rt::AverInt::from_i64(2))) } else { false } }
         },
         _ => {
             false

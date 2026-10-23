@@ -157,7 +157,7 @@ pub fn fastEqIntBranch(
 pub fn fastEqStringBranch(
     calleeEnv @ _: &aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
     slot @ _: aver_rt::AverInt,
-    expected @ _: AverStr,
+    expected @ _: &AverStr,
     thenLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
     elseLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
@@ -169,7 +169,7 @@ pub fn fastEqStringBranch(
             crate::aver_generated::domain::value::Val__view::ValStr(__actual_fields) => {
                 let actual = __actual_fields.0.clone();
                 {
-                    let __arg7 @ _ = (actual == expected);
+                    let __arg7 @ _ = (&(actual) == expected);
                     crate::aver_generated::domain::eval::fast::selectFastLeaf(
                         __arg7, thenLeaf, elseLeaf, calleeEnv,
                     )

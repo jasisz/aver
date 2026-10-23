@@ -24,20 +24,7 @@ fn __mutual_tco_trampoline_1(
         __state = match __state {
             __MutualTco1::QualifyFns__indexed(mut fns @ _, mut prefix @ _, mut acc @ _) => {
                 crate::cancel_checkpoint();
-                {
-                    let __list_subject = fns;
-                    if __list_subject.is_empty() {
-                        return acc.reverse();
-                    } else {
-                        if let (Some(f), Some(rest)) =
-                            (__list_subject.first(), __list_subject.tail())
-                        {
-                            __MutualTco1::QualifyFnsOne__indexed(f.clone(), rest, prefix, acc)
-                        } else {
-                            panic!("Aver Rust codegen: non-exhaustive list match")
-                        }
-                    }
-                }
+                aver_list_match!(fns, [] => { return acc.reverse() }, [f, rest] => __MutualTco1::QualifyFnsOne__indexed(f, rest, prefix, acc))
             }
             __MutualTco1::QualifyFnsOne__indexed(
                 mut f @ _,

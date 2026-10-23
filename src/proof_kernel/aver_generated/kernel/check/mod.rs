@@ -386,127 +386,7 @@ fn __mutual_tco_trampoline_2(
                 mut path @ _,
             ) => {
                 crate::proof_kernel::cancel_checkpoint();
-                {
-                    let __list_subject = cs;
-                    if __list_subject.is_empty() {
-                        return crate::proof_kernel::aver_generated::kernel::check::splitDone(
-                            &before, path,
-                        );
-                    } else {
-                        if let (Some(c), Some(rest)) =
-                            (__list_subject.first(), __list_subject.tail())
-                        {
-                            if {
-                                let __arg9 @ _ = aver_rt::AverList::concat(
-                                    &crate::proof_kernel::aver_generated::kernel::subst::freeVars(
-                                        &*on,
-                                    ),
-                                    &crate::proof_kernel::aver_generated::kernel::check::hypNames(
-                                        &env.hyps,
-                                    ),
-                                );
-                                {
-                                    let __arg10 @ _ = <aver_rt::AverList<AverStr>>::empty();
-                                    crate::proof_kernel::aver_generated::kernel::check::freshAll(
-                                        &c.binders, &__arg9, &*env, &__arg10,
-                                    )
-                                }
-                            } {
-                                {
-                                    let __arg16 @ _ = {
-                                        let __arg14 @ _ = {
-                                            let __arg12 @ _ = {
-                                                let __arg11 @ _ = aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::check::firstHyps(&hss), &env.hyps.clone());
-                                                crate::proof_kernel::aver_generated::kernel::check::withHyps(&*env, &__arg11)
-                                            };
-                                            {
-                                                let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::check::firstVars(&vss);
-                                                crate::proof_kernel::aver_generated::kernel::check::withVars(&__arg12, &__arg13)
-                                            }
-                                        };
-                                        {
-                                            let __arg15 @ _ = aver_rt::AverStr::from({
-                                                let mut __b = {
-                                                    let mut __b = {
-                                                        let mut __b =
-                                                            aver_rt::Buffer::with_capacity(
-                                                                (aver_rt::AverInt::from_i64(39))
-                                                                    .to_usize()
-                                                                    .unwrap_or(0),
-                                                            );
-                                                        __b.push_str(&aver_rt::AverStr::from(
-                                                            aver_rt::aver_display(&(path)),
-                                                        ));
-                                                        __b
-                                                    };
-                                                    __b.push_str(&::aver_rt::str_lit!("/split."));
-                                                    __b
-                                                };
-                                                __b.push_str(&aver_rt::AverStr::from(
-                                                    aver_rt::aver_display(&(c.ctor)),
-                                                ));
-                                                __b
-                                            });
-                                            crate::proof_kernel::aver_generated::kernel::check::conclude(c.proof.clone(), __arg14, __arg15)
-                                        }
-                                    }?;
-                                    {
-                                        let __arg17 @ _ = {
-                                            let __n = aver_rt::clamp_list_count(
-                                                &(aver_rt::AverInt::from_i64(1)),
-                                            );
-                                            (hss).drop_first(__n)
-                                        };
-                                        {
-                                            let __arg18 @ _ = {
-                                                let __n = aver_rt::clamp_list_count(
-                                                    &(aver_rt::AverInt::from_i64(1)),
-                                                );
-                                                (vss).drop_first(__n)
-                                            };
-                                            __MutualTco2::SplitNext(
-                                                __arg16,
-                                                c.clone(),
-                                                rest,
-                                                __arg17,
-                                                __arg18,
-                                                before,
-                                                path,
-                                            )
-                                        }
-                                    }
-                                }
-                            } else {
-                                {
-                                    let __arg19 @ _ = aver_rt::AverStr::from({
-                                        let mut __b = {
-                                            let mut __b = {
-                                                let mut __b = aver_rt::Buffer::with_capacity(
-                                                    (aver_rt::AverInt::from_i64(48))
-                                                        .to_usize()
-                                                        .unwrap_or(0),
-                                                );
-                                                __b.push_str(&::aver_rt::str_lit!(
-                                                    "the names of case "
-                                                ));
-                                                __b
-                                            };
-                                            __b.push_str(&aver_rt::AverStr::from(
-                                                aver_rt::aver_display(&(c.ctor)),
-                                            ));
-                                            __b
-                                        };
-                                        __b.push_str(&::aver_rt::str_lit!(" are not fresh"));
-                                        __b
-                                    });
-                                    return crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg19);
-                                }
-                            }
-                        } else {
-                            panic!("Aver Rust codegen: non-exhaustive list match")
-                        }
-                    }
-                }
+                aver_list_match!(cs, [] => { return crate::proof_kernel::aver_generated::kernel::check::splitDone(&before, path) }, [c, rest] => { if { let __arg9 @ _ = aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::subst::freeVars(&*on), &crate::proof_kernel::aver_generated::kernel::check::hypNames(&env.hyps)); { let __arg10 @ _ = <aver_rt::AverList<AverStr>>::empty(); crate::proof_kernel::aver_generated::kernel::check::freshAll(&c.binders, &__arg9, &*env, &__arg10) } } { { let __arg16 @ _ = { let __arg14 @ _ = { let __arg12 @ _ = { let __arg11 @ _ = aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::check::firstHyps(&hss), &env.hyps.clone()); crate::proof_kernel::aver_generated::kernel::check::withHyps(&*env, &__arg11) }; { let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::check::firstVars(&vss); crate::proof_kernel::aver_generated::kernel::check::withVars(&__arg12, &__arg13) } }; { let __arg15 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path)))); __b }; __b.push_str(&::aver_rt::str_lit!("/split.")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c.ctor)))); __b }); crate::proof_kernel::aver_generated::kernel::check::conclude(c.proof.clone(), __arg14, __arg15) } }?; { let __arg17 @ _ = { let __n = aver_rt::clamp_list_count(&(aver_rt::AverInt::from_i64(1))); (hss).drop_first(__n) }; { let __arg18 @ _ = { let __n = aver_rt::clamp_list_count(&(aver_rt::AverInt::from_i64(1))); (vss).drop_first(__n) }; __MutualTco2::SplitNext(__arg16, c, rest, __arg17, __arg18, before, path) } } } } else { { let __arg19 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("the names of case ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c.ctor)))); __b }; __b.push_str(&::aver_rt::str_lit!(" are not fresh")); __b }); return crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg19) } } })
             }
             __MutualTco2::SplitNext(
                 mut e @ _,
@@ -1260,28 +1140,7 @@ fn __mutual_tco_trampoline_7(mut __state: __MutualTco7) -> Result<(), AverStr> {
         __state = match __state {
             __MutualTco7::CheckFacts(mut fs @ _, mut earlier @ _) => {
                 crate::proof_kernel::cancel_checkpoint();
-                {
-                    let __list_subject = fs;
-                    if __list_subject.is_empty() {
-                        return Ok(());
-                    } else {
-                        if let (Some(f), Some(rest)) =
-                            (__list_subject.first(), __list_subject.tail())
-                        {
-                            {
-                                let __arg5 @ _ = {
-                                    let __arg4 @ _ = Box::new(crate::proof_kernel::aver_generated::kernel::proof::Script__Fields { obligation: f.law.clone(), defs: aver_rt::AverList::empty(), consts: aver_rt::AverList::empty(), sums: aver_rt::AverList::empty(), recs: aver_rt::AverList::empty(), sigs: aver_rt::AverList::empty(), laws: earlier.clone(), facts: aver_rt::AverList::empty(), proof: f.proof.clone() });
-                                    crate::proof_kernel::aver_generated::kernel::check::checkScript(
-                                        __arg4,
-                                    )
-                                };
-                                __MutualTco7::CheckFactThen(__arg5, f.law.clone(), rest, earlier)
-                            }
-                        } else {
-                            panic!("Aver Rust codegen: non-exhaustive list match")
-                        }
-                    }
-                }
+                aver_list_match!(fs, [] => { return Ok(()) }, [f, rest] => { { let __arg5 @ _ = { let __arg4 @ _ = Box::new(crate::proof_kernel::aver_generated::kernel::proof::Script__Fields { obligation: f.law.clone(), defs: aver_rt::AverList::empty(), consts: aver_rt::AverList::empty(), sums: aver_rt::AverList::empty(), recs: aver_rt::AverList::empty(), sigs: aver_rt::AverList::empty(), laws: earlier.clone(), facts: aver_rt::AverList::empty(), proof: f.proof }); crate::proof_kernel::aver_generated::kernel::check::checkScript(__arg4) }; __MutualTco7::CheckFactThen(__arg5, f.law, rest, earlier) } })
             }
             __MutualTco7::CheckFactThen(
                 mut done @ _,
@@ -2782,82 +2641,7 @@ pub fn transFrom(
         {
             let __list_subject = __pat0;
             if let (Some(a), Some(__pat2)) = (__list_subject.first(), __list_subject.tail()) {
-                {
-                    let __list_subject = __pat2;
-                    if let (Some(b), Some(moreTerms)) =
-                        (__list_subject.first(), __list_subject.tail())
-                    {
-                        {
-                            let __list_subject = __pat1;
-                            if let (Some(p), Some(moreSteps)) =
-                                (__list_subject.first(), __list_subject.tail())
-                            {
-                                {
-                                    let __arg13 @ _ =
-                                        aver_rt::AverList::prepend_owned(b.clone(), moreTerms);
-                                    crate::proof_kernel::aver_generated::kernel::check::transLink(
-                                        a.clone(),
-                                        b.clone(),
-                                        p.clone(),
-                                        &__arg13,
-                                        &moreSteps,
-                                        env,
-                                        path,
-                                        i,
-                                    )
-                                }
-                            } else {
-                                crate::proof_kernel::aver_generated::kernel::check::refuse(
-                                    path,
-                                    ::aver_rt::str_lit!("trans needs at least one step"),
-                                )
-                            }
-                        }
-                    } else {
-                        if __list_subject.is_empty() {
-                            {
-                                let __list_subject = __pat1;
-                                if __list_subject.is_empty() {
-                                    {
-                                        let __arg14 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: a.clone(), rhs: a.clone() };
-                                        {
-                                            let __arg15 @ _ = aver_rt::AverStr::from({
-                                                let mut __b = {
-                                                    let mut __b = {
-                                                        let mut __b =
-                                                            aver_rt::Buffer::with_capacity(
-                                                                (aver_rt::AverInt::from_i64(39))
-                                                                    .to_usize()
-                                                                    .unwrap_or(0),
-                                                            );
-                                                        __b.push_str(&aver_rt::AverStr::from(
-                                                            aver_rt::aver_display(&(path)),
-                                                        ));
-                                                        __b
-                                                    };
-                                                    __b.push_str(&::aver_rt::str_lit!("/trans."));
-                                                    __b
-                                                };
-                                                __b.push_str(&aver_rt::AverStr::from(
-                                                    aver_rt::aver_display(&(i)),
-                                                ));
-                                                __b
-                                            });
-                                            crate::proof_kernel::aver_generated::kernel::check::typedEquation(__arg14, env, __arg15)
-                                        }
-                                    }
-                                } else {
-                                    crate::proof_kernel::aver_generated::kernel::check::refuse(
-                                        path,
-                                        ::aver_rt::str_lit!("trans needs at least one step"),
-                                    )
-                                }
-                            }
-                        } else {
-                            panic!("Aver Rust codegen: non-exhaustive list match")
-                        }
-                    }
-                }
+                aver_list_match!(__pat2, [] => { { let __list_subject = __pat1; if __list_subject.is_empty() { { let __arg14 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: a.clone(), rhs: a.clone() }; { let __arg15 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path)))); __b }; __b.push_str(&::aver_rt::str_lit!("/trans.")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(i)))); __b }); crate::proof_kernel::aver_generated::kernel::check::typedEquation(__arg14, env, __arg15) } } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("trans needs at least one step")) } } }, [b, moreTerms] => { { let __list_subject = __pat1; if let (Some(p), Some(moreSteps)) = (__list_subject.first(), __list_subject.tail()) { { let __arg13 @ _ = aver_rt::AverList::prepend_owned(b.clone(), moreTerms); crate::proof_kernel::aver_generated::kernel::check::transLink(a.clone(), b, p.clone(), &__arg13, &moreSteps, env, path, i) } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("trans needs at least one step")) } } })
             } else {
                 crate::proof_kernel::aver_generated::kernel::check::refuse(
                     path,
@@ -6345,31 +6129,14 @@ pub fn statementTyped(
                 __b
             })),
             _ => {
-                let __list_subject = __pat1;
-                if let (Some(__pat2), Some(__pat3)) =
-                    (__list_subject.first(), __list_subject.tail())
-                {
-                    {
-                        let __t = __pat2;
-                        match __t.view() {
-                            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyBool => {
-                                let __list_subject = __pat3;
-                                if __list_subject.is_empty() {
-                                    Ok(())
-                                } else {
-                                    Err(::aver_rt::str_lit!("step proof: the when is not a Bool"))
-                                }
-                            }
-                            _ => Err(::aver_rt::str_lit!("step proof: the when is not a Bool")),
-                        }
-                    }
-                } else {
-                    if __list_subject.is_empty() {
-                        Ok(())
-                    } else {
-                        panic!("Aver Rust codegen: non-exhaustive list match")
-                    }
-                }
+                aver_list_match!(__pat1, [] => Ok(()), [__pat2, __pat3] => { { let __t = __pat2; match __t.view() {
+        crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyBool => {
+            { let __list_subject = __pat3; if __list_subject.is_empty() { Ok(()) } else { Err(::aver_rt::str_lit!("step proof: the when is not a Bool")) } }
+        },
+        _ => {
+            Err(::aver_rt::str_lit!("step proof: the when is not a Bool"))
+        }
+    } } })
             }
         }
     }

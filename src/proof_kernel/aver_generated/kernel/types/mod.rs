@@ -1105,23 +1105,22 @@ pub fn sumOf(
     ss @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Sum>,
 ) -> Option<crate::proof_kernel::aver_generated::kernel::proof::Sum> {
     crate::proof_kernel::cancel_checkpoint();
-    let __arg2 @ _ = crate::proof_kernel::aver_generated::kernel::types::typeName(c);
+    let __arg2 @ _ = crate::proof_kernel::aver_generated::kernel::types::typeName(&c);
     crate::proof_kernel::aver_generated::kernel::types::sumNamed(__arg2, ss)
 }
 
 /// A constructor's name up to its last dot.
 #[inline(always)]
-pub fn typeName(c @ _: AverStr) -> AverStr {
+pub fn typeName(c @ _: &AverStr) -> AverStr {
     crate::proof_kernel::cancel_checkpoint();
     (aver_rt::string_join(
         &{
             let __n = aver_rt::clamp_list_count(&(aver_rt::AverInt::from_i64(1)));
-            ((aver_rt::AverList::from_vec(
+            (aver_rt::AverList::from_vec(
                 c.split(&*::aver_rt::str_lit!("."))
-                    .map(|s| s.to_string())
+                    .map(aver_rt::AverStr::from)
                     .collect::<Vec<_>>(),
-            ))
-            .into_aver()
+            )
             .reverse())
             .drop_first(__n)
         }

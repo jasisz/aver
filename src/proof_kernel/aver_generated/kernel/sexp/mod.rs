@@ -246,34 +246,16 @@ pub fn scan(
                                                     if __dispatch_subject
                                                         == aver_rt::AverInt::from_i64(41)
                                                     {
-                                                        {
-                                                            let __list_subject = parents;
-                                                            if __list_subject.is_empty() {
-                                                                return Err(::aver_rt::str_lit!(
-                                                                    "unexpected )"
-                                                                ));
-                                                            } else {
-                                                                if let (Some(parent), Some(above)) = (
-                                                                    __list_subject.first(),
-                                                                    __list_subject.tail(),
-                                                                ) {
-                                                                    {
-                                                                        let __tco0 = rest;
-                                                                        let __tco2 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(current.reverse()), parent);
-                                                                        let __tco3 = above;
-                                                                        __hold0 = __tco0;
-                                                                        cs = &__hold0;
-                                                                        current = __tco2;
-                                                                        parents = __tco3;
-                                                                        continue;
-                                                                    }
-                                                                } else {
-                                                                    panic!(
-                                                                        "Aver Rust codegen: non-exhaustive list match"
-                                                                    )
-                                                                }
-                                                            }
-                                                        }
+                                                        aver_list_match!(parents, [] => { return Err(::aver_rt::str_lit!("unexpected )")); }, [parent, above] => { {
+            let __tco0 = rest;
+            let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(current.reverse()), parent);
+            let __tco3 = above;
+            __hold0 = __tco0;
+            cs = &__hold0;
+            current = __tco2;
+            parents = __tco3;
+            continue;
+        } })
                                                     } else {
                                                         if __dispatch_subject
                                                             == aver_rt::AverInt::from_i64(34)
@@ -920,33 +902,15 @@ pub fn scan__cursor(
                                                     if __dispatch_subject
                                                         == aver_rt::AverInt::from_i64(41)
                                                     {
-                                                        {
-                                                            let __list_subject = parents;
-                                                            if __list_subject.is_empty() {
-                                                                return Err(::aver_rt::str_lit!(
-                                                                    "unexpected )"
-                                                                ));
-                                                            } else {
-                                                                if let (Some(parent), Some(above)) = (
-                                                                    __list_subject.first(),
-                                                                    __list_subject.tail(),
-                                                                ) {
-                                                                    {
-                                                                        let __tco1 = __cur_i1;
-                                                                        let __tco3 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(current.reverse()), parent);
-                                                                        let __tco4 = above;
-                                                                        __cur_i = __tco1;
-                                                                        current = __tco3;
-                                                                        parents = __tco4;
-                                                                        continue;
-                                                                    }
-                                                                } else {
-                                                                    panic!(
-                                                                        "Aver Rust codegen: non-exhaustive list match"
-                                                                    )
-                                                                }
-                                                            }
-                                                        }
+                                                        aver_list_match!(parents, [] => { return Err(::aver_rt::str_lit!("unexpected )")); }, [parent, above] => { {
+            let __tco1 = __cur_i1;
+            let __tco3 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(current.reverse()), parent);
+            let __tco4 = above;
+            __cur_i = __tco1;
+            current = __tco3;
+            parents = __tco4;
+            continue;
+        } })
                                                     } else {
                                                         if __dispatch_subject
                                                             == aver_rt::AverInt::from_i64(34)

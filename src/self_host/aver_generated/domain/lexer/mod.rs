@@ -1037,9 +1037,9 @@ pub fn tokenizeAlphaWith(
 }
 
 /// Check if a character is the greater-than sign.
-pub fn isGreaterThan(c @ _: AverStr) -> bool {
+pub fn isGreaterThan(c @ _: &AverStr) -> bool {
     crate::cancel_checkpoint();
-    (&*c == ">")
+    (&**c == ">")
 }
 
 /// Tokenize a minus or arrow token.
@@ -1979,7 +1979,7 @@ pub fn tokenizeMinus__indexed(
     let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
     match aver_rt::string_index_char_at(&src, &__str_index, &nextPos) {
         Some(c @ _) => {
-            if crate::aver_generated::domain::lexer::isGreaterThan(c) {
+            if crate::aver_generated::domain::lexer::isGreaterThan(&c) {
                 aver_rt::AverList::prepend_owned(
                     crate::aver_generated::domain::token::Token::TkArrow,
                     crate::aver_generated::domain::lexer::tokenize__indexed(

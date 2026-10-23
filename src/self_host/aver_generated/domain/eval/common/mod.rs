@@ -62,7 +62,7 @@ pub fn wrapPropagatedError(msg @ _: AverStr) -> AverStr {
 
 /// Return the propagated payload when the evaluator error is an internal ? marker.
 #[inline(always)]
-pub fn unwrapPropagatedError(err @ _: AverStr) -> Option<AverStr> {
+pub fn unwrapPropagatedError(err @ _: &AverStr) -> Option<AverStr> {
     crate::cancel_checkpoint();
     let prefix @ _ = ::aver_rt::str_lit!("__aver_prop__:");
     if err.starts_with(&*prefix) {
@@ -91,7 +91,7 @@ pub fn normalizeFnReturn(
         Ok(v @ _) => Ok(v.clone()),
         Err(err @ _) => {
             let err = err.clone();
-            match crate::aver_generated::domain::eval::common::unwrapPropagatedError(err.clone()) {
+            match crate::aver_generated::domain::eval::common::unwrapPropagatedError(&err) {
                 Some(msg @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
                     crate::aver_generated::domain::value::Val__ValErr(
                         crate::aver_generated::domain::value::Val::ValStr(
