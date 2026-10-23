@@ -878,22 +878,40 @@ pub fn isBuiltinCallName(name @ _: AverStr) -> bool {
         ::aver_rt::str_lit!("Vector.set"),
         ::aver_rt::str_lit!("List.fromVector"),
     ]);
-    crate::aver_generated::domain::resolver::calls::isBuiltinCallNameFrom(name, __arg1)
+    crate::aver_generated::domain::resolver::calls::isBuiltinCallNameFrom(name, &__arg1)
 }
 
 /// Check builtin/service call names recursively by exact match.
 #[inline(always)]
 pub fn isBuiltinCallNameFrom(
     mut name @ _: AverStr,
-    mut knownNames @ _: aver_rt::AverList<AverStr>,
+    knownNames @ _: &aver_rt::AverList<AverStr>,
 ) -> bool {
+    let mut __hold1: aver_rt::AverList<AverStr>;
+    let mut knownNames @ _: &aver_rt::AverList<AverStr> = knownNames;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(knownNames, [] => { return false; }, [knownName, rest] => { if (name == knownName) { return true; } else { {
-            let __tco1 = rest;
-            knownNames = __tco1;
-            continue;
-        } } })
+        {
+            let __list_subject = knownNames;
+            if __list_subject.is_empty() {
+                return false;
+            } else {
+                if let Some((knownName, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    if (name == knownName) {
+                        return true;
+                    } else {
+                        {
+                            let __tco1 = rest;
+                            __hold1 = __tco1;
+                            knownNames = &__hold1;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 

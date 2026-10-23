@@ -1009,7 +1009,7 @@ fn __mutual_tco_trampoline_1(
             __MutualTco1::EachGiven(mut n @ _, mut gs @ _, mut next @ _) => {
                 crate::proof_std::cancel_checkpoint();
                 let ob @ _ = n.goal.obligation.clone();
-                aver_list_match!(gs, [] => __MutualTco1::Within(n, next), [g, rest] => { return Ok(crate::proof_std::aver_generated::kernel::proof::Proof::PEnum(crate::proof_std::aver_generated::kernel::proof::Proof__PEnum(g.name.clone(), ob.lhs, ob.rhs, { let __arg7 @ _ = crate::proof_std::aver_generated::kernel::finite::values(&g.fin); crate::proof_std::aver_generated::kernel::std::eachCase(&n, g.name.clone(), __arg7, &rest, &next, &*answers) }?))) })
+                aver_list_match!(gs, [] => __MutualTco1::Within(n, next), [g, rest] => { return Ok(crate::proof_std::aver_generated::kernel::proof::Proof::PEnum(crate::proof_std::aver_generated::kernel::proof::Proof__PEnum(g.name.clone(), ob.lhs, ob.rhs, { let __arg7 @ _ = crate::proof_std::aver_generated::kernel::finite::values(&g.fin); crate::proof_std::aver_generated::kernel::std::eachCase(&n, g.name.clone(), &__arg7, &rest, &next, &*answers) }?))) })
             }
         };
     }
@@ -1143,7 +1143,7 @@ pub fn splitAll(
                                 crate::proof_std::aver_generated::kernel::std::eachValue(
                                     goal,
                                     g.name.clone(),
-                                    __arg4,
+                                    &__arg4,
                                     &rest,
                                 )
                             }?,
@@ -1162,11 +1162,32 @@ pub fn splitAll(
 pub fn eachValue(
     goal @ _: &crate::proof_std::aver_generated::kernel::proof::Goal,
     v @ _: AverStr,
-    mut vals @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
+    vals @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
     rest @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Given>,
 ) -> Result<aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Proof>, AverStr> {
     crate::proof_std::cancel_checkpoint();
-    aver_list_match!(vals, [] => Ok(aver_rt::AverList::empty()), [x, xs] => { Ok(aver_rt::AverList::prepend_owned({ let __arg6 @ _ = crate::proof_std::aver_generated::kernel::std::at(goal.clone(), v.clone(), &x)?; crate::proof_std::aver_generated::kernel::std::splitAll(&__arg6, rest) }?, crate::proof_std::aver_generated::kernel::std::eachValue(goal, v, xs, rest)?)) })
+    {
+        let __list_subject = vals;
+        if __list_subject.is_empty() {
+            Ok(aver_rt::AverList::empty())
+        } else {
+            if let (Some(x), Some(xs)) = (__list_subject.first(), __list_subject.tail()) {
+                Ok(aver_rt::AverList::prepend_owned(
+                    {
+                        let __arg6 @ _ = crate::proof_std::aver_generated::kernel::std::at(
+                            goal.clone(),
+                            v.clone(),
+                            x,
+                        )?;
+                        crate::proof_std::aver_generated::kernel::std::splitAll(&__arg6, rest)
+                    }?,
+                    crate::proof_std::aver_generated::kernel::std::eachValue(goal, v, &xs, rest)?,
+                ))
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// One case: impossible when the `when` reads false in it, otherwise close.
@@ -1388,7 +1409,7 @@ pub fn close(
                         crate::proof_std::aver_generated::kernel::proof::Proof__PSymm(r.proof),
                     ),
                 ]);
-                crate::proof_std::aver_generated::kernel::lib::trans(__arg6, __arg7)
+                crate::proof_std::aver_generated::kernel::lib::trans(&__arg6, &__arg7)
             }
         }
     } else {
@@ -2110,13 +2131,41 @@ pub fn first(
 pub fn eachCase(
     n @ _: &Node,
     v @ _: AverStr,
-    mut vals @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
+    vals @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
     rest @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Given>,
     next @ _: &Tactic,
     answers @ _: &aver_rt::AverList<Answer>,
 ) -> Result<aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Proof>, Stop> {
     crate::proof_std::cancel_checkpoint();
-    aver_list_match!(vals, [] => Ok(aver_rt::AverList::empty()), [x, xs] => { Ok(aver_rt::AverList::prepend_owned({ let __arg8 @ _ = crate::proof_std::aver_generated::kernel::std::caseNode(n.clone(), v.clone(), &x)?; crate::proof_std::aver_generated::kernel::std::eachGiven(__arg8, rest.clone(), next.clone(), answers) }?, crate::proof_std::aver_generated::kernel::std::eachCase(n, v, xs, rest, next, answers)?)) })
+    {
+        let __list_subject = vals;
+        if __list_subject.is_empty() {
+            Ok(aver_rt::AverList::empty())
+        } else {
+            if let (Some(x), Some(xs)) = (__list_subject.first(), __list_subject.tail()) {
+                Ok(aver_rt::AverList::prepend_owned(
+                    {
+                        let __arg8 @ _ = crate::proof_std::aver_generated::kernel::std::caseNode(
+                            n.clone(),
+                            v.clone(),
+                            x,
+                        )?;
+                        crate::proof_std::aver_generated::kernel::std::eachGiven(
+                            __arg8,
+                            rest.clone(),
+                            next.clone(),
+                            answers,
+                        )
+                    }?,
+                    crate::proof_std::aver_generated::kernel::std::eachCase(
+                        n, v, &xs, rest, next, answers,
+                    )?,
+                ))
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// The node where v is the value x.

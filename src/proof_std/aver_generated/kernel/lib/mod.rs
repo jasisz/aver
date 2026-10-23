@@ -364,16 +364,16 @@ pub fn chain(
 /// terms[0] = terms[n] from n proofs, proof k of terms[k] = terms[k + 1]: the kernel's chain lists one term more than it has steps.
 #[inline(always)]
 pub fn trans(
-    mut terms @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
-    mut proofs @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Proof>,
+    terms @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
+    proofs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Proof>,
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Proof, AverStr> {
     crate::proof_std::cancel_checkpoint();
     if (aver_rt::AverInt::from_i64(terms.len() as i64)
         == aver_rt::AverInt::from_i64(proofs.len() as i64).add(&aver_rt::AverInt::from_i64(1)))
     {
         {
-            let __list_subject = proofs.clone();
-            if let Some((p, __pat0)) = aver_rt::list_uncons_cloned(&__list_subject) {
+            let __list_subject = proofs;
+            if let Some((p, __pat0)) = aver_rt::list_uncons_cloned(__list_subject) {
                 {
                     let __list_subject = __pat0;
                     if __list_subject.is_empty() {
@@ -382,7 +382,8 @@ pub fn trans(
                         Ok(
                             crate::proof_std::aver_generated::kernel::proof::Proof::PTrans(
                                 crate::proof_std::aver_generated::kernel::proof::Proof__PTrans(
-                                    terms, proofs,
+                                    terms.clone(),
+                                    proofs.clone(),
                                 ),
                             ),
                         )
@@ -392,7 +393,8 @@ pub fn trans(
                 Ok(
                     crate::proof_std::aver_generated::kernel::proof::Proof::PTrans(
                         crate::proof_std::aver_generated::kernel::proof::Proof__PTrans(
-                            terms, proofs,
+                            terms.clone(),
+                            proofs.clone(),
                         ),
                     ),
                 )
@@ -541,7 +543,7 @@ pub fn bothSides(
                         crate::proof_std::aver_generated::kernel::proof::Proof__PSymm(r.proof),
                     ),
                 ]);
-                crate::proof_std::aver_generated::kernel::lib::trans(__arg5, __arg6)
+                crate::proof_std::aver_generated::kernel::lib::trans(&__arg5, &__arg6)
             }
         }
     } else {

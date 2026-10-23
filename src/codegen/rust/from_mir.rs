@@ -883,7 +883,7 @@ fn handed_list_candidates(
 }
 
 /// The `List` params every call fills with a list built by `List.prepend`
-/// for it (or a list literal), whose nodes the callee then holds alone. A
+/// for it (or `[]`), whose nodes the callee then holds alone. A
 /// value is built when it is such a list, the result of a function whose
 /// every result is built, such a param, a `let` of a built value, or the rest
 /// of a built list taken apart. A greatest fixpoint: a param or a result
@@ -927,7 +927,8 @@ fn built_list_params(program: &crate::ir::mir::MirProgram) -> HashSet<(crate::ir
     ) -> bool {
         let built = |e: &MirExpr| depth < 32 && built(e, id, from, f, depth + 1);
         match expr {
-            MirExpr::List(_) => true,
+            // A literal with items is one flat node, which no match moves.
+            MirExpr::List(items) => items.is_empty(),
             MirExpr::Call(call) => match &call.node.callee {
                 MirCallee::Fn(callee) => f.results.contains(callee),
                 MirCallee::Builtin(b) => {
