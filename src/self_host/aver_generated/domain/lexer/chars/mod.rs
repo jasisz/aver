@@ -323,7 +323,11 @@ pub fn readNumberLoop__indexed(
         crate::cancel_checkpoint();
         if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
             {
-                let __int_match_subject = aver_rt::string_index_code_at(&src, &__str_index, &pos);
+                let __int_match_subject = aver_rt::string_index_code_at_i64(
+                    &src,
+                    &__str_index,
+                    aver_rt::string_position(&pos),
+                );
                 if __int_match_subject == -1i64 {
                     return (acc, pos);
                 } else {
@@ -374,7 +378,11 @@ pub fn readIdentLoopDotted__indexed(
     loop {
         crate::cancel_checkpoint();
         if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
-            match aver_rt::string_index_char_at(&src, &__str_index, &pos) {
+            match aver_rt::string_index_char_at_i64(
+                &src,
+                &__str_index,
+                aver_rt::string_position(&pos),
+            ) {
                 Some(c @ _) => {
                     if crate::aver_generated::domain::lexer::chars::isIdentCharDotted(c.clone()) {
                         {
@@ -409,7 +417,11 @@ pub fn readIdentLoopPlain__indexed(
     loop {
         crate::cancel_checkpoint();
         if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
-            match aver_rt::string_index_char_at(&src, &__str_index, &pos) {
+            match aver_rt::string_index_char_at_i64(
+                &src,
+                &__str_index,
+                aver_rt::string_position(&pos),
+            ) {
                 Some(c @ _) => {
                     if crate::aver_generated::domain::lexer::chars::isIdentCharPlain(c.clone()) {
                         {

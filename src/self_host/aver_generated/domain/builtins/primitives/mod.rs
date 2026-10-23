@@ -1429,7 +1429,11 @@ pub fn stringToCharList__indexed(
         crate::cancel_checkpoint();
         let reversed @ _ = acc.reverse();
         if (pos < total) {
-            match aver_rt::string_index_char_at(&s, &__str_index, &pos) {
+            match aver_rt::string_index_char_at_i64(
+                &s,
+                &__str_index,
+                aver_rt::string_position(&pos),
+            ) {
                 Some(c @ _) => {
                     let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
                     let __tco3 = aver_rt::AverList::prepend_owned(

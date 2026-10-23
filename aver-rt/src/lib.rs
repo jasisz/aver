@@ -61,7 +61,9 @@ pub use strcursor::{
     str_cursor_next, str_fold_lower, str_fold_upper,
 };
 pub use string_index::{
-    StringIndex, string_index_build, string_index_char_at, string_index_code_at, string_index_slice,
+    StringIndex, string_index_build, string_index_char_at, string_index_char_at_i64,
+    string_index_code_at, string_index_code_at_i64, string_index_slice, string_index_slice_i64,
+    string_position,
 };
 
 #[cfg(feature = "terminal")]

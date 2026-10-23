@@ -3797,7 +3797,11 @@ pub fn userCtorTagOffsetLoop__indexed(
         crate::cancel_checkpoint();
         let accPlusOne @ _ = acc.add(&aver_rt::AverInt::from_i64(1));
         if (pos < aver_rt::AverInt::from_i64(name.chars().count() as i64)) {
-            match aver_rt::string_index_char_at(&name, &__str_index, &pos) {
+            match aver_rt::string_index_char_at_i64(
+                &name,
+                &__str_index,
+                aver_rt::string_position(&pos),
+            ) {
                 Some(ch @ _) => {
                     let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
                     let __tco2 = {
@@ -3886,27 +3890,27 @@ pub fn canonicalCtorNameAtBothDots__indexed(
         name
     } else {
         if {
-            let __arg5 @ _ = aver_rt::string_index_slice(
+            let __arg5 @ _ = aver_rt::string_index_slice_i64(
                 &name,
                 &__str_index,
-                &prevDot.add(&aver_rt::AverInt::from_i64(1)),
-                &lastDot,
+                aver_rt::string_position(&prevDot.add(&aver_rt::AverInt::from_i64(1))),
+                aver_rt::string_position(&lastDot),
             );
             {
-                let __arg6 @ _ = aver_rt::string_index_slice(
+                let __arg6 @ _ = aver_rt::string_index_slice_i64(
                     &name,
                     &__str_index,
-                    &lastDot.add(&aver_rt::AverInt::from_i64(1)),
-                    &total,
+                    aver_rt::string_position(&lastDot.add(&aver_rt::AverInt::from_i64(1))),
+                    aver_rt::string_position(&total),
                 );
                 crate::aver_generated::domain::ast::isTypeVariantTail(__arg5, __arg6)
             }
         } {
-            aver_rt::string_index_slice(
+            aver_rt::string_index_slice_i64(
                 &name,
                 &__str_index,
-                &prevDot.add(&aver_rt::AverInt::from_i64(1)),
-                &total,
+                aver_rt::string_position(&prevDot.add(&aver_rt::AverInt::from_i64(1))),
+                aver_rt::string_position(&total),
             )
         } else {
             name
@@ -3926,7 +3930,11 @@ pub fn lastDotAtOrBefore__indexed(
         if (pos < aver_rt::AverInt::from_i64(0)) {
             return aver_rt::AverInt::from_i64(-1);
         } else {
-            match aver_rt::string_index_char_at(&name, &__str_index, &pos) {
+            match aver_rt::string_index_char_at_i64(
+                &name,
+                &__str_index,
+                aver_rt::string_position(&pos),
+            ) {
                 Some(c @ _) => {
                     if (&*c == ".") {
                         return pos;

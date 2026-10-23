@@ -972,7 +972,8 @@ fn rewrite_children_inner(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<
 /// A non-`Fn` callee (builtin / intrinsic / fn-value) normally treats every
 /// Int arg as a general-Int (boxed) context. Compiler-owned character folds
 /// are the narrow exception: their first argument is the same raw scalar
-/// carrier they return.
+/// carrier they return, and the indexed string reads take a position that
+/// renders raw as it is.
 fn rewrite_call_args(
     args: Vec<Spanned<MirExpr>>,
     callee: &MirCallee,
@@ -987,6 +988,8 @@ fn rewrite_call_args(
         .map(|(i, a)| {
             if callee_facts.is_some_and(|f| f.param_is_bare(i))
                 || super::bare_i64::intrinsic_accepts_raw_code_arg(callee, i)
+                || (super::bare_i64::intrinsic_accepts_raw_position_arg(callee, i)
+                    && renders_raw(&a.node, ctx.facts))
             {
                 rewrite_raw(a, ctx)
             } else {

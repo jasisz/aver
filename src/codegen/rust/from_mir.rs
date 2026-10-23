@@ -421,6 +421,18 @@ fn emit_bare_i64(expr: &Spanned<MirExpr>) -> Option<String> {
     }
 }
 
+/// A string position for the indexed reads, as an `i64`: raw when the
+/// analysis proved it bare, saturated from `AverInt` otherwise.
+fn emit_string_position(arg: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String> {
+    if mir_expr_is_bare_i64(arg, ctx)
+        && let Some(raw) = emit_bare_i64(arg)
+    {
+        return Some(raw);
+    }
+    let boxed = emit_mir_expr(arg, ctx)?;
+    Some(format!("aver_rt::string_position(&{boxed})"))
+}
+
 /// Per-fn borrow policy for the MIR walker — the slice of
 /// [`super::emit_ctx::EmitCtx`] the covered arms read, owned so a
 /// borrowing [`MirEmitCtx`] can be built from it. Recomputed per
@@ -7630,19 +7642,22 @@ fn emit_mir_intrinsic_call(
             let s = emit_mir_expr(&args[0], ctx)?;
             Some(format!("aver_rt::string_index_build(&{s})"))
         }
+        // A position the representation analysis proved to fit `i64` (a
+        // string-walk position, `bare_i64::string_positions`) arrives
+        // raw; any other position saturates, which keeps every answer.
         BuiltinIntrinsic::StrIndexCharAt => {
             let s = emit_mir_expr(&args[0], ctx)?;
             let index = emit_mir_expr(&args[1], ctx)?;
-            let position = emit_mir_expr(&args[2], ctx)?;
+            let position = emit_string_position(&args[2], ctx)?;
             Some(format!(
-                "aver_rt::string_index_char_at(&{s}, &{index}, &{position})"
+                "aver_rt::string_index_char_at_i64(&{s}, &{index}, {position})"
             ))
         }
         BuiltinIntrinsic::StrIndexCodeAt => {
             let s = emit_mir_expr(&args[0], ctx)?;
             let index = emit_mir_expr(&args[1], ctx)?;
-            let position = emit_mir_expr(&args[2], ctx)?;
-            let call = format!("aver_rt::string_index_code_at(&{s}, &{index}, &{position})");
+            let position = emit_string_position(&args[2], ctx)?;
+            let call = format!("aver_rt::string_index_code_at_i64(&{s}, &{index}, {position})");
             Some(if raw_result {
                 call
             } else {
@@ -7652,10 +7667,10 @@ fn emit_mir_intrinsic_call(
         BuiltinIntrinsic::StrIndexSlice => {
             let s = emit_mir_expr(&args[0], ctx)?;
             let index = emit_mir_expr(&args[1], ctx)?;
-            let from = emit_mir_expr(&args[2], ctx)?;
-            let to = emit_mir_expr(&args[3], ctx)?;
+            let from = emit_string_position(&args[2], ctx)?;
+            let to = emit_string_position(&args[3], ctx)?;
             Some(format!(
-                "aver_rt::string_index_slice(&{s}, &{index}, &{from}, &{to})"
+                "aver_rt::string_index_slice_i64(&{s}, &{index}, {from}, {to})"
             ))
         }
         // List builder (list-build fusion). The builder IS the

@@ -4086,21 +4086,25 @@ pub fn splitDottedLoop__indexed(
     loop {
         crate::cancel_checkpoint();
         if (pos < total) {
-            match aver_rt::string_index_char_at(&name, &__str_index, &pos) {
+            match aver_rt::string_index_char_at_i64(
+                &name,
+                &__str_index,
+                aver_rt::string_position(&pos),
+            ) {
                 Some(c @ _) => {
                     if (&*c == ".") {
                         return Some((
-                            aver_rt::string_index_slice(
+                            aver_rt::string_index_slice_i64(
                                 &name,
                                 &__str_index,
-                                &aver_rt::AverInt::from_i64(0),
-                                &pos,
+                                0i64,
+                                aver_rt::string_position(&pos),
                             ),
-                            aver_rt::string_index_slice(
+                            aver_rt::string_index_slice_i64(
                                 &name,
                                 &__str_index,
-                                &pos.add(&aver_rt::AverInt::from_i64(1)),
-                                &total,
+                                aver_rt::string_position(&pos.add(&aver_rt::AverInt::from_i64(1))),
+                                aver_rt::string_position(&total),
                             ),
                         ));
                     } else {
