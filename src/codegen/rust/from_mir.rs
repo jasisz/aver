@@ -172,6 +172,9 @@ pub struct MirEmitCtx<'a> {
     pub moved_roots: &'a HashSet<crate::ir::mir::LocalId>,
     /// See [`crate::ir::mir::field_moves::moved_paths`].
     pub moved_paths: &'a [(usize, crate::ir::mir::LocalId, Vec<String>)],
+    /// The `List.prepend` (by the address of its arguments) a list match's
+    /// cons arm builds in the node it took apart (see [`list_reuse_target`]).
+    pub list_slot: Option<usize>,
     /// The boxed records whose new field values are being emitted, each
     /// already bound under its own name (see [`emit_boxed_record_update`]).
     pub record_alias: Option<&'a RecordAlias<'a>>,
@@ -219,6 +222,7 @@ impl<'a> MirEmitCtx<'a> {
             movable_projections: empty_addr_set(),
             moved_roots: empty_slot_set(),
             moved_paths: &[],
+            list_slot: None,
             record_alias: None,
         }
     }
@@ -268,6 +272,7 @@ impl<'a> MirEmitCtx<'a> {
             movable_projections: &policy.movable_projections,
             moved_roots: &policy.moved_roots,
             moved_paths: &policy.moved_paths,
+            list_slot: None,
             record_alias: None,
         }
     }
@@ -304,6 +309,7 @@ impl<'a> MirEmitCtx<'a> {
             movable_projections: &policy.movable_projections,
             moved_roots: &policy.moved_roots,
             moved_paths: &policy.moved_paths,
+            list_slot: None,
             record_alias: None,
         }
     }
@@ -4004,9 +4010,21 @@ fn emit_mir_match_with(
     // into `arms`, then reads the matching pre-rendered string. The parts
     // an arm only reads are borrowed in its body (see [`lent_parts`]).
     let path = match_path(m, &arms, emit_ctx);
+    let reuse = list_reuse_target(m, path, emit_ctx);
     let mut lent: Vec<HashSet<String>> = Vec::with_capacity(m.arms.len());
     let mut arm_bodies: Vec<String> = Vec::with_capacity(m.arms.len());
     for (arm, resolved) in m.arms.iter().zip(&arms) {
+        let slot_ctx;
+        let emit_ctx = match (reuse, &arm.pattern) {
+            (Some(target), MirPattern::Cons { .. }) => {
+                slot_ctx = MirEmitCtx {
+                    list_slot: Some(target),
+                    ..*emit_ctx
+                };
+                &slot_ctx
+            }
+            _ => emit_ctx,
+        };
         // A part borrowed from the subject needs the subject to stay: an arm
         // that hands the subject's local on borrows nothing from it.
         let keeps_subject = super::ownership::projection_root_local(&m.subject.node)
@@ -4283,6 +4301,7 @@ fn emit_mir_match_with(
         return Some(bind(emit_list_match(
             subj,
             subject_lent,
+            reuse.is_some(),
             &heads,
             &arms,
             list_shape,
@@ -4686,6 +4705,46 @@ fn takes_list_apart(m: &MirMatch, ctx: &MirEmitCtx<'_>) -> bool {
     list_match_takes_apart(m)
         && !mir_expr_is_borrowed_param_read(&m.subject.node, ctx)
         && !owned_read_clones(&m.subject.node, ctx)
+}
+
+/// The one `List.prepend` (by the address of its arguments) that the cons
+/// arm of a list match builds in the node the match takes apart
+/// (`aver_list_match_reuse!`): the match takes its list apart (see
+/// [`takes_list_apart`]), the list is not an `Int` list, and the arm calls
+/// `List.prepend` exactly once, outside `(a, b)!`, onto a list of the same
+/// type. A node the list does not hold alone leaves the slot empty and the
+/// call allocates as before.
+fn list_reuse_target(m: &MirMatch, path: MatchPath, ctx: &MirEmitCtx<'_>) -> Option<usize> {
+    fn prepends<'e>(expr: &'e MirExpr, ctx: &MirEmitCtx<'_>, out: &mut Vec<&'e [Spanned<MirExpr>]>) {
+        if let Some(("List.prepend", args)) = mir_builtin_call_parts(expr, ctx) {
+            out.push(args);
+        }
+        let before = out.len();
+        crate::ir::mir::expr::walk_children(expr, &mut |child| prepends(child, ctx, out));
+        // A branch of `(a, b)!` runs on another thread.
+        if matches!(expr, MirExpr::IndependentProduct(_)) && out.len() > before {
+            out.push(&[]);
+        }
+    }
+    if path != MatchPath::List
+        || ctx.codegen.is_none()
+        || type_is_int_list(m.subject.ty())
+        || !takes_list_apart(m, ctx)
+    {
+        return None;
+    }
+    let cons = m
+        .arms
+        .iter()
+        .find(|arm| matches!(arm.pattern, MirPattern::Cons { .. }))?;
+    let mut found = Vec::new();
+    prepends(&cons.body.node, ctx, &mut found);
+    match found.as_slice() {
+        [args] if args.len() == 2 && args[1].ty().is_some() && args[1].ty() == m.subject.ty() => {
+            Some(args.as_ptr() as usize)
+        }
+        _ => None,
+    }
 }
 
 /// Whether a list match has the shape `aver_list_match!` takes: `[]` and
@@ -7328,6 +7387,11 @@ fn emit_mir_builtin_call(
             // its one copy.
             let head = clone!(0);
             let list = emit_operand(&args[1])?;
+            if ctx.list_slot == Some(args.as_ptr() as usize) {
+                let list = super::ownership::materialize_owned(list, &args[1].node, ctx);
+                let slot = generated_ident("list_slot");
+                return Some(format!("{slot}.prepend({head}, {list})"));
+            }
             match super::ownership::moves_when_owned(&args[1].node, ctx) {
                 true => format!("{list_type}::prepend_owned({head}, {list})"),
                 false => format!(
@@ -8024,6 +8088,7 @@ mod tests {
             movable_projections: &policy.movable_projections,
             moved_roots: &policy.moved_roots,
             moved_paths: &policy.moved_paths,
+            list_slot: None,
             record_alias: None,
         };
         let lit = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
@@ -9147,6 +9212,7 @@ mod tests {
             movable_projections: &policy.movable_projections,
             moved_roots: &policy.moved_roots,
             moved_paths: &policy.moved_paths,
+            list_slot: None,
             record_alias: None,
         }
     }

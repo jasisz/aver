@@ -519,11 +519,14 @@ fn emit_default_dispatch_arm(
 }
 
 /// `lent`: `subject` is a `&AverList`, matched through the borrow (the macro
-/// takes its list by value). `heads`: the heads an arm borrows from the list
-/// instead of cloning them out.
+/// takes its list by value). `reuse`: the cons arm builds a list in the node
+/// it takes apart (`aver_list_match_reuse!`). `heads`: the heads an arm
+/// borrows from the list instead of cloning them out.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_list_match<F>(
     subject: String,
     lent: bool,
+    reuse: bool,
     heads: &HashSet<String>,
     arms: &[ResolvedMatchArm],
     list_shape: Option<ListMatchShape>,
@@ -539,7 +542,7 @@ where
     if !lent
         && heads.is_empty()
         && let Some(code) =
-            try_emit_list_match_macro(&subject, arms, list_shape, ctx, &body_for_arm)
+            try_emit_list_match_macro(&subject, reuse, arms, list_shape, ctx, &body_for_arm)
     {
         return code;
     }
@@ -556,6 +559,7 @@ where
 /// Emit the aver_list_match! macro for the common []/[h,..t] two-arm pattern.
 fn try_emit_list_match_macro<F>(
     subject: &str,
+    reuse: bool,
     arms: &[ResolvedMatchArm],
     list_shape: Option<ListMatchShape>,
     ctx: &CodegenContext,
@@ -590,6 +594,14 @@ where
             body.to_string()
         }
     };
+    if reuse {
+        return Some(format!(
+            "aver_rt::aver_list_match_reuse!({subject}, [] => {}, [{head_name}, {tail_name}, {}] => {})",
+            wrap(&empty_body),
+            generated_ident("list_slot"),
+            wrap(&cons_body)
+        ));
+    }
     Some(format!(
         "aver_list_match!({}, [] => {}, [{}, {}] => {})",
         subject,

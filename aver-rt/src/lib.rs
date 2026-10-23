@@ -1299,6 +1299,38 @@ impl<T> AverList<T> {
         self.uncons_cloned()
     }
 
+    /// `uncons_owned` that also keeps the node it took apart: a `Prepend`
+    /// node this list alone holds gives up its head and tail and stays
+    /// allocated in the returned slot, so the next node the caller builds
+    /// takes its place ([`ListSlot::prepend`]) instead of a free and an
+    /// allocation. Any other list is read as `uncons_cloned` reads it and
+    /// gives an empty slot.
+    pub fn uncons_reuse(mut self) -> Option<(T, Self, ListSlot<T>)>
+    where
+        T: Clone,
+    {
+        if self.start == 0
+            && let Some(node) = self.inner.as_mut().and_then(Rc::get_mut)
+            && matches!(node, AverListInner::Prepend { .. })
+        {
+            let hole = AverListInner::Concat {
+                left: Self::empty(),
+                right: Self::empty(),
+                len: 0,
+            };
+            let inner = std::mem::ManuallyDrop::new(std::mem::replace(node, hole));
+            let AverListInner::Prepend { head, tail, .. } = &*inner else {
+                unreachable!("the shape was read just above")
+            };
+            // SAFETY: `inner` is never dropped, so its head and tail are each
+            // read out exactly once; `len` is a plain usize.
+            let (head, tail) = unsafe { (std::ptr::read(head), std::ptr::read(tail)) };
+            return Some((head, tail, ListSlot(self.inner.take())));
+        }
+        self.uncons_cloned()
+            .map(|(head, tail)| (head, tail, ListSlot(None)))
+    }
+
     pub fn empty() -> Self {
         Self {
             inner: None,
@@ -1783,6 +1815,60 @@ macro_rules! aver_list_match {
     }};
 }
 
+/// The node of a list a match took apart ([`AverList::uncons_reuse`]), kept
+/// for the node the arm builds next. An empty slot holds nothing; a slot
+/// dropped unused frees its node.
+pub struct ListSlot<T>(Option<Rc<AverListInner<T>>>);
+
+impl<T> ListSlot<T> {
+    /// `AverList::prepend_owned` that builds the node in this slot's memory.
+    pub fn prepend(self, item: T, list: AverList<T>) -> AverList<T> {
+        let Some(mut node) = self.0 else {
+            return AverList::prepend_owned(item, list);
+        };
+        let Some(slot) = Rc::get_mut(&mut node) else {
+            return AverList::prepend_owned(item, list);
+        };
+        let tail = if list.is_empty() {
+            AverList::empty()
+        } else {
+            list
+        };
+        let node_value = AverListInner::Prepend {
+            head: item,
+            len: tail.len() + 1,
+            tail,
+        };
+        // SAFETY: the slot holds the empty `Concat` that `uncons_reuse` left
+        // there, which owns nothing, so writing over it without dropping it
+        // leaks nothing.
+        unsafe { std::ptr::write(slot, node_value) };
+        AverList {
+            inner: Some(node),
+            start: 0,
+            segment_index: 0,
+        }
+    }
+}
+
+/// `aver_list_match!` whose cons arm also gets the node it took apart, as a
+/// [`ListSlot`] for the one list it builds with `ListSlot::prepend`.
+#[macro_export]
+macro_rules! aver_list_match_reuse {
+    ($list:expr, [] => $empty:expr, [$head:ident, $tail:ident, $slot:ident] => $cons:expr) => {{
+        let __aver_list = $list;
+        if __aver_list.is_empty() {
+            $empty
+        } else if let ::core::option::Option::Some(($head, $tail, $slot)) =
+            $crate::AverList::uncons_reuse(__aver_list)
+        {
+            $cons
+        } else {
+            panic!("Aver: non-exhaustive list match")
+        }
+    }};
+}
+
 pub fn string_join<S: AsRef<str>>(parts: &AverList<S>, sep: &str) -> String {
     let mut iter = parts.iter();
     let Some(first) = iter.next() else {
@@ -1851,6 +1937,39 @@ mod tests {
 
         let onto_spent = AverList::prepend_owned(Rc::new(9), flat.drop_first(2));
         assert_eq!(onto_spent.len(), 1);
+    }
+
+    /// A unique `Prepend` node taken apart by `uncons_reuse` holds the next
+    /// node built in its slot; a shared node, another shape or an unused
+    /// slot leave every list as it was and free what they should.
+    #[test]
+    fn uncons_reuse_builds_the_next_node_in_the_old_one() {
+        use crate::shared::Shared as Rc;
+        let word = |s: &str| AverStr::from(s);
+        let list = AverList::prepend_owned(word("b"), AverList::from_vec(vec![word("c")]));
+        let list = AverList::prepend_owned(word("a"), list);
+        let node = list.inner.as_ref().map(Rc::as_ptr);
+        let (a, rest, slot) = list.uncons_reuse().expect("three elements");
+        assert_eq!((a.as_ref(), rest.len()), ("a", 2));
+        let env = slot.prepend(word("x"), AverList::from_vec(vec![word("y")]));
+        assert_eq!(env.inner.as_ref().map(Rc::as_ptr), node, "built in the old node");
+        let words: Vec<&str> = env.iter().map(|w| w.as_ref()).collect();
+        assert_eq!(words, ["x", "y"]);
+
+        let kept = rest.clone();
+        let (b, c, slot) = rest.uncons_reuse().expect("shared node");
+        assert!(slot.0.is_none(), "a shared node is not reused");
+        assert_eq!((b.as_ref(), c.len(), kept.len()), ("b", 1, 2));
+        let onto_empty = slot.prepend(b, AverList::empty());
+        assert_eq!(onto_empty.len(), 1);
+
+        let (c, rest, slot) = c.uncons_reuse().expect("flat");
+        assert!(slot.0.is_none() && rest.is_empty() && c.as_ref() == "c");
+        let (_, _, unused) = env.uncons_reuse().expect("unique node");
+        assert!(unused.0.is_some());
+        drop(unused);
+        let words: Vec<&str> = kept.iter().map(|w| w.as_ref()).collect();
+        assert_eq!(words, ["b", "c"]);
     }
 
     /// A literal that runs again and again is the one static node, never a
