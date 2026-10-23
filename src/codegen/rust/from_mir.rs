@@ -859,10 +859,10 @@ fn handed_list_candidates(
         let Some(resolved) = ctx.resolved_program.fn_by_id(*id) else {
             continue;
         };
-        let as_value = values
-            .iter()
-            .any(|v| *v == mir_fn.name || v.rsplit('.').next() == Some(mir_fn.name.as_str()));
-        if as_value
+        // A function used as a value is named as `own_param` names it. The
+        // adapter of a function value passes every param as a direct call
+        // does, so a name this misses costs a copy, never correctness.
+        if values.contains(&mir_fn.name)
             || mir_fn.name == "main"
             || ctx.guest_entry.as_deref() == Some(resolved.name.as_str())
             || ctx.mutual_tco_members.contains(id)
