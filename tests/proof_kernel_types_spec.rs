@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// (script, what the kernel says, whether an untyped kernel accepted it)
-const REFUSED: [(&str, &str, bool); 34] = [
+const REFUSED: [(&str, &str, bool); 36] = [
     // A law about a sum, cited at an Int: `x = One.Only` for every `x` of
     // the one-value type `One`, read at 0 and at 1, gives `0 = 1`.
     (
@@ -198,6 +198,22 @@ const REFUSED: [(&str, &str, bool); 34] = [
         "constant a has type String, declared Int",
         true,
     ),
+    // A second definition with the same name supplied fake termination
+    // evidence for the first, nonterminating one. Unfolding f(n) = f(n) + 1
+    // and ring arithmetic then proved 0 = 1.
+    (
+        "duplicate_definition_spoofs_termination",
+        "duplicate definition f",
+        true,
+    ),
+    // A theorem given shadowed a module constant, but the const step ignored
+    // lexical scope and asserted that the arbitrary given had the constant's
+    // value.
+    (
+        "constant_shadowed_by_given",
+        "module-level binding n is shadowed by a variable",
+        true,
+    ),
 ];
 
 fn fixtures() -> PathBuf {
@@ -233,8 +249,8 @@ fn every_refused_script_is_listed() {
     assert_eq!(on_disk, listed);
 }
 
-/// Sixteen scripts were accepted before their corresponding kernel gates.
+/// Eighteen scripts were accepted before their corresponding kernel gates.
 #[test]
-fn sixteen_of_them_were_accepted_before() {
-    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 16);
+fn eighteen_of_them_were_accepted_before() {
+    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 18);
 }

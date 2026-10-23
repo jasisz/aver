@@ -69,11 +69,23 @@ verify argsFit
 fn declarationsTyped(env: Env, path: String) -> Result<Unit, String>
     ? "Every definition body and constant value fits the type its declaration gives it; theorem givens are not in their scope."
     scope = Env(defs = env.defs, consts = env.consts, laws = [], hyps = [], vars = [], sums = env.sums, recs = env.recs, sigs = env.sigs)
+    uniqueDefs(scope.defs, [], path)?
     defsTyped(scope.defs, scope, path)?
     constsTyped(scope.consts, scope, path)
 
 verify declarationsTyped
     declarationsTyped(Env(defs = [Def(name = "cast", params = [Kernel.Term.typed("x", Ty.TyStr)], ret = Ty.TyInt, lets = [], body = Term.TVar("x"))], consts = [], laws = [], hyps = [], vars = [], sums = [], recs = [], sigs = []), "proof") => Result.Err("step proof: definition cast has type String, declared Int")
+
+fn uniqueDefs(ds: List<Def>, seen: List<String>, path: String) -> Result<Unit, String>
+    ? "No second definition may borrow the first one's identity, type or termination evidence."
+    match ds
+        [] -> Result.Ok(Unit)
+        [d, ..rest] -> match List.contains(seen, d.name)
+            true -> Result.Err("step {path}: duplicate definition {d.name}")
+            false -> uniqueDefs(rest, List.prepend(d.name, seen), path)
+
+verify uniqueDefs
+    uniqueDefs([Def(name = "f", params = [], ret = Ty.TyInt, lets = [], body = Term.TInt(0)), Def(name = "f", params = [], ret = Ty.TyInt, lets = [], body = Term.TInt(1))], [], "proof") => Result.Err("step proof: duplicate definition f")
 
 fn defsTyped(ds: List<Def>, env: Env, path: String) -> Result<Unit, String>
     ? "Every definition in the script is well typed."
@@ -164,7 +176,7 @@ fn conclude(p: Proof, env: Env, path: String) -> Result<Eqn, String>
         Proof.PTrans(ts, ps) -> trans(ts, ps, env, path)
         Proof.PCongr(c, q) -> congr(c, q, env, path)
         Proof.PUnfold(f, k, xs, ys, pre) -> unfold(f, k, xs, ys, pre, env, path)
-        Proof.PConst(n) -> constant(n, env.consts, path)
+        Proof.PConst(n) -> constant(n, env, path)
         Proof.PArm(k, ys, t, q) -> armStep(k, ys, t, q, env, path)
         Proof.PProj(t) -> proj(t, env, path)
         Proof.PCell(t) -> cell(t, path)
@@ -721,17 +733,26 @@ fn withHyps(env: Env, hs: List<Hyp>) -> Env
 verify withHyps
     withHyps(emptyEnv(), []).hyps => []
 
-fn constant(n: String, cs: List<Const>, path: String) -> Result<Eqn, String>
-    ? "A module-level binding's value: the variable that reads it equals the value the script carries."
+fn constant(n: String, env: Env, path: String) -> Result<Eqn, String>
+    ? "A module-level binding's value, unless a variable in the current proof scope shadows its name."
+    match List.contains(Kernel.Proof.givenNames(env.vars), n)
+        true -> refuse(path, "module-level binding {n} is shadowed by a variable")
+        false -> constantIn(n, env.consts, path)
+
+verify constant
+    constant("n", Env(defs = [], consts = [Const(name = "n", ty = Ty.TyInt, value = Term.TInt(0))], laws = [], hyps = [], vars = [Kernel.Term.typed("n", Ty.TyInt)], sums = [], recs = [], sigs = []), "p") => Result.Err("step p: module-level binding n is shadowed by a variable")
+
+fn constantIn(n: String, cs: List<Const>, path: String) -> Result<Eqn, String>
+    ? "A module-level binding's declared value."
     match cs
         [] -> refuse(path, "no module-level binding {n}")
         [c, ..rest] -> match c.name == n
             true -> Result.Ok(Eqn(lhs = Term.TVar(n), rhs = c.value))
-            false -> constant(n, rest, path)
+            false -> constantIn(n, rest, path)
 
-verify constant
-    constant("base", [Const(name = "base", ty = Ty.TyAny, value = Term.TInt(40))], "p") => Result.Ok(Eqn(lhs = Term.TVar("base"), rhs = Term.TInt(40)))
-    constant("Lib.base", [Const(name = "base", ty = Ty.TyAny, value = Term.TInt(40))], "p") => Result.Err("step p: no module-level binding Lib.base")
+verify constantIn
+    constantIn("base", [Const(name = "base", ty = Ty.TyAny, value = Term.TInt(40))], "p") => Result.Ok(Eqn(lhs = Term.TVar("base"), rhs = Term.TInt(40)))
+    constantIn("Lib.base", [Const(name = "base", ty = Ty.TyAny, value = Term.TInt(40))], "p") => Result.Err("step p: no module-level binding Lib.base")
 
 fn zipBind(names: List<String>, values: List<Term>) -> List<Binding>
     ? "Pair names with terms, as far as both go."
