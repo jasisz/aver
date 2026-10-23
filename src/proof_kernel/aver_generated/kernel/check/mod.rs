@@ -1548,6 +1548,276 @@ pub fn argsFit(
     }
 }
 
+/// Every definition body and constant value fits the type its declaration gives it; theorem givens are not in their scope.
+pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    let scope @ _ = Box::new(
+        crate::proof_kernel::aver_generated::kernel::check::Env__Fields {
+            defs: env.defs.clone(),
+            consts: env.consts.clone(),
+            laws: aver_rt::AverList::empty(),
+            hyps: aver_rt::AverList::empty(),
+            vars: aver_rt::AverList::empty(),
+            sums: env.sums.clone(),
+            recs: env.recs.clone(),
+            sigs: env.sigs.clone(),
+        },
+    );
+    crate::proof_kernel::aver_generated::kernel::check::defsTyped(
+        &scope.defs,
+        &scope,
+        path.clone(),
+    )?;
+    crate::proof_kernel::aver_generated::kernel::check::constsTyped(&scope.consts, &scope, path)
+}
+
+/// Every definition in the script is well typed.
+#[inline(always)]
+pub fn defsTyped(
+    ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
+    env @ _: &Env,
+    mut path @ _: AverStr,
+) -> Result<(), AverStr> {
+    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>;
+    let mut ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def> =
+        ds;
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __list_subject = ds;
+            if __list_subject.is_empty() {
+                return Ok(());
+            } else {
+                if let (Some(d), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    match crate::proof_kernel::aver_generated::kernel::check::definitionTyped(
+                        d,
+                        env,
+                        path.clone(),
+                    ) {
+                        Err(why @ _) => {
+                            return Err(why);
+                        }
+                        Ok(done @ _) => {
+                            let __tco0 = rest;
+                            __hold0 = __tco0;
+                            ds = &__hold0;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
+    }
+}
+
+/// A definition body has its declared result type under its parameters and local bindings.
+pub fn definitionTyped(
+    d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
+    env @ _: &Env,
+    path @ _: AverStr,
+) -> Result<(), AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    let scope @ _ = {
+        let __arg4 @ _ =
+            crate::proof_kernel::aver_generated::kernel::check::withVars(env, &d.params);
+        crate::proof_kernel::aver_generated::kernel::check::letsTyped(&d.lets, __arg4, path.clone())
+    }?;
+    let __arg5 @ _ =
+        crate::proof_kernel::aver_generated::kernel::check::typeOf(&d.body, &scope, path.clone())?;
+    let __arg6 @ _ = aver_rt::AverStr::from({
+        let mut __b = {
+            let mut __b = aver_rt::Buffer::with_capacity(
+                (aver_rt::AverInt::from_i64(27)).to_usize().unwrap_or(0),
+            );
+            __b.push_str(&::aver_rt::str_lit!("definition "));
+            __b
+        };
+        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name))));
+        __b
+    });
+    crate::proof_kernel::aver_generated::kernel::check::declaredFits(&__arg5, &d.ret, __arg6, path)
+}
+
+/// Infer local bindings in source order, making each one visible to those after it and to the body.
+#[inline(always)]
+pub fn letsTyped(
+    bs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
+    mut env @ _: Env,
+    mut path @ _: AverStr,
+) -> Result<Env, AverStr> {
+    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>;
+    let mut bs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding> =
+        bs;
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __list_subject = bs;
+            if __list_subject.is_empty() {
+                return Ok(env);
+            } else {
+                if let (Some(b), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    {
+                        let __tco0 = rest;
+                        let __tco1 = {
+                            let __arg6 @ _ = aver_rt::AverList::from_vec(vec![{
+                                let __arg5 @ _ =
+                                    crate::proof_kernel::aver_generated::kernel::check::typeOf(
+                                        &b.value,
+                                        &env,
+                                        path.clone(),
+                                    )?;
+                                crate::proof_kernel::aver_generated::kernel::term::typed(
+                                    b.name.clone(),
+                                    __arg5,
+                                )
+                            }]);
+                            crate::proof_kernel::aver_generated::kernel::check::withVars(
+                                &env, &__arg6,
+                            )
+                        };
+                        __hold0 = __tco0;
+                        bs = &__hold0;
+                        env = __tco1;
+                        continue;
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
+    }
+}
+
+/// Every module constant value has its declared type.
+#[inline(always)]
+pub fn constsTyped(
+    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
+    env @ _: &Env,
+    mut path @ _: AverStr,
+) -> Result<(), AverStr> {
+    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>;
+    let mut cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const> =
+        cs;
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __list_subject = cs;
+            if __list_subject.is_empty() {
+                return Ok(());
+            } else {
+                if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    {
+                        let __subject = {
+                            let __arg7 @ _ =
+                                crate::proof_kernel::aver_generated::kernel::check::typeOf(
+                                    &c.value,
+                                    env,
+                                    path.clone(),
+                                )?;
+                            {
+                                let __arg8 @ _ = aver_rt::AverStr::from({
+                                    let mut __b = {
+                                        let mut __b = aver_rt::Buffer::with_capacity(
+                                            (aver_rt::AverInt::from_i64(25))
+                                                .to_usize()
+                                                .unwrap_or(0),
+                                        );
+                                        __b.push_str(&::aver_rt::str_lit!("constant "));
+                                        __b
+                                    };
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                        &(c.name),
+                                    )));
+                                    __b
+                                });
+                                crate::proof_kernel::aver_generated::kernel::check::declaredFits(
+                                    &__arg7,
+                                    &c.ty,
+                                    __arg8,
+                                    path.clone(),
+                                )
+                            }
+                        };
+                        match __subject {
+                            Err(why @ _) => {
+                                return Err(why);
+                            }
+                            Ok(done @ _) => {
+                                let __tco0 = rest;
+                                __hold0 = __tco0;
+                                cs = &__hold0;
+                                continue;
+                            }
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
+    }
+}
+
+/// A declaration's inferred type fits the type it announces.
+#[inline(always)]
+pub fn declaredFits(
+    actual @ _: &crate::proof_kernel::aver_generated::kernel::term::Ty,
+    declared @ _: &crate::proof_kernel::aver_generated::kernel::term::Ty,
+    what @ _: AverStr,
+    path @ _: AverStr,
+) -> Result<(), AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    if crate::proof_kernel::aver_generated::kernel::types::fits(actual.clone(), declared.clone()) {
+        Ok(())
+    } else {
+        Err(aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = {
+                    let mut __b = {
+                        let mut __b = {
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = {
+                                        let mut __b = aver_rt::Buffer::with_capacity(
+                                            (aver_rt::AverInt::from_i64(92))
+                                                .to_usize()
+                                                .unwrap_or(0),
+                                        );
+                                        __b.push_str(&::aver_rt::str_lit!("step "));
+                                        __b
+                                    };
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                        &(path),
+                                    )));
+                                    __b
+                                };
+                                __b.push_str(&::aver_rt::str_lit!(": "));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(what))));
+                            __b
+                        };
+                        __b.push_str(&::aver_rt::str_lit!(" has type "));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        &(crate::proof_kernel::aver_generated::kernel::types::show(actual)),
+                    )));
+                    __b
+                };
+                __b.push_str(&::aver_rt::str_lit!(", declared "));
+                __b
+            };
+            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                &(crate::proof_kernel::aver_generated::kernel::types::show(declared)),
+            )));
+            __b
+        }))
+    }
+}
+
 /// The variables a pattern binds over a subject of this type, a refusal naming the step when it does not fit.
 #[inline(always)]
 pub fn patTypes(
@@ -5065,9 +5335,9 @@ pub fn checkScript(
     crate::proof_kernel::cancel_checkpoint();
     crate::proof_kernel::aver_generated::kernel::induct::refuseMutualRecursion(&s.defs)?;
     {
-        let __arg6 @ _ =
+        let __arg7 @ _ =
             <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Law>>::empty();
-        crate::proof_kernel::aver_generated::kernel::check::checkFacts(s.facts.clone(), __arg6)
+        crate::proof_kernel::aver_generated::kernel::check::checkFacts(s.facts.clone(), __arg7)
     }?;
     let env @ _ = Box::new(
         crate::proof_kernel::aver_generated::kernel::check::Env__Fields {
@@ -5086,6 +5356,10 @@ pub fn checkScript(
             sigs: s.sigs,
         },
     );
+    crate::proof_kernel::aver_generated::kernel::check::declarationsTyped(
+        &env,
+        ::aver_rt::str_lit!("proof"),
+    )?;
     crate::proof_kernel::aver_generated::kernel::check::statementTyped(&s.obligation, &env)?;
     let e @ _ = crate::proof_kernel::aver_generated::kernel::check::conclude(
         s.proof,
