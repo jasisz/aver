@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// (script, what the kernel says, whether an untyped kernel accepted it)
-const REFUSED: [(&str, &str, bool); 50] = [
+const REFUSED: [(&str, &str, bool); 53] = [
     // A law about a sum, cited at an Int: `x = One.Only` for every `x` of
     // the one-value type `One`, read at 0 and at 1, gives `0 = 1`.
     (
@@ -285,6 +285,26 @@ const REFUSED: [(&str, &str, bool); 50] = [
         "constructor pattern Option.None binds 1 names for 0 fields",
         true,
     ),
+    // A constructor belongs to the sum named by its qualifier. Letting C
+    // list D.Loop made D.Loop's recursive C field look structurally smaller
+    // than C itself, so induction supplied `0 = 1` as its own hypothesis.
+    (
+        "foreign_constructor_spoofs_structural_induction",
+        "constructor D.Loop does not produce C",
+        true,
+    ),
+    // The same ownership check applies to ordinary match arms, and one sum
+    // may not give the same constructor two identities.
+    (
+        "constructor_pattern_of_another_sum",
+        "constructor D.Box does not fit C",
+        true,
+    ),
+    (
+        "duplicate_sum_constructor",
+        "sum C repeats constructor C.A",
+        true,
+    ),
     // A typed trans conclusion could pass through an intermediate projection
     // with no type because only the written links were compared syntactically.
     (
@@ -342,8 +362,8 @@ fn every_refused_script_is_listed() {
     assert_eq!(on_disk, listed);
 }
 
-/// Thirty-two scripts were accepted before their corresponding kernel gates.
+/// Thirty-five scripts were accepted before their corresponding kernel gates.
 #[test]
-fn thirty_two_of_them_were_accepted_before() {
-    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 32);
+fn thirty_five_of_them_were_accepted_before() {
+    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 35);
 }

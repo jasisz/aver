@@ -1246,22 +1246,54 @@ pub fn ctorFields(
                     __b
                 })),
                 Some(s @ _) => {
-                    match crate::proof_std::aver_generated::kernel::types::variantFields(
-                        c.clone(),
-                        &s.variants,
-                    ) {
-                        None => Err(aver_rt::AverStr::from({
+                    if (subject
+                        == &(crate::proof_std::aver_generated::kernel::term::Ty::TyNamed(
+                            crate::proof_std::aver_generated::kernel::term::Ty__TyNamed(s.name),
+                        )))
+                    {
+                        match crate::proof_std::aver_generated::kernel::types::variantFields(
+                            c.clone(),
+                            &s.variants,
+                        ) {
+                            None => Err(aver_rt::AverStr::from({
+                                let mut __b = {
+                                    let mut __b = aver_rt::Buffer::with_capacity(
+                                        (aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0),
+                                    );
+                                    __b.push_str(&::aver_rt::str_lit!("unknown constructor "));
+                                    __b
+                                };
+                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c))));
+                                __b
+                            })),
+                            Some(fs @ _) => Ok(fs),
+                        }
+                    } else {
+                        Err(aver_rt::AverStr::from({
                             let mut __b = {
-                                let mut __b = aver_rt::Buffer::with_capacity(
-                                    (aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0),
-                                );
-                                __b.push_str(&::aver_rt::str_lit!("unknown constructor "));
+                                let mut __b = {
+                                    let mut __b = {
+                                        let mut __b = aver_rt::Buffer::with_capacity(
+                                            (aver_rt::AverInt::from_i64(58))
+                                                .to_usize()
+                                                .unwrap_or(0),
+                                        );
+                                        __b.push_str(&::aver_rt::str_lit!("constructor "));
+                                        __b
+                                    };
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                        &(c),
+                                    )));
+                                    __b
+                                };
+                                __b.push_str(&::aver_rt::str_lit!(" does not fit "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c))));
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                &(crate::proof_std::aver_generated::kernel::types::show(subject)),
+                            )));
                             __b
-                        })),
-                        Some(fs @ _) => Ok(fs),
+                        }))
                     }
                 }
             },
@@ -1953,6 +1985,158 @@ pub fn recordFieldsUnique(
                                 continue;
                             }
                         }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
+    }
+}
+
+/// Every sum gives each constructor one identity, and applying its declared fields produces that sum rather than another or a builtin type.
+#[inline(always)]
+pub fn sumVariantsTyped(
+    ss @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Sum>,
+    e @ _: &TyEnv,
+    mut path @ _: AverStr,
+) -> Result<(), AverStr> {
+    let mut __hold0: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Sum>;
+    let mut ss @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Sum> = ss;
+    loop {
+        crate::proof_std::cancel_checkpoint();
+        {
+            let __list_subject = ss;
+            if __list_subject.is_empty() {
+                return Ok(());
+            } else {
+                if let (Some(s), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    {
+                        let __subject = {
+                            let __arg9 @ _ =
+                                crate::proof_std::aver_generated::kernel::proof::variantNames(
+                                    &s.variants,
+                                );
+                            {
+                                let __arg10 @ _ = <aver_rt::AverList<AverStr>>::empty();
+                                {
+                                    let __arg11 @ _ = aver_rt::AverStr::from({
+                                        let mut __b = {
+                                            let mut __b = {
+                                                let mut __b = {
+                                                    let mut __b = {
+                                                        let mut __b =
+                                                            aver_rt::Buffer::with_capacity(
+                                                                (aver_rt::AverInt::from_i64(63))
+                                                                    .to_usize()
+                                                                    .unwrap_or(0),
+                                                            );
+                                                        __b.push_str(&::aver_rt::str_lit!("step "));
+                                                        __b
+                                                    };
+                                                    __b.push_str(&aver_rt::AverStr::from(
+                                                        aver_rt::aver_display(&(path)),
+                                                    ));
+                                                    __b
+                                                };
+                                                __b.push_str(&::aver_rt::str_lit!(": sum "));
+                                                __b
+                                            };
+                                            __b.push_str(&aver_rt::AverStr::from(
+                                                aver_rt::aver_display(&(s.name)),
+                                            ));
+                                            __b
+                                        };
+                                        __b.push_str(&::aver_rt::str_lit!(" repeats constructor"));
+                                        __b
+                                    });
+                                    crate::proof_std::aver_generated::kernel::types::unique(
+                                        &__arg9, __arg10, __arg11,
+                                    )
+                                }
+                            }
+                        };
+                        match __subject { Err(why @ _) => { return Err(why); }, Ok(done @ _) => { match crate::proof_std::aver_generated::kernel::types::variantsProduce(s.name.clone(), &s.variants, e, path.clone()) { Err(why @ _) => { return Err(why); }, Ok(valid @ _) => { {
+            let __tco0 = rest;
+            __hold0 = __tco0;
+            ss = &__hold0;
+            continue;
+        } } } } }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
+    }
+}
+
+/// Each variant constructor, at the field types it declares, produces its enclosing sum.
+#[inline(always)]
+pub fn variantsProduce(
+    mut sum @ _: AverStr,
+    vs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Variant>,
+    e @ _: &TyEnv,
+    mut path @ _: AverStr,
+) -> Result<(), AverStr> {
+    let mut __hold1: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Variant>;
+    let mut vs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Variant> =
+        vs;
+    loop {
+        crate::proof_std::cancel_checkpoint();
+        {
+            let __list_subject = vs;
+            if __list_subject.is_empty() {
+                return Ok(());
+            } else {
+                if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    if (crate::proof_std::aver_generated::kernel::types::ctorType(
+                        v.name.clone(),
+                        &v.fields,
+                        e,
+                    ) == Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyNamed(
+                        crate::proof_std::aver_generated::kernel::term::Ty__TyNamed(sum.clone()),
+                    ))) {
+                        {
+                            let __tco1 = rest;
+                            __hold1 = __tco1;
+                            vs = &__hold1;
+                            continue;
+                        }
+                    } else {
+                        return Err(aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = {
+                                        let mut __b = {
+                                            let mut __b = {
+                                                let mut __b = aver_rt::Buffer::with_capacity(
+                                                    (aver_rt::AverInt::from_i64(85))
+                                                        .to_usize()
+                                                        .unwrap_or(0),
+                                                );
+                                                __b.push_str(&::aver_rt::str_lit!("step "));
+                                                __b
+                                            };
+                                            __b.push_str(&aver_rt::AverStr::from(
+                                                aver_rt::aver_display(&(path)),
+                                            ));
+                                            __b
+                                        };
+                                        __b.push_str(&::aver_rt::str_lit!(": constructor "));
+                                        __b
+                                    };
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                        &(v.name),
+                                    )));
+                                    __b
+                                };
+                                __b.push_str(&::aver_rt::str_lit!(" does not produce "));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(sum))));
+                            __b
+                        }));
                     }
                 } else {
                     panic!("Aver Rust codegen: non-exhaustive list match")

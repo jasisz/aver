@@ -85,6 +85,7 @@ fn declarationsTyped(env: Env, path: String) -> Result<Unit, String>
     Kernel.Types.unique(constNames(scope.consts), [], "step {path}: duplicate module-level binding")?
     declarationsAcyclic(scope.consts, scope.defs, scope.consts, path)?
     Kernel.Types.unique(typeNames(scope.sums, scope.recs), [], "step {path}: duplicate type declaration")?
+    Kernel.Types.sumVariantsTyped(scope.sums, tyEnv(scope), path)?
     Kernel.Types.recordFieldsUnique(scope.recs, path)?
     defsTyped(scope.defs, scope, path)?
     constsTyped(scope.consts, scope, path)

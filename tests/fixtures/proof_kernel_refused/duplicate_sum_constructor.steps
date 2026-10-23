@@ -1,0 +1,15 @@
+(steps 16
+  (obligation duplicateSumConstructor () (none)
+    (i 0)
+    (i 0))
+  (defs)
+  (consts)
+  (sums
+    (sum C eq
+      (C.A)
+      (C.A)))
+  (recs)
+  (sigs)
+  (laws)
+  (proof
+    (refl (i 0))))
