@@ -14,8 +14,9 @@ fn script(lhs: super::Term, rhs: super::Term, proof: Proof) -> Script {
     let mut free = Vec::new();
     term::free_vars(&lhs, &mut free);
     term::free_vars(&rhs, &mut free);
+    // A qualified name is a module-level binding, never a given.
     for n in free {
-        if !givens.contains(&n) {
+        if !givens.contains(&n) && !n.contains('.') {
             givens.push(n);
         }
     }
