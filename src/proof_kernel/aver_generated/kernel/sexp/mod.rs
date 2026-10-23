@@ -53,86 +53,511 @@ impl aver_rt::AverDisplay for Sexp {
     }
 }
 
-#[allow(non_camel_case_types)]
-enum __MutualTco1 {
-    ReadList(aver_rt::AverList<AverStr>, aver_rt::AverList<Sexp>),
-    ReadListItem(aver_rt::AverList<AverStr>, aver_rt::AverList<Sexp>),
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ReadMode {
+    Ready,
+    Atom(AverStr),
+    Text(AverStr),
+    Escape(AverStr),
+    Comment,
 }
 
-fn __mutual_tco_trampoline_1(
-    mut __state: __MutualTco1,
-) -> Result<(Sexp, aver_rt::AverList<AverStr>), AverStr> {
-    loop {
-        __state = match __state {
-            __MutualTco1::ReadList(mut cs @ _, mut acc @ _) => {
-                crate::proof_kernel::cancel_checkpoint();
-                aver_list_match!(cs.clone(), [] => { return Err(::aver_rt::str_lit!("unexpected end of data")) }, [__pat0, rest] => { { let __int_match_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&__pat0)); if __int_match_subject == aver_rt::AverInt::from_i64(41) { return Ok((crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(acc.reverse()), rest)) } else { __MutualTco1::ReadListItem(cs, acc) } } })
-            }
-            __MutualTco1::ReadListItem(mut cs @ _, mut acc @ _) => {
-                crate::proof_kernel::cancel_checkpoint();
-                match crate::proof_kernel::aver_generated::kernel::sexp::readOne(&cs) {
-                    Err(e @ _) => return Err(e),
-                    Ok(__pat0 @ _) => {
-                        let (item, rest) = __pat0;
-                        {
-                            let __arg6 @ _ =
-                                crate::proof_kernel::aver_generated::kernel::sexp::skipBlank(rest);
-                            {
-                                let __arg7 @ _ = aver_rt::AverList::prepend(item, &acc);
-                                __MutualTco1::ReadList(__arg6, __arg7)
-                            }
-                        }
-                    }
-                }
-            }
-        };
+impl ReadMode {
+    fn aver_key_rank(&self) -> usize {
+        match self {
+            ReadMode::Atom(..) => 0,
+            ReadMode::Comment => 1,
+            ReadMode::Escape(..) => 2,
+            ReadMode::Ready => 3,
+            ReadMode::Text(..) => 4,
+        }
     }
 }
 
-/// The items of a list up to its closing parenthesis.
-pub fn readList(
-    cs @ _: aver_rt::AverList<AverStr>,
-    acc @ _: aver_rt::AverList<Sexp>,
-) -> Result<(Sexp, aver_rt::AverList<AverStr>), AverStr> {
-    __mutual_tco_trampoline_1(__MutualTco1::ReadList(cs, acc))
+impl PartialOrd for ReadMode {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
-/// One item of a list, then the rest of the list.
-pub fn readListItem(
-    cs @ _: aver_rt::AverList<AverStr>,
-    acc @ _: aver_rt::AverList<Sexp>,
-) -> Result<(Sexp, aver_rt::AverList<AverStr>), AverStr> {
-    __mutual_tco_trampoline_1(__MutualTco1::ReadListItem(cs, acc))
+impl Ord for ReadMode {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let rank = self.aver_key_rank().cmp(&other.aver_key_rank());
+        if rank != std::cmp::Ordering::Equal {
+            return rank;
+        }
+        match (self, other) {
+            (ReadMode::Atom(a0), ReadMode::Atom(b0)) => {
+                std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
+            }
+            (ReadMode::Escape(a0), ReadMode::Escape(b0)) => {
+                std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
+            }
+            (ReadMode::Text(a0), ReadMode::Text(b0)) => {
+                std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
+            }
+            _ => std::cmp::Ordering::Equal,
+        }
+    }
+}
+
+impl aver_rt::AverDisplay for ReadMode {
+    fn aver_display(&self) -> String {
+        match self {
+            ReadMode::Ready => "Ready".to_string(),
+            ReadMode::Atom(f0) => format!("Atom({})", f0.aver_display_inner()),
+            ReadMode::Text(f0) => format!("Text({})", f0.aver_display_inner()),
+            ReadMode::Escape(f0) => format!("Escape({})", f0.aver_display_inner()),
+            ReadMode::Comment => "Comment".to_string(),
+        }
+    }
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
 }
 
 /// One S-expression and nothing after it but blanks, its shared parts written out.
 #[inline(always)]
 pub fn readAll(text @ _: AverStr) -> Result<Sexp, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    {
-        let __subject = {
-            let __arg6 @ _ = {
-                let __arg5 @ _ = (aver_rt::AverList::from_vec(
-                    text.chars().map(|c| c.to_string()).collect::<Vec<_>>(),
-                ))
-                .into_aver();
-                crate::proof_kernel::aver_generated::kernel::sexp::skipBlank(__arg5)
-            };
-            crate::proof_kernel::aver_generated::kernel::sexp::readOne(&__arg6)
-        };
-        match __subject {
-            Err(e @ _) => Err(e),
-            Ok(__pat0 @ _) => {
-                let (s, rest) = __pat0;
-                {
-                    let __list_subject =
-                        crate::proof_kernel::aver_generated::kernel::sexp::skipBlank(rest);
-                    if __list_subject.is_empty() {
-                        crate::proof_kernel::aver_generated::kernel::sexp::expand(s)
-                    } else {
-                        Err(::aver_rt::str_lit!("text after the S-expression"))
+    let __arg1 @ _ = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+    let __arg2 @ _ = <aver_rt::AverList<Sexp>>::empty();
+    let __arg3 @ _ = <aver_rt::AverList<aver_rt::AverList<Sexp>>>::empty();
+    crate::proof_kernel::aver_generated::kernel::sexp::scan__cursor(
+        text,
+        aver_rt::AverInt::from_i64(0),
+        &__arg1,
+        __arg2,
+        __arg3,
+    )
+}
+
+/// Read characters once, keeping reversed items for the current list and each parent list.
+#[inline(always)]
+pub fn scan(
+    cs @ _: &aver_rt::AverList<AverStr>,
+    mode @ _: &ReadMode,
+    mut current @ _: aver_rt::AverList<Sexp>,
+    mut parents @ _: aver_rt::AverList<aver_rt::AverList<Sexp>>,
+) -> Result<Sexp, AverStr> {
+    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut cs @ _: &aver_rt::AverList<AverStr> = cs;
+    let mut __hold1: ReadMode;
+    let mut mode @ _: &ReadMode = mode;
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __list_subject = cs;
+            if __list_subject.is_empty() {
+                match mode {
+                    crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text(acc) => {
+                        let acc = acc.clone();
+                        return Err(::aver_rt::str_lit!("unterminated text"));
+                    }
+                    crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Escape(acc) => {
+                        let acc = acc.clone();
+                        return Err(::aver_rt::str_lit!("unterminated text"));
+                    }
+                    crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Atom(acc) => {
+                        let acc = acc.clone();
+                        return {
+                            let __arg14 @ _ = aver_rt::AverList::prepend(
+                                crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc),
+                                &current,
+                            );
+                            crate::proof_kernel::aver_generated::kernel::sexp::finish(
+                                &__arg14, &parents,
+                            )
+                        };
+                    }
+                    _ => {
+                        return crate::proof_kernel::aver_generated::kernel::sexp::finish(
+                            &current, &parents,
+                        );
                     }
                 }
+            } else {
+                if let Some((c, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    match mode {
+                        crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready => {
+                            let __dispatch_subject =
+                                aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
+                            if __dispatch_subject == aver_rt::AverInt::from_i64(32) {
+                                {
+                                    let __tco0 = rest;
+                                    __hold0 = __tco0;
+                                    cs = &__hold0;
+                                    continue;
+                                }
+                            } else {
+                                if __dispatch_subject == aver_rt::AverInt::from_i64(10) {
+                                    {
+                                        let __tco0 = rest;
+                                        __hold0 = __tco0;
+                                        cs = &__hold0;
+                                        continue;
+                                    }
+                                } else {
+                                    if __dispatch_subject == aver_rt::AverInt::from_i64(9) {
+                                        {
+                                            let __tco0 = rest;
+                                            __hold0 = __tco0;
+                                            cs = &__hold0;
+                                            continue;
+                                        }
+                                    } else {
+                                        if __dispatch_subject == aver_rt::AverInt::from_i64(13) {
+                                            {
+                                                let __tco0 = rest;
+                                                __hold0 = __tco0;
+                                                cs = &__hold0;
+                                                continue;
+                                            }
+                                        } else {
+                                            if __dispatch_subject == aver_rt::AverInt::from_i64(59)
+                                            {
+                                                {
+                                                    let __tco0 = rest;
+                                                    let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Comment;
+                                                    __hold0 = __tco0;
+                                                    cs = &__hold0;
+                                                    __hold1 = __tco1;
+                                                    mode = &__hold1;
+                                                    continue;
+                                                }
+                                            } else {
+                                                if __dispatch_subject
+                                                    == aver_rt::AverInt::from_i64(40)
+                                                {
+                                                    {
+                                                        let __tco0 = rest;
+                                                        let __tco2 = aver_rt::AverList::empty();
+                                                        let __tco3 = aver_rt::AverList::prepend(
+                                                            current, &parents,
+                                                        );
+                                                        __hold0 = __tco0;
+                                                        cs = &__hold0;
+                                                        current = __tco2;
+                                                        parents = __tco3;
+                                                        continue;
+                                                    }
+                                                } else {
+                                                    if __dispatch_subject
+                                                        == aver_rt::AverInt::from_i64(41)
+                                                    {
+                                                        {
+                                                            let __list_subject = parents;
+                                                            if __list_subject.is_empty() {
+                                                                return Err(::aver_rt::str_lit!(
+                                                                    "unexpected )"
+                                                                ));
+                                                            } else {
+                                                                if let (Some(parent), Some(above)) = (
+                                                                    __list_subject.first(),
+                                                                    __list_subject.tail(),
+                                                                ) {
+                                                                    {
+                                                                        let __tco0 = rest;
+                                                                        let __tco2 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(current.reverse()), &parent.clone());
+                                                                        let __tco3 = above;
+                                                                        __hold0 = __tco0;
+                                                                        cs = &__hold0;
+                                                                        current = __tco2;
+                                                                        parents = __tco3;
+                                                                        continue;
+                                                                    }
+                                                                } else {
+                                                                    panic!(
+                                                                        "Aver Rust codegen: non-exhaustive list match"
+                                                                    )
+                                                                }
+                                                            }
+                                                        }
+                                                    } else {
+                                                        if __dispatch_subject
+                                                            == aver_rt::AverInt::from_i64(34)
+                                                        {
+                                                            {
+                                                                let __tco0 = rest;
+                                                                let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text(::aver_rt::str_lit!(""));
+                                                                __hold0 = __tco0;
+                                                                cs = &__hold0;
+                                                                __hold1 = __tco1;
+                                                                mode = &__hold1;
+                                                                continue;
+                                                            }
+                                                        } else {
+                                                            {
+                                                                let __tco0 = rest;
+                                                                let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Atom(c);
+                                                                __hold0 = __tco0;
+                                                                cs = &__hold0;
+                                                                __hold1 = __tco1;
+                                                                mode = &__hold1;
+                                                                continue;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Atom(acc) => {
+                            let acc = acc.clone();
+                            {
+                                let __dispatch_subject =
+                                    aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
+                                if __dispatch_subject == aver_rt::AverInt::from_i64(32) {
+                                    {
+                                        let __tco0 = rest;
+                                        let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                        let __tco2 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                        __hold0 = __tco0;
+                                        cs = &__hold0;
+                                        __hold1 = __tco1;
+                                        mode = &__hold1;
+                                        current = __tco2;
+                                        continue;
+                                    }
+                                } else {
+                                    if __dispatch_subject == aver_rt::AverInt::from_i64(10) {
+                                        {
+                                            let __tco0 = rest;
+                                            let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                            let __tco2 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                            __hold0 = __tco0;
+                                            cs = &__hold0;
+                                            __hold1 = __tco1;
+                                            mode = &__hold1;
+                                            current = __tco2;
+                                            continue;
+                                        }
+                                    } else {
+                                        if __dispatch_subject == aver_rt::AverInt::from_i64(9) {
+                                            {
+                                                let __tco0 = rest;
+                                                let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                                let __tco2 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                                __hold0 = __tco0;
+                                                cs = &__hold0;
+                                                __hold1 = __tco1;
+                                                mode = &__hold1;
+                                                current = __tco2;
+                                                continue;
+                                            }
+                                        } else {
+                                            if __dispatch_subject == aver_rt::AverInt::from_i64(13)
+                                            {
+                                                {
+                                                    let __tco0 = rest;
+                                                    let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                                    let __tco2 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                                    __hold0 = __tco0;
+                                                    cs = &__hold0;
+                                                    __hold1 = __tco1;
+                                                    mode = &__hold1;
+                                                    current = __tco2;
+                                                    continue;
+                                                }
+                                            } else {
+                                                if __dispatch_subject
+                                                    == aver_rt::AverInt::from_i64(40)
+                                                {
+                                                    {
+                                                        let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                                        let __tco2 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                                        __hold1 = __tco1;
+                                                        mode = &__hold1;
+                                                        current = __tco2;
+                                                        continue;
+                                                    }
+                                                } else {
+                                                    if __dispatch_subject
+                                                        == aver_rt::AverInt::from_i64(41)
+                                                    {
+                                                        {
+                                                            let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                                            let __tco2 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                                            __hold1 = __tco1;
+                                                            mode = &__hold1;
+                                                            current = __tco2;
+                                                            continue;
+                                                        }
+                                                    } else {
+                                                        if __dispatch_subject
+                                                            == aver_rt::AverInt::from_i64(34)
+                                                        {
+                                                            {
+                                                                let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                                                let __tco2 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                                                __hold1 = __tco1;
+                                                                mode = &__hold1;
+                                                                current = __tco2;
+                                                                continue;
+                                                            }
+                                                        } else {
+                                                            {
+                                                                let __tco0 = rest;
+                                                                let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Atom((acc + &c));
+                                                                __hold0 = __tco0;
+                                                                cs = &__hold0;
+                                                                __hold1 = __tco1;
+                                                                mode = &__hold1;
+                                                                continue;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text(acc) => {
+                            let acc = acc.clone();
+                            {
+                                let __dispatch_subject =
+                                    aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
+                                if __dispatch_subject == aver_rt::AverInt::from_i64(34) {
+                                    {
+                                        let __tco0 = rest;
+                                        let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                        let __tco2 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Text(acc), &current);
+                                        __hold0 = __tco0;
+                                        cs = &__hold0;
+                                        __hold1 = __tco1;
+                                        mode = &__hold1;
+                                        current = __tco2;
+                                        continue;
+                                    }
+                                } else {
+                                    if __dispatch_subject == aver_rt::AverInt::from_i64(92) {
+                                        {
+                                            let __tco0 = rest;
+                                            let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Escape(acc);
+                                            __hold0 = __tco0;
+                                            cs = &__hold0;
+                                            __hold1 = __tco1;
+                                            mode = &__hold1;
+                                            continue;
+                                        }
+                                    } else {
+                                        {
+                                            let __tco0 = rest;
+                                            let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text((acc + &c));
+                                            __hold0 = __tco0;
+                                            cs = &__hold0;
+                                            __hold1 = __tco1;
+                                            mode = &__hold1;
+                                            continue;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Escape(
+                            acc,
+                        ) => {
+                            let acc = acc.clone();
+                            {
+                                let __int_match_subject =
+                                    aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
+                                if __int_match_subject == aver_rt::AverInt::from_i64(110) {
+                                    {
+                                        let __tco0 = rest;
+                                        let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text((acc + &::aver_rt::str_lit!("\n")));
+                                        __hold0 = __tco0;
+                                        cs = &__hold0;
+                                        __hold1 = __tco1;
+                                        mode = &__hold1;
+                                        continue;
+                                    }
+                                } else {
+                                    {
+                                        let __tco0 = rest;
+                                        let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text((acc + &c));
+                                        __hold0 = __tco0;
+                                        cs = &__hold0;
+                                        __hold1 = __tco1;
+                                        mode = &__hold1;
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                        crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Comment => {
+                            let __int_match_subject =
+                                aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
+                            if __int_match_subject == aver_rt::AverInt::from_i64(10) {
+                                {
+                                    let __tco0 = rest;
+                                    let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                    __hold0 = __tco0;
+                                    cs = &__hold0;
+                                    __hold1 = __tco1;
+                                    mode = &__hold1;
+                                    continue;
+                                }
+                            } else {
+                                {
+                                    let __tco0 = rest;
+                                    __hold0 = __tco0;
+                                    cs = &__hold0;
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
+    }
+}
+
+/// Finish one top-level form, or name the unmatched/list-tail error.
+#[inline(always)]
+pub fn finish(
+    current @ _: &aver_rt::AverList<Sexp>,
+    parents @ _: &aver_rt::AverList<aver_rt::AverList<Sexp>>,
+) -> Result<Sexp, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __list_subject = parents;
+        if let Some((parent, above)) = aver_rt::list_uncons_cloned(__list_subject) {
+            Err(::aver_rt::str_lit!("unexpected end of data"))
+        } else {
+            if __list_subject.is_empty() {
+                {
+                    let __list_subject = current;
+                    if __list_subject.is_empty() {
+                        Err(::aver_rt::str_lit!("unexpected end of data"))
+                    } else {
+                        if let (Some(s), Some(__pat0)) =
+                            (__list_subject.first(), __list_subject.tail())
+                        {
+                            {
+                                let __list_subject = __pat0;
+                                if __list_subject.is_empty() {
+                                    crate::proof_kernel::aver_generated::kernel::sexp::expand(
+                                        s.clone(),
+                                    )
+                                } else {
+                                    Err(::aver_rt::str_lit!("text after the S-expression"))
+                                }
+                            }
+                        } else {
+                            panic!("Aver Rust codegen: non-exhaustive list match")
+                        }
+                    }
+                }
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
             }
         }
     }
@@ -383,257 +808,371 @@ pub fn withinAll(
     }
 }
 
-/// Read one S-expression from the front of the characters.
+/// Synthesized cursor variant of `scan`. Call sites that hand it `String.chars(s)` walk `s` directly — a byte offset stepped one codepoint at a time — instead of materialising the list of one-character strings.
 #[inline(always)]
-pub fn readOne(
-    cs @ _: &aver_rt::AverList<AverStr>,
-) -> Result<(Sexp, aver_rt::AverList<AverStr>), AverStr> {
-    crate::proof_kernel::cancel_checkpoint();
-    {
-        let __list_subject = cs;
-        if __list_subject.is_empty() {
-            Err(::aver_rt::str_lit!("unexpected end of data"))
-        } else {
-            if let Some((__pat0, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                {
-                    let __dispatch_subject =
-                        aver_rt::AverInt::from_i64(aver_rt::str_code1(&__pat0));
-                    if __dispatch_subject == aver_rt::AverInt::from_i64(40) {
-                        {
-                            let __arg3 @ _ =
-                                crate::proof_kernel::aver_generated::kernel::sexp::skipBlank(rest);
-                            {
-                                let __arg4 @ _ = <aver_rt::AverList<Sexp>>::empty();
-                                crate::proof_kernel::aver_generated::kernel::sexp::readList(
-                                    __arg3, __arg4,
-                                )
-                            }
-                        }
-                    } else {
-                        if __dispatch_subject == aver_rt::AverInt::from_i64(34) {
-                            crate::proof_kernel::aver_generated::kernel::sexp::readText(
-                                &rest,
-                                ::aver_rt::str_lit!(""),
-                            )
-                        } else {
-                            if __dispatch_subject == aver_rt::AverInt::from_i64(41) {
-                                Err(::aver_rt::str_lit!("unexpected )"))
-                            } else {
-                                crate::proof_kernel::aver_generated::kernel::sexp::readAtom(
-                                    cs.clone(),
-                                    ::aver_rt::str_lit!(""),
-                                )
-                            }
-                        }
-                    }
-                }
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
-        }
-    }
-}
-
-/// A quoted text; backslash escapes a quote, a backslash or a newline.
-#[inline(always)]
-pub fn readText(
-    cs @ _: &aver_rt::AverList<AverStr>,
-    mut acc @ _: AverStr,
-) -> Result<(Sexp, aver_rt::AverList<AverStr>), AverStr> {
-    let mut __hold0: aver_rt::AverList<AverStr>;
-    let mut cs @ _: &aver_rt::AverList<AverStr> = cs;
+pub fn scan__cursor(
+    mut __cur_s @ _: AverStr,
+    mut __cur_i @ _: aver_rt::AverInt,
+    mode @ _: &ReadMode,
+    mut current @ _: aver_rt::AverList<Sexp>,
+    mut parents @ _: aver_rt::AverList<aver_rt::AverList<Sexp>>,
+) -> Result<Sexp, AverStr> {
+    let mut __hold2: ReadMode;
+    let mut mode @ _: &ReadMode = mode;
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        {
-            let __list_subject = cs;
-            if __list_subject.is_empty() {
-                return Err(::aver_rt::str_lit!("unterminated text"));
-            } else {
-                if let Some((__pat0, __pat1)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    {
-                        let __dispatch_subject =
-                            aver_rt::AverInt::from_i64(aver_rt::str_code1(&__pat0));
-                        if __dispatch_subject == aver_rt::AverInt::from_i64(34) {
-                            return Ok((
-                                crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Text(acc),
-                                __pat1,
-                            ));
-                        } else {
-                            if __dispatch_subject == aver_rt::AverInt::from_i64(92) {
+        if aver_rt::str_cursor_end(&__cur_s, (__cur_i).to_usize().unwrap_or(usize::MAX)) {
+            match mode {
+                crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text(acc) => {
+                    let acc = acc.clone();
+                    return Err(::aver_rt::str_lit!("unterminated text"));
+                }
+                crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Escape(acc) => {
+                    let acc = acc.clone();
+                    return Err(::aver_rt::str_lit!("unterminated text"));
+                }
+                crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Atom(acc) => {
+                    let acc = acc.clone();
+                    return {
+                        let __arg15 @ _ = aver_rt::AverList::prepend(
+                            crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc),
+                            &current,
+                        );
+                        crate::proof_kernel::aver_generated::kernel::sexp::finish(
+                            &__arg15, &parents,
+                        )
+                    };
+                }
+                _ => {
+                    return crate::proof_kernel::aver_generated::kernel::sexp::finish(
+                        &current, &parents,
+                    );
+                }
+            }
+        } else {
+            {
+                let c = aver_rt::AverStr::from(aver_rt::str_cursor_head(
+                    &__cur_s,
+                    (__cur_i).to_usize().unwrap_or(usize::MAX),
+                ));
+                {
+                    let __cur_i1 = aver_rt::AverInt::from_i64(aver_rt::str_cursor_next(
+                        &__cur_s,
+                        (__cur_i).to_usize().unwrap_or(usize::MAX),
+                    ) as i64);
+                    match mode {
+                        crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready => {
+                            let __dispatch_subject =
+                                aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
+                            if __dispatch_subject == aver_rt::AverInt::from_i64(32) {
                                 {
-                                    let __list_subject = __pat1.clone();
-                                    if let Some((__pat2, __pat3)) =
-                                        aver_rt::list_uncons_cloned(&__list_subject)
+                                    let __tco1 = __cur_i1;
+                                    __cur_i = __tco1;
+                                    continue;
+                                }
+                            } else {
+                                if __dispatch_subject == aver_rt::AverInt::from_i64(10) {
                                     {
+                                        let __tco1 = __cur_i1;
+                                        __cur_i = __tco1;
+                                        continue;
+                                    }
+                                } else {
+                                    if __dispatch_subject == aver_rt::AverInt::from_i64(9) {
                                         {
-                                            let __int_match_subject = aver_rt::AverInt::from_i64(
-                                                aver_rt::str_code1(&__pat2),
-                                            );
-                                            if __int_match_subject
-                                                == aver_rt::AverInt::from_i64(110)
+                                            let __tco1 = __cur_i1;
+                                            __cur_i = __tco1;
+                                            continue;
+                                        }
+                                    } else {
+                                        if __dispatch_subject == aver_rt::AverInt::from_i64(13) {
+                                            {
+                                                let __tco1 = __cur_i1;
+                                                __cur_i = __tco1;
+                                                continue;
+                                            }
+                                        } else {
+                                            if __dispatch_subject == aver_rt::AverInt::from_i64(59)
                                             {
                                                 {
-                                                    let __tco0 = __pat3;
-                                                    let __tco1 = (acc + &::aver_rt::str_lit!("\n"));
-                                                    __hold0 = __tco0;
-                                                    cs = &__hold0;
-                                                    acc = __tco1;
+                                                    let __tco1 = __cur_i1;
+                                                    let __tco2 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Comment;
+                                                    __cur_i = __tco1;
+                                                    __hold2 = __tco2;
+                                                    mode = &__hold2;
                                                     continue;
                                                 }
                                             } else {
+                                                if __dispatch_subject
+                                                    == aver_rt::AverInt::from_i64(40)
                                                 {
-                                                    let __tco0 = __pat3;
-                                                    let __tco1 = (acc + &__pat2);
-                                                    __hold0 = __tco0;
-                                                    cs = &__hold0;
-                                                    acc = __tco1;
-                                                    continue;
+                                                    {
+                                                        let __tco1 = __cur_i1;
+                                                        let __tco3 = aver_rt::AverList::empty();
+                                                        let __tco4 = aver_rt::AverList::prepend(
+                                                            current, &parents,
+                                                        );
+                                                        __cur_i = __tco1;
+                                                        current = __tco3;
+                                                        parents = __tco4;
+                                                        continue;
+                                                    }
+                                                } else {
+                                                    if __dispatch_subject
+                                                        == aver_rt::AverInt::from_i64(41)
+                                                    {
+                                                        {
+                                                            let __list_subject = parents;
+                                                            if __list_subject.is_empty() {
+                                                                return Err(::aver_rt::str_lit!(
+                                                                    "unexpected )"
+                                                                ));
+                                                            } else {
+                                                                if let (Some(parent), Some(above)) = (
+                                                                    __list_subject.first(),
+                                                                    __list_subject.tail(),
+                                                                ) {
+                                                                    {
+                                                                        let __tco1 = __cur_i1;
+                                                                        let __tco3 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(current.reverse()), &parent.clone());
+                                                                        let __tco4 = above;
+                                                                        __cur_i = __tco1;
+                                                                        current = __tco3;
+                                                                        parents = __tco4;
+                                                                        continue;
+                                                                    }
+                                                                } else {
+                                                                    panic!(
+                                                                        "Aver Rust codegen: non-exhaustive list match"
+                                                                    )
+                                                                }
+                                                            }
+                                                        }
+                                                    } else {
+                                                        if __dispatch_subject
+                                                            == aver_rt::AverInt::from_i64(34)
+                                                        {
+                                                            {
+                                                                let __tco1 = __cur_i1;
+                                                                let __tco2 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text(::aver_rt::str_lit!(""));
+                                                                __cur_i = __tco1;
+                                                                __hold2 = __tco2;
+                                                                mode = &__hold2;
+                                                                continue;
+                                                            }
+                                                        } else {
+                                                            {
+                                                                let __tco1 = __cur_i1;
+                                                                let __tco2 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Atom(c);
+                                                                __cur_i = __tco1;
+                                                                __hold2 = __tco2;
+                                                                mode = &__hold2;
+                                                                continue;
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
+                                    }
+                                }
+                            }
+                        }
+                        crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Atom(acc) => {
+                            let acc = acc.clone();
+                            {
+                                let __dispatch_subject =
+                                    aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
+                                if __dispatch_subject == aver_rt::AverInt::from_i64(32) {
+                                    {
+                                        let __tco1 = __cur_i1;
+                                        let __tco2 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                        let __tco3 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                        __cur_i = __tco1;
+                                        __hold2 = __tco2;
+                                        mode = &__hold2;
+                                        current = __tco3;
+                                        continue;
+                                    }
+                                } else {
+                                    if __dispatch_subject == aver_rt::AverInt::from_i64(10) {
+                                        {
+                                            let __tco1 = __cur_i1;
+                                            let __tco2 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                            let __tco3 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                            __cur_i = __tco1;
+                                            __hold2 = __tco2;
+                                            mode = &__hold2;
+                                            current = __tco3;
+                                            continue;
+                                        }
+                                    } else {
+                                        if __dispatch_subject == aver_rt::AverInt::from_i64(9) {
+                                            {
+                                                let __tco1 = __cur_i1;
+                                                let __tco2 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                                let __tco3 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                                __cur_i = __tco1;
+                                                __hold2 = __tco2;
+                                                mode = &__hold2;
+                                                current = __tco3;
+                                                continue;
+                                            }
+                                        } else {
+                                            if __dispatch_subject == aver_rt::AverInt::from_i64(13)
+                                            {
+                                                {
+                                                    let __tco1 = __cur_i1;
+                                                    let __tco2 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                                    let __tco3 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                                    __cur_i = __tco1;
+                                                    __hold2 = __tco2;
+                                                    mode = &__hold2;
+                                                    current = __tco3;
+                                                    continue;
+                                                }
+                                            } else {
+                                                if __dispatch_subject
+                                                    == aver_rt::AverInt::from_i64(40)
+                                                {
+                                                    {
+                                                        let __tco2 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                                        let __tco3 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                                        __hold2 = __tco2;
+                                                        mode = &__hold2;
+                                                        current = __tco3;
+                                                        continue;
+                                                    }
+                                                } else {
+                                                    if __dispatch_subject
+                                                        == aver_rt::AverInt::from_i64(41)
+                                                    {
+                                                        {
+                                                            let __tco2 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                                            let __tco3 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                                            __hold2 = __tco2;
+                                                            mode = &__hold2;
+                                                            current = __tco3;
+                                                            continue;
+                                                        }
+                                                    } else {
+                                                        if __dispatch_subject
+                                                            == aver_rt::AverInt::from_i64(34)
+                                                        {
+                                                            {
+                                                                let __tco2 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                                                let __tco3 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                                                __hold2 = __tco2;
+                                                                mode = &__hold2;
+                                                                current = __tco3;
+                                                                continue;
+                                                            }
+                                                        } else {
+                                                            {
+                                                                let __tco1 = __cur_i1;
+                                                                let __tco2 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Atom((acc + &c));
+                                                                __cur_i = __tco1;
+                                                                __hold2 = __tco2;
+                                                                mode = &__hold2;
+                                                                continue;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text(acc) => {
+                            let acc = acc.clone();
+                            {
+                                let __dispatch_subject =
+                                    aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
+                                if __dispatch_subject == aver_rt::AverInt::from_i64(34) {
+                                    {
+                                        let __tco1 = __cur_i1;
+                                        let __tco2 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                        let __tco3 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Text(acc), &current);
+                                        __cur_i = __tco1;
+                                        __hold2 = __tco2;
+                                        mode = &__hold2;
+                                        current = __tco3;
+                                        continue;
+                                    }
+                                } else {
+                                    if __dispatch_subject == aver_rt::AverInt::from_i64(92) {
+                                        {
+                                            let __tco1 = __cur_i1;
+                                            let __tco2 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Escape(acc);
+                                            __cur_i = __tco1;
+                                            __hold2 = __tco2;
+                                            mode = &__hold2;
+                                            continue;
+                                        }
                                     } else {
                                         {
-                                            let __tco0 = __pat1;
-                                            let __tco1 = (acc + &__pat0);
-                                            __hold0 = __tco0;
-                                            cs = &__hold0;
-                                            acc = __tco1;
+                                            let __tco1 = __cur_i1;
+                                            let __tco2 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text((acc + &c));
+                                            __cur_i = __tco1;
+                                            __hold2 = __tco2;
+                                            mode = &__hold2;
                                             continue;
                                         }
                                     }
                                 }
+                            }
+                        }
+                        crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Escape(
+                            acc,
+                        ) => {
+                            let acc = acc.clone();
+                            {
+                                let __int_match_subject =
+                                    aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
+                                if __int_match_subject == aver_rt::AverInt::from_i64(110) {
+                                    {
+                                        let __tco1 = __cur_i1;
+                                        let __tco2 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text((acc + &::aver_rt::str_lit!("\n")));
+                                        __cur_i = __tco1;
+                                        __hold2 = __tco2;
+                                        mode = &__hold2;
+                                        continue;
+                                    }
+                                } else {
+                                    {
+                                        let __tco1 = __cur_i1;
+                                        let __tco2 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text((acc + &c));
+                                        __cur_i = __tco1;
+                                        __hold2 = __tco2;
+                                        mode = &__hold2;
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                        crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Comment => {
+                            let __int_match_subject =
+                                aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
+                            if __int_match_subject == aver_rt::AverInt::from_i64(10) {
+                                {
+                                    let __tco1 = __cur_i1;
+                                    let __tco2 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                    __cur_i = __tco1;
+                                    __hold2 = __tco2;
+                                    mode = &__hold2;
+                                    continue;
+                                }
                             } else {
                                 {
-                                    let __tco0 = __pat1;
-                                    let __tco1 = (acc + &__pat0);
-                                    __hold0 = __tco0;
-                                    cs = &__hold0;
-                                    acc = __tco1;
+                                    let __tco1 = __cur_i1;
+                                    __cur_i = __tco1;
                                     continue;
                                 }
                             }
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
-    }
-}
-
-/// An atom runs until a blank, a parenthesis or a quote.
-#[inline(always)]
-pub fn readAtom(
-    mut cs @ _: aver_rt::AverList<AverStr>,
-    mut acc @ _: AverStr,
-) -> Result<(Sexp, aver_rt::AverList<AverStr>), AverStr> {
-    loop {
-        crate::proof_kernel::cancel_checkpoint();
-        aver_list_match!(cs.clone(), [] => { return Ok((crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), aver_rt::AverList::empty())); }, [c, rest] => { if crate::proof_kernel::aver_generated::kernel::sexp::isDelimiter(c.clone()) { return Ok((crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), cs)); } else { {
-            let __tco0 = rest;
-            let __tco1 = (acc + &c);
-            cs = __tco0;
-            acc = __tco1;
-            continue;
-        } } })
-    }
-}
-
-/// Characters that end an atom.
-#[inline(always)]
-pub fn isDelimiter(c @ _: AverStr) -> bool {
-    crate::proof_kernel::cancel_checkpoint();
-    {
-        let __dispatch_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
-        if __dispatch_subject == aver_rt::AverInt::from_i64(40) {
-            true
-        } else {
-            if __dispatch_subject == aver_rt::AverInt::from_i64(41) {
-                true
-            } else {
-                if __dispatch_subject == aver_rt::AverInt::from_i64(34) {
-                    true
-                } else {
-                    crate::proof_kernel::aver_generated::kernel::sexp::isBlank(c)
-                }
-            }
-        }
-    }
-}
-
-/// Spaces, tabs and line breaks.
-#[inline(always)]
-pub fn isBlank(c @ _: AverStr) -> bool {
-    crate::proof_kernel::cancel_checkpoint();
-    {
-        let __dispatch_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
-        if __dispatch_subject == aver_rt::AverInt::from_i64(32) {
-            true
-        } else {
-            if __dispatch_subject == aver_rt::AverInt::from_i64(10) {
-                true
-            } else {
-                if __dispatch_subject == aver_rt::AverInt::from_i64(9) {
-                    true
-                } else {
-                    if __dispatch_subject == aver_rt::AverInt::from_i64(13) {
-                        true
-                    } else {
-                        false
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Drop leading blanks and comments: a comment runs from `;` to the end of its line, and the reader never sees it.
-#[inline(always)]
-pub fn skipBlank(mut cs @ _: aver_rt::AverList<AverStr>) -> aver_rt::AverList<AverStr> {
-    loop {
-        crate::proof_kernel::cancel_checkpoint();
-        aver_list_match!(cs.clone(), [] => { return aver_rt::AverList::empty(); }, [c, rest] => { { let __int_match_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&c)); if __int_match_subject == aver_rt::AverInt::from_i64(59) { {
-            let __tco0 = crate::proof_kernel::aver_generated::kernel::sexp::skipLine(&rest);
-            cs = __tco0;
-            continue;
-        } } else { if crate::proof_kernel::aver_generated::kernel::sexp::isBlank(c) { {
-            let __tco0 = rest;
-            cs = __tco0;
-            continue;
-        } } else { return cs; } } } })
-    }
-}
-
-/// Drop everything up to and including the next line break.
-#[inline(always)]
-pub fn skipLine(cs @ _: &aver_rt::AverList<AverStr>) -> aver_rt::AverList<AverStr> {
-    let mut __hold0: aver_rt::AverList<AverStr>;
-    let mut cs @ _: &aver_rt::AverList<AverStr> = cs;
-    loop {
-        crate::proof_kernel::cancel_checkpoint();
-        {
-            let __list_subject = cs;
-            if __list_subject.is_empty() {
-                return aver_rt::AverList::empty();
-            } else {
-                if let Some((c, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    {
-                        let __int_match_subject =
-                            aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
-                        if __int_match_subject == aver_rt::AverInt::from_i64(10) {
-                            return rest;
-                        } else {
-                            {
-                                let __tco0 = rest;
-                                __hold0 = __tco0;
-                                cs = &__hold0;
-                                continue;
-                            }
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
                 }
             }
         }
