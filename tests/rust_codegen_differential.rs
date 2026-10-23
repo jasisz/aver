@@ -6525,7 +6525,7 @@ fn main() -> Unit
         if !emitted.contains("script == &(made())")
             || !emitted.contains("&(made()) == script")
             || !emitted.contains("script == &(made())")
-            || !emitted.contains("&*name == \"anchor\"")
+            || !emitted.contains("&**name == \"anchor\"")
         {
             return Err(format!(
                 "match-subject comparisons were not aligned with the borrowed params:\n{emitted}"
