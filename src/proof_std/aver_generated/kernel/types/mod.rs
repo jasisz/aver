@@ -1710,41 +1710,17 @@ pub fn recordLiteralType(
     crate::proof_std::cancel_checkpoint();
     let r @ _ = crate::proof_std::aver_generated::kernel::types::recordDecl(n.clone(), e)?;
     {
-        let __arg6 @ _ = crate::proof_std::aver_generated::kernel::types::fieldNames(fs);
-        {
-            let __arg7 @ _ = <aver_rt::AverList<AverStr>>::empty();
-            {
-                let __arg8 @ _ = aver_rt::AverStr::from({
-                    let mut __b = {
-                        let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(37)).to_usize().unwrap_or(0),
-                            );
-                            __b.push_str(&::aver_rt::str_lit!("record "));
-                            __b
-                        };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
-                        __b
-                    };
-                    __b.push_str(&::aver_rt::str_lit!(" repeats field"));
-                    __b
-                });
-                crate::proof_std::aver_generated::kernel::types::unique(&__arg6, __arg7, __arg8)
-            }
-        }
-    }?;
-    {
-        let __arg9 @ _ = crate::proof_std::aver_generated::kernel::types::fieldNames(fs);
+        let __arg5 @ _ = crate::proof_std::aver_generated::kernel::types::fieldNames(fs);
         crate::proof_std::aver_generated::kernel::types::requiredFieldsPresent(
             n.clone(),
             &r.fields,
-            __arg9,
+            __arg5,
         )
     }?;
-    let __arg10 @ _ = crate::proof_std::aver_generated::kernel::term::Ty::TyNamed(
+    let __arg6 @ _ = crate::proof_std::aver_generated::kernel::term::Ty::TyNamed(
         crate::proof_std::aver_generated::kernel::term::Ty__TyNamed(n.clone()),
     );
-    crate::proof_std::aver_generated::kernel::types::fieldsFit(n, fs, __arg10, e)
+    crate::proof_std::aver_generated::kernel::types::fieldsFit(n, fs, __arg6, e)
 }
 
 /// The declaration of a record literal's named type.
@@ -1905,9 +1881,125 @@ pub fn unique(
     }
 }
 
-/// A record's fields each fit their declared type.
+/// Every record declaration gives each field name one identity, using the shared uniqueness check.
 #[inline(always)]
+pub fn recordFieldsUnique(
+    rs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Rec>,
+    mut path @ _: AverStr,
+) -> Result<(), AverStr> {
+    let mut __hold0: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Rec>;
+    let mut rs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Rec> = rs;
+    loop {
+        crate::proof_std::cancel_checkpoint();
+        {
+            let __list_subject = rs;
+            if __list_subject.is_empty() {
+                return Ok(());
+            } else {
+                if let (Some(r), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    {
+                        let __subject = {
+                            let __arg6 @ _ =
+                                crate::proof_std::aver_generated::kernel::proof::givenNames(
+                                    &r.fields,
+                                );
+                            {
+                                let __arg7 @ _ = <aver_rt::AverList<AverStr>>::empty();
+                                {
+                                    let __arg8 @ _ = aver_rt::AverStr::from({
+                                        let mut __b = {
+                                            let mut __b = {
+                                                let mut __b = {
+                                                    let mut __b = {
+                                                        let mut __b =
+                                                            aver_rt::Buffer::with_capacity(
+                                                                (aver_rt::AverInt::from_i64(60))
+                                                                    .to_usize()
+                                                                    .unwrap_or(0),
+                                                            );
+                                                        __b.push_str(&::aver_rt::str_lit!("step "));
+                                                        __b
+                                                    };
+                                                    __b.push_str(&aver_rt::AverStr::from(
+                                                        aver_rt::aver_display(&(path)),
+                                                    ));
+                                                    __b
+                                                };
+                                                __b.push_str(&::aver_rt::str_lit!(": record "));
+                                                __b
+                                            };
+                                            __b.push_str(&aver_rt::AverStr::from(
+                                                aver_rt::aver_display(&(r.name)),
+                                            ));
+                                            __b
+                                        };
+                                        __b.push_str(&::aver_rt::str_lit!(" repeats field"));
+                                        __b
+                                    });
+                                    crate::proof_std::aver_generated::kernel::types::unique(
+                                        &__arg6, __arg7, __arg8,
+                                    )
+                                }
+                            }
+                        };
+                        match __subject {
+                            Err(why @ _) => {
+                                return Err(why);
+                            }
+                            Ok(done @ _) => {
+                                let __tco0 = rest;
+                                __hold0 = __tco0;
+                                rs = &__hold0;
+                                continue;
+                            }
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
+    }
+}
+
+/// A record literal or update writes each field once and every value fits its declared type.
 pub fn fieldsFit(
+    n @ _: AverStr,
+    fs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Field>,
+    mut result @ _: crate::proof_std::aver_generated::kernel::term::Ty,
+    e @ _: &TyEnv,
+) -> Result<crate::proof_std::aver_generated::kernel::term::Ty, AverStr> {
+    crate::proof_std::cancel_checkpoint();
+    {
+        let __arg5 @ _ = crate::proof_std::aver_generated::kernel::types::fieldNames(fs);
+        {
+            let __arg6 @ _ = <aver_rt::AverList<AverStr>>::empty();
+            {
+                let __arg7 @ _ = aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = {
+                            let mut __b = aver_rt::Buffer::with_capacity(
+                                (aver_rt::AverInt::from_i64(37)).to_usize().unwrap_or(0),
+                            );
+                            __b.push_str(&::aver_rt::str_lit!("record "));
+                            __b
+                        };
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                        __b
+                    };
+                    __b.push_str(&::aver_rt::str_lit!(" repeats field"));
+                    __b
+                });
+                crate::proof_std::aver_generated::kernel::types::unique(&__arg5, __arg6, __arg7)
+            }
+        }
+    }?;
+    crate::proof_std::aver_generated::kernel::types::fieldTypesFit(n, fs, result, e)
+}
+
+/// Each written field value fits the field's declared type.
+#[inline(always)]
+pub fn fieldTypesFit(
     mut n @ _: AverStr,
     fs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Field>,
     mut result @ _: crate::proof_std::aver_generated::kernel::term::Ty,

@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// (script, what the kernel says, whether an untyped kernel accepted it)
-const REFUSED: [(&str, &str, bool); 43] = [
+const REFUSED: [(&str, &str, bool); 45] = [
     // A law about a sum, cited at an Int: `x = One.Only` for every `x` of
     // the one-value type `One`, read at 0 and at 1, gives `0 = 1`.
     (
@@ -265,6 +265,19 @@ const REFUSED: [(&str, &str, bool); 43] = [
         "f recurses from a local binding",
         true,
     ),
+    // An update with the same field twice has two competing meanings: the
+    // projection step read the first write while execution keeps the last.
+    (
+        "duplicate_record_update_field",
+        "record R repeats field a",
+        true,
+    ),
+    // A repeated declaration field gave one textual name two identities.
+    (
+        "duplicate_record_declaration_field",
+        "record R repeats field a",
+        true,
+    ),
 ];
 
 fn fixtures() -> PathBuf {
@@ -300,8 +313,8 @@ fn every_refused_script_is_listed() {
     assert_eq!(on_disk, listed);
 }
 
-/// Twenty-five scripts were accepted before their corresponding kernel gates.
+/// Twenty-seven scripts were accepted before their corresponding kernel gates.
 #[test]
-fn twenty_five_of_them_were_accepted_before() {
-    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 25);
+fn twenty_seven_of_them_were_accepted_before() {
+    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 27);
 }

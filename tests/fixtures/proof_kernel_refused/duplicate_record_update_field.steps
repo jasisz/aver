@@ -1,0 +1,14 @@
+(steps 16
+ (obligation duplicateRecordUpdateField () (none)
+  (get (upd R (rec R (a (i 0))) (a (i 1)) (a (i 2))) a)
+  (i 1))
+ (defs)
+ (consts)
+ (sums)
+ (recs
+  (rec R eq
+   (a int)))
+ (sigs)
+ (laws)
+ (proof
+  (proj (get (upd R (rec R (a (i 0))) (a (i 1)) (a (i 2))) a))))
