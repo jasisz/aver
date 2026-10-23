@@ -1,0 +1,19 @@
+(steps 16
+  (obligation constructorPatternOfAnotherSum ((x (named C))) (none)
+    (i 0)
+    (i 0))
+  (defs
+    (def project ((x (named C))) int ()
+      (match (v x)
+        (arm (pc D.Box n) (v n)))))
+  (consts)
+  (sums
+    (sum C eq
+      (C.Empty))
+    (sum D eq
+      (D.Box int)))
+  (recs)
+  (sigs)
+  (laws)
+  (proof
+    (refl (i 0))))

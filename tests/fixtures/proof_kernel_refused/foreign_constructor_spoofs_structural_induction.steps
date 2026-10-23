@@ -1,0 +1,23 @@
+(steps 16
+  (obligation foreignConstructorProvesZeroIsOne ((x (named C))) (none)
+    (i 0)
+    (i 1))
+  (defs
+    (def f ((x (named C))) int ()
+      (match (v x)
+        (arm (pc D.Loop t) (call f (v t))))))
+  (consts)
+  (sums
+    (sum C eq
+      (D.Loop (named C)))
+    (sum D eq
+      (D.Loop (named C))))
+  (recs)
+  (sigs)
+  (laws)
+  (proof
+    (induct f ((v x))
+      (i 0)
+      (i 1)
+      (case (t) (ih) ()
+        (hyp ih)))))

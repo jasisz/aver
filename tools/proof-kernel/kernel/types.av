@@ -8,7 +8,7 @@ module Types
         "Option.None, Map.empty) leaves a hole, which fits any type; a variable ?t marked as"
         "needing equality takes only a type whose == is equality: which types those are is data, the"
         "shapes in Kernel.Builtins and what each declared type's declaration says."
-    exposes [TyEnv, unique, recordFieldsUnique, typeOf, typesOf, join, fits, bindTyped, finOf, ctorFields, ctorsOf, elemOf, sumOf, hasEq, rigidVars, show, withVars, patVars, paramsOf, namedVars, typesOfVars, empty]
+    exposes [TyEnv, unique, sumVariantsTyped, recordFieldsUnique, typeOf, typesOf, join, fits, bindTyped, finOf, ctorFields, ctorsOf, elemOf, sumOf, hasEq, rigidVars, show, withVars, patVars, paramsOf, namedVars, typesOfVars, empty]
     depends [Kernel.Term, Kernel.Proof, Kernel.Builtins]
     effects []
 
@@ -369,14 +369,17 @@ fn ctorFields(c: String, subject: Ty, e: TyEnv) -> Result<List<Ty>, String>
         ("Result.Err", "Result") -> Result.Ok([nth(partsOf(subject), 1)])
         _ -> match sumOf(c, e.sums)
             Option.None -> Result.Err("unknown constructor {c}")
-            Option.Some(s) -> match variantFields(c, s.variants)
-                Option.None -> Result.Err("unknown constructor {c}")
-                Option.Some(fs) -> Result.Ok(fs)
+            Option.Some(s) -> match subject == Ty.TyNamed(s.name)
+                false -> Result.Err("constructor {c} does not fit {show(subject)}")
+                true -> match variantFields(c, s.variants)
+                    Option.None -> Result.Err("unknown constructor {c}")
+                    Option.Some(fs) -> Result.Ok(fs)
 
 verify ctorFields
     ctorFields("Option.Some", Ty.TyOption(Ty.TyInt), empty()) => Result.Ok([Ty.TyInt])
     ctorFields("C.A", Ty.TyNamed("C"), empty()) => Result.Err("unknown constructor C.A")
     ctorFields("cons", Ty.TyList(Ty.TyInt), empty()) => Result.Ok([Ty.TyInt, Ty.TyList(Ty.TyInt)])
+    ctorFields("D.A", Ty.TyNamed("C"), TyEnv(vars = [], defs = [], consts = [], sums = [Sum(name = "D", eq = true, variants = [Variant(name = "D.A", fields = [])])], recs = [], sigs = [])) => Result.Err("constructor D.A does not fit C")
 
 fn elemOf(t: Ty) -> Option<Ty>
     ? "What a list holds, if the type is a list."
@@ -549,6 +552,30 @@ fn recordFieldsUnique(rs: List<Rec>, path: String) -> Result<Unit, String>
 
 verify recordFieldsUnique
     recordFieldsUnique([Rec(name = "R", eq = true, fields = [Kernel.Term.typed("a", Ty.TyInt), Kernel.Term.typed("a", Ty.TyInt)])], "proof") => Result.Err("step proof: record R repeats field a")
+
+fn sumVariantsTyped(ss: List<Sum>, e: TyEnv, path: String) -> Result<Unit, String>
+    ? "Every sum gives each constructor one identity, and applying its declared fields produces that sum rather than another or a builtin type."
+    match ss
+        [] -> Result.Ok(Unit)
+        [s, ..rest] -> match unique(Kernel.Proof.variantNames(s.variants), [], "step {path}: sum {s.name} repeats constructor")
+            Result.Err(why) -> Result.Err(why)
+            Result.Ok(done) -> match variantsProduce(s.name, s.variants, e, path)
+                Result.Err(why) -> Result.Err(why)
+                Result.Ok(valid) -> sumVariantsTyped(rest, e, path)
+
+verify sumVariantsTyped
+    sumVariantsTyped([Sum(name = "C", eq = true, variants = [Variant(name = "D.A", fields = [])]), Sum(name = "D", eq = true, variants = [Variant(name = "D.A", fields = [])])], TyEnv(vars = [], defs = [], consts = [], sums = [Sum(name = "C", eq = true, variants = [Variant(name = "D.A", fields = [])]), Sum(name = "D", eq = true, variants = [Variant(name = "D.A", fields = [])])], recs = [], sigs = []), "proof") => Result.Err("step proof: constructor D.A does not produce C")
+
+fn variantsProduce(sum: String, vs: List<Variant>, e: TyEnv, path: String) -> Result<Unit, String>
+    ? "Each variant constructor, at the field types it declares, produces its enclosing sum."
+    match vs
+        [] -> Result.Ok(Unit)
+        [v, ..rest] -> match ctorType(v.name, v.fields, e) == Result.Ok(Ty.TyNamed(sum))
+            true -> variantsProduce(sum, rest, e, path)
+            false -> Result.Err("step {path}: constructor {v.name} does not produce {sum}")
+
+verify variantsProduce
+    variantsProduce("C", [Variant(name = "C.A", fields = [])], TyEnv(vars = [], defs = [], consts = [], sums = [Sum(name = "C", eq = true, variants = [Variant(name = "C.A", fields = [])])], recs = [], sigs = []), "proof") => Result.Ok(Unit)
 
 fn fieldsFit(n: String, fs: List<Field>, result: Ty, e: TyEnv) -> Result<Ty, String>
     ? "A record literal or update writes each field once and every value fits its declared type."
