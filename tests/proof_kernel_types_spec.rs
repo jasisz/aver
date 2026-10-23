@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// (script, what the kernel says, whether an untyped kernel accepted it)
-const REFUSED: [(&str, &str, bool); 36] = [
+const REFUSED: [(&str, &str, bool); 43] = [
     // A law about a sum, cited at an Int: `x = One.Only` for every `x` of
     // the one-value type `One`, read at 0 and at 1, gives `0 = 1`.
     (
@@ -214,6 +214,57 @@ const REFUSED: [(&str, &str, bool); 36] = [
         "module-level binding n is shadowed by a variable",
         true,
     ),
+    // A sum and a record shared TyNamed("R"). Equality validation inspected
+    // the safe sum first, while the same type could still contain a record's
+    // Float field, reviving NaN != NaN through bool.beq.refl.
+    (
+        "sum_and_record_share_a_type_name",
+        "duplicate type declaration R",
+        true,
+    ),
+    // The termination checker treated the first `n` as the decreasing
+    // parameter, while unfolding substituted the second `n`. That admitted
+    // f(0, 1) = f(0, 1) + 1 and hence 0 = 1 by ring arithmetic.
+    (
+        "duplicate_parameter_spoofs_termination",
+        "definition f has duplicate parameter n",
+        true,
+    ),
+    // A catch-all pattern binds the whole matched value, not a proper part.
+    // Treating that binder as smaller admitted f(xs) = f(xs) + 1.
+    (
+        "catchall_spoofs_structural_termination",
+        "f recurses on something that is not a part of the value it matches",
+        true,
+    ),
+    // Constants are equations too. A self-reference made `const a` assert
+    // a = a + 1 without passing through the function termination gate.
+    (
+        "recursive_constant_proves_zero_is_one",
+        "cyclic module-level binding a",
+        true,
+    ),
+    // The same cycle crossed namespaces: a = f() and f() = a + 1. Neither
+    // the function-only nor the constant-only cycle check could see it.
+    (
+        "constant_function_cycle_proves_zero_is_one",
+        "cyclic declaration through module-level binding a",
+        true,
+    ),
+    // Record literals may omit declared fields, but finite enumeration only
+    // visits complete records, so it proves a false universal equality.
+    (
+        "incomplete_record_breaks_finite_enumeration",
+        "record R is missing field value",
+        true,
+    ),
+    // Aver evaluates local bindings eagerly. Erasing an unused recursive
+    // binding before the fallback termination check made divergence invisible.
+    (
+        "eager_local_recursion_is_opened",
+        "f recurses from a local binding",
+        true,
+    ),
 ];
 
 fn fixtures() -> PathBuf {
@@ -249,8 +300,8 @@ fn every_refused_script_is_listed() {
     assert_eq!(on_disk, listed);
 }
 
-/// Eighteen scripts were accepted before their corresponding kernel gates.
+/// Twenty-five scripts were accepted before their corresponding kernel gates.
 #[test]
-fn eighteen_of_them_were_accepted_before() {
-    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 18);
+fn twenty_five_of_them_were_accepted_before() {
+    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 25);
 }

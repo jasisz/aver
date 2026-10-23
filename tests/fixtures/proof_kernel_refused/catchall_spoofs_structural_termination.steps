@@ -1,0 +1,28 @@
+(steps 16
+ (obligation catchAllRecursionProvesZeroIsOne () (none)
+  (i 0)
+  (i 1))
+ (defs
+  (def f ((xs (list int))) int ()
+   (match (v xs)
+    (arm (pv ys) (op + (call f (v ys)) (i 1))))))
+ (consts)
+ (sums)
+ (recs)
+ (sigs)
+ (laws)
+ (proof
+  (trans
+   ((i 0)
+    (op - (call f (list)) (call f (list)))
+    (op - (op + (call f (list)) (i 1)) (call f (list)))
+    (i 1))
+   (ring
+    (i 0)
+    (op - (call f (list)) (call f (list))))
+   (congr
+    (op - (hole) (call f (list)))
+    (unfold f 1 ((list)) ((list)) (refl (list))))
+   (ring
+    (op - (op + (call f (list)) (i 1)) (call f (list)))
+    (i 1)))))

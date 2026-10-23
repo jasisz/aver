@@ -1,0 +1,20 @@
+(steps 16
+ (obligation everyRecordIsCanonical ((r (named R))) (none)
+  (v r)
+  (rec R (value (ctor One.Only))))
+ (defs)
+ (consts
+  (const bad (named R) (rec R)))
+ (sums
+  (sum One eq
+   (One.Only)))
+ (recs
+  (rec R eq
+   (value (named One))))
+ (sigs)
+ (laws)
+ (proof
+  (enum r
+   (v r)
+   (rec R (value (ctor One.Only)))
+   (refl (rec R (value (ctor One.Only)))))))

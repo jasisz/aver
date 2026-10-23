@@ -1,0 +1,26 @@
+(steps 16
+ (obligation recursiveConstantProvesZeroIsOne () (none)
+  (i 0)
+  (i 1))
+ (defs)
+ (consts
+  (const a int (op + (v a) (i 1))))
+ (sums)
+ (recs)
+ (sigs)
+ (laws)
+ (proof
+  (trans
+   ((i 0)
+    (op - (v a) (v a))
+    (op - (op + (v a) (i 1)) (v a))
+    (i 1))
+   (ring
+    (i 0)
+    (op - (v a) (v a)))
+   (congr
+    (op - (hole) (v a))
+    (const a))
+   (ring
+    (op - (op + (v a) (i 1)) (v a))
+    (i 1)))))

@@ -1572,7 +1572,7 @@ pub fn openGate(
     }
 }
 
-/// Whether d calls itself only directly, never back through another definition of ds, and at one place every call, its local bindings substituted, passes a list shorter than the one there (shorter). That length falls at every call, so the recursion stops.
+/// Whether d calls itself only directly, never back through another definition of ds, and at one place every eager local binding and the body, with local bindings substituted, pass a shorter list at every call (shorter). That length falls at every call, so the recursion stops.
 #[inline(always)]
 pub fn shortens(
     d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
@@ -1602,19 +1602,40 @@ pub fn shortens(
                                 ds,
                             )
                         }) && {
-                            let __arg6 @ _ =
-                                crate::proof_kernel::aver_generated::kernel::proof::givenNames(
-                                    &d.params,
-                                );
-                            crate::proof_kernel::aver_generated::kernel::induct::shorterSomewhere(
-                                &body,
-                                d.name.clone(),
-                                &__arg6,
-                                aver_rt::AverInt::from_i64(0),
-                            )
+                            let __arg6 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TTuple(crate::proof_kernel::aver_generated::kernel::term::Term__TTuple(aver_rt::AverList::prepend(body, &crate::proof_kernel::aver_generated::kernel::induct::bindingValues(&ls))));
+                            {
+                                let __arg7 @ _ =
+                                    crate::proof_kernel::aver_generated::kernel::proof::givenNames(
+                                        &d.params,
+                                    );
+                                crate::proof_kernel::aver_generated::kernel::induct::shorterSomewhere(&__arg6, d.name.clone(), &__arg7, aver_rt::AverInt::from_i64(0))
+                            }
                         })
                     }
                 }
+            }
+        }
+    }
+}
+
+/// Every eager local binding value after earlier bindings have been substituted into it.
+#[inline(always)]
+pub fn bindingValues(
+    bs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
+) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __list_subject = bs;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let (Some(b), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                aver_rt::AverList::prepend(
+                    b.value.clone(),
+                    &crate::proof_kernel::aver_generated::kernel::induct::bindingValues(&rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
             }
         }
     }
@@ -2201,7 +2222,7 @@ pub fn orOn(
     }
 }
 
-/// Every arm passes, at place j of each recursive call, a name its pattern binds and no inner arm rebinds.
+/// Every arm passes, at place j of each recursive call, a proper part bound below a constructor and no inner arm rebinds.
 #[inline(always)]
 pub fn armsShrink(
     arms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
@@ -2221,7 +2242,7 @@ pub fn armsShrink(
                         crate::proof_kernel::aver_generated::kernel::induct::calls(&a.body, d, ds)?;
                     {
                         let __arg7 @ _ =
-                            crate::proof_kernel::aver_generated::kernel::subst::patNames(
+                            crate::proof_kernel::aver_generated::kernel::induct::structuralParts(
                                 &a.pattern,
                             );
                         {
@@ -2241,6 +2262,30 @@ pub fn armsShrink(
                 panic!("Aver Rust codegen: non-exhaustive list match")
             }
         }
+    }
+}
+
+/// Names bound below a constructor, list cell or tuple; a catch-all binds the whole value, not a smaller part.
+pub fn structuralParts(
+    p @ _: &crate::proof_kernel::aver_generated::kernel::term::Pat,
+) -> aver_rt::AverList<AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    match p {
+        crate::proof_kernel::aver_generated::kernel::term::Pat::PCons(h, t) => {
+            let h = h.clone();
+            let t = t.clone();
+            crate::proof_kernel::aver_generated::kernel::subst::patNames(p)
+        }
+        crate::proof_kernel::aver_generated::kernel::term::Pat::PCtor(c, ns) => {
+            let c = c.clone();
+            let ns = ns.clone();
+            crate::proof_kernel::aver_generated::kernel::subst::patNames(p)
+        }
+        crate::proof_kernel::aver_generated::kernel::term::Pat::PTuple(ps) => {
+            let ps = ps.clone();
+            crate::proof_kernel::aver_generated::kernel::subst::patNames(p)
+        }
+        _ => aver_rt::AverList::empty(),
     }
 }
 

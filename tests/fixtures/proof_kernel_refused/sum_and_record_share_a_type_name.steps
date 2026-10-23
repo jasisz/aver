@@ -1,0 +1,14 @@
+(steps 16
+ (obligation sumLoansEqualityToFloatRecord ((r (named R))) (none)
+  (op == (v r) (v r))
+  (b true))
+ (defs)
+ (consts)
+ (sums
+  (sum R eq (R.A)))
+ (recs
+  (rec R eq (value float)))
+ (sigs)
+ (laws)
+ (proof
+  (rule bool.beq.refl ((a (v r))))))

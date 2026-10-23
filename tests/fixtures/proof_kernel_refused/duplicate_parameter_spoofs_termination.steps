@@ -1,0 +1,41 @@
+(steps 16
+ (obligation duplicateParamsProveZeroIsOne () (none)
+  (i 0)
+  (i 1))
+ (defs
+  (def f ((n int) (n int)) int ()
+   (match (op <= (v n) (i 0))
+    (arm (pl (b true)) (i 0))
+    (arm (pl (b false))
+     (op + (call f (op - (v n) (i 1)) (v n)) (i 1))))))
+ (consts)
+ (sums)
+ (recs)
+ (sigs)
+ (laws)
+ (proof
+  (trans
+   ((i 0)
+    (op - (call f (i 0) (i 1)) (call f (i 0) (i 1)))
+    (op -
+     (op + (call f (op - (i 1) (i 1)) (i 1)) (i 1))
+     (call f (i 0) (i 1)))
+    (op -
+     (op + (call f (i 0) (i 1)) (i 1))
+     (call f (i 0) (i 1)))
+    (i 1))
+   (ring
+    (i 0)
+    (op - (call f (i 0) (i 1)) (call f (i 0) (i 1))))
+   (congr
+    (op - (hole) (call f (i 0) (i 1)))
+    (unfold f 2 ((i 0) (i 1)) ()
+     (compute (op <= (i 1) (i 0)) (b false))))
+   (congr
+    (op - (op + (call f (hole) (i 1)) (i 1)) (call f (i 0) (i 1)))
+    (compute (op - (i 1) (i 1)) (i 0)))
+   (ring
+    (op -
+     (op + (call f (i 0) (i 1)) (i 1))
+     (call f (i 0) (i 1)))
+    (i 1)))))
