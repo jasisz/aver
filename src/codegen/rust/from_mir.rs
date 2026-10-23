@@ -3788,7 +3788,9 @@ fn emit_mir_match_with(
             (MatchPath::Generic { by_ref }, Some(codegen)) => {
                 lent_parts(&arm.pattern, &resolved.pattern, &arm.body, by_ref, codegen)
             }
-            (MatchPath::List, Some(_)) => lent_head(&arm.pattern, &arm.body),
+            (MatchPath::List, Some(_)) if !takes_list_apart(m, emit_ctx) => {
+                lent_head(&arm.pattern, &arm.body)
+            }
             (MatchPath::LentTuple, Some(_)) => lent_tuple_parts(&arm.pattern, &arm.body),
             _ => HashSet::new(),
         };
@@ -4442,6 +4444,40 @@ fn lent_tuple_parts(pattern: &MirPattern, body: &Spanned<MirExpr>) -> HashSet<St
             _ => None,
         })
         .collect()
+}
+
+/// Whether a list match takes its subject apart: a list read nowhere after
+/// the match, matched by `[]` and `[h, ..t]` with both parts named, goes
+/// through `aver_list_match!`, which moves the head and the rest out of a
+/// node it alone holds. A list that lives on lends its head instead (see
+/// [`lent_head`]).
+fn takes_list_apart(m: &MirMatch, ctx: &MirEmitCtx<'_>) -> bool {
+    let named = |name: &str| !name.is_empty() && name != "_";
+    let shape = match m.arms.as_slice() {
+        [first, second] => match (&first.pattern, &second.pattern) {
+            (
+                MirPattern::EmptyList,
+                MirPattern::Cons {
+                    head_name,
+                    tail_name,
+                    ..
+                },
+            )
+            | (
+                MirPattern::Cons {
+                    head_name,
+                    tail_name,
+                    ..
+                },
+                MirPattern::EmptyList,
+            ) => named(head_name) && named(tail_name),
+            _ => false,
+        },
+        _ => false,
+    };
+    shape
+        && !mir_expr_is_borrowed_param_read(&m.subject.node, ctx)
+        && !owned_read_clones(&m.subject.node, ctx)
 }
 
 /// The head a list arm binds, which it borrows from the list instead of
@@ -6958,7 +6994,7 @@ fn emit_mir_builtin_call(
             let s = arg!(0);
             let delim = arg!(1);
             format!(
-                "aver_rt::AverList::from_vec({}.split(&*{}).map(|s| s.to_string()).collect::<Vec<_>>())",
+                "aver_rt::AverList::from_vec({}.split(&*{}).map(aver_rt::AverStr::from).collect::<Vec<_>>())",
                 s, delim
             )
         }

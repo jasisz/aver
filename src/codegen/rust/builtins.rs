@@ -17,7 +17,6 @@ pub(super) fn builtin_needs_str_conversion(name: &str) -> bool {
             | "String.trim"
             | "String.trimStart"
             | "String.trimEnd"
-            | "String.split"
             | "String.replace"
             | "String.replaceFirst"
             | "String.join"
