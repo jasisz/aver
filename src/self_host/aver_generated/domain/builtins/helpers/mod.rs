@@ -67,8 +67,8 @@ pub fn expectList(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValList(__items_fields) => {
-                let items = __items_fields.0.clone();
-                Ok(items)
+                let items = &__items_fields.0;
+                Ok(items.clone())
             }
             _ => Err(::aver_rt::str_lit!("expected list argument")),
         }
@@ -211,7 +211,7 @@ pub fn expectByteItems(
                                 let value = __value_fields.0.clone();
                                 {
                                     let __tco0 = rest;
-                                    let __tco1 = aver_rt::AverIntList::prepend(value, &acc);
+                                    let __tco1 = aver_rt::AverIntList::prepend_owned(value, acc);
                                     __hold0 = __tco0;
                                     items = &__hold0;
                                     acc = __tco1;

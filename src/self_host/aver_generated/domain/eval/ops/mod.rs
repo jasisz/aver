@@ -549,7 +549,7 @@ pub fn evalVectorSetMaybeDefault(
         let __t = vecV;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValVector(__vec_fields) => {
-                let vec = __vec_fields.0.clone();
+                let vec = &__vec_fields.0;
                 {
                     let __t = idxV;
                     match __t.view() {
@@ -561,7 +561,7 @@ pub fn evalVectorSetMaybeDefault(
                                 if (idx < aver_rt::AverInt::from_i64(vec.len() as i64)) {
                                     Ok(Some(crate::aver_generated::domain::value::Val::ValVector(
                                         crate::aver_generated::domain::value::Val__ValVector({
-                                            let __vec = vec;
+                                            let __vec = vec.clone();
                                             match (idx).to_usize() {
                                                 Some(__idx) if __idx < __vec.len() => {
                                                     __vec.set_unchecked(__idx, valueV.clone())

@@ -161,9 +161,9 @@ pub fn scan(
                     crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Atom(acc) => {
                         let acc = acc.clone();
                         return {
-                            let __arg14 @ _ = aver_rt::AverList::prepend(
+                            let __arg14 @ _ = aver_rt::AverList::prepend_owned(
                                 crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc),
-                                &current,
+                                current,
                             );
                             crate::proof_kernel::aver_generated::kernel::sexp::finish(
                                 &__arg14, &parents,
@@ -232,9 +232,10 @@ pub fn scan(
                                                     {
                                                         let __tco0 = rest;
                                                         let __tco2 = aver_rt::AverList::empty();
-                                                        let __tco3 = aver_rt::AverList::prepend(
-                                                            current, &parents,
-                                                        );
+                                                        let __tco3 =
+                                                            aver_rt::AverList::prepend_owned(
+                                                                current, parents,
+                                                            );
                                                         __hold0 = __tco0;
                                                         cs = &__hold0;
                                                         current = __tco2;
@@ -258,7 +259,7 @@ pub fn scan(
                                                                 ) {
                                                                     {
                                                                         let __tco0 = rest;
-                                                                        let __tco2 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(current.reverse()), &parent.clone());
+                                                                        let __tco2 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(current.reverse()), parent);
                                                                         let __tco3 = above;
                                                                         __hold0 = __tco0;
                                                                         cs = &__hold0;
@@ -314,7 +315,7 @@ pub fn scan(
                                     {
                                         let __tco0 = rest;
                                         let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                        let __tco2 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                        let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
                                         __hold0 = __tco0;
                                         cs = &__hold0;
                                         __hold1 = __tco1;
@@ -327,7 +328,7 @@ pub fn scan(
                                         {
                                             let __tco0 = rest;
                                             let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                            let __tco2 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                            let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
                                             __hold0 = __tco0;
                                             cs = &__hold0;
                                             __hold1 = __tco1;
@@ -340,7 +341,7 @@ pub fn scan(
                                             {
                                                 let __tco0 = rest;
                                                 let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                                let __tco2 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                                let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
                                                 __hold0 = __tco0;
                                                 cs = &__hold0;
                                                 __hold1 = __tco1;
@@ -354,7 +355,7 @@ pub fn scan(
                                                 {
                                                     let __tco0 = rest;
                                                     let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                                    let __tco2 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                                    let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
                                                     __hold0 = __tco0;
                                                     cs = &__hold0;
                                                     __hold1 = __tco1;
@@ -368,7 +369,7 @@ pub fn scan(
                                                 {
                                                     {
                                                         let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                                        let __tco2 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                                        let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
                                                         __hold1 = __tco1;
                                                         mode = &__hold1;
                                                         current = __tco2;
@@ -380,7 +381,7 @@ pub fn scan(
                                                     {
                                                         {
                                                             let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                                            let __tco2 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                                            let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
                                                             __hold1 = __tco1;
                                                             mode = &__hold1;
                                                             current = __tco2;
@@ -392,7 +393,7 @@ pub fn scan(
                                                         {
                                                             {
                                                                 let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                                                let __tco2 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                                                let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
                                                                 __hold1 = __tco1;
                                                                 mode = &__hold1;
                                                                 current = __tco2;
@@ -426,7 +427,7 @@ pub fn scan(
                                     {
                                         let __tco0 = rest;
                                         let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                        let __tco2 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Text(acc), &current);
+                                        let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Text(acc), current);
                                         __hold0 = __tco0;
                                         cs = &__hold0;
                                         __hold1 = __tco1;
@@ -749,16 +750,13 @@ pub fn within(
             Ok((s, aver_rt::AverInt::from_i64(1)))
         }
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(xs) => {
-            let xs = xs.clone();
-            {
-                let __arg5 @ _ = <aver_rt::AverList<Sexp>>::empty();
-                crate::proof_kernel::aver_generated::kernel::sexp::withinAll(
-                    &xs,
-                    table,
-                    __arg5,
-                    aver_rt::AverInt::from_i64(1),
-                )
-            }
+            let __arg5 @ _ = <aver_rt::AverList<Sexp>>::empty();
+            crate::proof_kernel::aver_generated::kernel::sexp::withinAll(
+                xs,
+                table,
+                __arg5,
+                aver_rt::AverInt::from_i64(1),
+            )
         }
     }
 }
@@ -791,7 +789,7 @@ pub fn withinAll(
                         )?;
                         {
                             let __tco0 = rest;
-                            let __tco2 = aver_rt::AverList::prepend(y, &acc);
+                            let __tco2 = aver_rt::AverList::prepend_owned(y, acc);
                             let __tco3 = size.add(&n);
                             __hold0 = __tco0;
                             xs = &__hold0;
@@ -834,9 +832,9 @@ pub fn scan__cursor(
                 crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Atom(acc) => {
                     let acc = acc.clone();
                     return {
-                        let __arg15 @ _ = aver_rt::AverList::prepend(
+                        let __arg15 @ _ = aver_rt::AverList::prepend_owned(
                             crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc),
-                            &current,
+                            current,
                         );
                         crate::proof_kernel::aver_generated::kernel::sexp::finish(
                             &__arg15, &parents,
@@ -909,9 +907,10 @@ pub fn scan__cursor(
                                                     {
                                                         let __tco1 = __cur_i1;
                                                         let __tco3 = aver_rt::AverList::empty();
-                                                        let __tco4 = aver_rt::AverList::prepend(
-                                                            current, &parents,
-                                                        );
+                                                        let __tco4 =
+                                                            aver_rt::AverList::prepend_owned(
+                                                                current, parents,
+                                                            );
                                                         __cur_i = __tco1;
                                                         current = __tco3;
                                                         parents = __tco4;
@@ -934,7 +933,7 @@ pub fn scan__cursor(
                                                                 ) {
                                                                     {
                                                                         let __tco1 = __cur_i1;
-                                                                        let __tco3 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(current.reverse()), &parent.clone());
+                                                                        let __tco3 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(current.reverse()), parent);
                                                                         let __tco4 = above;
                                                                         __cur_i = __tco1;
                                                                         current = __tco3;
@@ -987,7 +986,7 @@ pub fn scan__cursor(
                                     {
                                         let __tco1 = __cur_i1;
                                         let __tco2 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                        let __tco3 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                        let __tco3 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
                                         __cur_i = __tco1;
                                         __hold2 = __tco2;
                                         mode = &__hold2;
@@ -999,7 +998,7 @@ pub fn scan__cursor(
                                         {
                                             let __tco1 = __cur_i1;
                                             let __tco2 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                            let __tco3 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                            let __tco3 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
                                             __cur_i = __tco1;
                                             __hold2 = __tco2;
                                             mode = &__hold2;
@@ -1011,7 +1010,7 @@ pub fn scan__cursor(
                                             {
                                                 let __tco1 = __cur_i1;
                                                 let __tco2 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                                let __tco3 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                                let __tco3 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
                                                 __cur_i = __tco1;
                                                 __hold2 = __tco2;
                                                 mode = &__hold2;
@@ -1024,7 +1023,7 @@ pub fn scan__cursor(
                                                 {
                                                     let __tco1 = __cur_i1;
                                                     let __tco2 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                                    let __tco3 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                                    let __tco3 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
                                                     __cur_i = __tco1;
                                                     __hold2 = __tco2;
                                                     mode = &__hold2;
@@ -1037,7 +1036,7 @@ pub fn scan__cursor(
                                                 {
                                                     {
                                                         let __tco2 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                                        let __tco3 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                                        let __tco3 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
                                                         __hold2 = __tco2;
                                                         mode = &__hold2;
                                                         current = __tco3;
@@ -1049,7 +1048,7 @@ pub fn scan__cursor(
                                                     {
                                                         {
                                                             let __tco2 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                                            let __tco3 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                                            let __tco3 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
                                                             __hold2 = __tco2;
                                                             mode = &__hold2;
                                                             current = __tco3;
@@ -1061,7 +1060,7 @@ pub fn scan__cursor(
                                                         {
                                                             {
                                                                 let __tco2 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                                                let __tco3 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), &current);
+                                                                let __tco3 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
                                                                 __hold2 = __tco2;
                                                                 mode = &__hold2;
                                                                 current = __tco3;
@@ -1094,7 +1093,7 @@ pub fn scan__cursor(
                                     {
                                         let __tco1 = __cur_i1;
                                         let __tco2 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                        let __tco3 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Text(acc), &current);
+                                        let __tco3 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Text(acc), current);
                                         __cur_i = __tco1;
                                         __hold2 = __tco2;
                                         mode = &__hold2;

@@ -246,29 +246,29 @@ pub fn selfCalls(
                     __g_fields,
                 ) => {
                     let g = __g_fields.0.clone();
-                    let xs = __g_fields.1.clone();
+                    let xs = &__g_fields.1;
                     if (g == f) {
-                        return Ok(aver_rt::AverList::prepend(
+                        return Ok(aver_rt::AverList::prepend_owned(
                             crate::proof_kernel::aver_generated::kernel::induct::Call {
                                 args: xs.clone(),
                                 inner: bound.clone(),
                             },
-                            &crate::proof_kernel::aver_generated::kernel::induct::callsAll(
-                                &xs, f, bound, ds, fuel,
+                            crate::proof_kernel::aver_generated::kernel::induct::callsAll(
+                                xs, f, bound, ds, fuel,
                             )?,
                         ));
                     } else {
                         return Ok(aver_rt::AverList::concat(
                             &crate::proof_kernel::aver_generated::kernel::induct::helperCalls(
                                 g,
-                                &xs,
+                                xs,
                                 f.clone(),
                                 bound,
                                 ds,
                                 fuel.clone(),
                             )?,
                             &crate::proof_kernel::aver_generated::kernel::induct::callsAll(
-                                &xs, f, bound, ds, fuel,
+                                xs, f, bound, ds, fuel,
                             )?,
                         ));
                     }
@@ -292,10 +292,10 @@ pub fn selfCalls(
                     ));
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TGet(__o_fields) => {
-                    let o = __o_fields.0.clone();
+                    let o = &__o_fields.0;
                     let n = __o_fields.1.clone();
                     {
-                        let __tco0 = o;
+                        let __tco0 = o.clone();
                         __hold0 = __tco0;
                         t = &__hold0;
                         continue;
@@ -303,9 +303,9 @@ pub fn selfCalls(
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TBi(__n_fields) => {
                     let n = __n_fields.0.clone();
-                    let xs = __n_fields.1.clone();
+                    let xs = &__n_fields.1;
                     return crate::proof_kernel::aver_generated::kernel::induct::callsAll(
-                        &xs, f, bound, ds, fuel,
+                        xs, f, bound, ds, fuel,
                     );
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TOp(__o_fields) => {
@@ -326,9 +326,9 @@ pub fn selfCalls(
                     ));
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TNeg(__a_fields) => {
-                    let a = __a_fields.0.clone();
+                    let a = &__a_fields.0;
                     {
-                        let __tco0 = a;
+                        let __tco0 = a.clone();
                         __hold0 = __tco0;
                         t = &__hold0;
                         continue;
@@ -338,40 +338,40 @@ pub fn selfCalls(
                     __c_fields,
                 ) => {
                     let c = __c_fields.0.clone();
-                    let xs = __c_fields.1.clone();
+                    let xs = &__c_fields.1;
                     return crate::proof_kernel::aver_generated::kernel::induct::callsAll(
-                        &xs, f, bound, ds, fuel,
+                        xs, f, bound, ds, fuel,
                     );
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TParts(
                     __xs_fields,
                 ) => {
-                    let xs = __xs_fields.0.clone();
+                    let xs = &__xs_fields.0;
                     return crate::proof_kernel::aver_generated::kernel::induct::callsAll(
-                        &xs, f, bound, ds, fuel,
+                        xs, f, bound, ds, fuel,
                     );
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TList(
                     __xs_fields,
                 ) => {
-                    let xs = __xs_fields.0.clone();
+                    let xs = &__xs_fields.0;
                     return crate::proof_kernel::aver_generated::kernel::induct::callsAll(
-                        &xs, f, bound, ds, fuel,
+                        xs, f, bound, ds, fuel,
                     );
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TTuple(
                     __xs_fields,
                 ) => {
-                    let xs = __xs_fields.0.clone();
+                    let xs = &__xs_fields.0;
                     return crate::proof_kernel::aver_generated::kernel::induct::callsAll(
-                        &xs, f, bound, ds, fuel,
+                        xs, f, bound, ds, fuel,
                     );
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TRec(__n_fields) => {
                     let n = __n_fields.0.clone();
-                    let fs = __n_fields.1.clone();
+                    let fs = &__n_fields.1;
                     return crate::proof_kernel::aver_generated::kernel::induct::callsFields(
-                        &fs, f, bound, ds, fuel,
+                        fs, f, bound, ds, fuel,
                     );
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TUpd(__n_fields) => {
@@ -686,7 +686,7 @@ pub fn letsInlined(
                 if let (Some(b), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend(
+                        let __tco1 = aver_rt::AverList::prepend_owned(
                             {
                                 let __arg4 @ _ =
                                     crate::proof_kernel::aver_generated::kernel::subst::subst(
@@ -698,7 +698,7 @@ pub fn letsInlined(
                                     __arg4,
                                 )
                             },
-                            &done,
+                            done,
                         );
                         __hold0 = __tco0;
                         lets = &__hold0;
@@ -728,9 +728,9 @@ pub fn readAt(
             Ok(aver_rt::AverList::empty())
         } else {
             if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                Ok(aver_rt::AverList::prepend(
+                Ok(aver_rt::AverList::prepend_owned(
                     crate::proof_kernel::aver_generated::kernel::induct::readOne(c, h, xs, bound)?,
-                    &crate::proof_kernel::aver_generated::kernel::induct::readAt(
+                    crate::proof_kernel::aver_generated::kernel::induct::readAt(
                         &rest, h, xs, bound,
                     )?,
                 ))
@@ -829,9 +829,9 @@ pub fn paramsAt(
             let Some((x, moreXs)) = aver_rt::list_uncons_cloned(&(*__lit1)) else {
                 unreachable!("Aver Rust codegen: tuple element list mismatch")
             };
-            aver_rt::AverList::prepend(
+            aver_rt::AverList::prepend_owned(
                 crate::proof_kernel::aver_generated::kernel::term::bind(p, x),
-                &crate::proof_kernel::aver_generated::kernel::induct::paramsAt(&morePs, &moreXs),
+                crate::proof_kernel::aver_generated::kernel::induct::paramsAt(&morePs, &moreXs),
             )
         } else {
             aver_rt::AverList::empty()
@@ -1143,14 +1143,14 @@ pub fn armCalls(
             Ok(aver_rt::AverList::empty())
         } else {
             if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                Ok(aver_rt::AverList::prepend(
+                Ok(aver_rt::AverList::prepend_owned(
                     crate::proof_kernel::aver_generated::kernel::induct::ArmCalls {
                         arm: a.clone(),
                         calls: crate::proof_kernel::aver_generated::kernel::induct::calls(
                             &a.body, d, ds,
                         )?,
                     },
-                    &crate::proof_kernel::aver_generated::kernel::induct::armCalls(&rest, d, ds)?,
+                    crate::proof_kernel::aver_generated::kernel::induct::armCalls(&rest, d, ds)?,
                 ))
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -1602,7 +1602,7 @@ pub fn shortens(
                                 ds,
                             )
                         }) && {
-                            let __arg6 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TTuple(crate::proof_kernel::aver_generated::kernel::term::Term__TTuple(aver_rt::AverList::prepend(body, &crate::proof_kernel::aver_generated::kernel::induct::bindingValues(&ls))));
+                            let __arg6 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TTuple(crate::proof_kernel::aver_generated::kernel::term::Term__TTuple(aver_rt::AverList::prepend_owned(body, crate::proof_kernel::aver_generated::kernel::induct::bindingValues(&ls))));
                             {
                                 let __arg7 @ _ =
                                     crate::proof_kernel::aver_generated::kernel::proof::givenNames(
@@ -1630,9 +1630,9 @@ pub fn bindingValues(
             aver_rt::AverList::empty()
         } else {
             if let (Some(b), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     b.value.clone(),
-                    &crate::proof_kernel::aver_generated::kernel::induct::bindingValues(&rest),
+                    crate::proof_kernel::aver_generated::kernel::induct::bindingValues(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -1756,10 +1756,10 @@ pub fn shorter(
                     ));
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TGet(__o_fields) => {
-                    let o = __o_fields.0.clone();
+                    let o = &__o_fields.0;
                     let k = __o_fields.1.clone();
                     {
-                        let __tco0 = o;
+                        let __tco0 = o.clone();
                         __hold0 = __tco0;
                         t = &__hold0;
                         continue;
@@ -1767,9 +1767,9 @@ pub fn shorter(
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TBi(__k_fields) => {
                     let k = __k_fields.0.clone();
-                    let xs = __k_fields.1.clone();
+                    let xs = &__k_fields.1;
                     return crate::proof_kernel::aver_generated::kernel::induct::shorterAll(
-                        &xs, m, live, parts,
+                        xs, m, live, parts,
                     );
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TOp(__o_fields) => {
@@ -1783,9 +1783,9 @@ pub fn shorter(
                     ));
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TNeg(__a_fields) => {
-                    let a = __a_fields.0.clone();
+                    let a = &__a_fields.0;
                     {
-                        let __tco0 = a;
+                        let __tco0 = a.clone();
                         __hold0 = __tco0;
                         t = &__hold0;
                         continue;
@@ -1795,33 +1795,33 @@ pub fn shorter(
                     __c_fields,
                 ) => {
                     let c = __c_fields.0.clone();
-                    let xs = __c_fields.1.clone();
+                    let xs = &__c_fields.1;
                     return crate::proof_kernel::aver_generated::kernel::induct::shorterAll(
-                        &xs, m, live, parts,
+                        xs, m, live, parts,
                     );
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TParts(
                     __xs_fields,
                 ) => {
-                    let xs = __xs_fields.0.clone();
+                    let xs = &__xs_fields.0;
                     return crate::proof_kernel::aver_generated::kernel::induct::shorterAll(
-                        &xs, m, live, parts,
+                        xs, m, live, parts,
                     );
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TList(
                     __xs_fields,
                 ) => {
-                    let xs = __xs_fields.0.clone();
+                    let xs = &__xs_fields.0;
                     return crate::proof_kernel::aver_generated::kernel::induct::shorterAll(
-                        &xs, m, live, parts,
+                        xs, m, live, parts,
                     );
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TTuple(
                     __xs_fields,
                 ) => {
-                    let xs = __xs_fields.0.clone();
+                    let xs = &__xs_fields.0;
                     return crate::proof_kernel::aver_generated::kernel::induct::shorterAll(
-                        &xs, m, live, parts,
+                        xs, m, live, parts,
                     );
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TRec(__k_fields) => {
@@ -1837,12 +1837,12 @@ pub fn shorter(
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TUpd(__k_fields) => {
                     let k = __k_fields.0.clone();
-                    let b = __k_fields.1.clone();
+                    let b = &__k_fields.1;
                     let fs = &__k_fields.2;
                     return {
-                        let __arg29 @ _ = aver_rt::AverList::prepend(
-                            b,
-                            &crate::proof_kernel::aver_generated::kernel::induct::fieldValues(fs),
+                        let __arg29 @ _ = aver_rt::AverList::prepend_owned(
+                            b.clone(),
+                            crate::proof_kernel::aver_generated::kernel::induct::fieldValues(fs),
                         );
                         crate::proof_kernel::aver_generated::kernel::induct::shorterAll(
                             &__arg29, m, live, parts,
@@ -2007,9 +2007,9 @@ pub fn fieldValues(
             aver_rt::AverList::empty()
         } else {
             if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     x.value.clone(),
-                    &crate::proof_kernel::aver_generated::kernel::induct::fieldValues(&rest),
+                    crate::proof_kernel::aver_generated::kernel::induct::fieldValues(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -2591,7 +2591,7 @@ pub fn reaches(
                                         ds,
                                     ),
                                 );
-                                let __tco3 = aver_rt::AverList::prepend(g, &seen);
+                                let __tco3 = aver_rt::AverList::prepend_owned(g, seen);
                                 let __tco4 = fuel.sub(&aver_rt::AverInt::from_i64(1));
                                 frontier = __tco0;
                                 seen = __tco3;
@@ -2704,9 +2704,9 @@ pub fn onlyDefs(
                             ds,
                         ))
                     {
-                        return aver_rt::AverList::prepend(
+                        return aver_rt::AverList::prepend_owned(
                             n,
-                            &crate::proof_kernel::aver_generated::kernel::induct::onlyDefs(
+                            crate::proof_kernel::aver_generated::kernel::induct::onlyDefs(
                                 &rest, ds, own,
                             ),
                         );
@@ -2764,9 +2764,9 @@ pub fn namesCalled(
                 ) => {
                     let g = __g_fields.0.clone();
                     let xs = &__g_fields.1;
-                    return aver_rt::AverList::prepend(
+                    return aver_rt::AverList::prepend_owned(
                         g,
-                        &crate::proof_kernel::aver_generated::kernel::induct::namesAll(xs),
+                        crate::proof_kernel::aver_generated::kernel::induct::namesAll(xs),
                     );
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TMatch(
@@ -2780,10 +2780,10 @@ pub fn namesCalled(
                     );
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TGet(__o_fields) => {
-                    let o = __o_fields.0.clone();
+                    let o = &__o_fields.0;
                     let n = __o_fields.1.clone();
                     {
-                        let __tco0 = o;
+                        let __tco0 = o.clone();
                         __hold0 = __tco0;
                         t = &__hold0;
                         continue;
@@ -2791,8 +2791,8 @@ pub fn namesCalled(
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TBi(__n_fields) => {
                     let n = __n_fields.0.clone();
-                    let xs = __n_fields.1.clone();
-                    return crate::proof_kernel::aver_generated::kernel::induct::namesAll(&xs);
+                    let xs = &__n_fields.1;
+                    return crate::proof_kernel::aver_generated::kernel::induct::namesAll(xs);
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TOp(__o_fields) => {
                     let o = __o_fields.0.clone();
@@ -2804,9 +2804,9 @@ pub fn namesCalled(
                     );
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TNeg(__a_fields) => {
-                    let a = __a_fields.0.clone();
+                    let a = &__a_fields.0;
                     {
-                        let __tco0 = a;
+                        let __tco0 = a.clone();
                         __hold0 = __tco0;
                         t = &__hold0;
                         continue;
@@ -2816,31 +2816,31 @@ pub fn namesCalled(
                     __c_fields,
                 ) => {
                     let c = __c_fields.0.clone();
-                    let xs = __c_fields.1.clone();
-                    return crate::proof_kernel::aver_generated::kernel::induct::namesAll(&xs);
+                    let xs = &__c_fields.1;
+                    return crate::proof_kernel::aver_generated::kernel::induct::namesAll(xs);
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TParts(
                     __xs_fields,
                 ) => {
-                    let xs = __xs_fields.0.clone();
-                    return crate::proof_kernel::aver_generated::kernel::induct::namesAll(&xs);
+                    let xs = &__xs_fields.0;
+                    return crate::proof_kernel::aver_generated::kernel::induct::namesAll(xs);
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TList(
                     __xs_fields,
                 ) => {
-                    let xs = __xs_fields.0.clone();
-                    return crate::proof_kernel::aver_generated::kernel::induct::namesAll(&xs);
+                    let xs = &__xs_fields.0;
+                    return crate::proof_kernel::aver_generated::kernel::induct::namesAll(xs);
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TTuple(
                     __xs_fields,
                 ) => {
-                    let xs = __xs_fields.0.clone();
-                    return crate::proof_kernel::aver_generated::kernel::induct::namesAll(&xs);
+                    let xs = &__xs_fields.0;
+                    return crate::proof_kernel::aver_generated::kernel::induct::namesAll(xs);
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TRec(__n_fields) => {
                     let n = __n_fields.0.clone();
-                    let fs = __n_fields.1.clone();
-                    return crate::proof_kernel::aver_generated::kernel::induct::namesFields(&fs);
+                    let fs = &__n_fields.1;
+                    return crate::proof_kernel::aver_generated::kernel::induct::namesFields(fs);
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TUpd(__n_fields) => {
                     let n = __n_fields.0.clone();
@@ -3006,7 +3006,7 @@ pub fn generalised(
                                 if (((k != j) && (n != v))
                                     && (givens.contains(&n) && (!seen.contains(&n))))
                                 {
-                                    return aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::induct::Place { at: k.clone(), name: n.clone() }, &crate::proof_kernel::aver_generated::kernel::induct::generalised(&rest, k.add(&aver_rt::AverInt::from_i64(1)), j, v, givens, aver_rt::AverList::prepend(n, &seen)));
+                                    return aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::induct::Place { at: k.clone(), name: n.clone() }, crate::proof_kernel::aver_generated::kernel::induct::generalised(&rest, k.add(&aver_rt::AverInt::from_i64(1)), j, v, givens, aver_rt::AverList::prepend_owned(n, seen)));
                                 } else {
                                     {
                                         let __tco0 = rest;

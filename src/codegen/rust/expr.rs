@@ -524,7 +524,9 @@ pub(super) fn emit_list_match<F>(
 where
     F: Fn(&ResolvedMatchArm) -> String,
 {
-    // Fast path: exactly [] and [h, ..t] → use aver_list_match! macro
+    // Fast path: exactly [] and [h, ..t] → use aver_list_match! macro, which
+    // owns the list and takes it apart. A head an arm borrows stays on the
+    // path below: a shared list lends it rather than copying it out.
     if !lent
         && heads.is_empty()
         && let Some(code) =

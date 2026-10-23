@@ -3818,6 +3818,36 @@ fn a_param_moved_and_read_in_one_call_is_read_first_and_moved() {
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// What a match reads through a borrow is borrowed too, and copied where an
+/// arm needs it owned (Pestka #53): a bucket entry `(k, v)` is cloned only on
+/// a hit, a value in a map is matched in place (`m.get(&key)`), and a borrowed
+/// `Option` is matched without copying it. A list handed over at its last use
+/// is prepended without a count, a list read at an index is read in place,
+/// and a trampoline that calls itself binds what it computes first and moves
+/// the rest (Pestka #54). The compiled program must print what the VM does.
+#[test]
+fn borrowed_payloads_and_handed_lists_match_vm() {
+    let relative = "tests/fixtures/lent_payloads_app.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("lent_payloads", &src);
+    for expected in [
+        "let (k, v) = __pat0; if (k == e) { Some(v.clone()) }",
+        "match (m).get(&key) { Some(b @ _) => { findIn(b, e) }",
+        "match o { Some(e @ _) => { weight(e) }",
+        "aver_rt::AverList::prepend_owned(mk(i), acc)",
+        "Bucket::Entries(aver_rt::AverList::prepend(entry.clone(), es))",
+        "match (xs).get(aver_rt::clamp_list_count(&(k))) { Some(x) => { x.clone() }, None =>",
+        "aver_rt::AverList::prepend_owned(envOf(&env, n.clone()), stack); __MutualTco1::Ev(env, __arg",
+    ] {
+        assert!(
+            emitted.contains(expected),
+            "missing `{expected}`:\n{emitted}"
+        );
+    }
+    assert!(!emitted.contains(".get(&key).cloned()"), "{emitted}");
+    assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// The same with a bounce between two mutually recursive functions
 /// (`step(st, t, localValue(st.lctx, n), n)`), a field read by an earlier
 /// argument (`putFirst(readOnly(w.st, w.e), w.st, w.e)`), and a field read

@@ -215,13 +215,13 @@ fn __mutual_tco_trampoline_3(
                 {
                     let (valExpr, pos3) = vr;
                     {
-                        let __arg9 @ _ = aver_rt::AverList::prepend(
+                        let __arg9 @ _ = aver_rt::AverList::prepend_owned(
                             crate::aver_generated::domain::ast::Expr::ExprTuple(
                                 crate::aver_generated::domain::ast::Expr__ExprTuple(
                                     aver_rt::AverList::from_vec(vec![keyExpr, valExpr]),
                                 ),
                             ),
-                            &acc,
+                            acc,
                         );
                         __MutualTco3::ParseMapEntryTail(pos3, __arg9)
                     }
@@ -322,7 +322,7 @@ fn __mutual_tco_trampoline_4(
                 {
                     let (expr, pos2) = r;
                     {
-                        let __arg6 @ _ = aver_rt::AverList::prepend(expr, &acc);
+                        let __arg6 @ _ = aver_rt::AverList::prepend_owned(expr, acc);
                         __MutualTco4::ParseInterpAfterExpr(pos2, __arg6)
                     }
                 }
@@ -344,11 +344,11 @@ fn __mutual_tco_trampoline_4(
                 let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
                 match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkStr(s) => {
-                        let __arg5 @ _ = aver_rt::AverList::prepend(
+                        let __arg5 @ _ = aver_rt::AverList::prepend_owned(
                             crate::aver_generated::domain::ast::Expr::ExprStr(
                                 crate::aver_generated::domain::ast::Expr__ExprStr(s),
                             ),
-                            &acc,
+                            acc,
                         );
                         __MutualTco4::ParseInterpAfterStr(nextPos, __arg5)
                     }
@@ -449,7 +449,7 @@ fn __mutual_tco_trampoline_5(
                 {
                     let (expr, pos2) = r;
                     {
-                        let __arg6 @ _ = aver_rt::AverList::prepend(expr, &acc);
+                        let __arg6 @ _ = aver_rt::AverList::prepend_owned(expr, acc);
                         __MutualTco5::ParseListItemsTail(pos2, __arg6)
                     }
                 }
@@ -549,7 +549,7 @@ fn __mutual_tco_trampoline_6(
                 {
                     let (expr, pos2) = r;
                     {
-                        let __arg6 @ _ = aver_rt::AverList::prepend(expr, &acc);
+                        let __arg6 @ _ = aver_rt::AverList::prepend_owned(expr, acc);
                         __MutualTco6::ParseTupleRestTail(pos2, __arg6)
                     }
                 }
@@ -745,7 +745,7 @@ fn __mutual_tco_trampoline_8(
                 {
                     let (expr, pos3) = r;
                     {
-                        let __arg10 @ _ = aver_rt::AverList::prepend((field, expr), &acc);
+                        let __arg10 @ _ = aver_rt::AverList::prepend_owned((field, expr), acc);
                         __MutualTco8::ParseRecordFieldsTail(pos3, name, __arg10)
                     }
                 }
@@ -884,7 +884,7 @@ fn __mutual_tco_trampoline_9(
                 {
                     let (expr, pos2) = r;
                     {
-                        let __arg7 @ _ = aver_rt::AverList::prepend(expr, &acc);
+                        let __arg7 @ _ = aver_rt::AverList::prepend_owned(expr, acc);
                         __MutualTco9::ParseCallArgsListTail(pos2, name, __arg7)
                     }
                 }
@@ -1095,7 +1095,7 @@ fn __mutual_tco_trampoline_10(
                 {
                     let (expr, pos3) = r;
                     {
-                        let __arg11 @ _ = aver_rt::AverList::prepend((field, expr), &namedAcc);
+                        let __arg11 @ _ = aver_rt::AverList::prepend_owned((field, expr), namedAcc);
                         __MutualTco10::ParseNamedArgsTail(pos3, name, __arg11)
                     }
                 }
@@ -1277,13 +1277,13 @@ fn __mutual_tco_trampoline_11(
                             &*tokens, pos3,
                         );
                         {
-                            let __arg11 @ _ = aver_rt::AverList::prepend(
+                            let __arg11 @ _ = aver_rt::AverList::prepend_owned(
                                 crate::aver_generated::domain::ast::MatchArm {
                                     pattern: pat,
                                     body: body,
                                     bindingSlots: HashMap::new(),
                                 },
-                                &acc,
+                                acc,
                             );
                             __MutualTco11::ParseMatchArms(__arg10, __arg11)
                         }
@@ -1400,13 +1400,13 @@ fn __mutual_tco_trampoline_12(
                             &*tokens, pos3,
                         );
                         {
-                            let __arg11 @ _ = aver_rt::AverList::prepend(
+                            let __arg11 @ _ = aver_rt::AverList::prepend_owned(
                                 crate::aver_generated::domain::ast::MatchArm {
                                     pattern: pat,
                                     body: body,
                                     bindingSlots: HashMap::new(),
                                 },
-                                &acc,
+                                acc,
                             );
                             __MutualTco12::ParseMatchArmsFlat(__arg10, __arg11)
                         }

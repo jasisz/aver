@@ -217,10 +217,15 @@ fn __mutual_tco_trampoline_1(
                         crate::aver_generated::domain::ast::Expr__view::ExprBoolBranch(
                             __cond_fields,
                         ) => {
-                            let cond = __cond_fields.0.clone();
-                            let thenExpr = __cond_fields.1.clone();
-                            let elseExpr = __cond_fields.2.clone();
-                            __MutualTco1::EvalBoolBranch(cond, thenExpr, elseExpr, env)
+                            let cond = &__cond_fields.0;
+                            let thenExpr = &__cond_fields.1;
+                            let elseExpr = &__cond_fields.2;
+                            __MutualTco1::EvalBoolBranch(
+                                cond.clone(),
+                                thenExpr.clone(),
+                                elseExpr.clone(),
+                                env,
+                            )
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprVar(__name_fields) => {
                             let name = __name_fields.0.clone();
@@ -261,88 +266,114 @@ fn __mutual_tco_trampoline_1(
                         crate::aver_generated::domain::ast::Expr__view::ExprVectorGetOrInt(
                             __vecExpr_fields,
                         ) => {
-                            let vecExpr = __vecExpr_fields.0.clone();
-                            let idxExpr = __vecExpr_fields.1.clone();
+                            let vecExpr = &__vecExpr_fields.0;
+                            let idxExpr = &__vecExpr_fields.1;
                             let defaultValue = __vecExpr_fields.2.clone();
-                            return crate::aver_generated::domain::eval::core::evalVectorGetOrIntExpr(vecExpr, idxExpr, defaultValue, env, &*fns);
+                            return crate::aver_generated::domain::eval::core::evalVectorGetOrIntExpr(vecExpr.clone(), idxExpr.clone(), defaultValue, env, &*fns);
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprIntModOrInt(
                             __a_fields,
                         ) => {
-                            let a = __a_fields.0.clone();
-                            let b = __a_fields.1.clone();
+                            let a = &__a_fields.0;
+                            let b = &__a_fields.1;
                             let defaultValue = __a_fields.2.clone();
                             return crate::aver_generated::domain::eval::core::evalIntModOrIntExpr(
-                                a,
-                                b,
+                                a.clone(),
+                                b.clone(),
                                 defaultValue,
                                 env,
                                 &*fns,
                             );
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprAdd(__a_fields) => {
-                            let a = __a_fields.0.clone();
-                            let b = __a_fields.1.clone();
+                            let a = &__a_fields.0;
+                            let b = &__a_fields.1;
                             {
                                 let __arg22 @ _ = crate::aver_generated::domain::ast::BinOp::OpAdd;
                                 return crate::aver_generated::domain::eval::core::evalBinop(
-                                    a, b, env, &*fns, &__arg22,
+                                    a.clone(),
+                                    b.clone(),
+                                    env,
+                                    &*fns,
+                                    &__arg22,
                                 );
                             }
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprSub(__a_fields) => {
-                            let a = __a_fields.0.clone();
-                            let b = __a_fields.1.clone();
+                            let a = &__a_fields.0;
+                            let b = &__a_fields.1;
                             {
                                 let __arg23 @ _ = crate::aver_generated::domain::ast::BinOp::OpSub;
                                 return crate::aver_generated::domain::eval::core::evalBinop(
-                                    a, b, env, &*fns, &__arg23,
+                                    a.clone(),
+                                    b.clone(),
+                                    env,
+                                    &*fns,
+                                    &__arg23,
                                 );
                             }
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprMul(__a_fields) => {
-                            let a = __a_fields.0.clone();
-                            let b = __a_fields.1.clone();
+                            let a = &__a_fields.0;
+                            let b = &__a_fields.1;
                             {
                                 let __arg24 @ _ = crate::aver_generated::domain::ast::BinOp::OpMul;
                                 return crate::aver_generated::domain::eval::core::evalBinop(
-                                    a, b, env, &*fns, &__arg24,
+                                    a.clone(),
+                                    b.clone(),
+                                    env,
+                                    &*fns,
+                                    &__arg24,
                                 );
                             }
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprDiv(__a_fields) => {
-                            let a = __a_fields.0.clone();
-                            let b = __a_fields.1.clone();
+                            let a = &__a_fields.0;
+                            let b = &__a_fields.1;
                             {
                                 let __arg25 @ _ = crate::aver_generated::domain::ast::BinOp::OpDiv;
                                 return crate::aver_generated::domain::eval::core::evalBinop(
-                                    a, b, env, &*fns, &__arg25,
+                                    a.clone(),
+                                    b.clone(),
+                                    env,
+                                    &*fns,
+                                    &__arg25,
                                 );
                             }
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprNeg(__inner_fields) => {
-                            let inner = __inner_fields.0.clone();
+                            let inner = &__inner_fields.0;
                             return crate::aver_generated::domain::eval::core::evalNeg(
-                                inner, env, &*fns,
+                                inner.clone(),
+                                env,
+                                &*fns,
                             );
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprEq(__a_fields) => {
-                            let a = __a_fields.0.clone();
-                            let b = __a_fields.1.clone();
+                            let a = &__a_fields.0;
+                            let b = &__a_fields.1;
                             {
                                 let __arg26 @ _ = crate::aver_generated::domain::ast::CmpOp::CmpEq;
                                 return crate::aver_generated::domain::eval::core::evalCmp(
-                                    a, b, env, &*fns, &__arg26,
+                                    a.clone(),
+                                    b.clone(),
+                                    env,
+                                    &*fns,
+                                    &__arg26,
                                 );
                             }
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprNeq(__a_fields) => {
-                            let a = __a_fields.0.clone();
-                            let b = __a_fields.1.clone();
+                            let a = &__a_fields.0;
+                            let b = &__a_fields.1;
                             {
                                 let __arg27 @ _ = crate::aver_generated::domain::ast::CmpOp::CmpNeq;
                                 return crate::aver_generated::domain::eval::core::evalCmp(
-                                    a, b, env, &*fns, &__arg27,
+                                    a.clone(),
+                                    b.clone(),
+                                    env,
+                                    &*fns,
+                                    &__arg27,
                                 );
                             }
                         }
@@ -356,95 +387,111 @@ fn __mutual_tco_trampoline_1(
                     let __t = &expr;
                     match __t.view() {
                         crate::aver_generated::domain::ast::Expr__view::ExprLt(__a_fields) => {
-                            let a = __a_fields.0.clone();
-                            let b = __a_fields.1.clone();
+                            let a = &__a_fields.0;
+                            let b = &__a_fields.1;
                             {
                                 let __arg20 @ _ = crate::aver_generated::domain::ast::CmpOp::CmpLt;
                                 return crate::aver_generated::domain::eval::core::evalCmp(
-                                    a, b, env, &*fns, &__arg20,
+                                    a.clone(),
+                                    b.clone(),
+                                    env,
+                                    &*fns,
+                                    &__arg20,
                                 );
                             }
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprGt(__a_fields) => {
-                            let a = __a_fields.0.clone();
-                            let b = __a_fields.1.clone();
+                            let a = &__a_fields.0;
+                            let b = &__a_fields.1;
                             {
                                 let __arg21 @ _ = crate::aver_generated::domain::ast::CmpOp::CmpGt;
                                 return crate::aver_generated::domain::eval::core::evalCmp(
-                                    a, b, env, &*fns, &__arg21,
+                                    a.clone(),
+                                    b.clone(),
+                                    env,
+                                    &*fns,
+                                    &__arg21,
                                 );
                             }
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprLte(__a_fields) => {
-                            let a = __a_fields.0.clone();
-                            let b = __a_fields.1.clone();
+                            let a = &__a_fields.0;
+                            let b = &__a_fields.1;
                             {
                                 let __arg22 @ _ = crate::aver_generated::domain::ast::CmpOp::CmpLte;
                                 return crate::aver_generated::domain::eval::core::evalCmp(
-                                    a, b, env, &*fns, &__arg22,
+                                    a.clone(),
+                                    b.clone(),
+                                    env,
+                                    &*fns,
+                                    &__arg22,
                                 );
                             }
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprGte(__a_fields) => {
-                            let a = __a_fields.0.clone();
-                            let b = __a_fields.1.clone();
+                            let a = &__a_fields.0;
+                            let b = &__a_fields.1;
                             {
                                 let __arg23 @ _ = crate::aver_generated::domain::ast::CmpOp::CmpGte;
                                 return crate::aver_generated::domain::eval::core::evalCmp(
-                                    a, b, env, &*fns, &__arg23,
+                                    a.clone(),
+                                    b.clone(),
+                                    env,
+                                    &*fns,
+                                    &__arg23,
                                 );
                             }
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprConcat(
                             __parts_fields,
                         ) => {
-                            let parts = __parts_fields.0.clone();
+                            let parts = &__parts_fields.0;
                             return crate::aver_generated::domain::eval::core::evalConcatExpr(
-                                &parts, &env, &*fns,
+                                parts, &env, &*fns,
                             );
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprTuple(
                             __exprs_fields,
                         ) => {
-                            let exprs = __exprs_fields.0.clone();
+                            let exprs = &__exprs_fields.0;
                             return crate::aver_generated::domain::eval::core::evalTupleExpr(
-                                &exprs, &env, &*fns,
+                                exprs, &env, &*fns,
                             );
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprList(
                             __exprs_fields,
                         ) => {
-                            let exprs = __exprs_fields.0.clone();
+                            let exprs = &__exprs_fields.0;
                             return crate::aver_generated::domain::eval::core::evalListExpr(
-                                &exprs, &env, &*fns,
+                                exprs, &env, &*fns,
                             );
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprRecord(
                             __name_fields,
                         ) => {
                             let name = __name_fields.0.clone();
-                            let fieldExprs = __name_fields.1.clone();
+                            let fieldExprs = &__name_fields.1;
                             return crate::aver_generated::domain::eval::core::evalRecordExpr(
-                                name,
-                                &fieldExprs,
-                                &env,
-                                &*fns,
+                                name, fieldExprs, &env, &*fns,
                             );
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprFieldAccess(
                             __obj_fields,
                         ) => {
-                            let obj = __obj_fields.0.clone();
+                            let obj = &__obj_fields.0;
                             let field = __obj_fields.1.clone();
                             return crate::aver_generated::domain::eval::core::evalFieldAccess(
-                                obj, field, env, &*fns,
+                                obj.clone(),
+                                field,
+                                env,
+                                &*fns,
                             );
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprCall(__name_fields) => {
                             let name = __name_fields.0.clone();
-                            let argExprs = __name_fields.1.clone();
+                            let argExprs = &__name_fields.1;
                             return crate::aver_generated::domain::eval::core::evalCall(
-                                name, &argExprs, &env, &*fns,
+                                name, argExprs, &env, &*fns,
                             );
                         }
                         _ => __MutualTco1::EvalExprCalls(expr, env),
@@ -460,46 +507,48 @@ fn __mutual_tco_trampoline_1(
                             __fnId_fields,
                         ) => {
                             let fnId = __fnId_fields.0.clone();
-                            let argExprs = __fnId_fields.1.clone();
+                            let argExprs = &__fnId_fields.1;
                             return crate::aver_generated::domain::eval::core::evalCallDirect(
-                                fnId, &argExprs, &env, &*fns,
+                                fnId, argExprs, &env, &*fns,
                             );
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltin(
                             __name_fields,
                         ) => {
                             let name = __name_fields.0.clone();
-                            let argExprs = __name_fields.1.clone();
-                            __MutualTco1::EvalCallBuiltinMaybeSpecial(name, argExprs, env)
+                            let argExprs = &__name_fields.1;
+                            __MutualTco1::EvalCallBuiltinMaybeSpecial(name, argExprs.clone(), env)
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltinId(
                             __id_fields,
                         ) => {
                             let id = __id_fields.0.clone();
-                            let argExprs = __id_fields.1.clone();
-                            __MutualTco1::EvalCallBuiltinById(id, argExprs, env)
+                            let argExprs = &__id_fields.1;
+                            __MutualTco1::EvalCallBuiltinById(id, argExprs.clone(), env)
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprMatch(
                             __scrutinee_fields,
                         ) => {
-                            let scrutinee = __scrutinee_fields.0.clone();
-                            let arms = __scrutinee_fields.1.clone();
-                            __MutualTco1::EvalMatchExpr(scrutinee, arms, env)
+                            let scrutinee = &__scrutinee_fields.0;
+                            let arms = &__scrutinee_fields.1;
+                            __MutualTco1::EvalMatchExpr(scrutinee.clone(), arms.clone(), env)
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprPropagate(
                             __inner_fields,
                         ) => {
-                            let inner = __inner_fields.0.clone();
+                            let inner = &__inner_fields.0;
                             return crate::aver_generated::domain::eval::core::evalPropagate(
-                                inner, env, &*fns,
+                                inner.clone(),
+                                env,
+                                &*fns,
                             );
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprIndependentProduct(
                             __exprs_fields,
                         ) => {
-                            let exprs = __exprs_fields.0.clone();
+                            let exprs = &__exprs_fields.0;
                             let unwrap = __exprs_fields.1.clone();
-                            return crate::aver_generated::domain::eval::core::evalIndependentProduct(&exprs, unwrap, env, &*fns);
+                            return crate::aver_generated::domain::eval::core::evalIndependentProduct(exprs, unwrap, env, &*fns);
                         }
                         _ => {
                             return Err(aver_rt::AverStr::from({
@@ -1196,20 +1245,29 @@ fn __mutual_tco_trampoline_2(
                         crate::aver_generated::domain::ast::Expr__view::ExprBoolBranch(
                             __cond_fields,
                         ) => {
-                            let cond = __cond_fields.0.clone();
-                            let thenExpr = __cond_fields.1.clone();
-                            let elseExpr = __cond_fields.2.clone();
+                            let cond = &__cond_fields.0;
+                            let thenExpr = &__cond_fields.1;
+                            let elseExpr = &__cond_fields.2;
                             __MutualTco2::EvalTailBoolBranchSlot(
-                                selfId, cond, thenExpr, elseExpr, slotCount, env,
+                                selfId,
+                                cond.clone(),
+                                thenExpr.clone(),
+                                elseExpr.clone(),
+                                slotCount,
+                                env,
                             )
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprMatch(
                             __scrutinee_fields,
                         ) => {
-                            let scrutinee = __scrutinee_fields.0.clone();
-                            let arms = __scrutinee_fields.1.clone();
+                            let scrutinee = &__scrutinee_fields.0;
+                            let arms = &__scrutinee_fields.1;
                             __MutualTco2::EvalTailMatchExprSlot(
-                                selfId, scrutinee, arms, slotCount, env,
+                                selfId,
+                                scrutinee.clone(),
+                                arms.clone(),
+                                slotCount,
+                                env,
                             )
                         }
                         _ => {
@@ -1499,10 +1557,15 @@ fn __mutual_tco_trampoline_3(
                         crate::aver_generated::domain::ast::Expr__view::ExprBoolBranch(
                             __cond_fields,
                         ) => {
-                            let cond = __cond_fields.0.clone();
-                            let thenExpr = __cond_fields.1.clone();
-                            let elseExpr = __cond_fields.2.clone();
-                            __MutualTco3::EvalBoolBranchSlot(cond, thenExpr, elseExpr, env)
+                            let cond = &__cond_fields.0;
+                            let thenExpr = &__cond_fields.1;
+                            let elseExpr = &__cond_fields.2;
+                            __MutualTco3::EvalBoolBranchSlot(
+                                cond.clone(),
+                                thenExpr.clone(),
+                                elseExpr.clone(),
+                                env,
+                            )
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprVar(__name_fields) => {
                             let name = __name_fields.0.clone();
@@ -1562,82 +1625,115 @@ fn __mutual_tco_trampoline_3(
                         crate::aver_generated::domain::ast::Expr__view::ExprVectorGetOrInt(
                             __vecExpr_fields,
                         ) => {
-                            let vecExpr = __vecExpr_fields.0.clone();
-                            let idxExpr = __vecExpr_fields.1.clone();
+                            let vecExpr = &__vecExpr_fields.0;
+                            let idxExpr = &__vecExpr_fields.1;
                             let defaultValue = __vecExpr_fields.2.clone();
-                            return crate::aver_generated::domain::eval::core::evalVectorGetOrIntExprSlot(vecExpr, idxExpr, defaultValue, env, &*slotMap, &*fns);
+                            return crate::aver_generated::domain::eval::core::evalVectorGetOrIntExprSlot(vecExpr.clone(), idxExpr.clone(), defaultValue, env, &*slotMap, &*fns);
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprIntModOrInt(
                             __a_fields,
                         ) => {
-                            let a = __a_fields.0.clone();
-                            let b = __a_fields.1.clone();
+                            let a = &__a_fields.0;
+                            let b = &__a_fields.1;
                             let defaultValue = __a_fields.2.clone();
-                            return crate::aver_generated::domain::eval::core::evalIntModOrIntExprSlot(a, b, defaultValue, env, &*slotMap, &*fns);
+                            return crate::aver_generated::domain::eval::core::evalIntModOrIntExprSlot(a.clone(), b.clone(), defaultValue, env, &*slotMap, &*fns);
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprAdd(__a_fields) => {
-                            let a = __a_fields.0.clone();
-                            let b = __a_fields.1.clone();
+                            let a = &__a_fields.0;
+                            let b = &__a_fields.1;
                             {
                                 let __arg26 @ _ = crate::aver_generated::domain::ast::BinOp::OpAdd;
                                 return crate::aver_generated::domain::eval::core::evalBinopSlot(
-                                    a, b, env, &*slotMap, &*fns, &__arg26,
+                                    a.clone(),
+                                    b.clone(),
+                                    env,
+                                    &*slotMap,
+                                    &*fns,
+                                    &__arg26,
                                 );
                             }
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprSub(__a_fields) => {
-                            let a = __a_fields.0.clone();
-                            let b = __a_fields.1.clone();
+                            let a = &__a_fields.0;
+                            let b = &__a_fields.1;
                             {
                                 let __arg27 @ _ = crate::aver_generated::domain::ast::BinOp::OpSub;
                                 return crate::aver_generated::domain::eval::core::evalBinopSlot(
-                                    a, b, env, &*slotMap, &*fns, &__arg27,
+                                    a.clone(),
+                                    b.clone(),
+                                    env,
+                                    &*slotMap,
+                                    &*fns,
+                                    &__arg27,
                                 );
                             }
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprMul(__a_fields) => {
-                            let a = __a_fields.0.clone();
-                            let b = __a_fields.1.clone();
+                            let a = &__a_fields.0;
+                            let b = &__a_fields.1;
                             {
                                 let __arg28 @ _ = crate::aver_generated::domain::ast::BinOp::OpMul;
                                 return crate::aver_generated::domain::eval::core::evalBinopSlot(
-                                    a, b, env, &*slotMap, &*fns, &__arg28,
+                                    a.clone(),
+                                    b.clone(),
+                                    env,
+                                    &*slotMap,
+                                    &*fns,
+                                    &__arg28,
                                 );
                             }
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprDiv(__a_fields) => {
-                            let a = __a_fields.0.clone();
-                            let b = __a_fields.1.clone();
+                            let a = &__a_fields.0;
+                            let b = &__a_fields.1;
                             {
                                 let __arg29 @ _ = crate::aver_generated::domain::ast::BinOp::OpDiv;
                                 return crate::aver_generated::domain::eval::core::evalBinopSlot(
-                                    a, b, env, &*slotMap, &*fns, &__arg29,
+                                    a.clone(),
+                                    b.clone(),
+                                    env,
+                                    &*slotMap,
+                                    &*fns,
+                                    &__arg29,
                                 );
                             }
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprNeg(__inner_fields) => {
-                            let inner = __inner_fields.0.clone();
+                            let inner = &__inner_fields.0;
                             return crate::aver_generated::domain::eval::core::evalNegSlot(
-                                inner, env, &*slotMap, &*fns,
+                                inner.clone(),
+                                env,
+                                &*slotMap,
+                                &*fns,
                             );
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprEq(__a_fields) => {
-                            let a = __a_fields.0.clone();
-                            let b = __a_fields.1.clone();
+                            let a = &__a_fields.0;
+                            let b = &__a_fields.1;
                             {
                                 let __arg30 @ _ = crate::aver_generated::domain::ast::CmpOp::CmpEq;
                                 return crate::aver_generated::domain::eval::core::evalCmpSlot(
-                                    a, b, env, &*slotMap, &*fns, &__arg30,
+                                    a.clone(),
+                                    b.clone(),
+                                    env,
+                                    &*slotMap,
+                                    &*fns,
+                                    &__arg30,
                                 );
                             }
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprNeq(__a_fields) => {
-                            let a = __a_fields.0.clone();
-                            let b = __a_fields.1.clone();
+                            let a = &__a_fields.0;
+                            let b = &__a_fields.1;
                             {
                                 let __arg31 @ _ = crate::aver_generated::domain::ast::CmpOp::CmpNeq;
                                 return crate::aver_generated::domain::eval::core::evalCmpSlot(
-                                    a, b, env, &*slotMap, &*fns, &__arg31,
+                                    a.clone(),
+                                    b.clone(),
+                                    env,
+                                    &*slotMap,
+                                    &*fns,
+                                    &__arg31,
                                 );
                             }
                         }
@@ -1651,96 +1747,116 @@ fn __mutual_tco_trampoline_3(
                     let __t = &expr;
                     match __t.view() {
                         crate::aver_generated::domain::ast::Expr__view::ExprLt(__a_fields) => {
-                            let a = __a_fields.0.clone();
-                            let b = __a_fields.1.clone();
+                            let a = &__a_fields.0;
+                            let b = &__a_fields.1;
                             {
                                 let __arg21 @ _ = crate::aver_generated::domain::ast::CmpOp::CmpLt;
                                 return crate::aver_generated::domain::eval::core::evalCmpSlot(
-                                    a, b, env, &*slotMap, &*fns, &__arg21,
+                                    a.clone(),
+                                    b.clone(),
+                                    env,
+                                    &*slotMap,
+                                    &*fns,
+                                    &__arg21,
                                 );
                             }
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprGt(__a_fields) => {
-                            let a = __a_fields.0.clone();
-                            let b = __a_fields.1.clone();
+                            let a = &__a_fields.0;
+                            let b = &__a_fields.1;
                             {
                                 let __arg22 @ _ = crate::aver_generated::domain::ast::CmpOp::CmpGt;
                                 return crate::aver_generated::domain::eval::core::evalCmpSlot(
-                                    a, b, env, &*slotMap, &*fns, &__arg22,
+                                    a.clone(),
+                                    b.clone(),
+                                    env,
+                                    &*slotMap,
+                                    &*fns,
+                                    &__arg22,
                                 );
                             }
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprLte(__a_fields) => {
-                            let a = __a_fields.0.clone();
-                            let b = __a_fields.1.clone();
+                            let a = &__a_fields.0;
+                            let b = &__a_fields.1;
                             {
                                 let __arg23 @ _ = crate::aver_generated::domain::ast::CmpOp::CmpLte;
                                 return crate::aver_generated::domain::eval::core::evalCmpSlot(
-                                    a, b, env, &*slotMap, &*fns, &__arg23,
+                                    a.clone(),
+                                    b.clone(),
+                                    env,
+                                    &*slotMap,
+                                    &*fns,
+                                    &__arg23,
                                 );
                             }
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprGte(__a_fields) => {
-                            let a = __a_fields.0.clone();
-                            let b = __a_fields.1.clone();
+                            let a = &__a_fields.0;
+                            let b = &__a_fields.1;
                             {
                                 let __arg24 @ _ = crate::aver_generated::domain::ast::CmpOp::CmpGte;
                                 return crate::aver_generated::domain::eval::core::evalCmpSlot(
-                                    a, b, env, &*slotMap, &*fns, &__arg24,
+                                    a.clone(),
+                                    b.clone(),
+                                    env,
+                                    &*slotMap,
+                                    &*fns,
+                                    &__arg24,
                                 );
                             }
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprConcat(
                             __parts_fields,
                         ) => {
-                            let parts = __parts_fields.0.clone();
+                            let parts = &__parts_fields.0;
                             return crate::aver_generated::domain::eval::core::evalConcatSlot(
-                                &parts, &env, &*slotMap, &*fns,
+                                parts, &env, &*slotMap, &*fns,
                             );
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprTuple(
                             __exprs_fields,
                         ) => {
-                            let exprs = __exprs_fields.0.clone();
+                            let exprs = &__exprs_fields.0;
                             return crate::aver_generated::domain::eval::core::evalTupleSlot(
-                                &exprs, &env, &*slotMap, &*fns,
+                                exprs, &env, &*slotMap, &*fns,
                             );
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprList(
                             __exprs_fields,
                         ) => {
-                            let exprs = __exprs_fields.0.clone();
+                            let exprs = &__exprs_fields.0;
                             return crate::aver_generated::domain::eval::core::evalListSlot(
-                                &exprs, &env, &*slotMap, &*fns,
+                                exprs, &env, &*slotMap, &*fns,
                             );
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprRecord(
                             __name_fields,
                         ) => {
                             let name = __name_fields.0.clone();
-                            let fieldExprs = __name_fields.1.clone();
+                            let fieldExprs = &__name_fields.1;
                             return crate::aver_generated::domain::eval::core::evalRecordSlot(
-                                name,
-                                &fieldExprs,
-                                &env,
-                                &*slotMap,
-                                &*fns,
+                                name, fieldExprs, &env, &*slotMap, &*fns,
                             );
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprFieldAccess(
                             __obj_fields,
                         ) => {
-                            let obj = __obj_fields.0.clone();
+                            let obj = &__obj_fields.0;
                             let field = __obj_fields.1.clone();
                             return crate::aver_generated::domain::eval::core::evalFieldAccessSlot(
-                                obj, field, env, &*slotMap, &*fns,
+                                obj.clone(),
+                                field,
+                                env,
+                                &*slotMap,
+                                &*fns,
                             );
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprCall(__name_fields) => {
                             let name = __name_fields.0.clone();
-                            let argExprs = __name_fields.1.clone();
+                            let argExprs = &__name_fields.1;
                             return crate::aver_generated::domain::eval::core::evalCallSlot(
-                                name, &argExprs, env, &*slotMap, &*fns,
+                                name, argExprs, env, &*slotMap, &*fns,
                             );
                         }
                         _ => __MutualTco3::EvalExprSlotCalls(expr, env),
@@ -1756,46 +1872,53 @@ fn __mutual_tco_trampoline_3(
                             __fnId_fields,
                         ) => {
                             let fnId = __fnId_fields.0.clone();
-                            let argExprs = __fnId_fields.1.clone();
+                            let argExprs = &__fnId_fields.1;
                             return crate::aver_generated::domain::eval::core::evalCallDirectSlot(
-                                fnId, &argExprs, &env, &*slotMap, &*fns,
+                                fnId, argExprs, &env, &*slotMap, &*fns,
                             );
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltin(
                             __name_fields,
                         ) => {
                             let name = __name_fields.0.clone();
-                            let argExprs = __name_fields.1.clone();
-                            __MutualTco3::EvalCallBuiltinSlotMaybeSpecial(name, argExprs, env)
+                            let argExprs = &__name_fields.1;
+                            __MutualTco3::EvalCallBuiltinSlotMaybeSpecial(
+                                name,
+                                argExprs.clone(),
+                                env,
+                            )
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltinId(
                             __id_fields,
                         ) => {
                             let id = __id_fields.0.clone();
-                            let argExprs = __id_fields.1.clone();
-                            __MutualTco3::EvalCallBuiltinByIdSlot(id, argExprs, env)
+                            let argExprs = &__id_fields.1;
+                            __MutualTco3::EvalCallBuiltinByIdSlot(id, argExprs.clone(), env)
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprMatch(
                             __scrutinee_fields,
                         ) => {
-                            let scrutinee = __scrutinee_fields.0.clone();
-                            let arms = __scrutinee_fields.1.clone();
-                            __MutualTco3::EvalMatchExprSlot(scrutinee, arms, env)
+                            let scrutinee = &__scrutinee_fields.0;
+                            let arms = &__scrutinee_fields.1;
+                            __MutualTco3::EvalMatchExprSlot(scrutinee.clone(), arms.clone(), env)
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprPropagate(
                             __inner_fields,
                         ) => {
-                            let inner = __inner_fields.0.clone();
+                            let inner = &__inner_fields.0;
                             return crate::aver_generated::domain::eval::core::evalPropagateSlot(
-                                inner, env, &*slotMap, &*fns,
+                                inner.clone(),
+                                env,
+                                &*slotMap,
+                                &*fns,
                             );
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprIndependentProduct(
                             __exprs_fields,
                         ) => {
-                            let exprs = __exprs_fields.0.clone();
+                            let exprs = &__exprs_fields.0;
                             let unwrap = __exprs_fields.1.clone();
-                            return crate::aver_generated::domain::eval::core::evalIndependentProductSlot(&exprs, unwrap, env, &*slotMap, &*fns);
+                            return crate::aver_generated::domain::eval::core::evalIndependentProductSlot(exprs, unwrap, env, &*slotMap, &*fns);
                         }
                         _ => {
                             return Err(aver_rt::AverStr::from({
@@ -2850,17 +2973,19 @@ fn __mutual_tco_trampoline_7(
                             match stmt {
                                 crate::aver_generated::domain::ast::Stmt::StmtBindSlot(slot, e) => {
                                     let slot = slot.clone();
-                                    let e = e.clone();
-                                    __MutualTco7::EvalStmtBindSlotNext(slot, e, rest, env)
+                                    __MutualTco7::EvalStmtBindSlotNext(slot, e.clone(), rest, env)
                                 }
                                 crate::aver_generated::domain::ast::Stmt::StmtExpr(e) => {
-                                    let e = e.clone();
-                                    __MutualTco7::EvalStmtExprSlotNext(e, rest, env)
+                                    __MutualTco7::EvalStmtExprSlotNext(e.clone(), rest, env)
                                 }
                                 crate::aver_generated::domain::ast::Stmt::StmtBind(name, e) => {
                                     let name = name.clone();
-                                    let e = e.clone();
-                                    __MutualTco7::EvalStmtBindFallbackSlotNext(name, e, rest, env)
+                                    __MutualTco7::EvalStmtBindFallbackSlotNext(
+                                        name,
+                                        e.clone(),
+                                        rest,
+                                        env,
+                                    )
                                 }
                             }
                         } else {
@@ -3370,8 +3495,8 @@ pub fn evalPropagate(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValOk(__x_fields) => {
-                let x = __x_fields.0.clone();
-                Ok(x)
+                let x = &__x_fields.0;
+                Ok(x.clone())
             }
             crate::aver_generated::domain::value::Val__view::ValErr(__e_fields) => {
                 let e = &__e_fields.0;
@@ -3645,7 +3770,7 @@ pub fn splitIndependentExprs(
                     if sendLeft {
                         {
                             let __tco0 = rest;
-                            let __tco1 = aver_rt::AverList::prepend(expr.clone(), &leftAcc);
+                            let __tco1 = aver_rt::AverList::prepend_owned(expr.clone(), leftAcc);
                             let __tco3 = false;
                             __hold0 = __tco0;
                             exprs = &__hold0;
@@ -3656,7 +3781,7 @@ pub fn splitIndependentExprs(
                     } else {
                         {
                             let __tco0 = rest;
-                            let __tco2 = aver_rt::AverList::prepend(expr.clone(), &rightAcc);
+                            let __tco2 = aver_rt::AverList::prepend_owned(expr.clone(), rightAcc);
                             let __tco3 = true;
                             __hold0 = __tco0;
                             exprs = &__hold0;
@@ -3699,7 +3824,7 @@ pub fn interleaveIndependentVals(
                         {
                             let __tco0 = rest;
                             let __tco2 = false;
-                            let __tco3 = aver_rt::AverList::prepend(v.clone(), &acc);
+                            let __tco3 = aver_rt::AverList::prepend_owned(v.clone(), acc);
                             __hold0 = __tco0;
                             left = &__hold0;
                             takeLeft = __tco2;
@@ -3723,7 +3848,7 @@ pub fn interleaveIndependentVals(
                         {
                             let __tco1 = rest;
                             let __tco2 = true;
-                            let __tco3 = aver_rt::AverList::prepend(v.clone(), &acc);
+                            let __tco3 = aver_rt::AverList::prepend_owned(v.clone(), acc);
                             __hold1 = __tco1;
                             right = &__hold1;
                             takeLeft = __tco2;
@@ -3757,7 +3882,7 @@ pub fn finishIndependentVals(
                 if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend(v.clone(), &acc);
+                        let __tco1 = aver_rt::AverList::prepend_owned(v.clone(), acc);
                         __hold0 = __tco0;
                         items = &__hold0;
                         acc = __tco1;
@@ -3793,10 +3918,10 @@ pub fn unwrapProductResults(
                         let __t = v;
                         match __t.view() {
                             crate::aver_generated::domain::value::Val__view::ValOk(__x_fields) => {
-                                let x = __x_fields.0.clone();
+                                let x = &__x_fields.0;
                                 {
                                     let __tco0 = rest;
-                                    let __tco1 = aver_rt::AverList::prepend(x, &acc);
+                                    let __tco1 = aver_rt::AverList::prepend_owned(x.clone(), acc);
                                     __hold0 = __tco0;
                                     items = &__hold0;
                                     acc = __tco1;
@@ -4035,7 +4160,7 @@ pub fn evalRecordFieldOne(
     let v @ _ = crate::aver_generated::domain::eval::core::evalExpr(expr, env.clone(), fns)?;
     let restFields @ _ =
         crate::aver_generated::domain::eval::core::evalRecordFields(rest, env, fns)?;
-    Ok(aver_rt::AverList::prepend((fname, v), &restFields))
+    Ok(aver_rt::AverList::prepend_owned((fname, v), restFields))
 }
 
 /// Evaluate field access: obj.field.
@@ -4112,7 +4237,7 @@ pub fn evalListItemsRev(
                         }
                         Ok(v @ _) => {
                             let __tco0 = rest;
-                            let __tco3 = aver_rt::AverList::prepend(v, &acc);
+                            let __tco3 = aver_rt::AverList::prepend_owned(v, acc);
                             __hold0 = __tco0;
                             exprs = &__hold0;
                             acc = __tco3;
@@ -4165,7 +4290,7 @@ pub fn evalArgsRev(
                         }
                         Ok(v @ _) => {
                             let __tco0 = rest;
-                            let __tco3 = aver_rt::AverList::prepend(v, &acc);
+                            let __tco3 = aver_rt::AverList::prepend_owned(v, acc);
                             __hold0 = __tco0;
                             exprs = &__hold0;
                             acc = __tco3;
@@ -4646,9 +4771,13 @@ pub fn evalTailStmtSlot(
     crate::cancel_checkpoint();
     match &stmt {
         crate::aver_generated::domain::ast::Stmt::StmtExpr(expr) => {
-            let expr = expr.clone();
             crate::aver_generated::domain::eval::core::evalTailExprSlot(
-                selfId, expr, slotCount, env, slotMap, fns,
+                selfId,
+                expr.clone(),
+                slotCount,
+                env,
+                slotMap,
+                fns,
             )
         }
         _ => {
@@ -4676,8 +4805,12 @@ pub fn evalResolvedSingleStmtSlot(
     crate::cancel_checkpoint();
     match &stmt {
         crate::aver_generated::domain::ast::Stmt::StmtExpr(expr) => {
-            let expr = expr.clone();
-            crate::aver_generated::domain::eval::core::evalExprSlot(expr, calleeEnv, slotMap, fns)
+            crate::aver_generated::domain::eval::core::evalExprSlot(
+                expr.clone(),
+                calleeEnv,
+                slotMap,
+                fns,
+            )
         }
         _ => {
             let __arg5 @ _ = aver_rt::AverList::from_vec(vec![stmt]);
@@ -4720,8 +4853,7 @@ pub fn evalResolvedSingleStmtNamed(
     crate::cancel_checkpoint();
     match &stmt {
         crate::aver_generated::domain::ast::Stmt::StmtExpr(expr) => {
-            let expr = expr.clone();
-            crate::aver_generated::domain::eval::core::evalExpr(expr, calleeEnv, fns)
+            crate::aver_generated::domain::eval::core::evalExpr(expr.clone(), calleeEnv, fns)
         }
         _ => {
             let __arg4 @ _ = aver_rt::AverList::from_vec(vec![stmt]);
@@ -4808,7 +4940,7 @@ pub fn collectFastForwardArgs(
                     match crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slot) {
                         Ok(v @ _) => {
                             let __tco0 = rest;
-                            let __tco2 = aver_rt::AverList::prepend(v, &acc);
+                            let __tco2 = aver_rt::AverList::prepend_owned(v, acc);
                             __hold0 = __tco0;
                             slotArgs = &__hold0;
                             acc = __tco2;
@@ -4976,17 +5108,14 @@ pub fn evalStmt(
     crate::cancel_checkpoint();
     match stmt {
         crate::aver_generated::domain::ast::Stmt::StmtExpr(e) => {
-            let e = e.clone();
-            crate::aver_generated::domain::eval::core::evalStmtExpr(e, env, fns)
+            crate::aver_generated::domain::eval::core::evalStmtExpr(e.clone(), env, fns)
         }
         crate::aver_generated::domain::ast::Stmt::StmtBind(name, e) => {
             let name = name.clone();
-            let e = e.clone();
-            crate::aver_generated::domain::eval::core::evalStmtBind(name, e, env, fns)
+            crate::aver_generated::domain::eval::core::evalStmtBind(name, e.clone(), env, fns)
         }
         crate::aver_generated::domain::ast::Stmt::StmtBindSlot(_, e) => {
-            let e = e.clone();
-            crate::aver_generated::domain::eval::core::evalStmtExpr(e, env, fns)
+            crate::aver_generated::domain::eval::core::evalStmtExpr(e.clone(), env, fns)
         }
     }
 }
@@ -5516,7 +5645,7 @@ pub fn evalListItemsSlotRev(
                         }
                         Ok(v @ _) => {
                             let __tco0 = rest;
-                            let __tco4 = aver_rt::AverList::prepend(v, &acc);
+                            let __tco4 = aver_rt::AverList::prepend_owned(v, acc);
                             __hold0 = __tco0;
                             exprs = &__hold0;
                             acc = __tco4;
@@ -5589,7 +5718,7 @@ pub fn evalRecordFieldOneSlot(
         crate::aver_generated::domain::eval::core::evalExprSlot(expr, env.clone(), slotMap, fns)?;
     let restFields @ _ =
         crate::aver_generated::domain::eval::core::evalRecordFieldsSlot(rest, env, slotMap, fns)?;
-    Ok(aver_rt::AverList::prepend((fname, v), &restFields))
+    Ok(aver_rt::AverList::prepend_owned((fname, v), restFields))
 }
 
 /// Field access in slot path.
@@ -5860,7 +5989,7 @@ pub fn evalArgsSlotRev(
                         }
                         Ok(v @ _) => {
                             let __tco0 = rest;
-                            let __tco4 = aver_rt::AverList::prepend(v, &acc);
+                            let __tco4 = aver_rt::AverList::prepend_owned(v, acc);
                             __hold0 = __tco0;
                             exprs = &__hold0;
                             acc = __tco4;
@@ -5988,8 +6117,8 @@ pub fn evalPropagateSlot(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValOk(__x_fields) => {
-                let x = __x_fields.0.clone();
-                Ok(x)
+                let x = &__x_fields.0;
+                Ok(x.clone())
             }
             crate::aver_generated::domain::value::Val__view::ValErr(__e_fields) => {
                 let e = &__e_fields.0;
@@ -6271,10 +6400,10 @@ pub fn unwrapProductResults__collected(
                         let __t = v;
                         match __t.view() {
                             crate::aver_generated::domain::value::Val__view::ValOk(__x_fields) => {
-                                let x = __x_fields.0.clone();
+                                let x = &__x_fields.0;
                                 {
                                     let __tco0 = rest;
-                                    let __tco1 = aver_rt::list_builder_push(acc, x);
+                                    let __tco1 = aver_rt::list_builder_push(acc, x.clone());
                                     __hold0 = __tco0;
                                     items = &__hold0;
                                     acc = __tco1;

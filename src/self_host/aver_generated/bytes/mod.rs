@@ -315,7 +315,7 @@ pub fn parseHexChars(
                 if let Some((highChar, afterHigh)) = aver_rt::list_uncons_cloned(__list_subject) {
                     aver_list_match!(afterHigh, [] => { return Err(::aver_rt::str_lit!("Bytes.fromHex: expected an even number of hex characters")); }, [lowChar, rest] => { match crate::aver_generated::bytes::hexDigitValue(highChar.clone()) { None => { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(63)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(highChar)))); __b }; __b.push_str(&::aver_rt::str_lit!("'")); __b })); }, Some(high @ _) => { match crate::aver_generated::bytes::hexDigitValue(lowChar.clone()) { None => { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(63)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(lowChar)))); __b }; __b.push_str(&::aver_rt::str_lit!("'")); __b })); }, Some(low @ _) => { {
             let __tco0 = rest;
-            let __tco1 = aver_rt::AverIntList::prepend(high.mul(&aver_rt::AverInt::from_i64(16)).add(&low), &acc);
+            let __tco1 = aver_rt::AverIntList::prepend_owned(high.mul(&aver_rt::AverInt::from_i64(16)).add(&low), acc);
             __hold0 = __tco0;
             chars = &__hold0;
             acc = __tco1;
@@ -559,9 +559,9 @@ pub fn hexParts(
                 if let Some((head, tail)) = aver_rt::list_uncons_cloned(__list_subject) {
                     {
                         let __tco0 = tail;
-                        let __tco1 = aver_rt::AverList::prepend(
+                        let __tco1 = aver_rt::AverList::prepend_owned(
                             crate::aver_generated::bytes::byteToHex(head),
-                            &acc,
+                            acc,
                         );
                         __hold0 = __tco0;
                         values = &__hold0;
@@ -748,10 +748,10 @@ pub fn parseHexChars__cursor(
                                             }
                                             Some(low @ _) => {
                                                 let __tco1 = __cur_i2;
-                                                let __tco2 = aver_rt::AverIntList::prepend(
+                                                let __tco2 = aver_rt::AverIntList::prepend_owned(
                                                     high.mul(&aver_rt::AverInt::from_i64(16))
                                                         .add(&low),
-                                                    &acc,
+                                                    acc,
                                                 );
                                                 __cur_i = __tco1;
                                                 acc = __tco2;

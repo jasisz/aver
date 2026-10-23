@@ -14,8 +14,8 @@
 //! the call runs.
 //!
 //! Every call to a function counts, a tail call to another function too,
-//! including a bounce of a mutual trampoline; the self loop keeps its params
-//! in place and is emitted apart. An argument that cannot be bound (a raw `i64` the callee takes
+//! including a bounce of a mutual trampoline, to itself as well; the self
+//! loop keeps its params in place and is emitted apart. An argument that cannot be bound (a raw `i64` the callee takes
 //! bare) ends the bound run, so what follows it is left in place and the
 //! order still holds. It runs on the Rust backend's own copy of the MIR,
 //! after the representation rewrite and before the by-value parameter facts
@@ -42,24 +42,33 @@ pub(super) fn bind_computed_arguments(ctx: &mut CodegenContext) {
         .map(|(id, _)| *id)
         .collect();
     for mir_fn in program.fns.values_mut() {
+        // A member of a mutual trampoline calls itself by a bounce too.
+        let self_bounces = ctx.mutual_tco_members.contains(&mir_fn.fn_id);
         let mut body = std::mem::replace(
             &mut mir_fn.body,
             Spanned::bare(MirExpr::Literal(Spanned::bare(crate::ast::Literal::Unit))),
         );
-        rewrite(&mut body, mir_fn, &boxed_return);
+        rewrite(&mut body, mir_fn, &boxed_return, self_bounces);
         mir_fn.body = body;
     }
     ctx.mir_program = Some(program);
 }
 
 /// Rewrite every call in `expr`, innermost first.
-fn rewrite(expr: &mut Spanned<MirExpr>, mir_fn: &mut MirFn, boxed_return: &HashSet<FnId>) {
+fn rewrite(
+    expr: &mut Spanned<MirExpr>,
+    mir_fn: &mut MirFn,
+    boxed_return: &HashSet<FnId>,
+    self_bounces: bool,
+) {
     crate::ir::mir::expr::walk_children_mut(&mut expr.node, &mut |child| {
-        rewrite(child, mir_fn, boxed_return)
+        rewrite(child, mir_fn, boxed_return, self_bounces)
     });
     let args = match &expr.node {
         MirExpr::Call(call) if matches!(call.node.callee, MirCallee::Fn(_)) => &call.node.args,
-        MirExpr::TailCall(call) if call.node.target != mir_fn.fn_id => &call.node.args,
+        MirExpr::TailCall(call) if self_bounces || call.node.target != mir_fn.fn_id => {
+            &call.node.args
+        }
         _ => return,
     };
     // The computed arguments up to the first one that cannot be bound.

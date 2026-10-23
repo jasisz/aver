@@ -57,14 +57,14 @@ pub fn ctorValues(
             aver_rt::AverList::empty()
         } else {
             if let Some((c, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::proof_std::aver_generated::kernel::term::Term::TCtor(
                         crate::proof_std::aver_generated::kernel::term::Term__TCtor(
                             c,
                             aver_rt::AverList::empty(),
                         ),
                     ),
-                    &crate::proof_std::aver_generated::kernel::finite::ctorValues(&rest),
+                    crate::proof_std::aver_generated::kernel::finite::ctorValues(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -85,9 +85,9 @@ pub fn fieldNames(
             aver_rt::AverList::empty()
         } else {
             if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     f.name.clone(),
-                    &crate::proof_std::aver_generated::kernel::finite::fieldNames(&rest),
+                    crate::proof_std::aver_generated::kernel::finite::fieldNames(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -108,9 +108,9 @@ pub fn fieldValues(
             aver_rt::AverList::empty()
         } else {
             if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::proof_std::aver_generated::kernel::finite::values(&f.fin),
-                    &crate::proof_std::aver_generated::kernel::finite::fieldValues(&rest),
+                    crate::proof_std::aver_generated::kernel::finite::fieldValues(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -131,9 +131,9 @@ pub fn partValues(
             aver_rt::AverList::empty()
         } else {
             if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::proof_std::aver_generated::kernel::finite::values(t),
-                    &crate::proof_std::aver_generated::kernel::finite::partValues(&rest),
+                    crate::proof_std::aver_generated::kernel::finite::partValues(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -209,9 +209,9 @@ pub fn consAll(
             aver_rt::AverList::empty()
         } else {
             if let (Some(t), Some(ts)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
-                    aver_rt::AverList::prepend(h.clone(), &t.clone()),
-                    &crate::proof_std::aver_generated::kernel::finite::consAll(h, &ts),
+                aver_rt::AverList::prepend_owned(
+                    aver_rt::AverList::prepend(h.clone(), t),
+                    crate::proof_std::aver_generated::kernel::finite::consAll(h, &ts),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -236,14 +236,14 @@ pub fn recValues(
             aver_rt::AverList::empty()
         } else {
             if let (Some(r), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::proof_std::aver_generated::kernel::term::Term::TRec(
                         crate::proof_std::aver_generated::kernel::term::Term__TRec(
                             n.clone(),
                             crate::proof_std::aver_generated::kernel::finite::zipFields(names, r),
                         ),
                     ),
-                    &crate::proof_std::aver_generated::kernel::finite::recValues(n, names, &rest),
+                    crate::proof_std::aver_generated::kernel::finite::recValues(n, names, &rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -268,9 +268,9 @@ pub fn zipFields(
             let Some((v, rest)) = aver_rt::list_uncons_cloned(&(*__lit1)) else {
                 unreachable!("Aver Rust codegen: tuple element list mismatch")
             };
-            aver_rt::AverList::prepend(
+            aver_rt::AverList::prepend_owned(
                 crate::proof_std::aver_generated::kernel::term::Field { name: n, value: v },
-                &crate::proof_std::aver_generated::kernel::finite::zipFields(&ns, &rest),
+                crate::proof_std::aver_generated::kernel::finite::zipFields(&ns, &rest),
             )
         } else {
             aver_rt::AverList::empty()
@@ -292,11 +292,11 @@ pub fn tupleValues(
             aver_rt::AverList::empty()
         } else {
             if let (Some(r), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::proof_std::aver_generated::kernel::term::Term::TTuple(
                         crate::proof_std::aver_generated::kernel::term::Term__TTuple(r.clone()),
                     ),
-                    &crate::proof_std::aver_generated::kernel::finite::tupleValues(&rest),
+                    crate::proof_std::aver_generated::kernel::finite::tupleValues(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")

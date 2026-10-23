@@ -87,9 +87,10 @@ pub fn normalizeFnReturn(
     result @ _: &Result<crate::aver_generated::domain::value::Val, AverStr>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match result.clone() {
-        Ok(v @ _) => Ok(v),
+    match result {
+        Ok(v @ _) => Ok(v.clone()),
         Err(err @ _) => {
+            let err = err.clone();
             match crate::aver_generated::domain::eval::common::unwrapPropagatedError(err.clone()) {
                 Some(msg @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
                     crate::aver_generated::domain::value::Val__ValErr(

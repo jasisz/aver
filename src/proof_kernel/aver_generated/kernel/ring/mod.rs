@@ -164,10 +164,12 @@ pub fn readPoly(
                 }
             }
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TNeg(__a_fields) => {
-                let a = __a_fields.0.clone();
+                let a = &__a_fields.0;
                 {
-                    let __arg10 @ _ =
-                        crate::proof_kernel::aver_generated::kernel::ring::readPoly(a, atoms);
+                    let __arg10 @ _ = crate::proof_kernel::aver_generated::kernel::ring::readPoly(
+                        a.clone(),
+                        atoms,
+                    );
                     crate::proof_kernel::aver_generated::kernel::ring::negated(&__arg10)
                 }
             }
@@ -394,9 +396,9 @@ pub fn insertMono(mut m @ _: Mono, p @ _: &aver_rt::AverList<Mono>) -> aver_rt::
                             )
                         } else {
                             if __dispatch_subject == aver_rt::AverInt::from_i64(1) {
-                                aver_rt::AverList::prepend(
+                                aver_rt::AverList::prepend_owned(
                                     x,
-                                    &crate::proof_kernel::aver_generated::kernel::ring::insertMono(
+                                    crate::proof_kernel::aver_generated::kernel::ring::insertMono(
                                         m, &rest,
                                     ),
                                 )
@@ -581,14 +583,14 @@ pub fn mergeSorted(
                 unreachable!("Aver Rust codegen: tuple element list mismatch")
             };
             if (x > y) {
-                aver_rt::AverIntList::prepend(
+                aver_rt::AverIntList::prepend_owned(
                     y,
-                    &crate::proof_kernel::aver_generated::kernel::ring::mergeSorted(a, &ys),
+                    crate::proof_kernel::aver_generated::kernel::ring::mergeSorted(a, &ys),
                 )
             } else {
-                aver_rt::AverIntList::prepend(
+                aver_rt::AverIntList::prepend_owned(
                     x,
-                    &crate::proof_kernel::aver_generated::kernel::ring::mergeSorted(&xs, b),
+                    crate::proof_kernel::aver_generated::kernel::ring::mergeSorted(&xs, b),
                 )
             }
         } else {
@@ -909,8 +911,8 @@ pub fn asNonneg(
         match __t.view() {
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TOp(____pat0_fields) => {
                 let __pat0 = ____pat0_fields.0.clone();
-                let a = ____pat0_fields.1.clone();
-                let b = ____pat0_fields.2.clone();
+                let a = &____pat0_fields.1;
+                let b = &____pat0_fields.2;
                 {
                     let __dispatch_subject = __pat0;
                     if &*__dispatch_subject == "<" {
@@ -925,8 +927,8 @@ pub fn asNonneg(
                                 __arg6,
                                 atoms,
                                 value,
-                                a,
-                                b,
+                                a.clone(),
+                                b.clone(),
                             )
                         })
                     } else {
@@ -942,8 +944,8 @@ pub fn asNonneg(
                                     __arg7,
                                     atoms,
                                     value,
-                                    a,
-                                    b,
+                                    a.clone(),
+                                    b.clone(),
                                 )
                             })
                         } else {
@@ -956,15 +958,15 @@ pub fn asNonneg(
                                         __arg8,
                                         atoms,
                                         value,
-                                        b,
-                                        a,
+                                        b.clone(),
+                                        a.clone(),
                                     )
                                 })
                             } else {
                                 if &*__dispatch_subject == ">=" {
                                     Some({
                                         let __arg9 @ _ = crate::proof_kernel::aver_generated::kernel::ring::strictWhen(value, false);
-                                        crate::proof_kernel::aver_generated::kernel::ring::difference(a.clone(), b.clone(), __arg9, atoms, value, b, a)
+                                        crate::proof_kernel::aver_generated::kernel::ring::difference(a.clone(), b.clone(), __arg9, atoms, value, b.clone(), a.clone())
                                     })
                                 } else {
                                     None

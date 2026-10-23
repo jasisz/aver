@@ -43,7 +43,7 @@ fn __mutual_tco_trampoline_1(
                 {
                     let (stmt, pos2) = r;
                     {
-                        let __arg6 @ _ = aver_rt::AverList::prepend(stmt, &acc);
+                        let __arg6 @ _ = aver_rt::AverList::prepend_owned(stmt, acc);
                         __MutualTco1::ParseFnBodyStmtsIndented(pos2, __arg6)
                     }
                 }
@@ -125,7 +125,7 @@ fn __mutual_tco_trampoline_2(
                 {
                     let (stmt, pos2) = r;
                     {
-                        let __arg6 @ _ = aver_rt::AverList::prepend(stmt, &acc);
+                        let __arg6 @ _ = aver_rt::AverList::prepend_owned(stmt, acc);
                         __MutualTco2::ParseFnBodyAfterStmtFlat(pos2, __arg6)
                     }
                 }
@@ -332,7 +332,7 @@ fn __mutual_tco_trampoline_3(
                             &*tokens, pos2,
                         );
                         {
-                            let __arg9 @ _ = aver_rt::AverList::prepend(fd, &fns);
+                            let __arg9 @ _ = aver_rt::AverList::prepend_owned(fd, fns);
                             __MutualTco3::ParseProgram(__arg8, deps, __arg9, stmts)
                         }
                     }
@@ -353,7 +353,7 @@ fn __mutual_tco_trampoline_3(
                             &*tokens, pos2,
                         );
                         {
-                            let __arg9 @ _ = aver_rt::AverList::prepend(st, &stmts);
+                            let __arg9 @ _ = aver_rt::AverList::prepend_owned(st, stmts);
                             __MutualTco3::ParseProgram(__arg8, deps, fns, __arg9)
                         }
                     }

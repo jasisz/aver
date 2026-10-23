@@ -160,6 +160,23 @@ impl AverIntList {
         Self::Wide(AverList::prepend(head, &tail.to_aver_list()))
     }
 
+    /// `prepend` onto a list the caller hands over (see
+    /// `AverList::prepend_owned`).
+    pub fn prepend_owned(head: AverInt, tail: Self) -> Self {
+        Self::Wide(AverList::prepend_owned(head, tail.into_aver_list()))
+    }
+
+    /// The element at `index`, read in place.
+    pub fn get(&self, index: usize) -> Option<AverInt> {
+        match self {
+            Self::Packed(values) => values
+                .as_slice()
+                .get(index)
+                .map(|byte| AverInt::from_i64(i64::from(*byte))),
+            Self::Wide(values) => values.get(index).cloned(),
+        }
+    }
+
     pub fn concat(left: &Self, right: &Self) -> Self {
         match (left, right) {
             (Self::Packed(left), Self::Packed(right)) => {
@@ -364,5 +381,20 @@ mod tests {
         let joined = AverIntList::concat(&bytes, &beyond_byte);
         assert!(matches!(joined, AverIntList::Wide(_)));
         assert_eq!(joined.aver_display(), "[1, 2, 256]");
+    }
+
+    #[test]
+    fn get_and_owned_prepend_read_both_carriers() {
+        let packed = AverIntList::from_vec(vec![AverInt::from_i64(3), AverInt::from_i64(4)]);
+        assert!(matches!(packed, AverIntList::Packed(_)));
+        assert_eq!(packed.get(1), Some(AverInt::from_i64(4)));
+        assert_eq!(packed.drop_first(1).get(0), Some(AverInt::from_i64(4)));
+        assert_eq!(packed.get(2), None);
+        let wide = AverIntList::prepend_owned(AverInt::from_i64(300), packed);
+        assert!(matches!(wide, AverIntList::Wide(_)));
+        assert_eq!(wide.aver_display(), "[300, 3, 4]");
+        assert_eq!(wide.get(0), Some(AverInt::from_i64(300)));
+        assert_eq!(wide.get(2), Some(AverInt::from_i64(4)));
+        assert_eq!(wide.get(3), None);
     }
 }

@@ -160,7 +160,7 @@ pub fn builtinVectorSetInner(
         let __t = vecV;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValVector(__vec_fields) => {
-                let vec = __vec_fields.0.clone();
+                let vec = &__vec_fields.0;
                 {
                     let __t = idxV;
                     match __t.view() {
@@ -170,7 +170,7 @@ pub fn builtinVectorSetInner(
                                 Ok(crate::aver_generated::domain::value::Val::ValNone)
                             } else {
                                 if (idx < aver_rt::AverInt::from_i64(vec.len() as i64)) {
-                                    crate::aver_generated::domain::builtins::vector::builtinVectorSetInBounds(vec, idx, valV)
+                                    crate::aver_generated::domain::builtins::vector::builtinVectorSetInBounds(vec.clone(), idx, valV)
                                 } else {
                                     Ok(crate::aver_generated::domain::value::Val::ValNone)
                                 }
@@ -244,7 +244,7 @@ pub fn builtinVectorFromList(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValList(__items_fields) => {
-                let items = __items_fields.0.clone();
+                let items = &__items_fields.0;
                 Ok(crate::aver_generated::domain::value::Val::ValVector(
                     crate::aver_generated::domain::value::Val__ValVector(
                         aver_rt::AverVector::from_vec(items.to_vec()),
@@ -266,7 +266,7 @@ pub fn builtinVectorToList(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValVector(__vec_fields) => {
-                let vec = __vec_fields.0.clone();
+                let vec = &__vec_fields.0;
                 Ok(crate::aver_generated::domain::value::Val::ValList(
                     crate::aver_generated::domain::value::Val__ValList(vec.to_list()),
                 ))

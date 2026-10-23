@@ -393,9 +393,9 @@ pub fn tyTexts(
             aver_rt::AverList::empty()
         } else {
             if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::proof_std::aver_generated::kernel::wire::tyText(t),
-                    &crate::proof_std::aver_generated::kernel::wire::tyTexts(&rest),
+                    crate::proof_std::aver_generated::kernel::wire::tyTexts(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -410,7 +410,7 @@ pub fn answer(
     r @ _: &Result<crate::proof_std::aver_generated::kernel::proof::Proof, AverStr>,
 ) -> AverStr {
     crate::proof_std::cancel_checkpoint();
-    match r.clone() {
+    match r {
         Ok(p @ _) => aver_rt::AverStr::from({
             let mut __b = {
                 let mut __b = aver_rt::Buffer::with_capacity(
@@ -420,21 +420,24 @@ pub fn answer(
                 __b
             };
             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                &(crate::proof_std::aver_generated::kernel::wire::proofText(&p)),
+                &(crate::proof_std::aver_generated::kernel::wire::proofText(p)),
             )));
             __b
         }),
-        Err(why @ _) => aver_rt::AverStr::from({
-            let mut __b = {
-                let mut __b = aver_rt::Buffer::with_capacity(
-                    (aver_rt::AverInt::from_i64(24)).to_usize().unwrap_or(0),
-                );
-                __b.push_str(&::aver_rt::str_lit!("refused\n"));
+        Err(why @ _) => {
+            let why = why.clone();
+            aver_rt::AverStr::from({
+                let mut __b = {
+                    let mut __b = aver_rt::Buffer::with_capacity(
+                        (aver_rt::AverInt::from_i64(24)).to_usize().unwrap_or(0),
+                    );
+                    __b.push_str(&::aver_rt::str_lit!("refused\n"));
+                    __b
+                };
+                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(why))));
                 __b
-            };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(why))));
-            __b
-        }),
+            })
+        }
     }
 }
 
@@ -945,9 +948,9 @@ pub fn termTexts(
             aver_rt::AverList::empty()
         } else {
             if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::proof_std::aver_generated::kernel::wire::termText(x),
-                    &crate::proof_std::aver_generated::kernel::wire::termTexts(&rest),
+                    crate::proof_std::aver_generated::kernel::wire::termTexts(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -968,7 +971,7 @@ pub fn fieldTexts(
             aver_rt::AverList::empty()
         } else {
             if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     aver_rt::AverStr::from({
                         let mut __b = {
                             let mut __b = {
@@ -1000,7 +1003,7 @@ pub fn fieldTexts(
                         __b.push_str(&::aver_rt::str_lit!(")"));
                         __b
                     }),
-                    &crate::proof_std::aver_generated::kernel::wire::fieldTexts(&rest),
+                    crate::proof_std::aver_generated::kernel::wire::fieldTexts(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -1021,7 +1024,7 @@ pub fn armTexts(
             aver_rt::AverList::empty()
         } else {
             if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     aver_rt::AverStr::from({
                         let mut __b = {
                             let mut __b = {
@@ -1055,7 +1058,7 @@ pub fn armTexts(
                         __b.push_str(&::aver_rt::str_lit!(")"));
                         __b
                     }),
-                    &crate::proof_std::aver_generated::kernel::wire::armTexts(&rest),
+                    crate::proof_std::aver_generated::kernel::wire::armTexts(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -1191,9 +1194,9 @@ pub fn patTexts(
             aver_rt::AverList::empty()
         } else {
             if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::proof_std::aver_generated::kernel::wire::patText(p),
-                    &crate::proof_std::aver_generated::kernel::wire::patTexts(&rest),
+                    crate::proof_std::aver_generated::kernel::wire::patTexts(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -1243,7 +1246,7 @@ pub fn bindingTexts(
             aver_rt::AverList::empty()
         } else {
             if let (Some(b), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     aver_rt::AverStr::from({
                         let mut __b = {
                             let mut __b = {
@@ -1275,7 +1278,7 @@ pub fn bindingTexts(
                         __b.push_str(&::aver_rt::str_lit!(")"));
                         __b
                     }),
-                    &crate::proof_std::aver_generated::kernel::wire::bindingTexts(&rest),
+                    crate::proof_std::aver_generated::kernel::wire::bindingTexts(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -2466,9 +2469,9 @@ pub fn proofTexts(
             aver_rt::AverList::empty()
         } else {
             if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::proof_std::aver_generated::kernel::wire::proofText(p),
-                    &crate::proof_std::aver_generated::kernel::wire::proofTexts(&rest),
+                    crate::proof_std::aver_generated::kernel::wire::proofTexts(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -2487,7 +2490,7 @@ pub fn intTexts(ws @ _: &aver_rt::AverIntList) -> aver_rt::AverList<AverStr> {
             aver_rt::AverList::empty()
         } else {
             if let Some((w, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     aver_rt::AverStr::from({
                         let mut __b = aver_rt::Buffer::with_capacity(
                             (aver_rt::AverInt::from_i64(16)).to_usize().unwrap_or(0),
@@ -2495,7 +2498,7 @@ pub fn intTexts(ws @ _: &aver_rt::AverIntList) -> aver_rt::AverList<AverStr> {
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(w))));
                         __b
                     }),
-                    &crate::proof_std::aver_generated::kernel::wire::intTexts(&rest),
+                    crate::proof_std::aver_generated::kernel::wire::intTexts(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -2516,7 +2519,7 @@ pub fn splitCaseTexts(
             aver_rt::AverList::empty()
         } else {
             if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     aver_rt::AverStr::from({
                         let mut __b = {
                             let mut __b = {
@@ -2560,7 +2563,7 @@ pub fn splitCaseTexts(
                         __b.push_str(&::aver_rt::str_lit!(")"));
                         __b
                     }),
-                    &crate::proof_std::aver_generated::kernel::wire::splitCaseTexts(&rest),
+                    crate::proof_std::aver_generated::kernel::wire::splitCaseTexts(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -2610,7 +2613,7 @@ pub fn inductCaseTexts(
             aver_rt::AverList::empty()
         } else {
             if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     aver_rt::AverStr::from({
                         let mut __b = {
                             let mut __b = {
@@ -2659,7 +2662,7 @@ pub fn inductCaseTexts(
                         __b.push_str(&::aver_rt::str_lit!(")"));
                         __b
                     }),
-                    &crate::proof_std::aver_generated::kernel::wire::inductCaseTexts(&rest),
+                    crate::proof_std::aver_generated::kernel::wire::inductCaseTexts(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -2686,7 +2689,7 @@ pub fn ihTexts(
                 {
                     let __list_subject = carry;
                     if __list_subject.is_empty() {
-                        aver_rt::AverList::prepend(h, &{
+                        aver_rt::AverList::prepend_owned(h, {
                             let __arg6 @ _ = <aver_rt::AverList<
                                 aver_rt::AverList<
                                     crate::proof_std::aver_generated::kernel::proof::Proof,
@@ -2698,9 +2701,9 @@ pub fn ihTexts(
                         if let (Some(ps), Some(more)) =
                             (__list_subject.first(), __list_subject.tail())
                         {
-                            aver_rt::AverList::prepend(
+                            aver_rt::AverList::prepend_owned(
                                 crate::proof_std::aver_generated::kernel::wire::ihText(h, ps),
-                                &crate::proof_std::aver_generated::kernel::wire::ihTexts(
+                                crate::proof_std::aver_generated::kernel::wire::ihTexts(
                                     &rest, &more,
                                 ),
                             )
@@ -2772,7 +2775,7 @@ pub fn moreTexts(
             aver_rt::AverList::empty()
         } else {
             if let (Some(m), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     aver_rt::AverStr::from({
                         let mut __b = {
                             let mut __b = {
@@ -2802,7 +2805,7 @@ pub fn moreTexts(
                         __b.push_str(&::aver_rt::str_lit!(")"));
                         __b
                     }),
-                    &crate::proof_std::aver_generated::kernel::wire::moreTexts(&rest),
+                    crate::proof_std::aver_generated::kernel::wire::moreTexts(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -2823,7 +2826,7 @@ pub fn ihAtTexts(
             aver_rt::AverList::empty()
         } else {
             if let (Some(ih), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     aver_rt::AverStr::from({
                         let mut __b = {
                             let mut __b = {
@@ -2841,7 +2844,7 @@ pub fn ihAtTexts(
                         __b.push_str(&::aver_rt::str_lit!(")"));
                         __b
                     }),
-                    &crate::proof_std::aver_generated::kernel::wire::ihAtTexts(&rest),
+                    crate::proof_std::aver_generated::kernel::wire::ihAtTexts(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")

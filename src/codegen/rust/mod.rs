@@ -1734,7 +1734,7 @@ fn left(t: T) -> T
             "pub struct T__Pair(pub T, pub T);",
             "T::Pair(T__Pair(x.clone(), x))",
             "T__view::Pair(__a_fields) => {",
-            "let a = __a_fields.0.clone();",
+            "let a = &__a_fields.0;",
             "pub node: Node,",
             "1 App(Node__App),",
             "pub struct Node__App(pub E, pub E);",

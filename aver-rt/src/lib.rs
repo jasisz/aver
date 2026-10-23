@@ -1223,6 +1223,33 @@ impl<T> AverList<T> {
         self.uncons().map(|(head, tail)| (head.clone(), tail))
     }
 
+    /// `uncons` of a list that is not needed after it: a `Prepend` node this
+    /// list alone holds gives up its head and tail, moved rather than
+    /// counted; any other list is read as `uncons_cloned` reads it.
+    pub fn uncons_owned(mut self) -> Option<(T, Self)>
+    where
+        T: Clone,
+    {
+        if self.start == 0
+            && let Some(AverListInner::Prepend { .. }) = self.shape()
+            && let Some(node) = self.inner.take()
+        {
+            match Rc::try_unwrap(node) {
+                Ok(inner) => {
+                    let inner = std::mem::ManuallyDrop::new(inner);
+                    let AverListInner::Prepend { head, tail, .. } = &*inner else {
+                        unreachable!("the shape was read just above")
+                    };
+                    // SAFETY: `inner` is never dropped, so its head and tail
+                    // are each read out exactly once; `len` is a plain usize.
+                    return Some(unsafe { (std::ptr::read(head), std::ptr::read(tail)) });
+                }
+                Err(node) => self.inner = Some(node),
+            }
+        }
+        self.uncons_cloned()
+    }
+
     pub fn empty() -> Self {
         Self {
             inner: None,
@@ -1378,6 +1405,17 @@ impl<T> AverList<T> {
         } else {
             list.clone()
         };
+        Self::node(AverListInner::Prepend {
+            head: item,
+            len: tail.len() + 1,
+            tail,
+        })
+    }
+
+    /// `prepend` onto a list the caller hands over: the node takes it as it
+    /// is, without a count for a copy the caller would drop right after.
+    pub fn prepend_owned(item: T, list: Self) -> Self {
+        let tail = if list.is_empty() { Self::empty() } else { list };
         Self::node(AverListInner::Prepend {
             head: item,
             len: tail.len() + 1,
@@ -1625,6 +1663,11 @@ pub trait AverListMatch: Sized {
     type Item;
 
     fn uncons_for_match(&self) -> Option<(Self::Item, Self)>;
+
+    /// The same for a list the match holds alone and drops after.
+    fn uncons_owned_for_match(self) -> Option<(Self::Item, Self)> {
+        self.uncons_for_match()
+    }
 }
 
 impl<T: Clone> AverListMatch for AverList<T> {
@@ -1632,6 +1675,10 @@ impl<T: Clone> AverListMatch for AverList<T> {
 
     fn uncons_for_match(&self) -> Option<(Self::Item, Self)> {
         self.uncons_cloned()
+    }
+
+    fn uncons_owned_for_match(self) -> Option<(Self::Item, Self)> {
+        self.uncons_owned()
     }
 }
 
@@ -1641,13 +1688,27 @@ impl AverListMatch for AverIntList {
     fn uncons_for_match(&self) -> Option<(Self::Item, Self)> {
         self.uncons_cloned()
     }
+
+    fn uncons_owned_for_match(self) -> Option<(Self::Item, Self)> {
+        match self {
+            AverIntList::Wide(values) => values
+                .uncons_owned()
+                .map(|(head, tail)| (head, AverIntList::Wide(tail))),
+            packed => packed.uncons_cloned(),
+        }
+    }
 }
 
 pub fn list_uncons_cloned<L: AverListMatch>(list: &L) -> Option<(L::Item, L)> {
     list.uncons_for_match()
 }
 
-/// Pattern-match on an AverList: empty and cons (head, tail) arms.
+pub fn list_uncons_owned<L: AverListMatch>(list: L) -> Option<(L::Item, L)> {
+    list.uncons_owned_for_match()
+}
+
+/// Pattern-match on an AverList: empty and cons (head, tail) arms. The macro
+/// owns the list it matches, so the cons arm takes it apart.
 #[macro_export]
 macro_rules! aver_list_match {
     ($list:expr, [] => $empty:expr, [$head:ident, $tail:ident] => $cons:expr) => {{
@@ -1655,7 +1716,7 @@ macro_rules! aver_list_match {
         if __aver_list.is_empty() {
             $empty
         } else if let ::core::option::Option::Some(($head, $tail)) =
-            $crate::list_uncons_cloned(&__aver_list)
+            $crate::list_uncons_owned(__aver_list)
         {
             $cons
         } else {
@@ -1698,6 +1759,40 @@ mod tests {
 
         let rendered = AverStr::from(buffer);
         assert_eq!(rendered.as_ref(), ",b");
+    }
+
+    /// A list built by `prepend_owned` holds the list it was handed, and a
+    /// unique `Prepend` node taken apart by `uncons_owned` moves its head
+    /// out; a shared one, or another shape, is read as `uncons_cloned`.
+    #[test]
+    fn owned_prepend_and_uncons_move_rather_than_count() {
+        use std::rc::Rc;
+        let head = Rc::new(1);
+        let list = AverList::prepend_owned(Rc::clone(&head), AverList::empty());
+        let list = AverList::prepend_owned(Rc::new(0), list);
+        assert_eq!(list.len(), 2);
+        let (first, rest) = list.uncons_owned().expect("two elements");
+        assert_eq!(*first, 0);
+        let (second, rest) = rest.uncons_owned().expect("one element");
+        assert!(Rc::ptr_eq(&second, &head));
+        assert_eq!(Rc::strong_count(&head), 2, "the head moved out, not copied");
+        assert!(rest.is_empty() && rest.uncons_owned().is_none());
+
+        let shared = AverList::prepend_owned(Rc::clone(&head), AverList::empty());
+        let kept = shared.clone();
+        let (x, _) = shared.uncons_owned().expect("one element");
+        assert!(Rc::ptr_eq(&x, &head));
+        assert_eq!(kept.len(), 1);
+        assert_eq!(Rc::strong_count(&head), 4, "a shared node keeps its head");
+
+        let flat = AverList::from_vec(vec![Rc::new(7), Rc::new(8)]);
+        let (seven, eight) = flat.drop_first(0).uncons_owned().expect("flat");
+        assert_eq!((*seven, eight.len()), (7, 1));
+        let stepped = flat.drop_first(1);
+        assert_eq!(stepped.uncons_owned().map(|(x, _)| *x), Some(8));
+
+        let onto_spent = AverList::prepend_owned(Rc::new(9), flat.drop_first(2));
+        assert_eq!(onto_spent.len(), 1);
     }
 
     /// A literal that runs again and again is the one static node, never a

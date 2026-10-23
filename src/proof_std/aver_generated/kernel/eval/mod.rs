@@ -125,8 +125,8 @@ pub fn evalClosed(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) 
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TBi(__name_fields) => {
                 let name = __name_fields.0.clone();
-                let args = __name_fields.1.clone();
-                crate::proof_std::aver_generated::kernel::eval::evalBuiltin(name, &args)
+                let args = &__name_fields.1;
+                crate::proof_std::aver_generated::kernel::eval::evalBuiltin(name, args)
             }
             _ => None,
         }
@@ -137,8 +137,11 @@ pub fn evalClosed(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) 
 #[inline(always)]
 pub fn ctorOp(o @ _: AverStr, same @ _: &Option<bool>) -> Option<Val> {
     crate::proof_std::cancel_checkpoint();
-    match same.clone() {
-        Some(s @ _) => crate::proof_std::aver_generated::kernel::eval::boolOp(o, s, true),
+    match same {
+        Some(s @ _) => {
+            let s = s.clone();
+            crate::proof_std::aver_generated::kernel::eval::boolOp(o, s, true)
+        }
         None => None,
     }
 }
@@ -196,9 +199,9 @@ pub fn evalAll(
             aver_rt::AverList::empty()
         } else {
             if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::proof_std::aver_generated::kernel::eval::evalClosed(x),
-                    &crate::proof_std::aver_generated::kernel::eval::evalAll(&rest),
+                    crate::proof_std::aver_generated::kernel::eval::evalAll(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -246,7 +249,7 @@ pub fn consOnto(v @ _: &Val, rest @ _: &Option<Val>) -> Option<Val> {
             match __pat0 {
                 crate::proof_std::aver_generated::kernel::eval::Val::VList(vs) => {
                     Some(crate::proof_std::aver_generated::kernel::eval::Val::VList(
-                        aver_rt::AverList::prepend(v.clone(), &vs),
+                        aver_rt::AverList::prepend_owned(v.clone(), vs),
                     ))
                 }
                 _ => None,
@@ -1002,7 +1005,7 @@ pub fn prepended(a @ _: &Option<Val>, l @ _: &Option<Val>) -> Option<Val> {
                 Some(__pat2) => match __pat2 {
                     crate::proof_std::aver_generated::kernel::eval::Val::VList(vs) => {
                         Some(crate::proof_std::aver_generated::kernel::eval::Val::VList(
-                            aver_rt::AverList::prepend(v, &vs),
+                            aver_rt::AverList::prepend_owned(v, vs),
                         ))
                     }
                     _ => None,

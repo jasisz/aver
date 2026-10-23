@@ -210,7 +210,7 @@ pub fn mergeRecordFieldsAcc(
                                         k.clone(),
                                         &overrides,
                                     );
-                                let __tco2 = aver_rt::AverList::prepend((k, __stp0), &acc);
+                                let __tco2 = aver_rt::AverList::prepend_owned((k, __stp0), acc);
                                 __hold0 = __tco0;
                                 existing = &__hold0;
                                 overrides = __tco1;
@@ -219,7 +219,7 @@ pub fn mergeRecordFieldsAcc(
                             }
                             None => {
                                 let __tco0 = rest;
-                                let __tco2 = aver_rt::AverList::prepend((k, v), &acc);
+                                let __tco2 = aver_rt::AverList::prepend_owned((k, v), acc);
                                 __hold0 = __tco0;
                                 existing = &__hold0;
                                 acc = __tco2;
@@ -250,14 +250,14 @@ pub fn mergeOneField(
             let __arg6 @ _ =
                 crate::aver_generated::domain::eval::records::removeOverride(k.clone(), overrides);
             {
-                let __arg7 @ _ = aver_rt::AverList::prepend((k, newV), &acc.clone());
+                let __arg7 @ _ = aver_rt::AverList::prepend((k, newV), acc);
                 crate::aver_generated::domain::eval::records::mergeRecordFieldsAcc(
                     rest, __arg6, __arg7,
                 )
             }
         }
         None => {
-            let __arg8 @ _ = aver_rt::AverList::prepend((k, v), &acc.clone());
+            let __arg8 @ _ = aver_rt::AverList::prepend((k, v), acc);
             crate::aver_generated::domain::eval::records::mergeRecordFieldsAcc(
                 rest,
                 overrides.clone(),
@@ -347,7 +347,7 @@ pub fn removeOverrideAcc(
                         } else {
                             {
                                 let __tco1 = rest;
-                                let __tco2 = aver_rt::AverList::prepend((ok, ov), &acc);
+                                let __tco2 = aver_rt::AverList::prepend_owned((ok, ov), acc);
                                 __hold1 = __tco1;
                                 overrides = &__hold1;
                                 acc = __tco2;

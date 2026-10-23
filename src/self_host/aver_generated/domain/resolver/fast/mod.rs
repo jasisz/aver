@@ -20,12 +20,12 @@ pub fn annotateFastFns(
                 if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
-                        let __tco2 = aver_rt::AverList::prepend(
+                        let __tco2 = aver_rt::AverList::prepend_owned(
                             crate::aver_generated::domain::resolver::fast::annotateFastFn(
                                 f.clone(),
                                 fnMap,
                             ),
-                            &acc,
+                            acc,
                         );
                         __hold0 = __tco0;
                         fns = &__hold0;
@@ -132,7 +132,7 @@ pub fn exprNeedsTailLoop(
                     __thenExpr_fields,
                 ) => {
                     let thenExpr = &__thenExpr_fields.1;
-                    let elseExpr = __thenExpr_fields.2.clone();
+                    let elseExpr = &__thenExpr_fields.2;
                     if crate::aver_generated::domain::resolver::fast::exprNeedsTailLoop(
                         selfId.clone(),
                         thenExpr,
@@ -140,7 +140,7 @@ pub fn exprNeedsTailLoop(
                         return true;
                     } else {
                         {
-                            let __tco1 = elseExpr;
+                            let __tco1 = elseExpr.clone();
                             __hold1 = __tco1;
                             expr = &__hold1;
                             continue;
@@ -148,9 +148,9 @@ pub fn exprNeedsTailLoop(
                     }
                 }
                 crate::aver_generated::domain::ast::Expr__view::ExprMatch(__arms_fields) => {
-                    let arms = __arms_fields.1.clone();
+                    let arms = &__arms_fields.1;
                     return crate::aver_generated::domain::resolver::fast::armsNeedTailLoop(
-                        selfId, &arms,
+                        selfId, arms,
                     );
                 }
                 _ => {
@@ -1196,15 +1196,19 @@ pub fn classifyFastListCons(
     mut consLeaf @ _: crate::aver_generated::domain::ast::FastLeaf,
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
-    match bindingSlots.get(&head).cloned() {
-        Some(headSlot @ _) => match bindingSlots.get(&tail).cloned() {
-            Some(tailSlot @ _) => {
-                crate::aver_generated::domain::ast::FnFastPath::FastListSlotBranch(
-                    slot, emptyLeaf, headSlot, tailSlot, consLeaf,
-                )
+    match (bindingSlots).get(&head) {
+        Some(headSlot @ _) => {
+            let headSlot = headSlot.clone();
+            match (bindingSlots).get(&tail) {
+                Some(tailSlot @ _) => {
+                    let tailSlot = tailSlot.clone();
+                    crate::aver_generated::domain::ast::FnFastPath::FastListSlotBranch(
+                        slot, emptyLeaf, headSlot, tailSlot, consLeaf,
+                    )
+                }
+                None => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
             }
-            None => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
-        },
+        }
         None => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
     }
 }
@@ -1259,7 +1263,7 @@ pub fn classifyFastForwardSlots(
                                 let slot = __slot_fields.0.clone();
                                 {
                                     let __tco0 = rest;
-                                    let __tco1 = aver_rt::AverIntList::prepend(slot, &acc);
+                                    let __tco1 = aver_rt::AverIntList::prepend_owned(slot, acc);
                                     __hold0 = __tco0;
                                     args = &__hold0;
                                     acc = __tco1;

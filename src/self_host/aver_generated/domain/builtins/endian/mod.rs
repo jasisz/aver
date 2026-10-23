@@ -58,11 +58,11 @@ pub fn byteVals(
                 if let Some((octet, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
                     {
                         let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend(
+                        let __tco1 = aver_rt::AverList::prepend_owned(
                             crate::aver_generated::domain::value::Val::ValInt(
                                 crate::aver_generated::domain::value::Val__ValInt(octet),
                             ),
-                            &acc,
+                            acc,
                         );
                         __hold0 = __tco0;
                         octets = &__hold0;

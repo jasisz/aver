@@ -19,11 +19,11 @@ pub fn rewriteInternalFns(
                 if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend(
+                        let __tco1 = aver_rt::AverList::prepend_owned(
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalFn(
                                 f.clone(),
                             ),
-                            &acc,
+                            acc,
                         );
                         __hold0 = __tco0;
                         fns = &__hold0;
@@ -78,11 +78,11 @@ pub fn rewriteInternalStmts(
                 if let (Some(stmt), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend(
+                        let __tco1 = aver_rt::AverList::prepend_owned(
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalStmt(
                                 stmt,
                             ),
-                            &acc,
+                            acc,
                         );
                         __hold0 = __tco0;
                         stmts = &__hold0;
@@ -105,24 +105,21 @@ pub fn rewriteInternalStmt(
     match stmt {
         crate::aver_generated::domain::ast::Stmt::StmtBind(name, expr) => {
             let name = name.clone();
-            let expr = expr.clone();
             crate::aver_generated::domain::ast::Stmt::StmtBind(
                 name,
-                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(expr),
+                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(expr.clone()),
             )
         }
         crate::aver_generated::domain::ast::Stmt::StmtBindSlot(slot, expr) => {
             let slot = slot.clone();
-            let expr = expr.clone();
             crate::aver_generated::domain::ast::Stmt::StmtBindSlot(
                 slot,
-                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(expr),
+                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(expr.clone()),
             )
         }
         crate::aver_generated::domain::ast::Stmt::StmtExpr(expr) => {
-            let expr = expr.clone();
             crate::aver_generated::domain::ast::Stmt::StmtExpr(
-                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(expr),
+                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(expr.clone()),
             )
         }
     }
@@ -137,17 +134,19 @@ pub fn rewriteInternalExpr(
         let __t = &expr;
         match __t.view() {
             crate::aver_generated::domain::ast::Expr__view::ExprBoolBranch(__cond_fields) => {
-                let cond = __cond_fields.0.clone();
-                let thenExpr = __cond_fields.1.clone();
-                let elseExpr = __cond_fields.2.clone();
+                let cond = &__cond_fields.0;
+                let thenExpr = &__cond_fields.1;
+                let elseExpr = &__cond_fields.2;
                 crate::aver_generated::domain::ast::Expr::ExprBoolBranch(
                     crate::aver_generated::domain::ast::Expr__ExprBoolBranch(
-                        crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(cond),
                         crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
-                            thenExpr,
+                            cond.clone(),
                         ),
                         crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
-                            elseExpr,
+                            thenExpr.clone(),
+                        ),
+                        crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
+                            elseExpr.clone(),
                         ),
                     ),
                 )
@@ -159,29 +158,33 @@ pub fn rewriteInternalExpr(
             crate::aver_generated::domain::ast::Expr__view::ExprVectorGetOrInt(
                 __vecExpr_fields,
             ) => {
-                let vecExpr = __vecExpr_fields.0.clone();
-                let idxExpr = __vecExpr_fields.1.clone();
+                let vecExpr = &__vecExpr_fields.0;
+                let idxExpr = &__vecExpr_fields.1;
                 let defaultValue = __vecExpr_fields.2.clone();
                 crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(
                     crate::aver_generated::domain::ast::Expr__ExprVectorGetOrInt(
                         crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
-                            vecExpr,
+                            vecExpr.clone(),
                         ),
                         crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
-                            idxExpr,
+                            idxExpr.clone(),
                         ),
                         defaultValue,
                     ),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprIntModOrInt(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 let defaultValue = __a_fields.2.clone();
                 crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(
                     crate::aver_generated::domain::ast::Expr__ExprIntModOrInt(
-                        crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(a),
-                        crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(b),
+                        crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
+                            a.clone(),
+                        ),
+                        crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
+                            b.clone(),
+                        ),
                         defaultValue,
                     ),
                 )
@@ -202,17 +205,17 @@ pub fn rewriteInternalExprAfterLeaf(
         let __t = &expr;
         match __t.view() {
             crate::aver_generated::domain::ast::Expr__view::ExprAdd(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 {
                     let __arg22 @ _ = crate::aver_generated::domain::ast::BinOp::OpAdd;
                     {
                         let __arg23 @ _ =
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
-                                a,
+                                a.clone(),
                             );
                         {
-                            let __arg24 @ _ = crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(b);
+                            let __arg24 @ _ = crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(b.clone());
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalBinop(
                                 __arg22, __arg23, __arg24,
                             )
@@ -221,17 +224,17 @@ pub fn rewriteInternalExprAfterLeaf(
                 }
             }
             crate::aver_generated::domain::ast::Expr__view::ExprSub(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 {
                     let __arg25 @ _ = crate::aver_generated::domain::ast::BinOp::OpSub;
                     {
                         let __arg26 @ _ =
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
-                                a,
+                                a.clone(),
                             );
                         {
-                            let __arg27 @ _ = crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(b);
+                            let __arg27 @ _ = crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(b.clone());
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalBinop(
                                 __arg25, __arg26, __arg27,
                             )
@@ -240,17 +243,17 @@ pub fn rewriteInternalExprAfterLeaf(
                 }
             }
             crate::aver_generated::domain::ast::Expr__view::ExprMul(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 {
                     let __arg28 @ _ = crate::aver_generated::domain::ast::BinOp::OpMul;
                     {
                         let __arg29 @ _ =
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
-                                a,
+                                a.clone(),
                             );
                         {
-                            let __arg30 @ _ = crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(b);
+                            let __arg30 @ _ = crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(b.clone());
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalBinop(
                                 __arg28, __arg29, __arg30,
                             )
@@ -259,17 +262,17 @@ pub fn rewriteInternalExprAfterLeaf(
                 }
             }
             crate::aver_generated::domain::ast::Expr__view::ExprDiv(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 {
                     let __arg31 @ _ = crate::aver_generated::domain::ast::BinOp::OpDiv;
                     {
                         let __arg32 @ _ =
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
-                                a,
+                                a.clone(),
                             );
                         {
-                            let __arg33 @ _ = crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(b);
+                            let __arg33 @ _ = crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(b.clone());
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalBinop(
                                 __arg31, __arg32, __arg33,
                             )
@@ -278,27 +281,27 @@ pub fn rewriteInternalExprAfterLeaf(
                 }
             }
             crate::aver_generated::domain::ast::Expr__view::ExprNeg(__inner_fields) => {
-                let inner = __inner_fields.0.clone();
+                let inner = &__inner_fields.0;
                 crate::aver_generated::domain::ast::Expr::ExprNeg(
                     crate::aver_generated::domain::ast::Expr__ExprNeg(
                         crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
-                            inner,
+                            inner.clone(),
                         ),
                     ),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprEq(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 {
                     let __arg34 @ _ = crate::aver_generated::domain::ast::CmpOp::CmpEq;
                     {
                         let __arg35 @ _ =
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
-                                a,
+                                a.clone(),
                             );
                         {
-                            let __arg36 @ _ = crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(b);
+                            let __arg36 @ _ = crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(b.clone());
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmp(
                                 __arg34, __arg35, __arg36,
                             )
@@ -307,17 +310,17 @@ pub fn rewriteInternalExprAfterLeaf(
                 }
             }
             crate::aver_generated::domain::ast::Expr__view::ExprNeq(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 {
                     let __arg37 @ _ = crate::aver_generated::domain::ast::CmpOp::CmpNeq;
                     {
                         let __arg38 @ _ =
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
-                                a,
+                                a.clone(),
                             );
                         {
-                            let __arg39 @ _ = crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(b);
+                            let __arg39 @ _ = crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(b.clone());
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmp(
                                 __arg37, __arg38, __arg39,
                             )
@@ -326,17 +329,17 @@ pub fn rewriteInternalExprAfterLeaf(
                 }
             }
             crate::aver_generated::domain::ast::Expr__view::ExprLt(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 {
                     let __arg40 @ _ = crate::aver_generated::domain::ast::CmpOp::CmpLt;
                     {
                         let __arg41 @ _ =
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
-                                a,
+                                a.clone(),
                             );
                         {
-                            let __arg42 @ _ = crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(b);
+                            let __arg42 @ _ = crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(b.clone());
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmp(
                                 __arg40, __arg41, __arg42,
                             )
@@ -345,17 +348,17 @@ pub fn rewriteInternalExprAfterLeaf(
                 }
             }
             crate::aver_generated::domain::ast::Expr__view::ExprGt(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 {
                     let __arg43 @ _ = crate::aver_generated::domain::ast::CmpOp::CmpGt;
                     {
                         let __arg44 @ _ =
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
-                                a,
+                                a.clone(),
                             );
                         {
-                            let __arg45 @ _ = crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(b);
+                            let __arg45 @ _ = crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(b.clone());
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmp(
                                 __arg43, __arg44, __arg45,
                             )
@@ -364,17 +367,17 @@ pub fn rewriteInternalExprAfterLeaf(
                 }
             }
             crate::aver_generated::domain::ast::Expr__view::ExprLte(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 {
                     let __arg46 @ _ = crate::aver_generated::domain::ast::CmpOp::CmpLte;
                     {
                         let __arg47 @ _ =
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
-                                a,
+                                a.clone(),
                             );
                         {
-                            let __arg48 @ _ = crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(b);
+                            let __arg48 @ _ = crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(b.clone());
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmp(
                                 __arg46, __arg47, __arg48,
                             )
@@ -383,17 +386,17 @@ pub fn rewriteInternalExprAfterLeaf(
                 }
             }
             crate::aver_generated::domain::ast::Expr__view::ExprGte(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 {
                     let __arg49 @ _ = crate::aver_generated::domain::ast::CmpOp::CmpGte;
                     {
                         let __arg50 @ _ =
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
-                                a,
+                                a.clone(),
                             );
                         {
-                            let __arg51 @ _ = crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(b);
+                            let __arg51 @ _ = crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(b.clone());
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmp(
                                 __arg49, __arg50, __arg51,
                             )
@@ -417,12 +420,12 @@ pub fn rewriteInternalExprAfterArith(
         let __t = &expr;
         match __t.view() {
             crate::aver_generated::domain::ast::Expr__view::ExprMatch(__scrutinee_fields) => {
-                let scrutinee = __scrutinee_fields.0.clone();
+                let scrutinee = &__scrutinee_fields.0;
                 let arms = &__scrutinee_fields.1;
                 {
                     let __arg23 @ _ =
                         crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
-                            scrutinee,
+                            scrutinee.clone(),
                         );
                     {
                         let __arg24 @ _ = {
@@ -438,11 +441,11 @@ pub fn rewriteInternalExprAfterArith(
                 }
             }
             crate::aver_generated::domain::ast::Expr__view::ExprPropagate(__inner_fields) => {
-                let inner = __inner_fields.0.clone();
+                let inner = &__inner_fields.0;
                 crate::aver_generated::domain::ast::Expr::ExprPropagate(
                     crate::aver_generated::domain::ast::Expr__ExprPropagate(
                         crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
-                            inner,
+                            inner.clone(),
                         ),
                     ),
                 )
@@ -510,11 +513,13 @@ pub fn rewriteInternalExprAfterArith(
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprFieldAccess(__obj_fields) => {
-                let obj = __obj_fields.0.clone();
+                let obj = &__obj_fields.0;
                 let field = __obj_fields.1.clone();
                 crate::aver_generated::domain::ast::Expr::ExprFieldAccess(
                     crate::aver_generated::domain::ast::Expr__ExprFieldAccess(
-                        crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(obj),
+                        crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
+                            obj.clone(),
+                        ),
                         field,
                     ),
                 )
@@ -604,11 +609,11 @@ pub fn rewriteInternalExprs(
                 if let (Some(expr), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend(
+                        let __tco1 = aver_rt::AverList::prepend_owned(
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
                                 expr.clone(),
                             ),
-                            &acc,
+                            acc,
                         );
                         __hold0 = __tco0;
                         exprs = &__hold0;
@@ -644,7 +649,7 @@ pub fn rewriteInternalFields(
                         let (name, expr) = pair.clone();
                         {
                             let __tco0 = rest;
-                            let __tco1 = aver_rt::AverList::prepend((name, crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(expr)), &acc);
+                            let __tco1 = aver_rt::AverList::prepend_owned((name, crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(expr)), acc);
                             __hold0 = __tco0;
                             fields = &__hold0;
                             acc = __tco1;
@@ -677,7 +682,7 @@ pub fn rewriteInternalArms(
                 if let (Some(arm), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::ast::MatchArm { pattern: crate::aver_generated::domain::resolver::rewrite::rewritePattern(arm.pattern.clone()), body: crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(arm.body.clone()), bindingSlots: arm.bindingSlots.clone() }, &acc);
+                        let __tco1 = aver_rt::AverList::prepend_owned(crate::aver_generated::domain::ast::MatchArm { pattern: crate::aver_generated::domain::resolver::rewrite::rewritePattern(arm.pattern.clone()), body: crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(arm.body.clone()), bindingSlots: arm.bindingSlots.clone() }, acc);
                         __hold0 = __tco0;
                         arms = &__hold0;
                         acc = __tco1;
@@ -744,11 +749,11 @@ pub fn rewritePatterns(
                 if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend(
+                        let __tco1 = aver_rt::AverList::prepend_owned(
                             crate::aver_generated::domain::resolver::rewrite::rewritePattern(
                                 p.clone(),
                             ),
-                            &acc,
+                            acc,
                         );
                         __hold0 = __tco0;
                         pats = &__hold0;

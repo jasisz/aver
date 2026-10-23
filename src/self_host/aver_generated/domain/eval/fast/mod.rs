@@ -385,9 +385,9 @@ pub fn fastMapSetSlotInner(
         let __t = mapV;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
-                let m = __m_fields.0.clone();
+                let m = &__m_fields.0;
                 Ok(crate::aver_generated::domain::value::Val::ValMap(
-                    crate::aver_generated::domain::value::Val__ValMap(m.insert_owned(
+                    crate::aver_generated::domain::value::Val__ValMap(m.clone().insert_owned(
                         crate::aver_generated::domain::value::mapKeyRepr(keyV),
                         valueV.clone(),
                     )),
@@ -529,10 +529,11 @@ pub fn fastMapRemoveSlot(
         let __t = mapV;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
-                let m = __m_fields.0.clone();
+                let m = &__m_fields.0;
                 Ok(crate::aver_generated::domain::value::Val::ValMap(
                     crate::aver_generated::domain::value::Val__ValMap(
-                        m.remove_owned(&crate::aver_generated::domain::value::mapKeyRepr(&keyV)),
+                        m.clone()
+                            .remove_owned(&crate::aver_generated::domain::value::mapKeyRepr(&keyV)),
                     ),
                 ))
             }
