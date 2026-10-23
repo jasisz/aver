@@ -12,13 +12,16 @@ type Sexp
     Text(String)
     Node(List<Sexp>)
 
+type ReadMode
+    Ready
+    Atom(String)
+    Text(String)
+    Escape(String)
+    Comment
+
 fn readAll(text: String) -> Result<Sexp, String>
     ? "One S-expression and nothing after it but blanks, its shared parts written out."
-    match readOne(skipBlank(String.chars(text)))
-        Result.Err(e) -> Result.Err(e)
-        Result.Ok((s, rest)) -> match skipBlank(rest)
-            [] -> expand(s)
-            _ -> Result.Err("text after the S-expression")
+    scan(String.chars(text), ReadMode.Ready, [], [])
 
 verify readAll
     readAll("(a b)") => Result.Ok(Sexp.Node([Sexp.Atom("a"), Sexp.Atom("b")]))
@@ -26,14 +29,76 @@ verify readAll
     readAll("(a") => Result.Err("unexpected end of data")
     readAll("a b") => Result.Err("text after the S-expression")
     readAll("; by R.rule sha256:00\n(a)") => Result.Ok(Sexp.Node([Sexp.Atom("a")]))
-    readAll("(shared ((#a (v x)) (#b (op + #a #a))) (refl #b))") => readAll("(refl (op + (v x) (v x)))")
+    readAll("(shared ((#a (v x)) (#b (op + #a #a))) (refl #b))") => Result.Ok(Sexp.Node([Sexp.Atom("refl"), Sexp.Node([Sexp.Atom("op"), Sexp.Atom("+"), Sexp.Node([Sexp.Atom("v"), Sexp.Atom("x")]), Sexp.Node([Sexp.Atom("v"), Sexp.Atom("x")])])]))
     readAll("(shared ((#a (v x))) (refl #b))") => Result.Err("#b is not defined before its use")
     readAll("(shared ((#a (f #b)) (#b (v x))) #a)") => Result.Err("#b is not defined before its use")
     readAll("(shared ((#a (f #a))) #a)") => Result.Err("#a is not defined before its use")
     readAll("(shared ((#a (v x)) (#a (v y))) #a)") => Result.Err("#a is defined twice")
     readAll("(shared ((a (v x))) a)") => Result.Err("a shared name starts with #: a")
     readAll("(shared ((#a)) #a)") => Result.Err("malformed shared part")
+    readAll("(zażółć \"λ\")") => Result.Ok(Sexp.Node([Sexp.Atom("zażółć"), Sexp.Text("λ")]))
     readAll("(shared ((#0 (x x)) (#1 (#0 #0)) (#2 (#1 #1)) (#3 (#2 #2)) (#4 (#3 #3)) (#5 (#4 #4)) (#6 (#5 #5)) (#7 (#6 #6)) (#8 (#7 #7)) (#9 (#8 #8)) (#10 (#9 #9)) (#11 (#10 #10)) (#12 (#11 #11)) (#13 (#12 #12)) (#14 (#13 #13)) (#15 (#14 #14)) (#16 (#15 #15)) (#17 (#16 #16)) (#18 (#17 #17)) (#19 (#18 #18)) (#20 (#19 #19)) (#21 (#20 #20))) #21)") => Result.Err("a shared part stands for more than 4194304 items")
+
+fn scan(cs: List<String>, mode: ReadMode, current: List<Sexp>, parents: List<List<Sexp>>) -> Result<Sexp, String>
+    ? "Read characters once, keeping reversed items for the current list and each parent list."
+    match cs
+        [] -> match mode
+            ReadMode.Text(acc) -> Result.Err("unterminated text")
+            ReadMode.Escape(acc) -> Result.Err("unterminated text")
+            ReadMode.Atom(acc) -> finish(List.prepend(Sexp.Atom(acc), current), parents)
+            _ -> finish(current, parents)
+        [c, ..rest] -> match mode
+            ReadMode.Ready -> match c
+                " " -> scan(rest, mode, current, parents)
+                "\n" -> scan(rest, mode, current, parents)
+                "\t" -> scan(rest, mode, current, parents)
+                "\r" -> scan(rest, mode, current, parents)
+                ";" -> scan(rest, ReadMode.Comment, current, parents)
+                "(" -> scan(rest, mode, [], List.prepend(current, parents))
+                ")" -> match parents
+                    [] -> Result.Err("unexpected )")
+                    [parent, ..above] -> scan(rest, mode, List.prepend(Sexp.Node(List.reverse(current)), parent), above)
+                "\"" -> scan(rest, ReadMode.Text(""), current, parents)
+                _ -> scan(rest, ReadMode.Atom(c), current, parents)
+            ReadMode.Atom(acc) -> match c
+                " " -> scan(rest, ReadMode.Ready, List.prepend(Sexp.Atom(acc), current), parents)
+                "\n" -> scan(rest, ReadMode.Ready, List.prepend(Sexp.Atom(acc), current), parents)
+                "\t" -> scan(rest, ReadMode.Ready, List.prepend(Sexp.Atom(acc), current), parents)
+                "\r" -> scan(rest, ReadMode.Ready, List.prepend(Sexp.Atom(acc), current), parents)
+                "(" -> scan(cs, ReadMode.Ready, List.prepend(Sexp.Atom(acc), current), parents)
+                ")" -> scan(cs, ReadMode.Ready, List.prepend(Sexp.Atom(acc), current), parents)
+                "\"" -> scan(cs, ReadMode.Ready, List.prepend(Sexp.Atom(acc), current), parents)
+                _ -> scan(rest, ReadMode.Atom(acc + c), current, parents)
+            ReadMode.Text(acc) -> match c
+                "\"" -> scan(rest, ReadMode.Ready, List.prepend(Sexp.Text(acc), current), parents)
+                "\\" -> scan(rest, ReadMode.Escape(acc), current, parents)
+                _ -> scan(rest, ReadMode.Text(acc + c), current, parents)
+            ReadMode.Escape(acc) -> match c
+                "n" -> scan(rest, ReadMode.Text(acc + "\n"), current, parents)
+                _ -> scan(rest, ReadMode.Text(acc + c), current, parents)
+            ReadMode.Comment -> match c
+                "\n" -> scan(rest, ReadMode.Ready, current, parents)
+                _ -> scan(rest, mode, current, parents)
+
+verify scan
+    scan([], ReadMode.Ready, [], []) => Result.Err("unexpected end of data")
+    scan(["a"], ReadMode.Ready, [], []) => Result.Ok(Sexp.Atom("a"))
+    scan([], ReadMode.Text("a"), [], []) => Result.Err("unterminated text")
+
+fn finish(current: List<Sexp>, parents: List<List<Sexp>>) -> Result<Sexp, String>
+    ? "Finish one top-level form, or name the unmatched/list-tail error."
+    match parents
+        [parent, ..above] -> Result.Err("unexpected end of data")
+        [] -> match current
+            [] -> Result.Err("unexpected end of data")
+            [s] -> expand(s)
+            _ -> Result.Err("text after the S-expression")
+
+verify finish
+    finish([], []) => Result.Err("unexpected end of data")
+    finish([], [[]]) => Result.Err("unexpected end of data")
+    finish([Sexp.Atom("a")], []) => Result.Ok(Sexp.Atom("a"))
+    finish([Sexp.Atom("b"), Sexp.Atom("a")], []) => Result.Err("text after the S-expression")
 
 fn expand(s: Sexp) -> Result<Sexp, String>
     ? "(shared ((#NAME S)…) BODY) is BODY with every #NAME written out as its S; each S may use only the names before it. Anything else is itself."
@@ -101,109 +166,3 @@ fn withinAll(xs: List<Sexp>, table: Map<String, Tuple<Sexp, Int>>, acc: List<Sex
 
 verify withinAll
     withinAll([Sexp.Atom("a")], {}, [], 1) => Result.Ok((Sexp.Node([Sexp.Atom("a")]), 2))
-
-fn readOne(cs: List<String>) -> Result<Tuple<Sexp, List<String>>, String>
-    ? "Read one S-expression from the front of the characters."
-    match cs
-        [] -> Result.Err("unexpected end of data")
-        ["(", ..rest] -> readList(skipBlank(rest), [])
-        ["\"", ..rest] -> readText(rest, "")
-        [")", ..rest] -> Result.Err("unexpected )")
-        _ -> readAtom(cs, "")
-
-verify readOne
-    readOne(["a", ")"]) => Result.Ok((Sexp.Atom("a"), [")"]))
-    readOne([")"]) => Result.Err("unexpected )")
-
-fn readList(cs: List<String>, acc: List<Sexp>) -> Result<Tuple<Sexp, List<String>>, String>
-    ? "The items of a list up to its closing parenthesis."
-    match cs
-        [] -> Result.Err("unexpected end of data")
-        [")", ..rest] -> Result.Ok((Sexp.Node(List.reverse(acc)), rest))
-        _ -> readListItem(cs, acc)
-
-verify readList
-    readList([")"], []) => Result.Ok((Sexp.Node([]), []))
-
-fn readListItem(cs: List<String>, acc: List<Sexp>) -> Result<Tuple<Sexp, List<String>>, String>
-    ? "One item of a list, then the rest of the list."
-    match readOne(cs)
-        Result.Err(e) -> Result.Err(e)
-        Result.Ok((item, rest)) -> readList(skipBlank(rest), List.prepend(item, acc))
-
-verify readListItem
-    readListItem(["a", ")"], []) => Result.Ok((Sexp.Node([Sexp.Atom("a")]), []))
-
-fn readText(cs: List<String>, acc: String) -> Result<Tuple<Sexp, List<String>>, String>
-    ? "A quoted text; backslash escapes a quote, a backslash or a newline."
-    match cs
-        [] -> Result.Err("unterminated text")
-        ["\"", ..rest] -> Result.Ok((Sexp.Text(acc), rest))
-        ["\\", "n", ..rest] -> readText(rest, acc + "\n")
-        ["\\", c, ..rest] -> readText(rest, acc + c)
-        [c, ..rest] -> readText(rest, acc + c)
-
-verify readText
-    readText(["a", "\""], "") => Result.Ok((Sexp.Text("a"), []))
-    readText(["a"], "") => Result.Err("unterminated text")
-
-fn readAtom(cs: List<String>, acc: String) -> Result<Tuple<Sexp, List<String>>, String>
-    ? "An atom runs until a blank, a parenthesis or a quote."
-    match cs
-        [] -> Result.Ok((Sexp.Atom(acc), []))
-        [c, ..rest] -> match isDelimiter(c)
-            true -> Result.Ok((Sexp.Atom(acc), cs))
-            false -> readAtom(rest, acc + c)
-
-verify readAtom
-    readAtom(["a", "b", " "], "") => Result.Ok((Sexp.Atom("ab"), [" "]))
-
-fn isDelimiter(c: String) -> Bool
-    ? "Characters that end an atom."
-    match c
-        "(" -> true
-        ")" -> true
-        "\"" -> true
-        _ -> isBlank(c)
-
-verify isDelimiter
-    isDelimiter("(") => true
-    isDelimiter("a") => false
-
-fn isBlank(c: String) -> Bool
-    ? "Spaces, tabs and line breaks."
-    match c
-        " " -> true
-        "\n" -> true
-        "\t" -> true
-        "\r" -> true
-        _ -> false
-
-verify isBlank
-    isBlank(" ") => true
-    isBlank("x") => false
-
-fn skipBlank(cs: List<String>) -> List<String>
-    ? "Drop leading blanks and comments: a comment runs from `;` to the end of its line, and the reader never sees it."
-    match cs
-        [] -> []
-        [";", ..rest] -> skipBlank(skipLine(rest))
-        [c, ..rest] -> match isBlank(c)
-            true -> skipBlank(rest)
-            false -> cs
-
-verify skipBlank
-    skipBlank([" ", "\n", "a"]) => ["a"]
-    skipBlank([";", " ", "x", "\n", "a"]) => ["a"]
-    skipBlank([]) => []
-
-fn skipLine(cs: List<String>) -> List<String>
-    ? "Drop everything up to and including the next line break."
-    match cs
-        [] -> []
-        ["\n", ..rest] -> rest
-        [c, ..rest] -> skipLine(rest)
-
-verify skipLine
-    skipLine(["x", "\n", "a"]) => ["a"]
-    skipLine(["x"]) => []
