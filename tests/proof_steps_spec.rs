@@ -480,6 +480,62 @@ fn the_aver_backend_closes_by_steps_without_lean_on_the_path() {
     let _ = fs::remove_dir_all(out);
 }
 
+#[test]
+fn the_aver_backend_rejects_duplicate_law_identities_before_crediting() {
+    let dir = scratch("duplicate-law-identity");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("duplicate.av"),
+        r#"module DuplicateLaw
+    intent = "A duplicate law identity must not collapse two obligations."
+    effects []
+
+fn id(x: Int) -> Int
+    x
+
+verify id law collision
+    given x: Int = [0, 1]
+    id(x) => x + 1
+
+verify id law collision
+    given x: Int = [0, 1]
+    id(x) => x
+"#,
+    )
+    .unwrap();
+    let result = aver_in(
+        &dir,
+        &[
+            "proof",
+            "duplicate.av",
+            "--backend",
+            "aver",
+            "--check-json",
+            "--sorry-budget",
+            "99",
+            "-o",
+            "out",
+        ],
+    );
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "a duplicate proof identity is a harness error, not an open law\n{}",
+        format_output(&result)
+    );
+    let summary: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(summary["backend"], "aver");
+    assert_eq!(summary["passed"], false);
+    assert!(
+        summary["harness_error"]
+            .as_str()
+            .is_some_and(|e| e.contains("id.collision") && e.contains("duplicate law identity")),
+        "{}",
+        format_output(&result)
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
 /// `trust` says what each law closed by steps stands on: the wall rules
 /// its steps apply, including inside the proofs of the facts it cites,
 /// whether it uses the kernel's evaluator or a decision procedure, and the
