@@ -219,6 +219,15 @@ pub(super) fn param_borrow_mask(
     // graduated signature. A missing MIR fn / aliased_slots leaves the mask
     // unchanged (conservative borrow).
     clear_owned_param_borrows_of(fn_id, resolved, &mut mask, ctx);
+    if !is_mutual_tco
+        && let Some(program) = ctx.mir_program.as_ref()
+        && let Some(mir_fn) = program.fn_by_id(fn_id)
+    {
+        let lent = super::from_mir::lent_string_params(mir_fn, &resolved.params, &program.builtins);
+        for (borrowed, (name, _)) in mask.iter_mut().zip(&resolved.params) {
+            *borrowed |= lent.contains(&aver_name_to_rust(name));
+        }
+    }
     mask
 }
 

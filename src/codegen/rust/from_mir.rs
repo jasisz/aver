@@ -992,6 +992,81 @@ fn builtin_only_reads(callee: &MirCallee, builtins: &[String]) -> bool {
     )
 }
 
+/// The `String` params of a function that is not a tail-call loop which its
+/// body only reads in place: as the text a string built-in reads
+/// (`String.len(s)`, `String.slice(s, ..)`, an indexed read) or as an operand
+/// of `==` or `!=`. Rust borrows them (`s: &AverStr`), so a caller that keeps
+/// the string lends it instead of counting a copy for every call.
+pub(super) fn lent_string_params(
+    mir_fn: &crate::ir::mir::MirFn,
+    params: &[(String, Type)],
+    builtins: &[String],
+) -> HashSet<String> {
+    params
+        .iter()
+        .zip(&mir_fn.params)
+        .filter(|((_, ty), param)| {
+            matches!(ty, Type::Str)
+                && reads_string_in_place(&mir_fn.body.node, param.local, builtins)
+        })
+        .map(|((name, _), _)| aver_name_to_rust(name))
+        .collect()
+}
+
+/// Whether every read of the `String` local in `slot` within `expr` is one
+/// [`lent_string_params`] allows.
+fn reads_string_in_place(expr: &MirExpr, slot: LocalId, builtins: &[String]) -> bool {
+    let is_slot = |e: &MirExpr| local_of(e).is_some_and(|local| local.slot == slot);
+    let reads_text = |callee: &MirCallee| match callee {
+        MirCallee::Builtin(id) => matches!(
+            builtins.get(id.0 as usize).map(String::as_str),
+            Some(
+                "String.len"
+                    | "String.byteLength"
+                    | "String.charAt"
+                    | "String.slice"
+                    | "String.startsWith"
+                    | "String.endsWith"
+                    | "String.contains"
+                    | "String.split"
+                    | "String.trim"
+                    | "String.toLower"
+                    | "String.toUpper"
+            )
+        ),
+        MirCallee::Intrinsic(intrinsic) => matches!(
+            intrinsic,
+            BuiltinIntrinsic::StrIndexBuild
+                | BuiltinIntrinsic::StrIndexCharAt
+                | BuiltinIntrinsic::StrIndexCodeAt
+                | BuiltinIntrinsic::StrIndexSlice
+        ),
+        _ => false,
+    };
+    match expr {
+        MirExpr::Local(local) => local.node.slot != slot,
+        // A branch of `(a, b)!` runs on another thread.
+        MirExpr::IndependentProduct(_) => false,
+        MirExpr::Call(call) if reads_text(&call.node.callee) => {
+            call.node.args.iter().enumerate().all(|(i, arg)| {
+                (i == 0 && is_slot(&arg.node)) || reads_string_in_place(&arg.node, slot, builtins)
+            })
+        }
+        MirExpr::BinOp(op) if matches!(op.node.op, BinOp::Eq | BinOp::Neq) => {
+            [&op.node.lhs, &op.node.rhs].iter().all(|side| {
+                is_slot(&side.node) || reads_string_in_place(&side.node, slot, builtins)
+            })
+        }
+        _ => {
+            let mut only = true;
+            crate::ir::mir::expr::walk_children(expr, &mut |child| {
+                only = only && reads_string_in_place(child, slot, builtins);
+            });
+            only
+        }
+    }
+}
+
 /// Whether lone self-tail-recursive function `fn_id` borrows param `index`.
 ///
 /// The loop rebinds its params on every step, so it used to take each one by
@@ -5366,6 +5441,16 @@ pub(super) fn emit_mir_fn_body_routed(
     ctx: &CodegenContext,
 ) -> Option<String> {
     let mut policy = MirFnEmitPolicy::from_resolved(resolved, scope, borrow_by_default);
+    if borrow_by_default {
+        policy.borrowed_params.extend(lent_string_params(
+            mir_fn,
+            &resolved.params,
+            ctx.mir_program
+                .as_ref()
+                .map(|p| p.builtins.as_slice())
+                .unwrap_or(&[]),
+        ));
+    }
     // Graduate own_param-proven collection params to owned-by-value so
     // the body skips the `.clone()` at last-use mutation sites. The
     // SIGNATURE (`emit_fn_def_with_visibility`) computes the SAME owned
