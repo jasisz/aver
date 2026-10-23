@@ -423,7 +423,7 @@ fn typeOf(t: Term, e: TyEnv) -> Result<Ty, String>
         Term.TParts(xs) -> partsType(typesOf(xs, e)?)
         Term.TList(xs) -> Result.Ok(Ty.TyList(joinAll(typesOf(xs, e)?, Ty.TyAny)?))
         Term.TTuple(xs) -> Result.Ok(Ty.TyTuple(typesOf(xs, e)?))
-        Term.TRec(n, fs) -> fieldsFit(n, fs, declaredRec(n, e)?, e)
+        Term.TRec(n, fs) -> recordLiteralType(n, fs, e)
         Term.TUpd(n, b, fs) -> fieldsFit(n, fs, must(typeOf(b, e)?, Ty.TyNamed(n), "an update of {n}")?, e)
 
 verify typeOf
@@ -488,14 +488,56 @@ fn recField(n: String, f: String, e: TyEnv) -> Result<Ty, String>
 verify recField
     recField("R", "a", TyEnv(vars = [], defs = [], consts = [], sums = [], recs = [Rec(name = "R", eq = false, fields = [])], sigs = [])) => Result.Err("R has no field a")
 
-fn declaredRec(n: String, e: TyEnv) -> Result<Ty, String>
-    ? "The type of a literal of a record the script declares."
-    match recNamed(n, e.recs)
-        Option.Some(r) -> Result.Ok(Ty.TyNamed(n))
-        Option.None -> Result.Err("{n} is not a declared record")
+fn recordLiteralType(n: String, fs: List<Field>, e: TyEnv) -> Result<Ty, String>
+    ? "The type of a complete record literal: every declared field exactly once, at its declared type."
+    r = recordDecl(n, e)?
+    fieldsUnique(n, fs, [])?
+    requiredFieldsPresent(n, r.fields, fieldNames(fs))?
+    fieldsFit(n, fs, Ty.TyNamed(n), e)
 
-verify declaredRec
-    declaredRec("R", empty()) => Result.Err("R is not a declared record")
+verify recordLiteralType
+    recordLiteralType("R", [], TyEnv(vars = [], defs = [], consts = [], sums = [], recs = [Rec(name = "R", eq = false, fields = [Kernel.Term.typed("a", Ty.TyInt)])], sigs = [])) => Result.Err("record R is missing field a")
+    recordLiteralType("R", [Field(name = "a", value = Term.TInt(1))], TyEnv(vars = [], defs = [], consts = [], sums = [], recs = [Rec(name = "R", eq = false, fields = [Kernel.Term.typed("a", Ty.TyInt)])], sigs = [])) => Result.Ok(Ty.TyNamed("R"))
+
+fn recordDecl(n: String, e: TyEnv) -> Result<Rec, String>
+    ? "The declaration of a record literal's named type."
+    match recNamed(n, e.recs)
+        Option.None -> Result.Err("{n} is not a declared record")
+        Option.Some(r) -> Result.Ok(r)
+
+verify recordDecl
+    recordDecl("R", empty()) => Result.Err("R is not a declared record")
+
+fn fieldNames(fs: List<Field>) -> List<String>
+    ? "The names written by a record literal or update, in order."
+    match fs
+        [] -> []
+        [f, ..rest] -> List.prepend(f.name, fieldNames(rest))
+
+verify fieldNames
+    fieldNames([Field(name = "a", value = Term.TInt(1))]) => ["a"]
+
+fn requiredFieldsPresent(n: String, required: List<TypedVar>, actual: List<String>) -> Result<Unit, String>
+    ? "Every field declared by record n occurs in the literal."
+    match required
+        [] -> Result.Ok(Unit)
+        [f, ..rest] -> match List.contains(actual, f.name)
+            true -> requiredFieldsPresent(n, rest, actual)
+            false -> Result.Err("record {n} is missing field {f.name}")
+
+verify requiredFieldsPresent
+    requiredFieldsPresent("R", [Kernel.Term.typed("a", Ty.TyInt)], []) => Result.Err("record R is missing field a")
+
+fn fieldsUnique(n: String, fs: List<Field>, seen: List<String>) -> Result<Unit, String>
+    ? "No field is written twice in one record literal."
+    match fs
+        [] -> Result.Ok(Unit)
+        [f, ..rest] -> match List.contains(seen, f.name)
+            true -> Result.Err("record {n} repeats field {f.name}")
+            false -> fieldsUnique(n, rest, List.prepend(f.name, seen))
+
+verify fieldsUnique
+    fieldsUnique("R", [Field(name = "a", value = Term.TInt(1)), Field(name = "a", value = Term.TInt(2))], []) => Result.Err("record R repeats field a")
 
 fn fieldsFit(n: String, fs: List<Field>, result: Ty, e: TyEnv) -> Result<Ty, String>
     ? "A record's fields each fit their declared type."

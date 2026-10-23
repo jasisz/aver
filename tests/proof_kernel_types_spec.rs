@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// (script, what the kernel says, whether an untyped kernel accepted it)
-const REFUSED: [(&str, &str, bool); 41] = [
+const REFUSED: [(&str, &str, bool); 42] = [
     // A law about a sum, cited at an Int: `x = One.Only` for every `x` of
     // the one-value type `One`, read at 0 and at 1, gives `0 = 1`.
     (
@@ -251,6 +251,13 @@ const REFUSED: [(&str, &str, bool); 41] = [
         "cyclic declaration through module-level binding a",
         true,
     ),
+    // Record literals may omit declared fields, but finite enumeration only
+    // visits complete records, so it proves a false universal equality.
+    (
+        "incomplete_record_breaks_finite_enumeration",
+        "record R is missing field value",
+        true,
+    ),
 ];
 
 fn fixtures() -> PathBuf {
@@ -286,8 +293,8 @@ fn every_refused_script_is_listed() {
     assert_eq!(on_disk, listed);
 }
 
-/// Twenty-three scripts were accepted before their corresponding kernel gates.
+/// Twenty-four scripts were accepted before their corresponding kernel gates.
 #[test]
-fn twenty_three_of_them_were_accepted_before() {
-    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 23);
+fn twenty_four_of_them_were_accepted_before() {
+    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 24);
 }

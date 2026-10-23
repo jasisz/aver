@@ -1517,34 +1517,25 @@ pub fn typeOf(
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TRec(__n_fields) => {
                 let n = __n_fields.0.clone();
                 let fs = __n_fields.1.clone();
-                {
-                    let __arg41 @ _ =
-                        crate::proof_kernel::aver_generated::kernel::types::declaredRec(
-                            n.clone(),
-                            e,
-                        )?;
-                    crate::proof_kernel::aver_generated::kernel::types::fieldsFit(
-                        n, &fs, __arg41, e,
-                    )
-                }
+                crate::proof_kernel::aver_generated::kernel::types::recordLiteralType(n, &fs, e)
             }
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TUpd(__n_fields) => {
                 let n = __n_fields.0.clone();
                 let b = &__n_fields.1;
                 let fs = __n_fields.2.clone();
                 {
-                    let __arg45 @ _ = {
-                        let __arg42 @ _ =
+                    let __arg44 @ _ = {
+                        let __arg41 @ _ =
                             crate::proof_kernel::aver_generated::kernel::types::typeOf(b, e)?;
                         {
-                            let __arg43 @ _ =
+                            let __arg42 @ _ =
                                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(
                                     crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(
                                         n.clone(),
                                     ),
                                 );
                             {
-                                let __arg44 @ _ = aver_rt::AverStr::from({
+                                let __arg43 @ _ = aver_rt::AverStr::from({
                                     let mut __b = {
                                         let mut __b = aver_rt::Buffer::with_capacity(
                                             (aver_rt::AverInt::from_i64(29))
@@ -1560,13 +1551,13 @@ pub fn typeOf(
                                     __b
                                 });
                                 crate::proof_kernel::aver_generated::kernel::types::must(
-                                    &__arg42, __arg43, __arg44,
+                                    &__arg41, __arg42, __arg43,
                                 )
                             }
                         }
                     }?;
                     crate::proof_kernel::aver_generated::kernel::types::fieldsFit(
-                        n, &fs, __arg45, e,
+                        n, &fs, __arg44, e,
                     )
                 }
             }
@@ -1748,19 +1739,40 @@ pub fn recField(
     }
 }
 
-/// The type of a literal of a record the script declares.
-#[inline(always)]
-pub fn declaredRec(
+/// The type of a complete record literal: every declared field exactly once, at its declared type.
+pub fn recordLiteralType(
     n @ _: AverStr,
+    fs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Field>,
     e @ _: &TyEnv,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Ty, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
+    let r @ _ = crate::proof_kernel::aver_generated::kernel::types::recordDecl(n.clone(), e)?;
+    {
+        let __arg6 @ _ = <aver_rt::AverList<AverStr>>::empty();
+        crate::proof_kernel::aver_generated::kernel::types::fieldsUnique(n.clone(), fs, __arg6)
+    }?;
+    {
+        let __arg7 @ _ = crate::proof_kernel::aver_generated::kernel::types::fieldNames(fs);
+        crate::proof_kernel::aver_generated::kernel::types::requiredFieldsPresent(
+            n.clone(),
+            &r.fields,
+            __arg7,
+        )
+    }?;
+    let __arg8 @ _ = crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(
+        crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(n.clone()),
+    );
+    crate::proof_kernel::aver_generated::kernel::types::fieldsFit(n, fs, __arg8, e)
+}
+
+/// The declaration of a record literal's named type.
+#[inline(always)]
+pub fn recordDecl(
+    n @ _: AverStr,
+    e @ _: &TyEnv,
+) -> Result<crate::proof_kernel::aver_generated::kernel::proof::Rec, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
     match crate::proof_kernel::aver_generated::kernel::types::recNamed(n.clone(), &e.recs) {
-        Some(r @ _) => Ok(
-            crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(
-                crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(n),
-            ),
-        ),
         None => Err(aver_rt::AverStr::from({
             let mut __b = {
                 let mut __b = aver_rt::Buffer::with_capacity(
@@ -1772,6 +1784,151 @@ pub fn declaredRec(
             __b.push_str(&::aver_rt::str_lit!(" is not a declared record"));
             __b
         })),
+        Some(r @ _) => Ok(r),
+    }
+}
+
+/// The names written by a record literal or update, in order.
+#[inline(always)]
+pub fn fieldNames(
+    fs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Field>,
+) -> aver_rt::AverList<AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __list_subject = fs;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                aver_rt::AverList::prepend(
+                    f.name.clone(),
+                    &crate::proof_kernel::aver_generated::kernel::types::fieldNames(&rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
+}
+
+/// Every field declared by record n occurs in the literal.
+#[inline(always)]
+pub fn requiredFieldsPresent(
+    mut n @ _: AverStr,
+    required @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar>,
+    mut actual @ _: aver_rt::AverList<AverStr>,
+) -> Result<(), AverStr> {
+    let mut __hold1: aver_rt::AverList<
+        crate::proof_kernel::aver_generated::kernel::term::TypedVar,
+    >;
+    let mut required @ _: &aver_rt::AverList<
+        crate::proof_kernel::aver_generated::kernel::term::TypedVar,
+    > = required;
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __list_subject = required;
+            if __list_subject.is_empty() {
+                return Ok(());
+            } else {
+                if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    if actual.contains(&f.name) {
+                        {
+                            let __tco1 = rest;
+                            __hold1 = __tco1;
+                            required = &__hold1;
+                            continue;
+                        }
+                    } else {
+                        return Err(aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = {
+                                        let mut __b = aver_rt::Buffer::with_capacity(
+                                            (aver_rt::AverInt::from_i64(57))
+                                                .to_usize()
+                                                .unwrap_or(0),
+                                        );
+                                        __b.push_str(&::aver_rt::str_lit!("record "));
+                                        __b
+                                    };
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                        &(n),
+                                    )));
+                                    __b
+                                };
+                                __b.push_str(&::aver_rt::str_lit!(" is missing field "));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f.name))));
+                            __b
+                        }));
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
+    }
+}
+
+/// No field is written twice in one record literal.
+#[inline(always)]
+pub fn fieldsUnique(
+    mut n @ _: AverStr,
+    fs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Field>,
+    mut seen @ _: aver_rt::AverList<AverStr>,
+) -> Result<(), AverStr> {
+    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Field>;
+    let mut fs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Field> =
+        fs;
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __list_subject = fs;
+            if __list_subject.is_empty() {
+                return Ok(());
+            } else {
+                if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    if seen.contains(&f.name) {
+                        return Err(aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = {
+                                        let mut __b = aver_rt::Buffer::with_capacity(
+                                            (aver_rt::AverInt::from_i64(54))
+                                                .to_usize()
+                                                .unwrap_or(0),
+                                        );
+                                        __b.push_str(&::aver_rt::str_lit!("record "));
+                                        __b
+                                    };
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                        &(n),
+                                    )));
+                                    __b
+                                };
+                                __b.push_str(&::aver_rt::str_lit!(" repeats field "));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f.name))));
+                            __b
+                        }));
+                    } else {
+                        {
+                            let __tco1 = rest;
+                            let __tco2 = aver_rt::AverList::prepend(f.name.clone(), &seen);
+                            __hold1 = __tco1;
+                            fs = &__hold1;
+                            seen = __tco2;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
