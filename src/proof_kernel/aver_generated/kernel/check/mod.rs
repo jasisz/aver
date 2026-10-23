@@ -113,7 +113,7 @@ fn __mutual_tco_trampoline_1(
         },
         crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PConst(__n_fields) => {
             let n = __n_fields.0.clone();
-            return crate::proof_kernel::aver_generated::kernel::check::constant(n, &env.consts, path)
+            return crate::proof_kernel::aver_generated::kernel::check::constant(n, &env, path)
         },
         crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PArm(__k_fields) => {
             let k = __k_fields.0.clone();
@@ -1563,12 +1563,80 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
             sigs: env.sigs.clone(),
         },
     );
+    {
+        let __arg5 @ _ = <aver_rt::AverList<AverStr>>::empty();
+        crate::proof_kernel::aver_generated::kernel::check::uniqueDefs(
+            &scope.defs,
+            __arg5,
+            path.clone(),
+        )
+    }?;
     crate::proof_kernel::aver_generated::kernel::check::defsTyped(
         &scope.defs,
         &scope,
         path.clone(),
     )?;
     crate::proof_kernel::aver_generated::kernel::check::constsTyped(&scope.consts, &scope, path)
+}
+
+/// No second definition may borrow the first one's identity, type or termination evidence.
+#[inline(always)]
+pub fn uniqueDefs(
+    ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
+    mut seen @ _: aver_rt::AverList<AverStr>,
+    mut path @ _: AverStr,
+) -> Result<(), AverStr> {
+    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>;
+    let mut ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def> =
+        ds;
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __list_subject = ds;
+            if __list_subject.is_empty() {
+                return Ok(());
+            } else {
+                if let (Some(d), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    if seen.contains(&d.name) {
+                        return Err(aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = {
+                                        let mut __b = aver_rt::Buffer::with_capacity(
+                                            (aver_rt::AverInt::from_i64(60))
+                                                .to_usize()
+                                                .unwrap_or(0),
+                                        );
+                                        __b.push_str(&::aver_rt::str_lit!("step "));
+                                        __b
+                                    };
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                        &(path),
+                                    )));
+                                    __b
+                                };
+                                __b.push_str(&::aver_rt::str_lit!(": duplicate definition "));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name))));
+                            __b
+                        }));
+                    } else {
+                        {
+                            let __tco0 = rest;
+                            let __tco1 = aver_rt::AverList::prepend(d.name.clone(), &seen);
+                            __hold0 = __tco0;
+                            ds = &__hold0;
+                            seen = __tco1;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
+    }
 }
 
 /// Every definition in the script is well typed.
@@ -3765,9 +3833,41 @@ pub fn withHyps(
     )
 }
 
-/// A module-level binding's value: the variable that reads it equals the value the script carries.
+/// A module-level binding's value, unless a variable in the current proof scope shadows its name.
 #[inline(always)]
 pub fn constant(
+    n @ _: AverStr,
+    env @ _: &Env,
+    path @ _: AverStr,
+) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    if crate::proof_kernel::aver_generated::kernel::proof::givenNames(&env.vars).contains(&n) {
+        {
+            let __arg3 @ _ = aver_rt::AverStr::from({
+                let mut __b = {
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(63)).to_usize().unwrap_or(0),
+                        );
+                        __b.push_str(&::aver_rt::str_lit!("module-level binding "));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                    __b
+                };
+                __b.push_str(&::aver_rt::str_lit!(" is shadowed by a variable"));
+                __b
+            });
+            crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg3)
+        }
+    } else {
+        crate::proof_kernel::aver_generated::kernel::check::constantIn(n, &env.consts, path)
+    }
+}
+
+/// A module-level binding's declared value.
+#[inline(always)]
+pub fn constantIn(
     mut n @ _: AverStr,
     cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
     mut path @ _: AverStr,

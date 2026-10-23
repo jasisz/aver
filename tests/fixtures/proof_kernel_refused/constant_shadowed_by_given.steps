@@ -1,0 +1,12 @@
+(steps 16
+ (obligation everyIntIsZero ((n int)) (none)
+  (v n)
+  (i 0))
+ (defs)
+ (consts
+  (const n int (i 0)))
+ (sums)
+ (recs)
+ (sigs)
+ (laws)
+ (proof (const n)))
