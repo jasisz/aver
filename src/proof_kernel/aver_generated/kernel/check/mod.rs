@@ -1564,37 +1564,89 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
         },
     );
     {
-        let __arg9 @ _ = <aver_rt::AverList<AverStr>>::empty();
-        crate::proof_kernel::aver_generated::kernel::check::uniqueDefs(
-            &scope.defs,
-            __arg9,
-            path.clone(),
-        )
+        let __arg8 @ _ = crate::proof_kernel::aver_generated::kernel::check::defNames(&scope.defs);
+        {
+            let __arg9 @ _ = <aver_rt::AverList<AverStr>>::empty();
+            {
+                let __arg10 @ _ = aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = {
+                            let mut __b = aver_rt::Buffer::with_capacity(
+                                (aver_rt::AverInt::from_i64(43)).to_usize().unwrap_or(0),
+                            );
+                            __b.push_str(&::aver_rt::str_lit!("step "));
+                            __b
+                        };
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                        __b
+                    };
+                    __b.push_str(&::aver_rt::str_lit!(": duplicate definition"));
+                    __b
+                });
+                crate::proof_kernel::aver_generated::kernel::types::unique(&__arg8, __arg9, __arg10)
+            }
+        }
     }?;
     {
-        let __arg10 @ _ = <aver_rt::AverList<AverStr>>::empty();
-        crate::proof_kernel::aver_generated::kernel::check::uniqueConsts(
-            &scope.consts,
-            __arg10,
-            path.clone(),
-        )
+        let __arg11 @ _ =
+            crate::proof_kernel::aver_generated::kernel::check::constNames(&scope.consts);
+        {
+            let __arg12 @ _ = <aver_rt::AverList<AverStr>>::empty();
+            {
+                let __arg13 @ _ = aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = {
+                            let mut __b = aver_rt::Buffer::with_capacity(
+                                (aver_rt::AverInt::from_i64(53)).to_usize().unwrap_or(0),
+                            );
+                            __b.push_str(&::aver_rt::str_lit!("step "));
+                            __b
+                        };
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                        __b
+                    };
+                    __b.push_str(&::aver_rt::str_lit!(": duplicate module-level binding"));
+                    __b
+                });
+                crate::proof_kernel::aver_generated::kernel::types::unique(
+                    &__arg11, __arg12, __arg13,
+                )
+            }
+        }
     }?;
-    crate::proof_kernel::aver_generated::kernel::check::constsAcyclic(
-        &scope.consts,
-        &scope.consts,
-        path.clone(),
-    )?;
     crate::proof_kernel::aver_generated::kernel::check::declarationsAcyclic(
         &scope.consts,
         &scope.defs,
         &scope.consts,
         path.clone(),
     )?;
-    crate::proof_kernel::aver_generated::kernel::check::uniqueTypeDecls(
-        &scope.sums,
-        &scope.recs,
-        path.clone(),
-    )?;
+    {
+        let __arg14 @ _ =
+            crate::proof_kernel::aver_generated::kernel::check::typeNames(&scope.sums, &scope.recs);
+        {
+            let __arg15 @ _ = <aver_rt::AverList<AverStr>>::empty();
+            {
+                let __arg16 @ _ = aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = {
+                            let mut __b = aver_rt::Buffer::with_capacity(
+                                (aver_rt::AverInt::from_i64(49)).to_usize().unwrap_or(0),
+                            );
+                            __b.push_str(&::aver_rt::str_lit!("step "));
+                            __b
+                        };
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                        __b
+                    };
+                    __b.push_str(&::aver_rt::str_lit!(": duplicate type declaration"));
+                    __b
+                });
+                crate::proof_kernel::aver_generated::kernel::types::unique(
+                    &__arg14, __arg15, __arg16,
+                )
+            }
+        }
+    }?;
     crate::proof_kernel::aver_generated::kernel::check::defsTyped(
         &scope.defs,
         &scope,
@@ -1603,347 +1655,91 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
     crate::proof_kernel::aver_generated::kernel::check::constsTyped(&scope.consts, &scope, path)
 }
 
-/// No second definition may borrow the first one's identity, type or termination evidence.
+/// The names the script's definitions declare, in order.
 #[inline(always)]
-pub fn uniqueDefs(
+pub fn defNames(
     ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
-    mut seen @ _: aver_rt::AverList<AverStr>,
-    mut path @ _: AverStr,
-) -> Result<(), AverStr> {
-    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>;
-    let mut ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def> =
-        ds;
-    loop {
-        crate::proof_kernel::cancel_checkpoint();
-        {
-            let __list_subject = ds;
-            if __list_subject.is_empty() {
-                return Ok(());
-            } else {
-                if let (Some(d), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    if seen.contains(&d.name) {
-                        return Err(aver_rt::AverStr::from({
-                            let mut __b = {
-                                let mut __b = {
-                                    let mut __b = {
-                                        let mut __b = aver_rt::Buffer::with_capacity(
-                                            (aver_rt::AverInt::from_i64(60))
-                                                .to_usize()
-                                                .unwrap_or(0),
-                                        );
-                                        __b.push_str(&::aver_rt::str_lit!("step "));
-                                        __b
-                                    };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(path),
-                                    )));
-                                    __b
-                                };
-                                __b.push_str(&::aver_rt::str_lit!(": duplicate definition "));
-                                __b
-                            };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name))));
-                            __b
-                        }));
-                    } else {
-                        {
-                            let __tco0 = rest;
-                            let __tco1 = aver_rt::AverList::prepend(d.name.clone(), &seen);
-                            __hold0 = __tco0;
-                            ds = &__hold0;
-                            seen = __tco1;
-                            continue;
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
-    }
-}
-
-/// Each module-level binding has one identity and one defining equation.
-#[inline(always)]
-pub fn uniqueConsts(
-    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
-    mut seen @ _: aver_rt::AverList<AverStr>,
-    mut path @ _: AverStr,
-) -> Result<(), AverStr> {
-    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>;
-    let mut cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const> =
-        cs;
-    loop {
-        crate::proof_kernel::cancel_checkpoint();
-        {
-            let __list_subject = cs;
-            if __list_subject.is_empty() {
-                return Ok(());
-            } else {
-                if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    if seen.contains(&c.name) {
-                        return Err(aver_rt::AverStr::from({
-                            let mut __b = {
-                                let mut __b = {
-                                    let mut __b = {
-                                        let mut __b = aver_rt::Buffer::with_capacity(
-                                            (aver_rt::AverInt::from_i64(70))
-                                                .to_usize()
-                                                .unwrap_or(0),
-                                        );
-                                        __b.push_str(&::aver_rt::str_lit!("step "));
-                                        __b
-                                    };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(path),
-                                    )));
-                                    __b
-                                };
-                                __b.push_str(&::aver_rt::str_lit!(
-                                    ": duplicate module-level binding "
-                                ));
-                                __b
-                            };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c.name))));
-                            __b
-                        }));
-                    } else {
-                        {
-                            let __tco0 = rest;
-                            let __tco1 = aver_rt::AverList::prepend(c.name.clone(), &seen);
-                            __hold0 = __tco0;
-                            cs = &__hold0;
-                            seen = __tco1;
-                            continue;
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
-    }
-}
-
-/// No module-level binding depends on itself, directly or through other bindings.
-#[inline(always)]
-pub fn constsAcyclic(
-    todo @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
-    all @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
-    mut path @ _: AverStr,
-) -> Result<(), AverStr> {
-    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>;
-    let mut todo @ _: &aver_rt::AverList<
-        crate::proof_kernel::aver_generated::kernel::proof::Const,
-    > = todo;
-    loop {
-        crate::proof_kernel::cancel_checkpoint();
-        {
-            let __list_subject = todo;
-            if __list_subject.is_empty() {
-                return Ok(());
-            } else {
-                if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    if {
-                        let __arg5 @ _ =
-                            crate::proof_kernel::aver_generated::kernel::check::constDeps(
-                                c.name.clone(),
-                                all,
-                                all,
-                            );
-                        {
-                            let __arg6 @ _ = <aver_rt::AverList<AverStr>>::empty();
-                            {
-                                let __arg7 @ _ = aver_rt::AverInt::from_i64(all.len() as i64);
-                                crate::proof_kernel::aver_generated::kernel::check::constCycle(
-                                    __arg5,
-                                    c.name.clone(),
-                                    all,
-                                    __arg6,
-                                    __arg7,
-                                )
-                            }
-                        }
-                    } {
-                        return Err(aver_rt::AverStr::from({
-                            let mut __b = {
-                                let mut __b = {
-                                    let mut __b = {
-                                        let mut __b = aver_rt::Buffer::with_capacity(
-                                            (aver_rt::AverInt::from_i64(67))
-                                                .to_usize()
-                                                .unwrap_or(0),
-                                        );
-                                        __b.push_str(&::aver_rt::str_lit!("step "));
-                                        __b
-                                    };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(path),
-                                    )));
-                                    __b
-                                };
-                                __b.push_str(&::aver_rt::str_lit!(
-                                    ": cyclic module-level binding "
-                                ));
-                                __b
-                            };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c.name))));
-                            __b
-                        }));
-                    } else {
-                        {
-                            let __tco0 = rest;
-                            __hold0 = __tco0;
-                            todo = &__hold0;
-                            continue;
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
-    }
-}
-
-/// Whether following module-level binding references reaches target.
-pub fn constCycle(
-    mut frontier @ _: aver_rt::AverList<AverStr>,
-    mut target @ _: AverStr,
-    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
-    mut seen @ _: aver_rt::AverList<AverStr>,
-    mut fuel @ _: aver_rt::AverInt,
-) -> bool {
-    loop {
-        crate::proof_kernel::cancel_checkpoint();
-        {
-            let __subject = (frontier, (fuel > aver_rt::AverInt::from_i64(0)));
-            {
-                let __int_match_subject = __subject;
-                let (__lit0, __lit1) = &__int_match_subject;
-                if (*__lit0).is_empty() {
-                    return false;
-                } else if (*__lit1) == false {
-                    return false;
-                } else if !(*__lit0).is_empty() && (*__lit1) == true {
-                    let Some((n, rest)) = aver_rt::list_uncons_cloned(&(*__lit0)) else {
-                        unreachable!("Aver Rust codegen: tuple element list mismatch")
-                    };
-                    if (n == target) {
-                        return true;
-                    } else {
-                        if seen.contains(&n) {
-                            {
-                                let __tco0 = rest;
-                                frontier = __tco0;
-                                continue;
-                            }
-                        } else {
-                            {
-                                let __tco0 = aver_rt::AverList::concat(
-                                    &rest,
-                                    &crate::proof_kernel::aver_generated::kernel::check::constDeps(
-                                        n.clone(),
-                                        cs,
-                                        cs,
-                                    ),
-                                );
-                                let __tco3 = aver_rt::AverList::prepend(n, &seen);
-                                let __tco4 = fuel.sub(&aver_rt::AverInt::from_i64(1));
-                                frontier = __tco0;
-                                seen = __tco3;
-                                fuel = __tco4;
-                                continue;
-                            }
-                        }
-                    }
-                } else {
-                    unreachable!("Aver Rust codegen: non-exhaustive guard-chain match")
-                }
-            }
-        }
-    }
-}
-
-/// The module-level bindings referenced by the binding named name.
-#[inline(always)]
-pub fn constDeps(
-    mut name @ _: AverStr,
-    todo @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
-    all @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
 ) -> aver_rt::AverList<AverStr> {
-    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>;
-    let mut todo @ _: &aver_rt::AverList<
-        crate::proof_kernel::aver_generated::kernel::proof::Const,
-    > = todo;
-    loop {
-        crate::proof_kernel::cancel_checkpoint();
-        {
-            let __list_subject = todo;
-            if __list_subject.is_empty() {
-                return aver_rt::AverList::empty();
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __list_subject = ds;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let (Some(d), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                aver_rt::AverList::prepend(
+                    d.name.clone(),
+                    &crate::proof_kernel::aver_generated::kernel::check::defNames(&rest),
+                )
             } else {
-                if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    if (c.name == name) {
-                        return {
-                            let __arg5 @ _ =
-                                crate::proof_kernel::aver_generated::kernel::subst::freeVars(
-                                    &c.value,
-                                );
-                            crate::proof_kernel::aver_generated::kernel::check::constNames(
-                                &__arg5, all,
-                            )
-                        };
-                    } else {
-                        {
-                            let __tco1 = rest;
-                            __hold1 = __tco1;
-                            todo = &__hold1;
-                            continue;
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
+                panic!("Aver Rust codegen: non-exhaustive list match")
             }
         }
     }
 }
 
-/// Only names that denote module-level bindings.
+/// The names the script's module-level bindings declare, in order.
 #[inline(always)]
 pub fn constNames(
-    names @ _: &aver_rt::AverList<AverStr>,
     cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
 ) -> aver_rt::AverList<AverStr> {
-    let mut __hold0: aver_rt::AverList<AverStr>;
-    let mut names @ _: &aver_rt::AverList<AverStr> = names;
-    loop {
-        crate::proof_kernel::cancel_checkpoint();
-        {
-            let __list_subject = names;
-            if __list_subject.is_empty() {
-                return aver_rt::AverList::empty();
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __list_subject = cs;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                aver_rt::AverList::prepend(
+                    c.name.clone(),
+                    &crate::proof_kernel::aver_generated::kernel::check::constNames(&rest),
+                )
             } else {
-                if let Some((n, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    if crate::proof_kernel::aver_generated::kernel::check::isConst(n.clone(), cs) {
-                        return aver_rt::AverList::prepend(
-                            n,
-                            &crate::proof_kernel::aver_generated::kernel::check::constNames(
-                                &rest, cs,
-                            ),
-                        );
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
+}
+
+/// The names declared by sums, then by records: one namespace of named types.
+#[inline(always)]
+pub fn typeNames(
+    ss @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Sum>,
+    rs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Rec>,
+) -> aver_rt::AverList<AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __list_subject = ss;
+        if let (Some(s), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            aver_rt::AverList::prepend(
+                s.name.clone(),
+                &crate::proof_kernel::aver_generated::kernel::check::typeNames(&rest, rs),
+            )
+        } else {
+            if __list_subject.is_empty() {
+                {
+                    let __list_subject = rs;
+                    if __list_subject.is_empty() {
+                        aver_rt::AverList::empty()
                     } else {
+                        if let (Some(r), Some(more)) =
+                            (__list_subject.first(), __list_subject.tail())
                         {
-                            let __tco0 = rest;
-                            __hold0 = __tco0;
-                            names = &__hold0;
-                            continue;
+                            aver_rt::AverList::prepend(r.name.clone(), &{
+                                let __arg6 @ _ = <aver_rt::AverList<
+                                    crate::proof_kernel::aver_generated::kernel::proof::Sum,
+                                >>::empty();
+                                crate::proof_kernel::aver_generated::kernel::check::typeNames(
+                                    &__arg6, &more,
+                                )
+                            })
+                        } else {
+                            panic!("Aver Rust codegen: non-exhaustive list match")
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
                 }
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
             }
         }
     }
@@ -2031,7 +1827,7 @@ pub fn declarationsAcyclic(
     }
 }
 
-/// Whether following definition and binding references reaches the target declaration.
+/// Whether following definition and binding references reaches the target declaration; running out of fuel counts as a cycle.
 pub fn declarationCycle(
     mut frontier @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     target @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
@@ -2050,7 +1846,7 @@ pub fn declarationCycle(
                 if (*__lit0).is_empty() {
                     return false;
                 } else if (*__lit1) == false {
-                    return false;
+                    return true;
                 } else if !(*__lit0).is_empty() && (*__lit1) == true {
                     let Some((n, rest)) = aver_rt::list_uncons_cloned(&(*__lit0)) else {
                         unreachable!("Aver Rust codegen: tuple element list mismatch")
@@ -2346,141 +2142,6 @@ pub fn definitionDependencyNodes(
     }
 }
 
-/// A named type has exactly one declaration: never two sums, two records, or one of each.
-#[inline(always)]
-pub fn uniqueTypeDecls(
-    ss @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Sum>,
-    rs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Rec>,
-    path @ _: AverStr,
-) -> Result<(), AverStr> {
-    crate::proof_kernel::cancel_checkpoint();
-    let __arg4 @ _ = {
-        let __arg3 @ _ = <aver_rt::AverList<AverStr>>::empty();
-        crate::proof_kernel::aver_generated::kernel::check::uniqueSumNames(ss, __arg3, path.clone())
-    }?;
-    crate::proof_kernel::aver_generated::kernel::check::uniqueRecNames(rs, __arg4, path)
-}
-
-/// Collect distinct sum names.
-#[inline(always)]
-pub fn uniqueSumNames(
-    ss @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Sum>,
-    mut seen @ _: aver_rt::AverList<AverStr>,
-    mut path @ _: AverStr,
-) -> Result<aver_rt::AverList<AverStr>, AverStr> {
-    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Sum>;
-    let mut ss @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Sum> =
-        ss;
-    loop {
-        crate::proof_kernel::cancel_checkpoint();
-        {
-            let __list_subject = ss;
-            if __list_subject.is_empty() {
-                return Ok(seen);
-            } else {
-                if let (Some(s), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    if seen.contains(&s.name) {
-                        return Err(aver_rt::AverStr::from({
-                            let mut __b = {
-                                let mut __b = {
-                                    let mut __b = {
-                                        let mut __b = aver_rt::Buffer::with_capacity(
-                                            (aver_rt::AverInt::from_i64(66))
-                                                .to_usize()
-                                                .unwrap_or(0),
-                                        );
-                                        __b.push_str(&::aver_rt::str_lit!("step "));
-                                        __b
-                                    };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(path),
-                                    )));
-                                    __b
-                                };
-                                __b.push_str(&::aver_rt::str_lit!(": duplicate type declaration "));
-                                __b
-                            };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(s.name))));
-                            __b
-                        }));
-                    } else {
-                        {
-                            let __tco0 = rest;
-                            let __tco1 = aver_rt::AverList::prepend(s.name.clone(), &seen);
-                            __hold0 = __tco0;
-                            ss = &__hold0;
-                            seen = __tco1;
-                            continue;
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
-    }
-}
-
-/// Every record name is distinct from earlier records and every sum.
-#[inline(always)]
-pub fn uniqueRecNames(
-    rs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Rec>,
-    mut seen @ _: aver_rt::AverList<AverStr>,
-    mut path @ _: AverStr,
-) -> Result<(), AverStr> {
-    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Rec>;
-    let mut rs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Rec> =
-        rs;
-    loop {
-        crate::proof_kernel::cancel_checkpoint();
-        {
-            let __list_subject = rs;
-            if __list_subject.is_empty() {
-                return Ok(());
-            } else {
-                if let (Some(r), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    if seen.contains(&r.name) {
-                        return Err(aver_rt::AverStr::from({
-                            let mut __b = {
-                                let mut __b = {
-                                    let mut __b = {
-                                        let mut __b = aver_rt::Buffer::with_capacity(
-                                            (aver_rt::AverInt::from_i64(66))
-                                                .to_usize()
-                                                .unwrap_or(0),
-                                        );
-                                        __b.push_str(&::aver_rt::str_lit!("step "));
-                                        __b
-                                    };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(path),
-                                    )));
-                                    __b
-                                };
-                                __b.push_str(&::aver_rt::str_lit!(": duplicate type declaration "));
-                                __b
-                            };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(r.name))));
-                            __b
-                        }));
-                    } else {
-                        {
-                            let __tco0 = rest;
-                            let __tco1 = aver_rt::AverList::prepend(r.name.clone(), &seen);
-                            __hold0 = __tco0;
-                            rs = &__hold0;
-                            seen = __tco1;
-                            continue;
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
-    }
-}
-
 /// Every definition in the script is well typed.
 #[inline(always)]
 pub fn defsTyped(
@@ -2530,22 +2191,47 @@ pub fn definitionTyped(
 ) -> Result<(), AverStr> {
     crate::proof_kernel::cancel_checkpoint();
     {
-        let __arg5 @ _ = <aver_rt::AverList<AverStr>>::empty();
-        crate::proof_kernel::aver_generated::kernel::check::uniqueParams(
-            &d.params,
-            __arg5,
-            d.name.clone(),
-            path.clone(),
-        )
+        let __arg5 @ _ = crate::proof_kernel::aver_generated::kernel::proof::givenNames(&d.params);
+        {
+            let __arg6 @ _ = <aver_rt::AverList<AverStr>>::empty();
+            {
+                let __arg7 @ _ = aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = {
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = aver_rt::Buffer::with_capacity(
+                                        (aver_rt::AverInt::from_i64(74)).to_usize().unwrap_or(0),
+                                    );
+                                    __b.push_str(&::aver_rt::str_lit!("step "));
+                                    __b
+                                };
+                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                    &(path),
+                                )));
+                                __b
+                            };
+                            __b.push_str(&::aver_rt::str_lit!(": definition "));
+                            __b
+                        };
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name))));
+                        __b
+                    };
+                    __b.push_str(&::aver_rt::str_lit!(" has duplicate parameter"));
+                    __b
+                });
+                crate::proof_kernel::aver_generated::kernel::types::unique(&__arg5, __arg6, __arg7)
+            }
+        }
     }?;
     let scope @ _ = {
-        let __arg6 @ _ =
+        let __arg8 @ _ =
             crate::proof_kernel::aver_generated::kernel::check::withVars(env, &d.params);
-        crate::proof_kernel::aver_generated::kernel::check::letsTyped(&d.lets, __arg6, path.clone())
+        crate::proof_kernel::aver_generated::kernel::check::letsTyped(&d.lets, __arg8, path.clone())
     }?;
-    let __arg7 @ _ =
+    let __arg9 @ _ =
         crate::proof_kernel::aver_generated::kernel::check::typeOf(&d.body, &scope, path.clone())?;
-    let __arg8 @ _ = aver_rt::AverStr::from({
+    let __arg10 @ _ = aver_rt::AverStr::from({
         let mut __b = {
             let mut __b = aver_rt::Buffer::with_capacity(
                 (aver_rt::AverInt::from_i64(27)).to_usize().unwrap_or(0),
@@ -2556,81 +2242,7 @@ pub fn definitionTyped(
         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name))));
         __b
     });
-    crate::proof_kernel::aver_generated::kernel::check::declaredFits(&__arg7, &d.ret, __arg8, path)
-}
-
-/// Each parameter of a definition has one identity for typing, substitution and termination.
-#[inline(always)]
-pub fn uniqueParams(
-    ps @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar>,
-    mut seen @ _: aver_rt::AverList<AverStr>,
-    mut owner @ _: AverStr,
-    mut path @ _: AverStr,
-) -> Result<(), AverStr> {
-    let mut __hold0: aver_rt::AverList<
-        crate::proof_kernel::aver_generated::kernel::term::TypedVar,
-    >;
-    let mut ps @ _: &aver_rt::AverList<
-        crate::proof_kernel::aver_generated::kernel::term::TypedVar,
-    > = ps;
-    loop {
-        crate::proof_kernel::cancel_checkpoint();
-        {
-            let __list_subject = ps;
-            if __list_subject.is_empty() {
-                return Ok(());
-            } else {
-                if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    if seen.contains(&p.name) {
-                        return Err(aver_rt::AverStr::from({
-                            let mut __b = {
-                                let mut __b = {
-                                    let mut __b = {
-                                        let mut __b = {
-                                            let mut __b = {
-                                                let mut __b = aver_rt::Buffer::with_capacity(
-                                                    (aver_rt::AverInt::from_i64(91))
-                                                        .to_usize()
-                                                        .unwrap_or(0),
-                                                );
-                                                __b.push_str(&::aver_rt::str_lit!("step "));
-                                                __b
-                                            };
-                                            __b.push_str(&aver_rt::AverStr::from(
-                                                aver_rt::aver_display(&(path)),
-                                            ));
-                                            __b
-                                        };
-                                        __b.push_str(&::aver_rt::str_lit!(": definition "));
-                                        __b
-                                    };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(owner),
-                                    )));
-                                    __b
-                                };
-                                __b.push_str(&::aver_rt::str_lit!(" has duplicate parameter "));
-                                __b
-                            };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(p.name))));
-                            __b
-                        }));
-                    } else {
-                        {
-                            let __tco0 = rest;
-                            let __tco1 = aver_rt::AverList::prepend(p.name.clone(), &seen);
-                            __hold0 = __tco0;
-                            ps = &__hold0;
-                            seen = __tco1;
-                            continue;
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
-    }
+    crate::proof_kernel::aver_generated::kernel::check::declaredFits(&__arg9, &d.ret, __arg10, path)
 }
 
 /// Infer local bindings in source order, making each one visible to those after it and to the body.
