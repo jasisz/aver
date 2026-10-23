@@ -6089,9 +6089,26 @@ pub fn checkScript(
     crate::proof_kernel::cancel_checkpoint();
     crate::proof_kernel::aver_generated::kernel::induct::refuseMutualRecursion(&s.defs)?;
     {
-        let __arg7 @ _ =
+        let __arg9 @ _ = {
+            let __arg8 @ _ = aver_rt::AverList::concat(
+                &s.laws.clone(),
+                &crate::proof_kernel::aver_generated::kernel::check::factLaws(&s.facts),
+            );
+            crate::proof_kernel::aver_generated::kernel::check::lawKeys(&__arg8)
+        };
+        {
+            let __arg10 @ _ = <aver_rt::AverList<AverStr>>::empty();
+            crate::proof_kernel::aver_generated::kernel::types::unique(
+                &__arg9,
+                __arg10,
+                ::aver_rt::str_lit!("step proof: cited laws repeat key"),
+            )
+        }
+    }?;
+    {
+        let __arg11 @ _ =
             <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Law>>::empty();
-        crate::proof_kernel::aver_generated::kernel::check::checkFacts(s.facts.clone(), __arg7)
+        crate::proof_kernel::aver_generated::kernel::check::checkFacts(s.facts.clone(), __arg11)
     }?;
     let env @ _ = Box::new(
         crate::proof_kernel::aver_generated::kernel::check::Env__Fields {
@@ -6131,6 +6148,29 @@ pub fn checkScript(
         Err(::aver_rt::str_lit!(
             "step proof: the proof ends at a different equation than the claim"
         ))
+    }
+}
+
+/// The keys of cited laws and checked facts, in order.
+#[inline(always)]
+pub fn lawKeys(
+    ls @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Law>,
+) -> aver_rt::AverList<AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __list_subject = ls;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let (Some(l), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                aver_rt::AverList::prepend(
+                    l.key.clone(),
+                    &crate::proof_kernel::aver_generated::kernel::check::lawKeys(&rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
     }
 }
 

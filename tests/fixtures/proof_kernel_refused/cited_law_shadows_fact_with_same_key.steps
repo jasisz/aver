@@ -1,0 +1,15 @@
+(steps 16
+ (obligation citedLawShadowsFactWithSameKey () (none)
+  (i 0)
+  (i 1))
+ (defs)
+ (consts)
+ (sums)
+ (recs)
+ (sigs)
+ (laws
+  (law Int.zeroIsZero () (none) (i 0) (i 1))
+  (fact Int.zeroIsZero () (none) (i 0) (i 0)
+   (refl (i 0))))
+ (proof
+  (law Int.zeroIsZero ())))

@@ -1258,6 +1258,7 @@ verify lawPremises
 fn checkScript(s: Script) -> Result<String, String>
     ? "The proof must prove exactly the obligation, under its when; every cited builtin fact is checked first."
     Kernel.Induct.refuseMutualRecursion(s.defs)?
+    Kernel.Types.unique(lawKeys(List.concat(s.laws, factLaws(s.facts))), [], "step proof: cited laws repeat key")?
     checkFacts(s.facts, [])?
     env = Env(defs = s.defs, consts = s.consts, laws = List.concat(s.laws, factLaws(s.facts)), hyps = lawHyps(s.obligation), vars = Kernel.Types.rigidVars(s.obligation.givens), sums = s.sums, recs = s.recs, sigs = s.sigs)
     declarationsTyped(env, "proof")?
@@ -1270,6 +1271,15 @@ fn checkScript(s: Script) -> Result<String, String>
 verify checkScript
     checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), defs = [], consts = [], sums = [], recs = [], sigs = [], laws = [], facts = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Ok("k")
     checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2)), defs = [], consts = [], sums = [], recs = [], sigs = [], laws = [], facts = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Err("step proof: the proof ends at a different equation than the claim")
+
+fn lawKeys(ls: List<Law>) -> List<String>
+    ? "The keys of cited laws and checked facts, in order."
+    match ls
+        [] -> []
+        [l, ..rest] -> List.prepend(l.key, lawKeys(rest))
+
+verify lawKeys
+    lawKeys([Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit)]) => ["k"]
 
 fn statementTyped(ob: Law, env: Env) -> Result<Unit, String>
     ? "The claim's two sides have one type and its when is a Bool: a statement written wrongly is refused before its proof is read."

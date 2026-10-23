@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// (script, what the kernel says, whether an untyped kernel accepted it)
-const REFUSED: [(&str, &str, bool); 47] = [
+const REFUSED: [(&str, &str, bool); 48] = [
     // A law about a sum, cited at an Int: `x = One.Only` for every `x` of
     // the one-value type `One`, read at 0 and at 1, gives `0 = 1`.
     (
@@ -292,6 +292,13 @@ const REFUSED: [(&str, &str, bool); 47] = [
         "Missing is not a declared record",
         true,
     ),
+    // A free cited law shadowed a checked builtin fact carrying the same key,
+    // so the proof could attach false content to the fact's trusted identity.
+    (
+        "cited_law_shadows_fact_with_same_key",
+        "cited laws repeat key Int.zeroIsZero",
+        true,
+    ),
 ];
 
 fn fixtures() -> PathBuf {
@@ -327,8 +334,8 @@ fn every_refused_script_is_listed() {
     assert_eq!(on_disk, listed);
 }
 
-/// Twenty-nine scripts were accepted before their corresponding kernel gates.
+/// Thirty scripts were accepted before their corresponding kernel gates.
 #[test]
-fn twenty_nine_of_them_were_accepted_before() {
-    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 29);
+fn thirty_of_them_were_accepted_before() {
+    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 30);
 }
