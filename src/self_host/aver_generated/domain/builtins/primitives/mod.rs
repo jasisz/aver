@@ -1265,9 +1265,11 @@ pub fn builtinStringSplitInner(
     crate::cancel_checkpoint();
     let s @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(sV)?;
     let sep @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(sepV)?;
-    let parts @ _ =
-        (aver_rt::AverList::from_vec(s.split(&*sep).map(|s| s.to_string()).collect::<Vec<_>>()))
-            .into_aver();
+    let parts @ _ = aver_rt::AverList::from_vec(
+        s.split(&*sep)
+            .map(aver_rt::AverStr::from)
+            .collect::<Vec<_>>(),
+    );
     Ok(crate::aver_generated::domain::value::Val::ValList(
         crate::aver_generated::domain::value::Val__ValList({
             let __arg5 @ _ =
@@ -1388,31 +1390,7 @@ pub fn builtinStringReplaceAllExtract(
     {
         let __list_subject = args;
         if let (Some(sV), Some(r1)) = (__list_subject.first(), __list_subject.tail()) {
-            {
-                let __list_subject = r1;
-                if let (Some(fromV), Some(r2)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __list_subject = r2;
-                        if let (Some(toV), Some(r3)) =
-                            (__list_subject.first(), __list_subject.tail())
-                        {
-                            crate::aver_generated::domain::builtins::primitives::builtinStringReplaceAllDo(sV, fromV, toV)
-                        } else {
-                            if __list_subject.is_empty() {
-                                Err(::aver_rt::str_lit!("String.replace takes 3 arguments"))
-                            } else {
-                                panic!("Aver Rust codegen: non-exhaustive list match")
-                            }
-                        }
-                    }
-                } else {
-                    if __list_subject.is_empty() {
-                        Err(::aver_rt::str_lit!("String.replace takes 3 arguments"))
-                    } else {
-                        panic!("Aver Rust codegen: non-exhaustive list match")
-                    }
-                }
-            }
+            aver_list_match!(r1, [] => Err(::aver_rt::str_lit!("String.replace takes 3 arguments")), [fromV, r2] => aver_list_match!(r2, [] => Err(::aver_rt::str_lit!("String.replace takes 3 arguments")), [toV, r3] => crate::aver_generated::domain::builtins::primitives::builtinStringReplaceAllDo(sV, &fromV, &toV)))
         } else {
             if __list_subject.is_empty() {
                 Err(::aver_rt::str_lit!("String.replace takes 3 arguments"))

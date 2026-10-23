@@ -1009,39 +1009,7 @@ fn __mutual_tco_trampoline_1(
             __MutualTco1::EachGiven(mut n @ _, mut gs @ _, mut next @ _) => {
                 crate::proof_std::cancel_checkpoint();
                 let ob @ _ = n.goal.obligation.clone();
-                {
-                    let __list_subject = gs;
-                    if __list_subject.is_empty() {
-                        __MutualTco1::Within(n, next)
-                    } else {
-                        if let (Some(g), Some(rest)) =
-                            (__list_subject.first(), __list_subject.tail())
-                        {
-                            return Ok(
-                                crate::proof_std::aver_generated::kernel::proof::Proof::PEnum(
-                                    crate::proof_std::aver_generated::kernel::proof::Proof__PEnum(
-                                        g.name.clone(),
-                                        ob.lhs,
-                                        ob.rhs,
-                                        {
-                                            let __arg7 @ _ = crate::proof_std::aver_generated::kernel::finite::values(&g.fin);
-                                            crate::proof_std::aver_generated::kernel::std::eachCase(
-                                                &n,
-                                                g.name.clone(),
-                                                &__arg7,
-                                                &rest,
-                                                &next,
-                                                &*answers,
-                                            )
-                                        }?,
-                                    ),
-                                ),
-                            );
-                        } else {
-                            panic!("Aver Rust codegen: non-exhaustive list match")
-                        }
-                    }
-                }
+                aver_list_match!(gs, [] => __MutualTco1::Within(n, next), [g, rest] => { return Ok(crate::proof_std::aver_generated::kernel::proof::Proof::PEnum(crate::proof_std::aver_generated::kernel::proof::Proof__PEnum(g.name.clone(), ob.lhs, ob.rhs, { let __arg7 @ _ = crate::proof_std::aver_generated::kernel::finite::values(&g.fin); crate::proof_std::aver_generated::kernel::std::eachCase(&n, g.name.clone(), &__arg7, &rest, &next, &*answers) }?))) })
             }
         };
     }

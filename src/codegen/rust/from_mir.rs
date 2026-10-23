@@ -5149,16 +5149,21 @@ fn mir_emit_equality(
     emit_ctx: &MirEmitCtx<'_>,
 ) -> String {
     // `AverStr` (Rc<str>) does not implement `PartialEq<&str>`: deref the
-    // non-literal side when the other side is a string literal.
+    // non-literal side when the other side is a string literal, once more
+    // when that side is a borrow.
+    let deref = |side: &MirExpr| match emits_direct_borrow(side, emit_ctx) {
+        true => "&**",
+        false => "&*",
+    };
     if let MirExpr::Literal(lit) = &bop.rhs.node
         && let crate::ast::Literal::Str(s) = &lit.node
     {
-        return format!("(&*{} {} {:?})", l, op_str, s);
+        return format!("({}{} {} {:?})", deref(&bop.lhs.node), l, op_str, s);
     }
     if let MirExpr::Literal(lit) = &bop.lhs.node
         && let crate::ast::Literal::Str(s) = &lit.node
     {
-        return format!("({:?} {} &*{})", s, op_str, r);
+        return format!("({:?} {} {}{})", s, op_str, deref(&bop.rhs.node), r);
     }
     // All non-string equality sites align through the same explicit value
     // modes as calls and returns. When either side emits `&T`, compare two

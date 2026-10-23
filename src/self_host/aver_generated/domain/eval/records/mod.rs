@@ -4,7 +4,7 @@ use crate::*;
 /// Check if this is a Type.update(record, _named(...)) call.
 #[inline(always)]
 pub fn isRecordUpdate(
-    name @ _: AverStr,
+    name @ _: &AverStr,
     args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> bool {
     crate::cancel_checkpoint();

@@ -24,39 +24,7 @@ fn __mutual_tco_trampoline_1(
         __state = match __state {
             __MutualTco1::MatchPatTupleItemsAcc(mut pats @ _, mut items @ _, mut acc @ _) => {
                 crate::cancel_checkpoint();
-                {
-                    let __list_subject = pats;
-                    if __list_subject.is_empty() {
-                        return Ok(acc);
-                    } else {
-                        if let (Some(pat), Some(restPats)) =
-                            (__list_subject.first(), __list_subject.tail())
-                        {
-                            {
-                                let __list_subject = items;
-                                if __list_subject.is_empty() {
-                                    return Err(::aver_rt::str_lit!("no match"));
-                                } else {
-                                    if let (Some(item), Some(restItems)) =
-                                        (__list_subject.first(), __list_subject.tail())
-                                    {
-                                        __MutualTco1::MatchPatTupleOne(
-                                            pat.clone(),
-                                            item.clone(),
-                                            restPats,
-                                            restItems,
-                                            acc,
-                                        )
-                                    } else {
-                                        panic!("Aver Rust codegen: non-exhaustive list match")
-                                    }
-                                }
-                            }
-                        } else {
-                            panic!("Aver Rust codegen: non-exhaustive list match")
-                        }
-                    }
-                }
+                aver_list_match!(pats, [] => { return Ok(acc) }, [pat, restPats] => { aver_list_match!(items, [] => { return Err(::aver_rt::str_lit!("no match")) }, [item, restItems] => __MutualTco1::MatchPatTupleOne(pat, item, restPats, restItems, acc)) })
             }
             __MutualTco1::MatchPatTupleOne(
                 mut pat @ _,
@@ -119,7 +87,7 @@ pub fn matchPattern(
         }
         crate::aver_generated::domain::ast::Pattern::PatStr(s) => {
             let s = s.clone();
-            crate::aver_generated::domain::match_mod::matchPatStr(s, &v)
+            crate::aver_generated::domain::match_mod::matchPatStr(&s, &v)
         }
         crate::aver_generated::domain::ast::Pattern::PatEmpty => {
             crate::aver_generated::domain::match_mod::matchPatEmpty(&v)
@@ -218,7 +186,7 @@ pub fn matchPatBool(
 
 /// Match a string literal pattern.
 pub fn matchPatStr(
-    s @ _: AverStr,
+    s @ _: &AverStr,
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
@@ -227,7 +195,7 @@ pub fn matchPatStr(
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValStr(__vs_fields) => {
                 let vs = __vs_fields.0.clone();
-                if (s == vs) {
+                if (s == &(vs)) {
                     Ok(aver_rt::AverList::empty())
                 } else {
                     Err(::aver_rt::str_lit!("no match"))
@@ -393,7 +361,7 @@ pub fn matchGenericConstructor(
                 let fullName = __fullName_fields.1.clone();
                 let fields = &__fullName_fields.2;
                 crate::aver_generated::domain::match_mod::matchGenericCtorCheck(
-                    ctorName, fullName, bindings, fields,
+                    &ctorName, &fullName, bindings, fields,
                 )
             }
             _ => Err(::aver_rt::str_lit!("no match")),
@@ -404,8 +372,8 @@ pub fn matchGenericConstructor(
 /// Check if variant full name matches constructor name.
 #[inline(always)]
 pub fn matchGenericCtorCheck(
-    ctorName @ _: AverStr,
-    fullName @ _: AverStr,
+    ctorName @ _: &AverStr,
+    fullName @ _: &AverStr,
     bindings @ _: &aver_rt::AverList<AverStr>,
     fields @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
@@ -455,7 +423,7 @@ pub fn matchPatConstructorById(
                         crate::aver_generated::domain::match_mod::matchNonePat(v)
                     } else {
                         crate::aver_generated::domain::match_mod::matchGenericCtorById(
-                            tag, ctorName, bindings, v,
+                            tag, &ctorName, bindings, v,
                         )
                     }
                 }
@@ -536,7 +504,7 @@ pub fn matchWrapperPatDirect(
 /// Match a user-defined variant by integer tag first, then full constructor name for collision safety.
 pub fn matchGenericCtorById(
     tag @ _: aver_rt::AverInt,
-    ctorName @ _: AverStr,
+    ctorName @ _: &AverStr,
     bindings @ _: &aver_rt::AverList<AverStr>,
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
@@ -549,7 +517,7 @@ pub fn matchGenericCtorById(
                 let fullName = __vTag_fields.1.clone();
                 let fields = &__vTag_fields.2;
                 if (vTag == tag) {
-                    if (fullName == ctorName) {
+                    if (&(fullName) == ctorName) {
                         Ok(crate::aver_generated::domain::match_mod::zipBindings(
                             bindings, fields,
                         ))

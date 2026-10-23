@@ -2897,9 +2897,8 @@ pub fn typ(
                                         match __pat4 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(n) => {
             let n = n.clone();
-            { let __list_subject = __pat5; if __list_subject.is_empty() { crate::proof_kernel::aver_generated::kernel::decode::typeVar(n, false, vars) } else { if let (Some(__pat6), Some(__pat7)) = (__list_subject.first(), __list_subject.tail()) { match __pat6 {
+            aver_list_match!(__pat5, [] => crate::proof_kernel::aver_generated::kernel::decode::typeVar(n, false, vars), [__pat6, __pat7] => { match __pat6 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(__pat8) => {
-            let __pat8 = __pat8.clone();
             match &*__pat8 {
         "eq" => {
             { let __list_subject = __pat7; if __list_subject.is_empty() { crate::proof_kernel::aver_generated::kernel::decode::typeVar(n, true, vars) } else { Err(::aver_rt::str_lit!("malformed type")) } }
@@ -2912,7 +2911,7 @@ pub fn typ(
         _ => {
             Err(::aver_rt::str_lit!("malformed type"))
         }
-    } } else { panic!("Aver Rust codegen: non-exhaustive list match") } } }
+    } })
         },
         _ => {
             Err(::aver_rt::str_lit!("malformed type"))

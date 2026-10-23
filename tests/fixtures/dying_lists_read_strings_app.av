@@ -1,0 +1,130 @@
+module DyingListsReadStrings
+    intent =
+        "Fixture: a list taken apart as it dies, in a loop and between two mutually recursive functions; String params a helper only reads, called on every character; and a text split into lines."
+    effects [Console.print]
+
+type Clo
+    Clo(Int, String)
+
+type Term
+    Push(Int, Term)
+    Pop(Term)
+    Stop
+
+fn cloSize(c: Clo) -> Int
+    ? "The number and the length of the name."
+    match c
+        Clo.Clo(n, name) -> n + String.len(name)
+
+verify cloSize
+    cloSize(Clo.Clo(2, "ab")) => 4
+
+fn walk(t: Term, env: List<Clo>, stack: List<Clo>) -> Int
+    ? "Pushes closures on the stack and moves the top one to the environment at each pop."
+    match t
+        Term.Push(n, rest) -> walk(rest, env, List.prepend(Clo.Clo(n, "c{n}"), stack))
+        Term.Pop(rest) -> pop(rest, env, stack)
+        Term.Stop -> sizes(env, 0) * 1000 + List.len(stack)
+
+fn pop(t: Term, env: List<Clo>, stack: List<Clo>) -> Int
+    ? "Moves the top of the stack to the environment."
+    match stack
+        [c, ..others] -> walk(t, List.prepend(c, env), others)
+        [] -> walk(t, env, [])
+
+verify walk
+    walk(Term.Push(1, Term.Push(2, Term.Pop(Term.Stop))), [], []) => 4001
+
+fn sizes(xs: List<Clo>, acc: Int) -> Int
+    ? "The sizes of the closures, summed; the list dies as it goes."
+    match xs
+        [] -> acc
+        [c, ..rest] -> sizes(rest, acc + cloSize(c))
+
+verify sizes
+    sizes([Clo.Clo(1, "a")], 0) => 2
+
+fn moved(xs: List<Clo>, acc: List<Clo>) -> List<Clo>
+    ? "The list reversed, each closure handed over."
+    match xs
+        [] -> acc
+        [c, ..rest] -> moved(rest, List.prepend(c, acc))
+
+verify moved
+    List.len(moved([Clo.Clo(1, "a"), Clo.Clo(2, "b")], [])) => 2
+
+fn term(n: Int, acc: Term) -> Term
+    ? "n pushes, each other one followed by a pop."
+    match n == 0
+        true -> acc
+        false -> match Int.mod(n, 2) == 0
+            true -> term(n - 1, Term.Push(n, Term.Pop(acc)))
+            false -> term(n - 1, Term.Push(n, acc))
+
+verify term
+    walk(term(4, Term.Stop), [], []) => 10002
+
+fn digitAt(s: String, i: Int) -> Int
+    ? "The decimal digit at position i, or -1."
+    match String.charAt(s, i)
+        Option.Some("0") -> 0
+        Option.Some("1") -> 1
+        Option.Some("2") -> 2
+        Option.Some("3") -> 3
+        Option.Some("4") -> 4
+        Option.Some("5") -> 5
+        Option.Some("6") -> 6
+        Option.Some("7") -> 7
+        Option.Some("8") -> 8
+        Option.Some("9") -> 9
+        Option.Some -> -1
+        Option.None -> -1
+
+verify digitAt
+    digitAt("a7", 1) => 7
+    digitAt("a7", 0) => -1
+
+fn numberAt(s: String, i: Int, acc: Int) -> Int
+    ? "The digits from position i on as a number."
+    d = digitAt(s, i)
+    match d < 0
+        true -> acc
+        false -> numberAt(s, i + 1, acc * 10 + d)
+
+verify numberAt
+    numberAt("x12,", 1, 0) => 12
+
+fn sameAt(s: String, i: Int, t: String) -> Bool
+    ? "Whether t stands in s at position i."
+    String.slice(s, i, i + String.len(t)) == t
+
+verify sameAt
+    sameAt("ab,cd", 2, ",c") => true
+    sameAt("ab,cd", 3, ",c") => false
+
+fn endsAt(s: String, i: Int, t: String) -> Bool
+    ? "Whether s ends with t standing at position i."
+    match sameAt(s, i, t)
+        false -> false
+        true -> i + String.len(t) == String.len(s)
+
+verify endsAt
+    endsAt("ab,c", 2, ",c") => true
+
+fn sumLines(lines: List<String>, acc: Int) -> Int
+    ? "The numbers at the start of the lines, summed."
+    match lines
+        [] -> acc
+        [l, ..rest] -> sumLines(rest, acc + numberAt(l, 0, 0))
+
+verify sumLines
+    sumLines(["12", "3x"], 0) => 15
+
+fn main() -> Unit
+    ? "Runs every part and prints what it found."
+    ! [Console.print]
+    Console.print("walk {walk(term(40, Term.Stop), [], [])}")
+    Console.print("moved {sizes(moved([Clo.Clo(1, "a"), Clo.Clo(2, "bb"), Clo.Clo(3, "ccc")], []), 0)}")
+    lines = String.split("12\n345\n6x7\n\n89", "\n")
+    Console.print("lines {List.len(lines)} sum {sumLines(lines, 0)}")
+    Console.print("same {sameAt("key: value", 3, ": v")} {sameAt("key: value", 4, ": v")} {endsAt("key: value", 5, "value")}")

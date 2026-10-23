@@ -153,9 +153,9 @@ pub fn sameCtor(c @ _: AverStr, d @ _: AverStr, fields @ _: aver_rt::AverInt) ->
         let __subject = (
             (c == d),
             (fields == aver_rt::AverInt::from_i64(0)),
-            ((crate::proof_std::aver_generated::kernel::eval::typeOf(c.clone())
-                == crate::proof_std::aver_generated::kernel::eval::typeOf(d))
-                && (&*crate::proof_std::aver_generated::kernel::eval::typeOf(c) != "")),
+            ((crate::proof_std::aver_generated::kernel::eval::typeOf(&c)
+                == crate::proof_std::aver_generated::kernel::eval::typeOf(&d))
+                && (&*crate::proof_std::aver_generated::kernel::eval::typeOf(&c) != "")),
         );
         match __subject {
             (true, true, _) => Some(true),
@@ -167,17 +167,16 @@ pub fn sameCtor(c @ _: AverStr, d @ _: AverStr, fields @ _: aver_rt::AverInt) ->
 
 /// A constructor's name up to its last dot.
 #[inline(always)]
-pub fn typeOf(c @ _: AverStr) -> AverStr {
+pub fn typeOf(c @ _: &AverStr) -> AverStr {
     crate::proof_std::cancel_checkpoint();
     (aver_rt::string_join(
         &{
             let __n = aver_rt::clamp_list_count(&(aver_rt::AverInt::from_i64(1)));
-            ((aver_rt::AverList::from_vec(
+            (aver_rt::AverList::from_vec(
                 c.split(&*::aver_rt::str_lit!("."))
-                    .map(|s| s.to_string())
+                    .map(aver_rt::AverStr::from)
                     .collect::<Vec<_>>(),
-            ))
-            .into_aver()
+            )
             .reverse())
             .drop_first(__n)
         }

@@ -2028,7 +2028,7 @@ pub fn parseCallOrRecord(
         )),
         crate::aver_generated::domain::token::Token::TkIdent(first) => {
             crate::aver_generated::domain::parser::expr::parseCallOrRecordLookahead(
-                tokens, pos2, name, first,
+                tokens, pos2, name, &first,
             )
         }
         _ => {
@@ -2045,7 +2045,7 @@ pub fn parseCallOrRecordLookahead(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
     name @ _: AverStr,
-    first @ _: AverStr,
+    first @ _: &AverStr,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     {

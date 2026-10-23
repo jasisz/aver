@@ -140,24 +140,7 @@ fn __mutual_tco_trampoline_1(
         __state = match __state {
             __MutualTco1::SelectFrom(mut arms @ _, mut value @ _, mut k @ _) => {
                 crate::proof_std::cancel_checkpoint();
-                {
-                    let __list_subject = arms;
-                    if __list_subject.is_empty() {
-                        return None;
-                    } else {
-                        if let (Some(a), Some(rest)) =
-                            (__list_subject.first(), __list_subject.tail())
-                        {
-                            {
-                                let __arg5 @ _ =
-                                    crate::proof_std::aver_generated::kernel::lib::shapeOf(&value);
-                                __MutualTco1::SelectOne(a.clone(), rest, value, k, __arg5)
-                            }
-                        } else {
-                            panic!("Aver Rust codegen: non-exhaustive list match")
-                        }
-                    }
-                }
+                aver_list_match!(arms, [] => { return None }, [a, rest] => { { let __arg5 @ _ = crate::proof_std::aver_generated::kernel::lib::shapeOf(&value); __MutualTco1::SelectOne(a, rest, value, k, __arg5) } })
             }
             __MutualTco1::SelectOne(
                 mut a @ _,
@@ -984,12 +967,12 @@ pub fn lookupKnown(mut x @ _: AverStr, ks @ _: &aver_rt::AverList<Known>) -> Opt
 /// A call of a definition or an application of a builtin.
 #[inline(always)]
 pub fn rebuild(
-    kind @ _: AverStr,
+    kind @ _: &AverStr,
     name @ _: AverStr,
     xs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
 ) -> crate::proof_std::aver_generated::kernel::term::Term {
     crate::proof_std::cancel_checkpoint();
-    if (&*kind == "call") {
+    if (&**kind == "call") {
         crate::proof_std::aver_generated::kernel::term::Term::TCall(
             crate::proof_std::aver_generated::kernel::term::Term__TCall(name, xs.clone()),
         )
@@ -1016,7 +999,7 @@ pub fn evalArgs(
         if __list_subject.is_empty() {
             Ok({
                 let __arg8 @ _ =
-                    crate::proof_std::aver_generated::kernel::lib::rebuild(kind, name, done);
+                    crate::proof_std::aver_generated::kernel::lib::rebuild(&kind, name, done);
                 crate::proof_std::aver_generated::kernel::lib::refl(__arg8)
             })
         } else {
@@ -1053,7 +1036,7 @@ pub fn evalArg(
     let here @ _ = {
         let __arg10 @ _ =
             aver_rt::AverList::concat(&done.clone(), &aver_rt::AverList::prepend(x.clone(), rest));
-        crate::proof_std::aver_generated::kernel::lib::rebuild(kind.clone(), name.clone(), &__arg10)
+        crate::proof_std::aver_generated::kernel::lib::rebuild(&kind, name.clone(), &__arg10)
     };
     let step @ _ = if crate::proof_std::aver_generated::kernel::lib::isRefl(&r.proof) {
         crate::proof_std::aver_generated::kernel::lib::refl(here.clone())
@@ -1065,7 +1048,7 @@ pub fn evalArg(
                     &aver_rt::AverList::prepend(r.to.clone(), rest),
                 );
                 crate::proof_std::aver_generated::kernel::lib::rebuild(
-                    kind.clone(),
+                    &kind,
                     name.clone(),
                     &__arg11,
                 )
@@ -1081,7 +1064,7 @@ pub fn evalArg(
                             ),
                         );
                         crate::proof_std::aver_generated::kernel::lib::rebuild(
-                            kind.clone(),
+                            &kind,
                             name.clone(),
                             &__arg12,
                         )

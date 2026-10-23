@@ -429,20 +429,7 @@ pub fn builtinListHead(
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let items @ _ = crate::aver_generated::domain::builtins::helpers::expectList(&v)?;
-    {
-        let __list_subject = items;
-        if __list_subject.is_empty() {
-            Ok(crate::aver_generated::domain::value::Val::ValNone)
-        } else {
-            if let (Some(h), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                Ok(crate::aver_generated::domain::value::Val::ValSome(
-                    crate::aver_generated::domain::value::Val__ValSome(h.clone()),
-                ))
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
-        }
-    }
+    aver_list_match!(items, [] => Ok(crate::aver_generated::domain::value::Val::ValNone), [h, rest] => Ok(crate::aver_generated::domain::value::Val::ValSome(crate::aver_generated::domain::value::Val__ValSome(h))))
 }
 
 /// List.tail(list) -> Option of rest.
