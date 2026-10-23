@@ -1,0 +1,14 @@
+(steps 16
+ (obligation signatureCollidesWithDefinition () (none)
+  (i 0)
+  (i 0))
+ (defs
+  (def f () int () (i 0)))
+ (consts)
+ (sums)
+ (recs)
+ (sigs
+  (f () bool))
+ (laws)
+ (proof
+  (refl (i 0))))

@@ -80,6 +80,8 @@ fn declarationsTyped(env: Env, path: String) -> Result<Unit, String>
     ? "Every definition body and constant value fits the type its declaration gives it; theorem givens are not in their scope."
     scope = Env(defs = env.defs, consts = env.consts, laws = [], hyps = [], vars = [], sums = env.sums, recs = env.recs, sigs = env.sigs)
     Kernel.Types.unique(defNames(scope.defs), [], "step {path}: duplicate definition")?
+    Kernel.Types.unique(sigNames(scope.sigs), [], "step {path}: duplicate signature")?
+    Kernel.Types.unique(List.concat(defNames(scope.defs), sigNames(scope.sigs)), [], "step {path}: definition and signature share name")?
     Kernel.Types.unique(constNames(scope.consts), [], "step {path}: duplicate module-level binding")?
     declarationsAcyclic(scope.consts, scope.defs, scope.consts, path)?
     Kernel.Types.unique(typeNames(scope.sums, scope.recs), [], "step {path}: duplicate type declaration")?
@@ -98,6 +100,15 @@ fn defNames(ds: List<Def>) -> List<String>
 
 verify defNames
     defNames([Def(name = "f", params = [], ret = Ty.TyInt, lets = [], body = Term.TInt(0))]) => ["f"]
+
+fn sigNames(ss: List<FnSig>) -> List<String>
+    ? "The names the script's external signatures declare, in order."
+    match ss
+        [] -> []
+        [s, ..rest] -> List.prepend(s.name, sigNames(rest))
+
+verify sigNames
+    sigNames([FnSig(name = "f", params = [], ret = Ty.TyInt)]) => ["f"]
 
 fn constNames(cs: List<Const>) -> List<String>
     ? "The names the script's module-level bindings declare, in order."

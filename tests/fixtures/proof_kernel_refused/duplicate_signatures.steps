@@ -1,0 +1,14 @@
+(steps 16
+ (obligation duplicateSignatures () (none)
+  (i 0)
+  (i 0))
+ (defs)
+ (consts)
+ (sums)
+ (recs)
+ (sigs
+  (f () int)
+  (f () bool))
+ (laws)
+ (proof
+  (refl (i 0))))

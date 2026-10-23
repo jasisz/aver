@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// (script, what the kernel says, whether an untyped kernel accepted it)
-const REFUSED: [(&str, &str, bool); 48] = [
+const REFUSED: [(&str, &str, bool); 50] = [
     // A law about a sum, cited at an Int: `x = One.Only` for every `x` of
     // the one-value type `One`, read at 0 and at 1, gives `0 = 1`.
     (
@@ -299,6 +299,14 @@ const REFUSED: [(&str, &str, bool); 48] = [
         "cited laws repeat key Int.zeroIsZero",
         true,
     ),
+    // Signature lookup selected the first declaration silently, and a
+    // definition silently won over a conflicting signature of the same name.
+    ("duplicate_signatures", "duplicate signature f", true),
+    (
+        "signature_collides_with_definition",
+        "definition and signature share name f",
+        true,
+    ),
 ];
 
 fn fixtures() -> PathBuf {
@@ -334,8 +342,8 @@ fn every_refused_script_is_listed() {
     assert_eq!(on_disk, listed);
 }
 
-/// Thirty scripts were accepted before their corresponding kernel gates.
+/// Thirty-two scripts were accepted before their corresponding kernel gates.
 #[test]
-fn thirty_of_them_were_accepted_before() {
-    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 30);
+fn thirty_two_of_them_were_accepted_before() {
+    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 32);
 }

@@ -1608,11 +1608,11 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
         },
     );
     {
-        let __arg9 @ _ = crate::proof_kernel::aver_generated::kernel::check::defNames(&scope.defs);
+        let __arg11 @ _ = crate::proof_kernel::aver_generated::kernel::check::defNames(&scope.defs);
         {
-            let __arg10 @ _ = <aver_rt::AverList<AverStr>>::empty();
+            let __arg12 @ _ = <aver_rt::AverList<AverStr>>::empty();
             {
-                let __arg11 @ _ = aver_rt::AverStr::from({
+                let __arg13 @ _ = aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
                             let mut __b = aver_rt::Buffer::with_capacity(
@@ -1628,18 +1628,75 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
                     __b
                 });
                 crate::proof_kernel::aver_generated::kernel::types::unique(
-                    &__arg9, __arg10, __arg11,
+                    &__arg11, __arg12, __arg13,
                 )
             }
         }
     }?;
     {
-        let __arg12 @ _ =
+        let __arg14 @ _ = crate::proof_kernel::aver_generated::kernel::check::sigNames(&scope.sigs);
+        {
+            let __arg15 @ _ = <aver_rt::AverList<AverStr>>::empty();
+            {
+                let __arg16 @ _ = aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = {
+                            let mut __b = aver_rt::Buffer::with_capacity(
+                                (aver_rt::AverInt::from_i64(42)).to_usize().unwrap_or(0),
+                            );
+                            __b.push_str(&::aver_rt::str_lit!("step "));
+                            __b
+                        };
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                        __b
+                    };
+                    __b.push_str(&::aver_rt::str_lit!(": duplicate signature"));
+                    __b
+                });
+                crate::proof_kernel::aver_generated::kernel::types::unique(
+                    &__arg14, __arg15, __arg16,
+                )
+            }
+        }
+    }?;
+    {
+        let __arg17 @ _ = aver_rt::AverList::concat(
+            &crate::proof_kernel::aver_generated::kernel::check::defNames(&scope.defs),
+            &crate::proof_kernel::aver_generated::kernel::check::sigNames(&scope.sigs),
+        );
+        {
+            let __arg18 @ _ = <aver_rt::AverList<AverStr>>::empty();
+            {
+                let __arg19 @ _ = aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = {
+                            let mut __b = aver_rt::Buffer::with_capacity(
+                                (aver_rt::AverInt::from_i64(58)).to_usize().unwrap_or(0),
+                            );
+                            __b.push_str(&::aver_rt::str_lit!("step "));
+                            __b
+                        };
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                        __b
+                    };
+                    __b.push_str(&::aver_rt::str_lit!(
+                        ": definition and signature share name"
+                    ));
+                    __b
+                });
+                crate::proof_kernel::aver_generated::kernel::types::unique(
+                    &__arg17, __arg18, __arg19,
+                )
+            }
+        }
+    }?;
+    {
+        let __arg20 @ _ =
             crate::proof_kernel::aver_generated::kernel::check::constNames(&scope.consts);
         {
-            let __arg13 @ _ = <aver_rt::AverList<AverStr>>::empty();
+            let __arg21 @ _ = <aver_rt::AverList<AverStr>>::empty();
             {
-                let __arg14 @ _ = aver_rt::AverStr::from({
+                let __arg22 @ _ = aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
                             let mut __b = aver_rt::Buffer::with_capacity(
@@ -1655,7 +1712,7 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
                     __b
                 });
                 crate::proof_kernel::aver_generated::kernel::types::unique(
-                    &__arg12, __arg13, __arg14,
+                    &__arg20, __arg21, __arg22,
                 )
             }
         }
@@ -1667,12 +1724,12 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
         path.clone(),
     )?;
     {
-        let __arg15 @ _ =
+        let __arg23 @ _ =
             crate::proof_kernel::aver_generated::kernel::check::typeNames(&scope.sums, &scope.recs);
         {
-            let __arg16 @ _ = <aver_rt::AverList<AverStr>>::empty();
+            let __arg24 @ _ = <aver_rt::AverList<AverStr>>::empty();
             {
-                let __arg17 @ _ = aver_rt::AverStr::from({
+                let __arg25 @ _ = aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
                             let mut __b = aver_rt::Buffer::with_capacity(
@@ -1688,7 +1745,7 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
                     __b
                 });
                 crate::proof_kernel::aver_generated::kernel::types::unique(
-                    &__arg15, __arg16, __arg17,
+                    &__arg23, __arg24, __arg25,
                 )
             }
         }
@@ -1720,6 +1777,29 @@ pub fn defNames(
                 aver_rt::AverList::prepend(
                     d.name.clone(),
                     &crate::proof_kernel::aver_generated::kernel::check::defNames(&rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
+}
+
+/// The names the script's external signatures declare, in order.
+#[inline(always)]
+pub fn sigNames(
+    ss @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::FnSig>,
+) -> aver_rt::AverList<AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __list_subject = ss;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let (Some(s), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                aver_rt::AverList::prepend(
+                    s.name.clone(),
+                    &crate::proof_kernel::aver_generated::kernel::check::sigNames(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
