@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// (script, what the kernel says, whether an untyped kernel accepted it)
-const REFUSED: [(&str, &str, bool); 32] = [
+const REFUSED: [(&str, &str, bool); 34] = [
     // A law about a sum, cited at an Int: `x = One.Only` for every `x` of
     // the one-value type `One`, read at 0 and at 1, gives `0 = 1`.
     (
@@ -181,6 +181,23 @@ const REFUSED: [(&str, &str, bool); 32] = [
         "rule bool.beq.refl: a := == on R is not equality",
         true,
     ),
+    // A definition may not advertise Int while its body returns String. That
+    // type confusion let a script transport string concatenation through an
+    // Int-returning call, use ring commutativity, and prove that concatenation
+    // itself commutes.
+    (
+        "definition_body_has_another_type",
+        "definition cast has type String, declared Int",
+        true,
+    ),
+    // A constant declaration is another type boundary used by `const` steps;
+    // lying that two String values are Ints enabled the same transport through
+    // ring commutativity without any function definition.
+    (
+        "constant_value_has_another_type",
+        "constant a has type String, declared Int",
+        true,
+    ),
 ];
 
 fn fixtures() -> PathBuf {
@@ -216,8 +233,8 @@ fn every_refused_script_is_listed() {
     assert_eq!(on_disk, listed);
 }
 
-/// Fourteen scripts were accepted before their corresponding kernel gates.
+/// Sixteen scripts were accepted before their corresponding kernel gates.
 #[test]
-fn fourteen_of_them_were_accepted_before() {
-    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 14);
+fn sixteen_of_them_were_accepted_before() {
+    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 16);
 }

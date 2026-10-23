@@ -1,0 +1,25 @@
+(steps 16
+ (obligation constantsMakeStringsCommute () (none)
+  (op + (s "a") (s "b"))
+  (op + (s "b") (s "a")))
+ (defs)
+ (consts
+  (const a int (s "a"))
+  (const b int (s "b")))
+ (sums)
+ (recs)
+ (sigs)
+ (laws)
+ (proof
+  (trans
+   ((op + (s "a") (s "b"))
+    (op + (v a) (s "b"))
+    (op + (v a) (v b))
+    (op + (v b) (v a))
+    (op + (s "b") (v a))
+    (op + (s "b") (s "a")))
+   (symm (congr (op + (hole) (s "b")) (const a)))
+   (symm (congr (op + (v a) (hole)) (const b)))
+   (ring (op + (v a) (v b)) (op + (v b) (v a)))
+   (congr (op + (hole) (v a)) (const b))
+   (congr (op + (s "b") (hole)) (const a)))))

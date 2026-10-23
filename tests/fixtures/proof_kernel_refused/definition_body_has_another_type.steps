@@ -1,0 +1,30 @@
+(steps 16
+ (obligation castMakesStringsCommute () (none)
+  (op + (s "a") (s "b"))
+  (op + (s "b") (s "a")))
+ (defs
+  (def cast ((x str)) int () (v x)))
+ (consts)
+ (sums)
+ (recs)
+ (sigs)
+ (laws)
+ (proof
+  (trans
+   ((op + (s "a") (s "b"))
+    (op + (call cast (s "a")) (s "b"))
+    (op + (call cast (s "a")) (call cast (s "b")))
+    (op + (call cast (s "b")) (call cast (s "a")))
+    (op + (s "b") (call cast (s "a")))
+    (op + (s "b") (s "a")))
+   (symm (congr (op + (hole) (s "b"))
+    (unfold cast 0 ((s "a")) ())))
+   (symm (congr (op + (call cast (s "a")) (hole))
+    (unfold cast 0 ((s "b")) ())))
+   (ring
+    (op + (call cast (s "a")) (call cast (s "b")))
+    (op + (call cast (s "b")) (call cast (s "a"))))
+   (congr (op + (hole) (call cast (s "a")))
+    (unfold cast 0 ((s "b")) ()))
+   (congr (op + (s "b") (hole))
+    (unfold cast 0 ((s "a")) ())))))

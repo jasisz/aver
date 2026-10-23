@@ -66,6 +66,63 @@ verify argsFit
     argsFit(Def(name = "f", params = [Kernel.Term.typed("x", Ty.TyInt)], ret = Ty.TyInt, lets = [], body = Term.TVar("x")), [], emptyEnv(), "p") => Result.Err("step p: f takes 1 arguments")
     argsFit(Def(name = "f", params = [Kernel.Term.typed("x", Ty.TyInt)], ret = Ty.TyInt, lets = [], body = Term.TVar("x")), [Term.TStr("a")], emptyEnv(), "p") => Result.Err("step p: f: x := String is not Int")
 
+fn declarationsTyped(env: Env, path: String) -> Result<Unit, String>
+    ? "Every definition body and constant value fits the type its declaration gives it; theorem givens are not in their scope."
+    scope = Env(defs = env.defs, consts = env.consts, laws = [], hyps = [], vars = [], sums = env.sums, recs = env.recs, sigs = env.sigs)
+    defsTyped(scope.defs, scope, path)?
+    constsTyped(scope.consts, scope, path)
+
+verify declarationsTyped
+    declarationsTyped(Env(defs = [Def(name = "cast", params = [Kernel.Term.typed("x", Ty.TyStr)], ret = Ty.TyInt, lets = [], body = Term.TVar("x"))], consts = [], laws = [], hyps = [], vars = [], sums = [], recs = [], sigs = []), "proof") => Result.Err("step proof: definition cast has type String, declared Int")
+
+fn defsTyped(ds: List<Def>, env: Env, path: String) -> Result<Unit, String>
+    ? "Every definition in the script is well typed."
+    match ds
+        [] -> Result.Ok(Unit)
+        [d, ..rest] -> match definitionTyped(d, env, path)
+            Result.Err(why) -> Result.Err(why)
+            Result.Ok(done) -> defsTyped(rest, env, path)
+
+verify defsTyped
+    defsTyped([], emptyEnv(), "proof") => Result.Ok(Unit)
+
+fn definitionTyped(d: Def, env: Env, path: String) -> Result<Unit, String>
+    ? "A definition body has its declared result type under its parameters and local bindings."
+    scope = letsTyped(d.lets, withVars(env, d.params), path)?
+    declaredFits(typeOf(d.body, scope, path)?, d.ret, "definition {d.name}", path)
+
+verify definitionTyped
+    definitionTyped(Def(name = "id", params = [Kernel.Term.typed("x", Ty.TyInt)], ret = Ty.TyInt, lets = [], body = Term.TVar("x")), emptyEnv(), "proof") => Result.Ok(Unit)
+
+fn letsTyped(bs: List<Binding>, env: Env, path: String) -> Result<Env, String>
+    ? "Infer local bindings in source order, making each one visible to those after it and to the body."
+    match bs
+        [] -> Result.Ok(env)
+        [b, ..rest] -> letsTyped(rest, withVars(env, [Kernel.Term.typed(b.name, typeOf(b.value, env, path)?)]), path)
+
+verify letsTyped
+    letsTyped([], emptyEnv(), "proof") => Result.Ok(emptyEnv())
+
+fn constsTyped(cs: List<Const>, env: Env, path: String) -> Result<Unit, String>
+    ? "Every module constant value has its declared type."
+    match cs
+        [] -> Result.Ok(Unit)
+        [c, ..rest] -> match declaredFits(typeOf(c.value, env, path)?, c.ty, "constant {c.name}", path)
+            Result.Err(why) -> Result.Err(why)
+            Result.Ok(done) -> constsTyped(rest, env, path)
+
+verify constsTyped
+    constsTyped([Const(name = "n", ty = Ty.TyInt, value = Term.TStr("not an Int"))], emptyEnv(), "proof") => Result.Err("step proof: constant n has type String, declared Int")
+
+fn declaredFits(actual: Ty, declared: Ty, what: String, path: String) -> Result<Unit, String>
+    ? "A declaration's inferred type fits the type it announces."
+    match Kernel.Types.fits(actual, declared)
+        true -> Result.Ok(Unit)
+        false -> Result.Err("step {path}: {what} has type {Kernel.Types.show(actual)}, declared {Kernel.Types.show(declared)}")
+
+verify declaredFits
+    declaredFits(Ty.TyBool, Ty.TyInt, "definition f", "proof") => Result.Err("step proof: definition f has type Bool, declared Int")
+
 fn patTypes(p: Pat, subject: Ty, env: Env, path: String) -> Result<List<TypedVar>, String>
     ? "The variables a pattern binds over a subject of this type, a refusal naming the step when it does not fit."
     match Kernel.Types.patVars(p, subject, tyEnv(env))
@@ -1041,6 +1098,7 @@ fn checkScript(s: Script) -> Result<String, String>
     Kernel.Induct.refuseMutualRecursion(s.defs)?
     checkFacts(s.facts, [])?
     env = Env(defs = s.defs, consts = s.consts, laws = List.concat(s.laws, factLaws(s.facts)), hyps = lawHyps(s.obligation), vars = Kernel.Types.rigidVars(s.obligation.givens), sums = s.sums, recs = s.recs, sigs = s.sigs)
+    declarationsTyped(env, "proof")?
     statementTyped(s.obligation, env)?
     e = conclude(s.proof, env, "proof")?
     match e == Eqn(lhs = s.obligation.lhs, rhs = s.obligation.rhs)
