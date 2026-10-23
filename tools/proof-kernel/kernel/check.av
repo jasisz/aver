@@ -72,6 +72,7 @@ fn declarationsTyped(env: Env, path: String) -> Result<Unit, String>
     uniqueDefs(scope.defs, [], path)?
     uniqueConsts(scope.consts, [], path)?
     constsAcyclic(scope.consts, scope.consts, path)?
+    declarationsAcyclic(scope.consts, scope.defs, scope.consts, path)?
     uniqueTypeDecls(scope.sums, scope.recs, path)?
     defsTyped(scope.defs, scope, path)?
     constsTyped(scope.consts, scope, path)
@@ -148,6 +149,109 @@ fn constNames(names: List<String>, cs: List<Const>) -> List<String>
 
 verify constNames
     constNames(["x", "a"], [Const(name = "a", ty = Ty.TyInt, value = Term.TInt(0))]) => ["a"]
+
+fn declarationsAcyclic(todo: List<Const>, ds: List<Def>, cs: List<Const>, path: String) -> Result<Unit, String>
+    ? "No module-level binding depends on itself through any mixture of bindings and definitions."
+    match todo
+        [] -> Result.Ok(Unit)
+        [c, ..rest] -> match declarationCycle(constantDeclarationDeps(c.name, cs, ds, cs), Term.TVar(c.name), ds, cs, [], List.len(ds) + List.len(cs))
+            true -> Result.Err("step {path}: cyclic declaration through module-level binding {c.name}")
+            false -> declarationsAcyclic(rest, ds, cs, path)
+
+verify declarationsAcyclic
+    declarationsAcyclic([Const(name = "a", ty = Ty.TyInt, value = Term.TCall("f", []))], [Def(name = "f", params = [], ret = Ty.TyInt, lets = [], body = Term.TOp("+", Term.TVar("a"), Term.TInt(1)))], [Const(name = "a", ty = Ty.TyInt, value = Term.TCall("f", []))], "proof") => Result.Err("step proof: cyclic declaration through module-level binding a")
+
+fn declarationCycle(frontier: List<Term>, target: Term, ds: List<Def>, cs: List<Const>, seen: List<Term>, fuel: Int) -> Bool
+    ? "Whether following definition and binding references reaches the target declaration."
+    match (frontier, fuel > 0)
+        ([], _) -> false
+        (_, false) -> false
+        ([n, ..rest], true) -> match n == target
+            true -> true
+            false -> match List.contains(seen, n)
+                true -> declarationCycle(rest, target, ds, cs, seen, fuel)
+                false -> declarationCycle(List.concat(rest, declarationDeps(n, ds, cs)), target, ds, cs, List.prepend(n, seen), fuel - 1)
+
+verify declarationCycle
+    declarationCycle([Term.TVar("a")], Term.TVar("a"), [], [], [], 1) => true
+
+fn declarationDeps(node: Term, ds: List<Def>, cs: List<Const>) -> List<Term>
+    ? "The declarations directly read by one constant or definition node."
+    match node
+        Term.TVar(n) -> constantDeclarationDeps(n, cs, ds, cs)
+        Term.TCall(f, []) -> definitionDeclarationDeps(f, ds, ds, cs)
+        _ -> []
+
+verify declarationDeps
+    declarationDeps(Term.TInt(0), [], []) => []
+
+fn constantDeclarationDeps(name: String, todo: List<Const>, ds: List<Def>, cs: List<Const>) -> List<Term>
+    ? "The declarations read by a named module-level binding."
+    match todo
+        [] -> []
+        [c, ..rest] -> match c.name == name
+            true -> termDeclarationDeps(c.value, [], ds, cs)
+            false -> constantDeclarationDeps(name, rest, ds, cs)
+
+verify constantDeclarationDeps
+    constantDeclarationDeps("a", [], [], []) => []
+
+fn definitionDeclarationDeps(name: String, todo: List<Def>, ds: List<Def>, cs: List<Const>) -> List<Term>
+    ? "The declarations read by a named definition."
+    match todo
+        [] -> []
+        [d, ..rest] -> match d.name == name
+            true -> definitionDeps(d, ds, cs)
+            false -> definitionDeclarationDeps(name, rest, ds, cs)
+
+verify definitionDeclarationDeps
+    definitionDeclarationDeps("f", [], [], []) => []
+
+fn definitionDeps(d: Def, ds: List<Def>, cs: List<Const>) -> List<Term>
+    ? "A definition's dependencies, with parameters and sequential local bindings shadowing constants."
+    letDeclarationDeps(d.lets, d.body, Kernel.Proof.givenNames(d.params), ds, cs)
+
+verify definitionDeps
+    definitionDeps(Def(name = "f", params = [], ret = Ty.TyInt, lets = [], body = Term.TInt(0)), [], []) => []
+    definitionDeps(Def(name = "f", params = [Kernel.Term.typed("a", Ty.TyInt)], ret = Ty.TyInt, lets = [], body = Term.TVar("a")), [], [Const(name = "a", ty = Ty.TyInt, value = Term.TInt(0))]) => []
+
+fn letDeclarationDeps(lets: List<Binding>, body: Term, locals: List<String>, ds: List<Def>, cs: List<Const>) -> List<Term>
+    ? "Dependencies of local bindings in scope order, then of the body under all their names."
+    match lets
+        [] -> termDeclarationDeps(body, locals, ds, cs)
+        [b, ..rest] -> List.concat(termDeclarationDeps(b.value, locals, ds, cs), letDeclarationDeps(rest, body, List.prepend(b.name, locals), ds, cs))
+
+verify letDeclarationDeps
+    letDeclarationDeps([], Term.TInt(0), [], [], []) => []
+
+fn termDeclarationDeps(t: Term, locals: List<String>, ds: List<Def>, cs: List<Const>) -> List<Term>
+    ? "Constant references not shadowed in this scope and calls to script definitions."
+    List.concat(constDependencyNodes(Kernel.Subst.without(Kernel.Subst.freeVars(t), locals), cs), definitionDependencyNodes(Kernel.Induct.namesCalled(t), ds))
+
+verify termDeclarationDeps
+    termDeclarationDeps(Term.TInt(0), [], [], []) => []
+
+fn constDependencyNodes(names: List<String>, cs: List<Const>) -> List<Term>
+    ? "References whose names denote module-level bindings, as graph nodes."
+    match names
+        [] -> []
+        [n, ..rest] -> match isConst(n, cs)
+            true -> List.prepend(Term.TVar(n), constDependencyNodes(rest, cs))
+            false -> constDependencyNodes(rest, cs)
+
+verify constDependencyNodes
+    constDependencyNodes([], []) => []
+
+fn definitionDependencyNodes(names: List<String>, ds: List<Def>) -> List<Term>
+    ? "Calls whose names denote script definitions, as graph nodes."
+    match names
+        [] -> []
+        [n, ..rest] -> match Kernel.Proof.findDef(n, ds)
+            Option.Some(d) -> List.prepend(Term.TCall(n, []), definitionDependencyNodes(rest, ds))
+            Option.None -> definitionDependencyNodes(rest, ds)
+
+verify definitionDependencyNodes
+    definitionDependencyNodes([], []) => []
 
 fn uniqueTypeDecls(ss: List<Sum>, rs: List<Rec>, path: String) -> Result<Unit, String>
     ? "A named type has exactly one declaration: never two sums, two records, or one of each."

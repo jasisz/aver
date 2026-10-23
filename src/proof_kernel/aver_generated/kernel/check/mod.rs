@@ -1564,23 +1564,29 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
         },
     );
     {
-        let __arg8 @ _ = <aver_rt::AverList<AverStr>>::empty();
+        let __arg9 @ _ = <aver_rt::AverList<AverStr>>::empty();
         crate::proof_kernel::aver_generated::kernel::check::uniqueDefs(
             &scope.defs,
-            __arg8,
+            __arg9,
             path.clone(),
         )
     }?;
     {
-        let __arg9 @ _ = <aver_rt::AverList<AverStr>>::empty();
+        let __arg10 @ _ = <aver_rt::AverList<AverStr>>::empty();
         crate::proof_kernel::aver_generated::kernel::check::uniqueConsts(
             &scope.consts,
-            __arg9,
+            __arg10,
             path.clone(),
         )
     }?;
     crate::proof_kernel::aver_generated::kernel::check::constsAcyclic(
         &scope.consts,
+        &scope.consts,
+        path.clone(),
+    )?;
+    crate::proof_kernel::aver_generated::kernel::check::declarationsAcyclic(
+        &scope.consts,
+        &scope.defs,
         &scope.consts,
         path.clone(),
     )?;
@@ -1929,6 +1935,403 @@ pub fn constNames(
                         );
                     } else {
                         {
+                            let __tco0 = rest;
+                            __hold0 = __tco0;
+                            names = &__hold0;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
+    }
+}
+
+/// No module-level binding depends on itself through any mixture of bindings and definitions.
+#[inline(always)]
+pub fn declarationsAcyclic(
+    todo @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
+    ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
+    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
+    mut path @ _: AverStr,
+) -> Result<(), AverStr> {
+    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>;
+    let mut todo @ _: &aver_rt::AverList<
+        crate::proof_kernel::aver_generated::kernel::proof::Const,
+    > = todo;
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __list_subject = todo;
+            if __list_subject.is_empty() {
+                return Ok(());
+            } else {
+                if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    if {
+                        let __arg6 @ _ = crate::proof_kernel::aver_generated::kernel::check::constantDeclarationDeps(c.name.clone(), cs, ds, cs);
+                        {
+                            let __arg7 @ _ =
+                                crate::proof_kernel::aver_generated::kernel::term::Term::TVar(
+                                    crate::proof_kernel::aver_generated::kernel::term::Term__TVar(
+                                        c.name.clone(),
+                                    ),
+                                );
+                            {
+                                let __arg8 @ _ = <aver_rt::AverList<
+                                    crate::proof_kernel::aver_generated::kernel::term::Term,
+                                >>::empty();
+                                {
+                                    let __arg9 @ _ = aver_rt::AverInt::from_i64(ds.len() as i64)
+                                        .add(&aver_rt::AverInt::from_i64(cs.len() as i64));
+                                    crate::proof_kernel::aver_generated::kernel::check::declarationCycle(__arg6, &__arg7, ds, cs, __arg8, __arg9)
+                                }
+                            }
+                        }
+                    } {
+                        return Err(aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = {
+                                        let mut __b = aver_rt::Buffer::with_capacity(
+                                            (aver_rt::AverInt::from_i64(87))
+                                                .to_usize()
+                                                .unwrap_or(0),
+                                        );
+                                        __b.push_str(&::aver_rt::str_lit!("step "));
+                                        __b
+                                    };
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                        &(path),
+                                    )));
+                                    __b
+                                };
+                                __b.push_str(&::aver_rt::str_lit!(
+                                    ": cyclic declaration through module-level binding "
+                                ));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c.name))));
+                            __b
+                        }));
+                    } else {
+                        {
+                            let __tco0 = rest;
+                            __hold0 = __tco0;
+                            todo = &__hold0;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
+    }
+}
+
+/// Whether following definition and binding references reaches the target declaration.
+pub fn declarationCycle(
+    mut frontier @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    target @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
+    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
+    mut seen @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut fuel @ _: aver_rt::AverInt,
+) -> bool {
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __subject = (frontier, (fuel > aver_rt::AverInt::from_i64(0)));
+            {
+                let __int_match_subject = __subject;
+                let (__lit0, __lit1) = &__int_match_subject;
+                if (*__lit0).is_empty() {
+                    return false;
+                } else if (*__lit1) == false {
+                    return false;
+                } else if !(*__lit0).is_empty() && (*__lit1) == true {
+                    let Some((n, rest)) = aver_rt::list_uncons_cloned(&(*__lit0)) else {
+                        unreachable!("Aver Rust codegen: tuple element list mismatch")
+                    };
+                    if (&(n) == target) {
+                        return true;
+                    } else {
+                        if seen.contains(&n) {
+                            {
+                                let __tco0 = rest;
+                                frontier = __tco0;
+                                continue;
+                            }
+                        } else {
+                            {
+                                let __tco0 = aver_rt::AverList::concat(&rest, &crate::proof_kernel::aver_generated::kernel::check::declarationDeps(&n, ds, cs));
+                                let __tco4 = aver_rt::AverList::prepend(n, &seen);
+                                let __tco5 = fuel.sub(&aver_rt::AverInt::from_i64(1));
+                                frontier = __tco0;
+                                seen = __tco4;
+                                fuel = __tco5;
+                                continue;
+                            }
+                        }
+                    }
+                } else {
+                    unreachable!("Aver Rust codegen: non-exhaustive guard-chain match")
+                }
+            }
+        }
+    }
+}
+
+/// The declarations directly read by one constant or definition node.
+pub fn declarationDeps(
+    node @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
+    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
+) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __t = node;
+        match __t.view() {
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TVar(__n_fields) => {
+                let n = __n_fields.0.clone();
+                crate::proof_kernel::aver_generated::kernel::check::constantDeclarationDeps(
+                    n, cs, ds, cs,
+                )
+            }
+            crate::proof_kernel::aver_generated::kernel::term::Term__view::TCall(__f_fields) => {
+                let f = __f_fields.0.clone();
+                let __pat0 = &__f_fields.1;
+                {
+                    let __list_subject = __pat0;
+                    if __list_subject.is_empty() {
+                        crate::proof_kernel::aver_generated::kernel::check::definitionDeclarationDeps(f, ds, ds, cs)
+                    } else {
+                        aver_rt::AverList::empty()
+                    }
+                }
+            }
+            _ => aver_rt::AverList::empty(),
+        }
+    }
+}
+
+/// The declarations read by a named module-level binding.
+#[inline(always)]
+pub fn constantDeclarationDeps(
+    mut name @ _: AverStr,
+    todo @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
+    ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
+    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
+) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> {
+    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>;
+    let mut todo @ _: &aver_rt::AverList<
+        crate::proof_kernel::aver_generated::kernel::proof::Const,
+    > = todo;
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __list_subject = todo;
+            if __list_subject.is_empty() {
+                return aver_rt::AverList::empty();
+            } else {
+                if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    if (c.name == name) {
+                        return {
+                            let __arg6 @ _ = <aver_rt::AverList<AverStr>>::empty();
+                            crate::proof_kernel::aver_generated::kernel::check::termDeclarationDeps(
+                                &c.value, &__arg6, ds, cs,
+                            )
+                        };
+                    } else {
+                        {
+                            let __tco1 = rest;
+                            __hold1 = __tco1;
+                            todo = &__hold1;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
+    }
+}
+
+/// The declarations read by a named definition.
+#[inline(always)]
+pub fn definitionDeclarationDeps(
+    mut name @ _: AverStr,
+    todo @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
+    ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
+    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
+) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> {
+    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>;
+    let mut todo @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def> =
+        todo;
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __list_subject = todo;
+            if __list_subject.is_empty() {
+                return aver_rt::AverList::empty();
+            } else {
+                if let (Some(d), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    if (d.name == name) {
+                        return crate::proof_kernel::aver_generated::kernel::check::definitionDeps(
+                            d, ds, cs,
+                        );
+                    } else {
+                        {
+                            let __tco1 = rest;
+                            __hold1 = __tco1;
+                            todo = &__hold1;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
+    }
+}
+
+/// A definition's dependencies, with parameters and sequential local bindings shadowing constants.
+#[inline(always)]
+pub fn definitionDeps(
+    d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
+    ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
+    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
+) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> {
+    crate::proof_kernel::cancel_checkpoint();
+    let __arg3 @ _ = crate::proof_kernel::aver_generated::kernel::proof::givenNames(&d.params);
+    crate::proof_kernel::aver_generated::kernel::check::letDeclarationDeps(
+        &d.lets, &d.body, &__arg3, ds, cs,
+    )
+}
+
+/// Dependencies of local bindings in scope order, then of the body under all their names.
+#[inline(always)]
+pub fn letDeclarationDeps(
+    lets @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
+    body @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    locals @ _: &aver_rt::AverList<AverStr>,
+    ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
+    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
+) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __list_subject = lets;
+        if __list_subject.is_empty() {
+            crate::proof_kernel::aver_generated::kernel::check::termDeclarationDeps(
+                body, locals, ds, cs,
+            )
+        } else {
+            if let (Some(b), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                aver_rt::AverList::concat(
+                    &crate::proof_kernel::aver_generated::kernel::check::termDeclarationDeps(
+                        &b.value, locals, ds, cs,
+                    ),
+                    &{
+                        let __arg7 @ _ =
+                            aver_rt::AverList::prepend(b.name.clone(), &locals.clone());
+                        crate::proof_kernel::aver_generated::kernel::check::letDeclarationDeps(
+                            &rest, body, &__arg7, ds, cs,
+                        )
+                    },
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
+}
+
+/// Constant references not shadowed in this scope and calls to script definitions.
+#[inline(always)]
+pub fn termDeclarationDeps(
+    t @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    locals @ _: &aver_rt::AverList<AverStr>,
+    ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
+    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
+) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> {
+    crate::proof_kernel::cancel_checkpoint();
+    aver_rt::AverList::concat(
+        &{
+            let __arg5 @ _ = {
+                let __arg4 @ _ = crate::proof_kernel::aver_generated::kernel::subst::freeVars(t);
+                crate::proof_kernel::aver_generated::kernel::subst::without(&__arg4, locals.clone())
+            };
+            crate::proof_kernel::aver_generated::kernel::check::constDependencyNodes(&__arg5, cs)
+        },
+        &{
+            let __arg6 @ _ = crate::proof_kernel::aver_generated::kernel::induct::namesCalled(t);
+            crate::proof_kernel::aver_generated::kernel::check::definitionDependencyNodes(
+                &__arg6, ds,
+            )
+        },
+    )
+}
+
+/// References whose names denote module-level bindings, as graph nodes.
+#[inline(always)]
+pub fn constDependencyNodes(
+    names @ _: &aver_rt::AverList<AverStr>,
+    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
+) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> {
+    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut names @ _: &aver_rt::AverList<AverStr> = names;
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __list_subject = names;
+            if __list_subject.is_empty() {
+                return aver_rt::AverList::empty();
+            } else {
+                if let Some((n, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    if crate::proof_kernel::aver_generated::kernel::check::isConst(n.clone(), cs) {
+                        return aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(n)), &crate::proof_kernel::aver_generated::kernel::check::constDependencyNodes(&rest, cs));
+                    } else {
+                        {
+                            let __tco0 = rest;
+                            __hold0 = __tco0;
+                            names = &__hold0;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
+    }
+}
+
+/// Calls whose names denote script definitions, as graph nodes.
+#[inline(always)]
+pub fn definitionDependencyNodes(
+    names @ _: &aver_rt::AverList<AverStr>,
+    ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
+) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> {
+    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut names @ _: &aver_rt::AverList<AverStr> = names;
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __list_subject = names;
+            if __list_subject.is_empty() {
+                return aver_rt::AverList::empty();
+            } else {
+                if let Some((n, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    match crate::proof_kernel::aver_generated::kernel::proof::findDef(n.clone(), ds)
+                    {
+                        Some(d @ _) => {
+                            return aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::term::Term::TCall(crate::proof_kernel::aver_generated::kernel::term::Term__TCall(n, aver_rt::AverList::empty())), &crate::proof_kernel::aver_generated::kernel::check::definitionDependencyNodes(&rest, ds));
+                        }
+                        None => {
                             let __tco0 = rest;
                             __hold0 = __tco0;
                             names = &__hold0;

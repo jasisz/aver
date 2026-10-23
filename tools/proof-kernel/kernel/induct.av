@@ -12,7 +12,7 @@ module Induct
         "its place. A definition may also be opened, though not inducted along, when it calls"
         "itself only directly and every call passes, at one place, a list shorter than the one"
         "there, wherever in its body the call stands. See src/ir/proof_steps/induct.rs."
-    exposes [Call, Place, Varied, ArmCalls, Recursion, selfCalls, recursion, openGate, refuseMutualRecursion, varied, nthTerm]
+    exposes [Call, Place, Varied, ArmCalls, Recursion, selfCalls, recursion, openGate, refuseMutualRecursion, varied, nthTerm, namesCalled]
     depends [Kernel.Term, Kernel.Subst, Kernel.Proof]
     effects []
 
