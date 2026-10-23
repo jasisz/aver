@@ -1,0 +1,14 @@
+(steps 16
+ (obligation definitionConstantCapturedByGiven ((a int)) (none)
+  (call f)
+  (v a))
+ (defs
+  (def f () int () (v a)))
+ (consts
+  (const a int (i 0)))
+ (sums)
+ (recs)
+ (sigs)
+ (laws)
+ (proof
+  (unfold f 0 () ())))

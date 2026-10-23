@@ -83,6 +83,7 @@ fn declarationsTyped(env: Env, path: String) -> Result<Unit, String>
     Kernel.Types.unique(sigNames(scope.sigs), [], "step {path}: duplicate signature")?
     Kernel.Types.unique(List.concat(defNames(scope.defs), sigNames(scope.sigs)), [], "step {path}: definition and signature share name")?
     Kernel.Types.unique(constNames(scope.consts), [], "step {path}: duplicate module-level binding")?
+    Kernel.Types.unique(List.concat(constNames(scope.consts), Kernel.Proof.givenNames(env.vars)), [], "step {path}: module-level binding and variable share name")?
     declarationsAcyclic(scope.consts, scope.defs, scope.consts, path)?
     Kernel.Types.unique(typeNames(scope.sums, scope.recs), [], "step {path}: duplicate type declaration")?
     Kernel.Types.sumVariantsTyped(scope.sums, tyEnv(scope), path)?
@@ -92,6 +93,7 @@ fn declarationsTyped(env: Env, path: String) -> Result<Unit, String>
 
 verify declarationsTyped
     declarationsTyped(Env(defs = [Def(name = "cast", params = [Kernel.Term.typed("x", Ty.TyStr)], ret = Ty.TyInt, lets = [], body = Term.TVar("x"))], consts = [], laws = [], hyps = [], vars = [], sums = [], recs = [], sigs = []), "proof") => Result.Err("step proof: definition cast has type String, declared Int")
+    declarationsTyped(Env(defs = [], consts = [Const(name = "a", ty = Ty.TyInt, value = Term.TInt(0))], laws = [], hyps = [], vars = [Kernel.Term.typed("a", Ty.TyInt)], sums = [], recs = [], sigs = []), "proof") => Result.Err("step proof: module-level binding and variable share name a")
 
 fn defNames(ds: List<Def>) -> List<String>
     ? "The names the script's definitions declare, in order."
