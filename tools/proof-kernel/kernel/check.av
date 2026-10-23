@@ -1124,11 +1124,13 @@ verify inductChecked
     inductChecked(Def(name = "f", params = [], ret = Ty.TyAny, lets = [], body = Term.TUnit), Recursion(at = 0, guard = Option.None, arms = []), [], Eqn(lhs = Term.TVar("x"), rhs = Term.TVar("x")), [], [Case(binders = [], ihs = [], carry = [], more = [], proof = Proof.PRefl(Term.TUnit))], Varied(v = "x", general = []), emptyEnv(), "p") => Result.Err("step p: 0 arms, 1 cases")
 
 fn measured(r: Recursion, v: String, env: Env) -> Result<Unit, String>
-    ? "A match on the value itself needs one arm per constructor; a count toward zero needs v to be a given of type Int."
+    ? "A match on the value itself needs exactly one well-shaped arm per constructor of v's type; a count toward zero needs v to be a given of type Int."
     match r.guard
-        Option.None -> match armsAreConstructors(armsOf(r.arms))
-            true -> Result.Ok(Unit)
-            false -> Result.Err("the arms are not one per constructor")
+        Option.None -> match Kernel.Types.typeOf(Term.TVar(v), tyEnv(env))
+            Result.Ok(t) -> match constructorArmsFit(armsOf(r.arms), t, tyEnv(env))
+                true -> Result.Ok(Unit)
+                false -> Result.Err("the induction arms are not exactly the constructors of {Kernel.Types.show(t)}")
+            Result.Err(why) -> Result.Err(why)
         Option.Some(g) -> match Kernel.Types.typeOf(Term.TVar(v), tyEnv(env))
             Result.Ok(Ty.TyInt) -> Result.Ok(Unit)
             _ -> Result.Err("{v} is not a given of type Int")
@@ -1136,7 +1138,9 @@ fn measured(r: Recursion, v: String, env: Env) -> Result<Unit, String>
 verify measured
     measured(Recursion(at = 0, guard = Option.Some(Term.TOp(">", Term.TVar("x"), Term.TInt(0))), arms = []), "n", intsEnv(["m"])) => Result.Err("n is not a given of type Int")
     measured(Recursion(at = 0, guard = Option.Some(Term.TOp(">", Term.TVar("x"), Term.TInt(0))), arms = []), "n", intsEnv(["n"])) => Result.Ok(Unit)
-    measured(Recursion(at = 0, guard = Option.None, arms = [ArmCalls(arm = Arm(pattern = Pat.PWild, body = Term.TUnit), calls = [])]), "n", emptyEnv()) => Result.Err("the arms are not one per constructor")
+    measured(Recursion(at = 0, guard = Option.None, arms = [ArmCalls(arm = Arm(pattern = Pat.PWild, body = Term.TUnit), calls = [])]), "n", emptyEnv()) => Result.Err("n is not a variable in scope")
+    measured(Recursion(at = 0, guard = Option.None, arms = [ArmCalls(arm = Arm(pattern = Pat.PCtor("C.A", []), body = Term.TUnit), calls = [])]), "x", sumEnv()) => Result.Err("the induction arms are not exactly the constructors of C")
+    measured(Recursion(at = 0, guard = Option.None, arms = [ArmCalls(arm = Arm(pattern = Pat.PCtor("C.B", []), body = Term.TUnit), calls = []), ArmCalls(arm = Arm(pattern = Pat.PCtor("C.A", []), body = Term.TUnit), calls = [])]), "x", sumEnv()) => Result.Ok(Unit)
 
 fn armsOf(acs: List<ArmCalls>) -> List<Arm>
     ? "The arms, without their calls."
@@ -1201,60 +1205,80 @@ fn hypNames(hs: List<Hyp>) -> List<String>
 verify hypNames
     hypNames([]) => []
 
-fn armsAreConstructors(arms: List<Arm>) -> Bool
-    ? "Every pattern is [], [h, ..t] or a constructor, and [] comes with [h, ..t]."
-    Bool.and(allConstructorPatterns(arms), hasNil(arms) == hasCons(arms))
+fn constructorArmsFit(arms: List<Arm>, t: Ty, env: TyEnv) -> Bool
+    ? "The arms are a permutation of every constructor of t, without duplicates, and each pattern names exactly the constructor's fields."
+    Bool.and(sameNames(Kernel.Types.ctorsOf(t, env), armConstructorNames(arms)), constructorFieldsFit(arms, t, env))
 
-verify armsAreConstructors
-    armsAreConstructors([Arm(pattern = Pat.PNil, body = Term.TUnit)]) => false
-    armsAreConstructors([Arm(pattern = Pat.PCtor("N.Z", []), body = Term.TUnit)]) => true
+verify constructorArmsFit
+    constructorArmsFit([Arm(pattern = Pat.PCtor("C.A", []), body = Term.TUnit)], Ty.TyNamed("C"), tyEnv(sumEnv())) => false
+    constructorArmsFit([Arm(pattern = Pat.PCtor("C.B", []), body = Term.TUnit), Arm(pattern = Pat.PCtor("C.A", []), body = Term.TUnit)], Ty.TyNamed("C"), tyEnv(sumEnv())) => true
+    constructorArmsFit([Arm(pattern = Pat.PCtor("C.A", ["x"]), body = Term.TUnit), Arm(pattern = Pat.PCtor("C.B", []), body = Term.TUnit)], Ty.TyNamed("C"), tyEnv(sumEnv())) => false
 
-fn allConstructorPatterns(arms: List<Arm>) -> Bool
-    ? "No literal, wildcard or name pattern."
+fn sameNames(expected: List<String>, actual: List<String>) -> Bool
+    ? "Two lists contain every name the same number of times, in any order."
+    Bool.and(List.len(expected) == List.len(actual), sameNameCounts(expected, expected, actual))
+
+verify sameNames
+    sameNames(["A", "B"], ["B", "A"]) => true
+    sameNames(["A", "B"], ["A", "A"]) => false
+
+fn sameNameCounts(left: List<String>, allLeft: List<String>, right: List<String>) -> Bool
+    ? "Every name occurring on the left occurs equally often on both sides."
+    match left
+        [] -> true
+        [n, ..rest] -> Bool.and(countName(n, allLeft) == countName(n, right), sameNameCounts(rest, allLeft, right))
+
+verify sameNameCounts
+    sameNameCounts(["A"], ["A", "A"], ["A", "B"]) => false
+
+fn countName(want: String, names: List<String>) -> Int
+    ? "How often want occurs in names."
+    match names
+        [] -> 0
+        [n, ..rest] -> match n == want
+            true -> 1 + countName(want, rest)
+            false -> countName(want, rest)
+
+verify countName
+    countName("A", ["A", "B", "A"]) => 2
+
+fn armConstructorNames(arms: List<Arm>) -> List<String>
+    ? "The constructor selected by each constructor-shaped arm."
+    match arms
+        [] -> []
+        [a, ..rest] -> List.prepend(patternConstructorName(a.pattern), armConstructorNames(rest))
+
+verify armConstructorNames
+    armConstructorNames([Arm(pattern = Pat.PNil, body = Term.TUnit), Arm(pattern = Pat.PCons("h", "t"), body = Term.TUnit), Arm(pattern = Pat.PCtor("C.A", []), body = Term.TUnit)]) => ["nil", "cons", "C.A"]
+
+fn patternConstructorName(p: Pat) -> String
+    ? "The split name of a constructor-shaped pattern; an empty name for another pattern."
+    match p
+        Pat.PNil -> "nil"
+        Pat.PCons(h, t) -> "cons"
+        Pat.PCtor(c, ns) -> c
+        _ -> ""
+
+verify patternConstructorName
+    patternConstructorName(Pat.PCtor("C.A", [])) => "C.A"
+
+fn constructorFieldsFit(arms: List<Arm>, t: Ty, env: TyEnv) -> Bool
+    ? "Every arm is constructor-shaped and binds exactly the number of fields that constructor carries."
     match arms
         [] -> true
-        [a, ..rest] -> Bool.and(isConstructorPattern(a.pattern), allConstructorPatterns(rest))
+        [a, ..rest] -> Bool.and(constructorFieldCountFits(a.pattern, t, env), constructorFieldsFit(rest, t, env))
 
-verify allConstructorPatterns
-    allConstructorPatterns([Arm(pattern = Pat.PWild, body = Term.TUnit)]) => false
+verify constructorFieldsFit
+    constructorFieldsFit([Arm(pattern = Pat.PCtor("C.A", ["x"]), body = Term.TUnit)], Ty.TyNamed("C"), tyEnv(sumEnv())) => false
 
-fn isConstructorPattern(p: Pat) -> Bool
-    ? "[], [h, ..t] or a constructor."
-    match p
-        Pat.PNil -> true
-        Pat.PCons(h, t) -> true
-        Pat.PCtor(c, ns) -> true
-        _ -> false
+fn constructorFieldCountFits(p: Pat, t: Ty, env: TyEnv) -> Bool
+    ? "A constructor-shaped pattern has one name per declared field."
+    match Kernel.Types.ctorFields(patternConstructorName(p), t, env)
+        Result.Ok(fs) -> List.len(fs) == List.len(patFields(p))
+        Result.Err(why) -> false
 
-verify isConstructorPattern
-    isConstructorPattern(Pat.PLit(Term.TInt(0))) => false
-
-fn hasNil(arms: List<Arm>) -> Bool
-    ? "An arm for the empty list."
-    match arms
-        [] -> false
-        [a, ..rest] -> Bool.or(a.pattern == Pat.PNil, hasNil(rest))
-
-verify hasNil
-    hasNil([]) => false
-
-fn hasCons(arms: List<Arm>) -> Bool
-    ? "An arm for a nonempty list."
-    match arms
-        [] -> false
-        [a, ..rest] -> Bool.or(isCons(a.pattern), hasCons(rest))
-
-verify hasCons
-    hasCons([Arm(pattern = Pat.PCons("h", "t"), body = Term.TUnit)]) => true
-
-fn isCons(p: Pat) -> Bool
-    ? "A [h, ..t] pattern."
-    match p
-        Pat.PCons(h, t) -> true
-        _ -> false
-
-verify isCons
-    isCons(Pat.PNil) => false
+verify constructorFieldCountFits
+    constructorFieldCountFits(Pat.PCons("h", "t"), Ty.TyList(Ty.TyInt), tyEnv(emptyEnv())) => true
 
 fn inductCases(d: Def, r: Recursion, acs: List<ArmCalls>, cs: List<Case>, at: Call, claim: Eqn, vr: Varied, taken: List<String>, carried: List<Hyp>, env: Env, path: String, i: Int) -> Result<Eqn, String>
     ? "Each arm with its case, in order; the result is the claim."

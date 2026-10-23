@@ -5431,7 +5431,7 @@ pub fn inductChecked(
     }
 }
 
-/// A match on the value itself needs one arm per constructor; a count toward zero needs v to be a given of type Int.
+/// A match on the value itself needs exactly one well-shaped arm per constructor of v's type; a count toward zero needs v to be a given of type Int.
 #[inline(always)]
 pub fn measured(
     r @ _: &crate::proof_kernel::aver_generated::kernel::induct::Recursion,
@@ -5441,24 +5441,59 @@ pub fn measured(
     crate::proof_kernel::cancel_checkpoint();
     match r.guard.clone() {
         None => {
-            if {
-                let __arg5 @ _ =
-                    crate::proof_kernel::aver_generated::kernel::check::armsOf(&r.arms);
-                crate::proof_kernel::aver_generated::kernel::check::armsAreConstructors(&__arg5)
-            } {
-                Ok(())
-            } else {
-                Err(::aver_rt::str_lit!("the arms are not one per constructor"))
+            let __subject = {
+                let __arg7 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TVar(
+                    crate::proof_kernel::aver_generated::kernel::term::Term__TVar(v),
+                );
+                {
+                    let __arg8 @ _ = crate::proof_kernel::aver_generated::kernel::check::tyEnv(env);
+                    crate::proof_kernel::aver_generated::kernel::types::typeOf(&__arg7, &__arg8)
+                }
+            };
+            match __subject {
+                Ok(t @ _) => {
+                    if {
+                        let __arg9 @ _ =
+                            crate::proof_kernel::aver_generated::kernel::check::armsOf(&r.arms);
+                        {
+                            let __arg10 @ _ =
+                                crate::proof_kernel::aver_generated::kernel::check::tyEnv(env);
+                            crate::proof_kernel::aver_generated::kernel::check::constructorArmsFit(
+                                &__arg9, &t, &__arg10,
+                            )
+                        }
+                    } {
+                        Ok(())
+                    } else {
+                        Err(aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = aver_rt::Buffer::with_capacity(
+                                    (aver_rt::AverInt::from_i64(71)).to_usize().unwrap_or(0),
+                                );
+                                __b.push_str(&::aver_rt::str_lit!(
+                                    "the induction arms are not exactly the constructors of "
+                                ));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                &(crate::proof_kernel::aver_generated::kernel::types::show(&t)),
+                            )));
+                            __b
+                        }))
+                    }
+                }
+                Err(why @ _) => Err(why),
             }
         }
         Some(g @ _) => {
             let __subject = {
-                let __arg6 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TVar(
+                let __arg11 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TVar(
                     crate::proof_kernel::aver_generated::kernel::term::Term__TVar(v.clone()),
                 );
                 {
-                    let __arg7 @ _ = crate::proof_kernel::aver_generated::kernel::check::tyEnv(env);
-                    crate::proof_kernel::aver_generated::kernel::types::typeOf(&__arg6, &__arg7)
+                    let __arg12 @ _ =
+                        crate::proof_kernel::aver_generated::kernel::check::tyEnv(env);
+                    crate::proof_kernel::aver_generated::kernel::types::typeOf(&__arg11, &__arg12)
                 }
             };
             match __subject {
@@ -5676,21 +5711,160 @@ pub fn hypNames(
     }
 }
 
-/// Every pattern is [], [h, ..t] or a constructor, and [] comes with [h, ..t].
+/// The arms are a permutation of every constructor of t, without duplicates, and each pattern names exactly the constructor's fields.
 #[inline(always)]
-pub fn armsAreConstructors(
+pub fn constructorArmsFit(
     arms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
+    t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ty,
+    env @ _: &crate::proof_kernel::aver_generated::kernel::types::TyEnv,
 ) -> bool {
     crate::proof_kernel::cancel_checkpoint();
-    (crate::proof_kernel::aver_generated::kernel::check::allConstructorPatterns(arms)
-        && (crate::proof_kernel::aver_generated::kernel::check::hasNil(arms)
-            == crate::proof_kernel::aver_generated::kernel::check::hasCons(arms)))
+    ({
+        let __arg3 @ _ = crate::proof_kernel::aver_generated::kernel::types::ctorsOf(t, env);
+        {
+            let __arg4 @ _ =
+                crate::proof_kernel::aver_generated::kernel::check::armConstructorNames(arms);
+            crate::proof_kernel::aver_generated::kernel::check::sameNames(&__arg3, &__arg4)
+        }
+    } && crate::proof_kernel::aver_generated::kernel::check::constructorFieldsFit(arms, t, env))
 }
 
-/// No literal, wildcard or name pattern.
+/// Two lists contain every name the same number of times, in any order.
 #[inline(always)]
-pub fn allConstructorPatterns(
+pub fn sameNames(
+    expected @ _: &aver_rt::AverList<AverStr>,
+    actual @ _: &aver_rt::AverList<AverStr>,
+) -> bool {
+    crate::proof_kernel::cancel_checkpoint();
+    ((aver_rt::AverInt::from_i64(expected.len() as i64)
+        == aver_rt::AverInt::from_i64(actual.len() as i64))
+        && crate::proof_kernel::aver_generated::kernel::check::sameNameCounts(
+            expected, expected, actual,
+        ))
+}
+
+/// Every name occurring on the left occurs equally often on both sides.
+#[inline(always)]
+pub fn sameNameCounts(
+    left @ _: &aver_rt::AverList<AverStr>,
+    allLeft @ _: &aver_rt::AverList<AverStr>,
+    right @ _: &aver_rt::AverList<AverStr>,
+) -> bool {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __list_subject = left;
+        if __list_subject.is_empty() {
+            true
+        } else {
+            if let Some((n, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                ((crate::proof_kernel::aver_generated::kernel::check::countName(
+                    n.clone(),
+                    allLeft,
+                ) == crate::proof_kernel::aver_generated::kernel::check::countName(n, right))
+                    && crate::proof_kernel::aver_generated::kernel::check::sameNameCounts(
+                        &rest, allLeft, right,
+                    ))
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
+}
+
+/// How often want occurs in names.
+#[inline(always)]
+pub fn countName(
+    mut want @ _: AverStr,
+    names @ _: &aver_rt::AverList<AverStr>,
+) -> aver_rt::AverInt {
+    let mut __hold1: aver_rt::AverList<AverStr>;
+    let mut names @ _: &aver_rt::AverList<AverStr> = names;
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __list_subject = names;
+            if __list_subject.is_empty() {
+                return aver_rt::AverInt::from_i64(0);
+            } else {
+                if let Some((n, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    if (n == want) {
+                        return aver_rt::AverInt::from_i64(1).add(
+                            &crate::proof_kernel::aver_generated::kernel::check::countName(
+                                want, &rest,
+                            ),
+                        );
+                    } else {
+                        {
+                            let __tco1 = rest;
+                            __hold1 = __tco1;
+                            names = &__hold1;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
+    }
+}
+
+/// The constructor selected by each constructor-shaped arm.
+#[inline(always)]
+pub fn armConstructorNames(
     arms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
+) -> aver_rt::AverList<AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __list_subject = arms;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                aver_rt::AverList::prepend(
+                    crate::proof_kernel::aver_generated::kernel::check::patternConstructorName(
+                        &a.pattern,
+                    ),
+                    &crate::proof_kernel::aver_generated::kernel::check::armConstructorNames(&rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
+}
+
+/// The split name of a constructor-shaped pattern; an empty name for another pattern.
+pub fn patternConstructorName(
+    p @ _: &crate::proof_kernel::aver_generated::kernel::term::Pat,
+) -> AverStr {
+    crate::proof_kernel::cancel_checkpoint();
+    match p {
+        crate::proof_kernel::aver_generated::kernel::term::Pat::PNil => {
+            ::aver_rt::str_lit!("nil")
+        }
+        crate::proof_kernel::aver_generated::kernel::term::Pat::PCons(h, t) => {
+            let h = h.clone();
+            let t = t.clone();
+            ::aver_rt::str_lit!("cons")
+        }
+        crate::proof_kernel::aver_generated::kernel::term::Pat::PCtor(c, ns) => {
+            let c = c.clone();
+            let ns = ns.clone();
+            c
+        }
+        _ => {
+            ::aver_rt::str_lit!("")
+        }
+    }
+}
+
+/// Every arm is constructor-shaped and binds exactly the number of fields that constructor carries.
+#[inline(always)]
+pub fn constructorFieldsFit(
+    arms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
+    t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ty,
+    env @ _: &crate::proof_kernel::aver_generated::kernel::types::TyEnv,
 ) -> bool {
     crate::proof_kernel::cancel_checkpoint();
     {
@@ -5699,10 +5873,10 @@ pub fn allConstructorPatterns(
             true
         } else {
             if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                (crate::proof_kernel::aver_generated::kernel::check::isConstructorPattern(
-                    &a.pattern,
-                ) && crate::proof_kernel::aver_generated::kernel::check::allConstructorPatterns(
-                    &rest,
+                (crate::proof_kernel::aver_generated::kernel::check::constructorFieldCountFits(
+                    &a.pattern, t, env,
+                ) && crate::proof_kernel::aver_generated::kernel::check::constructorFieldsFit(
+                    &rest, t, env,
                 ))
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -5711,79 +5885,30 @@ pub fn allConstructorPatterns(
     }
 }
 
-/// [], [h, ..t] or a constructor.
-pub fn isConstructorPattern(
+/// A constructor-shaped pattern has one name per declared field.
+#[inline(always)]
+pub fn constructorFieldCountFits(
     p @ _: &crate::proof_kernel::aver_generated::kernel::term::Pat,
-) -> bool {
-    crate::proof_kernel::cancel_checkpoint();
-    match p {
-        crate::proof_kernel::aver_generated::kernel::term::Pat::PNil => true,
-        crate::proof_kernel::aver_generated::kernel::term::Pat::PCons(h, t) => {
-            let h = h.clone();
-            let t = t.clone();
-            true
-        }
-        crate::proof_kernel::aver_generated::kernel::term::Pat::PCtor(c, ns) => {
-            let c = c.clone();
-            let ns = ns.clone();
-            true
-        }
-        _ => false,
-    }
-}
-
-/// An arm for the empty list.
-#[inline(always)]
-pub fn hasNil(
-    arms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
+    t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ty,
+    env @ _: &crate::proof_kernel::aver_generated::kernel::types::TyEnv,
 ) -> bool {
     crate::proof_kernel::cancel_checkpoint();
     {
-        let __list_subject = arms;
-        if __list_subject.is_empty() {
-            false
-        } else {
-            if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                ((a.pattern == crate::proof_kernel::aver_generated::kernel::term::Pat::PNil)
-                    || crate::proof_kernel::aver_generated::kernel::check::hasNil(&rest))
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
+        let __subject = {
+            let __arg5 @ _ =
+                crate::proof_kernel::aver_generated::kernel::check::patternConstructorName(p);
+            crate::proof_kernel::aver_generated::kernel::types::ctorFields(__arg5, t, env)
+        };
+        match __subject {
+            Ok(fs @ _) => {
+                (aver_rt::AverInt::from_i64(fs.len() as i64)
+                    == aver_rt::AverInt::from_i64(
+                        crate::proof_kernel::aver_generated::kernel::check::patFields(p).len()
+                            as i64,
+                    ))
             }
+            Err(why @ _) => false,
         }
-    }
-}
-
-/// An arm for a nonempty list.
-#[inline(always)]
-pub fn hasCons(
-    arms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
-) -> bool {
-    crate::proof_kernel::cancel_checkpoint();
-    {
-        let __list_subject = arms;
-        if __list_subject.is_empty() {
-            false
-        } else {
-            if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                (crate::proof_kernel::aver_generated::kernel::check::isCons(&a.pattern)
-                    || crate::proof_kernel::aver_generated::kernel::check::hasCons(&rest))
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
-        }
-    }
-}
-
-/// A [h, ..t] pattern.
-pub fn isCons(p @ _: &crate::proof_kernel::aver_generated::kernel::term::Pat) -> bool {
-    crate::proof_kernel::cancel_checkpoint();
-    match p {
-        crate::proof_kernel::aver_generated::kernel::term::Pat::PCons(h, t) => {
-            let h = h.clone();
-            let t = t.clone();
-            true
-        }
-        _ => false,
     }
 }
 

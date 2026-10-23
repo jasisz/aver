@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// (script, what the kernel says, whether an untyped kernel accepted it)
-const REFUSED: [(&str, &str, bool); 30] = [
+const REFUSED: [(&str, &str, bool); 31] = [
     // A law about a sum, cited at an Int: `x = One.Only` for every `x` of
     // the one-value type `One`, read at 0 and at 1, gives `0 = 1`.
     (
@@ -167,6 +167,13 @@ const REFUSED: [(&str, &str, bool); 30] = [
         "+ takes two values of one type: Int is not Bool",
         false,
     ),
+    // Structural induction must cover every constructor. Omitting the one
+    // counterexample used to prove that every N differs from N.B.
+    (
+        "induction_missing_a_constructor",
+        "the induction arms are not exactly the constructors of N",
+        true,
+    ),
 ];
 
 fn fixtures() -> PathBuf {
@@ -202,9 +209,8 @@ fn every_refused_script_is_listed() {
     assert_eq!(on_disk, listed);
 }
 
-/// Twelve of the scripts prove their claim under a kernel that does not
-/// type what a proof binds; the list is what this change is for.
+/// Thirteen scripts were accepted before their corresponding kernel gates.
 #[test]
-fn twelve_of_them_were_accepted_before() {
-    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 12);
+fn thirteen_of_them_were_accepted_before() {
+    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 13);
 }
