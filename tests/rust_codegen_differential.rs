@@ -1114,14 +1114,45 @@ fn mutualOdd(text: String, pos: Int, acc: Int) -> Int
         Option.None -> acc
         Option.Some(c) -> mutualEven(text, pos + 1, acc + scoreChar(c))
 
+record At
+    pos: Int
+
+fn spaceAt(text: String, pos: Int) -> Int
+    ? "A raw position returned from the walk."
+    match String.charAt(text, pos)
+        Option.None -> pos
+        Option.Some(" ") -> pos
+        Option.Some(_) -> spaceAt(text, pos + 1)
+
+fn endAt(text: String, pos: Int) -> At
+    ? "A raw position stored in a record."
+    match String.charAt(text, pos)
+        Option.None -> At(pos = pos)
+        Option.Some(_) -> endAt(text, pos + 1)
+
+fn pairs(text: String, pos: Int, acc: String) -> String
+    ? "A position bounded by a length test, sliced raw."
+    match pos < String.len(text)
+        true -> pairs(text, pos + 2, "{acc}[{String.slice(text, pos, pos + 2)}]")
+        false -> acc
+
+fn far(text: String, pos: Int) -> Int
+    ? "Positions outside i64 and below zero stay boxed and read as past the end."
+    match String.charAt(text, pos)
+        Option.None -> pos
+        Option.Some(_) -> far(text, pos + 1)
+
 fn main() -> Unit
     ? "Print the indexed result for backend parity."
     ! [Console.print]
     Console.print("{walk("aą😀z", 0, 0)}|{score("aą😀z")}|{mutualEven("aą😀z", 0, 0)}")
     Console.print("{walkFar("LONG", 0, 0)}|{score("LONG")}|{mutualEven("LONG", 0, 0)}")
+    Console.print("{spaceAt("ą😀 z", 0)}|{spaceAt("ą😀z", 1)}|{endAt("aą😀", 0 - 2).pos}|{pairs("aą😀zb", 0, "")}")
+    Console.print("{far("ab", String.len("ab") * 1000000000000 * 1000000000000)}|{far("ab", 0 - 5)}")
 "#
     .replace("LONG", &"aą😀z".repeat(40));
-    let expected = "4:ą😀|211|211\n160:😀zaą😀|8440|8440";
+    let expected =
+        "4:ą😀|211|211\n160:😀zaą😀|8440|8440\n2|3|-2|[aą][😀z][b]\n2000000000000000000000000|-5";
     let vm = run_vm_inline("string_index", &src).expect("VM run");
     let rust =
         build_run_rust_inline("string_index", &src).expect("Rust compile + cargo build + run");

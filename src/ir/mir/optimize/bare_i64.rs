@@ -97,6 +97,20 @@ pub(super) fn intrinsic_accepts_raw_code_arg(callee: &MirCallee, i: usize) -> bo
     }
 }
 
+/// Does intrinsic argument `i` take a string position in either
+/// representation? The indexed reads answer the same for a raw `i64` and
+/// for an `AverInt` saturated to one, so a bare position reaches them raw
+/// and any other position stays boxed (no `Unbox`, which would panic on a
+/// position outside `i64` that `charAt` must answer `None` for).
+pub(super) fn intrinsic_accepts_raw_position_arg(callee: &MirCallee, i: usize) -> bool {
+    use crate::ir::hir::BuiltinIntrinsic as I;
+    match callee {
+        MirCallee::Intrinsic(I::StrIndexCharAt | I::StrIndexCodeAt) => i == 2,
+        MirCallee::Intrinsic(I::StrIndexSlice) => i == 2 || i == 3,
+        _ => false,
+    }
+}
+
 /// Compiler-synthesized `__code` and `__cursor` functions (and their own
 /// specializations) are unnameable from Aver source. Their reserved
 /// parameters are populated only from
@@ -588,6 +602,10 @@ struct Summary {
     /// could overflow, demoting the fast decrement to a boxed round-trip. A
     /// `None` entry (or a missing param) falls back to the full-`i64` seed.
     bare_param_intervals: HashMap<FnId, Vec<Option<Interval>>>,
+    /// String-walk positions (`string_positions`): bare params whose range
+    /// comes from a read of the string they index, boxed at each
+    /// general-Int sink instead of demoted when they escape.
+    positions: HashSet<(FnId, usize)>,
 }
 
 impl Summary {
@@ -604,6 +622,10 @@ impl Summary {
 
     /// The proven recurrence interval for param `i` of `id`, if one was
     /// derived. `None` ⇒ the body pass seeds the full `i64` range.
+    fn is_position(&self, f: &MirFn, i: usize) -> bool {
+        self.positions.contains(&(f.fn_id, i))
+    }
+
     fn param_interval(&self, id: FnId, i: usize) -> Option<Interval> {
         self.bare_param_intervals
             .get(&id)
@@ -676,7 +698,15 @@ fn compute_summary(
     // widens out of `i64` and maps to `None` (boxed). Drop-in: the output
     // type and both readers (condition B + the `analyze_fn` seed) are
     // unchanged.
-    let bare_param_intervals = compute_bare_param_intervals(program, &edges, &address_taken);
+    let mut bare_param_intervals = compute_bare_param_intervals(program, &edges, &address_taken);
+    let ranges = string_positions(program, &edges, &address_taken, &bare_param_intervals);
+    for &(id, i) in &ranges.positions {
+        if let Some(cell) = bare_param_intervals.get_mut(&id).and_then(|v| v.get_mut(i)) {
+            *cell = ranges.entry[&id][i]
+                .fits_i64()
+                .then_some(ranges.entry[&id][i]);
+        }
+    }
 
     loop {
         let mut changed = false;
@@ -691,8 +721,14 @@ fn compute_summary(
                 if !callee_params.get(i).copied().unwrap_or(false) {
                     continue; // already boxed — skip
                 }
-                let ok =
-                    arg_supplies_bare(&arg.node, edge.caller, program, &bare_params, &bare_return);
+                let ok = arg_supplies_bare(
+                    &arg.node,
+                    edge.caller,
+                    program,
+                    &bare_params,
+                    &bare_return,
+                    &ranges.entry,
+                );
                 if !ok {
                     demote_param(&mut bare_params, edge.target, i, &mut changed);
                 }
@@ -745,6 +781,7 @@ fn compute_summary(
             bare_params: bare_params.clone(),
             bare_return: bare_return.clone(),
             bare_param_intervals: bare_param_intervals.clone(),
+            positions: ranges.positions.clone(),
         };
         for (id, f) in program.iter() {
             let mut escaping: HashSet<LocalId> = HashSet::new();
@@ -753,6 +790,7 @@ fn compute_summary(
                 if bare_params[id].get(i).copied().unwrap_or(false)
                     && escaping.contains(&p.local)
                     && !is_code_carrier_param(f, i)
+                    && !tmp.is_position(f, i)
                 {
                     demote_param(&mut bare_params, *id, i, &mut changed);
                 }
@@ -770,6 +808,7 @@ fn compute_summary(
                 bare_params: bare_params.clone(),
                 bare_return: bare_return.clone(),
                 bare_param_intervals: bare_param_intervals.clone(),
+                positions: ranges.positions.clone(),
             };
             let facts = analyze_fn(f, &tmp, carrier, field_carrier);
             if !facts.bare_return && bare_return.insert(*id, false) != Some(false) {
@@ -817,6 +856,7 @@ fn compute_summary(
             bare_params: bare_params.clone(),
             bare_return: bare_return.clone(),
             bare_param_intervals: bare_param_intervals.clone(),
+            positions: ranges.positions.clone(),
         };
         for (_caller, f) in program.iter() {
             let facts = analyze_fn(f, &tmp, carrier, field_carrier);
@@ -840,6 +880,7 @@ fn compute_summary(
         bare_params,
         bare_return,
         bare_param_intervals,
+        positions: ranges.positions,
     }
 }
 
@@ -1090,6 +1131,8 @@ fn collect_call_edges(caller: FnId, e: &MirExpr, out: &mut Vec<CallEdge>) {
 ///   operands stays bare (the `i64`-bound is checked separately).
 /// - A read of a caller param that is itself bare is supplyable.
 /// - A call to another fn whose return is bare supplies bare.
+/// - A read of a boxed caller param whose every entry value is proven to fit
+///   `i64` (`entry`) supplies bare through a checked `Unbox`.
 /// - Anything else cannot be supplied bare ⇒ the callee param demotes.
 fn arg_supplies_bare(
     arg: &MirExpr,
@@ -1097,16 +1140,27 @@ fn arg_supplies_bare(
     program: &MirProgram,
     bare_params: &HashMap<FnId, Vec<bool>>,
     bare_return: &HashMap<FnId, bool>,
+    entry: &HashMap<FnId, Vec<Interval>>,
 ) -> bool {
+    let supplies =
+        |e: &MirExpr| arg_supplies_bare(e, caller, program, bare_params, bare_return, entry);
     match arg {
         MirExpr::Literal(l) => matches!(l.node, Literal::Int(_)),
-        MirExpr::Neg(inner) => {
-            arg_supplies_bare(&inner.node, caller, program, bare_params, bare_return)
+        MirExpr::Neg(inner) => supplies(&inner.node),
+        MirExpr::Local(local) => {
+            local_supplies_bare(local.node.slot, caller, program, bare_params)
+                || program.fn_by_id(caller).is_some_and(|f| {
+                    f.params.iter().enumerate().any(|(i, p)| {
+                        p.local == local.node.slot
+                            && entry
+                                .get(&caller)
+                                .and_then(|v| v.get(i))
+                                .is_some_and(|iv| iv.fits_i64())
+                    })
+                })
         }
-        MirExpr::Local(local) => local_supplies_bare(local.node.slot, caller, program, bare_params),
         MirExpr::BinOp(b) if matches!(b.node.op, BinOp::Add | BinOp::Sub | BinOp::Mul) => {
-            arg_supplies_bare(&b.node.lhs.node, caller, program, bare_params, bare_return)
-                && arg_supplies_bare(&b.node.rhs.node, caller, program, bare_params, bare_return)
+            supplies(&b.node.lhs.node) && supplies(&b.node.rhs.node)
         }
         MirExpr::Call(_) if is_code_carrier_call(arg) => true,
         MirExpr::Call(c) => match c.node.callee {
@@ -1316,6 +1370,287 @@ fn compute_param_intervals_for_test(program: &MirProgram) -> HashMap<FnId, Vec<O
         collect_call_edges(*caller, &f.body.node, &mut edges);
     }
     compute_bare_param_intervals(program, &edges, &address_taken)
+}
+
+// ── String-walk positions (the third guard kind) ─────────────────────────
+//
+// A position that only moves forward after a successful read of a string is
+// bounded by that string's length, and no string is longer than
+// `isize::MAX - 8` characters. So in a self-recursive walk whose every
+// back-edge sits under such a read (`match String.charAt(s, i)` past its
+// `None`, the indexed code read past its `-1`, or `i < String.len(s)`), the
+// back-edge value `i + k` lies in `[k, isize::MAX - 9 + k]` whatever string
+// is read, and the param's range is that joined with its entry values.
+// Entry values are evaluated over the CALLERS' param ranges, solved callers
+// first, so a position handed through an ABI-preserving wrapper keeps the
+// literal it started from.
+
+/// The output of [`string_positions`].
+struct PositionRanges {
+    /// Per-`(fn, param)` range over every value the param can hold — the
+    /// hull of its entry values, a proven recurrence bound, or a position
+    /// range. `unbounded()` where nothing is known.
+    entry: HashMap<FnId, Vec<Interval>>,
+    /// The params whose range comes from a position guard.
+    positions: HashSet<(FnId, usize)>,
+}
+
+/// Where a self-tail-call sits relative to a read of the position param.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum PositionGuard {
+    /// Under no guard on the position.
+    None,
+    /// Only past `i < String.len(s)`: the position is below the longest
+    /// string's length.
+    Below,
+    /// Past a successful read: at least 0 and below the longest string's
+    /// length.
+    Read,
+}
+
+fn string_positions(
+    program: &MirProgram,
+    edges: &[CallEdge],
+    address_taken: &HashSet<String>,
+    recurrence: &HashMap<FnId, Vec<Option<Interval>>>,
+) -> PositionRanges {
+    let nodes: Vec<FnId> = program.iter().map(|(id, _)| *id).collect();
+    let mut graph: HashMap<FnId, Vec<FnId>> = HashMap::new();
+    for edge in edges.iter().filter(|e| e.caller != e.target) {
+        graph.entry(edge.caller).or_default().push(edge.target);
+    }
+    // Callers first; a fn in a call cycle (or called from one) never gets an
+    // in-degree of zero and keeps every param unbounded.
+    let mutual = crate::scc::mutually_recursive(&nodes, &graph);
+    let mut indegree: HashMap<FnId, usize> = nodes.iter().map(|id| (*id, 0)).collect();
+    for callees in graph.values() {
+        for t in callees {
+            if let Some(d) = indegree.get_mut(t) {
+                *d += 1;
+            }
+        }
+    }
+    let mut ready: Vec<FnId> = nodes
+        .iter()
+        .copied()
+        .filter(|id| indegree[id] == 0 && !mutual.contains(id))
+        .collect();
+    ready.sort();
+    let mut out = PositionRanges {
+        entry: program
+            .iter()
+            .map(|(id, f)| (*id, vec![Interval::unbounded(); f.params.len()]))
+            .collect(),
+        positions: HashSet::new(),
+    };
+    while let Some(id) = ready.pop() {
+        let f = program.fn_by_id(id).expect("listed fn");
+        let pinned = f.name == "main" || address_taken.contains(&f.name);
+        for i in 0..f.params.len() {
+            if pinned || !ty_str_is_int(&f.params[i].ty) {
+                continue;
+            }
+            let range = if let Some(iv) = recurrence.get(&id).and_then(|v| v[i]) {
+                iv
+            } else {
+                let seed = entry_hull(f, i, edges, program, &out.entry);
+                let self_edges = edges
+                    .iter()
+                    .any(|e| e.target == id && e.is_tail_self() && e.args.len() > i);
+                if !self_edges {
+                    seed
+                } else if let Some(iv) = position_range(f, i, seed, program) {
+                    out.positions.insert((id, i));
+                    iv
+                } else {
+                    Interval::unbounded()
+                }
+            };
+            out.entry.get_mut(&id).unwrap()[i] = range;
+        }
+        for t in graph.get(&id).into_iter().flatten() {
+            if let Some(d) = indegree.get_mut(t) {
+                *d -= 1;
+                if *d == 0 && !mutual.contains(t) {
+                    ready.push(*t);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The hull of every value a non-self caller passes at param `i` of `f`,
+/// each evaluated over its caller's (already solved) param ranges.
+fn entry_hull(
+    f: &MirFn,
+    i: usize,
+    edges: &[CallEdge],
+    program: &MirProgram,
+    ranges: &HashMap<FnId, Vec<Interval>>,
+) -> Interval {
+    let mut hull: Option<Interval> = None;
+    for edge in edges
+        .iter()
+        .filter(|e| e.target == f.fn_id && !e.is_tail_self())
+    {
+        let (Some(arg), Some(caller)) = (edge.args.get(i), program.fn_by_id(edge.caller)) else {
+            return Interval::unbounded();
+        };
+        let env: HashMap<LocalId, Interval> = caller
+            .params
+            .iter()
+            .zip(&ranges[&edge.caller])
+            .map(|(p, iv)| (p.local, *iv))
+            .collect();
+        let iv = eval_interval_pub(&arg.node, &env);
+        hull = Some(hull.map_or(iv, |h| h.hull(iv)));
+    }
+    hull.unwrap_or_else(Interval::unbounded)
+}
+
+/// The range of position param `i` of `f` entered with `seed`, when every
+/// self-tail-call passing it sits under a guard on that position.
+fn position_range(f: &MirFn, i: usize, seed: Interval, program: &MirProgram) -> Option<Interval> {
+    let slot = f.params[i].local;
+    let mut sites: Vec<(PositionGuard, &MirExpr)> = Vec::new();
+    collect_position_sites(
+        &f.body.node,
+        f.fn_id,
+        i,
+        slot,
+        PositionGuard::None,
+        program,
+        &mut sites,
+    );
+    if sites.is_empty() || sites.iter().any(|(g, _)| *g == PositionGuard::None) {
+        return None;
+    }
+    // The last position of the longest string: its characters are at most
+    // its bytes, which share one allocation with the reference count
+    // (`aver_rt::shared::Node`), and no allocation exceeds `isize::MAX`.
+    let top = isize::MAX as i128 - 9;
+    // Past `i < len` alone the position is only bounded above; below it is
+    // bounded by its own range, which a forward step never lowers. Assume
+    // the entry's floor, then check the result kept it.
+    let floor = match seed.lo {
+        crate::ir::interval::Bound::Finite(v) => v,
+        _ if sites.iter().all(|(g, _)| *g == PositionGuard::Read) => 0,
+        _ => return None,
+    };
+    let mut range = seed;
+    for (guard, arg) in &sites {
+        let at = match guard {
+            PositionGuard::Read => Interval::between(0, top),
+            _ => Interval::between(floor, top),
+        };
+        let env = HashMap::from([(slot, at)]);
+        range = range.hull(eval_interval_pub(arg, &env));
+    }
+    let keeps_floor = sites.iter().all(|(g, _)| *g == PositionGuard::Read)
+        || matches!(range.lo, crate::ir::interval::Bound::Finite(v) if v >= floor);
+    (keeps_floor && range.fits_i64()).then_some(range)
+}
+
+/// Collect the arg at `i` of every self-tail-call in `e`, with the guard on
+/// position `slot` it sits under.
+fn collect_position_sites<'a>(
+    e: &'a MirExpr,
+    self_fn: FnId,
+    i: usize,
+    slot: LocalId,
+    guard: PositionGuard,
+    program: &MirProgram,
+    out: &mut Vec<(PositionGuard, &'a MirExpr)>,
+) {
+    let walk = |c: &'a MirExpr, g: PositionGuard, out: &mut Vec<_>| {
+        collect_position_sites(c, self_fn, i, slot, g, program, out)
+    };
+    match e {
+        MirExpr::TailCall(tc) if tc.node.target == self_fn => {
+            if let Some(arg) = tc.node.args.get(i) {
+                out.push((guard, &arg.node));
+            }
+            for a in &tc.node.args {
+                walk(&a.node, guard, out);
+            }
+        }
+        MirExpr::Match(m) if reads_position(&m.node.subject.node, slot, program) => {
+            walk(&m.node.subject.node, guard, out);
+            let mut failure_seen = false;
+            for arm in &m.node.arms {
+                let read = match &arm.pattern {
+                    MirPattern::Literal(Literal::Int(k)) => *k >= 0,
+                    MirPattern::Ctor {
+                        ctor: super::super::expr::MirCtor::Builtin(c),
+                        ..
+                    } => *c == crate::ir::hir::BuiltinCtor::OptionSome,
+                    MirPattern::Wildcard | MirPattern::Bind(..) => failure_seen,
+                    _ => false,
+                };
+                failure_seen |= matches!(
+                    &arm.pattern,
+                    MirPattern::Literal(Literal::Int(-1))
+                        | MirPattern::Ctor {
+                            ctor: super::super::expr::MirCtor::Builtin(
+                                crate::ir::hir::BuiltinCtor::OptionNone
+                            ),
+                            ..
+                        }
+                );
+                let g = if read { PositionGuard::Read } else { guard };
+                walk(&arm.body.node, g, out);
+            }
+        }
+        MirExpr::IfThenElse(ite) => {
+            let (then_g, else_g) = match below_length(&ite.node.cond.node, slot, program) {
+                Some(true) => (guard.max(PositionGuard::Below), guard),
+                Some(false) => (guard, guard.max(PositionGuard::Below)),
+                None => (guard, guard),
+            };
+            walk(&ite.node.cond.node, guard, out);
+            walk(&ite.node.then_branch.node, then_g, out);
+            walk(&ite.node.else_branch.node, else_g, out);
+        }
+        _ => visit_children(e, &mut |c| walk(c, guard, out)),
+    }
+}
+
+/// Is `e` a read of the string character at position `slot`?
+fn reads_position(e: &MirExpr, slot: LocalId, program: &MirProgram) -> bool {
+    use crate::ir::hir::BuiltinIntrinsic as I;
+    let MirExpr::Call(c) = e else {
+        return false;
+    };
+    let at = match c.node.callee {
+        MirCallee::Intrinsic(I::StrIndexCharAt | I::StrIndexCodeAt) => 2,
+        MirCallee::Builtin(b) if program.builtin_name(b) == "String.charAt" => 1,
+        _ => return false,
+    };
+    c.node
+        .args
+        .get(at)
+        .is_some_and(|a| subject_is_local(&a.node, slot))
+}
+
+/// `Some(true)` when `cond` holds only for `slot < String.len(_)`,
+/// `Some(false)` when it fails only then (`slot >= String.len(_)`).
+fn below_length(cond: &MirExpr, slot: LocalId, program: &MirProgram) -> Option<bool> {
+    let MirExpr::BinOp(b) = cond else {
+        return None;
+    };
+    let is_len = |e: &MirExpr| {
+        matches!(e, MirExpr::Call(c)
+            if matches!(c.node.callee, MirCallee::Builtin(id) if program.builtin_name(id) == "String.len"))
+    };
+    let (l, r) = (&b.node.lhs.node, &b.node.rhs.node);
+    match b.node.op {
+        BinOp::Lt if subject_is_local(l, slot) && is_len(r) => Some(true),
+        BinOp::Gt if is_len(l) && subject_is_local(r, slot) => Some(true),
+        BinOp::Gte if subject_is_local(l, slot) && is_len(r) => Some(false),
+        BinOp::Lte if is_len(l) && subject_is_local(r, slot) => Some(false),
+        _ => None,
+    }
 }
 
 /// Run the per-`(fn, param)` interval worklist for one SCC to a fixpoint.
@@ -1985,11 +2320,9 @@ fn analyze_fn(
             .get(slot)
             .copied()
             .unwrap_or(OpClass::OverflowFree);
-        let trusted_code_param = f
-            .params
-            .iter()
-            .enumerate()
-            .any(|(i, p)| p.local == *slot && is_code_carrier_param(f, i));
+        let trusted_code_param = f.params.iter().enumerate().any(|(i, p)| {
+            p.local == *slot && (is_code_carrier_param(f, i) || summary.is_position(f, i))
+        });
         // The explicit MIR rewrite inserts a `Box` at every general-Int sink.
         // Keep this compiler-owned scalar carrier raw and pay that boundary
         // only on an escaping branch; ordinary params retain the older,
@@ -2234,7 +2567,9 @@ fn scan_escapes(e: &MirExpr, summary: &Summary, out: &mut HashSet<LocalId>) {
             // exists on either side.
             _ => {
                 for (i, a) in c.node.args.iter().enumerate() {
-                    if !intrinsic_accepts_raw_code_arg(&c.node.callee, i) {
+                    if !intrinsic_accepts_raw_code_arg(&c.node.callee, i)
+                        && !intrinsic_accepts_raw_position_arg(&c.node.callee, i)
+                    {
                         mark_operand_escapes_deep(&a.node, out);
                     }
                     scan_escapes(&a.node, summary, out);
@@ -3843,6 +4178,140 @@ fn main() -> Int
         assert!(
             !table.contains_key(&("Coord".to_string(), "x".to_string())),
             "a record with no smart ctor attributes no field bound"
+        );
+    }
+
+    // ── String-walk positions ────────────────────────────────────────────
+
+    /// Is param `name` of fn `fn_name` bare?
+    fn position_is_bare(src: &str, fn_name: &str, name: &str) -> bool {
+        let (program, facts) = facts_for(src);
+        let id = fn_id_by_name(&program, fn_name);
+        let f = program.fn_by_id(id).expect("fn");
+        let i = f.params.iter().position(|p| p.name == name).expect("param");
+        facts.for_fn(id).expect("facts").param_is_bare(i)
+    }
+
+    const WALK: &str = r#"
+fn walk(s: String, i: Int, n: Int) -> Int
+    match String.charAt(s, i)
+        Option.None -> n
+        Option.Some(_) -> walk(s, STEP, n + 1)
+
+fn main() -> Int
+    walk("abc", START, 0)
+"#;
+
+    fn walk(step: &str, start: &str) -> String {
+        WALK.replace("STEP", step).replace("START", start)
+    }
+
+    #[test]
+    fn indexed_walk_position_is_bare_through_the_wrapper() {
+        let src = walk("i + 1", "0");
+        assert!(position_is_bare(&src, "walk__indexed", "i"));
+        // The ABI-preserving wrapper keeps its boxed parameter; its literal
+        // entry is what bounds the worker's start.
+        assert!(!position_is_bare(&src, "walk", "i"));
+    }
+
+    #[test]
+    fn position_bounded_by_a_length_test_is_bare() {
+        let src = r#"
+fn count(s: String, i: Int, n: Int) -> Int
+    match i < String.len(s)
+        true -> count(s, i + 2, n + 1)
+        false -> n
+
+fn main() -> Int
+    count("abcde", 1, 0)
+"#;
+        assert!(position_is_bare(src, "count", "i"));
+    }
+
+    #[test]
+    fn position_guarded_by_another_string_is_bare() {
+        // Every string is shorter than the bound, so a successful read of
+        // any of them bounds the position.
+        let src = r#"
+fn walk(s: String, t: String, i: Int, n: Int) -> Int
+    match String.charAt(t, i)
+        Option.None -> n
+        Option.Some(_) -> walk(s, t, i + 1, n + String.len(s))
+
+fn main() -> Int
+    walk("ab", "abc", 0, 0)
+"#;
+        assert!(position_is_bare(src, "walk__indexed", "i"));
+    }
+
+    #[test]
+    fn position_with_a_variable_step_stays_boxed() {
+        let src = walk("i + n", "0");
+        assert!(!position_is_bare(&src, "walk__indexed", "i"));
+    }
+
+    #[test]
+    fn position_with_an_unbounded_start_stays_boxed() {
+        let src = walk(
+            "i + 1",
+            "0 - String.len(\"abc\") * 1000000000000 * 1000000000000",
+        );
+        assert!(!position_is_bare(&src, "walk__indexed", "i"));
+    }
+
+    #[test]
+    fn position_stepped_outside_the_read_stays_boxed() {
+        let src = r#"
+fn walk(s: String, i: Int, n: Int) -> Int
+    match n > 3
+        true -> walk(s, i + 1, n - 1)
+        false -> match String.charAt(s, i)
+            Option.None -> n
+            Option.Some(_) -> walk(s, i + 1, n + 1)
+
+fn main() -> Int
+    walk("abc", 0, 0)
+"#;
+        assert!(!position_is_bare(src, "walk__indexed", "i"));
+    }
+
+    #[test]
+    fn escaping_position_stays_bare_and_is_boxed_at_the_sink() {
+        let src = r#"
+record At
+    pos: Int
+
+fn find(s: String, i: Int) -> At
+    match String.charAt(s, i)
+        Option.None -> At(pos = i)
+        Option.Some(_) -> find(s, i + 1)
+
+fn main() -> Int
+    find("abc", 0).pos
+"#;
+        assert!(position_is_bare(src, "find__indexed", "i"));
+        let program = crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_rust(
+            facts_for(src).0,
+            &HashSet::new(),
+            &CarrierIntervals::new(),
+        );
+        let id = fn_id_by_name(&program, "find__indexed");
+        let mut boxed_sink = false;
+        fn find_box(e: &MirExpr, out: &mut bool) {
+            if let MirExpr::RecordCreate(r) = e {
+                *out |= r
+                    .node
+                    .fields
+                    .iter()
+                    .any(|f| matches!(f.value.node, MirExpr::Box(_)));
+            }
+            visit_children(e, &mut |c| find_box(c, out));
+        }
+        find_box(&program.fn_by_id(id).unwrap().body.node, &mut boxed_sink);
+        assert!(
+            boxed_sink,
+            "the raw position is boxed where the record stores it"
         );
     }
 }

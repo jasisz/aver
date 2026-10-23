@@ -91,13 +91,35 @@ pub fn string_index_build(text: &AverStr) -> StringIndex {
     StringIndex::new(text)
 }
 
+/// A string position as the raw `i64` the indexed reads take. A position
+/// outside `i64` reads like one past the end (or before the start), so
+/// saturating it keeps every answer of `charAt` / `slice`.
+#[inline]
+pub fn string_position(position: &AverInt) -> i64 {
+    position.to_i64().unwrap_or(if position < &AverInt::zero() {
+        i64::MIN
+    } else {
+        i64::MAX
+    })
+}
+
 /// Indexed equivalent of `String.charAt`.
 pub fn string_index_char_at(
     text: &AverStr,
     index: &StringIndex,
     position: &AverInt,
 ) -> Option<AverStr> {
-    let position = position.to_usize()?;
+    string_index_char_at_i64(text, index, string_position(position))
+}
+
+/// [`string_index_char_at`] over a raw position (a loop position the
+/// compiler proved to fit `i64`).
+pub fn string_index_char_at_i64(
+    text: &AverStr,
+    index: &StringIndex,
+    position: i64,
+) -> Option<AverStr> {
+    let position = usize::try_from(position).ok()?;
     if position >= index.char_len() {
         return None;
     }
@@ -115,7 +137,12 @@ pub fn string_index_char_at(
 /// `Option.None`. This is the allocation-free lowering for a `charAt` whose
 /// `Some` payload is consumed only by character dispatch.
 pub fn string_index_code_at(text: &AverStr, index: &StringIndex, position: &AverInt) -> i64 {
-    let Some(position) = position.to_usize() else {
+    string_index_code_at_i64(text, index, string_position(position))
+}
+
+/// [`string_index_code_at`] over a raw position.
+pub fn string_index_code_at_i64(text: &AverStr, index: &StringIndex, position: i64) -> i64 {
+    let Ok(position) = usize::try_from(position) else {
         return -1;
     };
     if position >= index.char_len() {
@@ -153,6 +180,11 @@ pub fn string_index_slice(
     from: &AverInt,
     to: &AverInt,
 ) -> AverStr {
+    string_index_slice_i64(text, index, string_position(from), string_position(to))
+}
+
+/// [`string_index_slice`] over raw positions.
+pub fn string_index_slice_i64(text: &AverStr, index: &StringIndex, from: i64, to: i64) -> AverStr {
     let len = index.char_len();
     let from = clamp_position(from, len);
     let to = clamp_position(to, len);
@@ -162,12 +194,8 @@ pub fn string_index_slice(
     AverStr::from(&text[index.boundary(from)..index.boundary(to)])
 }
 
-fn clamp_position(position: &AverInt, len: usize) -> usize {
-    match position.to_usize() {
-        Some(position) => position.min(len),
-        None if position < &AverInt::zero() => 0,
-        None => len,
-    }
+fn clamp_position(position: i64, len: usize) -> usize {
+    usize::try_from(position).map_or(0, |position| position.min(len))
 }
 
 #[cfg(test)]

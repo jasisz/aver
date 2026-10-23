@@ -1514,7 +1514,11 @@ pub fn dotToSlash__indexed(
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
         if (pos < total) {
-            match aver_rt::string_index_char_at(&name, &__str_index, &pos) {
+            match aver_rt::string_index_char_at_i64(
+                &name,
+                &__str_index,
+                aver_rt::string_position(&pos),
+            ) {
                 Some(c @ _) => {
                     if (&*c == ".") {
                         {
