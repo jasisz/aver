@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// (script, what the kernel says, whether an untyped kernel accepted it)
-const REFUSED: [(&str, &str, bool); 42] = [
+const REFUSED: [(&str, &str, bool); 43] = [
     // A law about a sum, cited at an Int: `x = One.Only` for every `x` of
     // the one-value type `One`, read at 0 and at 1, gives `0 = 1`.
     (
@@ -258,6 +258,13 @@ const REFUSED: [(&str, &str, bool); 42] = [
         "record R is missing field value",
         true,
     ),
+    // Aver evaluates local bindings eagerly. Erasing an unused recursive
+    // binding before the fallback termination check made divergence invisible.
+    (
+        "eager_local_recursion_is_opened",
+        "f recurses from a local binding",
+        true,
+    ),
 ];
 
 fn fixtures() -> PathBuf {
@@ -293,8 +300,8 @@ fn every_refused_script_is_listed() {
     assert_eq!(on_disk, listed);
 }
 
-/// Twenty-four scripts were accepted before their corresponding kernel gates.
+/// Twenty-five scripts were accepted before their corresponding kernel gates.
 #[test]
-fn twenty_four_of_them_were_accepted_before() {
-    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 24);
+fn twenty_five_of_them_were_accepted_before() {
+    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 25);
 }

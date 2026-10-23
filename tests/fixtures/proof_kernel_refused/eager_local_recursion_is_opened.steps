@@ -1,0 +1,15 @@
+(steps 16
+ (obligation eagerLocalRecursionIsOpened () (none)
+  (call f (i 0))
+  (i 0))
+ (defs
+  (def f ((n int)) int
+   ((ignored (call f (v n))))
+   (i 0)))
+ (consts)
+ (sums)
+ (recs)
+ (sigs)
+ (laws)
+ (proof
+  (unfold f 0 ((i 0)) ())))

@@ -1572,7 +1572,7 @@ pub fn openGate(
     }
 }
 
-/// Whether d calls itself only directly, never back through another definition of ds, and at one place every call, its local bindings substituted, passes a list shorter than the one there (shorter). That length falls at every call, so the recursion stops.
+/// Whether d calls itself only directly, never back through another definition of ds, and at one place every eager local binding and the body, with local bindings substituted, pass a shorter list at every call (shorter). That length falls at every call, so the recursion stops.
 #[inline(always)]
 pub fn shortens(
     d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
@@ -1602,19 +1602,40 @@ pub fn shortens(
                                 ds,
                             )
                         }) && {
-                            let __arg6 @ _ =
-                                crate::proof_kernel::aver_generated::kernel::proof::givenNames(
-                                    &d.params,
-                                );
-                            crate::proof_kernel::aver_generated::kernel::induct::shorterSomewhere(
-                                &body,
-                                d.name.clone(),
-                                &__arg6,
-                                aver_rt::AverInt::from_i64(0),
-                            )
+                            let __arg6 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TTuple(crate::proof_kernel::aver_generated::kernel::term::Term__TTuple(aver_rt::AverList::prepend(body, &crate::proof_kernel::aver_generated::kernel::induct::bindingValues(&ls))));
+                            {
+                                let __arg7 @ _ =
+                                    crate::proof_kernel::aver_generated::kernel::proof::givenNames(
+                                        &d.params,
+                                    );
+                                crate::proof_kernel::aver_generated::kernel::induct::shorterSomewhere(&__arg6, d.name.clone(), &__arg7, aver_rt::AverInt::from_i64(0))
+                            }
                         })
                     }
                 }
+            }
+        }
+    }
+}
+
+/// Every eager local binding value after earlier bindings have been substituted into it.
+#[inline(always)]
+pub fn bindingValues(
+    bs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
+) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __list_subject = bs;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let (Some(b), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                aver_rt::AverList::prepend(
+                    b.value.clone(),
+                    &crate::proof_kernel::aver_generated::kernel::induct::bindingValues(&rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
             }
         }
     }

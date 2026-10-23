@@ -354,18 +354,28 @@ record Shrink
     n: Int
 
 fn shortens(d: Def, ds: List<Def>) -> Bool
-    ? "Whether d calls itself only directly, never back through another definition of ds, and at one place every call, its local bindings substituted, passes a list shorter than the one there (shorter). That length falls at every call, so the recursion stops."
+    ? "Whether d calls itself only directly, never back through another definition of ds, and at one place every eager local binding and the body, with local bindings substituted, pass a shorter list at every call (shorter). That length falls at every call, so the recursion stops."
     match letsInlined(d.lets, [])
         Result.Err(_) -> false
         Result.Ok(ls) -> match Kernel.Subst.subst(d.body, ls)
             Result.Err(_) -> false
-            Result.Ok(body) -> Bool.and(Bool.not(anyBack(callees(d, ds), d.name, ds)), shorterSomewhere(body, d.name, Kernel.Proof.givenNames(d.params), 0))
+            Result.Ok(body) -> Bool.and(Bool.not(anyBack(callees(d, ds), d.name, ds)), shorterSomewhere(Term.TTuple(List.prepend(body, bindingValues(ls))), d.name, Kernel.Proof.givenNames(d.params), 0))
 
 verify shortens
     shortens(Def(name = "f", params = [Kernel.Term.typed("xs", Ty.TyAny)], ret = Ty.TyAny, lets = [Kernel.Term.bind("y", Term.TMatch(Term.TVar("xs"), [Arm(pattern = Pat.PNil, body = Term.TInt(0)), Arm(pattern = Pat.PCons("h", "t"), body = Term.TMatch(Term.TBi("List.drop", [Term.TVar("t"), Term.TVar("h")]), [Arm(pattern = Pat.PVar("r"), body = Term.TCall("f", [Term.TBi("List.drop", [Term.TVar("r"), Term.TInt(1)])]))]))]))], body = Term.TOp("+", Term.TVar("y"), Term.TInt(1))), []) => true
     shortens(Def(name = "f", params = [Kernel.Term.typed("xs", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TOp("+", Term.TCall("f", [Term.TBi("List.drop", [Term.TVar("xs"), Term.TInt(1)])]), Term.TInt(1))), []) => false
     shortens(Def(name = "f", params = [Kernel.Term.typed("xs", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TMatch(Term.TVar("xs"), [Arm(pattern = Pat.PCons("h", "t"), body = Term.TMatch(Term.TVar("t"), [Arm(pattern = Pat.PCons("xs", "u"), body = Term.TMatch(Term.TVar("xs"), [Arm(pattern = Pat.PCons("a", "b"), body = Term.TCall("f", [Term.TVar("xs")]))]))]))])), []) => false
     shortens(walks(), [walks(), skipping([], Term.TCall("walk", [Term.TVar("rest")]))]) => false
+    shortens(Def(name = "f", params = [Kernel.Term.typed("n", Ty.TyInt)], ret = Ty.TyInt, lets = [Kernel.Term.bind("ignored", Term.TCall("f", [Term.TVar("n")]))], body = Term.TInt(0)), []) => false
+
+fn bindingValues(bs: List<Binding>) -> List<Term>
+    ? "Every eager local binding value after earlier bindings have been substituted into it."
+    match bs
+        [] -> []
+        [b, ..rest] -> List.prepend(b.value, bindingValues(rest))
+
+verify bindingValues
+    bindingValues([Kernel.Term.bind("x", Term.TInt(1))]) => [Term.TInt(1)]
 
 fn anyBack(gs: List<String>, f: String, ds: List<Def>) -> Bool
     ? "Whether one of gs reaches back to f."
