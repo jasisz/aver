@@ -1564,13 +1564,26 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
         },
     );
     {
-        let __arg6 @ _ = <aver_rt::AverList<AverStr>>::empty();
+        let __arg8 @ _ = <aver_rt::AverList<AverStr>>::empty();
         crate::proof_kernel::aver_generated::kernel::check::uniqueDefs(
             &scope.defs,
-            __arg6,
+            __arg8,
             path.clone(),
         )
     }?;
+    {
+        let __arg9 @ _ = <aver_rt::AverList<AverStr>>::empty();
+        crate::proof_kernel::aver_generated::kernel::check::uniqueConsts(
+            &scope.consts,
+            __arg9,
+            path.clone(),
+        )
+    }?;
+    crate::proof_kernel::aver_generated::kernel::check::constsAcyclic(
+        &scope.consts,
+        &scope.consts,
+        path.clone(),
+    )?;
     crate::proof_kernel::aver_generated::kernel::check::uniqueTypeDecls(
         &scope.sums,
         &scope.recs,
@@ -1633,6 +1646,292 @@ pub fn uniqueDefs(
                             __hold0 = __tco0;
                             ds = &__hold0;
                             seen = __tco1;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
+    }
+}
+
+/// Each module-level binding has one identity and one defining equation.
+#[inline(always)]
+pub fn uniqueConsts(
+    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
+    mut seen @ _: aver_rt::AverList<AverStr>,
+    mut path @ _: AverStr,
+) -> Result<(), AverStr> {
+    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>;
+    let mut cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const> =
+        cs;
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __list_subject = cs;
+            if __list_subject.is_empty() {
+                return Ok(());
+            } else {
+                if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    if seen.contains(&c.name) {
+                        return Err(aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = {
+                                        let mut __b = aver_rt::Buffer::with_capacity(
+                                            (aver_rt::AverInt::from_i64(70))
+                                                .to_usize()
+                                                .unwrap_or(0),
+                                        );
+                                        __b.push_str(&::aver_rt::str_lit!("step "));
+                                        __b
+                                    };
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                        &(path),
+                                    )));
+                                    __b
+                                };
+                                __b.push_str(&::aver_rt::str_lit!(
+                                    ": duplicate module-level binding "
+                                ));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c.name))));
+                            __b
+                        }));
+                    } else {
+                        {
+                            let __tco0 = rest;
+                            let __tco1 = aver_rt::AverList::prepend(c.name.clone(), &seen);
+                            __hold0 = __tco0;
+                            cs = &__hold0;
+                            seen = __tco1;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
+    }
+}
+
+/// No module-level binding depends on itself, directly or through other bindings.
+#[inline(always)]
+pub fn constsAcyclic(
+    todo @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
+    all @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
+    mut path @ _: AverStr,
+) -> Result<(), AverStr> {
+    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>;
+    let mut todo @ _: &aver_rt::AverList<
+        crate::proof_kernel::aver_generated::kernel::proof::Const,
+    > = todo;
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __list_subject = todo;
+            if __list_subject.is_empty() {
+                return Ok(());
+            } else {
+                if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    if {
+                        let __arg5 @ _ =
+                            crate::proof_kernel::aver_generated::kernel::check::constDeps(
+                                c.name.clone(),
+                                all,
+                                all,
+                            );
+                        {
+                            let __arg6 @ _ = <aver_rt::AverList<AverStr>>::empty();
+                            {
+                                let __arg7 @ _ = aver_rt::AverInt::from_i64(all.len() as i64);
+                                crate::proof_kernel::aver_generated::kernel::check::constCycle(
+                                    __arg5,
+                                    c.name.clone(),
+                                    all,
+                                    __arg6,
+                                    __arg7,
+                                )
+                            }
+                        }
+                    } {
+                        return Err(aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = {
+                                        let mut __b = aver_rt::Buffer::with_capacity(
+                                            (aver_rt::AverInt::from_i64(67))
+                                                .to_usize()
+                                                .unwrap_or(0),
+                                        );
+                                        __b.push_str(&::aver_rt::str_lit!("step "));
+                                        __b
+                                    };
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                        &(path),
+                                    )));
+                                    __b
+                                };
+                                __b.push_str(&::aver_rt::str_lit!(
+                                    ": cyclic module-level binding "
+                                ));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c.name))));
+                            __b
+                        }));
+                    } else {
+                        {
+                            let __tco0 = rest;
+                            __hold0 = __tco0;
+                            todo = &__hold0;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
+    }
+}
+
+/// Whether following module-level binding references reaches target.
+pub fn constCycle(
+    mut frontier @ _: aver_rt::AverList<AverStr>,
+    mut target @ _: AverStr,
+    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
+    mut seen @ _: aver_rt::AverList<AverStr>,
+    mut fuel @ _: aver_rt::AverInt,
+) -> bool {
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __subject = (frontier, (fuel > aver_rt::AverInt::from_i64(0)));
+            {
+                let __int_match_subject = __subject;
+                let (__lit0, __lit1) = &__int_match_subject;
+                if (*__lit0).is_empty() {
+                    return false;
+                } else if (*__lit1) == false {
+                    return false;
+                } else if !(*__lit0).is_empty() && (*__lit1) == true {
+                    let Some((n, rest)) = aver_rt::list_uncons_cloned(&(*__lit0)) else {
+                        unreachable!("Aver Rust codegen: tuple element list mismatch")
+                    };
+                    if (n == target) {
+                        return true;
+                    } else {
+                        if seen.contains(&n) {
+                            {
+                                let __tco0 = rest;
+                                frontier = __tco0;
+                                continue;
+                            }
+                        } else {
+                            {
+                                let __tco0 = aver_rt::AverList::concat(
+                                    &rest,
+                                    &crate::proof_kernel::aver_generated::kernel::check::constDeps(
+                                        n.clone(),
+                                        cs,
+                                        cs,
+                                    ),
+                                );
+                                let __tco3 = aver_rt::AverList::prepend(n, &seen);
+                                let __tco4 = fuel.sub(&aver_rt::AverInt::from_i64(1));
+                                frontier = __tco0;
+                                seen = __tco3;
+                                fuel = __tco4;
+                                continue;
+                            }
+                        }
+                    }
+                } else {
+                    unreachable!("Aver Rust codegen: non-exhaustive guard-chain match")
+                }
+            }
+        }
+    }
+}
+
+/// The module-level bindings referenced by the binding named name.
+#[inline(always)]
+pub fn constDeps(
+    mut name @ _: AverStr,
+    todo @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
+    all @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
+) -> aver_rt::AverList<AverStr> {
+    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>;
+    let mut todo @ _: &aver_rt::AverList<
+        crate::proof_kernel::aver_generated::kernel::proof::Const,
+    > = todo;
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __list_subject = todo;
+            if __list_subject.is_empty() {
+                return aver_rt::AverList::empty();
+            } else {
+                if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    if (c.name == name) {
+                        return {
+                            let __arg5 @ _ =
+                                crate::proof_kernel::aver_generated::kernel::subst::freeVars(
+                                    &c.value,
+                                );
+                            crate::proof_kernel::aver_generated::kernel::check::constNames(
+                                &__arg5, all,
+                            )
+                        };
+                    } else {
+                        {
+                            let __tco1 = rest;
+                            __hold1 = __tco1;
+                            todo = &__hold1;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
+    }
+}
+
+/// Only names that denote module-level bindings.
+#[inline(always)]
+pub fn constNames(
+    names @ _: &aver_rt::AverList<AverStr>,
+    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
+) -> aver_rt::AverList<AverStr> {
+    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut names @ _: &aver_rt::AverList<AverStr> = names;
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __list_subject = names;
+            if __list_subject.is_empty() {
+                return aver_rt::AverList::empty();
+            } else {
+                if let Some((n, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    if crate::proof_kernel::aver_generated::kernel::check::isConst(n.clone(), cs) {
+                        return aver_rt::AverList::prepend(
+                            n,
+                            &crate::proof_kernel::aver_generated::kernel::check::constNames(
+                                &rest, cs,
+                            ),
+                        );
+                    } else {
+                        {
+                            let __tco0 = rest;
+                            __hold0 = __tco0;
+                            names = &__hold0;
                             continue;
                         }
                     }

@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// (script, what the kernel says, whether an untyped kernel accepted it)
-const REFUSED: [(&str, &str, bool); 39] = [
+const REFUSED: [(&str, &str, bool); 40] = [
     // A law about a sum, cited at an Int: `x = One.Only` for every `x` of
     // the one-value type `One`, read at 0 and at 1, gives `0 = 1`.
     (
@@ -237,6 +237,13 @@ const REFUSED: [(&str, &str, bool); 39] = [
         "f recurses on something that is not a part of the value it matches",
         true,
     ),
+    // Constants are equations too. A self-reference made `const a` assert
+    // a = a + 1 without passing through the function termination gate.
+    (
+        "recursive_constant_proves_zero_is_one",
+        "cyclic module-level binding a",
+        true,
+    ),
 ];
 
 fn fixtures() -> PathBuf {
@@ -272,8 +279,8 @@ fn every_refused_script_is_listed() {
     assert_eq!(on_disk, listed);
 }
 
-/// Twenty-one scripts were accepted before their corresponding kernel gates.
+/// Twenty-two scripts were accepted before their corresponding kernel gates.
 #[test]
-fn twenty_one_of_them_were_accepted_before() {
-    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 21);
+fn twenty_two_of_them_were_accepted_before() {
+    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 22);
 }
