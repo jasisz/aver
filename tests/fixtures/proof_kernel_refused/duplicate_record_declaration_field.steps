@@ -1,0 +1,15 @@
+(steps 16
+ (obligation duplicateRecordDeclarationField () (none)
+  (i 0)
+  (i 0))
+ (defs)
+ (consts)
+ (sums)
+ (recs
+  (rec R eq
+   (a int)
+   (a int)))
+ (sigs)
+ (laws)
+ (proof
+  (refl (i 0))))

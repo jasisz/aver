@@ -1564,11 +1564,11 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
         },
     );
     {
-        let __arg8 @ _ = crate::proof_kernel::aver_generated::kernel::check::defNames(&scope.defs);
+        let __arg9 @ _ = crate::proof_kernel::aver_generated::kernel::check::defNames(&scope.defs);
         {
-            let __arg9 @ _ = <aver_rt::AverList<AverStr>>::empty();
+            let __arg10 @ _ = <aver_rt::AverList<AverStr>>::empty();
             {
-                let __arg10 @ _ = aver_rt::AverStr::from({
+                let __arg11 @ _ = aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
                             let mut __b = aver_rt::Buffer::with_capacity(
@@ -1583,17 +1583,19 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
                     __b.push_str(&::aver_rt::str_lit!(": duplicate definition"));
                     __b
                 });
-                crate::proof_kernel::aver_generated::kernel::types::unique(&__arg8, __arg9, __arg10)
+                crate::proof_kernel::aver_generated::kernel::types::unique(
+                    &__arg9, __arg10, __arg11,
+                )
             }
         }
     }?;
     {
-        let __arg11 @ _ =
+        let __arg12 @ _ =
             crate::proof_kernel::aver_generated::kernel::check::constNames(&scope.consts);
         {
-            let __arg12 @ _ = <aver_rt::AverList<AverStr>>::empty();
+            let __arg13 @ _ = <aver_rt::AverList<AverStr>>::empty();
             {
-                let __arg13 @ _ = aver_rt::AverStr::from({
+                let __arg14 @ _ = aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
                             let mut __b = aver_rt::Buffer::with_capacity(
@@ -1609,7 +1611,7 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
                     __b
                 });
                 crate::proof_kernel::aver_generated::kernel::types::unique(
-                    &__arg11, __arg12, __arg13,
+                    &__arg12, __arg13, __arg14,
                 )
             }
         }
@@ -1621,12 +1623,12 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
         path.clone(),
     )?;
     {
-        let __arg14 @ _ =
+        let __arg15 @ _ =
             crate::proof_kernel::aver_generated::kernel::check::typeNames(&scope.sums, &scope.recs);
         {
-            let __arg15 @ _ = <aver_rt::AverList<AverStr>>::empty();
+            let __arg16 @ _ = <aver_rt::AverList<AverStr>>::empty();
             {
-                let __arg16 @ _ = aver_rt::AverStr::from({
+                let __arg17 @ _ = aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
                             let mut __b = aver_rt::Buffer::with_capacity(
@@ -1642,11 +1644,15 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
                     __b
                 });
                 crate::proof_kernel::aver_generated::kernel::types::unique(
-                    &__arg14, __arg15, __arg16,
+                    &__arg15, __arg16, __arg17,
                 )
             }
         }
     }?;
+    crate::proof_kernel::aver_generated::kernel::types::recordFieldsUnique(
+        &scope.recs,
+        path.clone(),
+    )?;
     crate::proof_kernel::aver_generated::kernel::check::defsTyped(
         &scope.defs,
         &scope,

@@ -8,7 +8,7 @@ module Types
         "Option.None, Map.empty) leaves a hole, which fits any type; a variable ?t marked as"
         "needing equality takes only a type whose == is equality: which types those are is data, the"
         "shapes in Kernel.Builtins and what each declared type's declaration says."
-    exposes [TyEnv, unique, typeOf, typesOf, join, fits, bindTyped, finOf, ctorFields, ctorsOf, elemOf, sumOf, hasEq, rigidVars, show, withVars, patVars, paramsOf, namedVars, typesOfVars, empty]
+    exposes [TyEnv, unique, recordFieldsUnique, typeOf, typesOf, join, fits, bindTyped, finOf, ctorFields, ctorsOf, elemOf, sumOf, hasEq, rigidVars, show, withVars, patVars, paramsOf, namedVars, typesOfVars, empty]
     depends [Kernel.Term, Kernel.Proof, Kernel.Builtins]
     effects []
 
@@ -491,7 +491,6 @@ verify recField
 fn recordLiteralType(n: String, fs: List<Field>, e: TyEnv) -> Result<Ty, String>
     ? "The type of a complete record literal: every declared field exactly once, at its declared type."
     r = recordDecl(n, e)?
-    unique(fieldNames(fs), [], "record {n} repeats field")?
     requiredFieldsPresent(n, r.fields, fieldNames(fs))?
     fieldsFit(n, fs, Ty.TyNamed(n), e)
 
@@ -540,16 +539,35 @@ verify unique
     unique(["a", "b", "a"], [], "record R repeats field") => Result.Err("record R repeats field a")
     unique(["a", "b"], [], "duplicate definition") => Result.Ok(Unit)
 
+fn recordFieldsUnique(rs: List<Rec>, path: String) -> Result<Unit, String>
+    ? "Every record declaration gives each field name one identity, using the shared uniqueness check."
+    match rs
+        [] -> Result.Ok(Unit)
+        [r, ..rest] -> match unique(Kernel.Proof.givenNames(r.fields), [], "step {path}: record {r.name} repeats field")
+            Result.Err(why) -> Result.Err(why)
+            Result.Ok(done) -> recordFieldsUnique(rest, path)
+
+verify recordFieldsUnique
+    recordFieldsUnique([Rec(name = "R", eq = true, fields = [Kernel.Term.typed("a", Ty.TyInt), Kernel.Term.typed("a", Ty.TyInt)])], "proof") => Result.Err("step proof: record R repeats field a")
+
 fn fieldsFit(n: String, fs: List<Field>, result: Ty, e: TyEnv) -> Result<Ty, String>
-    ? "A record's fields each fit their declared type."
-    match fs
-        [] -> Result.Ok(result)
-        [f, ..rest] -> match fits(typeOf(f.value, e)?, fieldType(Ty.TyNamed(n), f.name, e)?)
-            true -> fieldsFit(n, rest, result, e)
-            false -> Result.Err("field {f.name} of {n} does not fit its type")
+    ? "A record literal or update writes each field once and every value fits its declared type."
+    unique(fieldNames(fs), [], "record {n} repeats field")?
+    fieldTypesFit(n, fs, result, e)
 
 verify fieldsFit
     fieldsFit("R", [], Ty.TyNamed("R"), empty()) => Result.Ok(Ty.TyNamed("R"))
+
+fn fieldTypesFit(n: String, fs: List<Field>, result: Ty, e: TyEnv) -> Result<Ty, String>
+    ? "Each written field value fits the field's declared type."
+    match fs
+        [] -> Result.Ok(result)
+        [f, ..rest] -> match fits(typeOf(f.value, e)?, fieldType(Ty.TyNamed(n), f.name, e)?)
+            true -> fieldTypesFit(n, rest, result, e)
+            false -> Result.Err("field {f.name} of {n} does not fit its type")
+
+verify fieldTypesFit
+    fieldTypesFit("R", [], Ty.TyNamed("R"), empty()) => Result.Ok(Ty.TyNamed("R"))
 
 fn callType(f: String, args: List<Ty>, e: TyEnv) -> Result<Ty, String>
     ? "A definition's result, once the arguments fit its parameters."
