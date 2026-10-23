@@ -207,7 +207,7 @@ pub fn loadModules(
                             continue;
                         }
                     } else {
-                        return loadOneModule(dep, &rest, moduleRoot, acc, loaded);
+                        return loadOneModule(dep, &rest, moduleRoot, &acc, loaded);
                     }
                 } else {
                     panic!("Aver Rust codegen: non-exhaustive list match")
@@ -222,7 +222,7 @@ pub fn loadOneModule(
     dep @ _: AverStr,
     rest @ _: &aver_rt::AverList<AverStr>,
     moduleRoot @ _: AverStr,
-    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     mut loaded @ _: aver_rt::AverMap<AverStr, bool>,
 ) -> Result<
     (
@@ -898,10 +898,24 @@ pub fn loadProgramFromFile(
 /// Dispatch normalized CLI args: path, module root, then guest args. Carries the user main()'s return Val up so the wrapping replay scope serialises it as recording.output.
 pub fn runFromFileWithRest(
     path @ _: AverStr,
-    mut rest @ _: aver_rt::AverList<AverStr>,
+    rest @ _: &aver_rt::AverList<AverStr>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    aver_list_match!(rest, [] => { { let __arg4 @ _ = <aver_rt::AverList<AverStr>>::empty(); runCliFile(path, ::aver_rt::str_lit!("."), &__arg4) } }, [moduleRoot, guestArgs] => runCliFile(path, moduleRoot, &guestArgs))
+    {
+        let __list_subject = rest;
+        if let Some((moduleRoot, guestArgs)) = aver_rt::list_uncons_cloned(__list_subject) {
+            runCliFile(path, moduleRoot, &guestArgs)
+        } else {
+            if __list_subject.is_empty() {
+                {
+                    let __arg4 @ _ = <aver_rt::AverList<AverStr>>::empty();
+                    runCliFile(path, ::aver_rt::str_lit!("."), &__arg4)
+                }
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// Load a guest file outside scope, then execute the guest program inside the guest boundary. Propagates the user main()'s return Val unchanged.
@@ -1263,7 +1277,7 @@ pub fn loadOneModule__indexed(
     dep @ _: AverStr,
     rest @ _: &aver_rt::AverList<AverStr>,
     moduleRoot @ _: AverStr,
-    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     mut loaded @ _: aver_rt::AverMap<AverStr, bool>,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> Result<
@@ -1306,7 +1320,7 @@ pub fn loadOneModule__indexed(
     let prog @ _ = crate::aver_generated::domain::parser::parse(&tokens)?;
     let moduleFns @ _ = resolveQualifiedModuleFns__indexed(&prog, dep.clone(), __str_index);
     let loaded2 @ _ = loaded.insert_owned(dep, true);
-    let innerResult @ _ = loadModules(&prog.deps, moduleRoot.clone(), acc, loaded2)?;
+    let innerResult @ _ = loadModules(&prog.deps, moduleRoot.clone(), acc.clone(), loaded2)?;
     {
         let (accWithInner, loaded3) = innerResult;
         {
@@ -1665,5 +1679,5 @@ pub fn main() -> Result<(), AverStr> {
             },
         )
     };
-    aver_list_match!(args, [] => runDemo(), [path, rest] => match runFromFileWithRest(path, rest) { Ok(_) => { Ok(()) }, Err(e @ _) => { Err(e) } })
+    aver_list_match!(args, [] => runDemo(), [path, rest] => match runFromFileWithRest(path, &rest) { Ok(_) => { Ok(()) }, Err(e @ _) => { Err(e) } })
 }

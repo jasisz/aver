@@ -569,7 +569,7 @@ fn __mutual_tco_trampoline_6(
                         return crate::aver_generated::domain::parser::expr::finishTupleOrProduct(
                             &*tokens,
                             pos.add(&aver_rt::AverInt::from_i64(1)),
-                            items.reverse(),
+                            &items.reverse(),
                         );
                     }
                     _ => return Err(::aver_rt::str_lit!("Expected ')' or ',' in tuple")),
@@ -582,7 +582,7 @@ fn __mutual_tco_trampoline_6(
                         return crate::aver_generated::domain::parser::expr::finishTupleOrProduct(
                             &*tokens,
                             pos.add(&aver_rt::AverInt::from_i64(1)),
-                            items,
+                            &items,
                         );
                     }
                     _ => __MutualTco6::ParseTupleRest(pos, items),
@@ -1877,7 +1877,7 @@ pub fn parseParenExpr(
 pub fn finishTupleOrProduct(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    mut items @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    items @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
@@ -1890,14 +1890,15 @@ pub fn finishTupleOrProduct(
                 crate::aver_generated::domain::token::Token::TkBang => Ok((
                     crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(
                         crate::aver_generated::domain::ast::Expr__ExprIndependentProduct(
-                            items, true,
+                            items.clone(),
+                            true,
                         ),
                     ),
                     pos.add(&aver_rt::AverInt::from_i64(2)),
                 )),
                 _ => Ok((
                     crate::aver_generated::domain::ast::Expr::ExprTuple(
-                        crate::aver_generated::domain::ast::Expr__ExprTuple(items),
+                        crate::aver_generated::domain::ast::Expr__ExprTuple(items.clone()),
                     ),
                     pos,
                 )),
@@ -1911,14 +1912,15 @@ pub fn finishTupleOrProduct(
             match __subject {
                 crate::aver_generated::domain::token::Token::TkLBracket => Ok((
                     crate::aver_generated::domain::ast::Expr::ExprTuple(
-                        crate::aver_generated::domain::ast::Expr__ExprTuple(items),
+                        crate::aver_generated::domain::ast::Expr__ExprTuple(items.clone()),
                     ),
                     pos,
                 )),
                 _ => Ok((
                     crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(
                         crate::aver_generated::domain::ast::Expr__ExprIndependentProduct(
-                            items, false,
+                            items.clone(),
+                            false,
                         ),
                     ),
                     pos.add(&aver_rt::AverInt::from_i64(1)),
@@ -1927,7 +1929,7 @@ pub fn finishTupleOrProduct(
         }
         _ => Ok((
             crate::aver_generated::domain::ast::Expr::ExprTuple(
-                crate::aver_generated::domain::ast::Expr__ExprTuple(items),
+                crate::aver_generated::domain::ast::Expr__ExprTuple(items.clone()),
             ),
             pos,
         )),

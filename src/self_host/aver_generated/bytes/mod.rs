@@ -170,23 +170,41 @@ pub fn firstOutOfRange(xs @ _: &aver_rt::AverIntList) -> aver_rt::AverInt {
 
 /// Return the index of the first non-octet value; the length when every value is an octet.
 #[inline(always)]
-pub fn firstOutOfRangeIndex(mut xs @ _: aver_rt::AverIntList) -> aver_rt::AverInt {
+pub fn firstOutOfRangeIndex(xs @ _: &aver_rt::AverIntList) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    aver_list_match!(xs, [] => aver_rt::AverInt::from_i64(0), [head, tail] => if ((head >= aver_rt::AverInt::from_i64(0)) && (head <= aver_rt::AverInt::from_i64(255))) { aver_rt::AverInt::from_i64(1).add(&crate::aver_generated::bytes::firstOutOfRangeIndex(tail)) } else { aver_rt::AverInt::from_i64(0) })
+    {
+        let __list_subject = xs;
+        if __list_subject.is_empty() {
+            aver_rt::AverInt::from_i64(0)
+        } else {
+            if let Some((head, tail)) = aver_rt::list_uncons_cloned(__list_subject) {
+                if ((head >= aver_rt::AverInt::from_i64(0))
+                    && (head <= aver_rt::AverInt::from_i64(255)))
+                {
+                    aver_rt::AverInt::from_i64(1)
+                        .add(&crate::aver_generated::bytes::firstOutOfRangeIndex(&tail))
+                } else {
+                    aver_rt::AverInt::from_i64(0)
+                }
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// Validate raw integers and construct a byte sequence.
 #[inline(always)]
-pub fn fromList(mut xs @ _: aver_rt::AverIntList) -> Result<Bytes, AverStr> {
+pub fn fromList(xs @ _: &aver_rt::AverIntList) -> Result<Bytes, AverStr> {
     crate::cancel_checkpoint();
     if let Some(__packed) = xs.as_packed() {
         return Ok(Bytes {
             values: __packed.clone(),
         });
     }
-    if crate::aver_generated::bytes::allInRange(&xs) {
+    if crate::aver_generated::bytes::allInRange(xs) {
         Ok(crate::aver_generated::bytes::Bytes {
-            values: aver_rt::into_packed_u8(xs)
+            values: aver_rt::into_packed_u8(xs.clone())
                 .expect("proof-packed U8 construction escaped its refinement gate"),
         })
     } else {
@@ -202,7 +220,7 @@ pub fn fromList(mut xs @ _: aver_rt::AverIntList) -> Result<Bytes, AverStr> {
                             __b
                         };
                         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::aver_generated::bytes::firstOutOfRange(&xs)),
+                            &(crate::aver_generated::bytes::firstOutOfRange(xs)),
                         )));
                         __b
                     };
@@ -534,7 +552,7 @@ pub fn toHex(bytes @ _: &Bytes) -> AverStr {
                 (aver_rt::AverInt::from_i64(8192)).to_usize().unwrap_or(0),
             );
             crate::aver_generated::bytes::hexParts__buffered(
-                __arg1,
+                &__arg1,
                 __arg2,
                 ::aver_rt::str_lit!(""),
             )
@@ -545,19 +563,43 @@ pub fn toHex(bytes @ _: &Bytes) -> AverStr {
 /// Synthesized buffered variant of `hexParts` for deforestation lowering. Call sites that match `String.join(hexParts(...), sep)` are rewritten to alloc a buffer + call this variant + finalize, skipping the intermediate List.
 #[inline(always)]
 pub fn hexParts__buffered(
-    mut values @ _: aver_rt::AverIntList,
+    values @ _: &aver_rt::AverIntList,
     mut __buf @ _: aver_rt::Buffer,
     mut __sep @ _: AverStr,
 ) -> aver_rt::Buffer {
+    let mut __hold0: aver_rt::AverIntList;
+    let mut values @ _: &aver_rt::AverIntList = values;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(values, [] => { return __buf; }, [head, tail] => { {
-            let __tco0 = tail;
-            let __tco1 = { let mut __b = { let mut __b = __buf; if !__b.is_empty() { __b.push_str(&__sep); } __b }; __b.push_str(&crate::aver_generated::bytes::byteToHex(head)); __b };
-            values = __tco0;
-            __buf = __tco1;
-            continue;
-        } })
+        {
+            let __list_subject = values;
+            if __list_subject.is_empty() {
+                return __buf;
+            } else {
+                if let Some((head, tail)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    {
+                        let __tco0 = tail;
+                        let __tco1 = {
+                            let mut __b = {
+                                let mut __b = __buf;
+                                if !__b.is_empty() {
+                                    __b.push_str(&__sep);
+                                }
+                                __b
+                            };
+                            __b.push_str(&crate::aver_generated::bytes::byteToHex(head));
+                            __b
+                        };
+                        __hold0 = __tco0;
+                        values = &__hold0;
+                        __buf = __tco1;
+                        continue;
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 

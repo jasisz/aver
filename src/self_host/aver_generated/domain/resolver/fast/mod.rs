@@ -4,19 +4,39 @@ use crate::*;
 /// Tag simple single-expression functions so eval can skip the stmt walker.
 #[inline(always)]
 pub fn annotateFastFns(
-    mut fns @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>;
+    let mut fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> = fns;
     loop {
         crate::cancel_checkpoint();
-        ::aver_rt::aver_list_match_reuse!(fns, [] => { return acc.reverse(); }, [f, rest, __list_slot] => { {
-            let __tco0 = rest;
-            let __tco2 = __list_slot.prepend(crate::aver_generated::domain::resolver::fast::annotateFastFn(f, fnMap), acc);
-            fns = __tco0;
-            acc = __tco2;
-            continue;
-        } })
+        {
+            let __list_subject = fns;
+            if __list_subject.is_empty() {
+                return acc.reverse();
+            } else {
+                if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    {
+                        let __tco0 = rest;
+                        let __tco2 = aver_rt::AverList::prepend_owned(
+                            crate::aver_generated::domain::resolver::fast::annotateFastFn(
+                                f.clone(),
+                                fnMap,
+                            ),
+                            acc,
+                        );
+                        __hold0 = __tco0;
+                        fns = &__hold0;
+                        acc = __tco2;
+                        continue;
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 

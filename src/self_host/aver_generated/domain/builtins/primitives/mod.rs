@@ -440,7 +440,7 @@ pub fn builtinStringJoinInner(
         let __arg5 @ _ =
             aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0));
         crate::aver_generated::domain::builtins::primitives::extractStrings__collected(
-            items, __arg5,
+            &items, __arg5,
         )
     }?;
     Ok(crate::aver_generated::domain::value::Val::ValStr(
@@ -1252,7 +1252,7 @@ pub fn builtinStringSplitInner(
             let __arg5 @ _ =
                 aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0));
             crate::aver_generated::domain::builtins::primitives::strPartsToVals__collected(
-                parts, __arg5,
+                &parts, __arg5,
             )
         }),
     ))
@@ -1417,43 +1417,81 @@ pub fn stringToCharList__indexed(
 /// Synthesized collecting variant of `extractStrings`. Appends to a builder where `extractStrings` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn extractStrings__collected(
-    mut items @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     mut acc @ _: aver_rt::AverList<AverStr>,
 ) -> Result<aver_rt::AverList<AverStr>, AverStr> {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val>;
+    let mut items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val> = items;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(items, [] => { return Ok(aver_rt::list_builder_finalize(acc)); }, [v, rest] => { { let __t = v; match __t.view() {
-        crate::aver_generated::domain::value::Val__view::ValStr(__s_fields) => {
-            let s = __s_fields.0.clone();
-            {
-            let __tco0 = rest;
-            let __tco1 = aver_rt::list_builder_push(acc, s);
-            items = __tco0;
-            acc = __tco1;
-            continue;
+        {
+            let __list_subject = items;
+            if __list_subject.is_empty() {
+                return Ok(aver_rt::list_builder_finalize(acc));
+            } else {
+                if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    {
+                        let __t = v;
+                        match __t.view() {
+                            crate::aver_generated::domain::value::Val__view::ValStr(__s_fields) => {
+                                let s = __s_fields.0.clone();
+                                {
+                                    let __tco0 = rest;
+                                    let __tco1 = aver_rt::list_builder_push(acc, s);
+                                    __hold0 = __tco0;
+                                    items = &__hold0;
+                                    acc = __tco1;
+                                    continue;
+                                }
+                            }
+                            _ => {
+                                return Err(::aver_rt::str_lit!(
+                                    "String.join requires list of strings"
+                                ));
+                            }
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
         }
-        },
-        _ => {
-            return Err(::aver_rt::str_lit!("String.join requires list of strings"));
-        }
-    } } })
     }
 }
 
 /// Synthesized collecting variant of `strPartsToVals`. Appends to a builder where `strPartsToVals` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn strPartsToVals__collected(
-    mut parts @ _: aver_rt::AverList<AverStr>,
+    parts @ _: &aver_rt::AverList<AverStr>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
+    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut parts @ _: &aver_rt::AverList<AverStr> = parts;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(parts, [] => { return aver_rt::list_builder_finalize(acc); }, [s, rest] => { {
-            let __tco0 = rest;
-            let __tco1 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::value::Val::ValStr(crate::aver_generated::domain::value::Val__ValStr(s)));
-            parts = __tco0;
-            acc = __tco1;
-            continue;
-        } })
+        {
+            let __list_subject = parts;
+            if __list_subject.is_empty() {
+                return aver_rt::list_builder_finalize(acc);
+            } else {
+                if let Some((s, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    {
+                        let __tco0 = rest;
+                        let __tco1 = aver_rt::list_builder_push(
+                            acc,
+                            crate::aver_generated::domain::value::Val::ValStr(
+                                crate::aver_generated::domain::value::Val__ValStr(s),
+                            ),
+                        );
+                        __hold0 = __tco0;
+                        parts = &__hold0;
+                        acc = __tco1;
+                        continue;
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }

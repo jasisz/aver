@@ -37,7 +37,7 @@ pub fn isNamedSentinel(
     {
         let __list_subject = args;
         if let Some((_, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-            crate::aver_generated::domain::eval::records::isNamedSentinelInner(rest)
+            crate::aver_generated::domain::eval::records::isNamedSentinelInner(&rest)
         } else {
             if __list_subject.is_empty() {
                 false
@@ -51,18 +51,32 @@ pub fn isNamedSentinel(
 /// Check first element of rest is a _named record.
 #[inline(always)]
 pub fn isNamedSentinelInner(
-    mut rest @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    rest @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> bool {
     crate::cancel_checkpoint();
-    aver_list_match!(rest, [] => false, [v, ignored] => { { let __t = v; match __t.view() {
-        crate::aver_generated::domain::value::Val__view::ValRecord(__typeName_fields) => {
-            let typeName = __typeName_fields.0.clone();
-            (&*typeName == "_named")
-        },
-        _ => {
-            false
+    {
+        let __list_subject = rest;
+        if let (Some(v), Some(ignored)) = (__list_subject.first(), __list_subject.tail()) {
+            {
+                let __t = v;
+                match __t.view() {
+                    crate::aver_generated::domain::value::Val__view::ValRecord(
+                        __typeName_fields,
+                    ) => {
+                        let typeName = __typeName_fields.0.clone();
+                        (&*typeName == "_named")
+                    }
+                    _ => false,
+                }
+            }
+        } else {
+            if __list_subject.is_empty() {
+                false
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
         }
-    } } })
+    }
 }
 
 /// Perform record update: merge named fields into base record.
@@ -74,7 +88,7 @@ pub fn doRecordUpdate(
     {
         let __list_subject = args;
         if let (Some(baseVal), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-            crate::aver_generated::domain::eval::records::doRecordUpdateInner(baseVal, rest)
+            crate::aver_generated::domain::eval::records::doRecordUpdateInner(baseVal, &rest)
         } else {
             if __list_subject.is_empty() {
                 Err(::aver_rt::str_lit!(
@@ -91,18 +105,35 @@ pub fn doRecordUpdate(
 #[inline(always)]
 pub fn doRecordUpdateInner(
     baseVal @ _: &crate::aver_generated::domain::value::Val,
-    mut rest @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    rest @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    aver_list_match!(rest, [] => Err(::aver_rt::str_lit!("record update requires named fields")), [namedVal, ignored] => { { let __t = namedVal; match __t.view() {
-        crate::aver_generated::domain::value::Val__view::ValRecord(__namedFields_fields) => {
-            let namedFields = &__namedFields_fields.1;
-            crate::aver_generated::domain::eval::records::applyRecordUpdate(baseVal, namedFields)
-        },
-        _ => {
-            Err(::aver_rt::str_lit!("record update requires named fields"))
+    {
+        let __list_subject = rest;
+        if let (Some(namedVal), Some(ignored)) = (__list_subject.first(), __list_subject.tail()) {
+            {
+                let __t = namedVal;
+                match __t.view() {
+                    crate::aver_generated::domain::value::Val__view::ValRecord(
+                        __namedFields_fields,
+                    ) => {
+                        let namedFields = &__namedFields_fields.1;
+                        crate::aver_generated::domain::eval::records::applyRecordUpdate(
+                            baseVal,
+                            namedFields,
+                        )
+                    }
+                    _ => Err(::aver_rt::str_lit!("record update requires named fields")),
+                }
+            }
+        } else {
+            if __list_subject.is_empty() {
+                Err(::aver_rt::str_lit!("record update requires named fields"))
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
         }
-    } } })
+    }
 }
 
 /// Override fields in a record value.

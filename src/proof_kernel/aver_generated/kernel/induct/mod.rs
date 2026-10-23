@@ -659,7 +659,7 @@ pub fn helperBody(
                         )
                     }
                 }?;
-                crate::proof_kernel::aver_generated::kernel::induct::readAt(__arg10, h, xs, bound)
+                crate::proof_kernel::aver_generated::kernel::induct::readAt(&__arg10, h, xs, bound)
             }
         }
     }
@@ -716,13 +716,29 @@ pub fn letsInlined(
 /// Each call of f in h's body at the arguments h is called with.
 #[inline(always)]
 pub fn readAt(
-    mut cs @ _: aver_rt::AverList<Call>,
+    cs @ _: &aver_rt::AverList<Call>,
     h @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
     xs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     bound @ _: &aver_rt::AverList<AverStr>,
 ) -> Result<aver_rt::AverList<Call>, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    ::aver_rt::aver_list_match_reuse!(cs, [] => Ok(aver_rt::AverList::empty()), [c, rest, __list_slot] => Ok(__list_slot.prepend(crate::proof_kernel::aver_generated::kernel::induct::readOne(&c, h, xs, bound)?, crate::proof_kernel::aver_generated::kernel::induct::readAt(rest, h, xs, bound)?)))
+    {
+        let __list_subject = cs;
+        if __list_subject.is_empty() {
+            Ok(aver_rt::AverList::empty())
+        } else {
+            if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                Ok(aver_rt::AverList::prepend_owned(
+                    crate::proof_kernel::aver_generated::kernel::induct::readOne(c, h, xs, bound)?,
+                    crate::proof_kernel::aver_generated::kernel::induct::readAt(
+                        &rest, h, xs, bound,
+                    )?,
+                ))
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// One call of f in h's body at the arguments h is called with: h's parameters that no arm of h rebinds around it replaced, refusing a capture. It may read nothing else of h's scope. The names bound around the call of h come before those h binds around it.
@@ -1367,7 +1383,7 @@ pub fn armDescends(
             {
                 let __arg7 @ _ = aver_rt::AverInt::from_i64(d.params.len() as i64);
                 crate::proof_kernel::aver_generated::kernel::induct::callsDescend(
-                    __arg6, p, j, __arg7,
+                    &__arg6, p, j, __arg7,
                 )
             }
         })
@@ -1377,13 +1393,35 @@ pub fn armDescends(
 /// Each call has every argument and passes p - 1 or p / k at place j, p not rebound around it.
 #[inline(always)]
 pub fn callsDescend(
-    mut cs @ _: aver_rt::AverList<Call>,
+    cs @ _: &aver_rt::AverList<Call>,
     p @ _: AverStr,
     j @ _: aver_rt::AverInt,
     n @ _: aver_rt::AverInt,
 ) -> bool {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(cs, [] => true, [c, rest] => { (((aver_rt::AverInt::from_i64(c.args.len() as i64) == n) && ({ let __arg6 @ _ = crate::proof_kernel::aver_generated::kernel::induct::nthTerm(&c.args, j.clone()); crate::proof_kernel::aver_generated::kernel::induct::descends(&__arg6, &p) } && (!c.inner.contains(&p)))) && crate::proof_kernel::aver_generated::kernel::induct::callsDescend(rest, p, j, n)) })
+    {
+        let __list_subject = cs;
+        if __list_subject.is_empty() {
+            true
+        } else {
+            if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                (((aver_rt::AverInt::from_i64(c.args.len() as i64) == n)
+                    && ({
+                        let __arg6 @ _ =
+                            crate::proof_kernel::aver_generated::kernel::induct::nthTerm(
+                                &c.args,
+                                j.clone(),
+                            );
+                        crate::proof_kernel::aver_generated::kernel::induct::descends(&__arg6, &p)
+                    } && (!c.inner.contains(&p))))
+                    && crate::proof_kernel::aver_generated::kernel::induct::callsDescend(
+                        &rest, p, j, n,
+                    ))
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// Whether t is p - 1, or p / k for a literal k of at least 2: for p > 0 each is at least 0 and below p.
@@ -2164,7 +2202,7 @@ pub fn armsShrink(
                         {
                             let __arg8 @ _ = aver_rt::AverInt::from_i64(d.params.len() as i64);
                             crate::proof_kernel::aver_generated::kernel::induct::callsShrink(
-                                __arg6,
+                                &__arg6,
                                 &__arg7,
                                 j.clone(),
                                 __arg8,
@@ -2208,13 +2246,36 @@ pub fn structuralParts(
 /// Each call passes one of the parts at place j.
 #[inline(always)]
 pub fn callsShrink(
-    mut cs @ _: aver_rt::AverList<Call>,
+    cs @ _: &aver_rt::AverList<Call>,
     parts @ _: &aver_rt::AverList<AverStr>,
     j @ _: aver_rt::AverInt,
     n @ _: aver_rt::AverInt,
 ) -> bool {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(cs, [] => true, [c, rest] => { (((aver_rt::AverInt::from_i64(c.args.len() as i64) == n) && { let __arg6 @ _ = crate::proof_kernel::aver_generated::kernel::induct::nthTerm(&c.args, j.clone()); crate::proof_kernel::aver_generated::kernel::induct::smaller(__arg6, parts.clone(), c.inner) }) && crate::proof_kernel::aver_generated::kernel::induct::callsShrink(rest, parts, j, n)) })
+    {
+        let __list_subject = cs;
+        if __list_subject.is_empty() {
+            true
+        } else {
+            if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                (((aver_rt::AverInt::from_i64(c.args.len() as i64) == n) && {
+                    let __arg6 @ _ = crate::proof_kernel::aver_generated::kernel::induct::nthTerm(
+                        &c.args,
+                        j.clone(),
+                    );
+                    crate::proof_kernel::aver_generated::kernel::induct::smaller(
+                        __arg6,
+                        parts.clone(),
+                        c.inner.clone(),
+                    )
+                }) && crate::proof_kernel::aver_generated::kernel::induct::callsShrink(
+                    &rest, parts, j, n,
+                ))
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// A name the arm's pattern binds, not rebound inside; or List.drop of something smaller, which is never longer than the list it drops from, whatever the count.
@@ -2530,7 +2591,7 @@ pub fn callees(
         &crate::proof_kernel::aver_generated::kernel::induct::namesCalled(&d.body),
         &crate::proof_kernel::aver_generated::kernel::induct::letNames(&d.lets),
     );
-    crate::proof_kernel::aver_generated::kernel::induct::onlyDefs(__arg2, ds, d.name.clone())
+    crate::proof_kernel::aver_generated::kernel::induct::onlyDefs(&__arg2, ds, d.name.clone())
 }
 
 /// Functions the local bindings call.
@@ -2559,17 +2620,45 @@ pub fn letNames(
 /// The names that are other definitions of the script.
 #[inline(always)]
 pub fn onlyDefs(
-    mut ns @ _: aver_rt::AverList<AverStr>,
+    ns @ _: &aver_rt::AverList<AverStr>,
     ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
     mut own @ _: AverStr,
 ) -> aver_rt::AverList<AverStr> {
+    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut ns @ _: &aver_rt::AverList<AverStr> = ns;
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        ::aver_rt::aver_list_match_reuse!(ns, [] => { return aver_rt::AverList::empty(); }, [n, rest, __list_slot] => { if ((n != own) && crate::proof_kernel::aver_generated::kernel::induct::isDef(n.clone(), ds)) { return __list_slot.prepend(n, crate::proof_kernel::aver_generated::kernel::induct::onlyDefs(rest, ds, own)); } else { {
-            let __tco0 = rest;
-            ns = __tco0;
-            continue;
-        } } })
+        {
+            let __list_subject = ns;
+            if __list_subject.is_empty() {
+                return aver_rt::AverList::empty();
+            } else {
+                if let Some((n, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    if ((n != own)
+                        && crate::proof_kernel::aver_generated::kernel::induct::isDef(
+                            n.clone(),
+                            ds,
+                        ))
+                    {
+                        return aver_rt::AverList::prepend_owned(
+                            n,
+                            crate::proof_kernel::aver_generated::kernel::induct::onlyDefs(
+                                &rest, ds, own,
+                            ),
+                        );
+                    } else {
+                        {
+                            let __tco0 = rest;
+                            __hold0 = __tco0;
+                            ns = &__hold0;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 

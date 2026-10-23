@@ -4,18 +4,37 @@ use crate::*;
 /// Rewrite resolved AST into lighter internal expression shapes without changing semantics.
 #[inline(always)]
 pub fn rewriteInternalFns(
-    mut fns @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>;
+    let mut fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> = fns;
     loop {
         crate::cancel_checkpoint();
-        ::aver_rt::aver_list_match_reuse!(fns, [] => { return acc.reverse(); }, [f, rest, __list_slot] => { {
-            let __tco0 = rest;
-            let __tco1 = __list_slot.prepend(crate::aver_generated::domain::resolver::rewrite::rewriteInternalFn(f), acc);
-            fns = __tco0;
-            acc = __tco1;
-            continue;
-        } })
+        {
+            let __list_subject = fns;
+            if __list_subject.is_empty() {
+                return acc.reverse();
+            } else {
+                if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    {
+                        let __tco0 = rest;
+                        let __tco1 = aver_rt::AverList::prepend_owned(
+                            crate::aver_generated::domain::resolver::rewrite::rewriteInternalFn(
+                                f.clone(),
+                            ),
+                            acc,
+                        );
+                        __hold0 = __tco0;
+                        fns = &__hold0;
+                        acc = __tco1;
+                        continue;
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
@@ -416,7 +435,7 @@ pub fn rewriteInternalExprAfterArith(
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalArms__collected(arms, __arg22)
                         };
                         crate::aver_generated::domain::resolver::rewrite::rewriteInternalMatch(
-                            __arg23, __arg24,
+                            __arg23, &__arg24,
                         )
                     }
                 }
@@ -551,7 +570,7 @@ pub fn rewriteInternalExprAfterArith(
                         crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs__collected(args, __arg32)
                     };
                     crate::aver_generated::domain::resolver::rewrite::rewriteInternalBuiltin(
-                        name, __arg33,
+                        name, &__arg33,
                     )
                 }
             }
@@ -835,7 +854,7 @@ pub fn binopCanFlip(op @ _: &crate::aver_generated::domain::ast::BinOp) -> bool 
 #[inline(always)]
 pub fn rewriteInternalBuiltin(
     name @ _: AverStr,
-    mut args @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     {
@@ -849,7 +868,7 @@ pub fn rewriteInternalBuiltin(
                 )
             } else {
                 crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                    crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(name, args),
+                    crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(name, args.clone()),
                 )
             }
         }
@@ -858,12 +877,12 @@ pub fn rewriteInternalBuiltin(
 
 /// Rewrite Option.withDefault(Vector.get(...), int) into one internal node.
 pub fn rewriteInternalOptionWithDefault(
-    mut args @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     {
-        let __list_subject = args.clone();
-        if let Some((optionExpr, rest)) = aver_rt::list_uncons_cloned(&__list_subject) {
+        let __list_subject = args;
+        if let Some((optionExpr, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
             {
                 let __list_subject = rest;
                 if let (Some(defaultExpr), Some(ignored)) =
@@ -874,7 +893,7 @@ pub fn rewriteInternalOptionWithDefault(
                     crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                         crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
                             ::aver_rt::str_lit!("Option.withDefault"),
-                            args,
+                            args.clone(),
                         ),
                     )
                 }
@@ -883,7 +902,7 @@ pub fn rewriteInternalOptionWithDefault(
             crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                 crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
                     ::aver_rt::str_lit!("Option.withDefault"),
-                    args,
+                    args.clone(),
                 ),
             )
         }
@@ -1042,12 +1061,12 @@ pub fn rewriteInternalVectorGetOrIntArgs(
 
 /// Rewrite Result.withDefault(Int.mod(...), int) into one internal node.
 pub fn rewriteInternalResultWithDefault(
-    mut args @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     {
-        let __list_subject = args.clone();
-        if let Some((resultExpr, rest)) = aver_rt::list_uncons_cloned(&__list_subject) {
+        let __list_subject = args;
+        if let Some((resultExpr, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
             {
                 let __list_subject = rest;
                 if let (Some(defaultExpr), Some(ignored)) =
@@ -1058,7 +1077,7 @@ pub fn rewriteInternalResultWithDefault(
                     crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                         crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
                             ::aver_rt::str_lit!("Result.withDefault"),
-                            args,
+                            args.clone(),
                         ),
                     )
                 }
@@ -1067,7 +1086,7 @@ pub fn rewriteInternalResultWithDefault(
             crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                 crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
                     ::aver_rt::str_lit!("Result.withDefault"),
-                    args,
+                    args.clone(),
                 ),
             )
         }
@@ -1412,10 +1431,10 @@ pub fn flipCmp(
 #[inline(always)]
 pub fn rewriteInternalMatch(
     mut scrutinee @ _: crate::aver_generated::domain::ast::Expr,
-    mut arms @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
-    match crate::aver_generated::domain::resolver::rewrite::rewriteBoolMatchArms(&arms) {
+    match crate::aver_generated::domain::resolver::rewrite::rewriteBoolMatchArms(arms) {
         Some(pair @ _) => {
             let (thenExpr, elseExpr) = pair;
             crate::aver_generated::domain::ast::Expr::ExprBoolBranch(
@@ -1425,7 +1444,7 @@ pub fn rewriteInternalMatch(
             )
         }
         None => crate::aver_generated::domain::ast::Expr::ExprMatch(
-            crate::aver_generated::domain::ast::Expr__ExprMatch(scrutinee, arms),
+            crate::aver_generated::domain::ast::Expr__ExprMatch(scrutinee, arms.clone()),
         ),
     }
 }

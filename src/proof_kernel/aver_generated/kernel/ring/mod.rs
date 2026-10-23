@@ -602,7 +602,7 @@ pub fn mergeSorted(
 /// Whether Int comparisons with the truth values given, read as p >= 0, then rows rounded from them (cuts), weighted by nonnegative numbers, sum to a negative constant.
 #[inline(always)]
 pub fn linearContradiction(
-    mut facts @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
+    facts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
     cuts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Cut>,
     weights @ _: &aver_rt::AverIntList,
 ) -> bool {
@@ -642,25 +642,60 @@ pub fn linearContradiction(
 /// Each fact read as p >= 0, over one list of atoms; None when one is not an Int comparison with a Bool value.
 #[inline(always)]
 pub fn readRows(
-    mut facts @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
+    facts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
     mut rows @ _: aver_rt::AverList<aver_rt::AverList<Mono>>,
     atoms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
 ) -> Option<aver_rt::AverList<aver_rt::AverList<Mono>>> {
+    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>;
+    let mut facts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn> =
+        facts;
     let mut __hold2: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>;
     let mut atoms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> =
         atoms;
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        aver_list_match!(facts, [] => { return Some(rows); }, [f, fs] => { if crate::proof_kernel::aver_generated::kernel::ring::isTruth(&f.rhs) { { let __subject = { let __arg6 @ _ = (f.rhs == crate::proof_kernel::aver_generated::kernel::term::Term::TBool(crate::proof_kernel::aver_generated::kernel::term::Term__TBool(true))); crate::proof_kernel::aver_generated::kernel::ring::asNonneg(&f.lhs, __arg6, atoms) }; match __subject { None => { return None; }, Some(read @ _) => { {
-            let __tco0 = fs;
-            let __tco1 = aver_rt::AverList::concat(&rows, &aver_rt::AverList::from_vec(vec![read.poly]));
-            let __tco2 = read.atoms;
-            facts = __tco0;
-            rows = __tco1;
-            __hold2 = __tco2;
-            atoms = &__hold2;
-            continue;
-        } } } } } else { return None; } })
+        {
+            let __list_subject = facts;
+            if __list_subject.is_empty() {
+                return Some(rows);
+            } else {
+                if let (Some(f), Some(fs)) = (__list_subject.first(), __list_subject.tail()) {
+                    if crate::proof_kernel::aver_generated::kernel::ring::isTruth(&f.rhs) {
+                        {
+                            let __subject = {
+                                let __arg6 @ _ = (f.rhs == crate::proof_kernel::aver_generated::kernel::term::Term::TBool(crate::proof_kernel::aver_generated::kernel::term::Term__TBool(true)));
+                                crate::proof_kernel::aver_generated::kernel::ring::asNonneg(
+                                    &f.lhs, __arg6, atoms,
+                                )
+                            };
+                            match __subject {
+                                None => {
+                                    return None;
+                                }
+                                Some(read @ _) => {
+                                    let __tco0 = fs;
+                                    let __tco1 = aver_rt::AverList::concat(
+                                        &rows,
+                                        &aver_rt::AverList::from_vec(vec![read.poly]),
+                                    );
+                                    let __tco2 = read.atoms;
+                                    __hold0 = __tco0;
+                                    facts = &__hold0;
+                                    rows = __tco1;
+                                    __hold2 = __tco2;
+                                    atoms = &__hold2;
+                                    continue;
+                                }
+                            }
+                        }
+                    } else {
+                        return None;
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 

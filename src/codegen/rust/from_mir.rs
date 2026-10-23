@@ -823,15 +823,19 @@ pub(super) fn owned_collection_param_names(
 /// its last use takes the list apart in place (`aver_list_match!`) instead
 /// of copying its head and rest. A caller that keeps the list would have to
 /// count a copy for the call and the match would copy both parts anyway, so
-/// such a param stays borrowed. Dropping a param changes what its own
-/// callers pass on, so the set of such params shrinks until it holds.
+/// such a param stays borrowed. So does one some caller passes a list read
+/// out of something else (see [`built_list_params`]): its nodes are shared,
+/// and taking them apart would copy every head. Dropping a param changes what
+/// its own callers pass on, so the set of such params shrinks until it holds.
 pub(super) fn compute_owned_record_params(
     ctx: &CodegenContext,
 ) -> HashMap<crate::ir::FnId, Vec<bool>> {
     let Some(program) = ctx.mir_program.as_ref() else {
         return HashMap::new();
     };
+    let built = built_list_params(program);
     let mut lists = handed_list_candidates(ctx, program);
+    lists.retain(|param| built.contains(param));
     loop {
         let owned = owned_params_with(ctx, program, &lists);
         let before = lists.len();
@@ -876,6 +880,137 @@ fn handed_list_candidates(
         }
     }
     out
+}
+
+/// The `List` params every call fills with a list built by `List.prepend`
+/// for it (or a list literal), whose nodes the callee then holds alone. A
+/// value is built when it is such a list, the result of a function whose
+/// every result is built, such a param, a `let` of a built value, or the rest
+/// of a built list taken apart. A greatest fixpoint: a param or a result
+/// drops out when one call or one result is not built.
+fn built_list_params(program: &crate::ir::mir::MirProgram) -> HashSet<(crate::ir::FnId, usize)> {
+    struct Facts<'p> {
+        params: HashSet<(crate::ir::FnId, usize)>,
+        results: HashSet<crate::ir::FnId>,
+        builtins: &'p [String],
+    }
+    /// Per function: the param index, `let` value or taken-apart list of a slot.
+    enum Origin<'e> {
+        Param(usize),
+        Value(&'e MirExpr),
+    }
+    fn origins<'e>(expr: &'e MirExpr, out: &mut HashMap<LocalId, Origin<'e>>) {
+        match expr {
+            MirExpr::Let(binding) => {
+                out.insert(
+                    binding.node.binding,
+                    Origin::Value(&binding.node.value.node),
+                );
+            }
+            MirExpr::Match(m) => {
+                for arm in &m.node.arms {
+                    if let MirPattern::Cons { tail, .. } = arm.pattern {
+                        out.insert(tail, Origin::Value(&m.node.subject.node));
+                    }
+                }
+            }
+            _ => {}
+        }
+        crate::ir::mir::expr::walk_children(expr, &mut |child| origins(child, out));
+    }
+    fn built(
+        expr: &MirExpr,
+        id: crate::ir::FnId,
+        from: &HashMap<LocalId, Origin<'_>>,
+        f: &Facts<'_>,
+        depth: u32,
+    ) -> bool {
+        let built = |e: &MirExpr| depth < 32 && built(e, id, from, f, depth + 1);
+        match expr {
+            MirExpr::List(_) => true,
+            MirExpr::Call(call) => match &call.node.callee {
+                MirCallee::Fn(callee) => f.results.contains(callee),
+                MirCallee::Builtin(b) => {
+                    f.builtins.get(b.0 as usize).map(String::as_str) == Some("List.prepend")
+                        && call.node.args.get(1).is_some_and(|tail| built(&tail.node))
+                }
+                _ => false,
+            },
+            MirExpr::Local(local) => match from.get(&local.node.slot) {
+                Some(Origin::Param(i)) => f.params.contains(&(id, *i)),
+                Some(Origin::Value(value)) => built(value),
+                None => false,
+            },
+            MirExpr::Let(binding) => built(&binding.node.body.node),
+            MirExpr::Match(m) => m.node.arms.iter().all(|arm| built(&arm.body.node)),
+            MirExpr::IfThenElse(branches) => {
+                built(&branches.node.then_branch.node) && built(&branches.node.else_branch.node)
+            }
+            MirExpr::TailCall(call) => f.results.contains(&call.node.target),
+            _ => false,
+        }
+    }
+    let mut from = HashMap::new();
+    for (id, mir_fn) in program.iter() {
+        let mut slots: HashMap<LocalId, Origin<'_>> = mir_fn
+            .params
+            .iter()
+            .enumerate()
+            .map(|(i, param)| (param.local, Origin::Param(i)))
+            .collect();
+        origins(&mir_fn.body.node, &mut slots);
+        from.insert(*id, slots);
+    }
+    let mut facts = Facts {
+        params: program
+            .iter()
+            .flat_map(|(id, mir_fn)| (0..mir_fn.params.len()).map(move |i| (*id, i)))
+            .collect(),
+        results: program.iter().map(|(id, _)| *id).collect(),
+        builtins: &program.builtins,
+    };
+    loop {
+        let mut params = HashSet::new();
+        let mut results = HashSet::new();
+        for (caller, mir_fn) in program.iter() {
+            let slots = &from[caller];
+            if built(&mir_fn.body.node, *caller, slots, &facts, 0) {
+                results.insert(*caller);
+            }
+            let mut calls = Vec::new();
+            collect_fn_calls(&mir_fn.body.node, &mut calls);
+            for (callee, args) in calls {
+                for (i, arg) in args.iter().enumerate() {
+                    if !built(&arg.node, *caller, slots, &facts, 0) {
+                        params.insert((callee, i));
+                    }
+                }
+            }
+        }
+        let before = (facts.params.len(), facts.results.len());
+        facts.params.retain(|param| !params.contains(param));
+        facts.results.retain(|id| results.contains(id));
+        if (facts.params.len(), facts.results.len()) == before {
+            return facts.params;
+        }
+    }
+}
+
+/// Every direct call in `expr`: its callee and its arguments.
+fn collect_fn_calls<'e>(
+    expr: &'e MirExpr,
+    out: &mut Vec<(crate::ir::FnId, &'e [Spanned<MirExpr>])>,
+) {
+    match expr {
+        MirExpr::Call(call) => {
+            if let MirCallee::Fn(callee) = call.node.callee {
+                out.push((callee, &call.node.args));
+            }
+        }
+        MirExpr::TailCall(call) => out.push((call.node.target, &call.node.args)),
+        _ => {}
+    }
+    crate::ir::mir::expr::walk_children(expr, &mut |child| collect_fn_calls(child, out));
 }
 
 fn collect_fn_values(expr: &MirExpr, out: &mut HashSet<String>) {

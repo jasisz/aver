@@ -21,14 +21,14 @@ pub fn resolveProgram(
     let calledFns @ _ = {
         let __arg7 @ _ = <aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>>::empty();
         crate::aver_generated::domain::resolver::calls::resolveCallsInFns(
-            resolvedFns,
+            &resolvedFns,
             &fnMap,
             __arg7,
         )
     };
     let annotatedFns @ _ = {
         let __arg8 @ _ = <aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>>::empty();
-        crate::aver_generated::domain::resolver::fast::annotateFastFns(calledFns, &fnMap, __arg8)
+        crate::aver_generated::domain::resolver::fast::annotateFastFns(&calledFns, &fnMap, __arg8)
     };
     crate::aver_generated::domain::ast::Program {
         deps: prog.deps.clone(),
@@ -36,7 +36,7 @@ pub fn resolveProgram(
             let __arg9 @ _ =
                 <aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>>::empty();
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalFns(
-                annotatedFns,
+                &annotatedFns,
                 __arg9,
             )
         },

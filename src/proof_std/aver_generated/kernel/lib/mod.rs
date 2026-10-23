@@ -640,7 +640,7 @@ pub fn evalNode(
                             s,
                             ::aver_rt::str_lit!("bi"),
                             name,
-                            __arg24,
+                            &__arg24,
                             &args,
                             depth.clone(),
                         )
@@ -660,7 +660,7 @@ pub fn evalNode(
                             s,
                             ::aver_rt::str_lit!("call"),
                             f,
-                            __arg26,
+                            &__arg26,
                             &args,
                             depth.clone(),
                         )
@@ -967,16 +967,16 @@ pub fn lookupKnown(mut x @ _: AverStr, ks @ _: &aver_rt::AverList<Known>) -> Opt
 pub fn rebuild(
     kind @ _: &AverStr,
     name @ _: AverStr,
-    mut xs @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
+    xs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
 ) -> crate::proof_std::aver_generated::kernel::term::Term {
     crate::proof_std::cancel_checkpoint();
     if (&**kind == "call") {
         crate::proof_std::aver_generated::kernel::term::Term::TCall(
-            crate::proof_std::aver_generated::kernel::term::Term__TCall(name, xs),
+            crate::proof_std::aver_generated::kernel::term::Term__TCall(name, xs.clone()),
         )
     } else {
         crate::proof_std::aver_generated::kernel::term::Term::TBi(
-            crate::proof_std::aver_generated::kernel::term::Term__TBi(name, xs),
+            crate::proof_std::aver_generated::kernel::term::Term__TBi(name, xs.clone()),
         )
     }
 }
@@ -987,7 +987,7 @@ pub fn evalArgs(
     s @ _: &Scope,
     kind @ _: AverStr,
     name @ _: AverStr,
-    mut done @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
+    done @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
     todo @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
     depth @ _: aver_rt::AverInt,
 ) -> Result<Rw, AverStr> {
@@ -1009,7 +1009,7 @@ pub fn evalArgs(
                         depth.clone(),
                     )?;
                     crate::proof_std::aver_generated::kernel::lib::evalArg(
-                        s, kind, name, &done, x, &rest, __arg9, depth,
+                        s, kind, name, done, x, &rest, __arg9, depth,
                     )
                 }
             } else {
@@ -1034,7 +1034,7 @@ pub fn evalArg(
     let here @ _ = {
         let __arg10 @ _ =
             aver_rt::AverList::concat(&done.clone(), &aver_rt::AverList::prepend(x.clone(), rest));
-        crate::proof_std::aver_generated::kernel::lib::rebuild(&kind, name.clone(), __arg10)
+        crate::proof_std::aver_generated::kernel::lib::rebuild(&kind, name.clone(), &__arg10)
     };
     let step @ _ = if crate::proof_std::aver_generated::kernel::lib::isRefl(&r.proof) {
         crate::proof_std::aver_generated::kernel::lib::refl(here.clone())
@@ -1045,7 +1045,11 @@ pub fn evalArg(
                     &done.clone(),
                     &aver_rt::AverList::prepend(r.to.clone(), rest),
                 );
-                crate::proof_std::aver_generated::kernel::lib::rebuild(&kind, name.clone(), __arg11)
+                crate::proof_std::aver_generated::kernel::lib::rebuild(
+                    &kind,
+                    name.clone(),
+                    &__arg11,
+                )
             },
             proof: crate::proof_std::aver_generated::kernel::proof::Proof::PCongr(
                 crate::proof_std::aver_generated::kernel::proof::Proof__PCongr(
@@ -1060,7 +1064,7 @@ pub fn evalArg(
                         crate::proof_std::aver_generated::kernel::lib::rebuild(
                             &kind,
                             name.clone(),
-                            __arg12,
+                            &__arg12,
                         )
                     },
                     r.proof,
@@ -1073,7 +1077,7 @@ pub fn evalArg(
             let __arg13 @ _ =
                 aver_rt::AverList::concat(&done.clone(), &aver_rt::AverList::from_vec(vec![r.to]));
             crate::proof_std::aver_generated::kernel::lib::evalArgs(
-                s, kind, name, __arg13, rest, depth,
+                s, kind, name, &__arg13, rest, depth,
             )
         }?;
         crate::proof_std::aver_generated::kernel::lib::chain(here, step, __arg14)
@@ -2349,12 +2353,12 @@ pub fn fieldBinds(
 
 /// base, or base followed by the first number that makes a name not in used (often taken(goal)): a hypothesis or binder name must not clash with one in scope.
 #[inline(always)]
-pub fn fresh(base @ _: AverStr, mut used @ _: aver_rt::AverList<AverStr>) -> AverStr {
+pub fn fresh(base @ _: AverStr, used @ _: &aver_rt::AverList<AverStr>) -> AverStr {
     crate::proof_std::cancel_checkpoint();
     if used.contains(&base) {
         crate::proof_std::aver_generated::kernel::lib::freshFrom(
             base,
-            used,
+            used.clone(),
             aver_rt::AverInt::from_i64(1),
         )
     } else {

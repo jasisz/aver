@@ -162,13 +162,13 @@ pub fn scan(
                                 current,
                             );
                             crate::proof_kernel::aver_generated::kernel::sexp::finish(
-                                __arg14, parents,
+                                &__arg14, parents,
                             )
                         };
                     }
                     _ => {
                         return crate::proof_kernel::aver_generated::kernel::sexp::finish(
-                            current, parents,
+                            &current, parents,
                         );
                     }
                 }
@@ -502,11 +502,11 @@ pub fn scan(
 /// Finish one top-level form, or name the unmatched/list-tail error.
 #[inline(always)]
 pub fn finish(
-    mut current @ _: aver_rt::AverList<Sexp>,
+    current @ _: &aver_rt::AverList<Sexp>,
     mut parents @ _: aver_rt::AverList<aver_rt::AverList<Sexp>>,
 ) -> Result<Sexp, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(parents, [] => { aver_list_match!(current, [] => Err(::aver_rt::str_lit!("unexpected end of data")), [s, __pat0] => { { let __list_subject = __pat0; if __list_subject.is_empty() { crate::proof_kernel::aver_generated::kernel::sexp::expand(s) } else { Err(::aver_rt::str_lit!("text after the S-expression")) } } }) }, [parent, above] => Err(::aver_rt::str_lit!("unexpected end of data")))
+    aver_list_match!(parents, [] => { { let __list_subject = current; if __list_subject.is_empty() { Err(::aver_rt::str_lit!("unexpected end of data")) } else { if let (Some(s), Some(__pat0)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat0; if __list_subject.is_empty() { crate::proof_kernel::aver_generated::kernel::sexp::expand(s.clone()) } else { Err(::aver_rt::str_lit!("text after the S-expression")) } } } else { panic!("Aver Rust codegen: non-exhaustive list match") } } } }, [parent, above] => Err(::aver_rt::str_lit!("unexpected end of data")))
 }
 
 /// (shared ((#NAME S)…) BODY) is BODY with every #NAME written out as its S; each S may use only the names before it. Anything else is itself.
@@ -781,12 +781,12 @@ pub fn scan__cursor(
                             crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc),
                             current,
                         );
-                        crate::proof_kernel::aver_generated::kernel::sexp::finish(__arg15, parents)
+                        crate::proof_kernel::aver_generated::kernel::sexp::finish(&__arg15, parents)
                     };
                 }
                 _ => {
                     return crate::proof_kernel::aver_generated::kernel::sexp::finish(
-                        current, parents,
+                        &current, parents,
                     );
                 }
             }

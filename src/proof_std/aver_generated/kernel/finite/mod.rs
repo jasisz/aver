@@ -31,7 +31,7 @@ pub fn values(
                             crate::proof_std::aver_generated::kernel::finite::fieldValues(fs);
                         crate::proof_std::aver_generated::kernel::finite::product(__arg5)
                     };
-                    crate::proof_std::aver_generated::kernel::finite::recValues(n, &__arg6, __arg7)
+                    crate::proof_std::aver_generated::kernel::finite::recValues(n, &__arg6, &__arg7)
                 }
             }
         }
@@ -40,7 +40,7 @@ pub fn values(
                 let __arg8 @ _ = crate::proof_std::aver_generated::kernel::finite::partValues(ts);
                 crate::proof_std::aver_generated::kernel::finite::product(__arg8)
             };
-            crate::proof_std::aver_generated::kernel::finite::tupleValues(__arg9)
+            crate::proof_std::aver_generated::kernel::finite::tupleValues(&__arg9)
         }
     }
 }
@@ -210,12 +210,31 @@ pub fn consAll(
 pub fn recValues(
     n @ _: AverStr,
     names @ _: &aver_rt::AverList<AverStr>,
-    mut rows @ _: aver_rt::AverList<
+    rows @ _: &aver_rt::AverList<
         aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
     >,
 ) -> aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term> {
     crate::proof_std::cancel_checkpoint();
-    aver_list_match!(rows, [] => aver_rt::AverList::empty(), [r, rest] => aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::term::Term::TRec(crate::proof_std::aver_generated::kernel::term::Term__TRec(n.clone(), crate::proof_std::aver_generated::kernel::finite::zipFields(names, &r))), crate::proof_std::aver_generated::kernel::finite::recValues(n, names, rest)))
+    {
+        let __list_subject = rows;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let (Some(r), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                aver_rt::AverList::prepend_owned(
+                    crate::proof_std::aver_generated::kernel::term::Term::TRec(
+                        crate::proof_std::aver_generated::kernel::term::Term__TRec(
+                            n.clone(),
+                            crate::proof_std::aver_generated::kernel::finite::zipFields(names, r),
+                        ),
+                    ),
+                    crate::proof_std::aver_generated::kernel::finite::recValues(n, names, &rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }
 
 /// Pair field names with values.
@@ -247,10 +266,26 @@ pub fn zipFields(
 /// A tuple per row of part values.
 #[inline(always)]
 pub fn tupleValues(
-    mut rows @ _: aver_rt::AverList<
+    rows @ _: &aver_rt::AverList<
         aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
     >,
 ) -> aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term> {
     crate::proof_std::cancel_checkpoint();
-    aver_list_match!(rows, [] => aver_rt::AverList::empty(), [r, rest] => aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::term::Term::TTuple(crate::proof_std::aver_generated::kernel::term::Term__TTuple(r)), crate::proof_std::aver_generated::kernel::finite::tupleValues(rest)))
+    {
+        let __list_subject = rows;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let (Some(r), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                aver_rt::AverList::prepend_owned(
+                    crate::proof_std::aver_generated::kernel::term::Term::TTuple(
+                        crate::proof_std::aver_generated::kernel::term::Term__TTuple(r.clone()),
+                    ),
+                    crate::proof_std::aver_generated::kernel::finite::tupleValues(&rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
 }

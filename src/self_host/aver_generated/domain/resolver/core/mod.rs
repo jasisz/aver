@@ -1963,28 +1963,47 @@ pub fn mapMaxVal(m @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>) -> aver_rt
         es.sort_by(|a, b| a.0.cmp(&b.0));
         aver_rt::AverIntList::from_vec(es.into_iter().map(|(_, v)| v).collect::<Vec<_>>())
     };
-    crate::aver_generated::domain::resolver::core::maxInList(vals, aver_rt::AverInt::from_i64(-1))
+    crate::aver_generated::domain::resolver::core::maxInList(&vals, aver_rt::AverInt::from_i64(-1))
 }
 
 /// Find maximum value in a list.
 #[inline(always)]
 pub fn maxInList(
-    mut vals @ _: aver_rt::AverIntList,
+    vals @ _: &aver_rt::AverIntList,
     mut acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
+    let mut __hold0: aver_rt::AverIntList;
+    let mut vals @ _: &aver_rt::AverIntList = vals;
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(vals, [] => { return acc; }, [v, rest] => { if (v > acc) { {
-            let __tco0 = rest;
-            let __tco1 = v;
-            vals = __tco0;
-            acc = __tco1;
-            continue;
-        } } else { {
-            let __tco0 = rest;
-            vals = __tco0;
-            continue;
-        } } })
+        {
+            let __list_subject = vals;
+            if __list_subject.is_empty() {
+                return acc;
+            } else {
+                if let Some((v, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    if (v > acc) {
+                        {
+                            let __tco0 = rest;
+                            let __tco1 = v;
+                            __hold0 = __tco0;
+                            vals = &__hold0;
+                            acc = __tco1;
+                            continue;
+                        }
+                    } else {
+                        {
+                            let __tco0 = rest;
+                            __hold0 = __tco0;
+                            vals = &__hold0;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
     }
 }
 
