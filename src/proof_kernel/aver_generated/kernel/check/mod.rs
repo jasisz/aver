@@ -1827,14 +1827,23 @@ pub fn definitionTyped(
     path @ _: AverStr,
 ) -> Result<(), AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    let scope @ _ = {
-        let __arg4 @ _ =
-            crate::proof_kernel::aver_generated::kernel::check::withVars(env, &d.params);
-        crate::proof_kernel::aver_generated::kernel::check::letsTyped(&d.lets, __arg4, path.clone())
+    {
+        let __arg5 @ _ = <aver_rt::AverList<AverStr>>::empty();
+        crate::proof_kernel::aver_generated::kernel::check::uniqueParams(
+            &d.params,
+            __arg5,
+            d.name.clone(),
+            path.clone(),
+        )
     }?;
-    let __arg5 @ _ =
+    let scope @ _ = {
+        let __arg6 @ _ =
+            crate::proof_kernel::aver_generated::kernel::check::withVars(env, &d.params);
+        crate::proof_kernel::aver_generated::kernel::check::letsTyped(&d.lets, __arg6, path.clone())
+    }?;
+    let __arg7 @ _ =
         crate::proof_kernel::aver_generated::kernel::check::typeOf(&d.body, &scope, path.clone())?;
-    let __arg6 @ _ = aver_rt::AverStr::from({
+    let __arg8 @ _ = aver_rt::AverStr::from({
         let mut __b = {
             let mut __b = aver_rt::Buffer::with_capacity(
                 (aver_rt::AverInt::from_i64(27)).to_usize().unwrap_or(0),
@@ -1845,7 +1854,81 @@ pub fn definitionTyped(
         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name))));
         __b
     });
-    crate::proof_kernel::aver_generated::kernel::check::declaredFits(&__arg5, &d.ret, __arg6, path)
+    crate::proof_kernel::aver_generated::kernel::check::declaredFits(&__arg7, &d.ret, __arg8, path)
+}
+
+/// Each parameter of a definition has one identity for typing, substitution and termination.
+#[inline(always)]
+pub fn uniqueParams(
+    ps @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar>,
+    mut seen @ _: aver_rt::AverList<AverStr>,
+    mut owner @ _: AverStr,
+    mut path @ _: AverStr,
+) -> Result<(), AverStr> {
+    let mut __hold0: aver_rt::AverList<
+        crate::proof_kernel::aver_generated::kernel::term::TypedVar,
+    >;
+    let mut ps @ _: &aver_rt::AverList<
+        crate::proof_kernel::aver_generated::kernel::term::TypedVar,
+    > = ps;
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __list_subject = ps;
+            if __list_subject.is_empty() {
+                return Ok(());
+            } else {
+                if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    if seen.contains(&p.name) {
+                        return Err(aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = {
+                                        let mut __b = {
+                                            let mut __b = {
+                                                let mut __b = aver_rt::Buffer::with_capacity(
+                                                    (aver_rt::AverInt::from_i64(91))
+                                                        .to_usize()
+                                                        .unwrap_or(0),
+                                                );
+                                                __b.push_str(&::aver_rt::str_lit!("step "));
+                                                __b
+                                            };
+                                            __b.push_str(&aver_rt::AverStr::from(
+                                                aver_rt::aver_display(&(path)),
+                                            ));
+                                            __b
+                                        };
+                                        __b.push_str(&::aver_rt::str_lit!(": definition "));
+                                        __b
+                                    };
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                        &(owner),
+                                    )));
+                                    __b
+                                };
+                                __b.push_str(&::aver_rt::str_lit!(" has duplicate parameter "));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(p.name))));
+                            __b
+                        }));
+                    } else {
+                        {
+                            let __tco0 = rest;
+                            let __tco1 = aver_rt::AverList::prepend(p.name.clone(), &seen);
+                            __hold0 = __tco0;
+                            ps = &__hold0;
+                            seen = __tco1;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
+    }
 }
 
 /// Infer local bindings in source order, making each one visible to those after it and to the body.

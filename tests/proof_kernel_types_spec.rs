@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// (script, what the kernel says, whether an untyped kernel accepted it)
-const REFUSED: [(&str, &str, bool); 37] = [
+const REFUSED: [(&str, &str, bool); 38] = [
     // A law about a sum, cited at an Int: `x = One.Only` for every `x` of
     // the one-value type `One`, read at 0 and at 1, gives `0 = 1`.
     (
@@ -222,6 +222,14 @@ const REFUSED: [(&str, &str, bool); 37] = [
         "duplicate type declaration R",
         true,
     ),
+    // The termination checker treated the first `n` as the decreasing
+    // parameter, while unfolding substituted the second `n`. That admitted
+    // f(0, 1) = f(0, 1) + 1 and hence 0 = 1 by ring arithmetic.
+    (
+        "duplicate_parameter_spoofs_termination",
+        "definition f has duplicate parameter n",
+        true,
+    ),
 ];
 
 fn fixtures() -> PathBuf {
@@ -257,8 +265,8 @@ fn every_refused_script_is_listed() {
     assert_eq!(on_disk, listed);
 }
 
-/// Nineteen scripts were accepted before their corresponding kernel gates.
+/// Twenty scripts were accepted before their corresponding kernel gates.
 #[test]
-fn nineteen_of_them_were_accepted_before() {
-    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 19);
+fn twenty_of_them_were_accepted_before() {
+    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 20);
 }

@@ -130,11 +130,23 @@ verify defsTyped
 
 fn definitionTyped(d: Def, env: Env, path: String) -> Result<Unit, String>
     ? "A definition body has its declared result type under its parameters and local bindings."
+    uniqueParams(d.params, [], d.name, path)?
     scope = letsTyped(d.lets, withVars(env, d.params), path)?
     declaredFits(typeOf(d.body, scope, path)?, d.ret, "definition {d.name}", path)
 
 verify definitionTyped
     definitionTyped(Def(name = "id", params = [Kernel.Term.typed("x", Ty.TyInt)], ret = Ty.TyInt, lets = [], body = Term.TVar("x")), emptyEnv(), "proof") => Result.Ok(Unit)
+
+fn uniqueParams(ps: List<TypedVar>, seen: List<String>, owner: String, path: String) -> Result<Unit, String>
+    ? "Each parameter of a definition has one identity for typing, substitution and termination."
+    match ps
+        [] -> Result.Ok(Unit)
+        [p, ..rest] -> match List.contains(seen, p.name)
+            true -> Result.Err("step {path}: definition {owner} has duplicate parameter {p.name}")
+            false -> uniqueParams(rest, List.prepend(p.name, seen), owner, path)
+
+verify uniqueParams
+    uniqueParams([Kernel.Term.typed("n", Ty.TyInt), Kernel.Term.typed("n", Ty.TyInt)], [], "f", "proof") => Result.Err("step proof: definition f has duplicate parameter n")
 
 fn letsTyped(bs: List<Binding>, env: Env, path: String) -> Result<Env, String>
     ? "Infer local bindings in source order, making each one visible to those after it and to the body."
