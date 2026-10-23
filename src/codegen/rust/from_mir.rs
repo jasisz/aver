@@ -3785,14 +3785,9 @@ fn emit_mir_match_with(
             // payload borrows from.
             (MatchPath::LentWrapper, Some(_)) => lent_payload(&arm.pattern, &arm.body),
             _ if !keeps_subject => HashSet::new(),
-            (MatchPath::Generic { by_ref }, Some(codegen)) => lent_parts(
-                &arm.pattern,
-                &resolved.pattern,
-                &arm.body,
-                by_ref,
-                codegen,
-                emit_ctx,
-            ),
+            (MatchPath::Generic { by_ref }, Some(codegen)) => {
+                lent_parts(&arm.pattern, &resolved.pattern, &arm.body, by_ref, codegen)
+            }
             (MatchPath::List, Some(_)) => lent_head(&arm.pattern, &arm.body),
             (MatchPath::LentTuple, Some(_)) => lent_tuple_parts(&arm.pattern, &arm.body),
             _ => HashSet::new(),
@@ -4479,13 +4474,12 @@ fn lent_parts(
     body: &Spanned<MirExpr>,
     by_ref: bool,
     codegen: &CodegenContext,
-    ctx: &MirEmitCtx<'_>,
 ) -> HashSet<String> {
     let mut out = HashSet::new();
     match (pattern, resolved) {
         (MirPattern::Tuple(items), ResolvedPattern::Tuple(resolved_items)) => {
             for (item, resolved_item) in items.iter().zip(resolved_items) {
-                out.extend(lent_parts(item, resolved_item, body, by_ref, codegen, ctx));
+                out.extend(lent_parts(item, resolved_item, body, by_ref, codegen));
             }
         }
         (
