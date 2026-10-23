@@ -9,7 +9,7 @@ pub fn rewriteInternalFns(
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
     loop {
         crate::cancel_checkpoint();
-        aver_rt::aver_list_match_reuse!(fns, [] => { return acc.reverse(); }, [f, rest, __list_slot] => { {
+        ::aver_rt::aver_list_match_reuse!(fns, [] => { return acc.reverse(); }, [f, rest, __list_slot] => { {
             let __tco0 = rest;
             let __tco1 = __list_slot.prepend(crate::aver_generated::domain::resolver::rewrite::rewriteInternalFn(f), acc);
             fns = __tco0;
@@ -580,7 +580,7 @@ pub fn rewriteInternalExprs(
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Expr> {
     loop {
         crate::cancel_checkpoint();
-        aver_rt::aver_list_match_reuse!(exprs, [] => { return acc.reverse(); }, [expr, rest, __list_slot] => { {
+        ::aver_rt::aver_list_match_reuse!(exprs, [] => { return acc.reverse(); }, [expr, rest, __list_slot] => { {
             let __tco0 = rest;
             let __tco1 = __list_slot.prepend(crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(expr), acc);
             exprs = __tco0;
@@ -598,7 +598,7 @@ pub fn rewriteInternalFields(
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> {
     loop {
         crate::cancel_checkpoint();
-        aver_rt::aver_list_match_reuse!(fields, [] => { return acc.reverse(); }, [pair, rest, __list_slot] => { { let (name, expr) = pair; {
+        ::aver_rt::aver_list_match_reuse!(fields, [] => { return acc.reverse(); }, [pair, rest, __list_slot] => { { let (name, expr) = pair; {
             let __tco0 = rest;
             let __tco1 = __list_slot.prepend((name, crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(expr)), acc);
             fields = __tco0;
@@ -616,7 +616,7 @@ pub fn rewriteInternalArms(
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> {
     loop {
         crate::cancel_checkpoint();
-        aver_rt::aver_list_match_reuse!(arms, [] => { return acc.reverse(); }, [arm, rest, __list_slot] => { {
+        ::aver_rt::aver_list_match_reuse!(arms, [] => { return acc.reverse(); }, [arm, rest, __list_slot] => { {
             let __tco0 = rest;
             let __tco1 = __list_slot.prepend(crate::aver_generated::domain::ast::MatchArm { pattern: crate::aver_generated::domain::resolver::rewrite::rewritePattern(arm.pattern), body: crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(arm.body), bindingSlots: arm.bindingSlots }, acc);
             arms = __tco0;
@@ -669,7 +669,7 @@ pub fn rewritePatterns(
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Pattern> {
     loop {
         crate::cancel_checkpoint();
-        aver_rt::aver_list_match_reuse!(pats, [] => { return acc.reverse(); }, [p, rest, __list_slot] => { {
+        ::aver_rt::aver_list_match_reuse!(pats, [] => { return acc.reverse(); }, [p, rest, __list_slot] => { {
             let __tco0 = rest;
             let __tco1 = __list_slot.prepend(crate::aver_generated::domain::resolver::rewrite::rewritePattern(p), acc);
             pats = __tco0;

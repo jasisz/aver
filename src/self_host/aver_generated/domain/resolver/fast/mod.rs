@@ -10,7 +10,7 @@ pub fn annotateFastFns(
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
     loop {
         crate::cancel_checkpoint();
-        aver_rt::aver_list_match_reuse!(fns, [] => { return acc.reverse(); }, [f, rest, __list_slot] => { {
+        ::aver_rt::aver_list_match_reuse!(fns, [] => { return acc.reverse(); }, [f, rest, __list_slot] => { {
             let __tco0 = rest;
             let __tco2 = __list_slot.prepend(crate::aver_generated::domain::resolver::fast::annotateFastFn(f, fnMap), acc);
             fns = __tco0;

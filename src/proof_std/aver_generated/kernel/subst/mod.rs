@@ -406,7 +406,7 @@ pub fn without(
 ) -> aver_rt::AverList<AverStr> {
     loop {
         crate::proof_std::cancel_checkpoint();
-        aver_rt::aver_list_match_reuse!(ns, [] => { return aver_rt::AverList::empty(); }, [n, rest, __list_slot] => { if drop.contains(&n) { {
+        ::aver_rt::aver_list_match_reuse!(ns, [] => { return aver_rt::AverList::empty(); }, [n, rest, __list_slot] => { if drop.contains(&n) { {
             let __tco0 = rest;
             ns = __tco0;
             continue;

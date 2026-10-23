@@ -2601,7 +2601,7 @@ pub fn transFrom(
         {
             let __list_subject = __pat0;
             if let (Some(a), Some(__pat2)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::aver_list_match_reuse!(__pat2, [] => { { let __list_subject = __pat1; if __list_subject.is_empty() { { let __arg14 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: a.clone(), rhs: a.clone() }; { let __arg15 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path)))); __b }; __b.push_str(&::aver_rt::str_lit!("/trans.")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(i)))); __b }); crate::proof_kernel::aver_generated::kernel::check::typedEquation(__arg14, env, __arg15) } } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("trans needs at least one step")) } } }, [b, moreTerms, __list_slot] => { { let __list_subject = __pat1; if let (Some(p), Some(moreSteps)) = (__list_subject.first(), __list_subject.tail()) { { let __arg13 @ _ = __list_slot.prepend(b.clone(), moreTerms); crate::proof_kernel::aver_generated::kernel::check::transLink(a.clone(), b, p.clone(), &__arg13, &moreSteps, env, path, i) } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("trans needs at least one step")) } } })
+                ::aver_rt::aver_list_match_reuse!(__pat2, [] => { { let __list_subject = __pat1; if __list_subject.is_empty() { { let __arg14 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: a.clone(), rhs: a.clone() }; { let __arg15 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path)))); __b }; __b.push_str(&::aver_rt::str_lit!("/trans.")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(i)))); __b }); crate::proof_kernel::aver_generated::kernel::check::typedEquation(__arg14, env, __arg15) } } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("trans needs at least one step")) } } }, [b, moreTerms, __list_slot] => { { let __list_subject = __pat1; if let (Some(p), Some(moreSteps)) = (__list_subject.first(), __list_subject.tail()) { { let __arg13 @ _ = __list_slot.prepend(b.clone(), moreTerms); crate::proof_kernel::aver_generated::kernel::check::transLink(a.clone(), b, p.clone(), &__arg13, &moreSteps, env, path, i) } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("trans needs at least one step")) } } })
             } else {
                 crate::proof_kernel::aver_generated::kernel::check::refuse(
                     path,
@@ -7223,7 +7223,7 @@ pub fn withoutNames(
 ) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding> {
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        aver_rt::aver_list_match_reuse!(bs, [] => { return aver_rt::AverList::empty(); }, [b, rest, __list_slot] => { if names.contains(&b.name) { {
+        ::aver_rt::aver_list_match_reuse!(bs, [] => { return aver_rt::AverList::empty(); }, [b, rest, __list_slot] => { if names.contains(&b.name) { {
             let __tco0 = rest;
             bs = __tco0;
             continue;

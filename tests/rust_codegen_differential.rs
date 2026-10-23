@@ -3912,7 +3912,7 @@ fn dying_lists_and_read_strings_match_vm() {
     let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
     let emitted = emitted_entry_module("dying_lists_read_strings", &src);
     for expected in [
-        "aver_rt::aver_list_match_reuse!(stack, [] =>",
+        "::aver_rt::aver_list_match_reuse!(stack, [] =>",
         "[c, others, __list_slot] => { { let __arg",
         "fn digitAt__indexed(s @ _: &AverStr,",
         "digitAt__indexed(&s, ",
@@ -3942,7 +3942,7 @@ fn handed_lists_are_taken_apart_and_reuse_their_nodes_like_vm() {
     let emitted = emitted_entry_module("handed_lists_reuse_nodes", &src);
     for expected in [
         "pub fn spill(mut stack @ _: aver_rt::AverList<Clo>, mut env @ _: aver_rt::AverList<Clo>)",
-        "aver_rt::aver_list_match_reuse!(stack, [] => { return env; }, [c, rest, __list_slot] =>",
+        "::aver_rt::aver_list_match_reuse!(stack, [] => { return env; }, [c, rest, __list_slot] =>",
         "let __tco1 = __list_slot.prepend(c, env);",
         "pub fn keepEven(mut stack @ _: aver_rt::AverList<Clo>,",
         "[c, others, __list_slot] => { { let __arg5 @ _ = __list_slot.prepend(c, env);",

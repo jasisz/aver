@@ -45,7 +45,7 @@ pub fn resolveCallsInFns(
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
     loop {
         crate::cancel_checkpoint();
-        aver_rt::aver_list_match_reuse!(fns, [] => { return acc.reverse(); }, [f, rest, __list_slot] => { {
+        ::aver_rt::aver_list_match_reuse!(fns, [] => { return acc.reverse(); }, [f, rest, __list_slot] => { {
             let __tco0 = rest;
             let __tco2 = __list_slot.prepend(crate::aver_generated::domain::resolver::calls::resolveCallsInFn(f, fnMap), acc);
             fns = __tco0;
@@ -87,7 +87,7 @@ pub fn resolveCallsInStmts(
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> {
     loop {
         crate::cancel_checkpoint();
-        aver_rt::aver_list_match_reuse!(stmts, [] => { return acc.reverse(); }, [s, rest, __list_slot] => { {
+        ::aver_rt::aver_list_match_reuse!(stmts, [] => { return acc.reverse(); }, [s, rest, __list_slot] => { {
             let __tco0 = rest;
             let __tco2 = __list_slot.prepend(crate::aver_generated::domain::resolver::calls::resolveCallsInStmt(&s, fnMap), acc);
             stmts = __tco0;
@@ -886,7 +886,7 @@ pub fn resolveCallsInExprs(
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Expr> {
     loop {
         crate::cancel_checkpoint();
-        aver_rt::aver_list_match_reuse!(exprs, [] => { return acc.reverse(); }, [e, rest, __list_slot] => { {
+        ::aver_rt::aver_list_match_reuse!(exprs, [] => { return acc.reverse(); }, [e, rest, __list_slot] => { {
             let __tco0 = rest;
             let __tco2 = __list_slot.prepend(crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(e, fnMap), acc);
             exprs = __tco0;
@@ -905,7 +905,7 @@ pub fn resolveCallsInArms(
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> {
     loop {
         crate::cancel_checkpoint();
-        aver_rt::aver_list_match_reuse!(arms, [] => { return acc.reverse(); }, [arm, rest, __list_slot] => { {
+        ::aver_rt::aver_list_match_reuse!(arms, [] => { return acc.reverse(); }, [arm, rest, __list_slot] => { {
             let __tco0 = rest;
             let __tco2 = __list_slot.prepend(crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern, body: crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(arm.body, fnMap), bindingSlots: arm.bindingSlots }, acc);
             arms = __tco0;
@@ -924,7 +924,7 @@ pub fn resolveCallsInFields(
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> {
     loop {
         crate::cancel_checkpoint();
-        aver_rt::aver_list_match_reuse!(fields, [] => { return acc.reverse(); }, [pair, rest, __list_slot] => { { let (name, expr) = pair; {
+        ::aver_rt::aver_list_match_reuse!(fields, [] => { return acc.reverse(); }, [pair, rest, __list_slot] => { { let (name, expr) = pair; {
             let __tco0 = rest;
             let __tco2 = __list_slot.prepend((name, crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(expr, fnMap)), acc);
             fields = __tco0;

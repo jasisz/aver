@@ -722,7 +722,7 @@ pub fn readAt(
     bound @ _: &aver_rt::AverList<AverStr>,
 ) -> Result<aver_rt::AverList<Call>, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    aver_rt::aver_list_match_reuse!(cs, [] => Ok(aver_rt::AverList::empty()), [c, rest, __list_slot] => Ok(__list_slot.prepend(crate::proof_kernel::aver_generated::kernel::induct::readOne(&c, h, xs, bound)?, crate::proof_kernel::aver_generated::kernel::induct::readAt(rest, h, xs, bound)?)))
+    ::aver_rt::aver_list_match_reuse!(cs, [] => Ok(aver_rt::AverList::empty()), [c, rest, __list_slot] => Ok(__list_slot.prepend(crate::proof_kernel::aver_generated::kernel::induct::readOne(&c, h, xs, bound)?, crate::proof_kernel::aver_generated::kernel::induct::readAt(rest, h, xs, bound)?)))
 }
 
 /// One call of f in h's body at the arguments h is called with: h's parameters that no arm of h rebinds around it replaced, refusing a capture. It may read nothing else of h's scope. The names bound around the call of h come before those h binds around it.
@@ -2565,7 +2565,7 @@ pub fn onlyDefs(
 ) -> aver_rt::AverList<AverStr> {
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        aver_rt::aver_list_match_reuse!(ns, [] => { return aver_rt::AverList::empty(); }, [n, rest, __list_slot] => { if ((n != own) && crate::proof_kernel::aver_generated::kernel::induct::isDef(n.clone(), ds)) { return __list_slot.prepend(n, crate::proof_kernel::aver_generated::kernel::induct::onlyDefs(rest, ds, own)); } else { {
+        ::aver_rt::aver_list_match_reuse!(ns, [] => { return aver_rt::AverList::empty(); }, [n, rest, __list_slot] => { if ((n != own) && crate::proof_kernel::aver_generated::kernel::induct::isDef(n.clone(), ds)) { return __list_slot.prepend(n, crate::proof_kernel::aver_generated::kernel::induct::onlyDefs(rest, ds, own)); } else { {
             let __tco0 = rest;
             ns = __tco0;
             continue;

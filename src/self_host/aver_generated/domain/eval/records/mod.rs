@@ -267,7 +267,7 @@ pub fn removeOverrideAcc(
     loop {
         crate::cancel_checkpoint();
         let reversed @ _ = acc.reverse();
-        aver_rt::aver_list_match_reuse!(overrides, [] => { return reversed; }, [pair, rest, __list_slot] => { { let (ok, ov) = pair; if (ok == k) { return aver_rt::AverList::concat(&reversed, &rest); } else { {
+        ::aver_rt::aver_list_match_reuse!(overrides, [] => { return reversed; }, [pair, rest, __list_slot] => { { let (ok, ov) = pair; if (ok == k) { return aver_rt::AverList::concat(&reversed, &rest); } else { {
             let __tco1 = rest;
             let __tco2 = __list_slot.prepend((ok, ov), acc);
             overrides = __tco1;

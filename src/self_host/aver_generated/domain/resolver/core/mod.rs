@@ -1581,7 +1581,7 @@ pub fn resolveExprs(
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Expr> {
     loop {
         crate::cancel_checkpoint();
-        aver_rt::aver_list_match_reuse!(exprs, [] => { return acc.reverse(); }, [e, rest, __list_slot] => { {
+        ::aver_rt::aver_list_match_reuse!(exprs, [] => { return acc.reverse(); }, [e, rest, __list_slot] => { {
             let __tco0 = rest;
             let __tco2 = __list_slot.prepend(crate::aver_generated::domain::resolver::core::resolveExprSimple(e, slots.clone()), acc);
             exprs = __tco0;
@@ -1600,7 +1600,7 @@ pub fn resolveFields(
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> {
     loop {
         crate::cancel_checkpoint();
-        aver_rt::aver_list_match_reuse!(fields, [] => { return acc.reverse(); }, [pair, rest, __list_slot] => { { let (name, expr) = pair; {
+        ::aver_rt::aver_list_match_reuse!(fields, [] => { return acc.reverse(); }, [pair, rest, __list_slot] => { { let (name, expr) = pair; {
             let __tco0 = rest;
             let __tco2 = __list_slot.prepend((name, crate::aver_generated::domain::resolver::core::resolveExprSimple(expr, slots.clone())), acc);
             fields = __tco0;
@@ -1622,7 +1622,7 @@ pub fn resolveArms(
 ) {
     loop {
         crate::cancel_checkpoint();
-        aver_rt::aver_list_match_reuse!(arms, [] => { return (acc.reverse(), slots); }, [arm, rest, __list_slot] => { { let (__stp0, _) = crate::aver_generated::domain::resolver::core::resolveArm(arm, &slots); {
+        ::aver_rt::aver_list_match_reuse!(arms, [] => { return (acc.reverse(), slots); }, [arm, rest, __list_slot] => { { let (__stp0, _) = crate::aver_generated::domain::resolver::core::resolveArm(arm, &slots); {
             let __tco0 = rest;
             let __tco2 = __list_slot.prepend(__stp0, acc);
             arms = __tco0;

@@ -3446,7 +3446,7 @@ pub fn interleaveIndependentVals(
     loop {
         crate::cancel_checkpoint();
         if takeLeft {
-            aver_rt::aver_list_match_reuse!(left, [] => { return crate::aver_generated::domain::eval::core::finishIndependentVals(right, acc); }, [v, rest, __list_slot] => { {
+            ::aver_rt::aver_list_match_reuse!(left, [] => { return crate::aver_generated::domain::eval::core::finishIndependentVals(right, acc); }, [v, rest, __list_slot] => { {
             let __tco0 = rest;
             let __tco2 = false;
             let __tco3 = __list_slot.prepend(v, acc);
@@ -3456,7 +3456,7 @@ pub fn interleaveIndependentVals(
             continue;
         } })
         } else {
-            aver_rt::aver_list_match_reuse!(right, [] => { return crate::aver_generated::domain::eval::core::finishIndependentVals(left, acc); }, [v, rest, __list_slot] => { {
+            ::aver_rt::aver_list_match_reuse!(right, [] => { return crate::aver_generated::domain::eval::core::finishIndependentVals(left, acc); }, [v, rest, __list_slot] => { {
             let __tco1 = rest;
             let __tco2 = true;
             let __tco3 = __list_slot.prepend(v, acc);
@@ -3477,7 +3477,7 @@ pub fn finishIndependentVals(
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();
-        aver_rt::aver_list_match_reuse!(items, [] => { return acc.reverse(); }, [v, rest, __list_slot] => { {
+        ::aver_rt::aver_list_match_reuse!(items, [] => { return acc.reverse(); }, [v, rest, __list_slot] => { {
             let __tco0 = rest;
             let __tco1 = __list_slot.prepend(v, acc);
             items = __tco0;
@@ -3495,7 +3495,7 @@ pub fn unwrapProductResults(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     loop {
         crate::cancel_checkpoint();
-        aver_rt::aver_list_match_reuse!(items, [] => { return Ok(crate::aver_generated::domain::value::Val::ValTuple(crate::aver_generated::domain::value::Val__ValTuple(acc.reverse()))); }, [v, rest, __list_slot] => { { let __t = v; match __t.view() {
+        ::aver_rt::aver_list_match_reuse!(items, [] => { return Ok(crate::aver_generated::domain::value::Val::ValTuple(crate::aver_generated::domain::value::Val__ValTuple(acc.reverse()))); }, [v, rest, __list_slot] => { { let __t = v; match __t.view() {
         crate::aver_generated::domain::value::Val__view::ValOk(__x_fields) => {
             let x = &__x_fields.0;
             {

@@ -596,7 +596,7 @@ where
     };
     if reuse {
         return Some(format!(
-            "aver_rt::aver_list_match_reuse!({subject}, [] => {}, [{head_name}, {tail_name}, {}] => {})",
+            "::aver_rt::aver_list_match_reuse!({subject}, [] => {}, [{head_name}, {tail_name}, {}] => {})",
             wrap(&empty_body),
             generated_ident("list_slot"),
             wrap(&cons_body)

@@ -149,7 +149,7 @@ pub fn listTake(
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     crate::cancel_checkpoint();
     if (count > aver_rt::AverInt::from_i64(0)) {
-        aver_rt::aver_list_match_reuse!(items, [] => aver_rt::AverList::empty(), [item, rest, __list_slot] => __list_slot.prepend(item, crate::aver_generated::domain::builtins::list::listTake(rest, count.sub(&aver_rt::AverInt::from_i64(1)))))
+        ::aver_rt::aver_list_match_reuse!(items, [] => aver_rt::AverList::empty(), [item, rest, __list_slot] => __list_slot.prepend(item, crate::aver_generated::domain::builtins::list::listTake(rest, count.sub(&aver_rt::AverInt::from_i64(1)))))
     } else {
         aver_rt::AverList::empty()
     }
@@ -333,7 +333,7 @@ pub fn zipListsAcc(
     loop {
         crate::cancel_checkpoint();
         let reversed @ _ = acc.reverse();
-        aver_rt::aver_list_match_reuse!(a, [] => { return reversed; }, [x, xs, __list_slot] => { aver_rt::aver_list_match_reuse!(b, [] => { return reversed; }, [y, ys, __list_slot] => { {
+        ::aver_rt::aver_list_match_reuse!(a, [] => { return reversed; }, [x, xs, __list_slot] => { ::aver_rt::aver_list_match_reuse!(b, [] => { return reversed; }, [y, ys, __list_slot] => { {
             let __tco0 = xs;
             let __tco1 = ys;
             let __tco2 = __list_slot.prepend(crate::aver_generated::domain::value::Val::ValTuple(crate::aver_generated::domain::value::Val__ValTuple(aver_rt::AverList::from_vec(vec![x, y]))), acc);

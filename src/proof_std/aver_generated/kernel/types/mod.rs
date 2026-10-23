@@ -820,7 +820,7 @@ pub fn rigidAll(
     mut ts @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Ty>,
 ) -> aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Ty> {
     crate::proof_std::cancel_checkpoint();
-    aver_rt::aver_list_match_reuse!(ts, [] => aver_rt::AverList::empty(), [t, rest, __list_slot] => __list_slot.prepend(crate::proof_std::aver_generated::kernel::types::rigid(t), crate::proof_std::aver_generated::kernel::types::rigidAll(rest)))
+    ::aver_rt::aver_list_match_reuse!(ts, [] => aver_rt::AverList::empty(), [t, rest, __list_slot] => __list_slot.prepend(crate::proof_std::aver_generated::kernel::types::rigid(t), crate::proof_std::aver_generated::kernel::types::rigidAll(rest)))
 }
 
 /// The givens of a statement as its own proof sees them.
@@ -829,7 +829,7 @@ pub fn rigidVars(
     mut vs @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>,
 ) -> aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar> {
     crate::proof_std::cancel_checkpoint();
-    aver_rt::aver_list_match_reuse!(vs, [] => aver_rt::AverList::empty(), [v, rest, __list_slot] => { __list_slot.prepend({ let __arg3 @ _ = crate::proof_std::aver_generated::kernel::types::rigid(v.ty); crate::proof_std::aver_generated::kernel::term::typed(v.name, __arg3) }, crate::proof_std::aver_generated::kernel::types::rigidVars(rest)) })
+    ::aver_rt::aver_list_match_reuse!(vs, [] => aver_rt::AverList::empty(), [v, rest, __list_slot] => { __list_slot.prepend({ let __arg3 @ _ = crate::proof_std::aver_generated::kernel::types::rigid(v.ty); crate::proof_std::aver_generated::kernel::term::typed(v.name, __arg3) }, crate::proof_std::aver_generated::kernel::types::rigidVars(rest)) })
 }
 
 /// A declared name claims equality and all of its fields support it; a recursive return to a name already under that check is sound.
@@ -1818,7 +1818,7 @@ pub fn unique(
 ) -> Result<(), AverStr> {
     loop {
         crate::proof_std::cancel_checkpoint();
-        aver_rt::aver_list_match_reuse!(names, [] => { return Ok(()); }, [n, rest, __list_slot] => { if seen.contains(&n) { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(33)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(what)))); __b }; __b.push_str(&::aver_rt::str_lit!(" ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n)))); __b })); } else { {
+        ::aver_rt::aver_list_match_reuse!(names, [] => { return Ok(()); }, [n, rest, __list_slot] => { if seen.contains(&n) { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(33)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(what)))); __b }; __b.push_str(&::aver_rt::str_lit!(" ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n)))); __b })); } else { {
             let __tco0 = rest;
             let __tco1 = __list_slot.prepend(n, seen);
             names = __tco0;
