@@ -31,6 +31,22 @@ fn law_key(symbols: &aver::ir::SymbolTable, t: &LawTheorem) -> String {
     }
 }
 
+/// Canonical law identities that occur more than once in the lowered proof
+/// program. Every report and citation table below is keyed by this identity,
+/// so accepting a collision would let one source obligation overwrite another
+/// before proof credit is counted.
+fn duplicate_law_keys(theorems: &[LawTheorem], symbols: &aver::ir::SymbolTable) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut duplicates = BTreeSet::new();
+    for theorem in theorems {
+        let key = law_key(symbols, theorem);
+        if !seen.insert(key.clone()) {
+            duplicates.insert(key);
+        }
+    }
+    duplicates.into_iter().collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run(
     file: &str,
@@ -56,6 +72,25 @@ pub(super) fn run(
         true,
         true, // proof_command
     );
+    let duplicate_laws = duplicate_law_keys(&ctx.proof_ir.law_theorems, &ctx.symbol_table);
+    if !duplicate_laws.is_empty() {
+        let why = format!(
+            "duplicate law identity {{{}}} — two `verify ... law` blocks share one canonical key",
+            duplicate_laws.join(", ")
+        );
+        if check_json {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "backend": "aver",
+                    "harness_error": why,
+                    "passed": false,
+                })
+            );
+        }
+        eprintln!("aver proof (backend aver): {why}");
+        std::process::exit(2);
+    }
     let front = front_started.elapsed();
     let started = std::time::Instant::now();
     // The time of the kernel's check of each law's scripts, here, after the
