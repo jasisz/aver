@@ -6,15 +6,14 @@
 //! shared subterm once for every path to it: the work is the size of the
 //! unfolded tree, exponential in the depth of the sharing. Here a comparison
 //! runs as it always did for at most [`BUDGET`] constructor pairs; one that
-//! needs more starts again remembering the pairs of shared nodes it found
-//! equal, and does not compare them again.
+//! needs more goes on from where it is, remembering from then on the pairs of
+//! shared nodes it finds equal, and does not compare them again.
 
 use crate::Shared;
 use std::cell::Cell;
 
-/// How many constructor pairs a comparison meets before it starts again
-/// with memory. A comparison within it pays a counter; one past it repeats
-/// at most this much work.
+/// How many constructor pairs a comparison meets before it starts to
+/// remember. A comparison within it pays a counter.
 pub const BUDGET: u32 = 1024;
 
 /// The pairs of shared nodes found equal by a comparison with memory. It
@@ -29,11 +28,12 @@ struct Memory {
 /// Addresses of pairs of nodes, the left one first.
 type Pairs = ahash::AHashSet<(usize, usize)>;
 
-/// How a comparison goes on: within its budget, or with memory.
+/// How a comparison goes on: within its budget while `left` is above zero,
+/// with memory once it is spent.
 #[derive(Clone, Copy)]
 pub struct Walk<'a> {
     left: &'a Cell<u32>,
-    memory: Option<&'a Memory>,
+    memory: &'a Memory,
 }
 
 /// `==` that carries the [`Walk`] it is part of: what the Rust backend
@@ -58,31 +58,13 @@ impl<T: WalkEq> WalkEq for Option<T> {
 #[inline]
 pub fn walk_eq<T: WalkEq>(a: &T, b: &T) -> bool {
     let left = Cell::new(BUDGET);
-    let same = a.walk_eq(
-        b,
-        Walk {
-            left: &left,
-            memory: None,
-        },
-    );
-    if left.get() > 0 {
-        return same;
-    }
-    with_memory(a, b)
-}
-
-/// [`walk_eq`] once the budget ran out: the answer a walk within it gave
-/// up on, from the start.
-#[cold]
-#[inline(never)]
-fn with_memory<T: WalkEq>(a: &T, b: &T) -> bool {
+    // Empty until the budget is spent: no table is made before then.
     let memory = Memory::default();
-    let left = Cell::new(0);
     a.walk_eq(
         b,
         Walk {
             left: &left,
-            memory: Some(&memory),
+            memory: &memory,
         },
     )
 }
@@ -129,13 +111,11 @@ impl Walk<'_> {
         if reflexive && a.addr() == b.addr() {
             return true;
         }
-        if let Some(memory) = self.memory {
-            return self.remembering(memory, a, b, fields_eq);
-        }
-        // Out of budget: the answer is thrown away and found again.
         let left = self.left.get();
         if left == 0 {
-            return false;
+            // The pairs under way go on where they are; only the ones met
+            // from now on are remembered.
+            return self.remembering(self.memory, a, b, fields_eq);
         }
         self.left.set(left - 1);
         fields_eq(self)
@@ -175,7 +155,7 @@ impl Walk<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{BUDGET, Walk, WalkEq, walk_eq};
+    use super::{BUDGET, Memory, Walk, WalkEq, walk_eq};
     use crate::Shared;
     use std::cell::Cell;
 
@@ -252,8 +232,8 @@ mod tests {
         (same, VISITS.with(Cell::get))
     }
 
-    /// What a comparison of 60 levels may pay: the walk within [`BUDGET`]
-    /// it gives up, then a few pairs per level.
+    /// What a comparison of 60 levels may pay: the walk within [`BUDGET`],
+    /// then a few pairs per level.
     const SPENT: usize = BUDGET as usize + 4 * 60;
 
     #[test]
@@ -264,6 +244,30 @@ mod tests {
         let (same, visits) = compare(&twice(60, 1.0), &spine(60, 1.0, 1.0));
         assert!(same);
         assert!(visits <= SPENT + 60 * 60, "{visits} pairs compared");
+    }
+
+    /// A full tree `n` levels deep, no node of it held twice.
+    fn full(n: usize, seed: f64) -> Node {
+        match n {
+            0 => leaf(seed),
+            _ => pair(full(n - 1, seed), full(n - 1, seed)),
+        }
+    }
+
+    /// The budget runs out once the first half, a tree with no sharing, has
+    /// been compared: the walk goes on into the second half, and does not
+    /// compare the first again. The first half is 511 pairs and the second
+    /// about 1830; starting over would compare the first half twice.
+    #[test]
+    fn a_walk_past_its_budget_goes_on_where_it_is() {
+        let value = |last: f64| pair(full(9, 1.0), spine(60, 1.0, last));
+        let (same, visits) = compare(&value(1.0), &value(1.0));
+        assert!(same);
+        assert!(visits <= 512 + 1900, "{visits} pairs compared");
+        let (same, visits) = compare(&value(1.0), &value(2.0));
+        assert!(!same);
+        assert!(visits <= 512 + 1900, "{visits} pairs compared");
+        assert!(pair(full(9, 1.0), twice(60, 1.0)) != pair(full(9, 2.0), twice(60, 1.0)));
     }
 
     #[test]
@@ -280,9 +284,10 @@ mod tests {
         VISITS.with(|v| v.set(0));
         let pair = Shared::new(Pair(leaf(1.0), leaf(1.0)));
         let left = Cell::new(BUDGET);
+        let memory = Memory::default();
         let walk = Walk {
             left: &left,
-            memory: None,
+            memory: &memory,
         };
         assert!(walk.shared(&pair, &pair.clone(), true));
         assert_eq!(VISITS.with(Cell::get), 0);

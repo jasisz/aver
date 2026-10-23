@@ -8,12 +8,51 @@
 //! so a 48-byte value would land in a 64-byte block.
 
 use std::alloc::{GlobalAlloc, Layout};
-use std::ffi::c_void;
+use std::ffi::{c_int, c_long, c_void};
 
 use libmimalloc_sys::{
     mi_free, mi_malloc, mi_malloc_aligned, mi_realloc, mi_realloc_aligned, mi_zalloc,
     mi_zalloc_aligned,
 };
+
+// mimalloc's options API, which `libmimalloc-sys` declares only under its
+// `extended` feature.
+unsafe extern "C" {
+    fn mi_option_set(option: c_int, value: c_long);
+    #[cfg(test)]
+    fn mi_option_get(option: c_int) -> c_long;
+}
+
+/// `mi_option_generic_collect` in the `mimalloc.h` of mimalloc v3 that
+/// `libmimalloc-sys` 0.1.49 builds: every this many
+/// allocations that reach its slow path, mimalloc walks all of the thread's
+/// pages. Pages left empty are given back every 1000 anyway.
+const MI_OPTION_GENERIC_COLLECT: c_int = 34;
+
+/// The walk every million slow-path allocations rather than every 10,000:
+/// on a heap of gigabytes the walk is long and finds little.
+const GENERIC_COLLECT: c_long = 1_000_000;
+
+/// Sets mimalloc's options when the process loads, before `main` and before
+/// the first allocation of any thread. `MIMALLOC_GENERIC_COLLECT` in the
+/// environment still decides, as for any mimalloc option.
+extern "C" fn set_options() {
+    if std::env::var_os("MIMALLOC_GENERIC_COLLECT").is_none() {
+        unsafe { mi_option_set(MI_OPTION_GENERIC_COLLECT, GENERIC_COLLECT) };
+    }
+}
+
+#[used]
+#[cfg_attr(
+    target_vendor = "apple",
+    unsafe(link_section = "__DATA,__mod_init_func")
+)]
+#[cfg_attr(
+    all(unix, not(target_vendor = "apple")),
+    unsafe(link_section = ".init_array")
+)]
+#[cfg_attr(windows, unsafe(link_section = ".CRT$XCU"))]
+static SET_OPTIONS: extern "C" fn() = set_options;
 
 /// `MI_MAX_ALIGN_SIZE` in mimalloc's `types.h`.
 const MI_MAX_ALIGN_SIZE: usize = 16;
@@ -70,6 +109,14 @@ mod tests {
 
     unsafe extern "C" {
         fn mi_usable_size(p: *const c_void) -> usize;
+    }
+
+    #[test]
+    fn the_page_walk_runs_every_million_allocations() {
+        if std::env::var_os("MIMALLOC_GENERIC_COLLECT").is_none() {
+            let value = unsafe { mi_option_get(MI_OPTION_GENERIC_COLLECT) };
+            assert_eq!(value, GENERIC_COLLECT);
+        }
     }
 
     #[test]

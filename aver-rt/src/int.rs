@@ -270,26 +270,46 @@ mod repr {
         }
     }
 
+    // Clone and drop keep the inline case at the call site and the boxed one
+    // out of line, so a function that copies or drops an `Int` field stays
+    // small enough to inline.
+
     impl Drop for Repr {
-        #[inline]
+        #[inline(always)]
         fn drop(&mut self) {
             if !self.is_inline() {
-                // SAFETY: as in `big`; drop runs once.
-                drop(unsafe { Box::from_raw(self.pointer()) });
+                self.drop_big();
             }
         }
     }
 
     impl Clone for Repr {
-        #[inline]
+        #[inline(always)]
         fn clone(&self) -> Self {
-            match self.big() {
-                None => Repr {
+            if self.is_inline() {
+                Repr {
                     word: self.word,
                     _owns: PhantomData,
-                },
-                Some(b) => Repr::from_big(b.clone()),
+                }
+            } else {
+                self.clone_big()
             }
+        }
+    }
+
+    impl Repr {
+        #[cold]
+        #[inline(never)]
+        fn drop_big(&mut self) {
+            // SAFETY: as in `big`; drop runs once, and only for a boxed word.
+            drop(unsafe { Box::from_raw(self.pointer()) });
+        }
+
+        #[cold]
+        #[inline(never)]
+        fn clone_big(&self) -> Self {
+            // SAFETY: as in `big`; called only for a boxed word.
+            Repr::from_big(unsafe { &*self.pointer() }.clone())
         }
     }
 }
@@ -813,11 +833,17 @@ impl PartialEq for AverInt {
         if (a | b) & 1 != 0 {
             return a == b;
         }
-        self.0.big() == other.0.big()
+        eq_slow(self, other)
     }
 }
 
 impl Eq for AverInt {}
+
+#[cold]
+#[inline(never)]
+fn eq_slow(a: &AverInt, b: &AverInt) -> bool {
+    a.0.big() == b.0.big()
+}
 
 // The `BigInt` paths of the arithmetic above, kept out of line so the
 // inlined inline-value fast path stays a few instructions at every call site.
@@ -964,11 +990,18 @@ impl core::hash::Hash for AverInt {
         // `i64` hashes as that `i64`, whichever way it is stored.
         match self.view() {
             View::Small(n) => n.hash(state),
-            View::Big(b) => match b.to_i64() {
-                Some(n) => n.hash(state),
-                None => b.hash(state),
-            },
+            View::Big(b) => hash_slow(b, state),
         }
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn hash_slow<H: core::hash::Hasher>(b: &BigInt, state: &mut H) {
+    use core::hash::Hash;
+    match b.to_i64() {
+        Some(n) => n.hash(state),
+        None => b.hash(state),
     }
 }
 
@@ -1105,6 +1138,34 @@ mod tests {
         big_a.hash(&mut ha);
         big_b.hash(&mut hb);
         assert_eq!(ha.finish(), hb.finish());
+    }
+
+    /// Clone, drop, `==` and hash of boxed values, which run out of line.
+    #[test]
+    fn boxed_values_clone_drop_compare_and_hash() {
+        let hash = |x: &AverInt| ahash::RandomState::with_seeds(1, 2, 3, 4).hash_one(x);
+        let a = big("123456789012345678901234567890");
+        let b = a.clone();
+        drop(a);
+        assert_eq!(b.to_string(), "123456789012345678901234567890");
+        let a = b.clone();
+        assert!(a == b);
+        assert!(a != big("123456789012345678901234567891"));
+        assert!(a != AverInt::from_i64(1));
+        assert!(AverInt::from_i64(1) != a);
+        assert_eq!(hash(&a), hash(&b));
+        // Boxed but within `i64`: hashes as that `i64`, like an inline value.
+        let edge = AverInt::from_i64(i64::MAX);
+        assert_eq!(hash(&edge.clone()), hash(&edge));
+        assert_eq!(
+            hash(&edge),
+            ahash::RandomState::with_seeds(1, 2, 3, 4).hash_one(i64::MAX)
+        );
+        let negative = AverInt::from_i64(i64::MIN);
+        assert!(negative.clone() == negative);
+        assert!(negative != edge);
+        let many: Vec<AverInt> = (0..1000).map(|_| a.clone()).collect();
+        assert!(many.iter().all(|x| *x == b));
     }
 
     #[test]
