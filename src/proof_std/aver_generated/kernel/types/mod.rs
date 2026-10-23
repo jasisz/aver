@@ -758,27 +758,27 @@ pub fn fits(
     }
 }
 
-/// Whether == between two values of the type is equality. Data, not a rule of the kernel: a declared type has one when its declaration in the script says so, any other type by its shape in Kernel.Builtins and then part by part; a type variable when it asks for one.
+/// Whether == between two values of the type is equality. A declared type must claim it and every field reachable from it must have equality; revisiting a recursive declaration closes that structural check. Other types follow their builtin shape and parts; a type variable follows its equality mark.
+#[inline(always)]
 pub fn hasEq(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty, e @ _: &TyEnv) -> bool {
+    crate::proof_std::cancel_checkpoint();
+    let __arg2 @ _ = <aver_rt::AverList<AverStr>>::empty();
+    crate::proof_std::aver_generated::kernel::types::hasEqSeen(t, e, &__arg2)
+}
+
+/// Equality checked structurally, with declared names already being checked treated coinductively.
+pub fn hasEqSeen(
+    t @ _: &crate::proof_std::aver_generated::kernel::term::Ty,
+    e @ _: &TyEnv,
+    seen @ _: &aver_rt::AverList<AverStr>,
+) -> bool {
     crate::proof_std::cancel_checkpoint();
     {
         let __t = t;
         match __t.view() {
             crate::proof_std::aver_generated::kernel::term::Ty__view::TyNamed(__n_fields) => {
                 let n = __n_fields.0.clone();
-                {
-                    let __arg7 @ _ = crate::proof_std::aver_generated::kernel::types::sumNamed(
-                        n.clone(),
-                        &e.sums,
-                    );
-                    {
-                        let __arg8 @ _ =
-                            crate::proof_std::aver_generated::kernel::types::recNamed(n, &e.recs);
-                        crate::proof_std::aver_generated::kernel::types::declaredEq(
-                            &__arg7, &__arg8,
-                        )
-                    }
-                }
+                crate::proof_std::aver_generated::kernel::types::namedHasEq(n, e, seen)
             }
             crate::proof_std::aver_generated::kernel::term::Ty__view::TyVar(__n_fields) => {
                 let n = __n_fields.0.clone();
@@ -792,11 +792,11 @@ pub fn hasEq(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty, e @ _: 
             }
             _ => {
                 ({
-                    let __arg9 @ _ = crate::proof_std::aver_generated::kernel::types::headOf(t);
-                    crate::proof_std::aver_generated::kernel::builtins::equality(__arg9)
+                    let __arg8 @ _ = crate::proof_std::aver_generated::kernel::types::headOf(t);
+                    crate::proof_std::aver_generated::kernel::builtins::equality(__arg8)
                 } && {
-                    let __arg10 @ _ = crate::proof_std::aver_generated::kernel::types::partsOf(t);
-                    crate::proof_std::aver_generated::kernel::types::allEq(&__arg10, e)
+                    let __arg9 @ _ = crate::proof_std::aver_generated::kernel::types::partsOf(t);
+                    crate::proof_std::aver_generated::kernel::types::allEqSeen(&__arg9, e, seen)
                 })
             }
         }
@@ -882,16 +882,69 @@ pub fn rigidVars(
     }
 }
 
-/// What a declared type's declaration says of its ==; a name the script does not declare has none.
-pub fn declaredEq(
-    s @ _: &Option<crate::proof_std::aver_generated::kernel::proof::Sum>,
-    r @ _: &Option<crate::proof_std::aver_generated::kernel::proof::Rec>,
+/// A declared name claims equality and all of its fields support it; a recursive return to a name already under that check is sound.
+#[inline(always)]
+pub fn namedHasEq(n @ _: AverStr, e @ _: &TyEnv, seen @ _: &aver_rt::AverList<AverStr>) -> bool {
+    crate::proof_std::cancel_checkpoint();
+    if seen.contains(&n) {
+        true
+    } else {
+        {
+            let __subject = (
+                crate::proof_std::aver_generated::kernel::types::sumNamed(n.clone(), &e.sums),
+                crate::proof_std::aver_generated::kernel::types::recNamed(n.clone(), &e.recs),
+            );
+            match __subject {
+                (Some(s), _) => {
+                    (s.eq && {
+                        let __arg5 @ _ = aver_rt::AverList::prepend(n, &seen.clone());
+                        crate::proof_std::aver_generated::kernel::types::variantsHaveEq(
+                            &s.variants,
+                            e,
+                            &__arg5,
+                        )
+                    })
+                }
+                (_, Some(r)) => {
+                    (r.eq && {
+                        let __arg6 @ _ =
+                            crate::proof_std::aver_generated::kernel::types::typesOfVars(&r.fields);
+                        {
+                            let __arg7 @ _ = aver_rt::AverList::prepend(n, &seen.clone());
+                            crate::proof_std::aver_generated::kernel::types::allEqSeen(
+                                &__arg6, e, &__arg7,
+                            )
+                        }
+                    })
+                }
+                _ => false,
+            }
+        }
+    }
+}
+
+/// Every field of every variant has equality.
+#[inline(always)]
+pub fn variantsHaveEq(
+    vs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Variant>,
+    e @ _: &TyEnv,
+    seen @ _: &aver_rt::AverList<AverStr>,
 ) -> bool {
     crate::proof_std::cancel_checkpoint();
-    match (s.clone(), r.clone()) {
-        (Some(sum), _) => sum.eq,
-        (_, Some(rec)) => rec.eq,
-        _ => false,
+    {
+        let __list_subject = vs;
+        if __list_subject.is_empty() {
+            true
+        } else {
+            if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                (crate::proof_std::aver_generated::kernel::types::allEqSeen(&v.fields, e, seen)
+                    && crate::proof_std::aver_generated::kernel::types::variantsHaveEq(
+                        &rest, e, seen,
+                    ))
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
     }
 }
 
@@ -902,14 +955,26 @@ pub fn allEq(
     e @ _: &TyEnv,
 ) -> bool {
     crate::proof_std::cancel_checkpoint();
+    let __arg2 @ _ = <aver_rt::AverList<AverStr>>::empty();
+    crate::proof_std::aver_generated::kernel::types::allEqSeen(ts, e, &__arg2)
+}
+
+/// Whether every type has equality while these recursive declarations are already being checked.
+#[inline(always)]
+pub fn allEqSeen(
+    ts @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Ty>,
+    e @ _: &TyEnv,
+    seen @ _: &aver_rt::AverList<AverStr>,
+) -> bool {
+    crate::proof_std::cancel_checkpoint();
     {
         let __list_subject = ts;
         if __list_subject.is_empty() {
             true
         } else {
             if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                (crate::proof_std::aver_generated::kernel::types::hasEq(t, e)
-                    && crate::proof_std::aver_generated::kernel::types::allEq(&rest, e))
+                (crate::proof_std::aver_generated::kernel::types::hasEqSeen(t, e, seen)
+                    && crate::proof_std::aver_generated::kernel::types::allEqSeen(&rest, e, seen))
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
             }

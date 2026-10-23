@@ -199,12 +199,19 @@ verify fits
     fits(Ty.TyRigid("", false), Ty.TyRigid("", false)) => true
 
 fn hasEq(t: Ty, e: TyEnv) -> Bool
-    ? "Whether == between two values of the type is equality. Data, not a rule of the kernel: a declared type has one when its declaration in the script says so, any other type by its shape in Kernel.Builtins and then part by part; a type variable when it asks for one."
+    ? "Whether == between two values of the type is equality. A declared type must claim it and every field reachable from it must have equality; revisiting a recursive declaration closes that structural check. Other types follow their builtin shape and parts; a type variable follows its equality mark."
+    hasEqSeen(t, e, [])
+
+fn hasEqSeen(t: Ty, e: TyEnv, seen: List<String>) -> Bool
+    ? "Equality checked structurally, with declared names already being checked treated coinductively."
     match t
-        Ty.TyNamed(n) -> declaredEq(sumNamed(n, e.sums), recNamed(n, e.recs))
+        Ty.TyNamed(n) -> namedHasEq(n, e, seen)
         Ty.TyVar(n, eq) -> eq
         Ty.TyRigid(n, eq) -> eq
-        _ -> Bool.and(Kernel.Builtins.equality(headOf(t)), allEq(partsOf(t), e))
+        _ -> Bool.and(Kernel.Builtins.equality(headOf(t)), allEqSeen(partsOf(t), e, seen))
+
+verify hasEqSeen
+    hasEqSeen(Ty.TyInt, empty(), []) => true
 
 verify hasEq
     hasEq(Ty.TyList(Ty.TyInt), empty()) => true
@@ -213,6 +220,9 @@ verify hasEq
     hasEq(Ty.TyNamed("R"), empty()) => false
     hasEq(Ty.TyOption(Ty.TyNamed("R")), TyEnv(vars = [], defs = [], consts = [], sums = [], recs = [Rec(name = "R", eq = true, fields = [])], sigs = [])) => true
     hasEq(Ty.TyNamed("R"), TyEnv(vars = [], defs = [], consts = [], sums = [], recs = [Rec(name = "R", eq = false, fields = [])], sigs = [])) => false
+    hasEq(Ty.TyNamed("R"), TyEnv(vars = [], defs = [], consts = [], sums = [], recs = [Rec(name = "R", eq = true, fields = [Kernel.Term.typed("value", Ty.TyFloat)])], sigs = [])) => false
+    hasEq(Ty.TyNamed("N"), TyEnv(vars = [], defs = [], consts = [], sums = [Sum(name = "N", eq = true, variants = [Variant(name = "N.Z", fields = []), Variant(name = "N.S", fields = [Ty.TyNamed("N")])])], recs = [], sigs = [])) => true
+    hasEq(Ty.TyNamed("N"), TyEnv(vars = [], defs = [], consts = [], sums = [Sum(name = "N", eq = true, variants = [Variant(name = "N.Z", fields = [Ty.TyFloat]), Variant(name = "N.S", fields = [Ty.TyNamed("N")])])], recs = [], sigs = [])) => false
     hasEq(Ty.TyList(Ty.TyAny), empty()) => true
     hasEq(Ty.TyNamed("?=T"), empty()) => false
     hasEq(Ty.TyRigid("=T", false), empty()) => false
@@ -247,21 +257,39 @@ fn rigidVars(vs: List<TypedVar>) -> List<TypedVar>
 verify rigidVars
     rigidVars([Kernel.Term.typed("x", Ty.TyVar("T", false))]) => [Kernel.Term.typed("x", Ty.TyRigid("T", false))]
 
-fn declaredEq(s: Option<Sum>, r: Option<Rec>) -> Bool
-    ? "What a declared type's declaration says of its ==; a name the script does not declare has none."
-    match (s, r)
-        (Option.Some(sum), _) -> sum.eq
-        (_, Option.Some(rec)) -> rec.eq
-        _ -> false
+fn namedHasEq(n: String, e: TyEnv, seen: List<String>) -> Bool
+    ? "A declared name claims equality and all of its fields support it; a recursive return to a name already under that check is sound."
+    match List.contains(seen, n)
+        true -> true
+        false -> match (sumNamed(n, e.sums), recNamed(n, e.recs))
+            (Option.Some(s), _) -> Bool.and(s.eq, variantsHaveEq(s.variants, e, List.prepend(n, seen)))
+            (_, Option.Some(r)) -> Bool.and(r.eq, allEqSeen(typesOfVars(r.fields), e, List.prepend(n, seen)))
+            _ -> false
 
-verify declaredEq
-    declaredEq(Option.None, Option.None) => false
+verify namedHasEq
+    namedHasEq("R", empty(), []) => false
+
+fn variantsHaveEq(vs: List<Variant>, e: TyEnv, seen: List<String>) -> Bool
+    ? "Every field of every variant has equality."
+    match vs
+        [] -> true
+        [v, ..rest] -> Bool.and(allEqSeen(v.fields, e, seen), variantsHaveEq(rest, e, seen))
+
+verify variantsHaveEq
+    variantsHaveEq([Variant(name = "C.A", fields = [Ty.TyFloat])], empty(), []) => false
 
 fn allEq(ts: List<Ty>, e: TyEnv) -> Bool
     ? "Whether every type has an equality."
+    allEqSeen(ts, e, [])
+
+fn allEqSeen(ts: List<Ty>, e: TyEnv, seen: List<String>) -> Bool
+    ? "Whether every type has equality while these recursive declarations are already being checked."
     match ts
         [] -> true
-        [t, ..rest] -> Bool.and(hasEq(t, e), allEq(rest, e))
+        [t, ..rest] -> Bool.and(hasEqSeen(t, e, seen), allEqSeen(rest, e, seen))
+
+verify allEqSeen
+    allEqSeen([Ty.TyInt, Ty.TyFloat], empty(), []) => false
 
 verify allEq
     allEq([], empty()) => true
