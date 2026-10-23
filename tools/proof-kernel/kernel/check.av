@@ -570,6 +570,7 @@ fn caseVars(cs: List<SplitCase>, t: Ty, env: Env) -> Result<List<List<TypedVar>>
 
 verify caseVars
     caseVars([SplitCase(ctor = "cons", binders = ["a", "b"], proof = Proof.PRefl(Term.TUnit))], Ty.TyList(Ty.TyInt), emptyEnv()) => Result.Ok([[Kernel.Term.typed("a", Ty.TyInt), Kernel.Term.typed("b", Ty.TyList(Ty.TyInt))]])
+    caseVars([SplitCase(ctor = "C.A", binders = ["extra"], proof = Proof.PRefl(Term.TUnit))], Ty.TyNamed("C"), sumEnv()) => Result.Err("case C.A binds 1 names for 0 fields")
 
 fn noVars(cs: List<SplitCase>) -> List<List<TypedVar>>
     ? "No variables for any case: a literal split names hypotheses, not values."
@@ -1073,6 +1074,7 @@ fn armEquation(s: Term, chosen: Arm, outer: List<Binding>, ys: List<Term>, q: Pr
 
 verify armEquation
     armEquation(Term.TVar("c"), Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TInt(1)), [], [], Proof.PHyp("h"), Term.TUnit, withHyp(withVars(emptyEnv(), [Kernel.Term.typed("c", Ty.TyBool)]), "h", Term.TVar("c"), false), "p") => Result.Err("step p: the premise does not select this arm")
+    armEquation(Term.TCtor("Option.None", []), Arm(pattern = Pat.PCtor("Option.None", ["extra"]), body = Term.TInt(1)), [], [Term.TInt(0)], Proof.PRefl(Term.TUnit), Term.TUnit, emptyEnv(), "p") => Result.Err("step p: constructor pattern Option.None binds 1 names for 0 fields")
 
 fn armAt(arms: List<Arm>, k: Int) -> Option<Arm>
     ? "Arm k, counting from 1."

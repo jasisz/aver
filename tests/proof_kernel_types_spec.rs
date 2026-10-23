@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// (script, what the kernel says, whether an untyped kernel accepted it)
-const REFUSED: [(&str, &str, bool); 45] = [
+const REFUSED: [(&str, &str, bool); 46] = [
     // A law about a sum, cited at an Int: `x = One.Only` for every `x` of
     // the one-value type `One`, read at 0 and at 1, gives `0 = 1`.
     (
@@ -278,6 +278,13 @@ const REFUSED: [(&str, &str, bool); 45] = [
         "record R repeats field a",
         true,
     ),
+    // Outside induction, constructor patterns silently zipped their names
+    // with fields. Both missing and extra names therefore passed typing.
+    (
+        "wrong_arity_constructor_pattern",
+        "constructor pattern Option.None binds 1 names for 0 fields",
+        true,
+    ),
 ];
 
 fn fixtures() -> PathBuf {
@@ -313,8 +320,8 @@ fn every_refused_script_is_listed() {
     assert_eq!(on_disk, listed);
 }
 
-/// Twenty-seven scripts were accepted before their corresponding kernel gates.
+/// Twenty-eight scripts were accepted before their corresponding kernel gates.
 #[test]
-fn twenty_seven_of_them_were_accepted_before() {
-    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 27);
+fn twenty_eight_of_them_were_accepted_before() {
+    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 28);
 }
