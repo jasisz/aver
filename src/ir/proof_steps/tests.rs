@@ -840,7 +840,7 @@ fn a_binding_unfolds_to_the_value_the_script_carries() {
     );
     s.consts.push(Const {
         name: "Lib.base".into(),
-        ty: crate::ast::Type::Invalid,
+        ty: crate::ast::Type::Int,
         value: forty.clone(),
     });
     assert_eq!(kernel(&s), Ok(()));
@@ -1476,7 +1476,7 @@ fn every_step_constructor_is_accepted_and_refused_by_the_kernel() {
         );
         s.consts.push(Const {
             name: "Lib.base".into(),
-            ty: crate::ast::Type::Invalid,
+            ty: crate::ast::Type::Int,
             value: i(40),
         });
         s
@@ -2051,7 +2051,6 @@ fn an_induction_toward_zero_follows_only_the_descents_the_gate_checked() {
         div(n(), i(0)),
         div(n(), i(-2)),
         div(n(), var("n")),
-        div(var("m"), i(2)),
         term::intrinsic(
             crate::ir::hir::BuiltinIntrinsic::IntModEuclid,
             vec![n(), i(2)],
@@ -2069,6 +2068,14 @@ fn an_induction_toward_zero_follows_only_the_descents_the_gate_checked() {
             "does not count n down to zero",
         );
     }
+    // A call on a name that is not a parameter: the kernel types the
+    // definition before its descent and refuses the free name there.
+    let elsewhere = halving(div(var("m"), i(2)));
+    assert!(super::induct::recursion(&elsewhere, &[]).is_err());
+    refused(
+        &trivially(elsewhere, &["ih"], refl(), refl()),
+        "m is not a variable in scope",
+    );
     // A recursive call where n is at most 0.
     let stops_late = def(&["n"], gt0(n()), i(0), call(vec![less(n(), 1)]));
     refused(
