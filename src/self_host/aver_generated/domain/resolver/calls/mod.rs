@@ -39,39 +39,19 @@ pub fn buildFnMap(
 /// Transform ExprCall→ExprCallDirect for known functions in all fn bodies.
 #[inline(always)]
 pub fn resolveCallsInFns(
-    fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    mut fns @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>;
-    let mut fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> = fns;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = fns;
-            if __list_subject.is_empty() {
-                return acc.reverse();
-            } else {
-                if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco2 = aver_rt::AverList::prepend_owned(
-                            crate::aver_generated::domain::resolver::calls::resolveCallsInFn(
-                                f.clone(),
-                                fnMap,
-                            ),
-                            acc,
-                        );
-                        __hold0 = __tco0;
-                        fns = &__hold0;
-                        acc = __tco2;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_rt::aver_list_match_reuse!(fns, [] => { return acc.reverse(); }, [f, rest, __list_slot] => { {
+            let __tco0 = rest;
+            let __tco2 = __list_slot.prepend(crate::aver_generated::domain::resolver::calls::resolveCallsInFn(f, fnMap), acc);
+            fns = __tco0;
+            acc = __tco2;
+            continue;
+        } })
     }
 }
 
@@ -101,38 +81,19 @@ pub fn resolveCallsInFn(
 /// Resolve calls in a list of statements.
 #[inline(always)]
 pub fn resolveCallsInStmts(
-    stmts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    mut stmts @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
     fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>;
-    let mut stmts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> = stmts;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = stmts;
-            if __list_subject.is_empty() {
-                return acc.reverse();
-            } else {
-                if let (Some(s), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco2 = aver_rt::AverList::prepend_owned(
-                            crate::aver_generated::domain::resolver::calls::resolveCallsInStmt(
-                                s, fnMap,
-                            ),
-                            acc,
-                        );
-                        __hold0 = __tco0;
-                        stmts = &__hold0;
-                        acc = __tco2;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_rt::aver_list_match_reuse!(stmts, [] => { return acc.reverse(); }, [s, rest, __list_slot] => { {
+            let __tco0 = rest;
+            let __tco2 = __list_slot.prepend(crate::aver_generated::domain::resolver::calls::resolveCallsInStmt(&s, fnMap), acc);
+            stmts = __tco0;
+            acc = __tco2;
+            continue;
+        } })
     }
 }
 
@@ -640,7 +601,7 @@ pub fn resolveOneCall(
                 if crate::aver_generated::domain::resolver::calls::isBuiltinCallName(name.clone()) {
                     crate::aver_generated::domain::resolver::calls::resolveBuiltinCall(
                         name,
-                        &resolvedArgs,
+                        resolvedArgs,
                     )
                 } else {
                     crate::aver_generated::domain::ast::Expr::ExprCall(
@@ -656,10 +617,10 @@ pub fn resolveOneCall(
 #[inline(always)]
 pub fn resolveBuiltinCall(
     name @ _: AverStr,
-    resolvedArgs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    mut resolvedArgs @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
-    if crate::aver_generated::domain::resolver::calls::isLiteralDivisorCall(&name, resolvedArgs) {
+    if crate::aver_generated::domain::resolver::calls::isLiteralDivisorCall(&name, &resolvedArgs) {
         crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
             crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
                 ::aver_rt::str_lit!("Result.withDefault"),
@@ -667,7 +628,7 @@ pub fn resolveBuiltinCall(
                     crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                         crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
                             name,
-                            resolvedArgs.clone(),
+                            resolvedArgs,
                         ),
                     ),
                     crate::aver_generated::domain::ast::Expr::ExprInt(
@@ -680,7 +641,7 @@ pub fn resolveBuiltinCall(
         )
     } else {
         crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-            crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(name, resolvedArgs.clone()),
+            crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(name, resolvedArgs),
         )
     }
 }
@@ -897,149 +858,79 @@ pub fn isBuiltinCallName(name @ _: AverStr) -> bool {
         ::aver_rt::str_lit!("Vector.set"),
         ::aver_rt::str_lit!("List.fromVector"),
     ]);
-    crate::aver_generated::domain::resolver::calls::isBuiltinCallNameFrom(name, &__arg1)
+    crate::aver_generated::domain::resolver::calls::isBuiltinCallNameFrom(name, __arg1)
 }
 
 /// Check builtin/service call names recursively by exact match.
 #[inline(always)]
 pub fn isBuiltinCallNameFrom(
     mut name @ _: AverStr,
-    knownNames @ _: &aver_rt::AverList<AverStr>,
+    mut knownNames @ _: aver_rt::AverList<AverStr>,
 ) -> bool {
-    let mut __hold1: aver_rt::AverList<AverStr>;
-    let mut knownNames @ _: &aver_rt::AverList<AverStr> = knownNames;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = knownNames;
-            if __list_subject.is_empty() {
-                return false;
-            } else {
-                if let Some((knownName, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    if (name == knownName) {
-                        return true;
-                    } else {
-                        {
-                            let __tco1 = rest;
-                            __hold1 = __tco1;
-                            knownNames = &__hold1;
-                            continue;
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_list_match!(knownNames, [] => { return false; }, [knownName, rest] => { if (name == knownName) { return true; } else { {
+            let __tco1 = rest;
+            knownNames = __tco1;
+            continue;
+        } } })
     }
 }
 
 /// Resolve calls in a list of expressions.
 #[inline(always)]
 pub fn resolveCallsInExprs(
-    exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    mut exprs @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
     fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Expr> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>;
-    let mut exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr> = exprs;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = exprs;
-            if __list_subject.is_empty() {
-                return acc.reverse();
-            } else {
-                if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco2 = aver_rt::AverList::prepend_owned(
-                            crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                                e.clone(),
-                                fnMap,
-                            ),
-                            acc,
-                        );
-                        __hold0 = __tco0;
-                        exprs = &__hold0;
-                        acc = __tco2;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_rt::aver_list_match_reuse!(exprs, [] => { return acc.reverse(); }, [e, rest, __list_slot] => { {
+            let __tco0 = rest;
+            let __tco2 = __list_slot.prepend(crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(e, fnMap), acc);
+            exprs = __tco0;
+            acc = __tco2;
+            continue;
+        } })
     }
 }
 
 /// Resolve calls in match arm bodies.
 #[inline(always)]
 pub fn resolveCallsInArms(
-    arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    mut arms @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
     fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>;
-    let mut arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> = arms;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = arms;
-            if __list_subject.is_empty() {
-                return acc.reverse();
-            } else {
-                if let (Some(arm), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco2 = aver_rt::AverList::prepend_owned(crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern.clone(), body: crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(arm.body.clone(), fnMap), bindingSlots: arm.bindingSlots.clone() }, acc);
-                        __hold0 = __tco0;
-                        arms = &__hold0;
-                        acc = __tco2;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_rt::aver_list_match_reuse!(arms, [] => { return acc.reverse(); }, [arm, rest, __list_slot] => { {
+            let __tco0 = rest;
+            let __tco2 = __list_slot.prepend(crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern, body: crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(arm.body, fnMap), bindingSlots: arm.bindingSlots }, acc);
+            arms = __tco0;
+            acc = __tco2;
+            continue;
+        } })
     }
 }
 
 /// Resolve calls in record field expressions.
 #[inline(always)]
 pub fn resolveCallsInFields(
-    fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
+    mut fields @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
     fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> {
-    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>;
-    let mut fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> =
-        fields;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = fields;
-            if __list_subject.is_empty() {
-                return acc.reverse();
-            } else {
-                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let (name, expr) = pair.clone();
-                        {
-                            let __tco0 = rest;
-                            let __tco2 = aver_rt::AverList::prepend_owned((name, crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(expr, fnMap)), acc);
-                            __hold0 = __tco0;
-                            fields = &__hold0;
-                            acc = __tco2;
-                            continue;
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_rt::aver_list_match_reuse!(fields, [] => { return acc.reverse(); }, [pair, rest, __list_slot] => { { let (name, expr) = pair; {
+            let __tco0 = rest;
+            let __tco2 = __list_slot.prepend((name, crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(expr, fnMap)), acc);
+            fields = __tco0;
+            acc = __tco2;
+            continue;
+        } } })
     }
 }
 

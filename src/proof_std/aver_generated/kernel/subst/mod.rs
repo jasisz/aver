@@ -30,7 +30,7 @@ fn __mutual_tco_trampoline_1(
                             let __arg5 @ _ =
                                 crate::proof_std::aver_generated::kernel::subst::freeVars(&b.value);
                             crate::proof_std::aver_generated::kernel::subst::firstShared(
-                                &__arg5,
+                                __arg5,
                                 (*bound).clone(),
                             )
                         };
@@ -386,9 +386,7 @@ pub fn freeVarsArms(
                                 crate::proof_std::aver_generated::kernel::subst::patNames(
                                     &a.pattern,
                                 );
-                            crate::proof_std::aver_generated::kernel::subst::without(
-                                &__arg3, __arg4,
-                            )
+                            crate::proof_std::aver_generated::kernel::subst::without(__arg3, __arg4)
                         }
                     },
                     &crate::proof_std::aver_generated::kernel::subst::freeVarsArms(&rest),
@@ -403,37 +401,16 @@ pub fn freeVarsArms(
 /// Names not in the dropped list.
 #[inline(always)]
 pub fn without(
-    ns @ _: &aver_rt::AverList<AverStr>,
+    mut ns @ _: aver_rt::AverList<AverStr>,
     mut drop @ _: aver_rt::AverList<AverStr>,
 ) -> aver_rt::AverList<AverStr> {
-    let mut __hold0: aver_rt::AverList<AverStr>;
-    let mut ns @ _: &aver_rt::AverList<AverStr> = ns;
     loop {
         crate::proof_std::cancel_checkpoint();
-        {
-            let __list_subject = ns;
-            if __list_subject.is_empty() {
-                return aver_rt::AverList::empty();
-            } else {
-                if let Some((n, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    if drop.contains(&n) {
-                        {
-                            let __tco0 = rest;
-                            __hold0 = __tco0;
-                            ns = &__hold0;
-                            continue;
-                        }
-                    } else {
-                        return aver_rt::AverList::prepend_owned(
-                            n,
-                            crate::proof_std::aver_generated::kernel::subst::without(&rest, drop),
-                        );
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_rt::aver_list_match_reuse!(ns, [] => { return aver_rt::AverList::empty(); }, [n, rest, __list_slot] => { if drop.contains(&n) { {
+            let __tco0 = rest;
+            ns = __tco0;
+            continue;
+        } } else { return __list_slot.prepend(n, crate::proof_std::aver_generated::kernel::subst::without(rest, drop)); } })
     }
 }
 
@@ -878,33 +855,15 @@ pub fn unbind(
 /// The first name also in the other list.
 #[inline(always)]
 pub fn firstShared(
-    ns @ _: &aver_rt::AverList<AverStr>,
+    mut ns @ _: aver_rt::AverList<AverStr>,
     mut others @ _: aver_rt::AverList<AverStr>,
 ) -> Option<AverStr> {
-    let mut __hold0: aver_rt::AverList<AverStr>;
-    let mut ns @ _: &aver_rt::AverList<AverStr> = ns;
     loop {
         crate::proof_std::cancel_checkpoint();
-        {
-            let __list_subject = ns;
-            if __list_subject.is_empty() {
-                return None;
-            } else {
-                if let Some((n, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    if others.contains(&n) {
-                        return Some(n);
-                    } else {
-                        {
-                            let __tco0 = rest;
-                            __hold0 = __tco0;
-                            ns = &__hold0;
-                            continue;
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_list_match!(ns, [] => { return None; }, [n, rest] => { if others.contains(&n) { return Some(n); } else { {
+            let __tco0 = rest;
+            ns = __tco0;
+            continue;
+        } } })
     }
 }

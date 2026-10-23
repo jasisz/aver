@@ -1952,7 +1952,11 @@ mod tests {
         let (a, rest, slot) = list.uncons_reuse().expect("three elements");
         assert_eq!((a.as_ref(), rest.len()), ("a", 2));
         let env = slot.prepend(word("x"), AverList::from_vec(vec![word("y")]));
-        assert_eq!(env.inner.as_ref().map(Rc::as_ptr), node, "built in the old node");
+        assert_eq!(
+            env.inner.as_ref().map(Rc::as_ptr),
+            node,
+            "built in the old node"
+        );
         let words: Vec<&str> = env.iter().map(|w| w.as_ref()).collect();
         assert_eq!(words, ["x", "y"]);
 

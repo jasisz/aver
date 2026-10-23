@@ -520,7 +520,7 @@ pub fn partsOf(
 /// The same shape over new parts.
 pub fn rebuild(
     mut t @ _: crate::proof_kernel::aver_generated::kernel::term::Ty,
-    parts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Ty>,
+    mut parts @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Ty>,
 ) -> crate::proof_kernel::aver_generated::kernel::term::Ty {
     crate::proof_kernel::cancel_checkpoint();
     {
@@ -531,7 +531,7 @@ pub fn rebuild(
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyList(
                     crate::proof_kernel::aver_generated::kernel::term::Ty__TyList(
                         crate::proof_kernel::aver_generated::kernel::types::nth(
-                            parts.clone(),
+                            parts,
                             aver_rt::AverInt::from_i64(0),
                         ),
                     ),
@@ -542,7 +542,7 @@ pub fn rebuild(
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyOption(
                     crate::proof_kernel::aver_generated::kernel::term::Ty__TyOption(
                         crate::proof_kernel::aver_generated::kernel::types::nth(
-                            parts.clone(),
+                            parts,
                             aver_rt::AverInt::from_i64(0),
                         ),
                     ),
@@ -553,7 +553,7 @@ pub fn rebuild(
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyVector(
                     crate::proof_kernel::aver_generated::kernel::term::Ty__TyVector(
                         crate::proof_kernel::aver_generated::kernel::types::nth(
-                            parts.clone(),
+                            parts,
                             aver_rt::AverInt::from_i64(0),
                         ),
                     ),
@@ -569,7 +569,7 @@ pub fn rebuild(
                             aver_rt::AverInt::from_i64(0),
                         ),
                         crate::proof_kernel::aver_generated::kernel::types::nth(
-                            parts.clone(),
+                            parts,
                             aver_rt::AverInt::from_i64(1),
                         ),
                     ),
@@ -585,7 +585,7 @@ pub fn rebuild(
                             aver_rt::AverInt::from_i64(0),
                         ),
                         crate::proof_kernel::aver_generated::kernel::types::nth(
-                            parts.clone(),
+                            parts,
                             aver_rt::AverInt::from_i64(1),
                         ),
                     ),
@@ -594,7 +594,7 @@ pub fn rebuild(
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyTuple(__xs_fields) => {
                 let xs = __xs_fields.0.clone();
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyTuple(
-                    crate::proof_kernel::aver_generated::kernel::term::Ty__TyTuple(parts.clone()),
+                    crate::proof_kernel::aver_generated::kernel::term::Ty__TyTuple(parts),
                 )
             }
             _ => t,
@@ -668,7 +668,7 @@ pub fn join(
                         )
                     }
                 }?;
-                crate::proof_kernel::aver_generated::kernel::types::rebuild(a, &__arg4)
+                crate::proof_kernel::aver_generated::kernel::types::rebuild(a, __arg4)
             }),
             _ => Err(aver_rt::AverStr::from({
                 let mut __b = {
@@ -722,35 +722,18 @@ pub fn joinEach(
 /// Every type joined with the one before; a hole when there is none.
 #[inline(always)]
 pub fn joinAll(
-    ts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Ty>,
+    mut ts @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Ty>,
     mut acc @ _: crate::proof_kernel::aver_generated::kernel::term::Ty,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Ty, AverStr> {
-    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Ty>;
-    let mut ts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Ty> = ts;
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        {
-            let __list_subject = ts;
-            if __list_subject.is_empty() {
-                return Ok(acc);
-            } else {
-                if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = crate::proof_kernel::aver_generated::kernel::types::join(
-                            acc,
-                            t.clone(),
-                        )?;
-                        __hold0 = __tco0;
-                        ts = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_list_match!(ts, [] => { return Ok(acc); }, [t, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = crate::proof_kernel::aver_generated::kernel::types::join(acc, t)?;
+            ts = __tco0;
+            acc = __tco1;
+            continue;
+        } })
     }
 }
 
@@ -831,9 +814,9 @@ pub fn rigid(
                 let __arg4 @ _ = {
                     let __arg3 @ _ =
                         crate::proof_kernel::aver_generated::kernel::types::partsOf(&t);
-                    crate::proof_kernel::aver_generated::kernel::types::rigidAll(&__arg3)
+                    crate::proof_kernel::aver_generated::kernel::types::rigidAll(__arg3)
                 };
-                crate::proof_kernel::aver_generated::kernel::types::rebuild(t, &__arg4)
+                crate::proof_kernel::aver_generated::kernel::types::rebuild(t, __arg4)
             }
         }
     }
@@ -842,24 +825,10 @@ pub fn rigid(
 /// Each type with its variables fixed.
 #[inline(always)]
 pub fn rigidAll(
-    ts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Ty>,
+    mut ts @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Ty>,
 ) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Ty> {
     crate::proof_kernel::cancel_checkpoint();
-    {
-        let __list_subject = ts;
-        if __list_subject.is_empty() {
-            aver_rt::AverList::empty()
-        } else {
-            if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend_owned(
-                    crate::proof_kernel::aver_generated::kernel::types::rigid(t.clone()),
-                    crate::proof_kernel::aver_generated::kernel::types::rigidAll(&rest),
-                )
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
-        }
-    }
+    aver_rt::aver_list_match_reuse!(ts, [] => aver_rt::AverList::empty(), [t, rest, __list_slot] => __list_slot.prepend(crate::proof_kernel::aver_generated::kernel::types::rigid(t), crate::proof_kernel::aver_generated::kernel::types::rigidAll(rest)))
 }
 
 /// The givens of a statement as its own proof sees them.
@@ -1442,7 +1411,7 @@ pub fn typeOf(
                 {
                     let __arg29 @ _ =
                         crate::proof_kernel::aver_generated::kernel::types::typesOf(xs, e)?;
-                    crate::proof_kernel::aver_generated::kernel::types::callType(f, &__arg29, e)
+                    crate::proof_kernel::aver_generated::kernel::types::callType(f, __arg29, e)
                 }
             }
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TBi(__n_fields) => {
@@ -1451,7 +1420,7 @@ pub fn typeOf(
                 {
                     let __arg30 @ _ =
                         crate::proof_kernel::aver_generated::kernel::types::typesOf(xs, e)?;
-                    crate::proof_kernel::aver_generated::kernel::types::builtinType(n, &__arg30)
+                    crate::proof_kernel::aver_generated::kernel::types::builtinType(n, __arg30)
                 }
             }
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TOp(__o_fields) => {
@@ -1536,7 +1505,7 @@ pub fn typeOf(
                                 let __arg40 @ _ =
                                     crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny;
                                 crate::proof_kernel::aver_generated::kernel::types::joinAll(
-                                    &__arg39, __arg40,
+                                    __arg39, __arg40,
                                 )
                             }
                         }?),
@@ -1908,53 +1877,19 @@ pub fn requiredFieldsPresent(
 /// The one check that a namespace gives each name one identity: a repeated name is refused as what, then the name.
 #[inline(always)]
 pub fn unique(
-    names @ _: &aver_rt::AverList<AverStr>,
+    mut names @ _: aver_rt::AverList<AverStr>,
     mut seen @ _: aver_rt::AverList<AverStr>,
     mut what @ _: AverStr,
 ) -> Result<(), AverStr> {
-    let mut __hold0: aver_rt::AverList<AverStr>;
-    let mut names @ _: &aver_rt::AverList<AverStr> = names;
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        {
-            let __list_subject = names;
-            if __list_subject.is_empty() {
-                return Ok(());
-            } else {
-                if let Some((n, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    if seen.contains(&n) {
-                        return Err(aver_rt::AverStr::from({
-                            let mut __b = {
-                                let mut __b = {
-                                    let mut __b = aver_rt::Buffer::with_capacity(
-                                        (aver_rt::AverInt::from_i64(33)).to_usize().unwrap_or(0),
-                                    );
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(what),
-                                    )));
-                                    __b
-                                };
-                                __b.push_str(&::aver_rt::str_lit!(" "));
-                                __b
-                            };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
-                            __b
-                        }));
-                    } else {
-                        {
-                            let __tco0 = rest;
-                            let __tco1 = aver_rt::AverList::prepend_owned(n, seen);
-                            __hold0 = __tco0;
-                            names = &__hold0;
-                            seen = __tco1;
-                            continue;
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_rt::aver_list_match_reuse!(names, [] => { return Ok(()); }, [n, rest, __list_slot] => { if seen.contains(&n) { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(33)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(what)))); __b }; __b.push_str(&::aver_rt::str_lit!(" ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n)))); __b })); } else { {
+            let __tco0 = rest;
+            let __tco1 = __list_slot.prepend(n, seen);
+            names = __tco0;
+            seen = __tco1;
+            continue;
+        } } })
     }
 }
 
@@ -2015,7 +1950,7 @@ pub fn recordFieldsUnique(
                                         __b
                                     });
                                     crate::proof_kernel::aver_generated::kernel::types::unique(
-                                        &__arg6, __arg7, __arg8,
+                                        __arg6, __arg7, __arg8,
                                     )
                                 }
                             }
@@ -2098,7 +2033,7 @@ pub fn sumVariantsTyped(
                                         __b
                                     });
                                     crate::proof_kernel::aver_generated::kernel::types::unique(
-                                        &__arg9, __arg10, __arg11,
+                                        __arg9, __arg10, __arg11,
                                     )
                                 }
                             }
@@ -2228,7 +2163,7 @@ pub fn fieldsFit(
                     __b.push_str(&::aver_rt::str_lit!(" repeats field"));
                     __b
                 });
-                crate::proof_kernel::aver_generated::kernel::types::unique(&__arg5, __arg6, __arg7)
+                crate::proof_kernel::aver_generated::kernel::types::unique(__arg5, __arg6, __arg7)
             }
         }
     }?;
@@ -2318,14 +2253,12 @@ pub fn fieldTypesFit(
 #[inline(always)]
 pub fn callType(
     f @ _: AverStr,
-    args @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Ty>,
+    mut args @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Ty>,
     e @ _: &TyEnv,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Ty, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
     match crate::proof_kernel::aver_generated::kernel::proof::findDef(f.clone(), &e.defs) {
-        None => {
-            crate::proof_kernel::aver_generated::kernel::types::sigType(f, args.clone(), &e.sigs, e)
-        }
+        None => crate::proof_kernel::aver_generated::kernel::types::sigType(f, args, &e.sigs, e),
         Some(d @ _) => {
             let __subject = {
                 let __arg6 @ _ =
@@ -2347,11 +2280,7 @@ pub fn callType(
                             __b
                         });
                         crate::proof_kernel::aver_generated::kernel::types::bindEach(
-                            &__arg6,
-                            args.clone(),
-                            __arg7,
-                            e,
-                            __arg8,
+                            &__arg6, args, __arg7, e, __arg8,
                         )
                     }
                 }
@@ -2450,7 +2379,7 @@ pub fn sigType(
 #[inline(always)]
 pub fn builtinType(
     n @ _: AverStr,
-    args @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Ty>,
+    mut args @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Ty>,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Ty, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
     match crate::proof_kernel::aver_generated::kernel::builtins::sig(n.clone()) {
@@ -2485,11 +2414,7 @@ pub fn builtinType(
                             __b
                         });
                         crate::proof_kernel::aver_generated::kernel::types::bindEach(
-                            &s.params,
-                            args.clone(),
-                            __arg3,
-                            &__arg4,
-                            __arg5,
+                            &s.params, args, __arg3, &__arg4, __arg5,
                         )
                     }
                 }
@@ -2532,7 +2457,7 @@ pub fn bindEach(
                     let __tco2 = crate::proof_kernel::aver_generated::kernel::types::bindVars(
                         &x,
                         y,
-                        &bound,
+                        bound,
                         e,
                         what.clone(),
                     )?;
@@ -2575,7 +2500,7 @@ pub fn bindEach(
 pub fn bindVars(
     expected @ _: &crate::proof_kernel::aver_generated::kernel::term::Ty,
     mut actual @ _: crate::proof_kernel::aver_generated::kernel::term::Ty,
-    bound @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar>,
+    mut bound @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar>,
     e @ _: &TyEnv,
     what @ _: AverStr,
 ) -> Result<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar>, AverStr>
@@ -2588,7 +2513,7 @@ pub fn bindVars(
                 let n = __n_fields.0.clone();
                 let eq = __n_fields.1.clone();
                 crate::proof_kernel::aver_generated::kernel::types::bindVar(
-                    n, eq, actual, bound, e, what,
+                    n, eq, actual, &bound, e, what,
                 )
             }
             _ => crate::proof_kernel::aver_generated::kernel::types::bindShape(
@@ -2602,7 +2527,7 @@ pub fn bindVars(
 pub fn bindShape(
     expected @ _: &crate::proof_kernel::aver_generated::kernel::term::Ty,
     actual @ _: &crate::proof_kernel::aver_generated::kernel::term::Ty,
-    bound @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar>,
+    mut bound @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar>,
     e @ _: &TyEnv,
     what @ _: AverStr,
 ) -> Result<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar>, AverStr>
@@ -2623,7 +2548,7 @@ pub fn bindShape(
                 ))),
         );
         match __subject {
-            (true, _) => Ok(bound.clone()),
+            (true, _) => Ok(bound),
             (_, true) => {
                 let __arg5 @ _ =
                     crate::proof_kernel::aver_generated::kernel::types::partsOf(expected);
@@ -2631,11 +2556,7 @@ pub fn bindShape(
                     let __arg6 @ _ =
                         crate::proof_kernel::aver_generated::kernel::types::partsOf(actual);
                     crate::proof_kernel::aver_generated::kernel::types::bindEach(
-                        &__arg5,
-                        __arg6,
-                        bound.clone(),
-                        e,
-                        what,
+                        &__arg5, __arg6, bound, e, what,
                     )
                 }
             }
@@ -3495,7 +3416,7 @@ pub fn bindTyped(
                     let __arg8 @ _ =
                         crate::proof_kernel::aver_generated::kernel::types::typesOfVars(declared);
                     crate::proof_kernel::aver_generated::kernel::types::eqKept(
-                        &__arg8, bound, e, what,
+                        __arg8, bound, e, what,
                     )
                 };
             } else {
@@ -3561,7 +3482,7 @@ pub fn bindTyped(
                                         __b
                                     });
                                     crate::proof_kernel::aver_generated::kernel::types::bindVars(
-                                        &want, __arg9, &bound, e, __arg10,
+                                        &want, __arg9, bound, e, __arg10,
                                     )
                                 }
                             }?;
@@ -3582,94 +3503,36 @@ pub fn bindTyped(
 /// Every type variable some declared type marks as needing equality is bound, once all terms are in, to a type that has one: the mark is the variable's, whichever of its places a term reached it through.
 #[inline(always)]
 pub fn eqKept(
-    ts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Ty>,
+    mut ts @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Ty>,
     mut bound @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar>,
     e @ _: &TyEnv,
     mut what @ _: AverStr,
 ) -> Result<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar>, AverStr>
 {
-    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Ty>;
-    let mut ts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Ty> = ts;
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        {
-            let __list_subject = ts;
-            if __list_subject.is_empty() {
-                return Ok(bound);
-            } else {
-                if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __t = t;
-                        match __t.view() {
-                            crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyVar(
-                                __n_fields,
-                            ) => {
-                                let n = __n_fields.0.clone();
-                                let __pat0 = __n_fields.1.clone();
-                                if __pat0 {
-                                    if {
-                                        let __arg8 @ _ = crate::proof_kernel::aver_generated::kernel::types::find(n.clone(), &bound).unwrap_or(crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny);
-                                        crate::proof_kernel::aver_generated::kernel::types::hasEq(
-                                            &__arg8, e,
-                                        )
-                                    } {
-                                        {
-                                            let __tco0 = rest;
-                                            __hold0 = __tco0;
-                                            ts = &__hold0;
-                                            continue;
-                                        }
-                                    } else {
-                                        return Err(aver_rt::AverStr::from({
-                                            let mut __b = {
-                                                let mut __b = {
-                                                    let mut __b = {
-                                                        let mut __b =
-                                                            aver_rt::Buffer::with_capacity(
-                                                                (aver_rt::AverInt::from_i64(56))
-                                                                    .to_usize()
-                                                                    .unwrap_or(0),
-                                                            );
-                                                        __b.push_str(&aver_rt::AverStr::from(
-                                                            aver_rt::aver_display(&(what)),
-                                                        ));
-                                                        __b
-                                                    };
-                                                    __b.push_str(&::aver_rt::str_lit!(": == on "));
-                                                    __b
-                                                };
-                                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&({ let __arg9 @ _ = crate::proof_kernel::aver_generated::kernel::types::find(n, &bound).unwrap_or(crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny); crate::proof_kernel::aver_generated::kernel::types::show(&__arg9) }))));
-                                                __b
-                                            };
-                                            __b.push_str(&::aver_rt::str_lit!(" is not equality"));
-                                            __b
-                                        }));
-                                    }
-                                } else {
-                                    {
-                                        let __tco0 = aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::types::partsOf(t), &rest);
-                                        __hold0 = __tco0;
-                                        ts = &__hold0;
-                                        continue;
-                                    }
-                                }
-                            }
-                            _ => {
-                                let __tco0 = aver_rt::AverList::concat(
-                                    &crate::proof_kernel::aver_generated::kernel::types::partsOf(t),
-                                    &rest,
-                                );
-                                __hold0 = __tco0;
-                                ts = &__hold0;
-                                continue;
-                            }
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
+        aver_list_match!(ts, [] => { return Ok(bound); }, [t, rest] => { { let __t = &t; match __t.view() {
+        crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyVar(__n_fields) => {
+            let n = __n_fields.0.clone();
+            let __pat0 = __n_fields.1.clone();
+            if __pat0 { if { let __arg8 @ _ = crate::proof_kernel::aver_generated::kernel::types::find(n.clone(), &bound).unwrap_or(crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny); crate::proof_kernel::aver_generated::kernel::types::hasEq(&__arg8, e) } { {
+            let __tco0 = rest;
+            ts = __tco0;
+            continue;
+        } } else { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(56)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(what)))); __b }; __b.push_str(&::aver_rt::str_lit!(": == on ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&({ let __arg9 @ _ = crate::proof_kernel::aver_generated::kernel::types::find(n, &bound).unwrap_or(crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny); crate::proof_kernel::aver_generated::kernel::types::show(&__arg9) })))); __b }; __b.push_str(&::aver_rt::str_lit!(" is not equality")); __b })); } } else { {
+            let __tco0 = aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::types::partsOf(&t), &rest);
+            ts = __tco0;
+            continue;
+        } }
+        },
+        _ => {
+            {
+            let __tco0 = aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::types::partsOf(&t), &rest);
+            ts = __tco0;
+            continue;
         }
+        }
+    } } })
     }
 }
 

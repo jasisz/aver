@@ -874,7 +874,7 @@ pub fn valRepr(v @ _: &Val) -> AverStr {
                         aver_rt::AverList::from_vec(es)
                     };
                     crate::aver_generated::domain::value::valMapRepr(
-                        &__arg17,
+                        __arg17,
                         ::aver_rt::str_lit!(""),
                         true,
                     )
@@ -972,71 +972,29 @@ pub fn valReprInner(v @ _: &Val) -> AverStr {
 /// Build a stable map repr close to the host interpreter output.
 #[inline(always)]
 pub fn valMapRepr(
-    entries @ _: &aver_rt::AverList<(AverStr, Val)>,
+    mut entries @ _: aver_rt::AverList<(AverStr, Val)>,
     mut acc @ _: AverStr,
     mut first @ _: bool,
 ) -> AverStr {
-    let mut __hold0: aver_rt::AverList<(AverStr, Val)>;
-    let mut entries @ _: &aver_rt::AverList<(AverStr, Val)> = entries;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = entries;
-            if __list_subject.is_empty() {
-                return aver_rt::AverStr::from({
-                    let mut __b = {
-                        let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(18)).to_usize().unwrap_or(0),
-                            );
-                            __b.push_str(&::aver_rt::str_lit!("{"));
-                            __b
-                        };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(acc))));
-                        __b
-                    };
-                    __b.push_str(&::aver_rt::str_lit!("}"));
-                    __b
-                });
-            } else {
-                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let (k, v) = pair.clone();
-                        if first {
-                            {
-                                let __tco0 = rest;
-                                let __tco1 =
-                                    ((crate::aver_generated::domain::value::quoteString(k)
-                                        + &::aver_rt::str_lit!(": "))
-                                        + &crate::aver_generated::domain::value::valReprInner(&v));
-                                let __tco2 = false;
-                                __hold0 = __tco0;
-                                entries = &__hold0;
-                                acc = __tco1;
-                                first = __tco2;
-                                continue;
-                            }
-                        } else {
-                            {
-                                let __tco0 = rest;
-                                let __tco1 = ((((acc + &::aver_rt::str_lit!(", "))
-                                    + &crate::aver_generated::domain::value::quoteString(k))
-                                    + &::aver_rt::str_lit!(": "))
-                                    + &crate::aver_generated::domain::value::valReprInner(&v));
-                                let __tco2 = false;
-                                __hold0 = __tco0;
-                                entries = &__hold0;
-                                acc = __tco1;
-                                first = __tco2;
-                                continue;
-                            }
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_list_match!(entries, [] => { return aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(18)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("{")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(acc)))); __b }; __b.push_str(&::aver_rt::str_lit!("}")); __b }); }, [pair, rest] => { { let (k, v) = pair; if first { {
+            let __tco0 = rest;
+            let __tco1 = ((crate::aver_generated::domain::value::quoteString(k) + &::aver_rt::str_lit!(": ")) + &crate::aver_generated::domain::value::valReprInner(&v));
+            let __tco2 = false;
+            entries = __tco0;
+            acc = __tco1;
+            first = __tco2;
+            continue;
+        } } else { {
+            let __tco0 = rest;
+            let __tco1 = ((((acc + &::aver_rt::str_lit!(", ")) + &crate::aver_generated::domain::value::quoteString(k)) + &::aver_rt::str_lit!(": ")) + &crate::aver_generated::domain::value::valReprInner(&v));
+            let __tco2 = false;
+            entries = __tco0;
+            acc = __tco1;
+            first = __tco2;
+            continue;
+        } } } })
     }
 }
 

@@ -896,13 +896,11 @@ fn list_param_fed_owned(
     id: crate::ir::FnId,
     index: usize,
 ) -> bool {
-    fn sites<'e>(
-        expr: &'e MirExpr,
-        id: crate::ir::FnId,
-        out: &mut Vec<&'e [Spanned<MirExpr>]>,
-    ) {
+    fn sites<'e>(expr: &'e MirExpr, id: crate::ir::FnId, out: &mut Vec<&'e [Spanned<MirExpr>]>) {
         match expr {
-            MirExpr::Call(call) if call.node.callee == MirCallee::Fn(id) => out.push(&call.node.args),
+            MirExpr::Call(call) if call.node.callee == MirCallee::Fn(id) => {
+                out.push(&call.node.args)
+            }
             MirExpr::TailCall(call) if call.node.target == id => out.push(&call.node.args),
             _ => {}
         }
@@ -911,14 +909,19 @@ fn list_param_fed_owned(
     fn computed(expr: &MirExpr, out: &mut HashSet<LocalId>) {
         match expr {
             MirExpr::Let(binding)
-                if !matches!(binding.node.value.node, MirExpr::Local(_) | MirExpr::Project(_)) =>
+                if !matches!(
+                    binding.node.value.node,
+                    MirExpr::Local(_) | MirExpr::Project(_)
+                ) =>
             {
                 out.insert(binding.node.binding);
             }
-            MirExpr::Match(m) => out.extend(m.node.arms.iter().filter_map(|arm| match arm.pattern {
-                MirPattern::Cons { tail, .. } => Some(tail),
-                _ => None,
-            })),
+            MirExpr::Match(m) => {
+                out.extend(m.node.arms.iter().filter_map(|arm| match arm.pattern {
+                    MirPattern::Cons { tail, .. } => Some(tail),
+                    _ => None,
+                }))
+            }
             _ => {}
         }
         crate::ir::mir::expr::walk_children(expr, &mut |child| computed(child, out));
@@ -931,17 +934,23 @@ fn list_param_fed_owned(
         }
         let mut fresh = HashSet::new();
         computed(&mir_fn.body.node, &mut fresh);
-        calls.iter().all(|args| match args.get(index).map(|arg| &arg.node) {
-            Some(MirExpr::Project(_)) | None => false,
-            Some(MirExpr::Local(local)) => {
-                local.node.last_use
-                    && match mir_fn.params.iter().position(|p| p.local == local.node.slot) {
-                        Some(j) => owned.get(caller).and_then(|abi| abi.get(j)) == Some(&true),
-                        None => fresh.contains(&local.node.slot),
-                    }
-            }
-            Some(_) => true,
-        })
+        calls
+            .iter()
+            .all(|args| match args.get(index).map(|arg| &arg.node) {
+                Some(MirExpr::Project(_)) | None => false,
+                Some(MirExpr::Local(local)) => {
+                    local.node.last_use
+                        && match mir_fn
+                            .params
+                            .iter()
+                            .position(|p| p.local == local.node.slot)
+                        {
+                            Some(j) => owned.get(caller).and_then(|abi| abi.get(j)) == Some(&true),
+                            None => fresh.contains(&local.node.slot),
+                        }
+                }
+                Some(_) => true,
+            })
     })
 }
 
@@ -1448,21 +1457,21 @@ fn consumes_local(expr: &MirExpr, cx: &Consumption<'_>) -> bool {
         MirExpr::Match(m) if last_use_of(&m.node.subject.node) => {
             (cx.takes_list_apart && list_match_takes_apart(&m.node))
                 || m.node.arms.iter().any(|arm| {
-            let mut binders = Vec::new();
-            moved_parts(&arm.pattern, cx.codegen, &mut binders);
-            binders.into_iter().any(|binder| {
-                matches!(
-                    read_type(&arm.body.node, binder),
-                    Some(Type::Map(..) | Type::Vector(_))
-                ) && consumes_local(
-                    &arm.body.node,
-                    &Consumption {
-                        slot: binder,
-                        ..*cx
-                    },
-                )
-            }) || consumes_local(&arm.body.node, cx)
-        })
+                    let mut binders = Vec::new();
+                    moved_parts(&arm.pattern, cx.codegen, &mut binders);
+                    binders.into_iter().any(|binder| {
+                        matches!(
+                            read_type(&arm.body.node, binder),
+                            Some(Type::Map(..) | Type::Vector(_))
+                        ) && consumes_local(
+                            &arm.body.node,
+                            &Consumption {
+                                slot: binder,
+                                ..*cx
+                            },
+                        )
+                    }) || consumes_local(&arm.body.node, cx)
+                })
         }
         MirExpr::RecordUpdate(update) => {
             (local_of(&update.node.base.node).is_some_and(|base| base.slot == slot)
@@ -4715,7 +4724,11 @@ fn takes_list_apart(m: &MirMatch, ctx: &MirEmitCtx<'_>) -> bool {
 /// type. A node the list does not hold alone leaves the slot empty and the
 /// call allocates as before.
 fn list_reuse_target(m: &MirMatch, path: MatchPath, ctx: &MirEmitCtx<'_>) -> Option<usize> {
-    fn prepends<'e>(expr: &'e MirExpr, ctx: &MirEmitCtx<'_>, out: &mut Vec<&'e [Spanned<MirExpr>]>) {
+    fn prepends<'e>(
+        expr: &'e MirExpr,
+        ctx: &MirEmitCtx<'_>,
+        out: &mut Vec<&'e [Spanned<MirExpr>]>,
+    ) {
         if let Some(("List.prepend", args)) = mir_builtin_call_parts(expr, ctx) {
             out.push(args);
         }

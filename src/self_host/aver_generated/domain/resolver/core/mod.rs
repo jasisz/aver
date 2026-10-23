@@ -648,7 +648,7 @@ pub fn maxInt(a @ _: aver_rt::AverInt, b @ _: aver_rt::AverInt) -> aver_rt::Aver
 /// Resolve statements, threading slot assignments.
 #[inline(always)]
 pub fn resolveStmts(
-    stmts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    mut stmts @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
     mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut next @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
@@ -657,99 +657,53 @@ pub fn resolveStmts(
     aver_rt::AverInt,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>;
-    let mut stmts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> = stmts;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = stmts;
-            if __list_subject.is_empty() {
-                return (acc.reverse(), next, slots);
-            } else {
-                if let (Some(s), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    match s {
-                        crate::aver_generated::domain::ast::Stmt::StmtBind(__stp1, __stp0) => {
-                            let __stp1 = __stp1.clone();
-                            {
-                                let (__stp3, __stp2) =
-                                    crate::aver_generated::domain::resolver::core::resolveExpr(
-                                        __stp0.clone(),
-                                        slots,
-                                    );
-                                {
-                                    let __stp4 = __stp2.insert_owned(__stp1, next.clone());
-                                    {
-                                        let __tco0 = rest;
-                                        let __tco1 = __stp4;
-                                        let __tco2 = next.add(&aver_rt::AverInt::from_i64(1));
-                                        let __tco3 = aver_rt::AverList::prepend_owned(
-                                            crate::aver_generated::domain::ast::Stmt::StmtBindSlot(
-                                                next, __stp3,
-                                            ),
-                                            acc,
-                                        );
-                                        __hold0 = __tco0;
-                                        stmts = &__hold0;
-                                        slots = __tco1;
-                                        next = __tco2;
-                                        acc = __tco3;
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
-                        crate::aver_generated::domain::ast::Stmt::StmtExpr(__stp0) => {
-                            let (__stp6, __stp5) =
-                                crate::aver_generated::domain::resolver::core::resolveExpr(
-                                    __stp0.clone(),
-                                    slots,
-                                );
-                            {
-                                let __tco0 = rest;
-                                let __tco1 = __stp5.clone();
-                                let __tco2 = {
-                                    let __arg14 @ _ =
-                                        crate::aver_generated::domain::resolver::core::mapMaxVal(
-                                            &__stp5,
-                                        )
-                                        .add(&aver_rt::AverInt::from_i64(1));
-                                    crate::aver_generated::domain::resolver::core::maxInt(
-                                        next, __arg14,
-                                    )
-                                };
-                                let __tco3 = aver_rt::AverList::prepend_owned(
-                                    crate::aver_generated::domain::ast::Stmt::StmtExpr(__stp6),
-                                    acc,
-                                );
-                                __hold0 = __tco0;
-                                stmts = &__hold0;
-                                slots = __tco1;
-                                next = __tco2;
-                                acc = __tco3;
-                                continue;
-                            }
-                        }
-                        crate::aver_generated::domain::ast::Stmt::StmtBindSlot(_, _) => {
-                            let __tco0 = rest;
-                            let __tco3 = aver_rt::AverList::prepend_owned(s.clone(), acc);
-                            __hold0 = __tco0;
-                            stmts = &__hold0;
-                            acc = __tco3;
-                            continue;
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
+        aver_list_match!(stmts, [] => { return (acc.reverse(), next, slots); }, [s, rest] => { match &s {
+        crate::aver_generated::domain::ast::Stmt::StmtBind(__stp1, __stp0) => {
+            let __stp1 = __stp1.clone();
+            { let (__stp3, __stp2) = crate::aver_generated::domain::resolver::core::resolveExpr(__stp0.clone(), slots); { let __stp4 = __stp2.insert_owned(__stp1, next.clone()); {
+            let __tco0 = rest;
+            let __tco1 = __stp4;
+            let __tco2 = next.add(&aver_rt::AverInt::from_i64(1));
+            let __tco3 = aver_rt::AverList::prepend_owned(crate::aver_generated::domain::ast::Stmt::StmtBindSlot(next, __stp3), acc);
+            stmts = __tco0;
+            slots = __tco1;
+            next = __tco2;
+            acc = __tco3;
+            continue;
+        } } }
+        },
+        crate::aver_generated::domain::ast::Stmt::StmtExpr(__stp0) => {
+            { let (__stp6, __stp5) = crate::aver_generated::domain::resolver::core::resolveExpr(__stp0.clone(), slots); {
+            let __tco0 = rest;
+            let __tco1 = __stp5.clone();
+            let __tco2 = { let __arg14 @ _ = crate::aver_generated::domain::resolver::core::mapMaxVal(&__stp5).add(&aver_rt::AverInt::from_i64(1)); crate::aver_generated::domain::resolver::core::maxInt(next, __arg14) };
+            let __tco3 = aver_rt::AverList::prepend_owned(crate::aver_generated::domain::ast::Stmt::StmtExpr(__stp6), acc);
+            stmts = __tco0;
+            slots = __tco1;
+            next = __tco2;
+            acc = __tco3;
+            continue;
+        } }
+        },
+        crate::aver_generated::domain::ast::Stmt::StmtBindSlot(_, _) => {
+            {
+            let __tco0 = rest;
+            let __tco3 = aver_rt::AverList::prepend_owned(s, acc);
+            stmts = __tco0;
+            acc = __tco3;
+            continue;
         }
+        }
+    } })
     }
 }
 
 /// Resolve a single statement and continue.
 pub fn resolveOneStmt(
     s @ _: &crate::aver_generated::domain::ast::Stmt,
-    rest @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    mut rest @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
     mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     next @ _: aver_rt::AverInt,
     acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
@@ -790,7 +744,7 @@ pub fn resolveOneStmt(
 /// Resolve an expression statement, collecting pattern slots.
 pub fn resolveStmtExpr(
     mut expr @ _: crate::aver_generated::domain::ast::Expr,
-    rest @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    mut rest @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
     mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     next @ _: aver_rt::AverInt,
     acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
@@ -821,7 +775,7 @@ pub fn resolveStmtExpr(
 pub fn resolveStmtBind(
     name @ _: AverStr,
     mut expr @ _: crate::aver_generated::domain::ast::Expr,
-    rest @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    mut rest @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
     mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     next @ _: aver_rt::AverInt,
     acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
@@ -844,7 +798,7 @@ pub fn resolveStmtBind(
 pub fn resolveStmtBindFinish(
     name @ _: AverStr,
     mut newExpr @ _: crate::aver_generated::domain::ast::Expr,
-    rest @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    mut rest @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
     mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     next @ _: aver_rt::AverInt,
     acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
@@ -1621,125 +1575,67 @@ pub fn resolveVar(
 /// Resolve a list of expressions.
 #[inline(always)]
 pub fn resolveExprs(
-    exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    mut exprs @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
     mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Expr> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>;
-    let mut exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr> = exprs;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = exprs;
-            if __list_subject.is_empty() {
-                return acc.reverse();
-            } else {
-                if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco2 = aver_rt::AverList::prepend_owned(
-                            crate::aver_generated::domain::resolver::core::resolveExprSimple(
-                                e.clone(),
-                                slots.clone(),
-                            ),
-                            acc,
-                        );
-                        __hold0 = __tco0;
-                        exprs = &__hold0;
-                        acc = __tco2;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_rt::aver_list_match_reuse!(exprs, [] => { return acc.reverse(); }, [e, rest, __list_slot] => { {
+            let __tco0 = rest;
+            let __tco2 = __list_slot.prepend(crate::aver_generated::domain::resolver::core::resolveExprSimple(e, slots.clone()), acc);
+            exprs = __tco0;
+            acc = __tco2;
+            continue;
+        } })
     }
 }
 
 /// Resolve record field expressions.
 #[inline(always)]
 pub fn resolveFields(
-    fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
+    mut fields @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
     mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> {
-    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>;
-    let mut fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> =
-        fields;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = fields;
-            if __list_subject.is_empty() {
-                return acc.reverse();
-            } else {
-                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let (name, expr) = pair.clone();
-                        {
-                            let __tco0 = rest;
-                            let __tco2 = aver_rt::AverList::prepend_owned((name, crate::aver_generated::domain::resolver::core::resolveExprSimple(expr, slots.clone())), acc);
-                            __hold0 = __tco0;
-                            fields = &__hold0;
-                            acc = __tco2;
-                            continue;
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_rt::aver_list_match_reuse!(fields, [] => { return acc.reverse(); }, [pair, rest, __list_slot] => { { let (name, expr) = pair; {
+            let __tco0 = rest;
+            let __tco2 = __list_slot.prepend((name, crate::aver_generated::domain::resolver::core::resolveExprSimple(expr, slots.clone())), acc);
+            fields = __tco0;
+            acc = __tco2;
+            continue;
+        } } })
     }
 }
 
 /// Resolve match arms, collecting all pattern slots.
 #[inline(always)]
 pub fn resolveArms(
-    arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    mut arms @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
     mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> (
     aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>;
-    let mut arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> = arms;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = arms;
-            if __list_subject.is_empty() {
-                return (acc.reverse(), slots);
-            } else {
-                if let (Some(arm), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let (__stp0, _) = crate::aver_generated::domain::resolver::core::resolveArm(
-                            arm.clone(),
-                            &slots,
-                        );
-                        {
-                            let __tco0 = rest;
-                            let __tco2 = aver_rt::AverList::prepend_owned(__stp0, acc);
-                            __hold0 = __tco0;
-                            arms = &__hold0;
-                            acc = __tco2;
-                            continue;
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_rt::aver_list_match_reuse!(arms, [] => { return (acc.reverse(), slots); }, [arm, rest, __list_slot] => { { let (__stp0, _) = crate::aver_generated::domain::resolver::core::resolveArm(arm, &slots); {
+            let __tco0 = rest;
+            let __tco2 = __list_slot.prepend(__stp0, acc);
+            arms = __tco0;
+            acc = __tco2;
+            continue;
+        } } })
     }
 }
 
 /// Resolve one match arm; continue with the ORIGINAL slots, since an arm's pattern binders are scoped to its own body. Threading the arm-extended map onward leaked binder slots into later arms and past the match, where a wrapping binding aliased them and shadowed names resolved wrong.
 pub fn resolveOneArm(
     mut arm @ _: crate::aver_generated::domain::ast::MatchArm,
-    rest @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    mut rest @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
     mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> (
@@ -2001,47 +1897,28 @@ pub fn mapMaxVal(m @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>) -> aver_rt
         es.sort_by(|a, b| a.0.cmp(&b.0));
         aver_rt::AverIntList::from_vec(es.into_iter().map(|(_, v)| v).collect::<Vec<_>>())
     };
-    crate::aver_generated::domain::resolver::core::maxInList(&vals, aver_rt::AverInt::from_i64(-1))
+    crate::aver_generated::domain::resolver::core::maxInList(vals, aver_rt::AverInt::from_i64(-1))
 }
 
 /// Find maximum value in a list.
 #[inline(always)]
 pub fn maxInList(
-    vals @ _: &aver_rt::AverIntList,
+    mut vals @ _: aver_rt::AverIntList,
     mut acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let mut __hold0: aver_rt::AverIntList;
-    let mut vals @ _: &aver_rt::AverIntList = vals;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = vals;
-            if __list_subject.is_empty() {
-                return acc;
-            } else {
-                if let Some((v, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    if (v > acc) {
-                        {
-                            let __tco0 = rest;
-                            let __tco1 = v;
-                            __hold0 = __tco0;
-                            vals = &__hold0;
-                            acc = __tco1;
-                            continue;
-                        }
-                    } else {
-                        {
-                            let __tco0 = rest;
-                            __hold0 = __tco0;
-                            vals = &__hold0;
-                            continue;
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_list_match!(vals, [] => { return acc; }, [v, rest] => { if (v > acc) { {
+            let __tco0 = rest;
+            let __tco1 = v;
+            vals = __tco0;
+            acc = __tco1;
+            continue;
+        } } else { {
+            let __tco0 = rest;
+            vals = __tco0;
+            continue;
+        } } })
     }
 }
 

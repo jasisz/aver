@@ -43,37 +43,18 @@ pub fn call(
 /// Wrap native octets for the self-hosted Bytes record.
 #[inline(always)]
 pub fn byteVals(
-    octets @ _: &aver_rt::AverIntList,
+    mut octets @ _: aver_rt::AverIntList,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
-    let mut __hold0: aver_rt::AverIntList;
-    let mut octets @ _: &aver_rt::AverIntList = octets;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = octets;
-            if __list_subject.is_empty() {
-                return acc.reverse();
-            } else {
-                if let Some((octet, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend_owned(
-                            crate::aver_generated::domain::value::Val::ValInt(
-                                crate::aver_generated::domain::value::Val__ValInt(octet),
-                            ),
-                            acc,
-                        );
-                        __hold0 = __tco0;
-                        octets = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_list_match!(octets, [] => { return acc.reverse(); }, [octet, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::AverList::prepend_owned(crate::aver_generated::domain::value::Val::ValInt(crate::aver_generated::domain::value::Val__ValInt(octet)), acc);
+            octets = __tco0;
+            acc = __tco1;
+            continue;
+        } })
     }
 }
 
@@ -95,7 +76,7 @@ pub fn bytesVal(
                                 (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
                             );
                             crate::aver_generated::domain::builtins::endian::byteVals__collected(
-                                &__arg1, __arg2,
+                                __arg1, __arg2,
                             )
                         }
                     }),
@@ -194,7 +175,7 @@ pub fn decodeBig(
     crate::cancel_checkpoint();
     let value @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let octets @ _ = crate::aver_generated::domain::builtins::helpers::expectBytes(&value)?;
-    let bytes @ _ = crate::aver_generated::bytes::fromList(&octets)?;
+    let bytes @ _ = crate::aver_generated::bytes::fromList(octets)?;
     Ok(crate::aver_generated::domain::value::Val::ValInt(
         crate::aver_generated::domain::value::Val__ValInt(aver_rt::int_from_big_endian(
             (bytes).values.as_slice(),
@@ -209,7 +190,7 @@ pub fn decodeLittle(
     crate::cancel_checkpoint();
     let value @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let octets @ _ = crate::aver_generated::domain::builtins::helpers::expectBytes(&value)?;
-    let bytes @ _ = crate::aver_generated::bytes::fromList(&octets)?;
+    let bytes @ _ = crate::aver_generated::bytes::fromList(octets)?;
     Ok(crate::aver_generated::domain::value::Val::ValInt(
         crate::aver_generated::domain::value::Val__ValInt(aver_rt::int_from_little_endian(
             (bytes).values.as_slice(),
@@ -220,36 +201,17 @@ pub fn decodeLittle(
 /// Synthesized collecting variant of `byteVals`. Appends to a builder where `byteVals` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn byteVals__collected(
-    octets @ _: &aver_rt::AverIntList,
+    mut octets @ _: aver_rt::AverIntList,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
-    let mut __hold0: aver_rt::AverIntList;
-    let mut octets @ _: &aver_rt::AverIntList = octets;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = octets;
-            if __list_subject.is_empty() {
-                return aver_rt::list_builder_finalize(acc);
-            } else {
-                if let Some((octet, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = aver_rt::list_builder_push(
-                            acc,
-                            crate::aver_generated::domain::value::Val::ValInt(
-                                crate::aver_generated::domain::value::Val__ValInt(octet),
-                            ),
-                        );
-                        __hold0 = __tco0;
-                        octets = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_list_match!(octets, [] => { return aver_rt::list_builder_finalize(acc); }, [octet, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::value::Val::ValInt(crate::aver_generated::domain::value::Val__ValInt(octet)));
+            octets = __tco0;
+            acc = __tco1;
+            continue;
+        } })
     }
 }

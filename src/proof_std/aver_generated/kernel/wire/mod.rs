@@ -470,31 +470,16 @@ pub fn quote(s @ _: AverStr) -> AverStr {
 
 /// The characters with quotes, backslashes and line breaks escaped.
 #[inline(always)]
-pub fn escaped(cs @ _: &aver_rt::AverList<AverStr>, mut acc @ _: AverStr) -> AverStr {
-    let mut __hold0: aver_rt::AverList<AverStr>;
-    let mut cs @ _: &aver_rt::AverList<AverStr> = cs;
+pub fn escaped(mut cs @ _: aver_rt::AverList<AverStr>, mut acc @ _: AverStr) -> AverStr {
     loop {
         crate::proof_std::cancel_checkpoint();
-        {
-            let __list_subject = cs;
-            if __list_subject.is_empty() {
-                return acc;
-            } else {
-                if let Some((c, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 =
-                            (acc + &crate::proof_std::aver_generated::kernel::wire::escapeOne(c));
-                        __hold0 = __tco0;
-                        cs = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_list_match!(cs, [] => { return acc; }, [c, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = (acc + &crate::proof_std::aver_generated::kernel::wire::escapeOne(c));
+            cs = __tco0;
+            acc = __tco1;
+            continue;
+        } })
     }
 }
 

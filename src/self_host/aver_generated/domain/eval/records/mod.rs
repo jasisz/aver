@@ -37,7 +37,7 @@ pub fn isNamedSentinel(
     {
         let __list_subject = args;
         if let Some((_, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-            crate::aver_generated::domain::eval::records::isNamedSentinelInner(&rest)
+            crate::aver_generated::domain::eval::records::isNamedSentinelInner(rest)
         } else {
             if __list_subject.is_empty() {
                 false
@@ -51,32 +51,18 @@ pub fn isNamedSentinel(
 /// Check first element of rest is a _named record.
 #[inline(always)]
 pub fn isNamedSentinelInner(
-    rest @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut rest @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> bool {
     crate::cancel_checkpoint();
-    {
-        let __list_subject = rest;
-        if let (Some(v), Some(ignored)) = (__list_subject.first(), __list_subject.tail()) {
-            {
-                let __t = v;
-                match __t.view() {
-                    crate::aver_generated::domain::value::Val__view::ValRecord(
-                        __typeName_fields,
-                    ) => {
-                        let typeName = __typeName_fields.0.clone();
-                        (&*typeName == "_named")
-                    }
-                    _ => false,
-                }
-            }
-        } else {
-            if __list_subject.is_empty() {
-                false
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+    aver_list_match!(rest, [] => false, [v, ignored] => { { let __t = v; match __t.view() {
+        crate::aver_generated::domain::value::Val__view::ValRecord(__typeName_fields) => {
+            let typeName = __typeName_fields.0.clone();
+            (&*typeName == "_named")
+        },
+        _ => {
+            false
         }
-    }
+    } } })
 }
 
 /// Perform record update: merge named fields into base record.
@@ -88,7 +74,7 @@ pub fn doRecordUpdate(
     {
         let __list_subject = args;
         if let (Some(baseVal), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-            crate::aver_generated::domain::eval::records::doRecordUpdateInner(baseVal, &rest)
+            crate::aver_generated::domain::eval::records::doRecordUpdateInner(baseVal, rest)
         } else {
             if __list_subject.is_empty() {
                 Err(::aver_rt::str_lit!(
@@ -105,35 +91,18 @@ pub fn doRecordUpdate(
 #[inline(always)]
 pub fn doRecordUpdateInner(
     baseVal @ _: &crate::aver_generated::domain::value::Val,
-    rest @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut rest @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    {
-        let __list_subject = rest;
-        if let (Some(namedVal), Some(ignored)) = (__list_subject.first(), __list_subject.tail()) {
-            {
-                let __t = namedVal;
-                match __t.view() {
-                    crate::aver_generated::domain::value::Val__view::ValRecord(
-                        __namedFields_fields,
-                    ) => {
-                        let namedFields = &__namedFields_fields.1;
-                        crate::aver_generated::domain::eval::records::applyRecordUpdate(
-                            baseVal,
-                            namedFields,
-                        )
-                    }
-                    _ => Err(::aver_rt::str_lit!("record update requires named fields")),
-                }
-            }
-        } else {
-            if __list_subject.is_empty() {
-                Err(::aver_rt::str_lit!("record update requires named fields"))
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+    aver_list_match!(rest, [] => Err(::aver_rt::str_lit!("record update requires named fields")), [namedVal, ignored] => { { let __t = namedVal; match __t.view() {
+        crate::aver_generated::domain::value::Val__view::ValRecord(__namedFields_fields) => {
+            let namedFields = &__namedFields_fields.1;
+            crate::aver_generated::domain::eval::records::applyRecordUpdate(baseVal, namedFields)
+        },
+        _ => {
+            Err(::aver_rt::str_lit!("record update requires named fields"))
         }
-    }
+    } } })
 }
 
 /// Override fields in a record value.
@@ -182,56 +151,27 @@ pub fn mergeRecordFields(
 /// Accumulate merged fields.
 #[inline(always)]
 pub fn mergeRecordFieldsAcc(
-    existing @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut existing @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
     mut overrides @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
     mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
-    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>;
-    let mut existing @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> =
-        existing;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = existing;
-            if __list_subject.is_empty() {
-                return aver_rt::AverList::concat(&acc.reverse(), &overrides);
-            } else {
-                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let (k, v) = pair.clone();
-                        match crate::aver_generated::domain::eval::records::findOverride(
-                            k.clone(),
-                            &overrides,
-                        ) {
-                            Some(__stp0 @ _) => {
-                                let __tco0 = rest;
-                                let __tco1 =
-                                    crate::aver_generated::domain::eval::records::removeOverride(
-                                        k.clone(),
-                                        &overrides,
-                                    );
-                                let __tco2 = aver_rt::AverList::prepend_owned((k, __stp0), acc);
-                                __hold0 = __tco0;
-                                existing = &__hold0;
-                                overrides = __tco1;
-                                acc = __tco2;
-                                continue;
-                            }
-                            None => {
-                                let __tco0 = rest;
-                                let __tco2 = aver_rt::AverList::prepend_owned((k, v), acc);
-                                __hold0 = __tco0;
-                                existing = &__hold0;
-                                acc = __tco2;
-                                continue;
-                            }
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_list_match!(existing, [] => { return aver_rt::AverList::concat(&acc.reverse(), &overrides); }, [pair, rest] => { { let (k, v) = pair; match crate::aver_generated::domain::eval::records::findOverride(k.clone(), &overrides) { Some(__stp0 @ _) => { {
+            let __tco0 = rest;
+            let __tco1 = crate::aver_generated::domain::eval::records::removeOverride(k.clone(), overrides);
+            let __tco2 = aver_rt::AverList::prepend_owned((k, __stp0), acc);
+            existing = __tco0;
+            overrides = __tco1;
+            acc = __tco2;
+            continue;
+        } }, None => { {
+            let __tco0 = rest;
+            let __tco2 = aver_rt::AverList::prepend_owned((k, v), acc);
+            existing = __tco0;
+            acc = __tco2;
+            continue;
+        } } } } })
     }
 }
 
@@ -240,12 +180,12 @@ pub fn mergeRecordFieldsAcc(
 pub fn mergeOneField(
     k @ _: AverStr,
     mut v @ _: crate::aver_generated::domain::value::Val,
-    rest @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
-    overrides @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut rest @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut overrides @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
     acc @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
     crate::cancel_checkpoint();
-    match crate::aver_generated::domain::eval::records::findOverride(k.clone(), overrides) {
+    match crate::aver_generated::domain::eval::records::findOverride(k.clone(), &overrides) {
         Some(newV @ _) => {
             let __arg6 @ _ =
                 crate::aver_generated::domain::eval::records::removeOverride(k.clone(), overrides);
@@ -259,9 +199,7 @@ pub fn mergeOneField(
         None => {
             let __arg8 @ _ = aver_rt::AverList::prepend((k, v), acc);
             crate::aver_generated::domain::eval::records::mergeRecordFieldsAcc(
-                rest,
-                overrides.clone(),
-                __arg8,
+                rest, overrides, __arg8,
             )
         }
     }
@@ -311,7 +249,7 @@ pub fn findOverride(
 #[inline(always)]
 pub fn removeOverride(
     k @ _: AverStr,
-    overrides @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut overrides @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
     crate::cancel_checkpoint();
     let __arg2 @ _ =
@@ -323,43 +261,19 @@ pub fn removeOverride(
 #[inline(always)]
 pub fn removeOverrideAcc(
     mut k @ _: AverStr,
-    overrides @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut overrides @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
     mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
-    let mut __hold1: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>;
-    let mut overrides @ _: &aver_rt::AverList<(
-        AverStr,
-        crate::aver_generated::domain::value::Val,
-    )> = overrides;
     loop {
         crate::cancel_checkpoint();
         let reversed @ _ = acc.reverse();
-        {
-            let __list_subject = overrides;
-            if __list_subject.is_empty() {
-                return reversed;
-            } else {
-                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let (ok, ov) = pair.clone();
-                        if (ok == k) {
-                            return aver_rt::AverList::concat(&reversed, &rest);
-                        } else {
-                            {
-                                let __tco1 = rest;
-                                let __tco2 = aver_rt::AverList::prepend_owned((ok, ov), acc);
-                                __hold1 = __tco1;
-                                overrides = &__hold1;
-                                acc = __tco2;
-                                continue;
-                            }
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_rt::aver_list_match_reuse!(overrides, [] => { return reversed; }, [pair, rest, __list_slot] => { { let (ok, ov) = pair; if (ok == k) { return aver_rt::AverList::concat(&reversed, &rest); } else { {
+            let __tco1 = rest;
+            let __tco2 = __list_slot.prepend((ok, ov), acc);
+            overrides = __tco1;
+            acc = __tco2;
+            continue;
+        } } } })
     }
 }
 
@@ -392,7 +306,7 @@ pub fn mergeRecordFieldsAcc__collected(
                                 let __tco1 =
                                     crate::aver_generated::domain::eval::records::removeOverride(
                                         k.clone(),
-                                        &overrides,
+                                        overrides,
                                     );
                                 let __tco2 = aver_rt::list_builder_push(acc, (k, __stp0));
                                 __hold0 = __tco0;

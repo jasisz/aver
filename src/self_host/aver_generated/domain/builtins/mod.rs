@@ -506,37 +506,18 @@ pub fn builtinEnvSetInner(
 /// Convert list of strings to list of ValStr.
 #[inline(always)]
 pub fn stringsToVals(
-    strs @ _: &aver_rt::AverList<AverStr>,
+    mut strs @ _: aver_rt::AverList<AverStr>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
-    let mut __hold0: aver_rt::AverList<AverStr>;
-    let mut strs @ _: &aver_rt::AverList<AverStr> = strs;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = strs;
-            if __list_subject.is_empty() {
-                return acc.reverse();
-            } else {
-                if let Some((s, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend_owned(
-                            crate::aver_generated::domain::value::Val::ValStr(
-                                crate::aver_generated::domain::value::Val__ValStr(s),
-                            ),
-                            acc,
-                        );
-                        __hold0 = __tco0;
-                        strs = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_list_match!(strs, [] => { return acc.reverse(); }, [s, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::AverList::prepend_owned(crate::aver_generated::domain::value::Val::ValStr(crate::aver_generated::domain::value::Val__ValStr(s)), acc);
+            strs = __tco0;
+            acc = __tco1;
+            continue;
+        } })
     }
 }
 
@@ -564,7 +545,7 @@ pub fn builtinMapEntries(
                                 (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
                             );
                             crate::aver_generated::domain::builtins::mapEntriesToTuples__collected(
-                                &__arg3, __arg4,
+                                __arg3, __arg4,
                             )
                         }
                     }),
@@ -578,50 +559,18 @@ pub fn builtinMapEntries(
 /// Convert entries to list of (key, value) tuples.
 #[inline(always)]
 pub fn mapEntriesToTuples(
-    entries @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut entries @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
-    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>;
-    let mut entries @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> =
-        entries;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = entries;
-            if __list_subject.is_empty() {
-                return acc.reverse();
-            } else {
-                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let (k, v) = pair.clone();
-                        {
-                            let __tco0 = rest;
-                            let __tco1 = aver_rt::AverList::prepend_owned(
-                                crate::aver_generated::domain::value::Val::ValTuple(
-                                    crate::aver_generated::domain::value::Val__ValTuple(
-                                        aver_rt::AverList::from_vec(vec![
-                                            crate::aver_generated::domain::value::Val::ValStr(
-                                                crate::aver_generated::domain::value::Val__ValStr(
-                                                    k,
-                                                ),
-                                            ),
-                                            v,
-                                        ]),
-                                    ),
-                                ),
-                                acc,
-                            );
-                            __hold0 = __tco0;
-                            entries = &__hold0;
-                            acc = __tco1;
-                            continue;
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_list_match!(entries, [] => { return acc.reverse(); }, [pair, rest] => { { let (k, v) = pair; {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::AverList::prepend_owned(crate::aver_generated::domain::value::Val::ValTuple(crate::aver_generated::domain::value::Val__ValTuple(aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::value::Val::ValStr(crate::aver_generated::domain::value::Val__ValStr(k)), v]))), acc);
+            entries = __tco0;
+            acc = __tco1;
+            continue;
+        } } })
     }
 }
 
@@ -2449,7 +2398,7 @@ pub fn headersToVal(
             {
                 let __arg2 @ _ =
                     <aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>>::new();
-                crate::aver_generated::domain::builtins::headersToValMap(headers, &__arg1, __arg2)
+                crate::aver_generated::domain::builtins::headersToValMap(headers, __arg1, __arg2)
             }
         }),
     )
@@ -2459,86 +2408,42 @@ pub fn headersToVal(
 #[inline(always)]
 pub fn headersToValMap(
     headers @ _: &aver_rt::AverMap<AverStr, aver_rt::AverList<AverStr>>,
-    names @ _: &aver_rt::AverList<AverStr>,
+    mut names @ _: aver_rt::AverList<AverStr>,
     mut acc @ _: aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val> {
-    let mut __hold1: aver_rt::AverList<AverStr>;
-    let mut names @ _: &aver_rt::AverList<AverStr> = names;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = names;
-            if __list_subject.is_empty() {
-                return acc;
-            } else {
-                if let Some((name, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    match headers.get(&name).cloned() {
-                        Some(values @ _) => {
-                            let __tco1 = rest;
-                            let __tco2 = acc.insert_owned(name, crate::aver_generated::domain::value::Val::ValList(crate::aver_generated::domain::value::Val__ValList({ let __arg6 @ _ = aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)); crate::aver_generated::domain::builtins::stringsToValStrs__collected(&values, __arg6) })));
-                            __hold1 = __tco1;
-                            names = &__hold1;
-                            acc = __tco2;
-                            continue;
-                        }
-                        None => {
-                            let __tco1 = rest;
-                            let __tco2 = acc.insert_owned(
-                                name,
-                                crate::aver_generated::domain::value::Val::ValList(
-                                    crate::aver_generated::domain::value::Val__ValList(
-                                        aver_rt::AverList::empty(),
-                                    ),
-                                ),
-                            );
-                            __hold1 = __tco1;
-                            names = &__hold1;
-                            acc = __tco2;
-                            continue;
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_list_match!(names, [] => { return acc; }, [name, rest] => { match headers.get(&name).cloned() { Some(values @ _) => { {
+            let __tco1 = rest;
+            let __tco2 = acc.insert_owned(name, crate::aver_generated::domain::value::Val::ValList(crate::aver_generated::domain::value::Val__ValList({ let __arg6 @ _ = aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)); crate::aver_generated::domain::builtins::stringsToValStrs__collected(&values, __arg6) })));
+            names = __tco1;
+            acc = __tco2;
+            continue;
+        } }, None => { {
+            let __tco1 = rest;
+            let __tco2 = acc.insert_owned(name, crate::aver_generated::domain::value::Val::ValList(crate::aver_generated::domain::value::Val__ValList(aver_rt::AverList::empty())));
+            names = __tco1;
+            acc = __tco2;
+            continue;
+        } } } })
     }
 }
 
 /// Convert a list of strings into a list of Val.ValStr (tail-recursive).
 #[inline(always)]
 pub fn stringsToValStrs(
-    values @ _: &aver_rt::AverList<AverStr>,
+    mut values @ _: aver_rt::AverList<AverStr>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
-    let mut __hold0: aver_rt::AverList<AverStr>;
-    let mut values @ _: &aver_rt::AverList<AverStr> = values;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = values;
-            if __list_subject.is_empty() {
-                return acc.reverse();
-            } else {
-                if let Some((v, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend_owned(
-                            crate::aver_generated::domain::value::Val::ValStr(
-                                crate::aver_generated::domain::value::Val__ValStr(v),
-                            ),
-                            acc,
-                        );
-                        __hold0 = __tco0;
-                        values = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_list_match!(values, [] => { return acc.reverse(); }, [v, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::AverList::prepend_owned(crate::aver_generated::domain::value::Val::ValStr(crate::aver_generated::domain::value::Val__ValStr(v)), acc);
+            values = __tco0;
+            acc = __tco1;
+            continue;
+        } })
     }
 }
 
@@ -3185,81 +3090,36 @@ pub fn valVariantToTcpSocket(
 /// Recover integer caller keys and typed socket states from a self-host Val map.
 #[inline(always)]
 pub fn tcpSocketEntriesToMap(
-    entries @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut entries @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
     mut acc @ _: aver_rt::AverMap<aver_rt::AverInt, crate::aver_generated::tcp::Socket>,
 ) -> Result<aver_rt::AverMap<aver_rt::AverInt, crate::aver_generated::tcp::Socket>, AverStr> {
-    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>;
-    let mut entries @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> =
-        entries;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = entries;
-            if __list_subject.is_empty() {
-                return Ok(acc);
-            } else {
-                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let (keyText, socketV) = pair.clone();
-                        {
-                            let __tco0 = rest;
-                            let __tco1 = acc.insert_owned(
-                                ({
-                                    let __s = &(keyText);
-                                    __s.parse::<aver_rt::AverInt>()
-                                        .map_err(|_| format!("Cannot parse '{}' as Int", __s))
-                                })
-                                .into_aver()?,
-                                crate::aver_generated::domain::builtins::valToTcpSocket(&socketV)?,
-                            );
-                            __hold0 = __tco0;
-                            entries = &__hold0;
-                            acc = __tco1;
-                            continue;
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_list_match!(entries, [] => { return Ok(acc); }, [pair, rest] => { { let (keyText, socketV) = pair; {
+            let __tco0 = rest;
+            let __tco1 = acc.insert_owned(({ let __s = &(keyText); __s.parse::<aver_rt::AverInt>().map_err(|_| format!("Cannot parse '{}' as Int", __s)) }).into_aver()?, crate::aver_generated::domain::builtins::valToTcpSocket(&socketV)?);
+            entries = __tco0;
+            acc = __tco1;
+            continue;
+        } } })
     }
 }
 
 /// Convert ready caller keys back into self-host values.
 #[inline(always)]
 pub fn tcpReadyKeysToVals(
-    keys @ _: &aver_rt::AverIntList,
+    mut keys @ _: aver_rt::AverIntList,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
-    let mut __hold0: aver_rt::AverIntList;
-    let mut keys @ _: &aver_rt::AverIntList = keys;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = keys;
-            if __list_subject.is_empty() {
-                return acc.reverse();
-            } else {
-                if let Some((key, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend_owned(
-                            crate::aver_generated::domain::value::Val::ValInt(
-                                crate::aver_generated::domain::value::Val__ValInt(key),
-                            ),
-                            acc,
-                        );
-                        __hold0 = __tco0;
-                        keys = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_list_match!(keys, [] => { return acc.reverse(); }, [key, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::AverList::prepend_owned(crate::aver_generated::domain::value::Val::ValInt(crate::aver_generated::domain::value::Val__ValInt(key)), acc);
+            keys = __tco0;
+            acc = __tco1;
+            continue;
+        } })
     }
 }
 
@@ -3308,7 +3168,7 @@ pub fn builtinTcpPollInner(
         {
             let __arg7 @ _ =
                 <aver_rt::AverMap<aver_rt::AverInt, crate::aver_generated::tcp::Socket>>::new();
-            crate::aver_generated::domain::builtins::tcpSocketEntriesToMap(&__arg6, __arg7)
+            crate::aver_generated::domain::builtins::tcpSocketEntriesToMap(__arg6, __arg7)
         }
     }?;
     match {
@@ -4165,50 +4025,18 @@ pub fn stringsToVals__collected(
 /// Synthesized collecting variant of `mapEntriesToTuples`. Appends to a builder where `mapEntriesToTuples` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn mapEntriesToTuples__collected(
-    entries @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut entries @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
-    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>;
-    let mut entries @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> =
-        entries;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = entries;
-            if __list_subject.is_empty() {
-                return aver_rt::list_builder_finalize(acc);
-            } else {
-                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let (k, v) = pair.clone();
-                        {
-                            let __tco0 = rest;
-                            let __tco1 = aver_rt::list_builder_push(
-                                acc,
-                                crate::aver_generated::domain::value::Val::ValTuple(
-                                    crate::aver_generated::domain::value::Val__ValTuple(
-                                        aver_rt::AverList::from_vec(vec![
-                                            crate::aver_generated::domain::value::Val::ValStr(
-                                                crate::aver_generated::domain::value::Val__ValStr(
-                                                    k,
-                                                ),
-                                            ),
-                                            v,
-                                        ]),
-                                    ),
-                                ),
-                            );
-                            __hold0 = __tco0;
-                            entries = &__hold0;
-                            acc = __tco1;
-                            continue;
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_list_match!(entries, [] => { return aver_rt::list_builder_finalize(acc); }, [pair, rest] => { { let (k, v) = pair; {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::value::Val::ValTuple(crate::aver_generated::domain::value::Val__ValTuple(aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::value::Val::ValStr(crate::aver_generated::domain::value::Val__ValStr(k)), v]))));
+            entries = __tco0;
+            acc = __tco1;
+            continue;
+        } } })
     }
 }
 

@@ -32,7 +32,7 @@ fn __mutual_tco_trampoline_1(
                                     &b.value,
                                 );
                             crate::proof_kernel::aver_generated::kernel::subst::firstShared(
-                                &__arg5,
+                                __arg5,
                                 (*bound).clone(),
                             )
                         };
@@ -952,33 +952,15 @@ pub fn unbind(
 /// The first name also in the other list.
 #[inline(always)]
 pub fn firstShared(
-    ns @ _: &aver_rt::AverList<AverStr>,
+    mut ns @ _: aver_rt::AverList<AverStr>,
     mut others @ _: aver_rt::AverList<AverStr>,
 ) -> Option<AverStr> {
-    let mut __hold0: aver_rt::AverList<AverStr>;
-    let mut ns @ _: &aver_rt::AverList<AverStr> = ns;
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        {
-            let __list_subject = ns;
-            if __list_subject.is_empty() {
-                return None;
-            } else {
-                if let Some((n, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    if others.contains(&n) {
-                        return Some(n);
-                    } else {
-                        {
-                            let __tco0 = rest;
-                            __hold0 = __tco0;
-                            ns = &__hold0;
-                            continue;
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_list_match!(ns, [] => { return None; }, [n, rest] => { if others.contains(&n) { return Some(n); } else { {
+            let __tco0 = rest;
+            ns = __tco0;
+            continue;
+        } } })
     }
 }
