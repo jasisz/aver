@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// (script, what the kernel says, whether an untyped kernel accepted it)
-const REFUSED: [(&str, &str, bool); 31] = [
+const REFUSED: [(&str, &str, bool); 32] = [
     // A law about a sum, cited at an Int: `x = One.Only` for every `x` of
     // the one-value type `One`, read at 0 and at 1, gives `0 = 1`.
     (
@@ -174,6 +174,13 @@ const REFUSED: [(&str, &str, bool); 31] = [
         "the induction arms are not exactly the constructors of N",
         true,
     ),
+    // A script may not make equality lawful merely by setting the eq bit on
+    // a record whose Float field admits NaN != NaN.
+    (
+        "fake_equality_on_a_record_with_float",
+        "rule bool.beq.refl: a := == on R is not equality",
+        true,
+    ),
 ];
 
 fn fixtures() -> PathBuf {
@@ -209,8 +216,8 @@ fn every_refused_script_is_listed() {
     assert_eq!(on_disk, listed);
 }
 
-/// Thirteen scripts were accepted before their corresponding kernel gates.
+/// Fourteen scripts were accepted before their corresponding kernel gates.
 #[test]
-fn thirteen_of_them_were_accepted_before() {
-    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 13);
+fn fourteen_of_them_were_accepted_before() {
+    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 14);
 }
