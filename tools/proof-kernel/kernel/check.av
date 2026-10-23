@@ -70,6 +70,7 @@ fn declarationsTyped(env: Env, path: String) -> Result<Unit, String>
     ? "Every definition body and constant value fits the type its declaration gives it; theorem givens are not in their scope."
     scope = Env(defs = env.defs, consts = env.consts, laws = [], hyps = [], vars = [], sums = env.sums, recs = env.recs, sigs = env.sigs)
     uniqueDefs(scope.defs, [], path)?
+    uniqueTypeDecls(scope.sums, scope.recs, path)?
     defsTyped(scope.defs, scope, path)?
     constsTyped(scope.consts, scope, path)
 
@@ -86,6 +87,35 @@ fn uniqueDefs(ds: List<Def>, seen: List<String>, path: String) -> Result<Unit, S
 
 verify uniqueDefs
     uniqueDefs([Def(name = "f", params = [], ret = Ty.TyInt, lets = [], body = Term.TInt(0)), Def(name = "f", params = [], ret = Ty.TyInt, lets = [], body = Term.TInt(1))], [], "proof") => Result.Err("step proof: duplicate definition f")
+
+fn uniqueTypeDecls(ss: List<Sum>, rs: List<Rec>, path: String) -> Result<Unit, String>
+    ? "A named type has exactly one declaration: never two sums, two records, or one of each."
+    uniqueRecNames(rs, uniqueSumNames(ss, [], path)?, path)
+
+verify uniqueTypeDecls
+    uniqueTypeDecls([Sum(name = "R", eq = true, variants = [])], [Rec(name = "R", eq = true, fields = [])], "proof") => Result.Err("step proof: duplicate type declaration R")
+
+fn uniqueSumNames(ss: List<Sum>, seen: List<String>, path: String) -> Result<List<String>, String>
+    ? "Collect distinct sum names."
+    match ss
+        [] -> Result.Ok(seen)
+        [s, ..rest] -> match List.contains(seen, s.name)
+            true -> Result.Err("step {path}: duplicate type declaration {s.name}")
+            false -> uniqueSumNames(rest, List.prepend(s.name, seen), path)
+
+verify uniqueSumNames
+    uniqueSumNames([], [], "proof") => Result.Ok([])
+
+fn uniqueRecNames(rs: List<Rec>, seen: List<String>, path: String) -> Result<Unit, String>
+    ? "Every record name is distinct from earlier records and every sum."
+    match rs
+        [] -> Result.Ok(Unit)
+        [r, ..rest] -> match List.contains(seen, r.name)
+            true -> Result.Err("step {path}: duplicate type declaration {r.name}")
+            false -> uniqueRecNames(rest, List.prepend(r.name, seen), path)
+
+verify uniqueRecNames
+    uniqueRecNames([], [], "proof") => Result.Ok(Unit)
 
 fn defsTyped(ds: List<Def>, env: Env, path: String) -> Result<Unit, String>
     ? "Every definition in the script is well typed."

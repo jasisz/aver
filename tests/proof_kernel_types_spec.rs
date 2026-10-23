@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// (script, what the kernel says, whether an untyped kernel accepted it)
-const REFUSED: [(&str, &str, bool); 36] = [
+const REFUSED: [(&str, &str, bool); 37] = [
     // A law about a sum, cited at an Int: `x = One.Only` for every `x` of
     // the one-value type `One`, read at 0 and at 1, gives `0 = 1`.
     (
@@ -214,6 +214,14 @@ const REFUSED: [(&str, &str, bool); 36] = [
         "module-level binding n is shadowed by a variable",
         true,
     ),
+    // A sum and a record shared TyNamed("R"). Equality validation inspected
+    // the safe sum first, while the same type could still contain a record's
+    // Float field, reviving NaN != NaN through bool.beq.refl.
+    (
+        "sum_and_record_share_a_type_name",
+        "duplicate type declaration R",
+        true,
+    ),
 ];
 
 fn fixtures() -> PathBuf {
@@ -249,8 +257,8 @@ fn every_refused_script_is_listed() {
     assert_eq!(on_disk, listed);
 }
 
-/// Eighteen scripts were accepted before their corresponding kernel gates.
+/// Nineteen scripts were accepted before their corresponding kernel gates.
 #[test]
-fn eighteen_of_them_were_accepted_before() {
-    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 18);
+fn nineteen_of_them_were_accepted_before() {
+    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 19);
 }

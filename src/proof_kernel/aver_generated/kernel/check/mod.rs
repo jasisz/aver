@@ -1564,13 +1564,18 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
         },
     );
     {
-        let __arg5 @ _ = <aver_rt::AverList<AverStr>>::empty();
+        let __arg6 @ _ = <aver_rt::AverList<AverStr>>::empty();
         crate::proof_kernel::aver_generated::kernel::check::uniqueDefs(
             &scope.defs,
-            __arg5,
+            __arg6,
             path.clone(),
         )
     }?;
+    crate::proof_kernel::aver_generated::kernel::check::uniqueTypeDecls(
+        &scope.sums,
+        &scope.recs,
+        path.clone(),
+    )?;
     crate::proof_kernel::aver_generated::kernel::check::defsTyped(
         &scope.defs,
         &scope,
@@ -1627,6 +1632,141 @@ pub fn uniqueDefs(
                             let __tco1 = aver_rt::AverList::prepend(d.name.clone(), &seen);
                             __hold0 = __tco0;
                             ds = &__hold0;
+                            seen = __tco1;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
+    }
+}
+
+/// A named type has exactly one declaration: never two sums, two records, or one of each.
+#[inline(always)]
+pub fn uniqueTypeDecls(
+    ss @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Sum>,
+    rs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Rec>,
+    path @ _: AverStr,
+) -> Result<(), AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    let __arg4 @ _ = {
+        let __arg3 @ _ = <aver_rt::AverList<AverStr>>::empty();
+        crate::proof_kernel::aver_generated::kernel::check::uniqueSumNames(ss, __arg3, path.clone())
+    }?;
+    crate::proof_kernel::aver_generated::kernel::check::uniqueRecNames(rs, __arg4, path)
+}
+
+/// Collect distinct sum names.
+#[inline(always)]
+pub fn uniqueSumNames(
+    ss @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Sum>,
+    mut seen @ _: aver_rt::AverList<AverStr>,
+    mut path @ _: AverStr,
+) -> Result<aver_rt::AverList<AverStr>, AverStr> {
+    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Sum>;
+    let mut ss @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Sum> =
+        ss;
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __list_subject = ss;
+            if __list_subject.is_empty() {
+                return Ok(seen);
+            } else {
+                if let (Some(s), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    if seen.contains(&s.name) {
+                        return Err(aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = {
+                                        let mut __b = aver_rt::Buffer::with_capacity(
+                                            (aver_rt::AverInt::from_i64(66))
+                                                .to_usize()
+                                                .unwrap_or(0),
+                                        );
+                                        __b.push_str(&::aver_rt::str_lit!("step "));
+                                        __b
+                                    };
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                        &(path),
+                                    )));
+                                    __b
+                                };
+                                __b.push_str(&::aver_rt::str_lit!(": duplicate type declaration "));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(s.name))));
+                            __b
+                        }));
+                    } else {
+                        {
+                            let __tco0 = rest;
+                            let __tco1 = aver_rt::AverList::prepend(s.name.clone(), &seen);
+                            __hold0 = __tco0;
+                            ss = &__hold0;
+                            seen = __tco1;
+                            continue;
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
+    }
+}
+
+/// Every record name is distinct from earlier records and every sum.
+#[inline(always)]
+pub fn uniqueRecNames(
+    rs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Rec>,
+    mut seen @ _: aver_rt::AverList<AverStr>,
+    mut path @ _: AverStr,
+) -> Result<(), AverStr> {
+    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Rec>;
+    let mut rs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Rec> =
+        rs;
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __list_subject = rs;
+            if __list_subject.is_empty() {
+                return Ok(());
+            } else {
+                if let (Some(r), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    if seen.contains(&r.name) {
+                        return Err(aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = {
+                                        let mut __b = aver_rt::Buffer::with_capacity(
+                                            (aver_rt::AverInt::from_i64(66))
+                                                .to_usize()
+                                                .unwrap_or(0),
+                                        );
+                                        __b.push_str(&::aver_rt::str_lit!("step "));
+                                        __b
+                                    };
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                        &(path),
+                                    )));
+                                    __b
+                                };
+                                __b.push_str(&::aver_rt::str_lit!(": duplicate type declaration "));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(r.name))));
+                            __b
+                        }));
+                    } else {
+                        {
+                            let __tco0 = rest;
+                            let __tco1 = aver_rt::AverList::prepend(r.name.clone(), &seen);
+                            __hold0 = __tco0;
+                            rs = &__hold0;
                             seen = __tco1;
                             continue;
                         }
